@@ -1,0 +1,17 @@
+........................................................................ [ 51%]
+.....................................................................    [100%]
+============================= slowest 25 durations =============================
+2.17s call     Tests/Chat/test_console_prompt_mixin_journey.py::test_local_queue_retry_current_regenerate_reopen[True]
+1.88s call     Tests/Chat/test_console_prompt_mixin_journey.py::test_local_queue_retry_current_regenerate_reopen[False]
+1.46s call     Tests/Chat/test_console_prompt_mixin_retry.py::test_real_agent_tool_loop_reuses_once_composed_request[False-False]
+1.43s call     Tests/Chat/test_console_prompt_mixin_journey.py::test_local_resend_continue_and_missing_original
+1.36s call     Tests/Chat/test_console_prompt_mixin_retry.py::test_real_agent_tool_loop_reuses_once_composed_request[True-True]
+1.36s call     Tests/Chat/test_console_prompt_mixin_retry.py::test_retry_original_regenerate_current_and_clean_history[True]
+1.33s call     Tests/Chat/test_console_prompt_mixin_retry.py::test_real_agent_tool_loop_reuses_once_composed_request[True-False]
+1.18s call     Tests/Chat/test_console_prompt_mixin_retry.py::test_retry_original_regenerate_current_and_clean_history[False]
+1.09s call     Tests/Chat/test_console_prompt_mixin_retry.py::test_original_retry_survives_reopen_deleted_source_and_latest_loss[False-False]
+1.08s call     Tests/Chat/test_console_prompt_mixin_retry.py::test_original_retry_survives_reopen_deleted_source_and_latest_loss[True-False]
+1.03s call     Tests/Chat/test_console_prompt_mixin_retry.py::test_original_retry_survives_reopen_deleted_source_and_latest_loss[True-True]
+
+(14 durations < 1s hidden.)
+141 passed in 128.31s (0:02:08)

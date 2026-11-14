@@ -1,0 +1,97 @@
+FFFF..FFFFF...                                                           [100%]
+=================================== FAILURES ===================================
+_ test_temporary_nested_fork_owns_retry_chain_after_close_and_promotion[False-False] _
+Tests/Chat/test_console_prompt_mixin_forks.py:84: in test_temporary_nested_fork_owns_retry_chain_after_close_and_promotion
+    store.update_message_content(reply.id, "Failed")
+tldw_chatbook/Chat/console_chat_store.py:12771: in update_message_content
+    return self._update_message_content(message_id, content)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_chat_store.py:12784: in _update_message_content
+    raise ValueError("Wait for response to finish before editing this message.")
+E   ValueError: Wait for response to finish before editing this message.
+_ test_temporary_nested_fork_owns_retry_chain_after_close_and_promotion[False-True] _
+Tests/Chat/test_console_prompt_mixin_forks.py:84: in test_temporary_nested_fork_owns_retry_chain_after_close_and_promotion
+    store.update_message_content(reply.id, "Failed")
+tldw_chatbook/Chat/console_chat_store.py:12771: in update_message_content
+    return self._update_message_content(message_id, content)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_chat_store.py:12784: in _update_message_content
+    raise ValueError("Wait for response to finish before editing this message.")
+E   ValueError: Wait for response to finish before editing this message.
+_ test_temporary_nested_fork_owns_retry_chain_after_close_and_promotion[True-False] _
+Tests/Chat/test_console_prompt_mixin_forks.py:84: in test_temporary_nested_fork_owns_retry_chain_after_close_and_promotion
+    store.update_message_content(reply.id, "Failed")
+tldw_chatbook/Chat/console_chat_store.py:12771: in update_message_content
+    return self._update_message_content(message_id, content)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_chat_store.py:12784: in _update_message_content
+    raise ValueError("Wait for response to finish before editing this message.")
+E   ValueError: Wait for response to finish before editing this message.
+_ test_temporary_nested_fork_owns_retry_chain_after_close_and_promotion[True-True] _
+Tests/Chat/test_console_prompt_mixin_forks.py:84: in test_temporary_nested_fork_owns_retry_chain_after_close_and_promotion
+    store.update_message_content(reply.id, "Failed")
+tldw_chatbook/Chat/console_chat_store.py:12771: in update_message_content
+    return self._update_message_content(message_id, content)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_chat_store.py:12784: in _update_message_content
+    raise ValueError("Wait for response to finish before editing this message.")
+E   ValueError: Wait for response to finish before editing this message.
+_ test_durable_to_temporary_fork_preserves_legacy_and_unavailable_markers[marker0] _
+Tests/Chat/test_console_prompt_mixin_forks.py:248: in test_durable_to_temporary_fork_preserves_legacy_and_unavailable_markers
+    store.update_message_content(assistant.id, "Failed")
+tldw_chatbook/Chat/console_chat_store.py:12771: in update_message_content
+    return self._update_message_content(message_id, content)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_chat_store.py:12784: in _update_message_content
+    raise ValueError("Wait for response to finish before editing this message.")
+E   ValueError: Wait for response to finish before editing this message.
+_ test_durable_to_temporary_fork_preserves_legacy_and_unavailable_markers[marker1] _
+Tests/Chat/test_console_prompt_mixin_forks.py:248: in test_durable_to_temporary_fork_preserves_legacy_and_unavailable_markers
+    store.update_message_content(assistant.id, "Failed")
+tldw_chatbook/Chat/console_chat_store.py:12771: in update_message_content
+    return self._update_message_content(message_id, content)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_chat_store.py:12784: in _update_message_content
+    raise ValueError("Wait for response to finish before editing this message.")
+E   ValueError: Wait for response to finish before editing this message.
+_ test_durable_to_temporary_fork_preserves_legacy_and_unavailable_markers[marker2] _
+Tests/Chat/test_console_prompt_mixin_forks.py:248: in test_durable_to_temporary_fork_preserves_legacy_and_unavailable_markers
+    store.update_message_content(assistant.id, "Failed")
+tldw_chatbook/Chat/console_chat_store.py:12771: in update_message_content
+    return self._update_message_content(message_id, content)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_chat_store.py:12784: in _update_message_content
+    raise ValueError("Wait for response to finish before editing this message.")
+E   ValueError: Wait for response to finish before editing this message.
+_ test_durable_to_temporary_fork_preserves_legacy_and_unavailable_markers[marker3] _
+Tests/Chat/test_console_prompt_mixin_forks.py:248: in test_durable_to_temporary_fork_preserves_legacy_and_unavailable_markers
+    store.update_message_content(assistant.id, "Failed")
+tldw_chatbook/Chat/console_chat_store.py:12771: in update_message_content
+    return self._update_message_content(message_id, content)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_chat_store.py:12784: in _update_message_content
+    raise ValueError("Wait for response to finish before editing this message.")
+E   ValueError: Wait for response to finish before editing this message.
+_ test_durable_to_temporary_fork_preserves_legacy_and_unavailable_markers[marker4] _
+Tests/Chat/test_console_prompt_mixin_forks.py:248: in test_durable_to_temporary_fork_preserves_legacy_and_unavailable_markers
+    store.update_message_content(assistant.id, "Failed")
+tldw_chatbook/Chat/console_chat_store.py:12771: in update_message_content
+    return self._update_message_content(message_id, content)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_chat_store.py:12784: in _update_message_content
+    raise ValueError("Wait for response to finish before editing this message.")
+E   ValueError: Wait for response to finish before editing this message.
+============================= slowest 25 durations =============================
+
+(25 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Chat/test_console_prompt_mixin_forks.py::test_temporary_nested_fork_owns_retry_chain_after_close_and_promotion[False-False]
+FAILED Tests/Chat/test_console_prompt_mixin_forks.py::test_temporary_nested_fork_owns_retry_chain_after_close_and_promotion[False-True]
+FAILED Tests/Chat/test_console_prompt_mixin_forks.py::test_temporary_nested_fork_owns_retry_chain_after_close_and_promotion[True-False]
+FAILED Tests/Chat/test_console_prompt_mixin_forks.py::test_temporary_nested_fork_owns_retry_chain_after_close_and_promotion[True-True]
+FAILED Tests/Chat/test_console_prompt_mixin_forks.py::test_durable_to_temporary_fork_preserves_legacy_and_unavailable_markers[marker0]
+FAILED Tests/Chat/test_console_prompt_mixin_forks.py::test_durable_to_temporary_fork_preserves_legacy_and_unavailable_markers[marker1]
+FAILED Tests/Chat/test_console_prompt_mixin_forks.py::test_durable_to_temporary_fork_preserves_legacy_and_unavailable_markers[marker2]
+FAILED Tests/Chat/test_console_prompt_mixin_forks.py::test_durable_to_temporary_fork_preserves_legacy_and_unavailable_markers[marker3]
+FAILED Tests/Chat/test_console_prompt_mixin_forks.py::test_durable_to_temporary_fork_preserves_legacy_and_unavailable_markers[marker4]
+9 failed, 5 passed in 7.32s

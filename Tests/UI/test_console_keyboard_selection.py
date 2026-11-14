@@ -26,6 +26,8 @@ from tldw_chatbook.Widgets.Console.console_transcript import (
     ConsoleTranscriptMessage,
 )
 
+pytestmark = pytest.mark.bootstrap_profile
+
 _DIFF_PATH = "/tmp/a.py"
 _DIFF_OLD = "alpha\nbeta\ngamma\n"
 _DIFF_NEW = "alpha\nBETA\ngamma\ndelta\n"

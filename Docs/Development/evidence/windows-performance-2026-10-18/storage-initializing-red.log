@@ -1,0 +1,124 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+F                                                                        [100%]
+================================== FAILURES ===================================
+_ test_original_native_initialization_wait_preserves_checks_and_retirement[quiet] _
+
+tmp_path = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-58/test_original_native_initializ0')
+case = 'quiet'
+
+    @pytest.mark.parametrize(
+        "case", ["quiet", "spurious", "pause", "leader-error", "path-drift", "source-drift"]
+    )
+    def test_original_native_initialization_wait_preserves_checks_and_retirement(
+        tmp_path, case
+    ):
+>       _run(tmp_path, case, "initialization", script=_WAIT, timeout=40)
+
+Tests\Backup_Recovery\test_storage_initialization_wait.py:131:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+tmp_path = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-58/test_original_native_initializ0')
+route = 'quiet', outcome = 'initialization'
+
+    def _run(
+        tmp_path,
+        route,
+        outcome,
+        *,
+        script=_SCRIPT,
+        timeout=45,
+        installed_package=None,
+        expect_restart=False,
+    ):
+        root = tmp_path.resolve()
+        test_root = Path(__file__).resolve().parents[2]
+        for name in ("home", "config", "data"):
+            (root / name).mkdir(mode=0o700)
+        environment = os.environ.copy()
+        environment.update(
+            HOME=str(root / "home"),
+            USERPROFILE=str(root / "home"),
+            XDG_CONFIG_HOME=str(root / "config"),
+            XDG_DATA_HOME=str(root / "data"),
+            TLDW_CONFIG_PATH=str(root / "config" / "config.toml"),
+            TLDW_TEST_MODE="1",
+            TLDW_DISABLE_CONFIG_WATCH="1",
+        )
+        cwd = test_root
+        if installed_package is not None:
+            installed = Path(installed_package).resolve()
+            environment.update(
+                PYTHONNOUSERSITE="1",
+                PYTHONPATH=os.pathsep.join((str(installed), str(test_root))),
+                TLDW_TEST_INSTALLED_PACKAGE=str(installed),
+            )
+            cwd = root
+        log = root / "restart-output.log"
+        deadline = time.monotonic() + timeout
+        # A fresh Windows process inherits the old process's output handles. Files
+        # let the original process exit without waiting for EOF from its descendant.
+        if expect_restart:
+            from Tests.Backup_Recovery.restart_observation import wait_for_restart
+
+            receipt = root / "home" / "restart-process.json"
+        try:
+            with log.open("w", encoding="utf-8") as output:
+                result = subprocess.run(
+                    [sys.executable, "-X", "utf8", "-c", script, route, outcome],
+                    cwd=cwd,
+                    env=environment,
+                    stdout=output,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    timeout=timeout,
+                    check=False,
+                )
+                if expect_restart:
+                    assert result.returncode == 0, log.read_text()[-7000:]
+                    fresh_code = wait_for_restart(receipt, deadline)
+                    assert fresh_code in (None, 0), log.read_text()[-7000:]
+        except BaseException as primary:
+            if expect_restart:
+                try:
+                    # A parent may fail after spawning and before its normal exit.
+                    # Never wait for a missing receipt or signal an unproved PID.
+                    if receipt.exists():
+                        wait_for_restart(receipt, time.monotonic())
+                except TimeoutError:
+                    pass  # The observer retires the verified child at this deadline.
+                except BaseException as cleanup:  # noqa: BLE001 - retain the original test failure.
+                    primary.add_note("restart_cleanup_error:" + type(cleanup).__name__)
+            raise
+        stdout = log.read_text(encoding="utf-8", errors="replace")
+        stderr = ""
+>       assert result.returncode == 0, stderr[-6000:] + stdout[-1000:]
+E       AssertionError:  09:39:16.662[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_close_connection_handle[0m:[36m3456[0m - [34m[1mAttempting WAL checkpoint (TRUNCATE) before close db_sha256=b72873c4fd67 thread=39756.[0m
+E         [32m2026-10-19 09:39:16.670[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_close_connection_handle[0m:[36m3462[0m - [34m[1mWAL checkpoint TRUNCATE executed db_sha256=b72873c4fd67.[0m
+E         [32m2026-10-19 09:39:16.673[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_close_connection_handle[0m:[36m3489[0m - [34m[1mClosed SQLite connection db_sha256=b72873c4fd67 thread=39756.[0m
+E         original initializing checks before/after: 1 16 wait timeouts: [0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01]
+E         Traceback (most recent call last):
+E           File "<string>", line 84, in <module>
+E         AssertionError: parked follower repeated native path validation without notification
+E
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe', '-X', 'utf8', '...e._holds and not storage._retiring_holds\nprint(\'retired and reopened\')\n', 'quiet', 'initialization'], returncode=1).returncode
+
+Tests\Backup_Recovery\test_home_citation_retirement.py:332: AssertionError
+---------------------------- Captured stderr setup ----------------------------
+2026-10-19 09:39:14.016 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - \u2705 huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.\n2026-10-19 09:39:14.144 | INFO     | tldw_chatbook.Audio.recording_service:<module>:49 - PyAudio backend available\n2026-10-19 09:39:14.147 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice\n2026-10-19 09:39:14.148 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+============================== warnings summary ===============================
+Tests/Backup_Recovery/test_storage_initialization_wait.py::test_original_native_initialization_wait_preserves_checks_and_retirement[quiet]
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 25 durations =============================
+3.03s call     Tests/Backup_Recovery/test_storage_initialization_wait.py::test_original_native_initialization_wait_preserves_checks_and_retirement[quiet]
+
+(2 durations < 1s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ===========================
+FAILED Tests/Backup_Recovery/test_storage_initialization_wait.py::test_original_native_initialization_wait_preserves_checks_and_retirement[quiet]
+1 failed, 6 deselected, 1 warning in 4.33s

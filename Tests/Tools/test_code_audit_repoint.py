@@ -18,7 +18,8 @@ def test_request_llm_analysis_calls_chat_api_call_and_extracts_content():
         return {"choices": [{"message": {"content": "RISK: HIGH — hardcoded return"}}]}
 
     with patch(
-        "tldw_chatbook.Chat.Chat_Functions.chat_api_call", side_effect=fake_chat_api_call
+        "tldw_chatbook.Chat.Chat_Functions.chat_api_call",
+        side_effect=fake_chat_api_call,
     ):
         result = asyncio.run(tool._request_llm_analysis("analyze this code"))
 
@@ -39,5 +40,6 @@ def test_request_llm_analysis_calls_chat_api_call_and_extracts_content():
 
 def test_no_dead_import_in_code_audit():
     import tldw_chatbook.Tools.code_audit_tool as m
+
     src = Path(m.__file__).read_text(encoding="utf-8")
     assert "import chat_with_provider" not in src

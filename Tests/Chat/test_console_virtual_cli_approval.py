@@ -121,6 +121,9 @@ def test_controller_composition_honors_local_master_and_kill_switch(
         is_session_approved=lambda *_args: False,
     )
     controller = object.__new__(ConsoleChatController)
+    from Tests.Chat.console_interrupt_test_bindings import make_interrupt_host
+
+    controller._interrupt_host = make_interrupt_host(controller)
     controller.app = SimpleNamespace(unified_mcp_service=service)
     turn_context = SimpleNamespace(
         tool_configuration={"local_tools_enabled": local_enabled},
@@ -159,6 +162,9 @@ def test_compose_virtual_cli_provider_wires_arg_rule_persist_and_check(tmp_path)
         ),
     )
     controller = object.__new__(ConsoleChatController)
+    from Tests.Chat.console_interrupt_test_bindings import make_interrupt_host
+
+    controller._interrupt_host = make_interrupt_host(controller)
     controller.app = SimpleNamespace(unified_mcp_service=service)
     # `tool_policy_profile_id="default"` sidesteps an unrelated pre-existing
     # bug in this composition path with a bare `SimpleNamespace` turn
@@ -196,6 +202,9 @@ def test_controller_does_not_compose_virtual_cli_without_admitted_roots(tmp_path
         is_session_approved=lambda *_args: False,
     )
     controller = object.__new__(ConsoleChatController)
+    from Tests.Chat.console_interrupt_test_bindings import make_interrupt_host
+
+    controller._interrupt_host = make_interrupt_host(controller)
     controller.app = SimpleNamespace(unified_mcp_service=service)
 
     assert controller._compose_virtual_cli_provider(
@@ -225,3 +234,50 @@ def test_run_registry_advertises_the_one_virtual_cli_model_tool(tmp_path):
     assert "virtual_cli" in allowed
     assert "virtual_cli" in local_names
     assert registry.load_schema("virtual_cli:virtual_cli").name == "virtual_cli"
+
+
+def test_virtual_cli_captures_profile_and_command_without_schema_metadata(tmp_path):
+    from tldw_chatbook.Chat.approval_presentation import profile_authority
+
+    owner = profile_authority("virtual_cli", "run-profile", str(tmp_path), "call")
+    provider = VirtualCliProvider(
+        workspace_root=tmp_path,
+        resolve_state=lambda _hub: ASK,
+        presentation_authority=owner,
+    )
+    legacy = _provider(tmp_path)
+    call = ToolCall("virtual_cli", {"command": "cat", "argv": ["a.txt"]}, "call-a")
+    row = provider.pending_gate_for(call)
+    assert row.presentation_authority == owner
+    assert row.tool_name == "cat" and row.call_id == "call-a"
+    assert row.arguments == call.args
+    assert provider.load_schema("virtual_cli") == legacy.load_schema("virtual_cli")
+
+
+def test_controller_metadata_uses_captured_profile_after_active_chat_changes(tmp_path):
+    observed = []
+    service = SimpleNamespace(
+        get_kill_switch=lambda: False,
+        gate_tool_test_for_profile=lambda hub, profile: (
+            observed.append(profile) or ASK
+        ),
+        is_session_approved=lambda *args, **kwargs: False,
+        arg_rule_allows_call=lambda *args, **kwargs: False,
+    )
+    controller = object.__new__(ConsoleChatController)
+    controller.app = SimpleNamespace(unified_mcp_service=service)
+    controller.store = SimpleNamespace(active_session_id="chat-a")
+    turn_context = SimpleNamespace(
+        tool_configuration={"local_tools_enabled": True},
+        scratch_space=None,
+        tool_policy_profile_id="run-profile",
+    )
+    provider, _ = controller._compose_virtual_cli_provider(
+        session_id="chat-a", turn_context=turn_context, project_root=tmp_path
+    )
+    controller.store.active_session_id = "chat-b"
+    row = provider.pending_gate_for(
+        ToolCall("virtual_cli", {"command": "cat", "argv": ["a"]}, "call-a")
+    )
+    assert row.presentation_authority.profile_id == observed[-1] == "run-profile"
+    assert row.presentation_authority.location_label == str(tmp_path)

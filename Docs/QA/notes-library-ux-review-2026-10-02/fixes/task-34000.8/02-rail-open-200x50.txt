@@ -1,0 +1,50 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌─────────────────────────────────────┐  N  ┌──────────────────────────────────────────────────────────────┐  N  Saved · Next: Keep editing; changes save automatically.                             │
+│ │ Navigation                          │  a  │ Library notes · Ready                                        │  o    ‹ Notes   Advisor meeting 2026-09-24                                              │
+│ │     Import…                         │  v  │ Notes (122)                                                  │  t                                                                                      │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎ │     │ These notes live in the Library's own database — for notes   │  e                                                                                      │
+│ │ ▊ Search Library…              ▎▊x▎ │     │ that live in a folder on disk, switch to Folder files. To    │  s   In the Library database only — no file on disk                                     │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎ │     │ copy or keep a folder synced, choose Add from files.         │     Saved                                                                               │
+│ │                                     │     │                                                              │         Edit     Preview     Info                                                       │
+│ │ ─────────────────────────────────── │     │ Filter                                                       │         Save     Use in Console                                                         │
+│ │ Browse                          ▾   │     │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │     Title                                                                               │
+│ │    Media (23) — your files          │     │ ▊ Filter notes… (Enter)                                    ▎ │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│ │    Conversations (0)                │     │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     ▊ Advisor meeting 2026-09-24                                                      ▎ │
+│ │  ▸ Notes (122)                      │     │                                                              │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│ │    Prompts (0) — reuse              │     │    New     Sort: Newest     Select                           │                                                                                         │
+│ │    Skills (1) — AI add-ons          │     │    Add from files…     Export                                │     Keywords                                                                            │
+│ │    Collections (0)                  │<--- │ Folders & placement                                          │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│ │    Search / RAG — find all          │     │    New folder     Add to folder     Move note                │     ▊ meeting, thesis                                                                 ▎ │
+│ │ ─────────────────────────────────── │     │    Remove placement                                          │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│ │ Artifacts                       ▾   │     │                                                              │                                                                                         │
+│ │    All artifacts                    │     │                                                              │     Body                                                                                │
+│ │    Chatbooks                        │     │  ▸ Agent_Lessons                                             │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│ │    Reports                          │     │  ▸ Journal                                                   │<--- ▊ # Advisor meeting — 2026-09-24                                                  ▎ │
+│ │ ─────────────────────────────────── │     │  ▾ Meetings                                                  │     ▊                                                                                 ▎ │
+│ │ Create                          ▾   │     │    Advisor meeting 2026-09-24 · now                          │     ▊ Attendees: me, Dr. Okafor                                                       ▎ │
+│ │    New note                         │     │    Standup 2026-09-29 · now                                  │     ▊                                                                                 ▎ │
+│ │    New prompt                       │     │    Advisor meeting 2026-09-10 · now                          │     ▊ ## Notes                                                                        ▎ │
+│ │    New skill                        │     │    ملاحظات الاجتماع — مراجعة المشروع · now                   │     ▊ - Chapter 2 is too broad; cut the history section.                              ▎ │
+│ │ ─────────────────────────────────── │     │    Meeting: design critique — Library rail · now             │     ▊ - Use the reranker results as the main table.                                   ▎ │
+│ │ Study                           ▾   │<--- │    Meeting notes 2026-09-30 · now                            │     ▊                                                                                 ▎ │
+│ │    Study decks (0)                  │     │  ▸ Projects                                                  │     ▊ ## Action items                                                                 ▎ │
+│ │    Flashcards due: 0                │     │  ▸ Recipes                                                   │     ▊ - [ ] Trim lit review to 8k words                                               ▎ │
+│ │    Quizzes (0)                      │     │  ▸ Research                                                  │     ▊ - [x] Send sweep results                                                        ▎ │
+│ │ ─────────────────────────────────── │     │  ▸ Study                                                     │     ▊ - [ ] Draft method chapter by Oct 15                                            ▎ │
+│ │ Import / Export                 ▾   │     │  ▾ Unfiled                                                   │     ▊                                                                                 ▎ │
+│ │    Import…                          │     │    Quotes · now                                              │     ▊ Previous: [[Advisor meeting                                                     ▎ │
+│ │    Export                           │     │    Scratch · now                                             │     ▊ 2026-09-10]](note://5e2a9496-0226-485f-88c9-3051cbbf737b)                       ▎ │
+│ │ ─────────────────────────────────── │     │    Untitled · now                                            │     ▊                                                                                 ▎ │
+│ │ Details                         ▸   │     │    A very long note title that keeps going so we can test…   │     ▊                                                                                 ▎ │
+│ │                                     │     │    📚 Reading queue 2026 ✨ · now                            │     ▊                                                                                 ▎ │
+│ │                                     │     │    Gardening log · now                                       │     ▊                                                                                 ▎ │
+│ │                                     │     │    Meeting Notes 2026-09-30 · now                          ▆ │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│ │                                     │     │    Index — start here · now                                  │                                                                                         │
+│ └─────────────────────────────────────┘     └──────────────────────────────────────────────────────────────┘                                                                         60 words · 1:1  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus search | F6 next pane | esc back to list | F1 help · Ctrl+P palette · Ctrl+Q quit

@@ -94,9 +94,7 @@ def test_management_boundaries_exclude_feed_items():
 
 
 def test_management_parks_feed_items_preference_but_keeps_mounted_rail_preferences():
-    preferred = RegionLayout(
-        collapsed=frozenset({Region.ITEMS, Region.RIGHT_RAIL})
-    )
+    preferred = RegionLayout(collapsed=frozenset({Region.ITEMS, Region.RIGHT_RAIL}))
     effective = resolve(preferred, 200, read_mode=False)
     assert effective.collapsed == frozenset({Region.RIGHT_RAIL})
 
@@ -169,9 +167,7 @@ def test_sub_sixty_widths_collapse_all_mounted_side_panes_without_raising(
 
 
 def test_resolver_discards_a_retired_reader_collapse_value():
-    preferred = RegionLayout(
-        collapsed=frozenset({Region.LEFT_RAIL, Region.CONTENT})
-    )
+    preferred = RegionLayout(collapsed=frozenset({Region.LEFT_RAIL, Region.CONTENT}))
     effective = resolve(preferred, 155)
     assert effective.collapsed == frozenset({Region.LEFT_RAIL})
     assert not effective.is_collapsed(Region.CONTENT)
@@ -252,9 +248,7 @@ def test_one_cell_oscillation_at_the_management_boundary_is_stable():
 
 def test_hysteresis_composes_per_region_when_two_boundaries_are_near():
     preferred = RegionLayout()
-    prev = RegionLayout(
-        collapsed=frozenset({Region.RIGHT_RAIL, Region.LEFT_RAIL})
-    )
+    prev = RegionLayout(collapsed=frozenset({Region.RIGHT_RAIL, Region.LEFT_RAIL}))
 
     # LEFT_RAIL's expand boundary (125 + 4) is evaluated with RIGHT_RAIL's
     # suppressed width already deducted -- per-region state, not one flag.
@@ -281,17 +275,13 @@ def test_hysteresis_applies_to_the_priority_target_too():
     held = resolve(preferred, 92, priority_target=Region.RIGHT_RAIL, previous=prev)
     assert held.collapsed == frozenset(region_layout.COLLAPSIBLE_REGIONS)
 
-    reopened = resolve(
-        preferred, 93, priority_target=Region.RIGHT_RAIL, previous=prev
-    )
+    reopened = resolve(preferred, 93, priority_target=Region.RIGHT_RAIL, previous=prev)
     assert reopened.collapsed == frozenset({Region.LEFT_RAIL, Region.ITEMS})
 
 
 def test_article_focus_still_collapses_everything_regardless_of_previous():
     preferred = RegionLayout()
-    effective = resolve(
-        preferred, 200, article_focus=True, previous=RegionLayout()
-    )
+    effective = resolve(preferred, 200, article_focus=True, previous=RegionLayout())
     assert effective.collapsed == frozenset(region_layout.COLLAPSIBLE_REGIONS)
 
 
@@ -337,14 +327,14 @@ def test_hysteresis_never_holds_a_pane_open_the_bare_resolver_collapses(
 def test_no_previous_state_resolves_exactly_as_before():
     preferred = RegionLayout()
     for width in (100, 101, 124, 125, 154, 155):
-        assert resolve(preferred, width) == resolve(
-            preferred, width, previous=None
-        )
+        assert resolve(preferred, width) == resolve(preferred, width, previous=None)
     # A far shrink with previous threaded still collapses everything the
     # bare resolver would (convergence at genuinely narrow widths).
     assert resolve(
         preferred, 60, previous=resolve(preferred, 200)
     ).collapsed == frozenset(region_layout.COLLAPSIBLE_REGIONS)
+
+
 @pytest.mark.parametrize(
     ("read_mode", "threshold", "preferred_collapsed", "responsive_region"),
     [
@@ -481,19 +471,20 @@ def test_large_width_jump_reopens_every_crossed_buffered_boundary(
     )
     previous = RegionLayout(collapsed=frozenset(mounted))
 
-    assert resolve(
-        RegionLayout(),
-        width,
-        read_mode=read_mode,
-        previous=previous,
-    ).collapsed == expected_collapsed
+    assert (
+        resolve(
+            RegionLayout(),
+            width,
+            read_mode=read_mode,
+            previous=previous,
+        ).collapsed
+        == expected_collapsed
+    )
 
 
 def test_priority_adjustment_is_reversed_for_reopening_candidates():
     preferred = RegionLayout()
-    previous = RegionLayout(
-        collapsed=frozenset(region_layout.COLLAPSIBLE_REGIONS)
-    )
+    previous = RegionLayout(collapsed=frozenset(region_layout.COLLAPSIBLE_REGIONS))
 
     before_buffer = resolve(
         preferred,
@@ -540,13 +531,16 @@ def test_previous_none_preserves_nominal_resolution(
     width: int,
     expected_collapsed: frozenset[Region],
 ):
-    assert resolve(
-        RegionLayout(),
-        width,
-        read_mode=read_mode,
-        priority_target=priority_target,
-        previous=None,
-    ).collapsed == expected_collapsed
+    assert (
+        resolve(
+            RegionLayout(),
+            width,
+            read_mode=read_mode,
+            priority_target=priority_target,
+            previous=None,
+        ).collapsed
+        == expected_collapsed
+    )
 
 
 def test_preferred_collapses_never_reopen_from_previous_state():
@@ -559,9 +553,7 @@ def test_preferred_collapses_never_reopen_from_previous_state():
 
 
 def test_management_never_reopens_unmounted_feed_items():
-    previous = RegionLayout(
-        collapsed=frozenset(region_layout.COLLAPSIBLE_REGIONS)
-    )
+    previous = RegionLayout(collapsed=frozenset(region_layout.COLLAPSIBLE_REGIONS))
 
     effective = resolve(
         RegionLayout(),

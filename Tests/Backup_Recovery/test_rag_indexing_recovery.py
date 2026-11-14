@@ -123,14 +123,14 @@ def test_indexing_unknown_schema_is_rejected(tmp_path):
 
 
 def test_idle_indexing_cache_retires_through_actual_caller_pause(tmp_path):
-    from tldw_chatbook.Backup_Recovery.participants import _retire_current_thread_caches
+    from tldw_chatbook.Backup_Recovery.participants import retire_current_thread_caches
 
     owner = RAGIndexingDB(tmp_path / "idle.db")
     with owner.connection() as connection:
         assert connection.execute("SELECT 1").fetchone()[0] == 1
     pause = storage._begin_local_pause()
     try:
-        _retire_current_thread_caches(pause)
+        retire_current_thread_caches(pause)
         with pytest.raises(sqlite3.ProgrammingError):
             connection.execute("SELECT 1")
     finally:

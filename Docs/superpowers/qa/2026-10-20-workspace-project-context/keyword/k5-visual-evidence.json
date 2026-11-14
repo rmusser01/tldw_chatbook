@@ -1,0 +1,57 @@
+{
+  "source_commit": "3820fe11572696f62d27291971f5c8d1dba0faec",
+  "renderer": "Existing Playwright + installed Edge; HTTP(S) aborted; local SVG only",
+  "mounted_evidence": "Post-fix full card test file; stable post-startup theme/focus assertions; see k5-fix1-ui-green.txt. Clear frames are focus evidence, not settled Off-control pixels.",
+  "root_visual_inspection": "Inspected final Settings dark80 and light170 PNGs; controls, blank=all copy and actual light palette are visible. Small terminal requires scrolling. Clear frames establish focused rendering only; settled Off-state controls are established by mounted assertions, not these pixels. Historical pre-fix Settings images remain in visuals/source-0295.",
+  "images": [
+    {
+      "source_qualification": "Original covering on source0295b820b5; Console visual source unchanged",
+      "svg": "visuals/k5-console-textual-dark-80.svg",
+      "svg_sha256": "df3c53d874bf8134f3c464f72df0c54d8cc5f521ca8eb0079d9b03c73e74c3cb",
+      "png": "visuals/k5-console-textual-dark-80.png",
+      "png_sha256": "c1556bf52d1ae01335d264fb4aa3b2f3b1d6b9fa6b419b1e051ccc0c9167e99f"
+    },
+    {
+      "source_qualification": "Original covering on source0295b820b5; Console visual source unchanged",
+      "svg": "visuals/k5-console-textual-light-170.svg",
+      "svg_sha256": "289b72c7502bdb6210252b82bb9febd800b8fcfd4e602a9988d85be08c7a2e46",
+      "png": "visuals/k5-console-textual-light-170.png",
+      "png_sha256": "95107b5bf1adb884f0041124450278e6088ca6a651154f03ba90cbec8e51b652"
+    },
+    {
+      "source_qualification": "Post-fix full Settings card test file; dispatch-only fix, same geometry",
+      "svg": "visuals/k5-settings-clear-textual-dark-80.svg",
+      "svg_sha256": "6e7c2faf47eb5ac2ab0ba78ea1e4393397020dd56dc654a94562253372e05270",
+      "png": "visuals/k5-settings-clear-textual-dark-80.png",
+      "png_sha256": "9cccb31cb6e0d52ba3822d2681f5a3186eecebc96aca027e37ca1f4fac467e6d"
+    },
+    {
+      "source_qualification": "Post-fix full Settings card test file; dispatch-only fix, same geometry",
+      "svg": "visuals/k5-settings-clear-textual-light-170.svg",
+      "svg_sha256": "1bdb43b1a01c20830d6b56ae9d28e88f7bc33f549deb74b3afbe4c16cae8ff9e",
+      "png": "visuals/k5-settings-clear-textual-light-170.png",
+      "png_sha256": "054fde56d6b5d47c371024f8222a0d06bf3c4701e531aa581d243ef97eca2da2"
+    },
+    {
+      "source_qualification": "Historical requested-light startup override adverse receipt",
+      "svg": "visuals/k5-settings-requested-light-startup-overridden-dark.svg",
+      "svg_sha256": "d85459f1ff59e1d5c6e250ccbe078ece3f7dace0cfeb2be72e265fd50ee1aefd",
+      "png": "visuals/k5-settings-requested-light-startup-overridden-dark.png",
+      "png_sha256": "4c9d01fe9555a6b35b1ed5f6b602d125e6b34b364fa8b72600de865f0773a877"
+    },
+    {
+      "source_qualification": "Post-fix full Settings card test file; dispatch-only fix, same geometry",
+      "svg": "visuals/k5-settings-textual-dark-80.svg",
+      "svg_sha256": "264960c430ef0a19861e957703b0eec9f06c64fe223c308383018edc231581c6",
+      "png": "visuals/k5-settings-textual-dark-80.png",
+      "png_sha256": "cacc2473703502e071a721ce6b3f6d1f96e265b92cd4f8cea7a17a6b47f1278a"
+    },
+    {
+      "source_qualification": "Post-fix full Settings card test file; dispatch-only fix, same geometry",
+      "svg": "visuals/k5-settings-textual-light-170.svg",
+      "svg_sha256": "4889477781b2084d9d3959bf6bcea827f55bf410ae7dde2f3c4b35d3ea090614",
+      "png": "visuals/k5-settings-textual-light-170.png",
+      "png_sha256": "cfe66416de49aa900e4a10d092154fc9e42e0fae21076a8ec5f8707d4e905479"
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "exact_uncompressed_sha256": "971b464cf6a6164bebe3b806138a58ee967feecb94612bf4dddac20a23556baf",
+  "bytes": 22307594,
+  "gzip": "cadence-combined-trace.log.gz",
+  "readable_log": "cadence-combined-trace.log",
+  "normalization": "Only the trace lines containing repeated synthetic fixture config/session reprs are relocated to gzip; decision trace omits config_key/context_key repr fields."
+}

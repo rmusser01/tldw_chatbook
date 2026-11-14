@@ -1,0 +1,59 @@
+{
+  "head": "e7be3ebfba3a057057964b7787e0b0b0e49c250d",
+  "records": [
+    {
+      "argv": [
+        "git",
+        "fetch",
+        "--depth=1",
+        "origin",
+        "codex/prompt-mix-ins"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "From file:///Users/macbook-dev/Documents/GitHub/tldw_chatbook\n * branch              codex/prompt-mix-ins -> FETCH_HEAD\n + a443d71c...e7be3ebf codex/prompt-mix-ins -> origin/codex/prompt-mix-ins  (forced update)\n"
+    },
+    {
+      "argv": [
+        "git",
+        "checkout",
+        "--detach",
+        "FETCH_HEAD"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "Warning: you are leaving 1 commit behind, not connected to\nany of your branches:\n\n  a443d71c fix(console): retain accepted mix-in order and fence artifact opens\n\nIf you want to keep it by creating a new branch, this may be a good time\nto do so with:\n\n git branch <new-branch-name> a443d71c\n\nHEAD is now at e7be3ebf docs(qa): qualify scoped fixes in an independent shallow clone\n"
+    },
+    {
+      "argv": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "exit_code": 0,
+      "stdout": "e7be3ebfba3a057057964b7787e0b0b0e49c250d\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "git",
+        "rev-list",
+        "--count",
+        "HEAD"
+      ],
+      "exit_code": 0,
+      "stdout": "1\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/verify_evidence.py",
+        "HEAD"
+      ],
+      "exit_code": 0,
+      "stdout": "Verified 757 current evidence/source records against HEAD.\nHistorical source verification UNAVAILABLE: 5dac2bb0207285eca67d571565a3ee88113e4a84 (79 hashes); historical commit object is absent (the port commit belongs to focused history; earlier mixed commits do not).\nHistorical source verification UNAVAILABLE: 247c9eb19ddbf49e49d55c7c1851f72fed2616a2 (77 hashes); historical commit object is absent (the port commit belongs to focused history; earlier mixed commits do not).\nHistorical source verification UNAVAILABLE: d7744a78e9094ad4df08a6466fab6d4eb8f412ce (77 hashes); historical commit object is absent (the port commit belongs to focused history; earlier mixed commits do not).\n",
+      "stderr": ""
+    }
+  ]
+}

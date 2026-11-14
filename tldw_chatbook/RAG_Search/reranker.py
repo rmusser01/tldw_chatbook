@@ -26,7 +26,7 @@ import hashlib
 import os
 import re
 import threading
-from typing import Any, List, Optional, Union, Literal, Tuple
+from typing import Any, List, Optional, Union
 from dataclasses import dataclass, replace
 from abc import ABC, abstractmethod
 import json
@@ -35,6 +35,7 @@ from tldw_chatbook.TTS._async_lifecycle import join_retained_task
 from .activation import async_guarded as activation_async_guarded
 from .activation import guarded as activation_guarded
 from .activation import source_paths
+from .config_metadata import RerankingConfig
 
 # Optional numpy import
 try:
@@ -133,50 +134,6 @@ class RerankOutcome:
 #: small to hold what the config already asked the model to produce, leaves
 #: every deliberate value alone, and covers profiles cloned after it ships.
 REASONING_TOKEN_FLOOR = 400
-
-
-@dataclass
-class RerankingConfig:
-    """Configuration for reranking operations."""
-
-    # Model settings
-    model_provider: str = "openai"
-    model_name: str = "gpt-3.5-turbo"
-    temperature: float = 0.0  # Use deterministic scoring
-    # Sized for `{"score": 0.9}`. With `include_reasoning` on it is raised to
-    # `REASONING_TOKEN_FLOOR` at the call site (`_effective_max_tokens`) --
-    # 100 tokens cannot hold an explanation AND the JSON, and the truncated
-    # object is billed but unscorable (TASK-17365).
-    max_tokens: int = 100
-
-    # Reranking settings.
-    #
-    # ``cross_encoder`` is implemented and selectable (TASK-16965) but is
-    # NOT a recommendation: measured on the gated instrument it is net
-    # harmful on the averaged row and bimodal by category. It is the
-    # default of no profile and no config template; pick it only with
-    # Docs/superpowers/qa/2026-08-17-cross-encoder/report.md in hand.
-    strategy: Literal["pairwise", "listwise", "pointwise", "cross_encoder"] = (
-        "pointwise"
-    )
-    top_k_to_rerank: int = 20  # Only rerank top K results
-    batch_size: int = 5  # Number of results to evaluate at once
-    include_reasoning: bool = False  # Whether to generate explanations
-
-    # Scoring settings
-    score_scale: Tuple[float, float] = (0.0, 1.0)  # Min and max scores
-    combine_original_score: bool = True  # Combine with original retrieval score
-    original_score_weight: float = 0.3  # Weight for original score (0-1)
-
-    # Prompts
-    system_prompt: Optional[str] = None
-    scoring_prompt_template: Optional[str] = None
-
-    # Performance settings
-    cache_results: bool = True
-    timeout_seconds: float = 30.0
-    retry_on_failure: bool = True
-    max_retries: int = 2
 
 
 class BaseReranker(ABC):
@@ -676,10 +633,42 @@ class _ComparisonTally:
 
 
 class PairwiseReranker(BaseReranker):
-    """Reranks by comparing pairs of results."""
+    """Reranks by comparing pairs of results.
 
-    def __init__(self, config: RerankingConfig):
+    The sort is a merge sort whose comparisons are LLM calls: the two
+    recursive halves are independent subproblems and run CONCURRENTLY, bounded
+    by ``max_concurrent_comparisons``; each merge loop stays strictly
+    sequential because each of its comparisons decides the next.
+    """
+
+    def __init__(
+        self,
+        config: RerankingConfig,
+        *,
+        max_concurrent_comparisons: int = 4,
+    ):
         super().__init__(config)
+
+        if isinstance(max_concurrent_comparisons, bool) or not isinstance(
+            max_concurrent_comparisons, int
+        ):
+            raise TypeError(
+                "max_concurrent_comparisons must be an int >= 1, got "
+                f"{max_concurrent_comparisons!r}"
+            )
+        if max_concurrent_comparisons < 1:
+            raise ValueError(
+                "max_concurrent_comparisons must be >= 1 (1 reproduces the "
+                f"sequential one-comparison-at-a-time behaviour), got "
+                f"{max_concurrent_comparisons}"
+            )
+        #: Upper bound on comparisons in flight across the WHOLE sort (task 17,
+        #: F16). One semaphore is created per ``rerank()`` call, NOT per
+        #: recursion and NOT per instance: the service holds this reranker as
+        #: a singleton across concurrent searches, so an instance-level gate
+        #: would couple unrelated searches' budgets. ``1`` reproduces the old
+        #: strictly-sequential behaviour exactly.
+        self.max_concurrent_comparisons = max_concurrent_comparisons
 
         # Registry defaults only when the caller supplied none (caller wins).
         if not config.system_prompt:
@@ -709,8 +698,17 @@ class PairwiseReranker(BaseReranker):
 
         tally = _ComparisonTally()
 
+        # One gate per rerank() call, threaded through the recursion so the
+        # bound applies to TOTAL in-flight comparisons across the whole sort,
+        # not per level. (Pairwise performs no `self._cache` access -- unlike
+        # pointwise/cross_encoder, whose shared cache is not lock-guarded --
+        # so this concurrency changes no cache semantics.)
+        comparison_gate = asyncio.Semaphore(self.max_concurrent_comparisons)
+
         # Perform tournament-style comparisons
-        reranked = await self._tournament_rank(query, results_to_rerank, tally)
+        reranked = await self._tournament_rank(
+            query, results_to_rerank, tally, comparison_gate
+        )
 
         log_counter(
             "reranker_pairwise_complete", labels={"results": len(results_to_rerank)}
@@ -727,6 +725,7 @@ class PairwiseReranker(BaseReranker):
         query: str,
         results: List[Union[SearchResult, SearchResultWithCitations]],
         tally: _ComparisonTally,
+        comparison_gate: asyncio.Semaphore,
     ) -> List[Union[SearchResult, SearchResultWithCitations]]:
         """Use tournament-style ranking with pairwise comparisons."""
         # Implementation of merge sort with async comparisons
@@ -737,25 +736,54 @@ class PairwiseReranker(BaseReranker):
         left_half = results[:mid]
         right_half = results[mid:]
 
-        # Recursively sort both halves
-        left_sorted = await self._tournament_rank(query, left_half, tally)
-        right_sorted = await self._tournament_rank(query, right_half, tally)
+        # Recursively sort both halves. They are independent subproblems, so
+        # gather runs them concurrently under `comparison_gate`. NO
+        # return_exceptions: the first error propagates to the caller exactly
+        # as the sequential awaits did (the only errors that CAN escape here
+        # are prompt-build failures -- `_compare_pair` catches every provider
+        # error and falls back to retrieval scores). A plain gather leaves the
+        # other half running in the background to finish or be collected;
+        # that residue is bounded by the same gate and its result discarded.
+        # Output equivalence with the sequential implementation holds for any
+        # comparator whose decision for a given pair is time-invariant: gather
+        # returns results in argument order, each half's output is
+        # deterministic by induction, and every merge below still walks its
+        # inputs strictly in order -- only the TIME-interleaving of
+        # comparisons across halves changes.
+        left_sorted, right_sorted = await asyncio.gather(
+            self._tournament_rank(query, left_half, tally, comparison_gate),
+            self._tournament_rank(query, right_half, tally, comparison_gate),
+        )
 
         # Merge with pairwise comparisons
         return await self._merge_with_comparisons(
-            query, left_sorted, right_sorted, tally
+            query, left_sorted, right_sorted, tally, comparison_gate
         )
 
     async def _merge_with_comparisons(
-        self, query: str, left: List, right: List, tally: _ComparisonTally
+        self,
+        query: str,
+        left: List,
+        right: List,
+        tally: _ComparisonTally,
+        comparison_gate: asyncio.Semaphore,
     ) -> List:
-        """Merge two sorted lists using pairwise comparisons."""
+        """Merge two sorted lists using pairwise comparisons.
+
+        The merge itself is inherently order-dependent (each comparison
+        decides the next pair) and stays sequential; each of its comparisons
+        takes the gate, which is what bounds TOTAL concurrent comparisons
+        when sibling subtrees' merges are running at the same time.
+        """
         result = []
         i = j = 0
 
         while i < len(left) and j < len(right):
             # Compare current elements
-            is_left_better = await self._compare_pair(query, left[i], right[j], tally)
+            async with comparison_gate:
+                is_left_better = await self._compare_pair(
+                    query, left[i], right[j], tally
+                )
 
             if is_left_better:
                 result.append(left[i])

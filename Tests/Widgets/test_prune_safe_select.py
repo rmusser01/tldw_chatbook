@@ -360,8 +360,7 @@ def test_importing_the_module_refuses_a_textual_with_a_renamed_method(monkeypatc
     class _RenamedSelect:
         """Textual after a hypothetical in-range rename."""
 
-        def _watch_value(self, value):
-            ...
+        def _watch_value(self, value): ...
 
     monkeypatch.setattr(textual.widgets, "Select", _RenamedSelect)
     source = pathlib.Path(module.__file__).read_text(encoding="utf-8")

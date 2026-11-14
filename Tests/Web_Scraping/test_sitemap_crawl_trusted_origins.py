@@ -128,7 +128,9 @@ def test_sitemap_discovered_urls_do_not_inherit_the_sitemap_hosts_trust(
 
     # Even a caller that legitimately trusts the sitemap host must not have
     # that trust forwarded to URLs the sitemap CONTENT names.
-    AEL.scrape_from_sitemap(SITEMAP_URL, trusted_origins=frozenset({"sitemap.internal"}))
+    AEL.scrape_from_sitemap(
+        SITEMAP_URL, trusted_origins=frozenset({"sitemap.internal"})
+    )
 
     assert seen, "no sitemap-discovered URL was scraped"
     trusted = seen[0].get("trusted_origins", frozenset())
@@ -145,7 +147,9 @@ def test_scrape_from_sitemap_threads_caller_supplied_trust_to_the_entry_fetch(
     monkeypatch.setattr(AEL, "guarded_fetch_requests", recorder)
     monkeypatch.setattr(AEL, "scrape_article", lambda *a, **k: None)
 
-    AEL.scrape_from_sitemap(SITEMAP_URL, trusted_origins=frozenset({"sitemap.internal"}))
+    AEL.scrape_from_sitemap(
+        SITEMAP_URL, trusted_origins=frozenset({"sitemap.internal"})
+    )
 
     assert recorder.calls[0]["trusted_origins"] == frozenset({"sitemap.internal"})
 
@@ -225,7 +229,10 @@ async def test_crawl_site_does_not_trust_discovered_links(
     monkeypatch.setattr(CR, "guarded_fetch_aiohttp", _fake_fetch)
 
     await CR.crawl_site(
-        BASE_URL, max_pages=5, max_depth=2, trusted_origins=frozenset({"crawl.internal"})
+        BASE_URL,
+        max_pages=5,
+        max_depth=2,
+        trusted_origins=frozenset({"crawl.internal"}),
     )
 
     trust = {c["url"]: c.get("trusted_origins", frozenset()) for c in calls}
@@ -250,7 +257,12 @@ async def test_crawl_site_does_not_trust_discovered_links(
         CR.get_urls_from_sitemap,
         CR.crawl_site,
     ],
-    ids=["scrape_from_sitemap", "collect_internal_links", "get_urls_from_sitemap", "crawl_site"],
+    ids=[
+        "scrape_from_sitemap",
+        "collect_internal_links",
+        "get_urls_from_sitemap",
+        "crawl_site",
+    ],
 )
 def test_sitemap_and_crawl_entry_points_default_to_no_trust(func) -> None:
     parameter = inspect.signature(func).parameters.get("trusted_origins")

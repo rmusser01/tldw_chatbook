@@ -7,6 +7,8 @@ from textual.containers import Horizontal, Vertical
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
+from ...Utils.input_validation import escape_markup
+
 
 RESUME_DISABLED_TOOLTIP = (
     "No study session to resume. Open flashcards or quizzes to start a session."
@@ -44,8 +46,17 @@ class StudyDashboard(Widget):
         margin-bottom: 1;
     }
 
+    /* TASK-34000.6 (S-05): Textual's Horizontal/Vertical default to
+       `height: 1fr`. Inside this auto-height card that made the columns row
+       take every remaining screen row (29 of them at 160x45, measured) and
+       pushed the actions row below the screen edge. */
+    .study-dashboard-columns {
+        height: auto;
+    }
+
     .study-dashboard-column {
         width: 1fr;
+        height: auto;
         margin-right: 1;
     }
 
@@ -70,7 +81,7 @@ class StudyDashboard(Widget):
             yield Static(
                 "Global study", id="study-scope-summary", classes="study-dashboard-meta"
             )
-            with Horizontal():
+            with Horizontal(classes="study-dashboard-columns"):
                 with Vertical(classes="study-dashboard-column"):
                     yield Static("Due Today", classes="study-dashboard-heading")
                     yield Static(
@@ -80,10 +91,12 @@ class StudyDashboard(Widget):
                     )
                 with Vertical(classes="study-dashboard-column"):
                     yield Static("Recent Decks", classes="study-dashboard-heading")
+                    # Deck and quiz names print as typed.
                     yield Static(
                         "No recent decks yet.",
                         id="study-recent-decks",
                         classes="study-dashboard-value",
+                        markup=False,
                     )
                 with Vertical(classes="study-dashboard-column"):
                     yield Static("Recent Quizzes", classes="study-dashboard-heading")
@@ -91,6 +104,7 @@ class StudyDashboard(Widget):
                         "No recent quizzes yet.",
                         id="study-recent-quizzes",
                         classes="study-dashboard-value",
+                        markup=False,
                     )
             with Horizontal(classes="study-dashboard-actions"):
                 yield Button(
@@ -112,6 +126,8 @@ class StudyDashboard(Widget):
                 "Source generation is unavailable until Study has selected source items.",
                 id="study-source-generation-status",
                 classes="study-dashboard-meta",
+                # Server pack titles and error text print as typed.
+                markup=False,
             )
 
     def update_scope_summary(self, summary: str) -> None:
@@ -137,7 +153,7 @@ class StudyDashboard(Widget):
             return
         button = self.query_one("#study-resume-last", Button)
         if summary:
-            button.label = f"Resume {summary}"
+            button.label = f"Resume {escape_markup(summary)}"
             button.disabled = False
             button.tooltip = RESUME_ENABLED_TOOLTIP
         else:

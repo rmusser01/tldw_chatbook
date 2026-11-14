@@ -273,10 +273,22 @@ class TestChatbookProperties:
             min_size=1,
             max_size=20,
         ),
-        resolution=st.sampled_from(list(ConflictResolution)),
+        resolution=st.sampled_from(
+            [
+                ConflictResolution.ASK,
+                ConflictResolution.SKIP,
+                ConflictResolution.RENAME,
+                ConflictResolution.REPLACE,
+            ]
+        ),
     )
     def test_conflict_resolution_strategies(self, items, resolution):
-        """Test different conflict resolution strategies with random data."""
+        """Test different conflict resolution strategies with random data.
+
+        MERGE is excluded: it is not implemented, and the resolver now
+        rejects it loudly instead of silently rewriting it to RENAME
+        (TASK-38594; see test_chatbook_import_conflict_strategies.py).
+        """
         from tldw_chatbook.Chatbooks.conflict_resolver import ConflictResolver
 
         resolver = ConflictResolver()
@@ -297,9 +309,6 @@ class TestChatbookProperties:
                 if resolution == ConflictResolution.ASK:
                     # Without callback, should return SKIP
                     assert result == ConflictResolution.SKIP
-                elif resolution == ConflictResolution.MERGE:
-                    # Note merge is not applied at strategy-selection time yet.
-                    assert result == ConflictResolution.RENAME
                 else:
                     assert result == resolution
             else:

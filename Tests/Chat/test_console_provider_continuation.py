@@ -30,6 +30,7 @@ from tldw_chatbook.Chat.console_chat_store import (
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationCall,
+    ContinuationRestoreTarget,
     ContinuationRound,
     ContinuationResult,
     ProviderContinuationCheckpoint,
@@ -39,6 +40,7 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Sync_Interop.chat_outbox_producer import ChatSyncV2OutboxProducer
 from tldw_chatbook.Sync_Interop.crypto import decrypt_sync_payload, generate_dataset_key
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
+from tldw_chatbook.Sync_Interop.chat_sync_source import CharactersRAGDBChatSyncSource
 from Tests.console_provider_doubles import provider_resolution
 
 
@@ -121,7 +123,8 @@ def test_first_tool_batch_force_creates_preallocated_owner_and_stream_reuses_it(
                 ),
                 checkpoint=checkpoint,
                 expected_checkpoint_revision=None,
-            )
+            ),
+            continuation_target=_MOONSHOT_RUN_TARGET,
         )
 
         created = database.get_message_by_id(owner.id)
@@ -204,7 +207,8 @@ def test_continuation_commit_gap_rejects_fork_until_live_owner_is_published(
                         ),
                         _active_checkpoint(),
                         None,
-                    )
+                    ),
+                    continuation_target=_MOONSHOT_RUN_TARGET,
                 )
             except BaseException as exc:  # pragma: no cover - assertion reports it
                 failures.append(exc)
@@ -240,7 +244,8 @@ def _store_with_checkpoint(*, content: str = ""):
             ContinuationEventContext(owner.id, "run", "primary", "persistent"),
             _active_checkpoint(),
             None,
-        )
+        ),
+        continuation_target=_MOONSHOT_RUN_TARGET,
     )
     return database, store, session, owner
 
@@ -259,7 +264,7 @@ def _enable_sync(tmp_path, database, store):
     store.sync_v2_chat_producer = ChatSyncV2OutboxProducer(
         state_repository=repository,
         dataset_keys={"dataset-1": dataset_key},
-        source=database,
+        source=CharactersRAGDBChatSyncSource(database),
     )
     store.sync_v2_server_profile_id = "server-a"
     store.sync_v2_authenticated_principal_id = "user-a"
@@ -1178,7 +1183,8 @@ def test_continuation_warning_clears_only_after_successful_durability(
     try:
         with pytest.raises(RuntimeError, match="safe failure"):
             store.persist_provider_continuation_event(
-                ToolCallExecuting(context, "PRIVATE-CALL-ID", 1)
+                ToolCallExecuting(context, "PRIVATE-CALL-ID", 1),
+                continuation_target=_MOONSHOT_RUN_TARGET,
             )
         assert store.get_message(owner.id).provider_continuation_warning == warning
 
@@ -1194,7 +1200,8 @@ def test_continuation_warning_clears_only_after_successful_durability(
                 2,
                 "completed",
                 ContinuationResult("PRIVATE-RESULT-CANARY"),
-            )
+            ),
+            continuation_target=_MOONSHOT_RUN_TARGET,
         )
         assert store.get_message(owner.id).provider_continuation_warning is None
     finally:
@@ -1297,7 +1304,8 @@ def test_ephemeral_event_writes_no_checkpoint_and_offers_no_recovery() -> None:
                 ContinuationEventContext(owner.id, "run", "primary", "ephemeral"),
                 _active_checkpoint(),
                 None,
-            )
+            ),
+            continuation_target=_MOONSHOT_RUN_TARGET,
         )
         assert store.get_message(owner.id).provider_continuation is None
         assert store.interrupted_provider_continuation_message(session.id) is None
@@ -1456,3 +1464,71 @@ def test_provider_selection_re_expands_character_template_per_send() -> None:
     selection = controller._provider_selection_for_session(session.id)
 
     assert selection.system_prompt == "Be Alraune for User."
+
+
+_MOONSHOT_RUN_TARGET = ContinuationRestoreTarget(
+    provider="moonshot",
+    protocol="chat_completions",
+    model="kimi-k2",
+    api_base_url="https://api.moonshot.ai/v1",
+    selected_provider="moonshot",
+)
+
+
+@pytest.mark.parametrize(
+    "drift", ["version", "checkpoint", "executing", "foreign", "none"]
+)
+def test_resume_activation_keeps_partial_text_and_requires_exact_durable_owner(drift):
+    from dataclasses import replace
+
+    database, store, _, owner = _store_with_checkpoint(
+        content="Retained partial answer"
+    )
+    before = database.get_message_by_id(owner.id)
+    current = store.get_message(owner.id)
+    checkpoint = current.provider_continuation
+    version = current.provider_continuation_message_version
+    target = owner.id
+    expected = checkpoint
+    expected_version = version
+    if drift == "version":
+        expected_version += 1
+    elif drift == "checkpoint":
+        expected = replace(checkpoint, model="other-model")
+    elif drift == "executing":
+        expected = replace(
+            checkpoint,
+            rounds=(
+                replace(
+                    checkpoint.rounds[0],
+                    calls=(replace(checkpoint.rounds[0].calls[0], state="executing"),),
+                ),
+            ),
+        )
+    elif drift == "foreign":
+        target = store.append_message(
+            store.session_id_for_message(owner.id),
+            role=ConsoleMessageRole.ASSISTANT,
+            content="other",
+            persist=True,
+        ).id
+    try:
+        if drift != "none":
+            with pytest.raises(RuntimeError, match="owner changed"):
+                store.begin_generation_attempt(
+                    target,
+                    expected_continuation=expected,
+                    expected_continuation_message_version=expected_version,
+                )
+        else:
+            store.begin_generation_attempt(
+                target,
+                expected_continuation=expected,
+                expected_continuation_message_version=expected_version,
+            )
+            assert store.get_message(target).status == "pending"
+            assert store.get_message(target).content == "Retained partial answer"
+        assert database.get_message_by_id(owner.id) == before
+        assert store.get_message(owner.id).provider_continuation == checkpoint
+    finally:
+        database.close_connection()

@@ -1,0 +1,141 @@
+{
+  "head": "96cae7eec00473bbfb5687ccfd0685eba2785add",
+  "created_utc": "2026-10-24T17:32:14.304933+00:00",
+  "artifacts": [
+    {
+      "path": "Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228/observations/media-source-pin-and-checks.json",
+      "bytes": 1653,
+      "sha256": "5cc6b3d19152230c8fbc5c45168af292be2ef9cc88b95cd231d5186e8b72d816",
+      "original_sha256": "5cc6b3d19152230c8fbc5c45168af292be2ef9cc88b95cd231d5186e8b72d816",
+      "original_bytes": 1653
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228/observations/media-commands.json",
+      "bytes": 5107,
+      "sha256": "2babb78076d3ba5bcfe4c46a48b13f3527f3c7a08f719d4ff67c1d1980eeb7e9",
+      "original_sha256": "2babb78076d3ba5bcfe4c46a48b13f3527f3c7a08f719d4ff67c1d1980eeb7e9",
+      "original_bytes": 5107
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228/sources/image_demo_probe.py.txt",
+      "bytes": 6484,
+      "sha256": "765dd6484a89e20b3ed490f659a483582e887a964d9d3e806eb0d9411f322caa",
+      "original_sha256": "765dd6484a89e20b3ed490f659a483582e887a964d9d3e806eb0d9411f322caa",
+      "original_bytes": 6484
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228/observations/image-demo-publication.json",
+      "bytes": 2638,
+      "sha256": "8469cfa2fe4761a2d582c55f0b27d88c65bcf5d83862bbae52f5bcbe68b890e6",
+      "original_sha256": "8469cfa2fe4761a2d582c55f0b27d88c65bcf5d83862bbae52f5bcbe68b890e6",
+      "original_bytes": 2638
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228/sources/dictation_probe.py.txt",
+      "bytes": 6776,
+      "sha256": "cb6e48eb349bd1375a1373de93570a499fcd06459914890a8012f306990b4a5a",
+      "original_sha256": "cb6e48eb349bd1375a1373de93570a499fcd06459914890a8012f306990b4a5a",
+      "original_bytes": 6776
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228/observations/dictation-unmount.json",
+      "bytes": 1914,
+      "sha256": "393d85335d1ea4b8e368cdebd85406918f01048ede1e5536bf62e4ad58eee382",
+      "original_sha256": "393d85335d1ea4b8e368cdebd85406918f01048ede1e5536bf62e4ad58eee382",
+      "original_bytes": 1914
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228/sources/dictation_dispatch_probe.py.txt",
+      "bytes": 4775,
+      "sha256": "1f04ab173b3375b0087f78544655d7e3405e4972cec2a48cb7bb5979a4b682c6",
+      "original_sha256": "1f04ab173b3375b0087f78544655d7e3405e4972cec2a48cb7bb5979a4b682c6",
+      "original_bytes": 4775
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228/observations/dictation-dispatch.json",
+      "bytes": 1167,
+      "sha256": "3f3f335664f561997ae7a3d02cff92945c5e956675c6ef09a6622a1fa1eac204",
+      "original_sha256": "3f3f335664f561997ae7a3d02cff92945c5e956675c6ef09a6622a1fa1eac204",
+      "original_bytes": 1167
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228/observations/mcp-final-revalidation.json",
+      "bytes": 20095,
+      "sha256": "859546c8f982814d5fa3e5afbaa6e1498824bd2f751917d0abbc40208361385e",
+      "original_sha256": "859546c8f982814d5fa3e5afbaa6e1498824bd2f751917d0abbc40208361385e",
+      "original_bytes": 20095
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228/sources/test_mcp_import_audit.py.txt",
+      "bytes": 4241,
+      "sha256": "9aaa19d10e092e4b3bdbe6f30b0e7deb6762073be5dec5ad854382bf88927992",
+      "original_sha256": "9aaa19d10e092e4b3bdbe6f30b0e7deb6762073be5dec5ad854382bf88927992",
+      "original_bytes": 4241
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228/sources/test_mcp_import_validation_audit.py.txt",
+      "bytes": 4800,
+      "sha256": "975e927abbc3777ac1bff9752ffbae5ff0054a1009929b05137da041c3eaf579",
+      "original_sha256": "975e927abbc3777ac1bff9752ffbae5ff0054a1009929b05137da041c3eaf579",
+      "original_bytes": 4800
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228/sources/test_sample_import.py.txt",
+      "bytes": 2885,
+      "sha256": "75cdfe7976f9c598512a971ff1c197b1b3677d7b7042100bc2777f7c4468ed62",
+      "original_sha256": "75cdfe7976f9c598512a971ff1c197b1b3677d7b7042100bc2777f7c4468ed62",
+      "original_bytes": 2885
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228/sources/chunking-conftest.py.txt",
+      "bytes": 58,
+      "sha256": "0bf15d165054fb1967d58d674e0af18bedb85ed4d1b50c56b85731684dc55d4c",
+      "original_sha256": "0bf15d165054fb1967d58d674e0af18bedb85ed4d1b50c56b85731684dc55d4c",
+      "original_bytes": 58
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228/observations/chunking-final-qualification.json",
+      "bytes": 2373,
+      "sha256": "0deae7123282d90caa5be613bfa64325c2b0cd31c67997d15191a006cfc071f4",
+      "original_sha256": "0deae7123282d90caa5be613bfa64325c2b0cd31c67997d15191a006cfc071f4",
+      "original_bytes": 2373
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228/receipts/chunking-child-0.xml.gz",
+      "bytes": 278,
+      "sha256": "053768120624f6187ccadeb81cd40912820f6d65a2679d3635f46c7ea403adb3",
+      "original_sha256": "809da183672982e805ebe903398b95c3fe7cd2a5a448def8d73c7c5a3e509dd2",
+      "original_bytes": 389
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228/receipts/chunking-child-1.xml.gz",
+      "bytes": 2874,
+      "sha256": "054e64e8d1684664f80fe9ec444fb3ac7195b69d16324867a6e79ab74cb5dde6",
+      "original_sha256": "3a2778ad3838d2e665dd9e0d131decd43c2cfee09ae179061208dedb9645c3ad",
+      "original_bytes": 12270
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228/merge-and-ci.json",
+      "bytes": 81855,
+      "sha256": "5cee5a1e39959426a5eded8476f4fa73d9bd0ab761a92672d94b7125661ca4ba",
+      "original_sha256": "5cee5a1e39959426a5eded8476f4fa73d9bd0ab761a92672d94b7125661ca4ba",
+      "original_bytes": 81855
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228/source-pins.json",
+      "bytes": 2476,
+      "sha256": "75f60a6afe2a3ba6261c7ceb4e25ab094311bdaa4e6687c4859df86bd08a07a8",
+      "original_sha256": "75f60a6afe2a3ba6261c7ceb4e25ab094311bdaa4e6687c4859df86bd08a07a8",
+      "original_bytes": 2476
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228/ui-58-execution-proof.json",
+      "bytes": 15731,
+      "sha256": "c3f38bc36e68aab47d0abb640f6213f0fbd721b5983b07c06f499a2171b12500",
+      "original_sha256": "c3f38bc36e68aab47d0abb640f6213f0fbd721b5983b07c06f499a2171b12500",
+      "original_bytes": 15731
+    }
+  ],
+  "source_receipt_note": "The .py.txt files are exact executed audit sources, not installed tests or portable one-command scripts. Original private commands are recorded; profile/data/temp trees and PDF contents are excluded.",
+  "qualification_note": "Unfixed-defect audit evidence, not passing repair tests. See each observation and Chunking child JUnit qualification."
+}

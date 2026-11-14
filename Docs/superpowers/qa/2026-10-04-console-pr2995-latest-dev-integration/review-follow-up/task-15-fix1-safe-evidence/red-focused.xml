@@ -1,0 +1,864 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="10" skipped="0" tests="10" time="18.186" timestamp="2026-10-04T15:14:33.805728-07:00" hostname="Roberts-MacBook-Pro-2.local"><testcase classname="Tests.DB.test_automatic_chat_starts" name="test_restriction_identity_is_captured_for_aliases_and_memory_peers[False]" time="0.791"><failure message="OSError: private canonical identity failure">tmp_path = PosixPath('/private/tmp/pr2995-task15-fix1/red-focused/test_restriction_identity_is_c0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10e4b0050&gt;
+memory = False
+
+    @pytest.mark.parametrize("memory", [False, True])
+    def test_restriction_identity_is_captured_for_aliases_and_memory_peers(tmp_path, monkeypatch, memory):
+        """Cleanup and admission keep the same key when filesystem observation fails."""
+        from pathlib import Path
+        import sys
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+        from tldw_chatbook.DB.automatic_work import AutomaticWorkLedger
+    
+        db = AgentRunsDB(":memory:" if memory else tmp_path / "identity.sqlite", client_id="identity")
+        other = AgentRunsDB(":memory:" if memory else tmp_path / "other.sqlite", client_id="other")
+        peer = None
+        ledger = db.automatic_work
+        ledger.recover(current_owner_id="owner")
+        root, _ = source_run(db)
+        other_root, _ = source_run(other)
+        if memory:
+            sibling = AutomaticWorkLedger(db)
+            assert ledger._restriction_database().startswith("memory:")
+            assert ledger._restriction_database() != other.automatic_work._restriction_database()
+        else:
+            alias = tmp_path / "alias"
+            alias.mkdir()
+            peer = AgentRunsDB(alias / ".." / db.db_path.name, client_id="alias", reconcile_on_init=False)
+            sibling = peer.automatic_work
+        assert sibling._restriction_database() == ledger._restriction_database()
+        resolve = Path.resolve
+        def fail_resolution(path, *args, **kwargs):
+            if (path == db.db_path or (peer is not None and path == peer.db_path)) and sys._getframe(1).f_globals.get("__name__") == "tldw_chatbook.DB.automatic_work":
+                raise OSError("private canonical identity failure")
+            return resolve(path, *args, **kwargs)
+        monkeypatch.setattr(Path, "resolve", fail_resolution)
+        try:
+&gt;           ledger._restrict_chat_start("uncertain", owner_id="owner", chain_id=root)
+
+Tests/DB/test_automatic_chat_starts.py:783: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tldw_chatbook/DB/automatic_work.py:84: in _restrict_chat_start
+    (self._restriction_database(), owner_id, attempt_id)
+     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/automatic_work.py:68: in _restriction_database
+    return str(self._db.db_path.resolve())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+path = PosixPath('/private/tmp/pr2995-task15-fix1/red-focused/test_restriction_identity_is_c0/identity.sqlite')
+args = (), kwargs = {}
+
+    def fail_resolution(path, *args, **kwargs):
+        if (path == db.db_path or (peer is not None and path == peer.db_path)) and sys._getframe(1).f_globals.get("__name__") == "tldw_chatbook.DB.automatic_work":
+&gt;           raise OSError("private canonical identity failure")
+E           OSError: private canonical identity failure
+
+Tests/DB/test_automatic_chat_starts.py:779: OSError</failure></testcase><testcase classname="Tests.Chat.test_console_chat_start" name="test_persistent_registration_and_settlement_failure_retains_native_denial[False-commit-canonical_resolution]" time="1.783"><failure message="Failed: DID NOT RAISE &lt;class 'tldw_chatbook.Agents.automatic_work_budget.AutomaticWorkRefused'&gt;">tmp_path = PosixPath('/private/tmp/pr2995-task15-fix1/red-focused/test_persistent_registration_a0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10e1c8ef0&gt;
+failure = 'canonical_resolution', worker = 'commit', replacement = False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failure", ["canonical_resolution", "persistent_registration"])
+    @pytest.mark.parametrize("worker", ["commit", "provider"])
+    @pytest.mark.parametrize("replacement", [False, True])
+    async def test_persistent_registration_and_settlement_failure_retains_native_denial(
+        tmp_path, monkeypatch, failure, worker, replacement
+    ):
+        """Drained accepted work remains charged and denied despite both cleanup faults."""
+        import asyncio
+        from copy import copy
+        from pathlib import Path
+        import sys
+        from threading import Event
+        from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    
+        controller, store, runs, source, target, chain, request = await _native_start_rig(tmp_path)
+        ledger = runs.automatic_work
+        owner = controller.fleet_wake.runtime_owner_id
+        ledger.recover(current_owner_id=owner)
+        unrelated = ledger.create_chain("unrelated", root_submission_id="unrelated")
+        alias = tmp_path / "alias"
+        alias.mkdir()
+        peer = AgentRunsDB(alias / ".." / runs.db_path.name, client_id="peer", reconcile_on_init=False)
+        peer_ledger = peer.automatic_work
+        entered, release, exited = Event(), Event(), Event()
+        original = store.commit_durable_turn if worker == "commit" else controller._agent_bridge.run_reply
+        def held(*args, **kwargs):
+            entered.set()
+            try:
+                assert release.wait(10)
+                return original(*args, **kwargs)
+            finally:
+                exited.set()
+        monkeypatch.setattr(store if worker == "commit" else controller._agent_bridge, "commit_durable_turn" if worker == "commit" else "run_reply", held)
+        # Real SQLite rejects the durable settlement transaction, after acceptance.
+        with runs.transaction() as conn:
+            conn.execute("CREATE TRIGGER deny_review BEFORE UPDATE OF state ON automatic_chat_start_attempts WHEN NEW.state='review_required' BEGIN SELECT RAISE(ABORT, 'private settlement failure'); END")
+        resolve = Path.resolve
+        def fail_resolution(path, *args, **kwargs):
+            if path == runs.db_path and sys._getframe(1).f_globals.get("__name__") == "tldw_chatbook.DB.automatic_work":
+                raise OSError("private canonical identity failure")
+            return resolve(path, *args, **kwargs)
+        registrations = []
+        def fail_registration(*args, **kwargs):
+            registrations.append(kwargs["chain_id"])
+            raise OSError("private persistent registration failure")
+        start = asyncio.create_task(controller._chat_start.start(request))
+        try:
+            assert await asyncio.to_thread(entered.wait, 5)
+            item = controller._chat_start._active[target.id]
+            captured_owner, token = item.capacity_owner, item.token
+            if worker == "provider":
+                assert (await start).launch_status == "started"
+                item.receipted = False
+            # Identity is known before this real filesystem failure starts.
+            monkeypatch.setattr(Path, "resolve", fail_resolution)
+            if failure == "persistent_registration":
+                monkeypatch.setattr(ledger, "_restrict_chat_start", fail_registration)
+            item.task.cancel()
+            await asyncio.sleep(0.05)
+            item.task.cancel()
+            await asyncio.sleep(0.05)
+            assert captured_owner._automatic_primary_claims[target.id] is token
+            assert not item.task.done() and not exited.is_set()
+            if worker == "commit":
+                assert not item.outcome.done()
+            if replacement:
+                replacement_item = copy(item)
+                replacement_item.token = object()
+                controller._chat_start._active[target.id] = replacement_item
+                captured_owner._automatic_primary_claims[target.id] = replacement_item.token
+            release.set()
+            assert await asyncio.gather(item.task, return_exceptions=True) == [None]
+            assert exited.is_set() and item.outcome.done()
+            if worker == "commit":
+                outcome = await start
+                assert (outcome.launch_status, outcome.reason) == ("review_required", "settlement_unconfirmed")
+            if replacement:
+                assert controller._chat_start._active[target.id] is replacement_item
+                assert captured_owner._automatic_primary_claims[target.id] is replacement_item.token
+            else:
+                assert target.id not in controller._chat_start._active
+                assert target.id not in captured_owner._automatic_primary_claims
+            if failure == "persistent_registration":
+                assert len(registrations) == 2
+            assert ledger.read_chat_start_attempt(request.attempt_id, owner_id=owner).state == "accepted"
+            assert ledger.snapshot(chain).used["generation"] == 1
+            assert ledger.snapshot(chain).status == "active"
+            # Only transient same-key denial can protect this healthy alias handle.
+&gt;           with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: DID NOT RAISE &lt;class 'tldw_chatbook.Agents.automatic_work_budget.AutomaticWorkRefused'&gt;
+
+Tests/Chat/test_console_chat_start.py:3804: Failed</failure></testcase><testcase classname="Tests.Chat.test_console_chat_start" name="test_persistent_registration_and_settlement_failure_retains_native_denial[False-commit-persistent_registration]" time="1.717"><failure message="Failed: DID NOT RAISE &lt;class 'tldw_chatbook.Agents.automatic_work_budget.AutomaticWorkRefused'&gt;">tmp_path = PosixPath('/private/tmp/pr2995-task15-fix1/red-focused/test_persistent_registration_a1')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10e341df0&gt;
+failure = 'persistent_registration', worker = 'commit', replacement = False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failure", ["canonical_resolution", "persistent_registration"])
+    @pytest.mark.parametrize("worker", ["commit", "provider"])
+    @pytest.mark.parametrize("replacement", [False, True])
+    async def test_persistent_registration_and_settlement_failure_retains_native_denial(
+        tmp_path, monkeypatch, failure, worker, replacement
+    ):
+        """Drained accepted work remains charged and denied despite both cleanup faults."""
+        import asyncio
+        from copy import copy
+        from pathlib import Path
+        import sys
+        from threading import Event
+        from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    
+        controller, store, runs, source, target, chain, request = await _native_start_rig(tmp_path)
+        ledger = runs.automatic_work
+        owner = controller.fleet_wake.runtime_owner_id
+        ledger.recover(current_owner_id=owner)
+        unrelated = ledger.create_chain("unrelated", root_submission_id="unrelated")
+        alias = tmp_path / "alias"
+        alias.mkdir()
+        peer = AgentRunsDB(alias / ".." / runs.db_path.name, client_id="peer", reconcile_on_init=False)
+        peer_ledger = peer.automatic_work
+        entered, release, exited = Event(), Event(), Event()
+        original = store.commit_durable_turn if worker == "commit" else controller._agent_bridge.run_reply
+        def held(*args, **kwargs):
+            entered.set()
+            try:
+                assert release.wait(10)
+                return original(*args, **kwargs)
+            finally:
+                exited.set()
+        monkeypatch.setattr(store if worker == "commit" else controller._agent_bridge, "commit_durable_turn" if worker == "commit" else "run_reply", held)
+        # Real SQLite rejects the durable settlement transaction, after acceptance.
+        with runs.transaction() as conn:
+            conn.execute("CREATE TRIGGER deny_review BEFORE UPDATE OF state ON automatic_chat_start_attempts WHEN NEW.state='review_required' BEGIN SELECT RAISE(ABORT, 'private settlement failure'); END")
+        resolve = Path.resolve
+        def fail_resolution(path, *args, **kwargs):
+            if path == runs.db_path and sys._getframe(1).f_globals.get("__name__") == "tldw_chatbook.DB.automatic_work":
+                raise OSError("private canonical identity failure")
+            return resolve(path, *args, **kwargs)
+        registrations = []
+        def fail_registration(*args, **kwargs):
+            registrations.append(kwargs["chain_id"])
+            raise OSError("private persistent registration failure")
+        start = asyncio.create_task(controller._chat_start.start(request))
+        try:
+            assert await asyncio.to_thread(entered.wait, 5)
+            item = controller._chat_start._active[target.id]
+            captured_owner, token = item.capacity_owner, item.token
+            if worker == "provider":
+                assert (await start).launch_status == "started"
+                item.receipted = False
+            # Identity is known before this real filesystem failure starts.
+            monkeypatch.setattr(Path, "resolve", fail_resolution)
+            if failure == "persistent_registration":
+                monkeypatch.setattr(ledger, "_restrict_chat_start", fail_registration)
+            item.task.cancel()
+            await asyncio.sleep(0.05)
+            item.task.cancel()
+            await asyncio.sleep(0.05)
+            assert captured_owner._automatic_primary_claims[target.id] is token
+            assert not item.task.done() and not exited.is_set()
+            if worker == "commit":
+                assert not item.outcome.done()
+            if replacement:
+                replacement_item = copy(item)
+                replacement_item.token = object()
+                controller._chat_start._active[target.id] = replacement_item
+                captured_owner._automatic_primary_claims[target.id] = replacement_item.token
+            release.set()
+            assert await asyncio.gather(item.task, return_exceptions=True) == [None]
+            assert exited.is_set() and item.outcome.done()
+            if worker == "commit":
+                outcome = await start
+                assert (outcome.launch_status, outcome.reason) == ("review_required", "settlement_unconfirmed")
+            if replacement:
+                assert controller._chat_start._active[target.id] is replacement_item
+                assert captured_owner._automatic_primary_claims[target.id] is replacement_item.token
+            else:
+                assert target.id not in controller._chat_start._active
+                assert target.id not in captured_owner._automatic_primary_claims
+            if failure == "persistent_registration":
+                assert len(registrations) == 2
+            assert ledger.read_chat_start_attempt(request.attempt_id, owner_id=owner).state == "accepted"
+            assert ledger.snapshot(chain).used["generation"] == 1
+            assert ledger.snapshot(chain).status == "active"
+            # Only transient same-key denial can protect this healthy alias handle.
+&gt;           with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: DID NOT RAISE &lt;class 'tldw_chatbook.Agents.automatic_work_budget.AutomaticWorkRefused'&gt;
+
+Tests/Chat/test_console_chat_start.py:3804: Failed</failure></testcase><testcase classname="Tests.Chat.test_console_chat_start" name="test_persistent_registration_and_settlement_failure_retains_native_denial[False-provider-canonical_resolution]" time="2.374"><failure message="Failed: DID NOT RAISE &lt;class 'tldw_chatbook.Agents.automatic_work_budget.AutomaticWorkRefused'&gt;">tmp_path = PosixPath('/private/tmp/pr2995-task15-fix1/red-focused/test_persistent_registration_a2')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10fbc6ed0&gt;
+failure = 'canonical_resolution', worker = 'provider', replacement = False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failure", ["canonical_resolution", "persistent_registration"])
+    @pytest.mark.parametrize("worker", ["commit", "provider"])
+    @pytest.mark.parametrize("replacement", [False, True])
+    async def test_persistent_registration_and_settlement_failure_retains_native_denial(
+        tmp_path, monkeypatch, failure, worker, replacement
+    ):
+        """Drained accepted work remains charged and denied despite both cleanup faults."""
+        import asyncio
+        from copy import copy
+        from pathlib import Path
+        import sys
+        from threading import Event
+        from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    
+        controller, store, runs, source, target, chain, request = await _native_start_rig(tmp_path)
+        ledger = runs.automatic_work
+        owner = controller.fleet_wake.runtime_owner_id
+        ledger.recover(current_owner_id=owner)
+        unrelated = ledger.create_chain("unrelated", root_submission_id="unrelated")
+        alias = tmp_path / "alias"
+        alias.mkdir()
+        peer = AgentRunsDB(alias / ".." / runs.db_path.name, client_id="peer", reconcile_on_init=False)
+        peer_ledger = peer.automatic_work
+        entered, release, exited = Event(), Event(), Event()
+        original = store.commit_durable_turn if worker == "commit" else controller._agent_bridge.run_reply
+        def held(*args, **kwargs):
+            entered.set()
+            try:
+                assert release.wait(10)
+                return original(*args, **kwargs)
+            finally:
+                exited.set()
+        monkeypatch.setattr(store if worker == "commit" else controller._agent_bridge, "commit_durable_turn" if worker == "commit" else "run_reply", held)
+        # Real SQLite rejects the durable settlement transaction, after acceptance.
+        with runs.transaction() as conn:
+            conn.execute("CREATE TRIGGER deny_review BEFORE UPDATE OF state ON automatic_chat_start_attempts WHEN NEW.state='review_required' BEGIN SELECT RAISE(ABORT, 'private settlement failure'); END")
+        resolve = Path.resolve
+        def fail_resolution(path, *args, **kwargs):
+            if path == runs.db_path and sys._getframe(1).f_globals.get("__name__") == "tldw_chatbook.DB.automatic_work":
+                raise OSError("private canonical identity failure")
+            return resolve(path, *args, **kwargs)
+        registrations = []
+        def fail_registration(*args, **kwargs):
+            registrations.append(kwargs["chain_id"])
+            raise OSError("private persistent registration failure")
+        start = asyncio.create_task(controller._chat_start.start(request))
+        try:
+            assert await asyncio.to_thread(entered.wait, 5)
+            item = controller._chat_start._active[target.id]
+            captured_owner, token = item.capacity_owner, item.token
+            if worker == "provider":
+                assert (await start).launch_status == "started"
+                item.receipted = False
+            # Identity is known before this real filesystem failure starts.
+            monkeypatch.setattr(Path, "resolve", fail_resolution)
+            if failure == "persistent_registration":
+                monkeypatch.setattr(ledger, "_restrict_chat_start", fail_registration)
+            item.task.cancel()
+            await asyncio.sleep(0.05)
+            item.task.cancel()
+            await asyncio.sleep(0.05)
+            assert captured_owner._automatic_primary_claims[target.id] is token
+            assert not item.task.done() and not exited.is_set()
+            if worker == "commit":
+                assert not item.outcome.done()
+            if replacement:
+                replacement_item = copy(item)
+                replacement_item.token = object()
+                controller._chat_start._active[target.id] = replacement_item
+                captured_owner._automatic_primary_claims[target.id] = replacement_item.token
+            release.set()
+            assert await asyncio.gather(item.task, return_exceptions=True) == [None]
+            assert exited.is_set() and item.outcome.done()
+            if worker == "commit":
+                outcome = await start
+                assert (outcome.launch_status, outcome.reason) == ("review_required", "settlement_unconfirmed")
+            if replacement:
+                assert controller._chat_start._active[target.id] is replacement_item
+                assert captured_owner._automatic_primary_claims[target.id] is replacement_item.token
+            else:
+                assert target.id not in controller._chat_start._active
+                assert target.id not in captured_owner._automatic_primary_claims
+            if failure == "persistent_registration":
+                assert len(registrations) == 2
+            assert ledger.read_chat_start_attempt(request.attempt_id, owner_id=owner).state == "accepted"
+            assert ledger.snapshot(chain).used["generation"] == 1
+            assert ledger.snapshot(chain).status == "active"
+            # Only transient same-key denial can protect this healthy alias handle.
+&gt;           with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: DID NOT RAISE &lt;class 'tldw_chatbook.Agents.automatic_work_budget.AutomaticWorkRefused'&gt;
+
+Tests/Chat/test_console_chat_start.py:3804: Failed</failure></testcase><testcase classname="Tests.Chat.test_console_chat_start" name="test_persistent_registration_and_settlement_failure_retains_native_denial[False-provider-persistent_registration]" time="1.936"><failure message="Failed: DID NOT RAISE &lt;class 'tldw_chatbook.Agents.automatic_work_budget.AutomaticWorkRefused'&gt;">tmp_path = PosixPath('/private/tmp/pr2995-task15-fix1/red-focused/test_persistent_registration_a3')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10fcc2ed0&gt;
+failure = 'persistent_registration', worker = 'provider', replacement = False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failure", ["canonical_resolution", "persistent_registration"])
+    @pytest.mark.parametrize("worker", ["commit", "provider"])
+    @pytest.mark.parametrize("replacement", [False, True])
+    async def test_persistent_registration_and_settlement_failure_retains_native_denial(
+        tmp_path, monkeypatch, failure, worker, replacement
+    ):
+        """Drained accepted work remains charged and denied despite both cleanup faults."""
+        import asyncio
+        from copy import copy
+        from pathlib import Path
+        import sys
+        from threading import Event
+        from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    
+        controller, store, runs, source, target, chain, request = await _native_start_rig(tmp_path)
+        ledger = runs.automatic_work
+        owner = controller.fleet_wake.runtime_owner_id
+        ledger.recover(current_owner_id=owner)
+        unrelated = ledger.create_chain("unrelated", root_submission_id="unrelated")
+        alias = tmp_path / "alias"
+        alias.mkdir()
+        peer = AgentRunsDB(alias / ".." / runs.db_path.name, client_id="peer", reconcile_on_init=False)
+        peer_ledger = peer.automatic_work
+        entered, release, exited = Event(), Event(), Event()
+        original = store.commit_durable_turn if worker == "commit" else controller._agent_bridge.run_reply
+        def held(*args, **kwargs):
+            entered.set()
+            try:
+                assert release.wait(10)
+                return original(*args, **kwargs)
+            finally:
+                exited.set()
+        monkeypatch.setattr(store if worker == "commit" else controller._agent_bridge, "commit_durable_turn" if worker == "commit" else "run_reply", held)
+        # Real SQLite rejects the durable settlement transaction, after acceptance.
+        with runs.transaction() as conn:
+            conn.execute("CREATE TRIGGER deny_review BEFORE UPDATE OF state ON automatic_chat_start_attempts WHEN NEW.state='review_required' BEGIN SELECT RAISE(ABORT, 'private settlement failure'); END")
+        resolve = Path.resolve
+        def fail_resolution(path, *args, **kwargs):
+            if path == runs.db_path and sys._getframe(1).f_globals.get("__name__") == "tldw_chatbook.DB.automatic_work":
+                raise OSError("private canonical identity failure")
+            return resolve(path, *args, **kwargs)
+        registrations = []
+        def fail_registration(*args, **kwargs):
+            registrations.append(kwargs["chain_id"])
+            raise OSError("private persistent registration failure")
+        start = asyncio.create_task(controller._chat_start.start(request))
+        try:
+            assert await asyncio.to_thread(entered.wait, 5)
+            item = controller._chat_start._active[target.id]
+            captured_owner, token = item.capacity_owner, item.token
+            if worker == "provider":
+                assert (await start).launch_status == "started"
+                item.receipted = False
+            # Identity is known before this real filesystem failure starts.
+            monkeypatch.setattr(Path, "resolve", fail_resolution)
+            if failure == "persistent_registration":
+                monkeypatch.setattr(ledger, "_restrict_chat_start", fail_registration)
+            item.task.cancel()
+            await asyncio.sleep(0.05)
+            item.task.cancel()
+            await asyncio.sleep(0.05)
+            assert captured_owner._automatic_primary_claims[target.id] is token
+            assert not item.task.done() and not exited.is_set()
+            if worker == "commit":
+                assert not item.outcome.done()
+            if replacement:
+                replacement_item = copy(item)
+                replacement_item.token = object()
+                controller._chat_start._active[target.id] = replacement_item
+                captured_owner._automatic_primary_claims[target.id] = replacement_item.token
+            release.set()
+            assert await asyncio.gather(item.task, return_exceptions=True) == [None]
+            assert exited.is_set() and item.outcome.done()
+            if worker == "commit":
+                outcome = await start
+                assert (outcome.launch_status, outcome.reason) == ("review_required", "settlement_unconfirmed")
+            if replacement:
+                assert controller._chat_start._active[target.id] is replacement_item
+                assert captured_owner._automatic_primary_claims[target.id] is replacement_item.token
+            else:
+                assert target.id not in controller._chat_start._active
+                assert target.id not in captured_owner._automatic_primary_claims
+            if failure == "persistent_registration":
+                assert len(registrations) == 2
+            assert ledger.read_chat_start_attempt(request.attempt_id, owner_id=owner).state == "accepted"
+            assert ledger.snapshot(chain).used["generation"] == 1
+            assert ledger.snapshot(chain).status == "active"
+            # Only transient same-key denial can protect this healthy alias handle.
+&gt;           with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: DID NOT RAISE &lt;class 'tldw_chatbook.Agents.automatic_work_budget.AutomaticWorkRefused'&gt;
+
+Tests/Chat/test_console_chat_start.py:3804: Failed</failure></testcase><testcase classname="Tests.Chat.test_console_chat_start" name="test_persistent_registration_and_settlement_failure_retains_native_denial[True-commit-canonical_resolution]" time="1.478"><failure message="Failed: DID NOT RAISE &lt;class 'tldw_chatbook.Agents.automatic_work_budget.AutomaticWorkRefused'&gt;">tmp_path = PosixPath('/private/tmp/pr2995-task15-fix1/red-focused/test_persistent_registration_a4')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10e086330&gt;
+failure = 'canonical_resolution', worker = 'commit', replacement = True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failure", ["canonical_resolution", "persistent_registration"])
+    @pytest.mark.parametrize("worker", ["commit", "provider"])
+    @pytest.mark.parametrize("replacement", [False, True])
+    async def test_persistent_registration_and_settlement_failure_retains_native_denial(
+        tmp_path, monkeypatch, failure, worker, replacement
+    ):
+        """Drained accepted work remains charged and denied despite both cleanup faults."""
+        import asyncio
+        from copy import copy
+        from pathlib import Path
+        import sys
+        from threading import Event
+        from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    
+        controller, store, runs, source, target, chain, request = await _native_start_rig(tmp_path)
+        ledger = runs.automatic_work
+        owner = controller.fleet_wake.runtime_owner_id
+        ledger.recover(current_owner_id=owner)
+        unrelated = ledger.create_chain("unrelated", root_submission_id="unrelated")
+        alias = tmp_path / "alias"
+        alias.mkdir()
+        peer = AgentRunsDB(alias / ".." / runs.db_path.name, client_id="peer", reconcile_on_init=False)
+        peer_ledger = peer.automatic_work
+        entered, release, exited = Event(), Event(), Event()
+        original = store.commit_durable_turn if worker == "commit" else controller._agent_bridge.run_reply
+        def held(*args, **kwargs):
+            entered.set()
+            try:
+                assert release.wait(10)
+                return original(*args, **kwargs)
+            finally:
+                exited.set()
+        monkeypatch.setattr(store if worker == "commit" else controller._agent_bridge, "commit_durable_turn" if worker == "commit" else "run_reply", held)
+        # Real SQLite rejects the durable settlement transaction, after acceptance.
+        with runs.transaction() as conn:
+            conn.execute("CREATE TRIGGER deny_review BEFORE UPDATE OF state ON automatic_chat_start_attempts WHEN NEW.state='review_required' BEGIN SELECT RAISE(ABORT, 'private settlement failure'); END")
+        resolve = Path.resolve
+        def fail_resolution(path, *args, **kwargs):
+            if path == runs.db_path and sys._getframe(1).f_globals.get("__name__") == "tldw_chatbook.DB.automatic_work":
+                raise OSError("private canonical identity failure")
+            return resolve(path, *args, **kwargs)
+        registrations = []
+        def fail_registration(*args, **kwargs):
+            registrations.append(kwargs["chain_id"])
+            raise OSError("private persistent registration failure")
+        start = asyncio.create_task(controller._chat_start.start(request))
+        try:
+            assert await asyncio.to_thread(entered.wait, 5)
+            item = controller._chat_start._active[target.id]
+            captured_owner, token = item.capacity_owner, item.token
+            if worker == "provider":
+                assert (await start).launch_status == "started"
+                item.receipted = False
+            # Identity is known before this real filesystem failure starts.
+            monkeypatch.setattr(Path, "resolve", fail_resolution)
+            if failure == "persistent_registration":
+                monkeypatch.setattr(ledger, "_restrict_chat_start", fail_registration)
+            item.task.cancel()
+            await asyncio.sleep(0.05)
+            item.task.cancel()
+            await asyncio.sleep(0.05)
+            assert captured_owner._automatic_primary_claims[target.id] is token
+            assert not item.task.done() and not exited.is_set()
+            if worker == "commit":
+                assert not item.outcome.done()
+            if replacement:
+                replacement_item = copy(item)
+                replacement_item.token = object()
+                controller._chat_start._active[target.id] = replacement_item
+                captured_owner._automatic_primary_claims[target.id] = replacement_item.token
+            release.set()
+            assert await asyncio.gather(item.task, return_exceptions=True) == [None]
+            assert exited.is_set() and item.outcome.done()
+            if worker == "commit":
+                outcome = await start
+                assert (outcome.launch_status, outcome.reason) == ("review_required", "settlement_unconfirmed")
+            if replacement:
+                assert controller._chat_start._active[target.id] is replacement_item
+                assert captured_owner._automatic_primary_claims[target.id] is replacement_item.token
+            else:
+                assert target.id not in controller._chat_start._active
+                assert target.id not in captured_owner._automatic_primary_claims
+            if failure == "persistent_registration":
+                assert len(registrations) == 2
+            assert ledger.read_chat_start_attempt(request.attempt_id, owner_id=owner).state == "accepted"
+            assert ledger.snapshot(chain).used["generation"] == 1
+            assert ledger.snapshot(chain).status == "active"
+            # Only transient same-key denial can protect this healthy alias handle.
+&gt;           with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: DID NOT RAISE &lt;class 'tldw_chatbook.Agents.automatic_work_budget.AutomaticWorkRefused'&gt;
+
+Tests/Chat/test_console_chat_start.py:3804: Failed</failure></testcase><testcase classname="Tests.Chat.test_console_chat_start" name="test_persistent_registration_and_settlement_failure_retains_native_denial[True-commit-persistent_registration]" time="1.601"><failure message="Failed: DID NOT RAISE &lt;class 'tldw_chatbook.Agents.automatic_work_budget.AutomaticWorkRefused'&gt;">tmp_path = PosixPath('/private/tmp/pr2995-task15-fix1/red-focused/test_persistent_registration_a5')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10f64b950&gt;
+failure = 'persistent_registration', worker = 'commit', replacement = True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failure", ["canonical_resolution", "persistent_registration"])
+    @pytest.mark.parametrize("worker", ["commit", "provider"])
+    @pytest.mark.parametrize("replacement", [False, True])
+    async def test_persistent_registration_and_settlement_failure_retains_native_denial(
+        tmp_path, monkeypatch, failure, worker, replacement
+    ):
+        """Drained accepted work remains charged and denied despite both cleanup faults."""
+        import asyncio
+        from copy import copy
+        from pathlib import Path
+        import sys
+        from threading import Event
+        from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    
+        controller, store, runs, source, target, chain, request = await _native_start_rig(tmp_path)
+        ledger = runs.automatic_work
+        owner = controller.fleet_wake.runtime_owner_id
+        ledger.recover(current_owner_id=owner)
+        unrelated = ledger.create_chain("unrelated", root_submission_id="unrelated")
+        alias = tmp_path / "alias"
+        alias.mkdir()
+        peer = AgentRunsDB(alias / ".." / runs.db_path.name, client_id="peer", reconcile_on_init=False)
+        peer_ledger = peer.automatic_work
+        entered, release, exited = Event(), Event(), Event()
+        original = store.commit_durable_turn if worker == "commit" else controller._agent_bridge.run_reply
+        def held(*args, **kwargs):
+            entered.set()
+            try:
+                assert release.wait(10)
+                return original(*args, **kwargs)
+            finally:
+                exited.set()
+        monkeypatch.setattr(store if worker == "commit" else controller._agent_bridge, "commit_durable_turn" if worker == "commit" else "run_reply", held)
+        # Real SQLite rejects the durable settlement transaction, after acceptance.
+        with runs.transaction() as conn:
+            conn.execute("CREATE TRIGGER deny_review BEFORE UPDATE OF state ON automatic_chat_start_attempts WHEN NEW.state='review_required' BEGIN SELECT RAISE(ABORT, 'private settlement failure'); END")
+        resolve = Path.resolve
+        def fail_resolution(path, *args, **kwargs):
+            if path == runs.db_path and sys._getframe(1).f_globals.get("__name__") == "tldw_chatbook.DB.automatic_work":
+                raise OSError("private canonical identity failure")
+            return resolve(path, *args, **kwargs)
+        registrations = []
+        def fail_registration(*args, **kwargs):
+            registrations.append(kwargs["chain_id"])
+            raise OSError("private persistent registration failure")
+        start = asyncio.create_task(controller._chat_start.start(request))
+        try:
+            assert await asyncio.to_thread(entered.wait, 5)
+            item = controller._chat_start._active[target.id]
+            captured_owner, token = item.capacity_owner, item.token
+            if worker == "provider":
+                assert (await start).launch_status == "started"
+                item.receipted = False
+            # Identity is known before this real filesystem failure starts.
+            monkeypatch.setattr(Path, "resolve", fail_resolution)
+            if failure == "persistent_registration":
+                monkeypatch.setattr(ledger, "_restrict_chat_start", fail_registration)
+            item.task.cancel()
+            await asyncio.sleep(0.05)
+            item.task.cancel()
+            await asyncio.sleep(0.05)
+            assert captured_owner._automatic_primary_claims[target.id] is token
+            assert not item.task.done() and not exited.is_set()
+            if worker == "commit":
+                assert not item.outcome.done()
+            if replacement:
+                replacement_item = copy(item)
+                replacement_item.token = object()
+                controller._chat_start._active[target.id] = replacement_item
+                captured_owner._automatic_primary_claims[target.id] = replacement_item.token
+            release.set()
+            assert await asyncio.gather(item.task, return_exceptions=True) == [None]
+            assert exited.is_set() and item.outcome.done()
+            if worker == "commit":
+                outcome = await start
+                assert (outcome.launch_status, outcome.reason) == ("review_required", "settlement_unconfirmed")
+            if replacement:
+                assert controller._chat_start._active[target.id] is replacement_item
+                assert captured_owner._automatic_primary_claims[target.id] is replacement_item.token
+            else:
+                assert target.id not in controller._chat_start._active
+                assert target.id not in captured_owner._automatic_primary_claims
+            if failure == "persistent_registration":
+                assert len(registrations) == 2
+            assert ledger.read_chat_start_attempt(request.attempt_id, owner_id=owner).state == "accepted"
+            assert ledger.snapshot(chain).used["generation"] == 1
+            assert ledger.snapshot(chain).status == "active"
+            # Only transient same-key denial can protect this healthy alias handle.
+&gt;           with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: DID NOT RAISE &lt;class 'tldw_chatbook.Agents.automatic_work_budget.AutomaticWorkRefused'&gt;
+
+Tests/Chat/test_console_chat_start.py:3804: Failed</failure></testcase><testcase classname="Tests.Chat.test_console_chat_start" name="test_persistent_registration_and_settlement_failure_retains_native_denial[True-provider-canonical_resolution]" time="1.796"><failure message="Failed: DID NOT RAISE &lt;class 'tldw_chatbook.Agents.automatic_work_budget.AutomaticWorkRefused'&gt;">tmp_path = PosixPath('/private/tmp/pr2995-task15-fix1/red-focused/test_persistent_registration_a6')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10e028a10&gt;
+failure = 'canonical_resolution', worker = 'provider', replacement = True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failure", ["canonical_resolution", "persistent_registration"])
+    @pytest.mark.parametrize("worker", ["commit", "provider"])
+    @pytest.mark.parametrize("replacement", [False, True])
+    async def test_persistent_registration_and_settlement_failure_retains_native_denial(
+        tmp_path, monkeypatch, failure, worker, replacement
+    ):
+        """Drained accepted work remains charged and denied despite both cleanup faults."""
+        import asyncio
+        from copy import copy
+        from pathlib import Path
+        import sys
+        from threading import Event
+        from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    
+        controller, store, runs, source, target, chain, request = await _native_start_rig(tmp_path)
+        ledger = runs.automatic_work
+        owner = controller.fleet_wake.runtime_owner_id
+        ledger.recover(current_owner_id=owner)
+        unrelated = ledger.create_chain("unrelated", root_submission_id="unrelated")
+        alias = tmp_path / "alias"
+        alias.mkdir()
+        peer = AgentRunsDB(alias / ".." / runs.db_path.name, client_id="peer", reconcile_on_init=False)
+        peer_ledger = peer.automatic_work
+        entered, release, exited = Event(), Event(), Event()
+        original = store.commit_durable_turn if worker == "commit" else controller._agent_bridge.run_reply
+        def held(*args, **kwargs):
+            entered.set()
+            try:
+                assert release.wait(10)
+                return original(*args, **kwargs)
+            finally:
+                exited.set()
+        monkeypatch.setattr(store if worker == "commit" else controller._agent_bridge, "commit_durable_turn" if worker == "commit" else "run_reply", held)
+        # Real SQLite rejects the durable settlement transaction, after acceptance.
+        with runs.transaction() as conn:
+            conn.execute("CREATE TRIGGER deny_review BEFORE UPDATE OF state ON automatic_chat_start_attempts WHEN NEW.state='review_required' BEGIN SELECT RAISE(ABORT, 'private settlement failure'); END")
+        resolve = Path.resolve
+        def fail_resolution(path, *args, **kwargs):
+            if path == runs.db_path and sys._getframe(1).f_globals.get("__name__") == "tldw_chatbook.DB.automatic_work":
+                raise OSError("private canonical identity failure")
+            return resolve(path, *args, **kwargs)
+        registrations = []
+        def fail_registration(*args, **kwargs):
+            registrations.append(kwargs["chain_id"])
+            raise OSError("private persistent registration failure")
+        start = asyncio.create_task(controller._chat_start.start(request))
+        try:
+            assert await asyncio.to_thread(entered.wait, 5)
+            item = controller._chat_start._active[target.id]
+            captured_owner, token = item.capacity_owner, item.token
+            if worker == "provider":
+                assert (await start).launch_status == "started"
+                item.receipted = False
+            # Identity is known before this real filesystem failure starts.
+            monkeypatch.setattr(Path, "resolve", fail_resolution)
+            if failure == "persistent_registration":
+                monkeypatch.setattr(ledger, "_restrict_chat_start", fail_registration)
+            item.task.cancel()
+            await asyncio.sleep(0.05)
+            item.task.cancel()
+            await asyncio.sleep(0.05)
+            assert captured_owner._automatic_primary_claims[target.id] is token
+            assert not item.task.done() and not exited.is_set()
+            if worker == "commit":
+                assert not item.outcome.done()
+            if replacement:
+                replacement_item = copy(item)
+                replacement_item.token = object()
+                controller._chat_start._active[target.id] = replacement_item
+                captured_owner._automatic_primary_claims[target.id] = replacement_item.token
+            release.set()
+            assert await asyncio.gather(item.task, return_exceptions=True) == [None]
+            assert exited.is_set() and item.outcome.done()
+            if worker == "commit":
+                outcome = await start
+                assert (outcome.launch_status, outcome.reason) == ("review_required", "settlement_unconfirmed")
+            if replacement:
+                assert controller._chat_start._active[target.id] is replacement_item
+                assert captured_owner._automatic_primary_claims[target.id] is replacement_item.token
+            else:
+                assert target.id not in controller._chat_start._active
+                assert target.id not in captured_owner._automatic_primary_claims
+            if failure == "persistent_registration":
+                assert len(registrations) == 2
+            assert ledger.read_chat_start_attempt(request.attempt_id, owner_id=owner).state == "accepted"
+            assert ledger.snapshot(chain).used["generation"] == 1
+            assert ledger.snapshot(chain).status == "active"
+            # Only transient same-key denial can protect this healthy alias handle.
+&gt;           with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: DID NOT RAISE &lt;class 'tldw_chatbook.Agents.automatic_work_budget.AutomaticWorkRefused'&gt;
+
+Tests/Chat/test_console_chat_start.py:3804: Failed</failure></testcase><testcase classname="Tests.Chat.test_console_chat_start" name="test_persistent_registration_and_settlement_failure_retains_native_denial[True-provider-persistent_registration]" time="1.867"><failure message="Failed: DID NOT RAISE &lt;class 'tldw_chatbook.Agents.automatic_work_budget.AutomaticWorkRefused'&gt;">tmp_path = PosixPath('/private/tmp/pr2995-task15-fix1/red-focused/test_persistent_registration_a7')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10e087860&gt;
+failure = 'persistent_registration', worker = 'provider', replacement = True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failure", ["canonical_resolution", "persistent_registration"])
+    @pytest.mark.parametrize("worker", ["commit", "provider"])
+    @pytest.mark.parametrize("replacement", [False, True])
+    async def test_persistent_registration_and_settlement_failure_retains_native_denial(
+        tmp_path, monkeypatch, failure, worker, replacement
+    ):
+        """Drained accepted work remains charged and denied despite both cleanup faults."""
+        import asyncio
+        from copy import copy
+        from pathlib import Path
+        import sys
+        from threading import Event
+        from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    
+        controller, store, runs, source, target, chain, request = await _native_start_rig(tmp_path)
+        ledger = runs.automatic_work
+        owner = controller.fleet_wake.runtime_owner_id
+        ledger.recover(current_owner_id=owner)
+        unrelated = ledger.create_chain("unrelated", root_submission_id="unrelated")
+        alias = tmp_path / "alias"
+        alias.mkdir()
+        peer = AgentRunsDB(alias / ".." / runs.db_path.name, client_id="peer", reconcile_on_init=False)
+        peer_ledger = peer.automatic_work
+        entered, release, exited = Event(), Event(), Event()
+        original = store.commit_durable_turn if worker == "commit" else controller._agent_bridge.run_reply
+        def held(*args, **kwargs):
+            entered.set()
+            try:
+                assert release.wait(10)
+                return original(*args, **kwargs)
+            finally:
+                exited.set()
+        monkeypatch.setattr(store if worker == "commit" else controller._agent_bridge, "commit_durable_turn" if worker == "commit" else "run_reply", held)
+        # Real SQLite rejects the durable settlement transaction, after acceptance.
+        with runs.transaction() as conn:
+            conn.execute("CREATE TRIGGER deny_review BEFORE UPDATE OF state ON automatic_chat_start_attempts WHEN NEW.state='review_required' BEGIN SELECT RAISE(ABORT, 'private settlement failure'); END")
+        resolve = Path.resolve
+        def fail_resolution(path, *args, **kwargs):
+            if path == runs.db_path and sys._getframe(1).f_globals.get("__name__") == "tldw_chatbook.DB.automatic_work":
+                raise OSError("private canonical identity failure")
+            return resolve(path, *args, **kwargs)
+        registrations = []
+        def fail_registration(*args, **kwargs):
+            registrations.append(kwargs["chain_id"])
+            raise OSError("private persistent registration failure")
+        start = asyncio.create_task(controller._chat_start.start(request))
+        try:
+            assert await asyncio.to_thread(entered.wait, 5)
+            item = controller._chat_start._active[target.id]
+            captured_owner, token = item.capacity_owner, item.token
+            if worker == "provider":
+                assert (await start).launch_status == "started"
+                item.receipted = False
+            # Identity is known before this real filesystem failure starts.
+            monkeypatch.setattr(Path, "resolve", fail_resolution)
+            if failure == "persistent_registration":
+                monkeypatch.setattr(ledger, "_restrict_chat_start", fail_registration)
+            item.task.cancel()
+            await asyncio.sleep(0.05)
+            item.task.cancel()
+            await asyncio.sleep(0.05)
+            assert captured_owner._automatic_primary_claims[target.id] is token
+            assert not item.task.done() and not exited.is_set()
+            if worker == "commit":
+                assert not item.outcome.done()
+            if replacement:
+                replacement_item = copy(item)
+                replacement_item.token = object()
+                controller._chat_start._active[target.id] = replacement_item
+                captured_owner._automatic_primary_claims[target.id] = replacement_item.token
+            release.set()
+            assert await asyncio.gather(item.task, return_exceptions=True) == [None]
+            assert exited.is_set() and item.outcome.done()
+            if worker == "commit":
+                outcome = await start
+                assert (outcome.launch_status, outcome.reason) == ("review_required", "settlement_unconfirmed")
+            if replacement:
+                assert controller._chat_start._active[target.id] is replacement_item
+                assert captured_owner._automatic_primary_claims[target.id] is replacement_item.token
+            else:
+                assert target.id not in controller._chat_start._active
+                assert target.id not in captured_owner._automatic_primary_claims
+            if failure == "persistent_registration":
+                assert len(registrations) == 2
+            assert ledger.read_chat_start_attempt(request.attempt_id, owner_id=owner).state == "accepted"
+            assert ledger.snapshot(chain).used["generation"] == 1
+            assert ledger.snapshot(chain).status == "active"
+            # Only transient same-key denial can protect this healthy alias handle.
+&gt;           with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: DID NOT RAISE &lt;class 'tldw_chatbook.Agents.automatic_work_budget.AutomaticWorkRefused'&gt;
+
+Tests/Chat/test_console_chat_start.py:3804: Failed</failure></testcase><testcase classname="Tests.Chat.test_console_chat_start" name="test_initial_identity_failure_precedes_native_start_authority" time="1.559"><failure message="Failed: DID NOT RAISE &lt;class 'OSError'&gt;">tmp_path = PosixPath('/private/tmp/pr2995-task15-fix1/red-focused/test_initial_identity_failure_0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10e0c1bb0&gt;
+
+    @pytest.mark.asyncio
+    async def test_initial_identity_failure_precedes_native_start_authority(tmp_path, monkeypatch):
+        """An unresolved canonical key refuses start before a slot or attempt exists."""
+        from pathlib import Path
+        import sys
+    
+        controller, store, runs, source, target, chain, request = await _native_start_rig(tmp_path)
+        # The real start boundary must construct a fresh ledger, as on first access.
+        ledger = runs.__dict__.pop("automatic_work")
+        resolve = Path.resolve
+        def fail_resolution(path, *args, **kwargs):
+            if path == runs.db_path and sys._getframe(1).f_globals.get("__name__") == "tldw_chatbook.DB.automatic_work":
+                raise OSError("private initial identity failure")
+            return resolve(path, *args, **kwargs)
+        monkeypatch.setattr(Path, "resolve", fail_resolution)
+        try:
+&gt;           with pytest.raises(OSError):
+                 ^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: DID NOT RAISE &lt;class 'OSError'&gt;
+
+Tests/Chat/test_console_chat_start.py:3838: Failed</failure></testcase></testsuite></testsuites>

@@ -338,8 +338,7 @@ def test_run_skill_script_absent_and_falls_through_when_not_wired(tmp_path):
     results = [s.result for s in outcome.steps if s.kind == "tool_result"]
     assert any("Tool not permitted: run_skill_script" in r for r in results)
     assert any(
-        step["kind"] == "tool_failed"
-        and step["summary"] == "run_skill_script blocked"
+        step["kind"] == "tool_failed" and step["summary"] == "run_skill_script blocked"
         for step in run["steps"]
     )
 

@@ -12,13 +12,13 @@ Fail-safe direction is ALWAYS verification-on: any invalid value (bad type,
 missing/unreadable file, unparseable PEM, bundle-write failure) logs an error
 with the remedy and yields default verification.
 
-Governance: backlog/decisions/079-network-tls-trust-policy.md and
+Governance: backlog/decisions/324-network-tls-trust-policy.md and
 Docs/superpowers/specs/2026-08-29-network-tls-trust-policy-design.md.
 """
+
 from __future__ import annotations
 
 import hashlib
-import os
 import ssl
 from pathlib import Path
 from typing import Any
@@ -103,18 +103,24 @@ def _maybe_warn(setting: bool | str) -> None:
     if setting is True:
         return
     if setting is False:
-        mode, message = "off", (
-            "TLS certificate verification is DISABLED"
-            " ([network] ssl_verify = false). API keys and conversation"
-            " content can be intercepted by anyone on the network path."
-            " Restore ssl_verify = true unless this is required by a"
-            " TLS-inspecting corporate network."
+        mode, message = (
+            "off",
+            (
+                "TLS certificate verification is DISABLED"
+                " ([network] ssl_verify = false). API keys and conversation"
+                " content can be intercepted by anyone on the network path."
+                " Restore ssl_verify = true unless this is required by a"
+                " TLS-inspecting corporate network."
+            ),
         )
     else:
-        mode, message = "custom_ca", (
-            "TLS verification additionally trusts custom CA bundle"
-            f" {setting!r} ([network] ssl_verify). Ensure this is your"
-            " organisation's root CA."
+        mode, message = (
+            "custom_ca",
+            (
+                "TLS verification additionally trusts custom CA bundle"
+                f" {setting!r} ([network] ssl_verify). Ensure this is your"
+                " organisation's root CA."
+            ),
         )
     if mode in _warned_modes:
         return

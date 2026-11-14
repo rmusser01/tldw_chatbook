@@ -441,8 +441,9 @@ def test_generated_sheets_scope_every_selector(filename: str):
     ``build_css.py`` -- see the decision comment there for the parity evidence).
     Born red against the quirked widget-defaults build: the self sheet carried
     56 leaked selectors across 6 classes (LibraryScreen, MCPAuditMode,
-    MCPToolsMode, MCPScreen, MainNavigationBar, SyncStatusWidget), and this
-    guard is what keeps that set from silently growing back.
+    MCPToolsMode, the since-retired MCP shell screen, MainNavigationBar,
+    SyncStatusWidget), and this guard is what keeps that set from silently
+    growing back.
     """
     text = (_CSS_ROOT / filename).read_text(encoding="utf-8")
     parts = _BANNER_RE.split(text)
@@ -586,7 +587,8 @@ def _ordering_problems(
     return problems
 
 
-def test_base_class_blocks_precede_their_subclasses():
+@private_profile_test
+def test_base_class_blocks_precede_their_subclasses(request):
     """Base-class CSS must be emitted before a subclass's, as Textual ordered it.
 
     Textual gave each class's own ``DEFAULT_CSS`` tie-breaker 0 and its bases
@@ -615,6 +617,31 @@ def test_base_class_blocks_precede_their_subclasses():
         pairs, [("self", self_order), ("scoped", scoped_order)]
     )
     assert not problems, "\n".join(problems)
+
+
+@private_profile_test
+def test_iter_blocks_emits_every_base_before_its_subclasses(request, tmp_path):
+    """The build orders blocks base-first, not only by module path (TASK-38697).
+
+    Path order put ``UI/Kanban/kanban_board_screen.py``'s KanbanBoardScreen
+    ahead of its base in ``UI/Navigation/base_app_screen.py``. ``Sub`` reaches
+    ``Base`` through ``Mid``, which bundles no CSS; ``Other`` is unrelated and
+    keeps its path slot.
+    """
+    (tmp_path / "a_sub.py").write_text(
+        "from b_base import Base\n\n"
+        "class Mid(Base):\n    pass\n\n"
+        "class Sub(Mid):\n    BUNDLED_CSS = 'Sub { width: 1; }'\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "a_unrelated.py").write_text(
+        "class Other:\n    BUNDLED_CSS = 'Other { width: 2; }'\n", encoding="utf-8"
+    )
+    (tmp_path / "b_base.py").write_text(
+        "class Base:\n    BUNDLED_CSS = 'Base { width: 3; }'\n", encoding="utf-8"
+    )
+    blocks = widget_css.iter_blocks(tmp_path, widget_css.WIDGET_ATTR)
+    assert [block.class_name for block in blocks] == ["Other", "Base", "Sub"]
 
 
 def test_ordering_check_catches_a_cross_stream_conflation_the_old_index_missed():
@@ -1120,125 +1147,328 @@ def _textual_css_declarations(
 #: docstring), which costs zero live stylesheet sources. Removals (after
 #: converting or deleting a declaration) are mandatory -- a stale entry fails
 #: the ratchet.
-_UNCONSOLIDATED_CSS_ALLOWLIST: frozenset[tuple[str, str, str]] = frozenset([
-    ("UI/CCP_Modules/ccp_loading_indicators.py", "InlineLoadingIndicator", "DEFAULT_CSS"),
-    ("UI/ChatbookCreationWindow.py", "ChatbookCreationWindow", "DEFAULT_CSS"),
-    ("UI/ChatbookExportManagementWindow.py", "ChatbookExportManagementWindow", "DEFAULT_CSS"),
-    ("UI/Chatbooks_Window_Improved.py", "ChatbookCard", "DEFAULT_CSS"),
-    ("UI/Chatbooks_Window_Improved.py", "ChatbooksWindowImproved", "DEFAULT_CSS"),
-    ("UI/Chatbooks_Window_Improved.py", "EmptyStateWidget", "DEFAULT_CSS"),
-    ("UI/ChatbookTemplatesWindow.py", "ChatbookTemplatesWindow", "DEFAULT_CSS"),
-    ("UI/Console_Modules/provider_continuation_recovery.py", "ProviderContinuationRecoveryCallout", "DEFAULT_CSS"),
-    ("UI/Dictation_Window_Improved.py", "ImprovedDictationWindow", "DEFAULT_CSS"),
-    ("UI/Library_Modules/prompt_collection_manager_modal.py", "PromptCollectionManagerModal", "DEFAULT_CSS"),
-    ("UI/MCP_Modules/mcp_profile_form.py", "MCPImportPanel", "DEFAULT_CSS"),
-    ("UI/MCP_Modules/mcp_profile_form.py", "MCPProfileForm", "DEFAULT_CSS"),
-    ("UI/MCP_Modules/mcp_schema_form.py", "MCPSchemaForm", "DEFAULT_CSS"),
-    ("UI/MCP_Modules/mcp_server_mutations.py", "MCPServerMutationsPanel", "DEFAULT_CSS"),
-    ("UI/Navigation/nav_overflow_menu.py", "NavOverflowMenu", "DEFAULT_CSS"),
-    ("UI/Outputs_Panel.py", "OutputsPanel", "DEFAULT_CSS"),
-    ("UI/Screens/scheduling/forms/reminder_form.py", "ReminderForm", "DEFAULT_CSS"),
-    ("UI/Sharing_Panel.py", "SharingPanel", "DEFAULT_CSS"),
-    ("UI/Speech/speech_clone_setup.py", "SpeechCloneSetup", "DEFAULT_CSS"),
-    ("UI/stts_profile_library.py", "STTSProfileLibrary", "DEFAULT_CSS"),
-    ("UI/stts_profile_library.py", "TTSCloneProfileSaveReviewModal", "DEFAULT_CSS"),
-    ("UI/stts_profile_library.py", "TTSProfileDeleteModal", "DEFAULT_CSS"),
-    ("UI/stts_profile_library.py", "TTSProfileEditorModal", "DEFAULT_CSS"),
-    ("UI/stts_profile_library.py", "TTSProfileNameModal", "DEFAULT_CSS"),
-    ("UI/STTS_Window.py", "AudioBookGenerationWidget", "DEFAULT_CSS"),
-    ("UI/STTS_Window.py", "STTSWindow", "DEFAULT_CSS"),
-    ("UI/STTS_Window.py", "VoiceProfilePickerModal", "DEFAULT_CSS"),
-    ("UI/Study_Window.py", "AnkiFlashcardsWidget", "DEFAULT_CSS"),
-    ("UI/Study_Window.py", "CourseCreationWidget", "DEFAULT_CSS"),
-    ("UI/Study_Window.py", "LearningMapWidget", "DEFAULT_CSS"),
-    ("UI/Study_Window.py", "MindmapsWidget", "DEFAULT_CSS"),
-    ("UI/Study_Window.py", "QuizzesWidget", "DEFAULT_CSS"),
-    ("UI/Study_Window.py", "StructuredLearningWidget", "DEFAULT_CSS"),
-    ("UI/Study_Window.py", "StudyGuideWidget", "DEFAULT_CSS"),
-    ("UI/Study_Window.py", "StudyWindow", "DEFAULT_CSS"),
-    ("UI/Tools_Settings_Window.py", "ConfirmDisableDialog", "DEFAULT_CSS"),
-    ("UI/Tools_Settings_Window.py", "ToolsSettingsWindow", "DEFAULT_CSS"),
-    ("UI/Voice_Cloning_Window.py", "VoiceCloningWindow", "DEFAULT_CSS"),
-    ("UI/Wizards/BaseWizard.py", "WizardContainer", "DEFAULT_CSS"),
-    ("UI/Wizards/BaseWizard.py", "WizardProgress", "DEFAULT_CSS"),
-    ("UI/Wizards/BaseWizard.py", "WizardScreen", "DEFAULT_CSS"),
-    ("UI/Workbench/help.py", "WorkbenchHelpPanel", "DEFAULT_CSS"),
-    ("Utils/widget_helpers.py", "FeatureNotAvailableDialog", "DEFAULT_CSS"),
-    ("Widgets/audio_troubleshooting_dialog.py", "AudioTroubleshootingDialog", "DEFAULT_CSS"),
-    ("Widgets/cancel_confirmation_dialog.py", "CancelConfirmationDialog", "DEFAULT_CSS"),
-    ("Widgets/Chat_Widgets/chat_handoff_card.py", "ChatHandoffCard", "DEFAULT_CSS"),
-    ("Widgets/Chat_Widgets/chat_message_enhanced.py", "ChatMessageEnhanced", "DEFAULT_CSS"),
-    ("Widgets/Chat_Widgets/chat_shell_bar.py", "ChatShellBar", "DEFAULT_CSS"),
-    ("Widgets/Coding_Widgets/repo_tree_widgets.py", "TreeNode", "DEFAULT_CSS"),
-    ("Widgets/Coding_Widgets/repo_tree_widgets.py", "TreeView", "DEFAULT_CSS"),
-    ("Widgets/confirmation_dialog.py", "ConfirmationDialog", "DEFAULT_CSS"),
-    ("Widgets/Console/console_character_picker_modal.py", "ConsoleCharacterPickerModal", "DEFAULT_CSS"),
-    ("Widgets/Console/console_composer_menu_modal.py", "ConsoleComposerMenuModal", "DEFAULT_CSS"),
-    ("Widgets/Console/console_edit_message_modal.py", "ConsoleEditMessageModal", "DEFAULT_CSS"),
-    ("Widgets/Console/console_generate_image_modal.py", "ConsoleGenerateImageModal", "DEFAULT_CSS"),
-    ("Widgets/Console/console_image_viewer_modal.py", "ConsoleImageViewerModal", "DEFAULT_CSS"),
-    ("Widgets/Console/console_model_popover.py", "ConsoleModelPopover", "DEFAULT_CSS"),
-    ("Widgets/Console/console_prompt_improve_view.py", "ConsolePromptImproveView", "DEFAULT_CSS"),
-    ("Widgets/Console/console_prompt_queue_modal.py", "ConsolePromptQueueModal", "DEFAULT_CSS"),
-    ("Widgets/Console/console_prompts_modal.py", "ConsolePromptsModal", "DEFAULT_CSS"),
-    ("Widgets/Console/console_rag_settings_modal.py", "ConsoleRagSettingsModal", "DEFAULT_CSS"),
-    ("Widgets/Console/console_rename_session_modal.py", "ConsoleRenameSessionModal", "DEFAULT_CSS"),
-    ("Widgets/Console/console_rewind_modal.py", "ConsoleRewindModal", "DEFAULT_CSS"),
-    ("Widgets/Console/console_save_as_modal.py", "ConsoleSaveAsModal", "DEFAULT_CSS"),
-    ("Widgets/Console/console_session_switcher_modal.py", "ConsoleSessionSwitcherModal", "DEFAULT_CSS"),
-    ("Widgets/Console/console_settings_modal.py", "ConsoleSettingsModal", "DEFAULT_CSS"),
-    ("Widgets/Console/console_transcript.py", "ConsoleMarkdownMessage", "DEFAULT_CSS"),
-    ("Widgets/Console/console_video_capacity_modal.py", "ConsoleVideoCapacityModal", "DEFAULT_CSS"),
-    ("Widgets/Console/console_workspace_switcher_modal.py", "ConsoleWorkspaceRenameModal", "DEFAULT_CSS"),
-    ("Widgets/Console/console_workspace_switcher_modal.py", "ConsoleWorkspaceSwitcherModal", "DEFAULT_CSS"),
-    ("Widgets/delete_confirmation_dialog.py", "DeleteConfirmationDialog", "DEFAULT_CSS"),
-    ("Widgets/destination_workbench.py", "DestinationWorkbench", "DEFAULT_CSS"),
-    ("Widgets/document_generation_modal.py", "DocumentGenerationModal", "DEFAULT_CSS"),
-    ("Widgets/enhanced_file_picker.py", "DirectorySearch", "DEFAULT_CSS"),
-    ("Widgets/enhanced_file_picker.py", "EnhancedFileDialog", "DEFAULT_CSS"),
-    ("Widgets/enhanced_file_picker.py", "PathBreadcrumbs", "DEFAULT_CSS"),
-    ("Widgets/feedback_dialog.py", "FeedbackDialog", "DEFAULT_CSS"),
-    ("Widgets/Library/library_file_notes_git_panel.py", "LibraryFileNotesGitPanel", "DEFAULT_CSS"),
-    ("Widgets/Library/library_file_notes_git_panel.py", "PushDestinationAuthorizationDialog", "DEFAULT_CSS"),
-    ("Widgets/Library/library_file_notes_git_panel.py", "PushEndpointDetailsDialog", "DEFAULT_CSS"),
-    ("Widgets/Library/library_file_notes_workspace.py", "FileNotesConflictCompareDialog", "DEFAULT_CSS"),
-    ("Widgets/Library/library_file_notes_workspace.py", "FileNotesRootDetailsDialog", "DEFAULT_CSS"),
-    ("Widgets/Library/library_file_notes_workspace.py", "LibraryFileNotesWorkspace", "DEFAULT_CSS"),
-    ("Widgets/Library/library_ingest_canvas.py", "LibraryIngestCanvas", "DEFAULT_CSS"),
-    ("Widgets/Library/library_media_content.py", "LibraryMediaContentSearchControls", "DEFAULT_CSS"),
-    ("Widgets/Library/library_media_viewer.py", "LibraryMediaViewer", "DEFAULT_CSS"),
-    ("Widgets/Library/prompt_delete_confirmation_modal.py", "PromptDeleteConfirmationModal", "DEFAULT_CSS"),
-    ("Widgets/Media/media_list_panel.py", "MediaListPanel", "DEFAULT_CSS"),
-    ("Widgets/Media/media_navigation_panel.py", "MediaNavigationPanel", "DEFAULT_CSS"),
-    ("Widgets/Media/media_search_panel.py", "MediaSearchPanel", "DEFAULT_CSS"),
-    ("Widgets/Media/media_viewer_panel.py", "DeleteConfirmDialog", "DEFAULT_CSS"),
-    ("Widgets/Media/media_viewer_panel.py", "MediaViewerPanel", "DEFAULT_CSS"),
-    ("Widgets/model_search_picker.py", "ModelSearchPicker", "DEFAULT_CSS"),
-    ("Widgets/ModelArtifacts/activation_controls.py", "ModelActivationControls", "DEFAULT_CSS"),
-    ("Widgets/ModelArtifacts/install_modal.py", "ModelInstallModal", "DEFAULT_CSS"),
-    ("Widgets/ModelArtifacts/local_gguf_import.py", "LocalGGUFImportConsentModal", "DEFAULT_CSS"),
-    ("Widgets/ModelArtifacts/local_gguf_import.py", "LocalGGUFImportControls", "DEFAULT_CSS"),
-    ("Widgets/Note_Widgets/note_creation_modal.py", "NoteCreationModal", "DEFAULT_CSS"),
-    ("Widgets/password_dialog.py", "EncryptionSetupDialog", "DEFAULT_CSS"),
-    ("Widgets/password_dialog.py", "PasswordDialog", "DEFAULT_CSS"),
-    ("Widgets/Persona_Widgets/character_tts_portability_dialogs.py", "CharacterTTSExistingAssignmentDialog", "DEFAULT_CSS"),
-    ("Widgets/Persona_Widgets/character_tts_portability_dialogs.py", "CharacterTTSProfileCollisionDialog", "DEFAULT_CSS"),
-    ("Widgets/Persona_Widgets/conversation_attach_picker.py", "ConversationAttachPicker", "DEFAULT_CSS"),
-    ("Widgets/Persona_Widgets/dictionary_attach_picker.py", "DictionaryAttachPicker", "DEFAULT_CSS"),
-    ("Widgets/Persona_Widgets/dictionary_picker.py", "DictionaryPicker", "DEFAULT_CSS"),
-    ("Widgets/Persona_Widgets/tag_filter_picker.py", "TagFilterPicker", "DEFAULT_CSS"),
-    ("Widgets/Persona_Widgets/world_book_picker.py", "WorldBookPicker", "DEFAULT_CSS"),
-    ("Widgets/Prompts/prompt_block_editor.py", "PromptBlockEditor", "DEFAULT_CSS"),
-    ("Widgets/Settings_Widgets/server_switch_modal.py", "ServerSwitchModal", "DEFAULT_CSS"),
-    ("Widgets/status_widget.py", "EnhancedStatusWidget", "DEFAULT_CSS"),
-    ("Widgets/Study/quiz_session_widget.py", "QuizSessionWidget", "DEFAULT_CSS"),
-    ("Widgets/Study/study_dashboard.py", "StudyDashboard", "DEFAULT_CSS"),
-    ("Widgets/Tamagotchi/base_tamagotchi.py", "BaseTamagotchi", "DEFAULT_CSS"),
-    ("Widgets/TTS/chapter_editor_widget.py", "ChapterEditorWidget", "DEFAULT_CSS"),
-    ("Widgets/TTS/character_voice_widget.py", "CharacterVoiceWidget", "DEFAULT_CSS"),
-    ("Widgets/voice_input_widget.py", "VoiceInputWidget", "DEFAULT_CSS"),
-    ("Widgets/voice_profile_dialog.py", "VoiceProfileDialog", "DEFAULT_CSS"),
-])
+_UNCONSOLIDATED_CSS_ALLOWLIST: frozenset[tuple[str, str, str]] = frozenset(
+    [
+        (
+            "UI/CCP_Modules/ccp_loading_indicators.py",
+            "InlineLoadingIndicator",
+            "DEFAULT_CSS",
+        ),
+        (
+            "UI/ChatbookExportManagementWindow.py",
+            "ChatbookExportManagementWindow",
+            "DEFAULT_CSS",
+        ),
+        ("UI/Chatbooks_Window_Improved.py", "ChatbookCard", "DEFAULT_CSS"),
+        ("UI/Chatbooks_Window_Improved.py", "ChatbooksWindowImproved", "DEFAULT_CSS"),
+        ("UI/Chatbooks_Window_Improved.py", "EmptyStateWidget", "DEFAULT_CSS"),
+        ("UI/ChatbookTemplatesWindow.py", "ChatbookTemplatesWindow", "DEFAULT_CSS"),
+        (
+            "UI/Console_Modules/provider_continuation_recovery.py",
+            "ProviderContinuationRecoveryCallout",
+            "DEFAULT_CSS",
+        ),
+        ("UI/Dictation_Window_Improved.py", "ImprovedDictationWindow", "DEFAULT_CSS"),
+        (
+            "UI/Library_Modules/prompt_collection_manager_modal.py",
+            "PromptCollectionManagerModal",
+            "DEFAULT_CSS",
+        ),
+        ("UI/MCP_Modules/mcp_profile_form.py", "MCPImportPanel", "DEFAULT_CSS"),
+        ("UI/MCP_Modules/mcp_profile_form.py", "MCPProfileForm", "DEFAULT_CSS"),
+        ("UI/MCP_Modules/mcp_schema_form.py", "MCPSchemaForm", "DEFAULT_CSS"),
+        (
+            "UI/MCP_Modules/mcp_server_mutations.py",
+            "MCPServerMutationsPanel",
+            "DEFAULT_CSS",
+        ),
+        # ADR-240: the pane's mode-chip styling must load under ANY host app
+        # (destination-shell harnesses mount it with no CSS_PATH, so the app
+        # bundle is absent; it also uses raw $surface/$text tokens that the
+        # $ds-* aliases only define once the bundle loads). Reviewed
+        # exception, inherited from the retired MCP shell screen's copy.
+        (
+            "UI/Screens/settings_tools_hub.py",
+            "ToolsHubPanel",
+            "DEFAULT_CSS",
+        ),
+        ("UI/Navigation/nav_overflow_menu.py", "NavOverflowMenu", "DEFAULT_CSS"),
+        ("UI/Screens/scheduling/forms/reminder_form.py", "ReminderForm", "DEFAULT_CSS"),
+        ("UI/Speech/speech_clone_setup.py", "SpeechCloneSetup", "DEFAULT_CSS"),
+        ("UI/stts_profile_library.py", "STTSProfileLibrary", "DEFAULT_CSS"),
+        ("UI/stts_profile_library.py", "TTSCloneProfileSaveReviewModal", "DEFAULT_CSS"),
+        ("UI/stts_profile_library.py", "TTSProfileDeleteModal", "DEFAULT_CSS"),
+        ("UI/stts_profile_library.py", "TTSProfileEditorModal", "DEFAULT_CSS"),
+        ("UI/stts_profile_library.py", "TTSProfileNameModal", "DEFAULT_CSS"),
+        ("UI/STTS_Window.py", "AudioBookGenerationWidget", "DEFAULT_CSS"),
+        ("UI/STTS_Window.py", "STTSWindow", "DEFAULT_CSS"),
+        ("UI/STTS_Window.py", "VoiceProfilePickerModal", "DEFAULT_CSS"),
+        ("UI/Study_Window.py", "AnkiFlashcardsWidget", "DEFAULT_CSS"),
+        ("UI/Study_Window.py", "CourseCreationWidget", "DEFAULT_CSS"),
+        ("UI/Study_Window.py", "LearningMapWidget", "DEFAULT_CSS"),
+        ("UI/Study_Window.py", "MindmapsWidget", "DEFAULT_CSS"),
+        ("UI/Study_Window.py", "QuizzesWidget", "DEFAULT_CSS"),
+        ("UI/Study_Window.py", "StructuredLearningWidget", "DEFAULT_CSS"),
+        ("UI/Study_Window.py", "StudyGuideWidget", "DEFAULT_CSS"),
+        ("UI/Study_Window.py", "StudyWindow", "DEFAULT_CSS"),
+        ("UI/Voice_Cloning_Window.py", "VoiceCloningWindow", "DEFAULT_CSS"),
+        ("UI/Wizards/BaseWizard.py", "WizardContainer", "DEFAULT_CSS"),
+        ("UI/Wizards/BaseWizard.py", "WizardProgress", "DEFAULT_CSS"),
+        ("UI/Wizards/BaseWizard.py", "WizardScreen", "DEFAULT_CSS"),
+        ("UI/Workbench/help.py", "WorkbenchHelpPanel", "DEFAULT_CSS"),
+        ("Utils/widget_helpers.py", "FeatureNotAvailableDialog", "DEFAULT_CSS"),
+        (
+            "Widgets/audio_troubleshooting_dialog.py",
+            "AudioTroubleshootingDialog",
+            "DEFAULT_CSS",
+        ),
+        (
+            "Widgets/cancel_confirmation_dialog.py",
+            "CancelConfirmationDialog",
+            "DEFAULT_CSS",
+        ),
+        ("Widgets/Coding_Widgets/repo_tree_widgets.py", "TreeNode", "DEFAULT_CSS"),
+        ("Widgets/Coding_Widgets/repo_tree_widgets.py", "TreeView", "DEFAULT_CSS"),
+        ("Widgets/confirmation_dialog.py", "ConfirmationDialog", "DEFAULT_CSS"),
+        (
+            "Widgets/Console/console_character_picker_modal.py",
+            "ConsoleCharacterPickerModal",
+            "DEFAULT_CSS",
+        ),
+        (
+            "Widgets/Console/console_composer_menu_modal.py",
+            "ConsoleComposerMenuModal",
+            "DEFAULT_CSS",
+        ),
+        (
+            "Widgets/Console/console_edit_message_modal.py",
+            "ConsoleEditMessageModal",
+            "DEFAULT_CSS",
+        ),
+        (
+            "Widgets/Console/console_generate_image_modal.py",
+            "ConsoleGenerateImageModal",
+            "DEFAULT_CSS",
+        ),
+        (
+            "Widgets/Console/console_image_viewer_modal.py",
+            "ConsoleImageViewerModal",
+            "DEFAULT_CSS",
+        ),
+        (
+            "Widgets/Console/console_model_popover.py",
+            "ConsoleModelPopover",
+            "DEFAULT_CSS",
+        ),
+        (
+            "Widgets/Console/console_prompt_improve_view.py",
+            "ConsolePromptImproveView",
+            "DEFAULT_CSS",
+        ),
+        (
+            "Widgets/Console/console_prompt_queue_modal.py",
+            "ConsolePromptQueueModal",
+            "DEFAULT_CSS",
+        ),
+        (
+            "Widgets/Console/console_prompts_modal.py",
+            "ConsolePromptsModal",
+            "DEFAULT_CSS",
+        ),
+        (
+            "Widgets/Console/console_rag_settings_modal.py",
+            "ConsoleRagSettingsModal",
+            "DEFAULT_CSS",
+        ),
+        (
+            "Widgets/Console/console_rename_session_modal.py",
+            "ConsoleRenameSessionModal",
+            "DEFAULT_CSS",
+        ),
+        (
+            "Widgets/Console/console_rewind_modal.py",
+            "ConsoleRewindModal",
+            "DEFAULT_CSS",
+        ),
+        (
+            "Widgets/Console/console_save_as_modal.py",
+            "ConsoleSaveAsModal",
+            "DEFAULT_CSS",
+        ),
+        (
+            "Widgets/Console/console_session_switcher_modal.py",
+            "ConsoleSessionSwitcherModal",
+            "DEFAULT_CSS",
+        ),
+        (
+            "Widgets/Console/console_settings_modal.py",
+            "ConsoleSettingsModal",
+            "DEFAULT_CSS",
+        ),
+        (
+            "Widgets/Console/console_transcript.py",
+            "ConsoleMarkdownMessage",
+            "DEFAULT_CSS",
+        ),
+        (
+            "Widgets/Console/console_video_capacity_modal.py",
+            "ConsoleVideoCapacityModal",
+            "DEFAULT_CSS",
+        ),
+        (
+            "Widgets/Console/console_workspace_switcher_modal.py",
+            "ConsoleWorkspaceRenameModal",
+            "DEFAULT_CSS",
+        ),
+        (
+            "Widgets/Console/console_workspace_switcher_modal.py",
+            "ConsoleWorkspaceSwitcherModal",
+            "DEFAULT_CSS",
+        ),
+        (
+            "Widgets/delete_confirmation_dialog.py",
+            "DeleteConfirmationDialog",
+            "DEFAULT_CSS",
+        ),
+        ("Widgets/destination_workbench.py", "DestinationWorkbench", "DEFAULT_CSS"),
+        (
+            "Widgets/document_generation_modal.py",
+            "DocumentGenerationModal",
+            "DEFAULT_CSS",
+        ),
+        ("Widgets/enhanced_file_picker.py", "DirectorySearch", "DEFAULT_CSS"),
+        ("Widgets/enhanced_file_picker.py", "EnhancedFileDialog", "DEFAULT_CSS"),
+        ("Widgets/enhanced_file_picker.py", "PathBreadcrumbs", "DEFAULT_CSS"),
+        ("Widgets/feedback_dialog.py", "FeedbackDialog", "DEFAULT_CSS"),
+        (
+            "Widgets/Library/library_file_notes_git_panel.py",
+            "LibraryFileNotesGitPanel",
+            "DEFAULT_CSS",
+        ),
+        (
+            "Widgets/Library/library_file_notes_git_panel.py",
+            "PushDestinationAuthorizationDialog",
+            "DEFAULT_CSS",
+        ),
+        (
+            "Widgets/Library/library_file_notes_git_panel.py",
+            "PushEndpointDetailsDialog",
+            "DEFAULT_CSS",
+        ),
+        (
+            "Widgets/Library/library_file_notes_workspace.py",
+            "FileNotesConflictCompareDialog",
+            "DEFAULT_CSS",
+        ),
+        (
+            "Widgets/Library/library_file_notes_workspace.py",
+            "FileNotesRootDetailsDialog",
+            "DEFAULT_CSS",
+        ),
+        (
+            "Widgets/Library/library_file_notes_workspace.py",
+            "LibraryFileNotesWorkspace",
+            "DEFAULT_CSS",
+        ),
+        (
+            "Widgets/Library/library_ingest_canvas.py",
+            "LibraryIngestCanvas",
+            "DEFAULT_CSS",
+        ),
+        (
+            "Widgets/Library/library_media_content.py",
+            "LibraryMediaContentSearchControls",
+            "DEFAULT_CSS",
+        ),
+        (
+            "Widgets/Library/library_media_viewer.py",
+            "LibraryMediaViewer",
+            "DEFAULT_CSS",
+        ),
+        (
+            "Widgets/Library/prompt_delete_confirmation_modal.py",
+            "PromptDeleteConfirmationModal",
+            "DEFAULT_CSS",
+        ),
+        ("Widgets/model_search_picker.py", "ModelSearchPicker", "DEFAULT_CSS"),
+        (
+            "Widgets/ModelArtifacts/activation_controls.py",
+            "ModelActivationControls",
+            "DEFAULT_CSS",
+        ),
+        ("Widgets/ModelArtifacts/install_modal.py", "ModelInstallModal", "DEFAULT_CSS"),
+        (
+            "Widgets/ModelArtifacts/local_gguf_import.py",
+            "LocalGGUFImportConsentModal",
+            "DEFAULT_CSS",
+        ),
+        (
+            "Widgets/ModelArtifacts/local_gguf_import.py",
+            "LocalGGUFImportControls",
+            "DEFAULT_CSS",
+        ),
+        (
+            "Widgets/Note_Widgets/note_creation_modal.py",
+            "NoteCreationModal",
+            "DEFAULT_CSS",
+        ),
+        ("Widgets/password_dialog.py", "EncryptionSetupDialog", "DEFAULT_CSS"),
+        ("Widgets/password_dialog.py", "PasswordDialog", "DEFAULT_CSS"),
+        (
+            "Widgets/Persona_Widgets/character_tts_portability_dialogs.py",
+            "CharacterTTSExistingAssignmentDialog",
+            "DEFAULT_CSS",
+        ),
+        (
+            "Widgets/Persona_Widgets/character_tts_portability_dialogs.py",
+            "CharacterTTSProfileCollisionDialog",
+            "DEFAULT_CSS",
+        ),
+        (
+            "Widgets/Persona_Widgets/conversation_attach_picker.py",
+            "ConversationAttachPicker",
+            "DEFAULT_CSS",
+        ),
+        (
+            "Widgets/Persona_Widgets/dictionary_attach_picker.py",
+            "DictionaryAttachPicker",
+            "DEFAULT_CSS",
+        ),
+        (
+            "Widgets/Persona_Widgets/dictionary_picker.py",
+            "DictionaryPicker",
+            "DEFAULT_CSS",
+        ),
+        (
+            "Widgets/Persona_Widgets/world_book_picker.py",
+            "WorldBookPicker",
+            "DEFAULT_CSS",
+        ),
+        ("Widgets/Prompts/prompt_block_editor.py", "PromptBlockEditor", "DEFAULT_CSS"),
+        (
+            "Widgets/Settings_Widgets/server_switch_modal.py",
+            "ServerSwitchModal",
+            "DEFAULT_CSS",
+        ),
+        # TASK-35649: opt-in ([session_summary] enabled = false) and shown only
+        # after a confirmed quit; app_lifecycle imports the module only at quit,
+        # so this source registers at quit, when no later first mount can pay
+        # the parse-cache cliff. As BUNDLED_CSS it would ride every boot's parse
+        # instead (ADR-097: "defer the cost"). Reviewed exception.
+        ("Widgets/session_summary_dialog.py", "SessionSummaryDialog", "DEFAULT_CSS"),
+        ("Widgets/status_widget.py", "EnhancedStatusWidget", "DEFAULT_CSS"),
+        ("Widgets/Study/quiz_session_widget.py", "QuizSessionWidget", "DEFAULT_CSS"),
+        ("Widgets/Study/study_dashboard.py", "StudyDashboard", "DEFAULT_CSS"),
+        ("Widgets/Tamagotchi/base_tamagotchi.py", "BaseTamagotchi", "DEFAULT_CSS"),
+        ("Widgets/TTS/chapter_editor_widget.py", "ChapterEditorWidget", "DEFAULT_CSS"),
+        (
+            "Widgets/TTS/character_voice_widget.py",
+            "CharacterVoiceWidget",
+            "DEFAULT_CSS",
+        ),
+        ("Widgets/voice_profile_dialog.py", "VoiceProfileDialog", "DEFAULT_CSS"),
+    ]
+)
 
 
 @pytest.mark.asyncio

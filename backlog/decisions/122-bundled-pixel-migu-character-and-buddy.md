@@ -5,7 +5,7 @@ Date: 2026-09-05
 
 ## Decision
 
-Ship the maintainer-supplied pixel-migu sprite assets as selectable application content. Seed a separate character with 18 Shared Visual Identity expressions and a local Persona with its operational Persona Visual animations. Follow ADR-067 for immutable character resources and create-only provenance, ADR-074 for the Buddy runtime, and the existing Actor Pack coordinator for cross-store Persona ownership. No schema or remote synchronization change is introduced.
+Ship the maintainer-supplied pixel-migu sprite assets as selectable application content. Seed a separate character with 18 Shared Visual Identity expressions and a local Persona with its operational Persona Visual animations. Follow ADR-312 for immutable character resources and create-only provenance, ADR-074 for the Buddy runtime, and the existing Actor Pack coordinator for cross-store Persona ownership. No schema or remote synchronization change is introduced.
 
 The maintainer explicitly requested inclusion in both application repositories. Preserve the supplied-art provenance (LicenseRef-User-Supplied) and source checksums; this decision does not assert a new artist identity or grant unrelated trademark or merchandise rights.
 

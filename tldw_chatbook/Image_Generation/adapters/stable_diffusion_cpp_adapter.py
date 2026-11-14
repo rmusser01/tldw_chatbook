@@ -9,14 +9,19 @@ from pathlib import Path
 from loguru import logger
 
 from tldw_chatbook.Image_Generation.adapters.base import ImageGenRequest, ImageGenResult
-from tldw_chatbook.Image_Generation.adapters.image_format_utils import validate_and_convert_image_output
+from tldw_chatbook.Image_Generation.adapters.image_format_utils import (
+    validate_and_convert_image_output,
+)
 from tldw_chatbook.Image_Generation.config import (
     DEFAULT_SD_CPP_CFG_SCALE,
     DEFAULT_SD_CPP_SAMPLER,
     DEFAULT_SD_CPP_STEPS,
     get_image_generation_config,
 )
-from tldw_chatbook.Image_Generation.exceptions import ImageBackendUnavailableError, ImageGenerationError
+from tldw_chatbook.Image_Generation.exceptions import (
+    ImageBackendUnavailableError,
+    ImageGenerationError,
+)
 from tldw_chatbook.Image_Generation.request_validation import effective_inline_max_bytes
 
 
@@ -28,10 +33,16 @@ class StableDiffusionCppAdapter:
         self._config = get_image_generation_config()
 
     def generate(self, request: ImageGenRequest) -> ImageGenResult:
-        binary_path = self._resolve_path(self._config.sd_cpp_binary_path, "sd_cpp_binary_path")
+        binary_path = self._resolve_path(
+            self._config.sd_cpp_binary_path, "sd_cpp_binary_path"
+        )
         if self._config.sd_cpp_diffusion_model_path:
-            diffusion_model_path = request.model or self._config.sd_cpp_diffusion_model_path
-            resolved_model_path = self._resolve_path(diffusion_model_path, "sd_cpp_diffusion_model_path")
+            diffusion_model_path = (
+                request.model or self._config.sd_cpp_diffusion_model_path
+            )
+            resolved_model_path = self._resolve_path(
+                diffusion_model_path, "sd_cpp_diffusion_model_path"
+            )
             model_flag = "--diffusion-model"
         else:
             model_path = request.model or self._config.sd_cpp_model_path
@@ -49,14 +60,26 @@ class StableDiffusionCppAdapter:
 
         width = request.width if request.width is not None else 512
         height = request.height if request.height is not None else 512
-        steps = request.steps if request.steps is not None else (self._config.sd_cpp_default_steps or DEFAULT_SD_CPP_STEPS)
-        cfg_scale = request.cfg_scale if request.cfg_scale is not None else (
-            self._config.sd_cpp_default_cfg_scale or DEFAULT_SD_CPP_CFG_SCALE
+        steps = (
+            request.steps
+            if request.steps is not None
+            else (self._config.sd_cpp_default_steps or DEFAULT_SD_CPP_STEPS)
         )
-        sampler = request.sampler or self._config.sd_cpp_default_sampler or DEFAULT_SD_CPP_SAMPLER
+        cfg_scale = (
+            request.cfg_scale
+            if request.cfg_scale is not None
+            else (self._config.sd_cpp_default_cfg_scale or DEFAULT_SD_CPP_CFG_SCALE)
+        )
+        sampler = (
+            request.sampler
+            or self._config.sd_cpp_default_sampler
+            or DEFAULT_SD_CPP_SAMPLER
+        )
         extra_params = dict(request.extra_params or {})
         if "llm" not in extra_params and self._config.sd_cpp_llm_path:
-            llm_path = self._resolve_path(self._config.sd_cpp_llm_path, "sd_cpp_llm_path")
+            llm_path = self._resolve_path(
+                self._config.sd_cpp_llm_path, "sd_cpp_llm_path"
+            )
             extra_params["llm"] = str(llm_path)
 
         with tempfile.TemporaryDirectory(prefix="sd_cpp_") as tmp_dir:
@@ -109,7 +132,9 @@ class StableDiffusionCppAdapter:
                 raise ImageGenerationError("stable-diffusion.cpp failed")
 
             if not output_path.exists():
-                raise ImageGenerationError("stable-diffusion.cpp did not produce output")
+                raise ImageGenerationError(
+                    "stable-diffusion.cpp did not produce output"
+                )
 
             content = output_path.read_bytes()
 
@@ -169,7 +194,15 @@ class StableDiffusionCppAdapter:
         extra_params: dict,
         device: str | None,
     ) -> list[str]:
-        cmd = [str(binary_path), model_flag, str(model_path), "-o", str(output_path), "-p", prompt]
+        cmd = [
+            str(binary_path),
+            model_flag,
+            str(model_path),
+            "-o",
+            str(output_path),
+            "-p",
+            prompt,
+        ]
         if negative_prompt:
             cmd += ["-n", negative_prompt]
         cmd += ["-W", str(width), "-H", str(height)]

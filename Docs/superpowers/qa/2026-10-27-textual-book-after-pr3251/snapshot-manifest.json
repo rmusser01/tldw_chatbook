@@ -1,0 +1,158 @@
+[
+  {
+    "source": ".test-tmp/textual-followup-fixes/book3251-evals-media-04/pytest/test_evals_save_completion_pre0/private-profile-process/pytest.xml",
+    "snapshot": "children/evals-media-1.xml",
+    "sha256": "798b17a88bf37bb1bdf8c9110f7bdc64bbb841fcbbc964ac05692eaf18a9d46b",
+    "bytes": 419
+  },
+  {
+    "source": ".test-tmp/textual-followup-fixes/book3251-evals-media-04/pytest/test_evals_save_completion_pre1/private-profile-process/pytest.xml",
+    "snapshot": "children/evals-media-2.xml",
+    "sha256": "5210b536eca0c905f94480471030e73fd08e13de56e4adef71c506ba16f1788d",
+    "bytes": 5874
+  },
+  {
+    "source": ".test-tmp/textual-followup-fixes/book3251-evals-media-04/pytest/test_speech_footer_tracks_moun0/private-profile-process/pytest.xml",
+    "snapshot": "children/evals-media-3.xml",
+    "sha256": "fc5e2204bbd6d208e57a95c6e11b4bf453c45af482e49b261a1d6ddb71d84657",
+    "bytes": 4152
+  },
+  {
+    "source": ".test-tmp/textual-after3251/audit-merged/library-research/book3251-library-qualified/pytest/test_prompt_export_allows_ui_d0/private-profile-process/pytest.xml",
+    "snapshot": "children/library-research-1.xml",
+    "sha256": "9823e6e5a1929000b29c2caf380faf3ee4dd2cfa7372379cbd7625cebeec71b2",
+    "bytes": 432
+  },
+  {
+    "source": ".test-tmp/textual-after3251/audit-merged/library-research/book3251-library-qualified/pytest/test_prompt_export_allows_ui_d1/private-profile-process/pytest.xml",
+    "snapshot": "children/library-research-2.xml",
+    "sha256": "a5b9ae855ed82085906ee8eefd974c75f1f9efe803e10356b8d8eafac394141d",
+    "bytes": 5793
+  },
+  {
+    "source": ".test-tmp/textual-after3251/audit-merged/workflows-schedules/book3251-workflows-fullforms-02/pytest/test_full_forms_keep_both_acce0/private-profile-process/pytest.xml",
+    "snapshot": "children/workflows-schedules-1.xml",
+    "sha256": "7dc7b05a3a00cbe952317dcc6bc8347d29ef2b8c5e2586b69a9fc962e97673cc",
+    "bytes": 412
+  },
+  {
+    "source": ".test-tmp/textual-after3251/audit-merged/workflows-schedules/book3251-workflows-fullforms-02/pytest/test_full_forms_keep_both_acce1/private-profile-process/pytest.xml",
+    "snapshot": "children/workflows-schedules-2.xml",
+    "sha256": "0890dd0eac5e45a677bc443f014bf3f478b883b79576eb6ccee059ac40a0ab19",
+    "bytes": 3964
+  },
+  {
+    "source": ".test-tmp/textual-after3251/audit-merged/evals-media/conftest.py",
+    "snapshot": "probes/evals-media/conftest.py.txt",
+    "sha256": "2bd7f2b9c7242c6beb07c21244f2af3ecef5474ce97e9c8485b7c0708defa194",
+    "bytes": 130
+  },
+  {
+    "source": ".test-tmp/textual-after3251/audit-merged/evals-media/test_book3251_evals_media.py",
+    "snapshot": "probes/evals-media/test_book3251_evals_media.py.txt",
+    "sha256": "c1a81c76c9af4eb5b93e5ccbfff22bbfe405ad034c38b3b1d4cbb3ab0070543b",
+    "bytes": 8021
+  },
+  {
+    "source": ".test-tmp/textual-after3251/audit-merged/library-research/conftest.py",
+    "snapshot": "probes/library-research/conftest.py.txt",
+    "sha256": "febb7dcf4b75790dab6211352bfa8524b83200a53afb6bb257016ef93029510a",
+    "bytes": 58
+  },
+  {
+    "source": ".test-tmp/textual-after3251/audit-merged/library-research/run-audit.py",
+    "snapshot": "probes/library-research/run-audit.py.txt",
+    "sha256": "8bae3271425c40149581a1784413e7e37170c0664cf40d1349d3693fba701006",
+    "bytes": 1696
+  },
+  {
+    "source": ".test-tmp/textual-after3251/audit-merged/library-research/test_export_observation.py",
+    "snapshot": "probes/library-research/test_export_observation.py.txt",
+    "sha256": "d364d42de504e58103b5975b152ffa1dc038deae539df0b8aab9e5ac819dc4b6",
+    "bytes": 5068
+  },
+  {
+    "source": ".test-tmp/textual-after3251/audit-merged/workflows-schedules/conftest.py",
+    "snapshot": "probes/workflows-schedules/conftest.py.txt",
+    "sha256": "5e7cbf289149188961a8eed8180141d165812ba3eb90bf12d5ad2176678be56a",
+    "bytes": 37
+  },
+  {
+    "source": ".test-tmp/textual-after3251/audit-merged/workflows-schedules/run_probe.py",
+    "snapshot": "probes/workflows-schedules/run_probe.py.txt",
+    "sha256": "e7f2ea69f7b5e09f55bf1d17c57ecfc6e4dc3f4944f507b7006abca978559a13",
+    "bytes": 1698
+  },
+  {
+    "source": ".test-tmp/textual-after3251/audit-merged/workflows-schedules/test_full_form_admission.py",
+    "snapshot": "probes/workflows-schedules/test_full_form_admission.py.txt",
+    "sha256": "dce3d842ff799a813225f466f99ff94aeef83e82c8d38993e097d164d0357c7d",
+    "bytes": 4277
+  },
+  {
+    "source": ".test-tmp/textual-followup-fixes/run-targeted.py",
+    "snapshot": "probes/run-targeted.py.txt",
+    "sha256": "d426132f21f1ec88eccc53b6866ae69519c149dfba5ba67feb314a775ecbfa4f",
+    "bytes": 1671
+  },
+  {
+    "source": ".test-tmp/textual-after3251/audit-merged/evals-media/evals-False-observation.json",
+    "snapshot": "observations/evals-ordinary.json",
+    "sha256": "f5ed6c23bb08520f5426f17bb35ba396d693614cc1f19d1fa6c55b81881dbccf",
+    "bytes": 173
+  },
+  {
+    "source": ".test-tmp/textual-after3251/audit-merged/evals-media/evals-True-observation.json",
+    "snapshot": "observations/evals-later-input.json",
+    "sha256": "25ed25ca28bc1e8f9fc56f05c04bbc672fbc4fd0137886807459b9824eff6cef",
+    "bytes": 257
+  },
+  {
+    "source": ".test-tmp/textual-after3251/audit-merged/evals-media/speech-observation.json",
+    "snapshot": "observations/speech-effects.json",
+    "sha256": "feb8956052b0b7f64e0ab4069a8fa093778a9f3b34b7caab5c7f1f5910ba0ab0",
+    "bytes": 1506
+  },
+  {
+    "source": ".test-tmp/textual-after3251/audit-merged/library-research/book3251-library-qualified/ordinary-observation.json",
+    "snapshot": "observations/prompt-export-ordinary.json",
+    "sha256": "1b22d550e5b63b1021a1869c2c7a395e4989af547cd01f78010b04e2a8ecf936",
+    "bytes": 459
+  },
+  {
+    "source": ".test-tmp/textual-after3251/audit-merged/library-research/book3251-library-qualified/held-observation.json",
+    "snapshot": "observations/prompt-export-held.json",
+    "sha256": "4c6cf57bb441ab9260311c2f984fd3ae759b59416ffde8a77a24b267cfb66427",
+    "bytes": 458
+  },
+  {
+    "source": ".test-tmp/textual-after3251/audit-merged/workflows-schedules/observation-serial.json",
+    "snapshot": "observations/reminder-serial.json",
+    "sha256": "b803f8ec54c7ce98c4a46b3a549b960bf06191537cb177540c5c768fb2b31c41",
+    "bytes": 2356
+  },
+  {
+    "source": ".test-tmp/textual-after3251/audit-merged/workflows-schedules/observation-overlap.json",
+    "snapshot": "observations/reminder-overlap.json",
+    "sha256": "5268b76e571c0f2553f49000a8c486a357de14ad9490909e53004ae0bf320822",
+    "bytes": 2365
+  },
+  {
+    "source": ".test-tmp/textual-after3251/merge-receipt.json",
+    "snapshot": "merge-receipt.json",
+    "sha256": "ec9c6e28b164d06d36da0b8c6790eee57db03fb7930c4e25db36622060c570a0",
+    "bytes": 9964
+  },
+  {
+    "source": ".test-tmp/textual-followup-fixes/hosted-40540997790/qualification.json",
+    "snapshot": "hosted-ci-qualification.json",
+    "sha256": "bcd8b66da7dbee03245beb838c62a303ecb1e41e31f0eca32bcfac89f264aebe",
+    "bytes": 15617
+  },
+  {
+    "source": ".test-tmp/textual-after3251/prefix-correction/perf6746-hosted-payload-receipt.json",
+    "snapshot": "perf-payload.json",
+    "sha256": "0bd943b48598bbabb789c38eb19997ec420bc130fd14b2d73868228c012e6df6",
+    "bytes": 755
+  }
+]

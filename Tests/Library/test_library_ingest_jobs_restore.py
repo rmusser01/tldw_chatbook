@@ -95,9 +95,10 @@ def test_merge_restored_on_an_empty_registry_is_exactly_restore(tmp_path):
     plain.restore(plan.jobs, plan.next_id)
 
     assert [j.job_id for j in merged.jobs()] == [j.job_id for j in plain.jobs()]
-    assert merged.submit(source_path="/c.pdf").job_id == plain.submit(
-        source_path="/c.pdf"
-    ).job_id
+    assert (
+        merged.submit(source_path="/c.pdf").job_id
+        == plain.submit(source_path="/c.pdf").job_id
+    )
     store2.close()
 
 

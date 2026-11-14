@@ -9,6 +9,10 @@
   const closeButton = document.getElementById("served-close-canvas");
   const restartButton = document.getElementById("terminal-restart");
   const terminal = document.getElementById("terminal");
+  const terminalId = terminal?.dataset.terminalId;
+  const canvasSessionUrl = terminalId
+    ? `/canvas/api/session?terminal_id=${encodeURIComponent(terminalId)}`
+    : "/canvas/api/session";
   let latest = null;
   let userClosed = false;
   let pollTimer = null;
@@ -127,7 +131,7 @@
 
   async function refreshCanvasState() {
     try {
-      const response = await fetch("/canvas/api/session", {cache: "no-store"});
+      const response = await fetch(canvasSessionUrl, {cache: "no-store"});
       if (response.status === 404) {
         disableCanvas();
         return;

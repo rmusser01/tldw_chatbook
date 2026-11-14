@@ -1,0 +1,9 @@
+.......................                                                  [100%]
+============================= slowest 25 durations =============================
+1.19s call     Tests/Chat/test_console_prompt_mixin_retry.py::test_retry_original_regenerate_current_and_clean_history[True]
+1.17s call     Tests/UI/test_console_prompt_mixins.py::test_accepted_toggle_preserves_editor_dirtied_during_apply
+1.08s call     Tests/UI/test_console_prompt_mixins.py::test_shared_editor_dirty_close_invalid_save_and_version_change_preserve_draft
+1.05s call     Tests/UI/test_console_prompt_mixins.py::test_dirty_toggle_restores_truth_without_losing_editor[save]
+
+(21 durations < 1s hidden.)
+23 passed in 24.35s

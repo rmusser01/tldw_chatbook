@@ -34,6 +34,7 @@ Real databases throughout (media + ChaChaNotes writer APIs, the
 blindness that let this defect live: the Library's unit tests drive doubles,
 so no test ever observed the composition of a real leg's output.
 """
+
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace
@@ -48,6 +49,12 @@ from tldw_chatbook.Library.library_local_rag_search_service import (
 )
 from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
 from tldw_chatbook.RAG_Search.simplified.rag_service import RAGService
+
+# TASK-38111: RAGConfig() resolves its default Chroma directory through the
+# guarded get_user_data_dir, which the per-test TLDW_CONFIG_PATH redirect
+# refuses (RecoveryRequired raw_source_selection_changed). Keep the
+# collection-time sandbox profile, like the other RAG_Search suites.
+pytestmark = pytest.mark.bootstrap_profile
 
 # The query token every seeded document carries.
 QUERY = "quokka"
@@ -286,9 +293,7 @@ def test_unselected_sub_legs_are_never_queried(mixed_corpus, monkeypatch):
         service._keyword_search(QUERY, top_k=20, keyword_source_types={"note"})
     )
 
-    assert calls == ["note"], (
-        f"unselected sub-legs were queried anyway: {calls}"
-    )
+    assert calls == ["note"], f"unselected sub-legs were queried anyway: {calls}"
     assert set(_types(results)) == {"note"}
 
 
@@ -324,9 +329,7 @@ def test_multi_type_selection_keeps_rank_fair_interleaving(mixed_corpus):
     service = _make_service(media_db_path=media_path, chachanotes_db_path=chacha_path)
 
     results = asyncio.run(
-        service._keyword_search(
-            QUERY, top_k=4, keyword_source_types={"media", "note"}
-        )
+        service._keyword_search(QUERY, top_k=4, keyword_source_types={"media", "note"})
     )
 
     assert len(results) == 4
@@ -497,9 +500,7 @@ def test_one_selection_is_one_cache_key_whatever_its_iteration_order(equivalent)
     """
     cache = _cache()
 
-    canonical = cache._make_key(
-        "quokka", "hybrid", 10, None, None, {"media", "note"}
-    )
+    canonical = cache._make_key("quokka", "hybrid", 10, None, None, {"media", "note"})
 
     assert (
         cache._make_key("quokka", "hybrid", 10, None, None, equivalent) == canonical
@@ -523,9 +524,9 @@ def test_an_empty_selection_is_not_the_same_request_as_no_selection():
     different searches returning different rows, so two different keys."""
     cache = _cache()
 
-    assert cache._make_key("quokka", "hybrid", 10, None, None, set()) != cache._make_key(
-        "quokka", "hybrid", 10, None, None, None
-    )
+    assert cache._make_key(
+        "quokka", "hybrid", 10, None, None, set()
+    ) != cache._make_key("quokka", "hybrid", 10, None, None, None)
 
 
 def test_different_selections_get_different_cache_keys():
@@ -588,9 +589,7 @@ class _HybridSpyRagService:
         self.profile = None
         self.results = results if results is not None else []
         self.calls: list[dict] = []
-        self.vector_store = SimpleNamespace(
-            get_collection_stats=lambda: {"count": 12}
-        )
+        self.vector_store = SimpleNamespace(get_collection_stats=lambda: {"count": 12})
 
     async def search(
         self,

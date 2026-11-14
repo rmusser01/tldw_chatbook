@@ -4,7 +4,7 @@
 Ingestion-time RAG indexing.
 
 This module is the bridge between content ingestion and the local semantic
-RAG stack (ADR-005): whenever media is added or updated through
+RAG stack (ADR-288): whenever media is added or updated through
 ``MediaDatabase.add_media_with_keywords``, a post-commit hook enqueues the
 item for chunking -> embedding -> vector-store upsert on a background worker
 thread, so semantic/hybrid search finally has something to search.
@@ -354,6 +354,7 @@ def _get_shared_rag_service(profile_name: str | None = None) -> Any | None:
 
     try:
         from .simplified import create_rag_service
+
         # Function-level import: active_config is consumed by
         # ingestion_indexing (Task 4 wires the reverse edge), so a
         # module-top import here would risk a circular import.
@@ -709,6 +710,43 @@ def _open_indexing_db(path: Path) -> Optional[Any]:
             return None
 
 
+def _retire_indexing_db(indexing_db: Any | None) -> None:
+    """Close every thread's idle handle of an installed indexing DB (TASK-39117).
+
+    The embedding cache can open handles on executor threads; this owner's
+    close used to reach only its own thread's. A handle in use stays open.
+    """
+    from ..DB.RAG_Indexing_DB import RAGIndexingDB
+
+    if type(indexing_db) is RAGIndexingDB:
+        RAGIndexingDB.close_idle_connections(indexing_db)
+        RAGIndexingDB.close(indexing_db)
+
+
+def _attach_embedding_cache_store(service: Any, indexing_db: Optional[Any]) -> None:
+    """Expose the caller's indexing DB as the wrapper's embedding cache.
+
+    ADR-223 / TASK-34420. Best-effort and duck-typed: this seam is the one
+    place that already owns a ``RAGIndexingDB`` handle (both the ingest
+    worker and the backfill route through ``index_entries``), and the
+    wrapper deliberately never default-opens the user-data-dir DB itself.
+    Re-attaching on every batch keeps a shared service in step with the
+    caller's handle; attaching is an atomic attribute assignment.
+    """
+    if indexing_db is None or not hasattr(indexing_db, "get_cached_embeddings"):
+        return
+    wrapper = getattr(service, "embeddings", None)
+    attach = getattr(wrapper, "set_embedding_cache_store", None)
+    if callable(attach):
+        try:
+            attach(indexing_db)
+        except Exception as e:
+            logger.debug(
+                "Could not attach persistent embedding cache "
+                f"(error_type={type(e).__name__})"
+            )
+
+
 @projection_lifetime.async_operation
 @activation_async_guarded
 async def index_entries(
@@ -731,45 +769,100 @@ async def index_entries(
         entries: Batch of IndexEntry items.
 
     Returns:
-        Summary dict: {'indexed', 'skipped', 'failed', 'errors'}.
+        Summary dict: {'indexed', 'skipped', 'failed', 'errors'}. A
+        partially-stored document (``IndexingResult`` with
+        ``success=True`` AND a non-None ``error`` -- some chunks failed
+        embedding generation, TASK-38591) counts under ``failed`` with the
+        loss in ``errors``, and is NOT marked indexed, so the next pass
+        re-indexes it instead of silently keeping the missing chunks.
     """
     summary: Dict[str, Any] = {"indexed": 0, "skipped": 0, "failed": 0, "errors": []}
 
     from .generation import record_source_paths
 
     record_source_paths(service, (entry.source_path for entry in entries))
+
+    # Before any embedding can happen: hand the caller's indexing DB to the
+    # service's embedding wrapper as its persistent cache (ADR-223). Even a
+    # fully-skipped batch attaches, so the next run's queries/chunks hit it.
+    _attach_embedding_cache_store(service, indexing_db)
+
     to_index: List[IndexEntry] = []
-    for entry in entries:
-        if indexing_db is not None:
+    if indexing_db is None:
+        to_index.extend(entries)
+    else:
+        # ADR-223 / TASK-34420: bounded batched tracking-table reads per distinct
+        # item type replace the per-entry ``needs_reindexing`` PK lookup
+        # (an N+1 -- one SELECT plus its metric logging per entry). Skip
+        # semantics are identical to that method: unknown item -> index;
+        # strictly newer ``last_modified`` -> index; anything else -> skip;
+        # a naive caller timestamp is stamped UTC before comparing; any
+        # read/comparison failure indexes anyway (fail open to re-indexing,
+        # exactly as the per-entry except did -- indexing is idempotent).
+        ids_by_type: Dict[str, List[str]] = {}
+        for entry in entries:
+            ids_by_type.setdefault(entry.item_type, []).append(entry.item_id)
+        last_modified_by_type: Dict[str, Optional[Dict[str, datetime]]] = {}
+        for item_type, item_ids in ids_by_type.items():
             try:
-                if not indexing_db.needs_reindexing(
-                    entry.item_id, entry.item_type, entry.last_modified
-                ):
-                    summary["skipped"] += 1
-                    continue
+                last_modified_by_type[item_type] = (
+                    indexing_db.get_indexed_items_by_ids(item_type, item_ids)
+                )
             except Exception as e:
                 logger.warning(
-                    f"Indexing-state lookup failed for {entry.item_type} {entry.item_id}; indexing anyway: {e}"
+                    "Indexing-state batch read failed; indexing batch "
+                    f"(error_type={type(e).__name__})"
                 )
-        to_index.append(entry)
+                last_modified_by_type[item_type] = None
+        for entry in entries:
+            tracked = last_modified_by_type.get(entry.item_type)
+            if tracked is not None:
+                stored_modified = tracked.get(entry.item_id)
+                if stored_modified is not None:
+                    try:
+                        current_modified = entry.last_modified
+                        if current_modified.tzinfo is None:
+                            current_modified = current_modified.replace(
+                                tzinfo=timezone.utc
+                            )
+                        if not current_modified > stored_modified:
+                            summary["skipped"] += 1
+                            continue
+                    except Exception as e:
+                        logger.warning(
+                            "Indexing-state comparison failed; indexing item "
+                            f"(error_type={type(e).__name__})"
+                        )
+            to_index.append(entry)
 
     if not to_index:
         return summary
 
     # Best-effort removal of stale chunks: ChromaDB `add` keeps existing IDs,
     # so re-indexed documents would otherwise retain chunks from their
-    # previous version.
-    delete_document = getattr(
-        getattr(service, "vector_store", None), "delete_document", None
-    )
-    if callable(delete_document):
-        for entry in to_index:
-            try:
-                delete_document(entry.document["id"])
-            except Exception as e:
-                logger.debug(
-                    f"Stale-chunk delete failed for {entry.document['id']}: {e}"
-                )
+    # previous version. One batched delete per ingestion batch (task 18):
+    # ChromaVectorStore.delete_documents chunks the ids into $in where-
+    # deletes itself; stores without the batch API (e.g. the in-memory
+    # store) keep the per-document loop.
+    vector_store = getattr(service, "vector_store", None)
+    delete_documents = getattr(vector_store, "delete_documents", None)
+    if callable(delete_documents):
+        try:
+            delete_documents([entry.document["id"] for entry in to_index])
+        except Exception as e:
+            logger.debug(
+                f"Batched stale-chunk delete failed (error_type={type(e).__name__})"
+            )
+    else:
+        delete_document = getattr(vector_store, "delete_document", None)
+        if callable(delete_document):
+            for entry in to_index:
+                try:
+                    delete_document(entry.document["id"])
+                except Exception as e:
+                    logger.debug(
+                        f"Stale-chunk delete failed (error_type={type(e).__name__})"
+                    )
 
     try:
         results = await service.index_batch_optimized(
@@ -810,6 +903,29 @@ async def index_entries(
     for entry in to_index:
         result = results_by_doc.get(entry.document["id"])
         if result is not None and result.success:
+            partial_error = getattr(result, "error", None)
+            if partial_error:
+                # TASK-38591(b): success=True with a non-None error is the
+                # batch path's PARTIAL verdict -- some chunks failed
+                # embedding generation and were never stored. Recording the
+                # item as indexed at its CURRENT last_modified would make
+                # every later pass skip it, silently losing those chunks
+                # forever, so leave its indexing-state row untouched: an
+                # absent or older timestamp re-indexes the item on the next
+                # pass (the unchanged-timestamp retry; re-indexing is
+                # idempotent and the stale-chunk delete above keeps it from
+                # duplicating). Surface the loss so reporting notices.
+                summary["failed"] += 1
+                summary["errors"].append(
+                    f"{entry.item_type} {entry.item_id}: stored with partial "
+                    f"chunk loss ({partial_error}); left for re-indexing"
+                )
+                logger.warning(
+                    f"RAG indexing partially failed for {entry.item_type} "
+                    f"{entry.item_id}: {partial_error} (item left for "
+                    f"re-indexing)"
+                )
+                continue
             summary["indexed"] += 1
             if indexing_db is not None:
                 indexed_records.append(
@@ -883,9 +999,7 @@ async def remove_entries(
         try:
             delete_document(removal.document_id)
         except Exception as e:
-            message = (
-                f"{removal.item_type} {removal.item_id} removal failed: {e}"
-            )
+            message = f"{removal.item_type} {removal.item_id} removal failed: {e}"
             logger.warning(message)
             summary["failed"] += 1
             summary["errors"].append(message)
@@ -905,9 +1019,7 @@ async def remove_entries(
     for removal in deleted:
         if indexing_db is not None:
             try:
-                indexing_db.remove_indexed_item(
-                    removal.item_id, removal.item_type
-                )
+                indexing_db.remove_indexed_item(removal.item_id, removal.item_type)
             except Exception as e:
                 message = (
                     f"{removal.item_type} {removal.item_id} tracking cleanup "
@@ -1076,9 +1188,7 @@ class IngestionIndexer:
             snapshot["pending"] = self._pending
             return snapshot
 
-    def set_guidance_notifier(
-        self, notifier: Optional[Callable[[str], None]]
-    ) -> None:
+    def set_guidance_notifier(self, notifier: Optional[Callable[[str], None]]) -> None:
         """Set the sink for setup-gap messages, which are not failures.
 
         Args:
@@ -1171,11 +1281,8 @@ class IngestionIndexer:
                     )
                 finally:
                     try:
-                        # Retire only this worker's exact installed SQLite cache.
-                        from ..DB.RAG_Indexing_DB import RAGIndexingDB
-
-                        if type(self._indexing_db) is RAGIndexingDB:
-                            RAGIndexingDB.close(self._indexing_db)
+                        # Retire this worker's exact installed SQLite cache.
+                        _retire_indexing_db(self._indexing_db)
                     finally:
                         with self._state_lock:
                             self._pending -= len(batch)
@@ -1230,7 +1337,6 @@ class IngestionIndexer:
             if summary["errors"]:
                 self._report_index_summary(summary)
             position = end
-
 
     #: The error every item reports when embedding generation produced nothing.
     #: On a fresh install that means no model has been downloaded yet, which is
@@ -1288,7 +1394,6 @@ class IngestionIndexer:
         self._notify_failure(
             f"RAG indexing failed for {summary['failed']} item(s): {errors[-1]}"
         )
-
 
     def _any_previously_indexed(self) -> bool:
         """Report whether anything has ever been indexed on this install.
@@ -1704,9 +1809,40 @@ async def backfill_semantic_index(
     record_source_paths(
         service, (getattr(db, "db_path", None) for db in (media_db, chachanotes_db))
     )
+    owned_db = None
     if indexing_db is None:
-        indexing_db = _default_indexing_db()
+        indexing_db = owned_db = _default_indexing_db()
+    try:
+        return await _backfill_with(
+            service,
+            indexing_db,
+            summary,
+            media_db=media_db,
+            chachanotes_db=chachanotes_db,
+            item_types=item_types,
+            page_size=page_size,
+            batch_size=batch_size,
+            progress_callback=progress_callback,
+            reconcile_for_recovery=reconcile_for_recovery,
+        )
+    finally:
+        # TASK-39117: the DB this call opened is retired on every thread.
+        _retire_indexing_db(owned_db)
 
+
+async def _backfill_with(
+    service: Any,
+    indexing_db: Any | None,
+    summary: dict[str, Any],
+    *,
+    media_db: Any | None,
+    chachanotes_db: Any | None,
+    item_types: Sequence[str],
+    page_size: int,
+    batch_size: int,
+    progress_callback: Callable[[dict[str, Any]], None] | None,
+    reconcile_for_recovery: bool,
+) -> dict[str, Any]:
     if reconcile_for_recovery:
         from .recovery import rebuild_projection
 

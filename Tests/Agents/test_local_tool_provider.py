@@ -5,8 +5,9 @@ import logging
 import os
 import shutil
 import subprocess
-from io import BytesIO
+import unicodedata
 from collections import UserDict
+from io import BytesIO
 from pathlib import Path
 
 import pytest
@@ -21,6 +22,7 @@ from tldw_chatbook.Agents.local_tool_provider import (
     LOCAL_ROOT_CHANGED_REFUSAL,
     LOCAL_TIMEOUT_REFUSAL,
     LOCAL_USER_DENY_REFUSAL,
+    LOCAL_WORKER_FAILED_REFUSAL,
     TODO_UPDATE_DELETE_RULE,
     LocalApprovalEffect,
     LocalToolExposure,
@@ -29,7 +31,6 @@ from tldw_chatbook.Agents.local_tool_provider import (
     RunAdmittedWorkspaceRoot,
 )
 from tldw_chatbook.Agents.run_context import use_run_id
-from tldw_chatbook.Agents.tool_catalog import ToolExecutionPolicy
 from tldw_chatbook.Agents.session_todo_store import (
     MAX_TODO_CONTENT_CHARS,
     MAX_TODO_ITEMS,
@@ -37,6 +38,7 @@ from tldw_chatbook.Agents.session_todo_store import (
     TODO_STATUSES,
     SessionTodoStore,
 )
+from tldw_chatbook.Agents.tool_catalog import ToolExecutionPolicy
 from tldw_chatbook.MCP.permission_store import EffectiveToolState, definition_hash
 from tldw_chatbook.Tools import (
     git_tool_impls,
@@ -51,6 +53,9 @@ from tldw_chatbook.Tools.workspace_tool_executor import (
 )
 from tldw_chatbook.Tools.workspace_tool_protocol import WorkspaceToolResponse
 from tldw_chatbook.Tools.workspace_tool_worker import run_workspace_worker
+
+# Default specs read the real config source admitted during collection.
+pytestmark = pytest.mark.bootstrap_profile
 
 ALLOW = EffectiveToolState(state="allow", origin="tool_override")
 ASK = EffectiveToolState(state="ask", origin="global_default")
@@ -295,6 +300,116 @@ def test_mixed_access_roots_refuse_mutation_on_read_only_alias(tmp_path):
     assert write_executor.calls == [
         ("fs_write", {"path": "a.txt", "content": "x"}, "write")
     ]
+
+
+def test_fs_mkdir_creates_a_directory_through_an_admitted_rw_root(tmp_path):
+    """TASK-35081: the incident's "create a folder" ask, end to end."""
+    root = admitted_root(
+        alias="folder-rw",
+        root=tmp_path,
+        allow_write=True,
+        executor=InProcessWorkspaceExecutor(tmp_path),
+    )
+    provider = make_provider(root=tmp_path, admitted_roots=(root,))
+
+    created = provider.invoke("local:fs_mkdir", {"path": "reports/2026"})
+    retried = provider.invoke("local:fs_mkdir", {"path": "reports/2026"})
+
+    assert created.ok and "created directory" in created.content
+    assert retried.ok and "already exists" in retried.content
+    assert (tmp_path / "reports" / "2026").is_dir()
+
+
+def test_fs_mkdir_is_stripped_when_no_root_is_writable(tmp_path):
+    provider = make_provider(
+        root=tmp_path,
+        admitted_roots=(
+            admitted_root(
+                alias="folder-ro",
+                root=tmp_path,
+                allow_write=False,
+                executor=RecordingWorkspaceExecutor(),
+            ),
+        ),
+    )
+    names = {entry.name for entry in provider.list_catalog()}
+
+    assert "fs_mkdir" not in names
+    assert "fs_write" not in names
+    assert "fs_read" in names
+
+
+def test_fs_mkdir_refused_on_read_only_alias_mixed_roots(tmp_path):
+    read_executor = RecordingWorkspaceExecutor()
+    provider = make_provider(
+        root=tmp_path,
+        admitted_roots=(
+            admitted_root(
+                alias="folder-ro",
+                root=tmp_path / "ro",
+                allow_write=False,
+                executor=read_executor,
+            ),
+            admitted_root(
+                alias="folder-rw",
+                root=tmp_path / "rw",
+                allow_write=True,
+                executor=RecordingWorkspaceExecutor(),
+            ),
+        ),
+    )
+
+    refused = provider.invoke(
+        "local:fs_mkdir", {"root_alias": "folder-ro", "path": "new"}
+    )
+
+    assert not refused.ok and refused.outcome == "blocked"
+    assert read_executor.calls == []
+
+
+def test_fs_mkdir_preflight_maps_directory_target_and_consults_the_chain_guard(
+    tmp_path, monkeypatch
+):
+    """TASK-35081 review follow-up: the preflight never promises a target
+    the executor would refuse, and classifies the target as a directory.
+
+    The chain guard itself is denylist-driven and environment-dependent;
+    this test pins the preflight's WIRING — the guard is consulted and a
+    refusal surfaces as a model-actionable LocalToolError — by
+    monkeypatching the guard predicate (the provider imports it
+    function-locally, so patching the defining module takes effect).
+    """
+    import tldw_chatbook.Utils.sensitive_paths as sensitive_paths_module
+    from tldw_chatbook.Tools.local_tool_impls import LocalToolError
+
+    provider = make_provider(
+        root=tmp_path,
+        admitted_roots=(
+            admitted_root(
+                alias="folder-rw",
+                root=tmp_path,
+                allow_write=True,
+                executor=RecordingWorkspaceExecutor(),
+            ),
+        ),
+    )
+
+    targets = provider.path_targets("local:fs_mkdir", {"path": "a/b"})
+
+    assert [(target.path, target.kind) for target in targets] == [
+        (tmp_path.resolve() / "a" / "b", "directory")
+    ]
+
+    monkeypatch.setattr(
+        sensitive_paths_module, "refuses_new_directory_chain", lambda *a, **k: True
+    )
+    # The raw-arg form ("creating 'c/d'") is unique to the provider's
+    # branch; the resolve choke point's write-chain refusal echoes the
+    # ABSOLUTE path, so this match pins which raise fired (review Minor
+    # on #3154: a future function-local import in local_tool_impls must
+    # not silently shift the exercised path).
+    with pytest.raises(LocalToolError, match=r"creating 'c/d' would collide"):
+        provider.path_targets("local:fs_mkdir", {"path": "c/d"})
 
 
 def test_admitted_root_guard_revokes_before_executor(tmp_path):
@@ -591,17 +706,18 @@ def test_web_todo_and_watchlists_handlers_never_launch_workspace_executor(
     assert executor.calls == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
-    ("code", "expected"),
+    ("code", "expected", "outcome"),
     (
-        ("root_pin_failed", LOCAL_ROOT_CHANGED_REFUSAL),
-        ("containment_unavailable", LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL),
-        ("protocol_failure", LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL),
-        ("spawn_failed", LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL),
+        ("root_pin_failed", LOCAL_ROOT_CHANGED_REFUSAL, "blocked"),
+        ("containment_unavailable", LOCAL_WORKER_FAILED_REFUSAL, None),
+        ("protocol_failure", LOCAL_WORKER_FAILED_REFUSAL, None),
+        ("spawn_failed", LOCAL_WORKER_FAILED_REFUSAL, None),
     ),
 )
 def test_local_executor_boundary_failures_map_to_pinned_refusals(
-    tmp_path, code, expected
+    tmp_path, code, expected, outcome
 ):
     executor = RecordingWorkspaceExecutor(error=code)
 
@@ -610,11 +726,12 @@ def test_local_executor_boundary_failures_map_to_pinned_refusals(
         workspace_executor=executor,
     ).invoke("local:fs_list", {"path": "."})
 
-    assert not result.ok and result.outcome == "blocked"
+    assert not result.ok and result.outcome == outcome
     assert result.error == expected
     assert executor.calls == [("fs_list", {"path": "."}, "read")]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("code", "expected_reason", "expected_error", "expected_outcome"),
     (
@@ -627,44 +744,44 @@ def test_local_executor_boundary_failures_map_to_pinned_refusals(
         (
             "containment_unavailable",
             local_tool_provider.LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
-            LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
-            "blocked",
+            LOCAL_WORKER_FAILED_REFUSAL,
+            None,
         ),
         (
             "spawn_failed",
             local_tool_provider.LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
-            LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
-            "blocked",
+            LOCAL_WORKER_FAILED_REFUSAL,
+            None,
         ),
         (
             "cleanup_unproven",
             local_tool_provider.LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
-            LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
-            "blocked",
+            LOCAL_WORKER_FAILED_REFUSAL,
+            None,
         ),
         (
             "worker_timed_out",
             local_tool_provider.LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
-            LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
-            "blocked",
+            LOCAL_WORKER_FAILED_REFUSAL,
+            None,
         ),
         (
             "worker_crashed",
             local_tool_provider.LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
-            LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
-            "blocked",
+            LOCAL_WORKER_FAILED_REFUSAL,
+            None,
         ),
         (
             "worker_failure",
             local_tool_provider.LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
-            LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
-            "blocked",
+            LOCAL_WORKER_FAILED_REFUSAL,
+            None,
         ),
         (
             "protocol_failure",
             local_tool_provider.LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
-            LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
-            "blocked",
+            LOCAL_WORKER_FAILED_REFUSAL,
+            None,
         ),
         (
             "invalid_request",
@@ -774,6 +891,7 @@ def test_catalog_lists_default_specs_with_local_ids(tmp_path):
         "local:fs_list",
         "local:fs_read",
         "local:fs_write",
+        "local:fs_mkdir",
         "local:fs_edit",
         "local:fs_patch",
         "local:fs_glob",
@@ -965,6 +1083,7 @@ def test_hub_tools_lists_every_spec_under_the_local_server_key(tmp_path):
         "fs_list",
         "fs_read",
         "fs_write",
+        "fs_mkdir",
         "fs_edit",
         "fs_patch",
         "fs_glob",
@@ -1579,9 +1698,9 @@ def test_local_tools_default_to_ask_without_an_explicit_server_allow(tmp_path):
         assert resolve_effective_state({}, p.hub_tool_for(name)).state == "ask", name
 
 
-# -- git_* read-only tool specs (phase 3b-ii, ADR-033) -------------------------
+# -- git_* read-only tool specs (phase 3b-ii, ADR-302) -------------------------
 #
-# ADR-033 binding: the git_* set is read-only over a fixed, allowlisted argv
+# ADR-302 binding: the git_* set is read-only over a fixed, allowlisted argv
 # surface, so the `process` risk tag is deliberately NOT applied. The no-tags
 # assertion below is the tripwire that keeps that decision visible -- if a
 # future change adds a mutating git subcommand, the tags must change too.
@@ -1597,7 +1716,7 @@ def test_git_specs_carry_no_risk_tags(tmp_path):
     p = make_provider(root=tmp_path)
     for name in GIT_TOOL_NAMES:
         assert p.hub_tool_for(name).tags == (), (
-            f"{name}: ADR-033 pins tags == () for the read-only allowlisted git set"
+            f"{name}: ADR-302 pins tags == () for the read-only allowlisted git set"
         )
 
 
@@ -3860,6 +3979,7 @@ def test_web_deep_search_pinned_catalog_list_unchanged_by_default(tmp_path):
         "fs_list",
         "fs_read",
         "fs_write",
+        "fs_mkdir",
         "fs_edit",
         "fs_patch",
         "fs_glob",
@@ -4340,7 +4460,8 @@ def test_cleanup_unproven_observer_failure_preserves_original_refusal(tmp_path, 
     captured = capsys.readouterr()
 
     assert not result.ok
-    assert result.error == "Private scratch space is unavailable; the tool was not run."
+    assert result.error == LOCAL_WORKER_FAILED_REFUSAL
+    assert result.dispatch_state == "uncertain"
     assert "private/path leaked" not in captured.err
 
 
@@ -4651,12 +4772,13 @@ def test_local_stamped_answer_scope_and_clear(tmp_path, unanswered, expected):
     assert provider.invoke("local:fs_list", {"path": "."}).approval_decision is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "failure,expected",
     [
         ("tool_failure", "approved"),
         ("root_pin_failed", None),
-        ("protocol_failure", None),
+        ("protocol_failure", "approved"),
     ],
 )
 def test_local_approved_execution_failure_preserves_only_valid_fact(
@@ -4833,6 +4955,34 @@ def test_path_targets_maps_remote_targets_lexically_no_laptop_disk(
         )
 
 
+@pytest.mark.parametrize(("rule_form", "path_form"), (("NFC", "NFD"), ("NFD", "NFC")))
+def test_remote_path_targets_refuse_other_normalization_of_an_exclusion(
+    tmp_path,
+    rule_form,
+    path_form,
+    _laptop_disk_tripwire,
+    _default_specs_without_config_reads,
+):
+    """TASK-37655: the preflight mirror folds like the worker, so an excluded
+    name in either spelling is refused before any approval card renders."""
+    from tldw_chatbook.Tools.local_tool_impls import LocalToolError
+    from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
+
+    rule = SensitiveExclusion(
+        "file", unicodedata.normalize(rule_form, "Données/naïve.txt")
+    )
+    authority = dataclasses.replace(
+        _remote_authority(), exclusions_provider=lambda: (rule,)
+    )
+    provider = make_provider(root=tmp_path, admitted_roots=(authority,))
+
+    with pytest.raises(LocalToolError, match="protected path"):
+        provider.path_targets(
+            "local:fs_read",
+            {"path": unicodedata.normalize(path_form, "Données/naïve.txt")},
+        )
+
+
 def test_remote_root_dispatch_completes_with_lexical_redaction(
     tmp_path, _laptop_disk_tripwire, _default_specs_without_config_reads
 ):
@@ -4913,3 +5063,357 @@ def test_localroot_wrapped_authority_behaves_exactly_like_plain_path(
     assert plain_provider.path_targets("local:fs_read", {"path": "a.txt"}) == (
         wrapped_provider.path_targets("local:fs_read", {"path": "a.txt"})
     )
+
+
+def test_display_authority_cannot_change_local_gate_or_schema(tmp_path):
+    from tldw_chatbook.Chat.approval_presentation import profile_authority
+
+    owner = profile_authority("local", "captured-profile", str(tmp_path), "call")
+    specs = [
+        LocalToolSpec(
+            "fs_read",
+            "Read",
+            {"type": "object"},
+            lambda args: "read",
+            LocalToolExposure.CONSOLE_ONLY,
+            (LocalApprovalEffect.PRIVATE_READ,),
+        )
+    ]
+    legacy = LocalToolProvider(
+        workspace_root=tmp_path, specs=specs, resolve_state=lambda _hub: ASK
+    )
+    provider = LocalToolProvider(
+        workspace_root=tmp_path,
+        specs=specs,
+        resolve_state=lambda _hub: ASK,
+        presentation_authority=owner,
+    )
+    args = {"path": "a.txt"}
+    before = legacy.pending_gate_for("fs_read", args, "call-a")
+    row = provider.pending_gate_for("fs_read", args, "call-a")
+    assert row.presentation_authority == owner
+    assert (row.options, row.reason, row.arguments, row.call_id) == (
+        before.options,
+        before.reason,
+        before.arguments,
+        before.call_id,
+    )
+    assert provider.load_schema("local:fs_read") == legacy.load_schema("local:fs_read")
+    assert not provider.invoke("local:fs_read", args).ok
+
+
+def test_pending_summary_preserves_original_nested_inputs_outside_legacy_serialization(
+    tmp_path,
+):
+    from tldw_chatbook.Chat.approval_presentation import (
+        capture_approval_view,
+        profile_authority,
+    )
+    from tldw_chatbook.Chat.console_chat_controller import _build_approval_payload
+    from tldw_chatbook.Chat.permission_summary_service import (
+        pending_calls_info_from_payload,
+    )
+
+    owner = profile_authority("local", "captured-profile", str(tmp_path), "call")
+    spec = LocalToolSpec(
+        "save_character",
+        "Save",
+        {"type": "object"},
+        lambda args: "saved",
+        LocalToolExposure.CONSOLE_ONLY,
+        (LocalApprovalEffect.MUTATES_LOCAL,),
+        approval_arguments=lambda args: {"summary": args["character"]["name"].upper()},
+    )
+    provider = LocalToolProvider(
+        workspace_root=tmp_path,
+        specs=[spec],
+        resolve_state=lambda hub: ASK,
+        presentation_authority=owner,
+    )
+    original = {
+        "character": {"name": "Ada", "private_note": "private-original-body"},
+        "tags": ["one", "two"],
+    }
+    row = provider.pending_gate_for("save_character", original, "call-a")
+    assert row.arguments == {"summary": "ADA"}
+    assert row.captured_arguments == original
+    assert row.captured_arguments is not original
+    view = capture_approval_view(
+        [row], round_id="r", session_id="s", run_id="run", revision=1
+    )
+    assert view.rows[0].argument_sets == (original,)
+    assert "private-original-body" not in " ".join(view.rows[0].targets)
+    payload = _build_approval_payload("r", "s", "run", [row], 0, None)
+    assert payload["calls"][0]["arguments"] == {"summary": "ADA"}
+    assert "captured_arguments" not in payload["calls"][0]
+    assert "private-original-body" not in json.dumps(
+        pending_calls_info_from_payload(payload["calls"])
+    )
+    assert "allow_matching" not in row.options
+    original["character"]["private_note"] = "modified"
+    assert (
+        row.captured_arguments["character"]["private_note"] == "private-original-body"
+    )
+
+@pytest.fixture
+def workflow_file_authorization(tmp_path, monkeypatch):
+    """Issue the real private accepted phase custody for provider boundary tests."""
+    from contextlib import closing
+    from threading import Event
+    from types import SimpleNamespace
+
+    from Tests.DB.test_workflow_runs import planned
+    from tldw_chatbook.Agents import automatic_work_runtime, run_log
+    from tldw_chatbook.Chat.console_workflow_runs import (
+        _accept_workflow_phase,
+        native_workflow_qualified,
+    )
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    if not native_workflow_qualified():
+        pytest.skip("native workflow platform qualification required")
+    setting = lambda key, default: True if key == "workflow_runs_enabled" else default
+    monkeypatch.setattr(run_log, "_setting", setting)
+    monkeypatch.setattr(automatic_work_runtime, "_setting", setting)
+    with closing(AgentRunsDB(tmp_path / "workflow.db")) as db:
+        db.automatic_work.recover(current_owner_id="owner")
+        snap = planned(db, tmp_path)
+        attempt = db.automatic_work.prepare_workflow_phase(
+            snap.id,
+            revision_id=1,
+            phase_id="phase-1",
+            owner_id="owner",
+            session_id="session",
+            command_id="approve",
+        )
+        session = SimpleNamespace(
+            id="session", persisted_conversation_id=snap.request.conversation_id
+        )
+        controller = SimpleNamespace(
+            _disposed=False,
+            _shutdown_requested=Event(),
+            _agent_bridge=SimpleNamespace(runs_db=db),
+            _fleet_wake=SimpleNamespace(runtime_owner_id="owner"),
+            store=SimpleNamespace(sessions=lambda: [session]),
+        )
+        yield _accept_workflow_phase(controller, attempt.id, session_id="session")
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("evicted", [False, True])
+@pytest.mark.parametrize("supplied_digest", [False, True])
+def test_workflow_write_requires_observed_content(
+    tmp_path, workflow_file_authorization, evicted, supplied_digest
+):
+    import hashlib
+
+    from tldw_chatbook.Agents.fs_read_ledger import ReadLedger
+
+    target = tmp_path / "a.txt"
+    target.write_text("old\n")
+    provider = make_provider(root=tmp_path, allow_write=True)
+    provider._read_ledger = ReadLedger(max_paths_per_run=1)
+    if evicted:
+        assert provider.invoke("fs_read", {"path": "a.txt"}).ok
+        (tmp_path / "b.txt").write_text("other\n")
+        assert provider.invoke("fs_read", {"path": "b.txt"}).ok
+    args = {"path": "a.txt", "content": "mine\n"}
+    if supplied_digest:
+        args["expected_sha256"] = hashlib.sha256(target.read_bytes()).hexdigest()
+    with workflow_file_authorization.context.scope():
+        receipt = provider.invoke_detailed("fs_write", args)
+    assert not receipt.result.ok
+    assert "workflow fs_write requires" in receipt.result.error
+    assert receipt.result.dispatch_state == "not_started"
+    assert not receipt.dispatch_started
+    assert target.read_text() == "old\n"
+
+
+@pytest.mark.bootstrap_profile
+def test_workflow_write_absence_then_repeated_content(
+    tmp_path, workflow_file_authorization
+):
+    provider = make_provider(root=tmp_path, allow_write=True)
+    with workflow_file_authorization.context.scope():
+        assert provider.invoke(
+            "fs_write", {"path": "new.txt", "content": "one\n", "expected_absent": True}
+        ).ok
+        assert provider.invoke("fs_write", {"path": "new.txt", "content": "two\n"}).ok
+        assert provider.invoke("fs_write", {"path": "new.txt", "content": "three\n"}).ok
+    assert (tmp_path / "new.txt").read_text() == "three\n"
+
+
+@pytest.mark.bootstrap_profile
+def test_workflow_write_cannot_override_observation(
+    tmp_path, workflow_file_authorization
+):
+    import hashlib
+
+    target = tmp_path / "a.txt"
+    target.write_text("old\n")
+    provider = make_provider(root=tmp_path, allow_write=True)
+    assert provider.invoke("fs_read", {"path": "a.txt"}).ok
+    target.write_text("peer\n")
+    with workflow_file_authorization.context.scope():
+        result = provider.invoke(
+            "fs_write",
+            {
+                "path": "a.txt",
+                "content": "mine\n",
+                "expected_sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+            },
+        )
+    assert not result.ok
+    assert target.read_text() == "peer\n"
+
+
+@pytest.mark.bootstrap_profile
+def test_workflow_remote_write_uses_worker_observation(
+    tmp_path, workflow_file_authorization, _laptop_disk_tripwire
+):
+    from tldw_chatbook.Agents.fs_read_ledger import ReadLedger
+    from tldw_chatbook.Tools.remote_workspace_executor import (
+        RemoteWorkspaceExecutionError,
+        run_bundle_loopback_frames,
+    )
+
+    class LoopbackExecutor:
+        def __init__(self):
+            self.calls = []
+            self.builder = WorkspaceToolExecutor(tmp_path)
+
+        def execute(self, operation, arguments, *, intent):
+            self.calls.append((operation, dict(arguments)))
+            request = self.builder._build_request(operation, arguments, intent=intent)
+            frames = run_bundle_loopback_frames(
+                tmp_path, json.loads(request.to_bytes())
+            )
+            response = frames[-1]
+            if response["outcome"] != "success":
+                raise RemoteWorkspaceExecutionError(
+                    response["code"], response["error"], admitted=len(frames) == 2
+                )
+            return response["result"]
+
+    executor = LoopbackExecutor()
+    provider = make_provider(
+        root=tmp_path, admitted_roots=(_remote_authority(executor=executor),)
+    )
+    provider._read_ledger = ReadLedger(max_paths_per_run=1)
+    (tmp_path / "a.txt").write_bytes(b"old\r\n")
+    (tmp_path / "b.txt").write_bytes(b"other\n")
+    with workflow_file_authorization.context.scope():
+        assert not provider.invoke("fs_write", {"path": "a.txt", "content": "blind"}).ok
+        assert executor.calls == []
+        assert provider.invoke("fs_read", {"path": "a.txt"}).ok
+        assert provider.invoke("fs_write", {"path": "a.txt", "content": "one\r\n"}).ok
+        assert provider.invoke("fs_write", {"path": "a.txt", "content": "two\r\n"}).ok
+        writes = [args for op, args in executor.calls if op == "fs_write"]
+        assert all("expected_sha256" in args for args in writes)
+        assert writes[0]["expected_sha256"] != writes[1]["expected_sha256"]
+        assert provider.invoke("fs_read", {"path": "b.txt"}).ok
+        dispatched = len(executor.calls)
+        assert not provider.invoke(
+            "fs_write", {"path": "a.txt", "content": "evicted"}
+        ).ok
+        assert len(executor.calls) == dispatched
+        assert provider.invoke(
+            "fs_write",
+            {"path": "new.txt", "content": "created", "expected_absent": True},
+        ).ok
+    assert (tmp_path / "a.txt").read_bytes() == b"two\r\n"
+    assert (tmp_path / "new.txt").read_bytes() == b"created"
+
+
+@pytest.mark.bootstrap_profile
+def test_workflow_write_preview_does_not_arm_observation(
+    tmp_path, workflow_file_authorization
+):
+    from tldw_chatbook.Agents.fs_read_ledger import canonical_ledger_key
+
+    provider = make_provider(root=tmp_path, allow_write=True)
+    with workflow_file_authorization.context.scope():
+        preview = provider.invoke(
+            "fs_write", {"path": "new.txt", "content": "preview", "dry_run": True}
+        )
+        assert preview.ok, preview.error
+        assert (
+            provider._read_ledger.stamp_for(
+                RUN, canonical_ledger_key(tmp_path / "new.txt")
+            )
+            is None
+        )
+        result = provider.invoke("fs_write", {"path": "new.txt", "content": "blind"})
+    assert not result.ok
+    assert not (tmp_path / "new.txt").exists()
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize(
+    "promotion_args", [{"promotion": {}}, {"proposal_digest": "forged"}]
+)
+def test_workflow_forged_promotion_cannot_bypass_write_guard(
+    tmp_path, workflow_file_authorization, promotion_args
+):
+    target = tmp_path / "AGENTS.md"
+    target.write_text("peer instructions\n")
+    provider = make_provider(root=tmp_path, allow_write=True)
+    with workflow_file_authorization.context.scope():
+        receipt = provider.invoke_detailed(
+            "fs_write", {"path": "AGENTS.md", "content": "forged", **promotion_args}
+        )
+    assert not receipt.result.ok
+    assert not receipt.dispatch_started
+    assert receipt.result.dispatch_state == "not_started"
+    assert target.read_text() == "peer instructions\n"
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("observed", [False, True])
+def test_workflow_explicit_absence_preserves_present_peer(
+    tmp_path, workflow_file_authorization, observed
+):
+    target = tmp_path / "a.txt"
+    target.write_text("peer\n")
+    provider = make_provider(root=tmp_path, allow_write=True)
+    with workflow_file_authorization.context.scope():
+        if observed:
+            assert provider.invoke("fs_read", {"path": "a.txt"}).ok
+        result = provider.invoke(
+            "fs_write", {"path": "a.txt", "content": "mine", "expected_absent": True}
+        )
+    assert not result.ok
+    assert target.read_text() == "peer\n"
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("code", ["tool_failure", "cleanup_unproven"])
+def test_workflow_write_preserves_typed_worker_failure(
+    tmp_path, workflow_file_authorization, code
+):
+    target = tmp_path / "a.txt"
+    target.write_text("old\n")
+    provider = make_provider(root=tmp_path, allow_write=True)
+    assert provider.invoke("fs_read", {"path": "a.txt"}).ok
+
+    def failed_worker(_args):
+        raise WorkspaceToolExecutionError(code, "failed operation, effects may remain")
+
+    provider._specs["fs_write"] = dataclasses.replace(
+        provider._specs["fs_write"], handler=failed_worker
+    )
+    with workflow_file_authorization.context.scope():
+        receipt = provider.invoke_detailed(
+            "fs_write", {"path": "a.txt", "content": "mine"}
+        )
+    assert not receipt.result.ok
+    assert receipt.dispatch_started
+    assert receipt.provider_terminal == local_tool_provider.LocalProviderTerminal.RAISED
+    if code == "cleanup_unproven":
+        assert receipt.result.dispatch_state == "uncertain"
+    else:
+        assert (
+            receipt.reason_code
+            == local_tool_provider.LocalToolInvocationReason.HANDLER_RAISED
+        )
+        assert receipt.result.outcome != "blocked"

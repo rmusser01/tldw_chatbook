@@ -18,17 +18,35 @@ import logging
 import re
 import traceback
 from collections.abc import Callable, Iterable, Mapping
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from tldw_chatbook.Character_Chat.character_avatar import (
-    image_backend_configured,
-    resolve_avatar,
-)
 from tldw_chatbook.DB.ChaChaNotes_DB import ConflictError
 
+if TYPE_CHECKING:
+    from tldw_chatbook.Character_Chat.character_avatar import AvatarOutcome
+
 _LOGGER = logging.getLogger(__name__)
+
+
+def image_backend_configured() -> str | None:
+    """Resolve the avatar backend only when its approval summary needs it."""
+    from tldw_chatbook.Character_Chat import character_avatar
+
+    return character_avatar.image_backend_configured()
+
+
+def resolve_avatar(
+    request: Mapping[str, Any],
+    card: Mapping[str, Any],
+    *,
+    generate: Callable[[str], bytes] | None = None,
+) -> AvatarOutcome:
+    """Resolve an avatar at the existing validated save boundary."""
+    from tldw_chatbook.Character_Chat import character_avatar
+
+    return character_avatar.resolve_avatar(request, card, generate=generate)
 
 _SEARCH_DESCRIPTION_CHARS = 160
 _SEARCH_TAGS_MAX = 20

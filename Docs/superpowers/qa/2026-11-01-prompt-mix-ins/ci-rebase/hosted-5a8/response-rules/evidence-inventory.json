@@ -1,0 +1,246 @@
+{
+  "root": "/private/tmp/mixins-5a8-ui26-diagnosis",
+  "inventory_self": "/private/tmp/mixins-5a8-ui26-diagnosis/evidence-inventory.json",
+  "self_hash": "Excluded to avoid self-reference; every other exact descendant file is listed.",
+  "files": [
+    {
+      "path": "/private/tmp/mixins-5a8-ui26-diagnosis/b110-overlay-manifest.json",
+      "role": "Exact11 baseline production Python blobs and source-loader qualification",
+      "bytes": 4358,
+      "sha256": "620eefad6582cdebf644f6803d982baee6cca559f5f4b0656db993a5fe90dd4f"
+    },
+    {
+      "path": "/private/tmp/mixins-5a8-ui26-diagnosis/b110-profile-first-events.json",
+      "role": "Condensed first missing-read/App-exception/click timing witnesses",
+      "bytes": 4522,
+      "sha256": "e69c9f6629b1d9265b6bb30a441ae23d09cd0cfc2de191a7704afeec034560ae"
+    },
+    {
+      "path": "/private/tmp/mixins-5a8-ui26-diagnosis/b110-profile.events.json",
+      "role": "Full metadata event stream from profile-induced b110 schedule",
+      "bytes": 167586158,
+      "sha256": "4d7c34e07f9630b71fe9858d4d151fafd37cac7476c376d8508e6167e31cd4bc"
+    },
+    {
+      "path": "/private/tmp/mixins-5a8-ui26-diagnosis/b110-profile.log",
+      "role": "Preserved original-case b110 failure under substantial profiling overhead",
+      "bytes": 332953,
+      "sha256": "d9e9c53c84640ff5e0302527333bab7b66cf079c9f56f76927629abdb95f4a0b"
+    },
+    {
+      "path": "/private/tmp/mixins-5a8-ui26-diagnosis/b110-python-blobs/tldw_chatbook/DB/prompt_export.py",
+      "role": "Exact b110 production Python source blob; mapping/hash also in b110-overlay-manifest.json",
+      "bytes": 9551,
+      "sha256": "baf3841e48ee38de3d4eeca56a6484c7117fa6622eecae4016415ffc45381fda"
+    },
+    {
+      "path": "/private/tmp/mixins-5a8-ui26-diagnosis/b110-python-blobs/tldw_chatbook/UI/Console_Modules/command_handoff.py",
+      "role": "Exact b110 production Python source blob; mapping/hash also in b110-overlay-manifest.json",
+      "bytes": 8344,
+      "sha256": "ea2efc96013b3b217c8ff6a5a773aacb12fdf3ff9fb660fa5c3522364393a0fc"
+    },
+    {
+      "path": "/private/tmp/mixins-5a8-ui26-diagnosis/b110-python-blobs/tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py",
+      "role": "Exact b110 production Python source blob; mapping/hash also in b110-overlay-manifest.json",
+      "bytes": 10516,
+      "sha256": "28123851b4e6b91d76d58e95a0f1213de7bcf01d2691012c154e5a5155a5423d"
+    },
+    {
+      "path": "/private/tmp/mixins-5a8-ui26-diagnosis/b110-python-blobs/tldw_chatbook/UI/Library_Modules/library_prompts_controller.py",
+      "role": "Exact b110 production Python source blob; mapping/hash also in b110-overlay-manifest.json",
+      "bytes": 238009,
+      "sha256": "59c75e7f9116538593f613c61d7710748385c2db2b349239e14866c106646db1"
+    },
+    {
+      "path": "/private/tmp/mixins-5a8-ui26-diagnosis/b110-python-blobs/tldw_chatbook/UI/Library_Modules/prompt_save_ack.py",
+      "role": "Exact b110 production Python source blob; mapping/hash also in b110-overlay-manifest.json",
+      "bytes": 7511,
+      "sha256": "5a0145975c8a984b1af5fff69a65af7e301b88649530b71ed8428b7628d306ed"
+    },
+    {
+      "path": "/private/tmp/mixins-5a8-ui26-diagnosis/b110-python-blobs/tldw_chatbook/UI/Library_Modules/screen_helpers.py",
+      "role": "Exact b110 production Python source blob; mapping/hash also in b110-overlay-manifest.json",
+      "bytes": 12594,
+      "sha256": "dbba381d92054806fbf9a1803d0281da5b11883148057fa5ad74ff22076d9db4"
+    },
+    {
+      "path": "/private/tmp/mixins-5a8-ui26-diagnosis/b110-python-blobs/tldw_chatbook/UI/Screens/chat_screen.py",
+      "role": "Exact b110 production Python source blob; mapping/hash also in b110-overlay-manifest.json",
+      "bytes": 1144117,
+      "sha256": "e4edb075a5911a3ef35e2b1a3b68f7bb494bbbc52455fcdb8f93391e476f9986"
+    },
+    {
+      "path": "/private/tmp/mixins-5a8-ui26-diagnosis/b110-python-blobs/tldw_chatbook/UI/Screens/library_screen.py",
+      "role": "Exact b110 production Python source blob; mapping/hash also in b110-overlay-manifest.json",
+      "bytes": 1771395,
+      "sha256": "1cb8f9303131434ab7d54c7261a2ca8a21f11ea04617bce32ddb9b3a45026c12"
+    },
+    {
+      "path": "/private/tmp/mixins-5a8-ui26-diagnosis/b110-python-blobs/tldw_chatbook/Widgets/Console/console_conversation_inspector.py",
+      "role": "Exact b110 production Python source blob; mapping/hash also in b110-overlay-manifest.json",
+      "bytes": 97295,
+      "sha256": "be99f066b93a9b0e5d0c9960eb45327f279bbaa538768c83650d3506ce01129c"
+    },
+    {
+      "path": "/private/tmp/mixins-5a8-ui26-diagnosis/b110-python-blobs/tldw_chatbook/Widgets/Console/console_prompts_modal.py",
+      "role": "Exact b110 production Python source blob; mapping/hash also in b110-overlay-manifest.json",
+      "bytes": 118406,
+      "sha256": "b6d0c0763df311024bb3bf975c203fcffeb344471c6a1c935342f074a5d7e832"
+    },
+    {
+      "path": "/private/tmp/mixins-5a8-ui26-diagnosis/b110-python-blobs/tldw_chatbook/Widgets/Library/library_prompts_canvas.py",
+      "role": "Exact b110 production Python source blob; mapping/hash also in b110-overlay-manifest.json",
+      "bytes": 90626,
+      "sha256": "8711b49bcbf6c3a1980a4c9e5f3dd947e530b80fd0ee89467b0b8431eb1fdffc"
+    },
+    {
+      "path": "/private/tmp/mixins-5a8-ui26-diagnosis/baseline_overlay.py",
+      "role": "Read-only baseline import loader and private blob preparation runner",
+      "bytes": 3040,
+      "sha256": "25b5ba82735bcf826f5f61d45e9fc077cf6a43f035a94d0ae7b6b47b84849f5f"
+    },
+    {
+      "path": "/private/tmp/mixins-5a8-ui26-diagnosis/commands-and-results.json",
+      "role": "Exact qualification arguments/results/node IDs and explicit limitations",
+      "bytes": 6580,
+      "sha256": "bfb3c6f5186f088e103ad75a64d49ae0fcc237d67eac470aa952dee078620030"
+    },
+    {
+      "path": "/private/tmp/mixins-5a8-ui26-diagnosis/current-exact-normal.log",
+      "role": "Original current exact node normal invocation with possible concurrency qualifier",
+      "bytes": 337,
+      "sha256": "df2c45ad4c4cdbf217c648c56d5232c17b7485946cceb8f2ec03f19ffdb7561c"
+    },
+    {
+      "path": "/private/tmp/mixins-5a8-ui26-diagnosis/current-lifecycle.log",
+      "role": "No-profiler controlled original-owner lifecycle diagnostic output",
+      "bytes": 335,
+      "sha256": "da95e934ecbd65df22b48f6708b1be277cb8fd6111266abeaba69da1dc97f58a"
+    },
+    {
+      "path": "/private/tmp/mixins-5a8-ui26-diagnosis/current-lifecycle.observation.json",
+      "role": "Exact old-owner identity/close error/resume outcome from controlled probe",
+      "bytes": 534,
+      "sha256": "bf9692dfb6323607d6cf14e072670c219e405026d56a0e28853527ac538f68d4"
+    },
+    {
+      "path": "/private/tmp/mixins-5a8-ui26-diagnosis/current-observed.events.json",
+      "role": "Early wrapper observer events, config-source representation reduced to presence flag",
+      "bytes": 4355845,
+      "sha256": "7bbe7d03d8608c298f4b25fc7072925d5148f4309dafb053f530dbd08011ab98"
+    },
+    {
+      "path": "/private/tmp/mixins-5a8-ui26-diagnosis/current-observed.log",
+      "role": "Early wrapper-observed original case output; callable-identity qualification",
+      "bytes": 336,
+      "sha256": "ba85fc5d36f65d0c73352a88869aecaa191262353fb04a547e23b16983e10f14"
+    },
+    {
+      "path": "/private/tmp/mixins-5a8-ui26-diagnosis/diagnose-initial-used.py",
+      "role": "Exact initial wrapper observer script used; full-source repr was reduced in final archived event data",
+      "bytes": 6317,
+      "sha256": "206d2df1bef7bf468ab145ad5ef0374ee7d60a2b40ed65a47ac35041aef7456c"
+    },
+    {
+      "path": "/private/tmp/mixins-5a8-ui26-diagnosis/diagnose.py",
+      "role": "Metadata-reduced wrapper observer script retained for provenance, not final GREEN",
+      "bytes": 6331,
+      "sha256": "393a98a71051588da3b45f75c7d55aa4a7029eba7255195523ba4d81f8afae0c"
+    },
+    {
+      "path": "/private/tmp/mixins-5a8-ui26-diagnosis/diagnosis.md",
+      "role": "Cause investigation and pre-edit repair proposal with baseline/overhead qualifications",
+      "bytes": 6120,
+      "sha256": "e9c878277b57d8df9c864037d6f17db6f90bc17961288f05cb75184e9a8908c5"
+    },
+    {
+      "path": "/private/tmp/mixins-5a8-ui26-diagnosis/draft-sync-baseline-proof.json",
+      "role": "Whole pre-repair faulty function AST equality at dev88af/b110/head5a8",
+      "bytes": 342,
+      "sha256": "1cb2429ecded6282a56b01c6b22511f3ac5c9adaf5a024905e4b7016e68ea18d"
+    },
+    {
+      "path": "/private/tmp/mixins-5a8-ui26-diagnosis/frozen-source-proof.json",
+      "role": "Authoritative final three owned product/test identities",
+      "bytes": 483,
+      "sha256": "b799187430fd9140628bd5b3202c6743456198397a48d3077cbce66ea266574c"
+    },
+    {
+      "path": "/private/tmp/mixins-5a8-ui26-diagnosis/historical-wave6-baseline-proof.json",
+      "role": "Read-only unchanged historical predicate/AST baseline proof; no rerun claim",
+      "bytes": 1777,
+      "sha256": "50842cf19271e84f3b6ebc5dfdaeff09aa6799acd484016c227f963621fbf467"
+    },
+    {
+      "path": "/private/tmp/mixins-5a8-ui26-diagnosis/lifecycle_probe.py",
+      "role": "No-profiler original fixture-slot diagnostic and original tree-read Event hold",
+      "bytes": 4028,
+      "sha256": "35429e7760d297561d5786ff6bdedd97696326340cb8c59c0798895b5d998fb6"
+    },
+    {
+      "path": "/private/tmp/mixins-5a8-ui26-diagnosis/lint-comparison.json",
+      "role": "Full per-file Ruff baseline/current details and exact relocated SIM102 warning",
+      "bytes": 25975,
+      "sha256": "b153d828b212932e799c547dda7fb02e100c658aafd6043ace2e2694e156b23d"
+    },
+    {
+      "path": "/private/tmp/mixins-5a8-ui26-diagnosis/original-consume-visible-handoff.py",
+      "role": "Pre-extraction original method source for exact body proof",
+      "bytes": 1376,
+      "sha256": "ad21c5ff2ae638b4ccf3e61f18703bb5c1aaf8d341347a16bbfce22235358815"
+    },
+    {
+      "path": "/private/tmp/mixins-5a8-ui26-diagnosis/permanent-red.log",
+      "role": "Valid permanent native regression RED at retired-owner read",
+      "bytes": 112290,
+      "sha256": "67e86f59cc9d9367a610f10a0dc60e6cfb85910442ae791f97d4fd7209ebbe20"
+    },
+    {
+      "path": "/private/tmp/mixins-5a8-ui26-diagnosis/post-green-source-validation.json",
+      "role": "Post-GREEN all-three frozen identity validation and owned-process stop record",
+      "bytes": 610,
+      "sha256": "440193d186a8459f4b016cf4dd84827ba138bdb666c761e2879e683de23295d0"
+    },
+    {
+      "path": "/private/tmp/mixins-5a8-ui26-diagnosis/profile_observer.py",
+      "role": "Metadata-only Python profile callback; leaves product callable identities intact",
+      "bytes": 5612,
+      "sha256": "7691036a5bcc686429549215d7b3e794760f2a8d02040a1ee4ab169753297844"
+    },
+    {
+      "path": "/private/tmp/mixins-5a8-ui26-diagnosis/repair-ast-proof.json",
+      "role": "Exact moved body, original facade args/doc, original E2E function equality",
+      "bytes": 199,
+      "sha256": "19f896e42bcb019f604af49a0e27152aaa88623cb62a8c34e90cfb80a607486e"
+    },
+    {
+      "path": "/private/tmp/mixins-5a8-ui26-diagnosis/repair-green.log",
+      "role": "Final normal-bootstrap thirteen-case GREEN on frozen repaired source",
+      "bytes": 1701,
+      "sha256": "2bd1936403d22c1eae11f90473d0a182d6e94ae731f68204ea020fdc40afe0bd"
+    },
+    {
+      "path": "/private/tmp/mixins-5a8-ui26-diagnosis/repair-static-guards.log",
+      "role": "Exact session two guards pass; unrelated historical Wave6 first failure retained",
+      "bytes": 1769,
+      "sha256": "c265dd51539a486b8ef355b7e01e327b54b1798c4debd08156f3f82bf14327fa"
+    },
+    {
+      "path": "/private/tmp/mixins-5a8-ui26-diagnosis/report.md",
+      "role": "Final repair and evidence handoff report",
+      "bytes": 5341,
+      "sha256": "89d1370107b9736f8110c79f2d88487dec275cef0d666ba38a06e6c154baeb44"
+    }
+  ],
+  "known_external_evidence": [
+    {
+      "path": "/private/tmp/mixins-5a8-ui26.log",
+      "role": "Original root-supplied hosted UI26 job log; preserved in place",
+      "bytes": 492460,
+      "sha256": "067ec5b712f6d7a6bf2a2461db0c0b35d732b5283933bfd9d5658ec8b3f0ca9b"
+    }
+  ],
+  "enumeration_scope": "Only this exact diagnosis directory and the one known root-supplied hosted log path; no broad tmp prefix scan.",
+  "verification_scope": "Normal-bootstrap targeted13 GREEN plus exact permanent RED; profile/overlay/fixture-substitution probes and historical static failures remain explicitly qualified. No full suite/startup/performance/live-provider claims.",
+  "source_frozen": "All3 owned files match final frozen identity after native GREEN; no source edit after freeze; all owned native/test subprocesses stopped."
+}

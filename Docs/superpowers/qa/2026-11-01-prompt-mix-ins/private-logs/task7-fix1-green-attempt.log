@@ -1,0 +1,18 @@
+.F                                                                       [100%]
+=================================== FAILURES ===================================
+___ test_invalid_mixin_copy_action_keeps_raw_draft_then_recovers[duplicate] ____
+Tests/UI/test_library_prompt_mixins.py:953: in test_invalid_mixin_copy_action_keeps_raw_draft_then_recovers
+    assert (
+E   AssertionError: assert 'Recovered mix-in' == 'Recovered mix-in (copy)'
+E     
+E     - Recovered mix-in (copy)
+E     ?                 -------
+E     + Recovered mix-in
+============================= slowest 25 durations =============================
+3.29s call     Tests/UI/test_library_prompt_mixins.py::test_invalid_mixin_copy_action_keeps_raw_draft_then_recovers[save_as_new]
+2.29s call     Tests/UI/test_library_prompt_mixins.py::test_invalid_mixin_copy_action_keeps_raw_draft_then_recovers[duplicate]
+
+(4 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_library_prompt_mixins.py::test_invalid_mixin_copy_action_keeps_raw_draft_then_recovers[duplicate]
+1 failed, 1 passed, 20 deselected in 7.21s

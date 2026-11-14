@@ -86,9 +86,13 @@ def check_optional_dependencies(available: Optional[Mapping[str, bool]] = None) 
 
 
 def check_database_integrity(integrity_fn: Optional[Callable[[], bool]] = None) -> DoctorCheck:
-    """Main DB integrity, via the existing PRAGMA integrity_check (AC#2)."""
+    """Main DB integrity, via the existing PRAGMA integrity_check (AC#2).
+
+    ``integrity_fn`` comes from the caller, which holds the database (ADR-250
+    section 6); without one the check reports the database unavailable.
+    """
     if integrity_fn is None:
-        integrity_fn = _default_integrity_fn
+        integrity_fn = database_integrity_fn(None)
     try:
         ok = integrity_fn()
     except Exception as exc:  # noqa: BLE001 - a check must report, not crash
@@ -138,12 +142,13 @@ def check_private_path_posture(postures: Optional[Sequence[tuple[str, bool]]] = 
 
 # --- default (impure) input gatherers, each best-effort ---------------------
 
-def _default_integrity_fn() -> bool:
-    from ..config import get_chachanotes_db_lazy
-    db = get_chachanotes_db_lazy()
-    if db is None:
-        raise RuntimeError("main database is not available")
-    return bool(db.check_integrity())
+def database_integrity_fn(db: object | None) -> Callable[[], bool]:
+    """The integrity check over ``db``; it raises when ``db`` is ``None``."""
+    def run() -> bool:
+        if db is None:
+            raise RuntimeError("main database is not available")
+        return bool(db.check_integrity())
+    return run
 
 
 def _path_is_owner_private(path: str) -> bool:
@@ -173,17 +178,20 @@ def _default_path_postures() -> list[tuple[str, bool]]:
 
 # --- orchestration + rendering ----------------------------------------------
 
-def run_doctor(*, include_network: bool = False) -> list[DoctorCheck]:
+def run_doctor(
+    *, include_network: bool = False, integrity_fn: Optional[Callable[[], bool]] = None
+) -> list[DoctorCheck]:
     """Run every check, each isolated so one failure can't abort the rest.
 
     ``include_network`` gates any check that would make a network call; none run
-    by default (AC#3). Runs regardless of config state (AC#6).
+    by default (AC#3). Runs regardless of config state (AC#6). ``integrity_fn``
+    is passed to ``check_database_integrity``.
     """
     checks: list[DoctorCheck] = []
     for name, fn in (
         ("config", check_config_load),
         ("optional-dependencies", check_optional_dependencies),
-        ("database", check_database_integrity),
+        ("database", lambda: check_database_integrity(integrity_fn)),
         ("providers", check_provider_readiness),
         ("private-paths", check_private_path_posture),
     ):

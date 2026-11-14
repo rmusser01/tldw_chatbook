@@ -115,6 +115,7 @@ cache -- the same gate every harness module uses, never a new one:
 
     RAG_EVAL=1 .venv/bin/pytest Tests/RAG_Eval/test_prf_probe_run.py -s
 """
+
 from __future__ import annotations
 
 import time
@@ -286,9 +287,7 @@ class _PointReport:
 
     def by_category(self, categories: Sequence[str]) -> tuple[_QueryPoint, ...]:
         return tuple(
-            point
-            for point in self.points
-            if point.result.category in categories
+            point for point in self.points if point.result.category in categories
         )
 
     @property
@@ -362,8 +361,8 @@ def _run_pass(
         )
     else:
         original = service_module.build_fts_match_query
-        service_module.build_fts_match_query = (
-            lambda _query, _expression=expression: _expression
+        service_module.build_fts_match_query = lambda _query, _expression=expression: (
+            _expression
         )
         try:
             result = runtime.run(
@@ -520,10 +519,7 @@ def _rarest_terms(
     for token in query_terms:
         excluded.update(_index_terms(token))
     candidates = {
-        term
-        for doc in docs
-        for term in _index_terms(doc)
-        if term not in excluded
+        term for doc in docs for term in _index_terms(doc) if term not in excluded
     }
     ranked = sorted(
         candidates, key=lambda term: (document_frequency.get(term, 0), term)
@@ -843,7 +839,11 @@ def _miss_mechanism(point: _QueryPoint) -> str:
 
 
 def _format_census(
-    rows: Sequence[_CensusRow], *, fireable_shipped: int, fireable_variant: int, regime: str
+    rows: Sequence[_CensusRow],
+    *,
+    fireable_shipped: int,
+    fireable_variant: int,
+    regime: str,
 ) -> str:
     lines = [
         f"STEP 0 — fireability census over the {len(rows)} plain-failing queries "
@@ -978,9 +978,7 @@ def _format_oracle(
             f"reach the top-{K}"
         )
     matched_deep = sum(
-        1
-        for row in rows
-        if row.rank_at_k is not None or row.deep_position is not None
+        1 for row in rows if row.rank_at_k is not None or row.deep_position is not None
     )
     lines.append(
         f"  {matched_deep}/{len(rows)} oracle expressions DO match their "
@@ -1055,9 +1053,7 @@ def _format_point(report: _PointReport, *, regime: str, with_terms: bool) -> str
         lines.append("")
         lines.append("expansion terms (this point only):")
         for point in targets:
-            lines.append(
-                f"  {point.result.query_id:<26} fed={list(point.fed_slugs)}"
-            )
+            lines.append(f"  {point.result.query_id:<26} fed={list(point.fed_slugs)}")
             lines.append(f"  {'':<26} terms={list(point.terms)}")
     return "\n".join(lines)
 
@@ -1320,9 +1316,7 @@ def test_the_prf_probe_over_the_real_fixtures(tmp_path, capsys):
 
         feed = variant if variant_active else shipped
         feed_docs = {qid: docs for qid, (_rows, docs) in feed.items()}
-        fireable = {
-            query.id: bool(feed_docs[query.id]) for query in golden
-        }
+        fireable = {query.id: bool(feed_docs[query.id]) for query in golden}
 
         hitters = {
             query.id: tuple(
@@ -1505,11 +1499,9 @@ def test_the_prf_probe_over_the_real_fixtures(tmp_path, capsys):
             f"the rescue-channel control under {selector.name!r} covered "
             f"{len(rows)} of {len(targets)} target queries"
         )
-    assert sum(
-        1 for selector, _n, _rows in oracle_runs if selector.pre_registered
-    ) == 1, (
-        "exactly one oracle row may be the pre-registered selector"
-    )
+    assert (
+        sum(1 for selector, _n, _rows in oracle_runs if selector.pre_registered) == 1
+    ), "exactly one oracle row may be the pre-registered selector"
     assert len(oracle_runs) > 1, (
         "the oracle must run under more than one selector — a single-selector "
         "ceiling reads as a property of the retrieval path, which a review "
@@ -1535,8 +1527,7 @@ def test_the_prf_probe_over_the_real_fixtures(tmp_path, capsys):
     )
     if len(reports) > 1:
         assert len(reports) == len(GRID_N) * len(GRID_M), (
-            f"the full grid ran {len(reports)} points, not "
-            f"{len(GRID_N) * len(GRID_M)}"
+            f"the full grid ran {len(reports)} points, not {len(GRID_N) * len(GRID_M)}"
         )
     for report in [*reports, *axis_reports]:
         assert len(report.points) == len(golden), (

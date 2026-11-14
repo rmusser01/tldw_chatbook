@@ -123,9 +123,7 @@ def _collect_class_records(source_paths: list[Path]) -> list[_ClassRecord]:
     return records
 
 
-def _transitive_subclass_names(
-    records: list[_ClassRecord], root: str
-) -> set[str]:
+def _transitive_subclass_names(records: list[_ClassRecord], root: str) -> set[str]:
     """Names of every class in ``records`` that (transitively) derives from ``root``.
 
     This is a name-based closure, not a real import-resolved MRO: it matches
@@ -176,7 +174,8 @@ def test_no_baseappscreen_subclass_calls_super_on_mount() -> None:
     assert violations == [], (
         "super().on_mount() over BaseAppScreen runs the parent handler "
         "twice via Textual's whole-MRO dispatch (TASK-2610/TASK-2710) -- "
-        "found: " + ", ".join(f"{module}:{cls}:{line}" for module, cls, line in violations)
+        "found: "
+        + ", ".join(f"{module}:{cls}:{line}" for module, cls, line in violations)
     )
 
 

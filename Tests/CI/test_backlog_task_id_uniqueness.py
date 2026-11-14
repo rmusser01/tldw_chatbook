@@ -131,9 +131,7 @@ def test_every_task_file_declares_a_frontmatter_id(task_files: list[Path]) -> No
         for path in task_files
         if not any(
             line.startswith("id:")
-            for line in path.read_text(
-                encoding="utf-8", errors="replace"
-            ).splitlines()
+            for line in path.read_text(encoding="utf-8", errors="replace").splitlines()
         )
     ]
     assert not missing, "Task files with no frontmatter id:\n" + "\n".join(

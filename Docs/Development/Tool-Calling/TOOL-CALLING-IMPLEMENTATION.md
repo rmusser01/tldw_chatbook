@@ -1,5 +1,7 @@
 # Tool Calling Implementation Summary
 
+> Status (2026-10-09): superseded — the widget components described here were removed; see TOOL-CALLING.md for updated tool-rendering references.
+
 **Date**: 2025-07-16
 **Author**: Claude Code
 

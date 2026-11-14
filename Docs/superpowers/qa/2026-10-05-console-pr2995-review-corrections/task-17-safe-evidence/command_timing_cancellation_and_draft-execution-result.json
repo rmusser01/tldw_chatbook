@@ -1,0 +1,88 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-vv",
+    "-p",
+    "no:randomly",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pr2995-task17-execution-1m7tpzb9/pytest",
+    "Tests/UI/test_console_video_send_freeze.py::test_the_cost_confirm_answers_its_keys_and_escape_starts_nothing[lazy-enter]",
+    "Tests/UI/test_console_video_send_freeze.py::test_the_cost_confirm_answers_its_keys_and_escape_starts_nothing[lazy-send-button]",
+    "Tests/UI/test_console_video_send_freeze.py::test_the_cost_confirm_answers_its_keys_and_escape_starts_nothing[eager-enter]",
+    "Tests/UI/test_console_video_send_freeze.py::test_the_cost_confirm_answers_its_keys_and_escape_starts_nothing[eager-send-button]",
+    "Tests/UI/test_console_video_send_freeze.py::test_another_command_runs_while_a_generation_is_in_flight",
+    "Tests/UI/test_console_video_send_freeze.py::test_a_command_whose_modal_wait_is_cancelled_ends_quietly",
+    "Tests/UI/test_console_video_send_freeze.py::test_stop_keeps_a_draft_typed_during_the_generation[enter]",
+    "Tests/UI/test_console_video_send_freeze.py::test_stop_keeps_a_draft_typed_during_the_generation[send-button]",
+    "Tests/UI/test_console_video_send_freeze.py::test_a_failed_generation_never_writes_into_the_chat_switched_to[typed]",
+    "Tests/UI/test_console_video_send_freeze.py::test_a_failed_image_batch_still_offers_a_command_its_take_left_behind",
+    "--junitxml=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-17-safe-evidence/command_timing_cancellation_and_draft-execution.xml"
+  ],
+  "exit": 0,
+  "elapsed_seconds": 70.332403291,
+  "stdout": "command_timing_cancellation_and_draft-execution.stdout",
+  "stderr": "command_timing_cancellation_and_draft-execution.stderr",
+  "log": "command_timing_cancellation_and_draft-execution.log",
+  "complete_outputs": true,
+  "pid": 50670,
+  "closed_process": true,
+  "head_after": "54a18180211ed2ecbf450db78202d28d97a7b995",
+  "source_after_unchanged": true,
+  "junit": "command_timing_cancellation_and_draft-execution.xml",
+  "cases": [
+    {
+      "classname": "Tests.UI.test_console_video_send_freeze",
+      "name": "test_the_cost_confirm_answers_its_keys_and_escape_starts_nothing[lazy-enter]",
+      "time": "8.049"
+    },
+    {
+      "classname": "Tests.UI.test_console_video_send_freeze",
+      "name": "test_the_cost_confirm_answers_its_keys_and_escape_starts_nothing[lazy-send-button]",
+      "time": "6.600"
+    },
+    {
+      "classname": "Tests.UI.test_console_video_send_freeze",
+      "name": "test_the_cost_confirm_answers_its_keys_and_escape_starts_nothing[eager-enter]",
+      "time": "5.959"
+    },
+    {
+      "classname": "Tests.UI.test_console_video_send_freeze",
+      "name": "test_the_cost_confirm_answers_its_keys_and_escape_starts_nothing[eager-send-button]",
+      "time": "5.287"
+    },
+    {
+      "classname": "Tests.UI.test_console_video_send_freeze",
+      "name": "test_another_command_runs_while_a_generation_is_in_flight",
+      "time": "6.062"
+    },
+    {
+      "classname": "Tests.UI.test_console_video_send_freeze",
+      "name": "test_a_command_whose_modal_wait_is_cancelled_ends_quietly",
+      "time": "6.951"
+    },
+    {
+      "classname": "Tests.UI.test_console_video_send_freeze",
+      "name": "test_stop_keeps_a_draft_typed_during_the_generation[enter]",
+      "time": "6.537"
+    },
+    {
+      "classname": "Tests.UI.test_console_video_send_freeze",
+      "name": "test_stop_keeps_a_draft_typed_during_the_generation[send-button]",
+      "time": "6.221"
+    },
+    {
+      "classname": "Tests.UI.test_console_video_send_freeze",
+      "name": "test_a_failed_generation_never_writes_into_the_chat_switched_to[typed]",
+      "time": "6.166"
+    },
+    {
+      "classname": "Tests.UI.test_console_video_send_freeze",
+      "name": "test_a_failed_image_batch_still_offers_a_command_its_take_left_behind",
+      "time": "5.496"
+    }
+  ],
+  "case_count": 10,
+  "failed_cases": [],
+  "skipped_cases": []
+}

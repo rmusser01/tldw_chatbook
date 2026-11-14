@@ -89,6 +89,7 @@ def prune_change_history(
         A :class:`PruneReport` of what happened.
     """
     from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+
     with acquire_storage(service._data_dir):
         if retention_days is None:
             retention_days = change_review_setting(
@@ -228,7 +229,5 @@ def run_retention_for_app(
             # thread connection before the finite worker returns.
             runs_db.close()
     except Exception:  # noqa: BLE001 -- maintenance must never crash the app
-        logger.opt(exception=True).warning(
-            "change_review: retention pass failed"
-        )
+        logger.opt(exception=True).warning("change_review: retention pass failed")
         return None

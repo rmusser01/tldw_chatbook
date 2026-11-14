@@ -1,0 +1,30 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflo  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌───────────────────────────┐┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+│ Navigat…    Collapse      │┃ Path to a local file or a URL…                                     ┃▂
+│     Import…               │┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  │
+│ ▊ Search Library…   ▎▊x▎  │  Browse…
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  │Import a file, a whole folder, or a URL. Supported: PDF documents,
+│                           │Word/Office documents, audio/video files, e-books, images, plain text
+│ ────────────────────────  │files, web pages.
+│ Browse               ▾    │
+│    Media (1)              │Imported items are searchable in your Library and can be used as
+│    Conversations (0)      │context in chat.
+│    Notes (0)              │
+│    Prompts (0) — reuse    │╭────────────────────────────────────────────────────────────────────╮
+│    Skills (1)             ││ ▶ Import behavior · analysis off                                   │
+│    Collections (0)        │╰────────────────────────────────────────────────────────────────────╯
+│    Search / RAG           │
+│ ────────────────────────  │Title (optional)       Author (optional)       Keywords (optional)    ▂
+│ Artifacts            ▾    │▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+│    All artifacts          │▊ Defaults to source╭───────────────────────────────────────────────╮▎
+│    Chatbooks              │▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁│                                               │▎
+│    Reports                │                    │ Import finished — 1 imported                  │
+│    Dreams                 │────────────────────│                                               │─
+│ ────────────────────────  │                    ╰───────────────────────────────────────────────╯
+│  ▾ scroll for more        │Queue
+└───────────────────────────┘ ▼ more — scroll for the rest
+  typing in field | esc back | after esc: r retry | F1 · F6 · Ctrl+P · Ctrl+Q

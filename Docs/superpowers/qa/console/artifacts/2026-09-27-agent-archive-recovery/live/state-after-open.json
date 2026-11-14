@@ -1,0 +1,45 @@
+{
+  "observed_at": "2026-09-27T23:51:09.090778+00:00",
+  "target": {
+    "id": "d1be8b67-5e72-4429-a3c0-465e76605271",
+    "title": "Amber itinerary conversation",
+    "workspace_id": "vault",
+    "archived": 0,
+    "version": 3,
+    "active_leaf_message_id": "51815f15-942d-4f77-9e15-0ff957dfaf40"
+  },
+  "messages": [
+    {
+      "id": "51815f15-942d-4f77-9e15-0ff957dfaf40",
+      "conversation_id": "d1be8b67-5e72-4429-a3c0-465e76605271"
+    },
+    {
+      "id": "e1ff02a1-5ed7-40b1-87c9-dea646b7d17b",
+      "conversation_id": "d1be8b67-5e72-4429-a3c0-465e76605271"
+    }
+  ],
+  "workspaces": [
+    {
+      "workspace_id": "atlas",
+      "name": "Atlas Research",
+      "active": 0,
+      "archived": 0,
+      "archive_revision": 2
+    },
+    {
+      "workspace_id": "vault",
+      "name": "Vault Trips",
+      "active": 1,
+      "archived": 0,
+      "archive_revision": 2
+    },
+    {
+      "workspace_id": "workspace-default",
+      "name": "Default",
+      "active": 0,
+      "archived": 0,
+      "archive_revision": 0
+    }
+  ],
+  "model_attempt_events": 62
+}

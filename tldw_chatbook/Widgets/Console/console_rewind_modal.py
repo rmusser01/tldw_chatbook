@@ -104,8 +104,9 @@ class ConsoleRewindModal(
         width: 76;
         height: auto;
         max-height: 32;
-        border: tall gray;
-        background: black;
+        border: tall $tldw-boundary;
+        background: $panel;
+        color: $text;
         padding: 1 2;
     }
 
@@ -141,7 +142,7 @@ class ConsoleRewindModal(
     #console-rewind-summary-disabled {
         height: auto;
         margin: 0 1 1 2;
-        color: $warning;
+        color: $text-warning;
     }
     """
 

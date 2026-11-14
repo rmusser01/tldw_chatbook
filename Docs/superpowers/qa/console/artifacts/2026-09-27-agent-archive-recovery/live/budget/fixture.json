@@ -1,0 +1,12 @@
+{
+  "title": "Cedar budget archival notes",
+  "conversation_id": "2e6b0b17-7e6f-4569-a9e6-c26675f1eb80",
+  "message_ids": [
+    "237a9a59-c7f1-4078-bae7-f003c1ae62b4",
+    "50213930-de23-4309-85ea-8a239157054e"
+  ],
+  "active_leaf": "50213930-de23-4309-85ea-8a239157054e",
+  "chat_db": "/private/tmp/archive-budget-live-764p7lar/data/task7_live/tldw_chatbook_ChaChaNotes.db",
+  "workspace_db": "/private/tmp/archive-budget-live-764p7lar/data/task7_live/tldw_chatbook_workspaces.db",
+  "user_data": "/private/tmp/archive-budget-live-764p7lar/data/task7_live"
+}

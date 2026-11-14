@@ -1,0 +1,402 @@
+{
+  "base": "5eb9a37b34a1b0af3e91ad360c0b997497ee7894",
+  "source_snapshot_sha256": "25b4892df0ec4ad861d16b8f2144b130b0f31d9a6b6380318a738a664550b066",
+  "files": [
+    {
+      "path": "Tests/Agents/test_archive_recovery_tools.py",
+      "sha256": "b998c9bd7c8fd9e89cc64c58a03ca136f549a90b39d87750e1d527d797c644cf"
+    },
+    {
+      "path": "Tests/Architecture/test_module_size_ratchet.py",
+      "sha256": "b920a57d83a4a90f16662b291d6ab8f89312fff92965b37082ed21e1bb6ef764"
+    },
+    {
+      "path": "Tests/Backup_Recovery/test_canvas_recovery_validation.py",
+      "sha256": "77f0f1e0032be74bc9028ddacd7ff59d17e50d208c67d30de0ca9aeda21a61a0"
+    },
+    {
+      "path": "Tests/Backup_Recovery/test_core_owners.py",
+      "sha256": "3fc7377284524d08332a093384e19c37cd84fb1cf780e8f8a6b2b5f46bafa692"
+    },
+    {
+      "path": "Tests/Backup_Recovery/test_operational_owners.py",
+      "sha256": "d48a8d4783e242d94be463e4d6185f12ad652b001c936b1d1a489bffe43736e3"
+    },
+    {
+      "path": "Tests/Chat/test_archive_recovery_coordinator.py",
+      "sha256": "fe00f3ea483da6966f5d36e66fed0cefd779023817677eaf5dc01322685c0b10"
+    },
+    {
+      "path": "Tests/Chat/test_archive_recovery_operations.py",
+      "sha256": "5f0c3276e276bd15ff4055c8f0d836f1c819dab0274da0e60ec9d35aebb499d4"
+    },
+    {
+      "path": "Tests/Chat/test_archive_recovery_result_store.py",
+      "sha256": "0bbf20c3d4b490cff090d0915b6ce0b323ddd22aa440fa206674b447d8e5425c"
+    },
+    {
+      "path": "Tests/Chat/test_archive_recovery_review_hook.py",
+      "sha256": "891c02aa4dea88f011cf0d8189cdb881d40a5411d624b1b1fbc4f8e3014d4ed5"
+    },
+    {
+      "path": "Tests/Chat/test_archive_recovery_search.py",
+      "sha256": "dcdb3297ec435c5e4e6734df18db1d50cabb46b0bc7c9ee3b0ff30186febe480"
+    },
+    {
+      "path": "Tests/Chat/test_console_archive_recovery_dispatch.py",
+      "sha256": "5d51a63651fe8e5f2ae1772164d7bcafe69728c12e9bd961803c088348b2d8a4"
+    },
+    {
+      "path": "Tests/Chat/test_console_archive_recovery_followup.py",
+      "sha256": "30e645357a0965eab24a631a30ba153ecddcc6e8e5503fcb811feaace9b0348a"
+    },
+    {
+      "path": "Tests/Chat/test_console_library_runtime_policy.py",
+      "sha256": "de69bbfe390cfb9bcbaf8caef670a477f0b67457ec3070e31e6e99adffb7547c"
+    },
+    {
+      "path": "Tests/Chat/test_console_trace_service.py",
+      "sha256": "4eb07afa43f334b20d6f29c3d68cc6aad10591201fac174c0fbe00634cd68f3f"
+    },
+    {
+      "path": "Tests/Chat/test_console_trace_settlement.py",
+      "sha256": "7e094e9510d1b5a1bc05f5a36b61f2171e45ccf9f3ba187184ccff8d36cbdf8f"
+    },
+    {
+      "path": "Tests/Chat/test_console_trace_sidecar_replay.py",
+      "sha256": "6d0c3da1516bce238be47fe68f74707d1d2e7e2d327b8a694321bb799d94c391"
+    },
+    {
+      "path": "Tests/Chat/test_console_trace_thinking_settlement.py",
+      "sha256": "0bf0d7d107d3edf5921be794c205947a15db1a4b36f5d188e71f0f2727b0577f"
+    },
+    {
+      "path": "Tests/Chat/test_console_viewless_hooks.py",
+      "sha256": "cb1b1e4183a2960d64cfa6c80603f45345e8697da79c642ed7455e365bdfc17f"
+    },
+    {
+      "path": "Tests/DB/test_archive_chronology.py",
+      "sha256": "dbd3c8b6b18653c47bb5ee05cfb1e772cd0eefcf9a40869e4c2543fcf71e0e11"
+    },
+    {
+      "path": "Tests/DB/test_archive_recovery_query.py",
+      "sha256": "16cb2f1e658330bfe25c938a18567ce07a50b197bd5c3e4ef17a2e61684df862"
+    },
+    {
+      "path": "Tests/DB/test_conversation_archive.py",
+      "sha256": "2e23bcbd71664d3be7fe3293c700e6b7773a1bda6ac334d0069e22a1f51c1369"
+    },
+    {
+      "path": "Tests/DB/test_migration_version_short_circuit_guard.py",
+      "sha256": "910b8b36b70d0c98bf99e7c6a49c6b013f8ef50c39cdd18e1f6d6e6f9a30381c"
+    },
+    {
+      "path": "Tests/DB/test_operation_owned_connection_retirement.py",
+      "sha256": "6ed72b82921e657c041f0976df37ba4fde64c9cd11b610d71d5376b973c96c9f"
+    },
+    {
+      "path": "Tests/DB/test_store_kernel.py",
+      "sha256": "57d82a6698c1a24c3bdc55e5fab65c45e058b92625d3925b30f4ef330e898488"
+    },
+    {
+      "path": "Tests/DB/test_workspace_db.py",
+      "sha256": "16eabd30f0d9b8ad51b9d86e4b26fc06f0a3db9780838436c244666fe4f92559"
+    },
+    {
+      "path": "Tests/Evals/test_evals_db_v5_to_v6_migration.py",
+      "sha256": "f8d1aed3cfef2b1e8c9daa09023069faec58768fd930ac8d71bb1b7ded19e6b5"
+    },
+    {
+      "path": "Tests/Library/test_library_collections_service.py",
+      "sha256": "56e1df6c44d0a94b18d8ab7c68a78b13d5cd6d8852bef7857a6db567bca7b442"
+    },
+    {
+      "path": "Tests/Performance/test_textual_css_fastpath.py",
+      "sha256": "c08c253f05d735340964be0aed4e219bd16ab327f400a82f47227772b9b7c231"
+    },
+    {
+      "path": "Tests/UI/test_artifacts_dreams_question_track.py",
+      "sha256": "5e456c9e20a9e6c74025e4083c6166a0fbf5845fb1849277548e65c89cd016c9"
+    },
+    {
+      "path": "Tests/UI/test_console_archive_recovery_cards.py",
+      "sha256": "fe3c0d520aef3f500db806621262bdb834961800471d3c39a58e4d0937e81d99"
+    },
+    {
+      "path": "Tests/UI/test_console_archive_recovery_flow.py",
+      "sha256": "12cef161dd12eb5dab124acf55070adc3ad1db2a5c4a6eea13084f29b8fa6026"
+    },
+    {
+      "path": "Tests/UI/test_console_conversation_archive_flow.py",
+      "sha256": "d8b739221d724dc164dbbf7b065c63ebfd3e9cfa4109e1f2e54e3b2a83438cbc"
+    },
+    {
+      "path": "Tests/UI/test_console_runtime_ownership.py",
+      "sha256": "0e312e3e4bbdcbd173fd1a2844649642dbcf3f27e9a52bde9f2069e11922de09"
+    },
+    {
+      "path": "Tests/UI/test_workspace_archive_review_regressions.py",
+      "sha256": "e82f9559b829f4cd0cb572df9fd43a6ed7b6aedf25c290218e57b4d33bf5af0a"
+    },
+    {
+      "path": "Tests/Workspaces/test_workspace_registry_service.py",
+      "sha256": "3690762c532aa7d0ecbd4ab50924466ca83433d7b4f2e045f4150a441bfa2d41"
+    },
+    {
+      "path": "scripts/index_plan_pin_census.tsv",
+      "sha256": "bcf97858ca66dbfa3e1cc725d09a59f1d63b8bce9f42ce3f90d500e4d9d1770b"
+    },
+    {
+      "path": "tldw_chatbook/Agents/agent_runtime.py",
+      "sha256": "5e2abe4c81722d9ee89e24f684edace804683ff9fc436c23307a16b4f07d328a"
+    },
+    {
+      "path": "tldw_chatbook/Agents/agent_service.py",
+      "sha256": "213fe874c3ba2bfe4aef3c0de8d98ed2bc3e696ea549e43ad01e9683b540f6b7"
+    },
+    {
+      "path": "tldw_chatbook/Agents/archive_recovery_tool_provider.py",
+      "sha256": "df28c652f5a85a998c0968f19ab36cace553f0f47c9588f2583e7655a60d7a71"
+    },
+    {
+      "path": "tldw_chatbook/Agents/tool_catalog.py",
+      "sha256": "8183ed8076eeba86200e749d1f44196c4fa9008e31c8c67604d99fb98c4b24fb"
+    },
+    {
+      "path": "tldw_chatbook/Backup_Recovery/sqlite_validation.py",
+      "sha256": "3c6533ea40f93a05797ba677c623f32e1734f95d7c7cc9899701a9e9aeac87b4"
+    },
+    {
+      "path": "tldw_chatbook/Chat/archive_recovery/__init__.py",
+      "sha256": "e51f696739ecc6da3a454ab641894af5417a21dffe3e8b80f67ca193e1880a85"
+    },
+    {
+      "path": "tldw_chatbook/Chat/archive_recovery/contracts.py",
+      "sha256": "301c7a67b76c77f15fd67af448fbcb0167d6b2ff533f2efb732eb6cf7135a32b"
+    },
+    {
+      "path": "tldw_chatbook/Chat/archive_recovery/coordinator.py",
+      "sha256": "5641afc868cdd83521fe9a7086be556e313064dc2f1b37bf79e39e1e7738b5c9"
+    },
+    {
+      "path": "tldw_chatbook/Chat/archive_recovery/operations.py",
+      "sha256": "a0c661e3a03a98184ec68ebe7dd24b6b66f8b13dba41e3c87352f8f09c7bcb89"
+    },
+    {
+      "path": "tldw_chatbook/Chat/archive_recovery/result_store.py",
+      "sha256": "d9d27c53957bea3a5f566c7e3f51e40c71d6e95c09d6daabdf763f97fcb70034"
+    },
+    {
+      "path": "tldw_chatbook/Chat/archive_recovery/runtime.py",
+      "sha256": "57731c8cb663275a0574842f652af6f70165be8598b5cc156ea6b88e9c1ceab7"
+    },
+    {
+      "path": "tldw_chatbook/Chat/archive_recovery/search_service.py",
+      "sha256": "031ae909cf8a5b19d4c2e45182113280db4699b474176fc51d22279219d4a75c"
+    },
+    {
+      "path": "tldw_chatbook/Chat/chat_conversation_service.py",
+      "sha256": "f849c27d44da10c419a452c502a1b720f4013da2e64d17fe9a903afd7a52da4c"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_agent_bridge.py",
+      "sha256": "3fd7c38e8bcad2b20ce3307653cd0fd68ccb96fbe85fcf1561396df64d545652"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_chat_controller.py",
+      "sha256": "006622dd62aefcc9d6a64ad614b012d60d8a8ba966ae50296cc3efe54846c112"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_interrupt_rounds.py",
+      "sha256": "4df230c7333c11891b85b437329211f77bb3a7b38e3f0a0e5a59bf1164333111"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_received_dispatch.py",
+      "sha256": "541443ee08399d327021d4bac11d4a67ef88d21b10f49e7c80126a77b9e5031d"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_received_intent.py",
+      "sha256": "ead887070dbc22bdf147b4c25fa622ba7101608bf1a98d0c83e17208a81f561f"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_runtime.py",
+      "sha256": "760c50d9ce93504581d44747b76e1ed17a318d303fda9cee1b6d17326a03683c"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_semantic_revision.py",
+      "sha256": "5cfe202a5f14262148a7be71ec9b1b3b674d005a0e1815dcc8f99912eebd179f"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_trace_service.py",
+      "sha256": "62f553d3b5cef99cd6f5919d4f5d6308aebfd6e123fcc0f7eb3ef9c018bb42d3"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_turn_context.py",
+      "sha256": "fcecf8b1048e8020b1ad03f93c5a44f337fa61f185bc70aa27d70744a0225b1a"
+    },
+    {
+      "path": "tldw_chatbook/DB/ChaChaNotes_DB.py",
+      "sha256": "0715631b8b51f435be29c84d1b5cd73c394b4dd0d743c808f69e6a59e6e96c4a"
+    },
+    {
+      "path": "tldw_chatbook/DB/Dreams_DB.py",
+      "sha256": "201030d9a7da9d054b22e20da38e65f43f56ff3dbcfe2b163a3b3f3ddaa7ee8a"
+    },
+    {
+      "path": "tldw_chatbook/DB/Workspace_DB.py",
+      "sha256": "8a9555401682db7d009750f7be19b0e022301faae7653b36985337b5b0236b38"
+    },
+    {
+      "path": "tldw_chatbook/DB/base_db.py",
+      "sha256": "56a8477ca207c3a160c5a4c7a74e1cbecd0af27cc91dab9cf4429b02ebffe687"
+    },
+    {
+      "path": "tldw_chatbook/DB/conversation_archive_queries.py",
+      "sha256": "9557ebb334097e2d800d560fe87c7aecfb0c7423ebe0be1e5a8e80c17794a934"
+    },
+    {
+      "path": "tldw_chatbook/DB/recovery_core.py",
+      "sha256": "bb72a9752e0328e19616023248ee5e965693a2b880a092748f34a627e72a7460"
+    },
+    {
+      "path": "tldw_chatbook/DB/recovery_core_schema.py",
+      "sha256": "128319592084213d587702b0e5a27d241f2c4b4ebb8c1c65f86349d1118e1aad"
+    },
+    {
+      "path": "tldw_chatbook/DB/recovery_operations.py",
+      "sha256": "082a556a44e594e11f05299e3d5efe30f0a5d61a8446ed889eddb0d7d60eb7a5"
+    },
+    {
+      "path": "tldw_chatbook/DB/store_kernel.py",
+      "sha256": "d7178baedf1651e8435c506164c8ac6c558ea0abef08f761d2c4b839af8056f2"
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/archive.py",
+      "sha256": "84f375a6def05606f392b68d8b25b5c96845da9f30282d314c2f3287c732a002"
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/archive_recovery.py",
+      "sha256": "93a4b34c4c996f4552b924a6121411c58f35de02a2a05111e8943ecb6e44b4a1"
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/prompt_queue.py",
+      "sha256": "cddf6aca4f5fa7ca8085fdb9ab3ef5d80acaf620e5633de4899e28734c0e12dd"
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/wiring.py",
+      "sha256": "d3df89ff6c90b6c358e183d10fa606d9bc5635386ead887a4a40a635b3c45423"
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/workspace.py",
+      "sha256": "aefe62c45cc576823c519d6527cc56fd740d252cb2623b9bf3b644390ee64231"
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/artifacts_dreams_modal.py",
+      "sha256": "6760c6e18125147c0b566eb2ebdb0ab2734914b7624cc9ad5327196a412dcd3a"
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/artifacts_screen.py",
+      "sha256": "7eeb06c659672c7160749eea12955ed716f7e0992e988b952d6d5edd1f915236"
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/chat_screen.py",
+      "sha256": "04e50d9a176c687082c09099c19e742cbbfd04c79196294e419ffa6d7a92bb01"
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/settings_screen.py",
+      "sha256": "647ca5a63267114d70de7d4075d72ccd3fca37b45257158cafe1e098c456c86d"
+    },
+    {
+      "path": "tldw_chatbook/UI/Settings_Modules/workspace_archive.py",
+      "sha256": "7d487723f00284c52dcfb3913d087eb2e48ef655e860a815536b67a90f9c48d5"
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Chat_Widgets/archive_recovery_cards.py",
+      "sha256": "73dd384559576c65571360c1617eb95e060d919ae4e34b4075b9b9c8d7a35edd"
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Console/console_composer_bar.py",
+      "sha256": "8578fad87af86771cb94effbfab95d43c8c409de3ecd823104cf2256b1e63964"
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Console/console_transcript.py",
+      "sha256": "7484af949011d3e158571b4b284ae1eaaf56c2ae4b2da82bfa1f6bc73e87c020"
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Library/library_skill_work_pane.py",
+      "sha256": "bcc330811eb8c3d61d02f5d943d0f42e857039672649747227ef801137190fdc"
+    },
+    {
+      "path": "tldw_chatbook/Workspaces/models.py",
+      "sha256": "1851ba59778c4ec031064d95bbba60f2af0bb4ff4bd8c40a94db1c94e8192b96"
+    },
+    {
+      "path": "tldw_chatbook/Workspaces/registry_service.py",
+      "sha256": "831b76162d2f1729f73522b1a54de17ab7509cd1a22d5189258de5fb28ce7db5"
+    },
+    {
+      "path": "tldw_chatbook/css/components/_agentic_terminal.tcss",
+      "sha256": "7baa877b43fe990a411e77cbc5405870be45ed3408e3ae11fb3b2c1335df885d"
+    },
+    {
+      "path": "tldw_chatbook/css/components/_settings_splash_theme.tcss",
+      "sha256": "7dfa65e15c32b1063b2da981a8e8c35308c63d2a5f5356964b32f7943cf68d7e"
+    },
+    {
+      "path": "tldw_chatbook/css/core/_variables.tcss",
+      "sha256": "1d0435fbace848dfbefa100a6ec8bee688cbdafabdd9ed6e541e5401d9ca1241"
+    },
+    {
+      "path": "tldw_chatbook/css/features/_console.tcss",
+      "sha256": "460f768b6d9f01e9bf1fee1cc7f0538880a80ea723c79e3265203381ba35a65d"
+    },
+    {
+      "path": "tldw_chatbook/css/features/_library_panels.tcss",
+      "sha256": "31460fd26c71918e0435fdca72102c894a479b17aa288539e2032fc35fe106cc"
+    },
+    {
+      "path": "tldw_chatbook/css/features/_wizards.tcss",
+      "sha256": "f28fee473354ea9b4fbf8f8444cfb16fd0fe7479a1de70fdd3e894abecd2a9a9"
+    },
+    {
+      "path": "tldw_chatbook/css/features/_workflows.tcss",
+      "sha256": "d71d706b5f367efa6988a1003bb096f3b4312996a8aa087129968d97ebb1cde9"
+    },
+    {
+      "path": "tldw_chatbook/css/screen_agentic_library.tcss",
+      "sha256": "04aab2b0045143dfadbc9135a7f5aab19d0348755b5baacb104abbe5273f8eef"
+    },
+    {
+      "path": "tldw_chatbook/css/screen_agentic_settings.tcss",
+      "sha256": "d8f42d3b5c3957de1e872bb3c5030df2b1a52f1cad8462c5450b2279b6e87186"
+    },
+    {
+      "path": "tldw_chatbook/css/screen_feature_evals.tcss",
+      "sha256": "cd87b165ebb0b3643f957f1d57f2cd538c4c1e8d6e4652d9c732eb44437f0262"
+    },
+    {
+      "path": "tldw_chatbook/css/screen_feature_roleplay.tcss",
+      "sha256": "690615bb5504d4a4f49f274cabb2a4e1bfe8b7c7db20929f9ddf16c2cf6d7330"
+    },
+    {
+      "path": "tldw_chatbook/css/screen_feature_scheduling.tcss",
+      "sha256": "ade32b87196281de2a169147d0c88782bd9ed96dbe6a4f38b27a0bc31aab43ee"
+    },
+    {
+      "path": "tldw_chatbook/css/screen_feature_watchlists.tcss",
+      "sha256": "c2e0496af89926474f625ce9cb86366121e41729f46eaece9088e72eabb62867"
+    },
+    {
+      "path": "tldw_chatbook/css/screen_feature_workflows.tcss",
+      "sha256": "39a31777b5b470bba1048fe73dd413b8e8770c12fb30cf30ae72bd48581e8311"
+    },
+    {
+      "path": "tldw_chatbook/css/screen_modal_console_delete_receipt.tcss",
+      "sha256": "419ae1c9b39714c3e975479e02806836097db8e3b3fc60fb744faed8f059b88c"
+    },
+    {
+      "path": "tldw_chatbook/css/tldw_cli_modular.tcss",
+      "sha256": "115a3644e177930708887ce842fe92f4414e3c56573ccdbc13240bfc83748813"
+    }
+  ]
+}

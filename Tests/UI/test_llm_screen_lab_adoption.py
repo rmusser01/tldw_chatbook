@@ -2881,7 +2881,7 @@ def test_audio_cpp_transfer_failures_map_to_bounded_inline_recovery(
 ):
     """Typed transfer failures select recovery without leaking collaborator text."""
     from tldw_chatbook.Model_Artifacts import acquisition as acquisition_module
-    from tldw_chatbook.UI.Screens.model_browser_state import install_failure_message
+    from tldw_chatbook.Model_Artifacts.model_browser_state import install_failure_message
 
     code_type = getattr(acquisition_module, "TransferFailureCode", None)
     assert code_type is not None
@@ -2908,7 +2908,7 @@ def test_audio_cpp_transfer_failures_map_to_bounded_inline_recovery(
 def test_ambiguous_transfer_text_cannot_promote_a_typed_recovery_claim() -> None:
     """Unknown code stays generic even when private text contains size/offline words."""
     from tldw_chatbook.Model_Artifacts import acquisition as acquisition_module
-    from tldw_chatbook.UI.Screens.model_browser_state import install_failure_message
+    from tldw_chatbook.Model_Artifacts.model_browser_state import install_failure_message
 
     code_type = getattr(acquisition_module, "TransferFailureCode", None)
     assert code_type is not None
@@ -4931,7 +4931,7 @@ async def test_open_installed_exact_row_focus_wins_real_window_switch(
 ):
     """The handoff focus must run after Installed's standard focus restore."""
     from tldw_chatbook.Model_Artifacts.service import ArtifactRef
-    from tldw_chatbook.UI.Screens.model_browser_state import InventoryRow
+    from tldw_chatbook.Model_Artifacts.model_browser_state import InventoryRow
     from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
     from tldw_chatbook.UI.Screens.model_remote_view import RemoteView
 
@@ -6513,7 +6513,7 @@ def _task6_stub_preflights(screen):
 def _task6_show_unmanaged_row(installed, source):
     """Render one real external-GGUF row without starting inventory I/O."""
     from tldw_chatbook.Model_Artifacts.service import ArtifactDiskUsage
-    from tldw_chatbook.UI.Screens.model_browser_state import (
+    from tldw_chatbook.Model_Artifacts.model_browser_state import (
         UnmanagedRow,
         inventory_rows,
     )

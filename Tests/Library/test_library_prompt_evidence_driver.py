@@ -25,9 +25,7 @@ def _isolated_env(root: Path, scratch: Path) -> dict[str, str]:
     env.update(
         {
             "PYTHONPATH": os.pathsep.join(
-                part
-                for part in (str(root), env.get("PYTHONPATH", ""))
-                if part
+                part for part in (str(root), env.get("PYTHONPATH", "")) if part
             ),
             "TASK22033_SCRATCH_ROOT": str(scratch),
             "TASK22033_DATA_DIR": str(scratch / "prompt-data"),
@@ -145,9 +143,7 @@ def test_prompt_evidence_host_closes_database_after_failure(monkeypatch) -> None
     monkeypatch.setattr(runner, "LibraryProductionCSSHarness", FakeHarness)
 
     async def fail_inside_host() -> None:
-        async with runner._run_seeded_host(
-            SimpleNamespace(), database, size=(80, 24)
-        ):
+        async with runner._run_seeded_host(SimpleNamespace(), database, size=(80, 24)):
             raise RuntimeError("journey failed")
 
     with pytest.raises(RuntimeError, match="journey failed"):

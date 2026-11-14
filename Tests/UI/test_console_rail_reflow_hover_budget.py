@@ -78,7 +78,9 @@ async def test_reconcile_passes_that_move_nothing_keep_the_hover_row(
             f"\n[t22221 hover] {PASSES} no-op reconcile passes: "
             f"hover_cleared={cleared}, tooltip_recomputes={len(tooltips)}"
         )
-        assert cleared == 0, f"hover cleared on {cleared}/{PASSES} passes that moved nothing"
+        assert cleared == 0, (
+            f"hover cleared on {cleared}/{PASSES} passes that moved nothing"
+        )
         # A tree that did not move costs the leg nothing at all.
         assert tooltips == [], tooltips
 

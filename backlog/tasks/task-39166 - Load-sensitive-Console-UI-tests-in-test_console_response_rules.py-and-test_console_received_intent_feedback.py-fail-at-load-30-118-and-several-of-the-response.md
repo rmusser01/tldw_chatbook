@@ -1,0 +1,155 @@
+---
+id: TASK-39166
+title: "Load-sensitive Console UI tests in test_console_response_rules.py and test_console_received_intent_feedback.py fail at load 30-118, and several of the response-rules nodes are UI census entries"
+status: Done
+assignee:
+- '@claude'
+created_date: 2026-11-08 06:54
+updated_date: 2026-11-10 22:04
+labels:
+- follow-up
+- tests
+- console
+- flaky
+- ci
+priority: low
+references:
+- Tests/UI/test_console_response_rules.py
+- Tests/UI/test_console_received_intent_feedback.py
+- scripts/ui_pr_gate_census.txt
+dependencies:
+- TASK-36511
+- TASK-38948
+- TASK-38977
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+Found in round 12 of the 2026-10-23 burn-down (TASK-38977 and TASK-38948 on round-12 branch fu/r12-ctests). The evidence is from their notes. The census entries were checked on the round-12 stack 9091820bf2, 2026-11-08.
+
+**`test_console_response_rules.py`.**
+- Nine whole-file runs at `-n 4` and load 32-98 each failed 1-6 of these (TASK-38977's notes):
+  - `test_fixture_failure_retires_held_transport[primary|helper]`;
+  - `test_console_syncs_never_wait_for_a_config_rebuild[full-ui-held|full-ui]`;
+  - `test_console_mount_refreshes_never_wait_for_a_config_rebuild[roleplay|mount]`.
+- Base, at load 52-75, failed the same four tests.
+- The coordinator's list also names `test_rule_phase_events_project_only_the_mounted_current_session[rebuild]` from the same runs.
+- TASK-36511's notes saw `test_fixture_failure_retires_held_transport[primary]` flake on its base too.
+- Several are UI census entries (`scripts/ui_pr_gate_census.txt`):
+  - `test_console_syncs_never_wait_for_a_config_rebuild`;
+  - `test_console_mount_refreshes_never_wait_for_a_config_rebuild[mount]`, `[view-start]` and `[roleplay]`;
+  - `test_fixture_failure_retires_held_transport`;
+  - `test_rule_phase_events_project_only_the_mounted_current_session`.
+
+  PR runs have been green, so the risk is a loaded runner.
+
+**`test_console_received_intent_feedback.py`.** Ten runs at load 93-118 failed 1-6 per run, each on its own 15 s bounded wait (TASK-38948's notes):
+- `test_pressed_capture_survives_identical_retyping_before_promotion`;
+- `test_enter_sends_pressed_body_after_clear_and_type_before_paint_dispatch`;
+- `test_navigation_after_receipt_…`;
+- `test_send_feedback_survives_preparation_and_provider_wait`.
+<!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [x] #1 For each listed node, the step that misses under load is named from its own failure: which wait, and which state it was waiting for, or, for a node that did not fail in at least 30 whole-file runs at load 40 or more, every candidate wait is converted to a bounded wait on its state that fails naming that state
+- [x] #2 Each node waits on the state it reads, with a bound that fails naming that state; no latency budget is loosened to make it pass
+- [x] #3 Both files pass 10 of 10 whole-file runs at `-n 4`, with load recorded, at least five of them at a one-minute load of 40 or more
+<!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Reproduce each listed node under load (whole files at `-n 4`, runs in parallel to raise the load) and name, from its own traceback, the wait that missed and the state it waited for.
+2. `test_console_response_rules.py`: replace the fixed-time watchdogs (2 s / 5 s from the hold's start) with a detector of the state they stand for, a UI loop that stops running callbacks while the rebuild holds config; let the holders hold until the test releases them; turn the bare `asyncio.timeout` waits on events and flags into named bounded waits; bound the held-transport test's teardown, not its mount.
+3. `test_console_received_intent_feedback.py`: per the failures found in step 1, wait on each turn's own end condition with a bound that names it.
+4. Keep every latency budget (the mount test's five-second after-release delivery budget, TASK-38948's 100 ms send budget, which this task does not touch).
+5. Red evidence: the old tests failed under load (step 1); a temporary product edit that makes a display sync wait for the rebuild still fails the converted tests on the new detector.
+6. Both files 10 of 10 whole-file runs at `-n 4`, load recorded, at least five at load 40 or more.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Base dev ae9f9e8d21, 2026-11-10. Test-only changes in both files. One listed node, `test_console_mount_refreshes_never_wait_for_a_config_rebuild[roleplay]`, now fails on a real product wait (below), so AC#1 and AC#3 are not fully met and the task stays In Progress.
+
+**AC#1: what missed, from each node's own failure.** All runs were whole files at `-n 4` through run.sh. Runs went in parallel to raise the load; 1-minute load is given.
+- `test_fixture_failure_retires_held_transport[primary|helper]`. The outer `asyncio.timeout(10)` ran out inside `host.run_test()` while it awaited `app_ready_event`. That is the mount, before the test's first step. Both cases failed in every run that listed failures by name: 2 of 2 runs at load 54-60 before the change, 4 of 4 base runs at load 67-99.
+- `test_console_syncs_never_wait_for_a_config_rebuild[full-ui-held|full-ui]`. The 2 s `threading.Timer` started with the hold fired: "full-ui-held sync waited 2.943s / 3.008s / 3.083s" and "full-ui sync waited 2.465s / 2.357s", at load 25-68. Every stack it recorded ended in `selectors.select`. The loop was idle: the sync was slow, not waiting.
+- `test_console_mount_refreshes_never_wait_for_a_config_rebuild[mount]`. "the UI loop did not progress during the hold" (7 < 15). The observation loop stopped at its fixed 2 s deadline after 7 `asyncio.sleep(0.05)` turns, at load 45-58.
+- `test_console_mount_refreshes_never_wait_for_a_config_rebuild[roleplay]`. A real UI-thread wait, but a harness-only one. The hold began at the `_sync_console_identity_surfaces` entry, before `CompactModelBar.on_mount`. That `on_mount` took its direct-read route: `get_cli_providers_and_models()` -> `load_settings()` -> the config-participant lock loop, which is the recorded stack.
+  - A temporary probe showed `_capture_setup` returning None in compose, with `_sources_current()` True and no hold yet. `ConsoleHarness` hosts `ChatScreen` on its own App, so `widget.app is not app_instance`. In production the bar reads off the loop.
+  - Seen in 1 of 2 whole-file runs at load 54-60, 4 of 8 base runs of the node alone at load 32-38, and 12 of 12 probed node runs at load 45-58.
+- `test_rule_phase_events_project_only_the_mounted_current_session`. `[maintenance]` failed once on base, at load 67-90, on the `asyncio.timeout(2)` wait for the attach reconcile and its control-bar sync (`:462`). `[rebuild]` runs the same step before its deferral branch. It did not fail in about 10 runs here, so its own failure is not recorded.
+- `test_pressed_capture_survives_identical_retyping_before_promotion[True]`. It failed at `:744`, the 15 s wait for the turn's custody to clear after the held read was released. That was 1 of 6 runs at load 54 rising to 101-110.
+- Not reproduced: `test_enter_sends_pressed_body_after_clear_and_type_before_paint_dispatch`, `test_navigation_after_receipt_…` and `test_send_feedback_survives_preparation_and_provider_wait`. None of them failed in 9 runs before the change (load 25-110) or in 11 runs of a base copy (load 59-99). TASK-38948's notes name their 15 s bounded waits. They were converted by shape: their 15 s custody waits, and in the feedback test the provider-entry wait and the provider's own `release.wait(15)`.
+
+**AC#2: what changed.**
+- `test_console_response_rules.py`:
+  - `_UiLoopWatch` replaces the fixed-time watchdogs in the rule-phase, syncs and mount tests. It posts a callback to the loop every 50 ms. It fires only when one has not run in 10 s, records the loop thread's stack, and releases the hold.
+  - The holders hold until the test releases them (60 s patience) and no longer end the hold on their own after 5-10 s.
+  - Waits on events and flags use `_until`/`_until_set`, a 30 s bound that fails naming the state.
+  - The held-transport test bounds only its teardown (a rescheduled `asyncio.timeout`), not the mount.
+  - The mount test observes the hold until 15 loop turns and the expected deferral, with a 30 s bound, instead of for a fixed 2 s.
+  - The harness's compact-bar reads, only from `CompactModelBar.compose` and `on_mount` frames, get providers read before the hold.
+  - `test_workspace_command_opens_same_manager_in_registered_scope` was not listed but failed 2 of 10 runs: `workers.wait_for_complete()` raised `WorkerCancelled` when a newer sync replaced a worker. It now waits until the activation's workers have finished, cancelled ones included.
+- `test_console_received_intent_feedback.py`:
+  - `_turn_settles` waits for the released turn's own task, then for its custody to clear. Each wait has a 60 s bound and fails naming its state.
+  - The provider-entry wait ends when the provider is entered or the turn ends, and names which.
+  - The provider's own `release.wait` is 60 s, so it cannot fail a run that otherwise passes.
+  - The remaining `_until` asserts name their state.
+- Unchanged:
+  - the mount test's five-second after-release delivery budget;
+  - the 2 s Sending-frame and 5 s run-segment waits;
+  - `test_actual_send_paints_sending_and_accepts_input_within_100ms`.
+- The 2 s and 5 s timers were block detectors misreading slowness, not budgets: their recorded stacks were idle in `select`.
+
+**Red evidence.**
+- Before the change: the failures listed under AC#1.
+- A temporary `load_settings()` at the top of `ChatScreen._sync_console_control_bar` failed all six config-hold nodes on the watch, at load 49-60: `syncs[full-ui|full-ui-held]`, `mount[mount|roleplay]` and `rule_phase[rebuild|maintenance]`. Each stack named `chat_screen.py _sync_console_control_bar -> load_settings`.
+- A fixture that never releases the held transport (a temporary edit of `response_rules_fixtures.py`):
+  - `[primary]` failed `assert release.is_set()`.
+  - `[helper]` hung to the 300 s pytest timeout in `owner.dispose()`. No asyncio bound in the test escapes that wait; the old 10 s bound sat on the same await.
+
+**AC#3.**
+- `test_console_received_intent_feedback.py`: 11 of 11 whole-file runs at `-n 4`, at load 44-91; every run started and ended at load 44 or more.
+- `test_console_response_rules.py`: 13 runs at load 44-80. Every listed node except `mount[roleplay]` passed every run.
+  - `[roleplay]` failed 8 of 13 runs. Each failure was the watch's stack on a product wait: `ConsoleComposerBar.on_mount` runs `PromptHistory.load()` on the loop. `FileJob(self, "prompt_history")` calls `raw._async_source_selection` -> `default_prompt_history_path()` -> `get_user_data_dir()`, which takes the rebuild lock (`config_participants.py:427`) on the UI thread.
+  - Removing the harness-only compact-bar wait let the hold reach this second wait. Alone it failed 5 of 15 at load 35-45, against base's 4 of 8 at load 32-38 on the compact-bar wait, so the node is no flakier than on base.
+- The fix is product code (resolve the history path off the loop), so it is left for the coordinator (NEEDS_CONTEXT). This node is a UI census entry.
+
+**Files.** `Tests/UI/test_console_response_rules.py`, `Tests/UI/test_console_received_intent_feedback.py`, `backlog/docs/lessons-testing-evidence.md` (new entry).
+
+**Parent's combined runs (2026-11-10, for TASK-38977 AC#1).** Ten runs of this file and `test_console_prompts_modal.py` in one `-n 4` invocation, at load 36-47: 4 passed. `[roleplay]` failed 4 times on the `PromptHistory` wait above. `test_rule_phase_events_project_only_the_mounted_current_session[rebuild]` failed once, on the watch, with a second UI-thread config read: `_sync_console_native_session_tabs` -> `_maybe_show_fleet_coachmark` -> `_ensure_console_chat_controller` -> `_sync_console_chat_core_state` -> `_build_console_provider_selection_uncached` -> `_provider_readiness_app_config` -> `load_settings()` -> the participant lock loop (`config_participants.py:427`). Whether the real app routes that read the same way under `ConsoleHarness`'s own App was not checked. Two unlisted nodes also failed and were not captured: `test_actual_stop_after_generation_cancels_rule_check` (3 of the first 3 runs, 0 of the next 7; it waits a fixed 60 and 10 `pilot.pause()` turns) and, in the prompts file, `test_preservation_veto_retains_candidate_in_review_and_tamper_blocks_apply` (once).
+
+**Round 2 (2026-11-10, coordinator ruling: fix the product).**
+- **`PromptHistory` path off the loop.** `prompt_history._resolve_default_path_off_loop()` re-resolves the default path on a worker thread (`asyncio.to_thread`) until the kept path matches its inputs, and `PromptHistory._file_job()` awaits it before every `FileJob` (exact class only, as the source selection checks). The file job's selection on the loop then hits the kept path. New test `Tests/Backup_Recovery/test_prompt_history_path_memo.py::test_a_load_during_a_config_rebuild_never_waits_on_the_ui_loop` (laned, pr-fast-lane): red before, deterministically ("the history load waited on the UI loop for the config rebuild"), green after. `[roleplay]` as 8 temporary copies, two concurrent `-n 4` runs: before 12 of 16 failed at load 54-59, every stack in `default_prompt_history_path`; after 16 of 16 passed at load 57-60.
+- **Fleet coach-mark (`[rebuild]`).** Traced: the real app reaches it. Every tab sync calls `_maybe_show_fleet_coachmark`; on the 1 -> 2 session transition it read `_ensure_console_chat_controller().max_parallel_runs`, which resyncs the provider selection, and `_provider_readiness_app_config` calls `load_settings()` live whenever the snapshot is disk-loaded, as `TldwCli.app_config = load_settings()` is. The show is now a module-level `_show_console_fleet_coachmark` under `spend.retry_after_config_rebuild` (0.2 s retry while a rebuild holds config); the transition check stays synchronous. ChatScreen's method ceiling (741) refused a new method, and wrapping the whole method instead deferred every tab sync's bookkeeping, which the mount-refresh test (rightly) counted as an unfinished retry: 3 of 3 mount cases failed every run, so that version was replaced. New case `test_console_syncs_never_wait_for_a_config_rebuild[coachmark]` (census entry, all params): red before with the `[rebuild]` stack, green after, and the banner shows after release.
+- **Remaining nodes in this file.**
+  - `test_actual_stop_after_generation_cancels_rule_check`: the step that missed was the click. The old shape clicked as soon as the held assessment was entered; 1 of 24 temporary copies failed `assert await case.pilot.click(...)` (False: the Stop button was not under the pointer yet), 24 of 24 new-shape copies passed (load 38-56). It now waits for the button under the pointer, then for the cancel (phase idle) before releasing, then for composer focus. A temporary never-cancelling `rules.cancel` fails on "Stop cancelling the held rule check (phase idle): not within 30 s".
+  - `test_fixture_failure_retires_held_transport[helper]`: `ConsoleRuntime.dispose()` waits out helpers by design ("Helpers and admitted rule SQL outlive logical cancellation and grace", re-raising the cancel afterwards), so it is not a product defect; the test now frees an unreleased hold itself after its 30 s bound and fails naming it. With a temporary fixture that never releases: `[helper]` failed in 41 s ("the fixture's teardown did not retire the held helper transport within 30 s; the test released it"), not at the 300 s timeout; `[primary]` failed `assert release.is_set()`.
+  - `test_canonical_settings_opens_global_rules_before_console_visit` failed once in a combined run (load 44): the test ended with the manager's Selects still mounting, and teardown raised `NoMatches 'SelectOverlay'`. This test, `test_workspace_command_opens_same_manager_in_registered_scope`, `test_chat_and_canonical_settings_open_the_same_scoped_manager`, `test_violation_status_opens_rules_with_disable_action` and the refusal test now wait for the manager to be mounted (`is_mounted` turns True only after `on_mount`'s awaited reload), not just pushed. Presses that must do nothing keep their pauses.
+  - `[maintenance]` failed once in 10 runs (load ~51) at `assert not stop.display`: the deferred-sync flag cleared before a later sync hid Stop. It now waits for the flag, Stop hidden and "Testing rule" gone.
+
+**AC#3 (met, final head).** `test_console_response_rules.py`: 10 of 10 whole-file runs at `-n 4`, two streams at once, every run at load 41-57. `test_console_received_intent_feedback.py`: 10 of 10 at load 38-68 (plus round 1's 11 of 11).
+
+**AC#1 (amended by coordinator ruling, 2026-11-10; met).** The coordinator amended AC#1 because `test_send_feedback_survives_preparation_and_provider_wait` never failed here: a node that did not fail in at least 30 whole-file runs at load 40 or more may instead have every candidate wait converted to a bounded wait on its state that fails naming that state. Its whole-file runs without a failure of this node:
+- round 1 (fork B): 11 runs of a base copy at load 59-99, and 11 runs after the change at load 44-91 (every run started and ended at load 44 or more); 9 more before the change at load 25-110;
+- round 2: 11 runs that started and ended at load 40 or more (41-68), and 2 more that started or ended below 40 (31.8 and 37.9).
+
+That is 33 runs at load 40 or more. TASK-38948 recorded only that it failed "on its own 15 s bounded wait". The base file (ae9f9e8d21) had three candidate waits, and each is now bounded on its state:
+- `:939`, the provider's `release.wait(15)`, which raised "test provider wait timed out": now `release.wait(_SETTLE_SECONDS)` (60 s). It is the provider double's patience for the test's own release, which the test sets right after the run segment shows and again in its `finally`; it still raises naming itself, and no longer ends a run that would pass.
+- `:962`, `_until(entered.is_set, 15)`: now waits up to 60 s for the provider's entry or the turn's end, then asserts `entered.is_set()` with a message naming which: "the turn never reached the provider: it ended first (<task>)" or "not within 60 s".
+- `:974`, the custody `_until(lambda: not ...has_custodied_turns(...), 15)`: now `_turn_settles(case, record.task)`, which waits for the released turn's own task ("the released turn's task did not finish within 60 s: <task>; provider calls=N"), then for its custody to clear ("the turn finished (<task>) but its custody never cleared").
+
+`test_enter_sends_…` and `test_navigation_after_receipt_…` had one 15 s bounded wait each, the custody-clear wait, so TASK-38948's record names theirs; both now use `_turn_settles` too. Every other listed node's missed step is named above.
+
+**Files (round 2).** `tldw_chatbook/Chat/prompt_history.py`, `tldw_chatbook/UI/Screens/chat_screen.py`, `Tests/Backup_Recovery/test_prompt_history_path_memo.py`, `Tests/UI/test_console_response_rules.py`. Preflight passed; the chat_screen line, method and projection ceilings pass (24605 of 24608 lines).
+
+**Review r13d-rev1 fixes (2026-11-10).**
+- The deferred coach-mark show now rechecks `_console_fleet_coachmark_seen()` first and reads `screen.console_session_surface` at show time; `_maybe_show_fleet_coachmark` drops its unused `surface` parameter. New case `test_console_syncs_never_wait_for_a_config_rebuild[coachmark-dismissed]` dismisses while the show is pending: red before ("the dismissed coach-mark reappeared"), green after.
+- `_resolve_default_path_off_loop`'s docstring now states the three-attempt limit and the on-loop fallback.
+- Root fix: `PromptHistory(path=None)` takes the default path lazily; `_file_job()` resolves it off the loop on first use, and `ConsoleRuntime.ensure_prompt_history()` and the prompts controller now build `PromptHistory()`. New test `test_a_history_first_built_during_a_config_rebuild_never_waits` (path-memo file, pr-fast-lane) builds through `ConsoleRuntime.ensure_prompt_history` and loads inside a held rebuild: red before ("building and loading the history waited on the UI loop for the rebuild"), green after. The three composer-history tests that patched `prompts.default_prompt_history_path` now use the app's `console_prompt_history_factory` seam; 22 of 22 under a temporary `bootstrap_profile` marker (plain, they hit the local RecoveryRequired trap, as on base).
+- Covering after the fixes: response rules 5 of 5 whole-file runs (26 tests), intent feedback 4 of 5, load 18-30. The one failure is `test_actual_send_paints_sending_and_accepts_input_within_100ms[send-button]` (TASK-38948's budget, untouched here). Interleaved runs of that node at load 13-24 failed in 5 of 10 runs with base product files and 6 of 10 with this branch's, and a probe showed the coach-mark show never runs in it.
+<!-- SECTION:NOTES:END -->

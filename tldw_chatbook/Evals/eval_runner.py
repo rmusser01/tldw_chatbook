@@ -19,6 +19,7 @@ import inspect
 import json
 import math
 import re
+import threading
 import time
 import traceback
 from abc import ABC, abstractmethod
@@ -41,7 +42,7 @@ from .task_loader import TaskConfig
 
 # Use existing Chat infrastructure for LLM calls
 from tldw_chatbook.Chat.Chat_Functions import chat_api_call
-from tldw_chatbook.Chat.Chat_Deps import (
+from tldw_chatbook.Provider_Contract import (
     ChatProviderError as EvalProviderError,
     ChatAPIError as EvalAPIError,
     ChatAuthenticationError as EvalAuthenticationError,
@@ -82,8 +83,10 @@ def _finite_number(name: str, value: object, *, positive: bool) -> float:
             numeric_value = float(value)
         except (OverflowError, ValueError):
             pass
-    if numeric_value is None or not math.isfinite(numeric_value) or (
-        numeric_value <= 0 if positive else numeric_value < 0
+    if (
+        numeric_value is None
+        or not math.isfinite(numeric_value)
+        or (numeric_value <= 0 if positive else numeric_value < 0)
     ):
         qualifier = "positive" if positive else "non-negative"
         raise ValueError(f"{name} must be a {qualifier} finite number")
@@ -97,6 +100,31 @@ async def _invoke_callback(callback, *args) -> None:
     result = callback(*args)
     if inspect.isawaitable(result):
         await result
+
+
+def _reject_nonfinite_numbers(value: Any, label: str) -> Any:
+    """Recursively replace non-finite floats with ``None`` (TASK-38583).
+
+    ``float("-inf")``/``nan`` serialize as ``-Infinity``/``NaN`` under
+    ``json.dumps`` (the EvalsDB persist path), which is invalid strict JSON
+    on export. This is the belt-and-braces guard at the metrics boundary:
+    the runners must not produce non-finite values, and any that slip
+    through become ``None`` with a warning instead of being persisted.
+    """
+    if isinstance(value, float) and not math.isfinite(value):
+        logger.warning(
+            f"{label}: non-finite float ({value}) replaced with None so "
+            "persisted metrics stay strict-JSON valid"
+        )
+        return None
+    if isinstance(value, dict):
+        return {
+            key: _reject_nonfinite_numbers(item, label)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_reject_nonfinite_numbers(item, label) for item in value]
+    return value
 
 
 class EvalError(Exception):
@@ -175,6 +203,12 @@ class EvalSampleResult:
             self.metadata = {}
         if self.error_info is None:
             self.error_info = {}
+        # Persist boundary guard (TASK-38583): every sample result flows
+        # into EvalsDB.store_result via json.dumps; non-finite floats would
+        # be persisted as invalid strict JSON. Sanitize before anything
+        # downstream can observe them.
+        self.metrics = _reject_nonfinite_numbers(self.metrics, "metrics")
+        self.logprobs = _reject_nonfinite_numbers(self.logprobs, "logprobs")
 
 
 class DatasetLoader:
@@ -546,6 +580,47 @@ class DatasetLoader:
             return str(item)
 
 
+# Process-level singleton for the semantic-similarity embedding model.
+# Constructing SentenceTransformer("all-MiniLM-L6-v2") per scored sample
+# dominated eval runs (one model load per non-exact-match sample), so the
+# model is built lazily once per process and reused. The lazy import stays
+# so sentence-transformers remains an optional dependency.
+_SEMANTIC_MODEL = None
+_SEMANTIC_MODEL_LOCK = threading.Lock()
+
+
+def get_semantic_embedding_model() -> "SentenceTransformer":  # type: ignore[name-defined] # noqa: F821
+    """Return the shared sentence-transformers model, constructing it once.
+
+    Returns:
+        The process-wide ``SentenceTransformer`` instance used by
+        ``calculate_semantic_similarity`` when no explicit model is passed.
+
+    Raises:
+        ImportError: If sentence-transformers is not installed (same
+            behavior as the previous in-function construction).
+    """
+    global _SEMANTIC_MODEL
+    if _SEMANTIC_MODEL is None:
+        with _SEMANTIC_MODEL_LOCK:
+            if _SEMANTIC_MODEL is None:
+                from sentence_transformers import SentenceTransformer
+
+                # Use local cache only so offline test runs do not attempt
+                # network downloads.
+                _SEMANTIC_MODEL = SentenceTransformer(
+                    "all-MiniLM-L6-v2", local_files_only=True
+                )
+    return _SEMANTIC_MODEL
+
+
+def _reset_semantic_model_for_tests() -> None:
+    """Clear the shared semantic model singleton (test isolation only)."""
+    global _SEMANTIC_MODEL
+    with _SEMANTIC_MODEL_LOCK:
+        _SEMANTIC_MODEL = None
+
+
 class MetricsCalculator:
     """Calculates evaluation metrics."""
 
@@ -817,12 +892,7 @@ class MetricsCalculator:
         # Try to use sentence transformers if available
         try:
             if embedding_model is None:
-                from sentence_transformers import SentenceTransformer
-
-                # Use local cache only so offline test runs do not attempt network downloads.
-                embedding_model = SentenceTransformer(
-                    "all-MiniLM-L6-v2", local_files_only=True
-                )
+                embedding_model = get_semantic_embedding_model()
 
             # Get embeddings
             embeddings = embedding_model.encode([predicted, expected])
@@ -1365,6 +1435,10 @@ class BaseEvalRunner(ABC):
         valid_chat_params = {
             "minp",
             "topk",
+            "stop",  # TASK-38587: chat_api_call accepts `stop` and
+            # PROVIDER_PARAM_MAP maps it for every provider; dropping it
+            # here silently discarded stop_sequences (a None value is
+            # harmless — project_chat_handler_kwargs skips None params).
             "query_system_prompt",
             "user_uploaded_images",
             "media_content",
@@ -2005,6 +2079,39 @@ class QuestionAnswerRunner(BaseEvalRunner):
         return "\n".join(prompt_parts)
 
 
+class ChoiceExtractionError(EvaluationError):
+    """Model response matched none of the listed choices (TASK-38587).
+
+    ``_extract_choice`` used to fabricate choice A ("Default to first
+    choice if nothing matches") whenever extraction failed on a verbose
+    reply, biasing accuracy. It now returns a ``None`` sentinel, and the
+    caller raises this typed, non-retryable error so the sample flows into
+    the existing error branch (``metrics={"error": 1.0}`` plus error_info)
+    — the run tally already counts that shape, and accuracy is never
+    computed for the sample.
+    """
+
+    def __init__(self, response: str):
+        snippet = response.strip()[:200]
+        super().__init__(
+            ErrorContext(
+                category=ErrorCategory.VALIDATION,
+                severity=ErrorSeverity.WARNING,
+                message="Could not extract a choice from the model response",
+                details=(
+                    "Response matched none of the listed choices "
+                    f"(response: {snippet!r})"
+                ),
+                suggestion=(
+                    "Use a prompt/format that elicits a choice letter or "
+                    "the exact choice text"
+                ),
+                is_retryable=False,
+                error_code="CHOICE_EXTRACTION_FAILED",
+            )
+        )
+
+
 class ClassificationRunner(BaseEvalRunner):
     """Runner for classification/multiple-choice tasks."""
 
@@ -2063,6 +2170,14 @@ class ClassificationRunner(BaseEvalRunner):
 
             # Extract choice from response
             predicted_choice = self._extract_choice(response, sample.choices)
+
+            # TASK-38587: None means no choice could be extracted. Raise a
+            # typed, non-retryable error so the sample becomes an ERROR
+            # sample (metrics={"error": 1.0}) via the except branch below —
+            # the existing tally counts it, and accuracy is never computed,
+            # so failed extraction cannot masquerade as choice A.
+            if predicted_choice is None:
+                raise ChoiceExtractionError(response)
 
             # Calculate metrics
             metrics = self.calculate_metrics(
@@ -2202,8 +2317,16 @@ class ClassificationRunner(BaseEvalRunner):
 
         return "\n".join(prompt_parts)
 
-    def _extract_choice(self, response: str, choices: List[str]) -> str:
-        """Extract the chosen answer from model response."""
+    def _extract_choice(
+        self, response: str, choices: List[str]
+    ) -> Optional[str]:
+        """Extract the chosen answer from model response.
+
+        Returns None when ``choices`` is non-empty but the response matches
+        none of them (TASK-38587) — previously this fabricated choice A.
+        With no choices configured the stripped response is the free-text
+        prediction and is returned unchanged.
+        """
         if not choices:
             return response.strip()
 
@@ -2232,37 +2355,23 @@ class ClassificationRunner(BaseEvalRunner):
             if choice.lower() in response.lower():
                 return choice
 
-        # Default to first choice if nothing matches
-        return choices[0] if choices else response.strip()
+        # Extraction failed: return the None sentinel instead of
+        # fabricating the first choice (TASK-38587).
+        return None
 
     async def _generate_response(self, prompt: str) -> str:
         """Generate response from LLM for classification."""
         generation_start = time.time()
         try:
-            # Prepare the message payload
-            messages = [{"role": "user", "content": prompt}]
-
-            # Prepare call kwargs
-            call_kwargs = {
-                "input_data": messages,
-                "model": self.model_id,
-                "api_key": self.api_key,
-            }
-
             # Add generation parameters
+            # (TASK-38587: the call_kwargs dict built here was dead —
+            # _call_llm re-derives every parameter itself.)
             config = self.model_config.copy()
             config.update(self.task_config.generation_kwargs)
 
             # For classification, we usually want shorter responses
             config.setdefault("max_tokens", 10)
             config.setdefault("temperature", 0.0)  # More deterministic
-
-            if "temperature" in config or "temp" in config:
-                call_kwargs["temp"] = config.get("temperature", config.get("temp", 0.0))
-            if "max_tokens" in config:
-                call_kwargs["max_tokens"] = config.get("max_tokens", 10)
-            if "top_p" in config or "maxp" in config:
-                call_kwargs["maxp"] = config.get("top_p", config.get("maxp"))
 
             # Call LLM using the unified interface
             response = await self._call_llm(
@@ -2333,8 +2442,51 @@ class ClassificationRunner(BaseEvalRunner):
             raise
 
 
+class LogProbUnsupportedError(EvaluationError):
+    """Raised when no provider path can expose logprobs for a sample.
+
+    TASK-38583: ``chat_api_call`` accepts a ``logprobs`` request parameter
+    (PROVIDER_PARAM_MAP maps it for OpenAI-compatible providers), but no
+    handler returns continuation log probabilities through it — the eval
+    dispatcher boundary (``_call_llm``) only yields response *text*, and
+    generated-token logprobs are not P(supplied continuation | prompt).
+    LogProbRunner therefore fails honestly instead of fabricating a
+    prediction. Non-retryable: no provider or retry count changes this.
+    """
+
+    def __init__(self, provider: str):
+        super().__init__(
+            ErrorContext(
+                category=ErrorCategory.MODEL_CONFIGURATION,
+                severity=ErrorSeverity.WARNING,
+                message=(
+                    "logprobs are not supported via chat_api_call for "
+                    f"provider '{provider}'"
+                ),
+                details=(
+                    "No provider handler returns continuation log "
+                    "probabilities through chat_api_call; the eval LLM "
+                    "boundary only yields response text."
+                ),
+                suggestion=(
+                    "Use a logprob-capable engine (for example the word "
+                    "bench via llama.cpp completions) or a different task "
+                    "type."
+                ),
+                is_retryable=False,
+                error_code="LOGPROBS_UNSUPPORTED",
+            )
+        )
+
+
 class LogProbRunner(BaseEvalRunner):
-    """Runner for log probability evaluation tasks."""
+    """Runner for log probability evaluation tasks.
+
+    Every sample run through this runner today is recorded as an ERROR
+    sample: no provider exposes continuation logprobs through the shared
+    chat dispatcher, so predicting would mean fabricating a choice
+    (TASK-38583).
+    """
 
     async def run_sample(self, sample: EvalSample) -> EvalSampleResult:
         """Run log probability evaluation on a single sample."""
@@ -2436,49 +2588,25 @@ class LogProbRunner(BaseEvalRunner):
         return await self._get_text_logprob(full_text)
 
     async def _get_text_logprob(self, text: str) -> float:
-        """Get log probability of text from LLM."""
-        try:
-            # OpenAI supports logprobs with specific parameters
-            if self.provider_name == "openai":
-                # Call LLM using the unified interface with logprobs
-                config = self.task_config.generation_kwargs
-                await self._call_llm(
-                    prompt=text,
-                    temperature=config.get("temperature", 0.0),
-                    max_tokens=config.get("max_tokens", 1),
-                    logprobs=True,  # Request log probabilities
-                    **{
-                        k: v
-                        for k, v in config.items()
-                        if k
-                        not in [
-                            "temperature",
-                            "temp",
-                            "max_tokens",
-                            "input_data",
-                            "model",
-                            "api_key",
-                        ]
-                    },
-                )
+        """Fail honestly: logprobs are unavailable through this boundary.
 
-                # Note: Log probability extraction may need provider-specific handling
-                # For now, we'll return a default value since logprobs require special API support
-                logger.warning(
-                    f"Log probabilities require provider-specific implementation for {self.provider_name}"
-                )
-                return float("-inf")
-            else:
-                # For providers that don't support logprobs, we could approximate
-                # by using perplexity or other metrics, but for now log warning
-                logger.warning(
-                    f"Log probabilities not supported by {self.provider_name}"
-                )
-                return float("-inf")
+        Previous behavior (TASK-38583): the OpenAI branch fired a real paid
+        request whose result was discarded, then returned ``float("-inf")``
+        for every provider — so ``run_sample`` always predicted choice 0 and
+        ``-Infinity`` reached the persisted metrics. PROVIDER_PARAM_MAP maps
+        a ``logprobs`` *request* parameter for OpenAI-compatible providers,
+        but no handler returns continuation log probabilities through
+        ``chat_api_call`` (the eval ``_call_llm`` boundary only yields
+        response text, and generated-token logprobs are not the logprob of
+        the supplied continuation), so there is nothing honest to compute
+        here today. Raise a typed, non-retryable error instead of calling
+        at all; ``run_sample`` records the sample as an error sample.
 
-        except Exception as e:
-            logger.error(f"Failed to get logprob: {e}")
-            return float("-inf")
+        Raises:
+            LogProbUnsupportedError: always, with ``LOGPROBS_UNSUPPORTED``
+                context.
+        """
+        raise LogProbUnsupportedError(self.provider_name)
 
 
 class GenerationRunner(BaseEvalRunner):
@@ -2552,32 +2680,15 @@ class GenerationRunner(BaseEvalRunner):
     async def _generate_response(self, prompt: str) -> str:
         """Generate response from LLM for text generation."""
         try:
-            # Prepare the message payload
-            messages = [{"role": "user", "content": prompt}]
-
-            # Prepare call kwargs
-            call_kwargs = {
-                "input_data": messages,
-                "model": self.model_id,
-                "api_key": self.api_key,
-            }
-
             # Add generation parameters
+            # (TASK-38587: the call_kwargs dict built here was dead —
+            # _call_llm re-derives every parameter itself.)
             config = self.model_config.copy()
             config.update(self.task_config.generation_kwargs)
 
             # Set stop sequences if specified
             if self.task_config.stop_sequences:
                 config["stop"] = self.task_config.stop_sequences
-
-            if "temperature" in config or "temp" in config:
-                call_kwargs["temp"] = config.get("temperature", config.get("temp"))
-            if "max_tokens" in config:
-                call_kwargs["max_tokens"] = config.get("max_tokens")
-            if "top_p" in config or "maxp" in config:
-                call_kwargs["maxp"] = config.get("top_p", config.get("maxp"))
-            if "stop" in config:
-                call_kwargs["stop"] = config.get("stop")
 
             # Call LLM using the unified interface
             response = await self._call_llm(
@@ -2692,10 +2803,7 @@ class EvalRunner:
                 "dialogue_generation",
             ]:
                 self.runner = CreativeEvaluationRunner(task_config, effective_config)
-            elif (
-                category == "research"
-                or task_config.task_type == "research_report"
-            ):
+            elif category == "research" or task_config.task_type == "research_report":
                 # task-16327: deterministic scoring of stored verification
                 # payloads; see Evals/research_report_scorer.py.
                 self.runner = ResearchReportRunner(task_config, effective_config)
@@ -2752,9 +2860,7 @@ class EvalRunner:
                 except asyncio.CancelledError:
                     raise
                 except Exception as error:
-                    logger.error(
-                        f"Fatal error processing sample {sample.id}: {error}"
-                    )
+                    logger.error(f"Fatal error processing sample {sample.id}: {error}")
                     result = EvalSampleResult(
                         sample_id=sample.id,
                         input_text=sample.input_text,
@@ -2798,9 +2904,7 @@ class EvalRunner:
                 )
 
                 if completed % 10 == 0:
-                    success_rate = (
-                        (completed - error_count) / completed
-                    ) * 100
+                    success_rate = ((completed - error_count) / completed) * 100
                     logger.info(
                         f"Processed {completed}/{len(samples)} samples | "
                         f"Success rate: {success_rate:.1f}% | "
@@ -2904,11 +3008,22 @@ class EvalRunner:
         aggregate_metrics = {}
 
         for metric_name in all_metrics:
-            values = [
-                result.metrics.get(metric_name, 0.0)
-                for result in results
-                if metric_name in result.metrics
-            ]
+            values = []
+            for result in results:
+                if metric_name not in result.metrics:
+                    continue
+                value = result.metrics[metric_name]
+                # TASK-38583 belt-and-braces: sanitized samples carry None
+                # for non-finite values; never aggregate (or persist)
+                # non-finite numbers into run metrics.
+                if isinstance(value, (int, float)) and math.isfinite(float(value)):
+                    values.append(value)
+                else:
+                    logger.warning(
+                        f"Skipping non-finite/None value for metric "
+                        f"'{metric_name}' (sample {result.sample_id}) in "
+                        "aggregate metrics"
+                    )
 
             if values:
                 aggregate_metrics[f"{metric_name}_mean"] = sum(values) / len(values)

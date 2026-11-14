@@ -100,7 +100,7 @@ async def test_picker_review_and_activation_use_one_controller_lease(
     archive = tmp_path / "incoming.tldw-actor-pack"
     controller = _Controller()
     importer = _Importer()
-    screen = _DialogScreen([archive, "create_new"])
+    screen = _DialogScreen(["create_new"])
     monkeypatch.setattr(screen_module, "ActorPackImportReview", _Review)
     monkeypatch.setattr(
         screen_module,
@@ -108,7 +108,9 @@ async def test_picker_review_and_activation_use_one_controller_lease(
         lambda review, preview: ("review", review, preview),
     )
 
-    await PersonasScreen._actor_pack_import_dialog_worker(screen, controller, importer)
+    await PersonasScreen._import_actor_pack_from_path(
+        screen, archive, controller, importer
+    )
 
     assert controller.started[0] == ("request", archive.resolve())
     assert controller.started[-1] == ("activate", controller.review, "create_new")
@@ -124,7 +126,7 @@ async def test_update_requires_second_confirmation_and_cancel_releases_review(
     archive = tmp_path / "incoming.tldw-actor-pack"
     controller = _Controller()
     importer = _Importer()
-    screen = _DialogScreen([archive, "update_existing", False])
+    screen = _DialogScreen(["update_existing", False])
     monkeypatch.setattr(screen_module, "ActorPackImportReview", _Review)
     monkeypatch.setattr(
         screen_module,
@@ -132,11 +134,15 @@ async def test_update_requires_second_confirmation_and_cancel_releases_review(
         lambda review, preview: ("review", review, preview),
     )
 
-    await PersonasScreen._actor_pack_import_dialog_worker(screen, controller, importer)
+    await PersonasScreen._import_actor_pack_from_path(
+        screen, archive, controller, importer
+    )
 
     assert not any(item[0] == "activate" for item in controller.started)
     assert controller.discarded == [controller.review]
-    assert len(screen.app.screens) == 3
+    # The review and the second confirmation (the one Import picker that
+    # chose the file is the caller's, frame slice B2b).
+    assert len(screen.app.screens) == 2
 
 
 @pytest.mark.asyncio
@@ -146,7 +152,7 @@ async def test_committed_import_is_not_reported_failed_when_one_refresh_breaks(
     archive = tmp_path / "incoming.tldw-actor-pack"
     controller = _Controller()
     importer = _Importer()
-    screen = _DialogScreen([archive, "create_new"])
+    screen = _DialogScreen(["create_new"])
     screen.state.active_mode = "personas"
     invalidated: list[tuple[str, ...]] = []
 
@@ -171,7 +177,9 @@ async def test_committed_import_is_not_reported_failed_when_one_refresh_breaks(
         lambda review, preview: ("review", review, preview),
     )
 
-    await PersonasScreen._actor_pack_import_dialog_worker(screen, controller, importer)
+    await PersonasScreen._import_actor_pack_from_path(
+        screen, archive, controller, importer
+    )
 
     assert invalidated == [
         ("shared", "persona", "local-persona-imported"),
@@ -246,7 +254,7 @@ async def test_stale_activation_returns_to_a_fresh_review_without_repicking_file
 
     archive = tmp_path / "incoming.tldw-actor-pack"
     controller = _StaleThenController()
-    screen = _DialogScreen([archive, "create_new", "create_new"])
+    screen = _DialogScreen(["create_new", "create_new"])
     monkeypatch.setattr(screen_module, "ActorPackImportReview", _Review)
     monkeypatch.setattr(
         screen_module,
@@ -254,8 +262,8 @@ async def test_stale_activation_returns_to_a_fresh_review_without_repicking_file
         lambda review, preview: ("review", review, preview),
     )
 
-    await PersonasScreen._actor_pack_import_dialog_worker(
-        screen, controller, _Importer()
+    await PersonasScreen._import_actor_pack_from_path(
+        screen, archive, controller, _Importer()
     )
 
     assert sum(item[0] == "request" for item in controller.started) == 2

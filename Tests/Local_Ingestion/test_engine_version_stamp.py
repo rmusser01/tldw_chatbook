@@ -11,6 +11,7 @@ code, all minimal):
   that table must increment ``version`` by exactly 1 -- same trap Task 11's
   tests hit), so it sets ``version = version + 1`` too.
 """
+
 import pytest
 
 
@@ -31,6 +32,7 @@ def test_new_chunks_stamped(tmp_path):
         persist_parsed_media,
     )
     from tldw_chatbook.RAG_Search.chunking_service import improved_chunking_process
+
     chunks = improved_chunking_process(
         "One two three four five six. " * 5,
         {"method": "words", "max_size": 5, "overlap": 0},
@@ -54,19 +56,30 @@ def test_new_chunks_stamped(tmp_path):
         db,
         generate_embeddings=False,
     )
-    rows = db.get_connection().execute(
-        "SELECT chunk_engine_version FROM UnvectorizedMediaChunks WHERE deleted = 0"
-    ).fetchall()
+    rows = (
+        db.get_connection()
+        .execute(
+            "SELECT chunk_engine_version FROM UnvectorizedMediaChunks WHERE deleted = 0"
+        )
+        .fetchall()
+    )
     assert rows and all(r["chunk_engine_version"] == "parity-1@385afa95" for r in rows)
 
 
 def test_legacy_rows_read_as_legacy(tmp_path):
     from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+
     db = MediaDatabase(str(tmp_path / "m.db"), client_id="test")
     # insert a row with NULL version (pre-parity)
     db.add_media_with_keywords(
-        title="t", media_type="document", content="...", keywords=None, url=None,
-        analysis_content=None, author=None, chunks=[{"text": "old", "metadata": {}}],
+        title="t",
+        media_type="document",
+        content="...",
+        keywords=None,
+        url=None,
+        analysis_content=None,
+        author=None,
+        chunks=[{"text": "old", "metadata": {}}],
         chunk_options={},
     )
     db.get_connection().execute(
@@ -79,6 +92,7 @@ def test_legacy_rows_read_as_legacy(tmp_path):
     )
     db.get_connection().commit()
     from tldw_chatbook.RAG_Admin.local_rag_admin_service import LocalRAGAdminService
+
     svc = LocalRAGAdminService.__new__(LocalRAGAdminService)  # read-only query path
     # count_chunks_by_engine_version is a small, dependency-light method
     counts = svc.count_chunks_by_engine_version(db)
@@ -114,9 +128,13 @@ def test_persist_parsed_media_stamps_chunks(tmp_path):
         "warnings": [],
     }
     persist_parsed_media(payload, db, generate_embeddings=False)
-    rows = db.get_connection().execute(
-        "SELECT chunk_engine_version FROM UnvectorizedMediaChunks WHERE deleted = 0"
-    ).fetchall()
+    rows = (
+        db.get_connection()
+        .execute(
+            "SELECT chunk_engine_version FROM UnvectorizedMediaChunks WHERE deleted = 0"
+        )
+        .fetchall()
+    )
     assert rows and all(r["chunk_engine_version"] == "parity-1@385afa95" for r in rows)
 
 
@@ -165,14 +183,23 @@ def test_batch_writer_keeps_row_and_sync_payload_consistent(tmp_path):
 
     db = MediaDatabase(str(tmp_path / "m.db"), client_id="test")
     db.add_media_with_keywords(
-        title="t", media_type="document", content="...", keywords=None, url=None,
-        analysis_content=None, author=None,
+        title="t",
+        media_type="document",
+        content="...",
+        keywords=None,
+        url=None,
+        analysis_content=None,
+        author=None,
         chunks=[{"text": "old", "metadata": {}}],
         chunk_options={},
     )
-    media_id = db.get_connection().execute(
-        "SELECT media_id FROM UnvectorizedMediaChunks WHERE deleted = 0 LIMIT 1"
-    ).fetchone()["media_id"]
+    media_id = (
+        db.get_connection()
+        .execute(
+            "SELECT media_id FROM UnvectorizedMediaChunks WHERE deleted = 0 LIMIT 1"
+        )
+        .fetchone()["media_id"]
+    )
 
     db.process_unvectorized_chunks(
         media_id,
@@ -189,11 +216,13 @@ def test_batch_writer_keeps_row_and_sync_payload_consistent(tmp_path):
 
     rows = {
         r["chunk_index"]: r
-        for r in db.get_connection().execute(
+        for r in db.get_connection()
+        .execute(
             "SELECT chunk_index, chunk_engine_version FROM UnvectorizedMediaChunks "
             "WHERE deleted = 0 AND media_id = ? ORDER BY chunk_index",
             (media_id,),
-        ).fetchall()
+        )
+        .fetchall()
     }
     # _persist_chunks writes 0-based indices: the pre-existing row is index 0;
     # process_unvectorized_chunks uses the chunk's own 'chunk_index' (1, 2).
@@ -202,12 +231,18 @@ def test_batch_writer_keeps_row_and_sync_payload_consistent(tmp_path):
     assert rows[2]["chunk_engine_version"] is None  # unstamped stays NULL
 
     # the sync event payload must agree with the row (the trap)
-    sync_rows = db.get_connection().execute(
-        "SELECT payload FROM sync_log WHERE entity = "
-        "'UnvectorizedMediaChunks' AND operation = 'create' ORDER BY change_id"
-    ).fetchall()
+    sync_rows = (
+        db.get_connection()
+        .execute(
+            "SELECT payload FROM sync_log WHERE entity = "
+            "'UnvectorizedMediaChunks' AND operation = 'create' ORDER BY change_id"
+        )
+        .fetchall()
+    )
     stamped_events = [
-        r for r in sync_rows if '"chunk_engine_version": "parity-1@385afa95"' in r["payload"]
+        r
+        for r in sync_rows
+        if '"chunk_engine_version": "parity-1@385afa95"' in r["payload"]
         or '"chunk_engine_version":"parity-1@385afa95"' in r["payload"]
     ]
     assert stamped_events, "sync events dropped the engine-version stamp"
@@ -225,8 +260,13 @@ def test_count_chunks_by_engine_version_groups(tmp_path):
 
     db = MediaDatabase(str(tmp_path / "m.db"), client_id="test")
     db.add_media_with_keywords(
-        title="t", media_type="document", content="...", keywords=None, url=None,
-        analysis_content=None, author=None,
+        title="t",
+        media_type="document",
+        content="...",
+        keywords=None,
+        url=None,
+        analysis_content=None,
+        author=None,
         chunks=[
             {"text": "a", "metadata": {}, "chunk_engine_version": "parity-1@385afa95"},
             {"text": "b", "metadata": {}, "chunk_engine_version": "parity-1@385afa95"},
@@ -239,8 +279,13 @@ def test_count_chunks_by_engine_version_groups(tmp_path):
 
     # A second item under the same version: distinct items, not rows.
     db.add_media_with_keywords(
-        title="t2", media_type="document", content="....", keywords=None, url=None,
-        analysis_content=None, author=None,
+        title="t2",
+        media_type="document",
+        content="....",
+        keywords=None,
+        url=None,
+        analysis_content=None,
+        author=None,
         chunks=[
             {"text": "c", "metadata": {}, "chunk_engine_version": "parity-1@385afa95"},
         ],
@@ -263,12 +308,20 @@ def test_legacy_chunk_report_line(tmp_path):
 
     # a media row + a legacy (unstamped) chunk: the line appears
     db.add_media_with_keywords(
-        title="t", media_type="document", content="...", keywords=None, url=None,
-        analysis_content=None, author=None, chunk_options={},
+        title="t",
+        media_type="document",
+        content="...",
+        keywords=None,
+        url=None,
+        analysis_content=None,
+        author=None,
+        chunk_options={},
     )
-    media_id = db.get_connection().execute(
-        "SELECT id FROM Media WHERE deleted = 0 LIMIT 1"
-    ).fetchone()["id"]
+    media_id = (
+        db.get_connection()
+        .execute("SELECT id FROM Media WHERE deleted = 0 LIMIT 1")
+        .fetchone()["id"]
+    )
     db.process_unvectorized_chunks(
         media_id,
         [

@@ -540,6 +540,7 @@ def _chromium_executable(browser_type: object) -> str:
 
 @pytest.mark.loopback_network
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_native_console_create_publication_automatically_opens_browser(
     tmp_path, monkeypatch
 ):
@@ -1147,6 +1148,7 @@ async def test_real_tool_publication_keeps_same_revision_pin_until_follow() -> N
 
 @pytest.mark.loopback_network
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_imported_archive_reopens_exact_branch_after_source_purge(
     tmp_path: Path,
     candidate_snapshot,

@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+import tldw_chatbook.DB.ChaChaNotes_DB as chachanotes
 from tldw_chatbook.DB.base_db import (
     SQLiteConnectionQuiescenceRegistry,
     _QuiescentSQLiteConnection,
@@ -246,3 +247,87 @@ def test_quiescence_coordinates_separate_instances_for_the_same_file(
         second_connection.execute("SELECT 1")
     first.close_connection()
     second.close_connection()
+
+
+def test_quiescence_interrupting_initialization_retires_unpublished_handle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An acquisition rejected during its PRAGMAs cannot leak a native handle."""
+    database = CharactersRAGDB(tmp_path / "interrupted.sqlite", "interrupted")
+    unrelated = CharactersRAGDB(tmp_path / "unrelated.sqlite", "unrelated")
+    warm = unrelated.get_connection()
+    warm.execute("BEGIN").close()
+    allocated: list[sqlite3.Connection] = []
+    opened = threading.Event()
+    resume = threading.Event()
+    acquisition_errors: list[BaseException] = []
+    maintenance_errors: list[BaseException] = []
+    connect = chachanotes.connect_private_sqlite
+
+    def parked_connect(*args, **kwargs):
+        connection = connect(*args, **kwargs)
+        allocated.append(connection)
+        opened.set()
+        assert resume.wait(3.0)
+        return connection
+
+    def acquire() -> None:
+        try:
+            database.get_connection()
+        except BaseException as exc:  # noqa: BLE001 - relay worker failure to parent
+            acquisition_errors.append(exc)
+
+    def maintain() -> None:
+        try:
+            with database.quiesce_connections(timeout_seconds=3.0):
+                pass
+        except BaseException as exc:  # noqa: BLE001 - relay worker failure to parent
+            maintenance_errors.append(exc)
+
+    worker = threading.Thread(target=acquire, daemon=True)
+    maintenance = threading.Thread(target=maintain, daemon=True)
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(chachanotes, "connect_private_sqlite", parked_connect)
+            worker.start()
+            assert opened.wait(3.0)
+            maintenance.start()
+            deadline = time.monotonic() + 2.0
+            while True:
+                try:
+                    database._connection_quiescence.begin_acquisition()
+                except RuntimeError as exc:
+                    assert str(exc) == "database_maintenance_in_progress"
+                    break
+                else:
+                    database._connection_quiescence.finish_acquisition()
+                assert time.monotonic() < deadline
+                time.sleep(0.001)
+            resume.set()
+            worker.join(timeout=3.0)
+            maintenance.join(timeout=3.0)
+        assert not worker.is_alive()
+        assert not maintenance.is_alive()
+        assert maintenance_errors == []
+        assert len(acquisition_errors) == 1
+        assert type(acquisition_errors[0]) is RuntimeError
+        assert str(acquisition_errors[0]) == "database_maintenance_in_progress"
+        assert len(allocated) == 1
+        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+            sqlite3.Connection.in_transaction.__get__(allocated[0])
+        assert database.registered_connection_count() == 0
+        assert unrelated.get_connection() is warm
+        assert warm.in_transaction
+        assert warm.execute("SELECT 1").fetchone()[0] == 1
+        assert database.get_connection().execute("SELECT 1").fetchone()[0] == 1
+    finally:
+        resume.set()
+        if worker.ident is not None:
+            worker.join(timeout=3.0)
+        if maintenance.ident is not None:
+            maintenance.join(timeout=3.0)
+        for connection in allocated:
+            connection.close()
+        warm.rollback()
+        unrelated.close_connection()
+        database.close_connection()

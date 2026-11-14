@@ -1,0 +1,8 @@
+{
+  "utc": "2026-11-02T20:15:35.887145+00:00",
+  "probe_process_exit": 0,
+  "matching_remaining_probe_or_app_census_python_processes": [],
+  "all_owned_test_processes_stopped": true,
+  "method": "ps process arguments inspected privately for this probe/temp label and tldw_chatbook -c census; only PID/parent/executable retained",
+  "sandbox_note": "Default sandbox disallowed ps; this read-only audit used approved process access."
+}

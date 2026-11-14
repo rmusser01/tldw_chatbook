@@ -3,7 +3,7 @@
 Status: Accepted
 Date: 2026-09-12
 Related Task: [TASK-32479](../tasks/task-32479%20-%20Expose-Improve-My-Prompt-rewrite-prompt-in-Settings-Internal-Prompts.md)
-Builds on: [ADR-029](029-versioned-prompt-artifacts-and-safe-improvement-transactions.md) (structured prompt-improvement transactions); the Internal_Prompts registry pattern used by [ADR-052](052-console-conversation-memory-and-compaction-policy.md)
+Builds on: [ADR-297](297-versioned-prompt-artifacts-and-safe-improvement-transactions.md) (structured prompt-improvement transactions); the Internal_Prompts registry pattern used by [ADR-052](052-console-conversation-memory-and-compaction-policy.md)
 
 ## Context
 

@@ -1,0 +1,9 @@
+{
+  "normal_action": "Ctrl+Q",
+  "app_pid": 41013,
+  "pid_present": false,
+  "tmux_has_session_returncode": 1,
+  "tmux_stderr": "no server running on /private/tmp/tmux-501/mixins-final-preview\n",
+  "exit_code_retained": false,
+  "current_product_source_differences_since_launch": []
+}

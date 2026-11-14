@@ -1,0 +1,42 @@
+{
+  "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": {
+    "baseline_diagnostics": 17,
+    "current_diagnostics": 14,
+    "new_diagnostics": []
+  },
+  "tldw_chatbook/UI/Library_Modules/prompt_save_ack.py": {
+    "baseline_diagnostics": 0,
+    "current_diagnostics": 0,
+    "new_diagnostics": []
+  },
+  "tldw_chatbook/Widgets/Console/console_prompts_modal.py": {
+    "baseline_diagnostics": 14,
+    "current_diagnostics": 14,
+    "new_diagnostics": []
+  },
+  "tldw_chatbook/Widgets/Console/console_conversation_inspector.py": {
+    "baseline_diagnostics": 1,
+    "current_diagnostics": 1,
+    "new_diagnostics": []
+  },
+  "Tests/UI/test_library_prompt_mixins.py": {
+    "baseline_diagnostics": 0,
+    "current_diagnostics": 0,
+    "new_diagnostics": []
+  },
+  "Tests/UI/test_console_prompt_mixins.py": {
+    "baseline_diagnostics": 0,
+    "current_diagnostics": 0,
+    "new_diagnostics": []
+  },
+  "Tests/UI/test_console_conversation_inspector.py": {
+    "baseline_diagnostics": 0,
+    "current_diagnostics": 0,
+    "new_diagnostics": []
+  },
+  "tldw_chatbook/Widgets/Library/library_prompts_canvas.py": {
+    "baseline_diagnostics": 1,
+    "current_diagnostics": 1,
+    "new_diagnostics": []
+  }
+}

@@ -4,7 +4,6 @@ Test message feedback functionality.
 
 import pytest
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, InputError, ConflictError
-from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
 
 
 class TestMessageFeedback:
@@ -181,41 +180,6 @@ class TestMessageFeedback:
 
         message = test_db.get_message_by_id(msg_id)
         assert message["feedback"] == extended_feedback
-
-
-class TestChatMessageWidget:
-    """Test ChatMessage widget feedback display."""
-
-    def test_chat_message_with_feedback(self):
-        """Test ChatMessage widget initialization with feedback."""
-        # Test with thumbs up
-        msg = ChatMessage(message="Test message", role="Assistant", feedback="1;")
-        assert msg.feedback == "1;"
-
-        # Test with thumbs down
-        msg2 = ChatMessage(message="Test message", role="Assistant", feedback="2;")
-        assert msg2.feedback == "2;"
-
-        # Test without feedback
-        msg3 = ChatMessage(message="Test message", role="User")
-        assert msg3.feedback is None
-
-    def test_chat_message_feedback_buttons_display(self):
-        """Test that feedback state affects button display in compose."""
-        # This would require a more complex test with the Textual test framework
-        # For now, just verify the widget accepts feedback parameter
-        ChatMessage(
-            message="AI response",
-            role="Assistant",
-            message_id="test-123",
-            message_version=1,
-            feedback="1;",
-        )
-
-        # In compose(), the buttons should show:
-        # thumb_up_label = "👍✓" (checked)
-        # thumb_down_label = "👎" (unchecked)
-        # This is handled by the compose method logic
 
 
 class TestFeedbackDialog:

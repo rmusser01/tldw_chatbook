@@ -1,4 +1,5 @@
 """TASK-1975: cost bounds — knobs, root budget scan, oversize detection."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -55,9 +56,10 @@ class TestKnobs:
         assert change_review_setting("max_files", DEFAULT_MAX_FILES) == (
             DEFAULT_MAX_FILES
         )
-        assert change_review_setting(
-            "retention_days", DEFAULT_RETENTION_DAYS
-        ) == DEFAULT_RETENTION_DAYS
+        assert (
+            change_review_setting("retention_days", DEFAULT_RETENTION_DAYS)
+            == DEFAULT_RETENTION_DAYS
+        )
 
     def test_env_var_overrides_config(self, monkeypatch):
         monkeypatch.setenv("TLDW_CHANGE_REVIEW_MAX_FILES", "123")
@@ -248,9 +250,7 @@ class TestOversizeExcludes:
         handle = tracker.begin_turn([root])
         handle.await_baseline()
         (root / "secret.bin").write_bytes(b"x" * 500)
-        records = tracker.end_turn(
-            handle, touched_paths=[str(root / "secret.bin")]
-        )
+        records = tracker.end_turn(handle, touched_paths=[str(root / "secret.bin")])
         assert len(records) == 1
         rec = records[0]
         assert rec.untracked_oversize == 1
@@ -283,9 +283,7 @@ class TestRetention:
         )
         return run
 
-    def test_prune_drops_old_rows_and_resets_rowless_repos(
-        self, tracked, tmp_path
-    ):
+    def test_prune_drops_old_rows_and_resets_rowless_repos(self, tracked, tmp_path):
         from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
         from tldw_chatbook.Workspaces.change_retention import (
             prune_change_history,
@@ -397,9 +395,7 @@ class TestAppRetentionRunner:
                 "UPDATE change_snapshots SET created_at = '2020-01-01T00:00:00.000000Z'"
             )
 
-        report = run_retention_for_app(
-            tmp_path / "chachanotes.db", service=service
-        )
+        report = run_retention_for_app(tmp_path / "chachanotes.db", service=service)
 
         assert report is not None and report.rows_pruned == 1
 
@@ -408,10 +404,7 @@ class TestAppRetentionRunner:
             run_retention_for_app,
         )
 
-        assert (
-            run_retention_for_app(tmp_path / "nodir" / "x.db") is None
-            or True
-        )
+        assert run_retention_for_app(tmp_path / "nodir" / "x.db") is None or True
 
 
 def test_old_schema_file_gains_the_oversize_column_on_open(tmp_path):
@@ -425,7 +418,7 @@ def test_old_schema_file_gains_the_oversize_column_on_open(tmp_path):
     db_file = tmp_path / "old.db"
     with closing(sqlite3.connect(db_file)) as conn:
         conn.executescript(
-        """
+            """
         CREATE TABLE change_snapshots (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             run_id TEXT NOT NULL,
@@ -463,9 +456,7 @@ def test_old_schema_file_gains_the_oversize_column_on_open(tmp_path):
 class TestReviewRoundHardening:
     """PR #1251 Qodo round: newline injection, git path, sweep locking."""
 
-    def test_newline_named_oversize_file_neither_committed_nor_injected(
-        self, tracked
-    ):
+    def test_newline_named_oversize_file_neither_committed_nor_injected(self, tracked):
         tracker, service, root = tracked
         evil = "evil\nsecond-line.bin"
         (root / evil).write_bytes(b"x" * 500)
@@ -602,8 +593,7 @@ class TestNestedRepoDetection:
         assert parent.nested_repos == (), "tracked sub-root wrongly disclosed"
         repo = service.repo_for_root(root)
         changed = {
-            c.path
-            for c in repo.changed_files(parent.baseline_sha, parent.end_sha)
+            c.path for c in repo.changed_files(parent.baseline_sha, parent.end_sha)
         }
         assert "small.txt" in changed
         assert not any("inner.txt" in p for p in changed), (
@@ -658,9 +648,7 @@ class TestNestedRepoBudgetIsolation:
             "never-trackable nested files polluted the oversize disclosure"
         )
 
-    def test_newline_named_commitless_child_does_not_kill_tracking(
-        self, tracked
-    ):
+    def test_newline_named_commitless_child_does_not_kill_tracking(self, tracked):
         import subprocess as _sp
 
         tracker, service, root = tracked
@@ -682,8 +670,7 @@ class TestNestedRepoBudgetIsolation:
         )
         repo = service.repo_for_root(root)
         changed = {
-            c.path
-            for c in repo.changed_files(parent.baseline_sha, parent.end_sha)
+            c.path for c in repo.changed_files(parent.baseline_sha, parent.end_sha)
         }
         assert "small.txt" in changed
         assert not any("inner.txt" in p for p in changed)
@@ -704,14 +691,36 @@ def _real_child(root, name: str):
     _sp.run(["git", "init", "--quiet", str(child)], check=True)
     (child / "inner.txt").write_text("original\n")
     _sp.run(
-        ["git", "-C", str(child), "-c", "user.email=t@t", "-c", "user.name=t",
-         "add", "-A"],
-        check=True, capture_output=True,
+        [
+            "git",
+            "-C",
+            str(child),
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "add",
+            "-A",
+        ],
+        check=True,
+        capture_output=True,
     )
     _sp.run(
-        ["git", "-C", str(child), "-c", "user.email=t@t", "-c", "user.name=t",
-         "commit", "--quiet", "-m", "init"],
-        check=True, capture_output=True,
+        [
+            "git",
+            "-C",
+            str(child),
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "--quiet",
+            "-m",
+            "init",
+        ],
+        check=True,
+        capture_output=True,
     )
     return child
 
@@ -736,9 +745,7 @@ class TestAutoSubRoots:
         repo = service.repo_for_root(child)
         changed = {
             c.path
-            for c in repo.changed_files(
-                child_rec.baseline_sha, child_rec.end_sha
-            )
+            for c in repo.changed_files(child_rec.baseline_sha, child_rec.end_sha)
         }
         assert changed == {"inner.txt"}
 
@@ -756,9 +763,7 @@ class TestAutoSubRoots:
             "a TRACKED sub-root must not be disclosed as an untracked hole"
         )
 
-    def test_sub_root_count_bound_truncates_with_disclosure(
-        self, tracked, monkeypatch
-    ):
+    def test_sub_root_count_bound_truncates_with_disclosure(self, tracked, monkeypatch):
         """AC#3: beyond max_sub_roots, children stay DISCLOSED untracked."""
         monkeypatch.setenv("TLDW_CHANGE_REVIEW_MAX_SUB_ROOTS", "1")
         tracker, service, root = tracked
@@ -774,9 +779,7 @@ class TestAutoSubRoots:
 
         parent = next(r for r in records if r.root == str(root.resolve()))
         registered = {
-            Path(r.root).name
-            for r in records
-            if r.root != str(root.resolve())
+            Path(r.root).name for r in records if r.root != str(root.resolve())
         }
         assert len(registered) == 1, (
             "exactly one child is within the bound; only ITS edit is "
@@ -850,9 +853,7 @@ def test_end_turn_survives_a_still_running_discovery_thread(tracked):
         thread.join(timeout=2)
 
     mine = [r for r in records if r.root == str(root.resolve())]
-    assert len(mine) == 1, (
-        f"churned roots produced {len(mine)} records for one root"
-    )
+    assert len(mine) == 1, f"churned roots produced {len(mine)} records for one root"
 
 
 # -- settings + gating (TASK-1979) -------------------------------------------
@@ -874,9 +875,7 @@ class TestChangeReviewGating:
         registry.add_folder_binding("ws-1", root)
         return root
 
-    def test_global_kill_knob_empties_the_root_list(
-        self, tmp_path, monkeypatch
-    ):
+    def test_global_kill_knob_empties_the_root_list(self, tmp_path, monkeypatch):
         import tldw_chatbook.Tools.workspace_file_roots as wfr
 
         registry = self._registry(tmp_path)
@@ -890,9 +889,7 @@ class TestChangeReviewGating:
             "the global knob must stop tracking on the NEXT read"
         )
 
-    def test_workspace_toggle_gates_only_that_workspace(
-        self, tmp_path, monkeypatch
-    ):
+    def test_workspace_toggle_gates_only_that_workspace(self, tmp_path, monkeypatch):
         import tldw_chatbook.Tools.workspace_file_roots as wfr
 
         registry = self._registry(tmp_path)
@@ -911,9 +908,7 @@ class TestChangeReviewGating:
         assert wfr.folder_binding_roots("ws-1") == ()
         assert wfr.folder_binding_roots("ws-2") == (other_root.resolve(),)
 
-    def test_reenabling_restores_tracking_without_restart(
-        self, tmp_path, monkeypatch
-    ):
+    def test_reenabling_restores_tracking_without_restart(self, tmp_path, monkeypatch):
         import tldw_chatbook.Tools.workspace_file_roots as wfr
 
         registry = self._registry(tmp_path)
@@ -959,9 +954,7 @@ class TestGatingCoversRegistrationHook:
             f"binding add: {containers}"
         )
 
-    def test_global_kill_gates_the_registration_hook(
-        self, tmp_path, monkeypatch
-    ):
+    def test_global_kill_gates_the_registration_hook(self, tmp_path, monkeypatch):
         from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
         from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
 

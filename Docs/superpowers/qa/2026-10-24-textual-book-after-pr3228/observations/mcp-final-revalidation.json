@@ -1,0 +1,309 @@
+{
+  "status": "ready: both findings freshly reproduced on exact merged latest dev; unfixed audit findings",
+  "head": "96cae7eec00473bbfb5687ccfd0685eba2785add",
+  "merge_pr": 3228,
+  "merge_time_utc": "2026-10-24T17:16:42Z",
+  "runtime": {
+    "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+    "textual": "8.2.8",
+    "executable": "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe"
+  },
+  "source_sha256": {
+    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": "4cb3ccd87da48c85d2abab5ed94e8c26dffcee0faaa6a551de53eb339e89e5f7",
+    "tldw_chatbook/UI/MCP_Modules/mcp_profile_form.py": "e787ac315d6d6bd88a3598e8ecee0ec88a6803e6bb58ebe71254109dc133cba5",
+    "tldw_chatbook/MCP/mcp_import.py": "68982787e656a6e27190d2796d3e6f0a4b21a0edaac72edf97d31aa5f744495b",
+    "tldw_chatbook/UI/Screens/settings_tools_hub.py": "2b741f5e33a371af9364b3e05217ea4f5522f47f50aa4923a9bb75aacf12e1eb",
+    "tldw_chatbook/app_lifecycle.py": "f5fed61e4f4bd804031c77cfee814f0039585c016400c133e998c5ea6fbe215f",
+    "tldw_chatbook/app_keep_alive.py": "211bc4d26d2cb63dba04ef13d519fa9f7f6f2076fac9c113d343c35bf7dc3399"
+  },
+  "mcp_owners_identical_to_original_qualified_head": true,
+  "command": [
+    "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-m",
+    "pytest",
+    ".test-tmp/post-3228-audit/settings-tools/merged-revalidation-96cae7ee/test_mcp_import_audit.py",
+    ".test-tmp/post-3228-audit/settings-tools/merged-revalidation-96cae7ee/test_mcp_import_validation_audit.py",
+    "-q",
+    "--tb=short",
+    "--timeout=60",
+    "--basetemp=C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\post-3228-audit\\settings-tools\\merged-96cae7ee-01\\pytest",
+    "--junitxml=C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\post-3228-audit\\settings-tools\\merged-96cae7ee-01\\result.xml"
+  ],
+  "receipt": ".test-tmp\\post-3228-audit\\settings-tools\\merged-96cae7ee-01",
+  "cases": [
+    {
+      "name": "test_import_file_respects_current_draft[none]",
+      "outcome": "passed",
+      "message": null
+    },
+    {
+      "name": "test_import_file_respects_current_draft[typing]",
+      "outcome": "failure",
+      "message": "Failed: C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\post-3228-audit\\settings-tools\\merged-96cae7ee-01\\pytest\\test_import_file_respects_curr1\\private-profile-process\\pytest.log\n--- child failure: AssertionError: {'arm': 'typing', 'expected_file_text': '{\"mcpServers\": {\"file-server\": {\"command\": \"python\"}}}', 'fixture_path': 'C:\\...private-profile-process\\\\profile\\\\home\\\\mcp-audit-input.json', 'head': '96cae7eec00473bbfb5687ccfd0685eba2785add', ...}\nassert '{\"mcpServers...: \"python\"}}}' == 'later-draft'\n  \n  - later-draft\n  + {\"mcpServers\": {\"file-server\": {\"command\": \"python\"}}}\nrequest = <FixtureRequest for <Coroutine test_import_file_respects_current_dr"
+    },
+    {
+      "name": "test_import_file_respects_current_draft[replacement]",
+      "outcome": "failure",
+      "message": "Failed: C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\post-3228-audit\\settings-tools\\merged-96cae7ee-01\\pytest\\test_import_file_respects_curr2\\private-profile-process\\pytest.log\n--- child failure: AssertionError: {'arm': 'replacement', 'expected_file_text': '{\"mcpServers\": {\"file-server\": {\"command\": \"python\"}}}', 'fixture_path':...private-profile-process\\\\profile\\\\home\\\\mcp-audit-input.json', 'head': '96cae7eec00473bbfb5687ccfd0685eba2785add', ...}\nassert '{\"mcpServers...: \"python\"}}}' == 'later-draft'\n  \n  - later-draft\n  + {\"mcpServers\": {\"file-server\": {\"command\": \"python\"}}}\nrequest = <FixtureRequest for <Coroutine test_import_file_respects_current_dr"
+    },
+    {
+      "name": "test_import_preview_shape_error_is_recoverable[valid]",
+      "outcome": "passed",
+      "message": null
+    },
+    {
+      "name": "test_import_preview_shape_error_is_recoverable[args_number]",
+      "outcome": "failure",
+      "message": "Failed: C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\post-3228-audit\\settings-tools\\merged-96cae7ee-01\\pytest\\test_import_preview_shape_erro1\\private-profile-process\\pytest.log\n--- child failure: TypeError: 'int' object is not iterable\nrequest = <FixtureRequest for <Coroutine test_import_preview_shape_error_is_recoverable[args_number]>>\nshape = 'args_number'\n\n    @pytest.mark.asyncio\n    @pytest.mark.parametrize('shape', ['valid', 'args_number', 'env_array'])\n    @private_profile_test\n    async def test_import_preview_shape_error_is_recoverable(request, shape):\n        app = HubApp()\n        entry = {'command': 'python', 'args': [], 'env': {}}\n        if "
+    },
+    {
+      "name": "test_import_preview_shape_error_is_recoverable[env_array]",
+      "outcome": "failure",
+      "message": "Failed: C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\post-3228-audit\\settings-tools\\merged-96cae7ee-01\\pytest\\test_import_preview_shape_erro2\\private-profile-process\\pytest.log\n--- child failure: AttributeError: 'list' object has no attribute 'items'\nrequest = <FixtureRequest for <Coroutine test_import_preview_shape_error_is_recoverable[env_array]>>\nshape = 'env_array'\n\n    @pytest.mark.asyncio\n    @pytest.mark.parametrize('shape', ['valid', 'args_number', 'env_array'])\n    @private_profile_test\n    async def test_import_preview_shape_error_is_recoverable(request, shape):\n        app = HubApp()\n        entry = {'command': 'python', 'args': [], 'env': {}}\n"
+    },
+    {
+      "name": "test_import_preview_with_installed_keepalive_guard",
+      "outcome": "passed",
+      "message": null
+    }
+  ],
+  "qualified_counts": {
+    "selected_private_children": 7,
+    "controls_and_guard_passed": 3,
+    "expected_product_oracle_failures": 4,
+    "setup_errors": 0,
+    "skipped": 0
+  },
+  "read_finding": {
+    "priority": "P2",
+    "source": "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py:6769",
+    "evidence": {
+      "none": {
+        "arm": "none",
+        "fixture_path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\post-3228-audit\\settings-tools\\merged-96cae7ee-01\\pytest\\test_import_file_respects_curr0\\private-profile-process\\profile\\home\\mcp-audit-input.json",
+        "text_after_completion": "{\"mcpServers\": {\"file-server\": {\"command\": \"python\"}}}",
+        "same_panel": true,
+        "original_attached": true,
+        "expected_file_text": "{\"mcpServers\": {\"file-server\": {\"command\": \"python\"}}}",
+        "head": "96cae7eec00473bbfb5687ccfd0685eba2785add"
+      },
+      "typing": {
+        "arm": "typing",
+        "fixture_path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\post-3228-audit\\settings-tools\\merged-96cae7ee-01\\pytest\\test_import_file_respects_curr1\\private-profile-process\\profile\\home\\mcp-audit-input.json",
+        "live_before_completion": "later-draft",
+        "text_after_completion": "{\"mcpServers\": {\"file-server\": {\"command\": \"python\"}}}",
+        "same_panel": true,
+        "original_attached": true,
+        "expected_file_text": "{\"mcpServers\": {\"file-server\": {\"command\": \"python\"}}}",
+        "head": "96cae7eec00473bbfb5687ccfd0685eba2785add"
+      },
+      "replacement": {
+        "arm": "replacement",
+        "fixture_path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\post-3228-audit\\settings-tools\\merged-96cae7ee-01\\pytest\\test_import_file_respects_curr2\\private-profile-process\\profile\\home\\mcp-audit-input.json",
+        "live_before_completion": "later-draft",
+        "text_after_completion": "{\"mcpServers\": {\"file-server\": {\"command\": \"python\"}}}",
+        "same_panel": false,
+        "original_attached": false,
+        "expected_file_text": "{\"mcpServers\": {\"file-server\": {\"command\": \"python\"}}}",
+        "head": "96cae7eec00473bbfb5687ccfd0685eba2785add"
+      }
+    },
+    "result": "Untouched load passes; later typing and Cancel/reopen replacement both lose witnessed later-draft to the older file JSON.",
+    "scope": "Actual mounted ToolsHubPanel/MCPWorkbench, From file button, actual EnhancedFileOpen Path callback and real asyncio.to_thread Path.read_text; only fixture read held. Fake catalog service does not perform file reading or editor publication."
+  },
+  "validation_finding": {
+    "priority": "P2",
+    "source": [
+      "tldw_chatbook/MCP/mcp_import.py:82",
+      "tldw_chatbook/MCP/mcp_import.py:94",
+      "tldw_chatbook/UI/MCP_Modules/mcp_profile_form.py:487"
+    ],
+    "evidence": {
+      "valid": {
+        "shape": "valid",
+        "text": "{\"mcpServers\": {\"audit-server\": {\"command\": \"python\", \"args\": [], \"env\": {}}}}",
+        "error_copy": "",
+        "apply_disabled": false,
+        "app_exception_type": null,
+        "app_exception": null
+      },
+      "args_number": {
+        "shape": "args_number",
+        "text": "{\"mcpServers\": {\"audit-server\": {\"command\": \"python\", \"args\": 42, \"env\": {}}}}",
+        "app_exception_type": "TypeError",
+        "app_exception": "'int' object is not iterable"
+      },
+      "env_array": {
+        "shape": "env_array",
+        "text": "{\"mcpServers\": {\"audit-server\": {\"command\": \"python\", \"args\": [], \"env\": [\"not-an-object\"]}}}",
+        "app_exception_type": "AttributeError",
+        "app_exception": "'list' object has no attribute 'items'"
+      }
+    },
+    "guard_evidence": {
+      "scope": "hosted pane with installed app error guard; no full TldwCli boot",
+      "app_running": true,
+      "app_exception_type": null,
+      "panel_attached": false,
+      "editor_attached": false,
+      "live_editor_count": 0,
+      "notifications": [
+        "Something went wrong in parse_mcp_servers_json \u2014 the screen was kept open. That panel may stop responding or disappear until you reopen it; details are in the log file."
+      ]
+    },
+    "result": "Valid list/dictionary control passes. Numeric args and array env escape Preview as TypeError/AttributeError. Installed keepalive leaves app running but retires import panel/editor.",
+    "production_effect_limit": "Guard test borrows exact installed LifecycleMixin._handle_exception into a lightweight host with native keepalive enabled; no full TldwCli boot and no verified whole-app production crash claim."
+  },
+  "task_spec_sanity": {
+    "result": "both supplied specs match separate root causes, owners and measured limitations; no amendment needed",
+    "specs": [
+      {
+        "key": "mcp-import-read",
+        "rank": 4,
+        "priority": "medium",
+        "severity": "P2",
+        "title": "Keep pending MCP file reads from replacing newer import drafts",
+        "why": "MCP file-import completion looks up whichever import panel currently exists and replaces its text. Later typing, or Cancel followed by a fresh import form, can therefore lose its draft to an older file selection.",
+        "measured": "Actual Import -> From file -> picker Path callback -> real to_thread read. Both same-panel typing and Cancel/reopen replacement retain later-draft before release, then receive older fixture JSON. Untouched-panel control loads normally. Fake hub only supplies catalog; no credentials or network.",
+        "related": [
+          "32791",
+          "32780",
+          "32787",
+          "32839",
+          "36361"
+        ],
+        "adr": [
+          "033-application-session-state-ownership.md",
+          "240-mcp-destination-retirement-tools-hub-in-settings.md"
+        ],
+        "owners": [
+          "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+          "tldw_chatbook/UI/MCP_Modules/mcp_profile_form.py"
+        ],
+        "ac": [
+          "An untouched originating import panel receives its explicitly selected file normally.",
+          "Typing or clearing the import text after file selection remains visible when the older read completes, including invalid raw drafts.",
+          "Cancel, replacement or reopening invalidates the old panel read so it cannot publish into a new import panel.",
+          "Mounted checks cover the actual picker callback and filesystem await with same-panel, replacement and ordinary controls."
+        ],
+        "existing_task_records": [
+          {
+            "id": "32791",
+            "path": "backlog/tasks/task-32791 - Preserve-MCP-root-drafts-and-ordered-save-outcomes.md",
+            "status": "status: Done"
+          },
+          {
+            "id": "32780",
+            "path": "backlog/tasks/task-32780 - Keep-Tool-Profile-reviews-within-the-initiating-Settings-visit.md",
+            "status": "status: Done"
+          },
+          {
+            "id": "32787",
+            "path": "backlog/tasks/task-32787 - Preserve-Tool-Profile-writes-across-Settings-recreation.md",
+            "status": "status: Done"
+          },
+          {
+            "id": "32839",
+            "path": "backlog/tasks/task-32839 - Keep-restored-MCP-review-completion-scoped-and-refresh-passive-views.md",
+            "status": "status: Done"
+          },
+          {
+            "id": "36361",
+            "path": "backlog/tasks/task-36361 - Preserve-newer-Appearance-Storage-and-Console-Behavior-drafts-after-pending-Saves.md",
+            "status": "status: Done"
+          }
+        ],
+        "book_basis": "PDF145\u2013146 and158 / printed136\u2013137 and149 explains widget queues and asynchronous handlers. Originating panel/draft identity is an application-specific deduction.",
+        "dedup": "TASK-32791 covers workspace-root drafts, TASK-32780/32787 Tool Pack review/write lifetimes, TASK-32839 recovery-review completion and TASK-36361 other Settings drafts. Their complete acceptance criteria do not own MCP server JSON file-import publication.",
+        "adr_reason": "Routine stale UI publication repair within existing import-panel/workbench ownership and the canonical Settings host; no new service or permission boundary."
+      },
+      {
+        "key": "mcp-import-validation",
+        "rank": 5,
+        "priority": "medium",
+        "severity": "P2",
+        "title": "Reject malformed MCP import shapes without losing the editable panel",
+        "why": "The MCP JSON importer assumes args is iterable and env is a mapping. Valid JSON with malformed field containers escapes Preview validation, causing the error keepalive to retire the import panel and its editable draft.",
+        "measured": "Real Preview of args:42 raises TypeError; env:[not-an-object] raises AttributeError. Valid args:[]/env:{} control passes. Installed keepalive guard keeps the host alive while the failing panel/editor detach. No verified whole-app production crash claim.",
+        "related": [
+          "241",
+          "26013",
+          "14922",
+          "32533",
+          "33621.13"
+        ],
+        "adr": [
+          "161-component-pattern-library.md",
+          "240-mcp-destination-retirement-tools-hub-in-settings.md"
+        ],
+        "owners": [
+          "tldw_chatbook/MCP/mcp_import.py",
+          "tldw_chatbook/UI/MCP_Modules/mcp_profile_form.py"
+        ],
+        "ac": [
+          "Malformed args/env container shapes produce a clear import validation error without an uncaught handler exception.",
+          "Rejected source text stays editable, Import remains disabled, and stale preview candidates cannot be submitted.",
+          "Correcting the text and pressing Preview recovers normally; supported valid and omitted field shapes retain existing behavior.",
+          "Parser and mounted Preview regressions cover both observed malformed shapes, a valid control and the installed keepalive semantics."
+        ],
+        "existing_task_records": [
+          {
+            "id": "241",
+            "path": "backlog/tasks/task-241 - MCP-Hub-engineering-follow-ups-from-Phase-2-3-ledgers.md",
+            "status": "status: To Do"
+          },
+          {
+            "id": "26013",
+            "path": "backlog/tasks/task-26013 - MCP-server-spawn-configuration-guard.md",
+            "status": "status: Done"
+          },
+          {
+            "id": "14922",
+            "path": "backlog/tasks/task-14922 - Resolve-PR-1490-post-merge-review-findings.md",
+            "status": "status: Done"
+          },
+          {
+            "id": "32533",
+            "path": "backlog/tasks/task-32533 - Library-Notes-the-app-exits-with-an-unhandled-InvalidSelectValueError-during-the-first-timer-edit-journey-and-the-crash-handler-records-no-site.md",
+            "status": "status: Done"
+          },
+          {
+            "id": "33621.13",
+            "path": "backlog/tasks/task-33621.13 - Console-Choose-folder-for-project-instructions-freezes-the-whole-app-Esc-clicks-and-CtrlQ-ignored.md",
+            "status": "status: Done"
+          }
+        ],
+        "book_basis": "Collateral concrete input-boundary defect found while tracing the book\u2019s queued Preview/panel lifecycle model. Container validation is an existing application requirement, rather than a specific book design.",
+        "dedup": "TASK-241 remains open for regex alignment, mutation remount, slot confirmation and lifecycle cancellation; its complete criteria do not cover malformed containers. TASK-26013 validates spawn-command shapes, TASK-14922 protocol/packaging. TASK-32533 and TASK-33621.13 keep handler errors alive while retiring failing pumps; they do not validate these JSON shapes.",
+        "adr_reason": "Routine validation and recoverable errors within the existing importer and host; no new service or security policy."
+      }
+    ],
+    "measurement_limits": "Clearing/invalid-raw draft variants, correction after validation rejection, stale candidate invalidation and omitted-field compatibility are desired future AC coverage. This revalidation does not claim all those unimplemented outcomes were measured."
+  },
+  "dedup_and_adr": "Original complete AC review and exclusions retained in audit-report.json. Root owns final dedup/open-PR refresh and filing. Existing ADR033/161/240 apply; no new ADR needed for routine UI publication and boundary validation repairs.",
+  "isolation": "Fresh bootstrap and private profile per selected child; Tests.conftest, Tests.UI.conftest, network guard and native private-profile admission retained. No real user config, credentials, network API, service launch or durable import.",
+  "preserved_original_evidence": [
+    "audit-report.json",
+    "profile-save-01",
+    "import-file-01",
+    "import-file-02",
+    "import-file-03",
+    "import-validation-01",
+    "import-validation-guard-01"
+  ],
+  "excluded_evidence_unchanged": [
+    {
+      "run": "profile-save-01",
+      "reason": "Gated fake save introduced a suspension absent from the installed save_local_profile path. Its newer-edit/replacement failures are not qualified production timing evidence and must not become a task."
+    },
+    {
+      "run": "import-file-01",
+      "reason": "All three failed in probe setup because EnhancedFileOpen.dismiss requires Path, not str. No product claim."
+    },
+    {
+      "run": "import-file-02 replacement arm",
+      "reason": "Probe observed replacement MCPImportPanel before its TextArea children mounted, causing setup NoMatches. Corrected by waiting for the actual child and repeated in import-file-03."
+    }
+  ],
+  "mutations": "Only owned scratch probe copies and new revalidation outputs/report. No tracked files, git metadata, tasks or PRs changed by this agent."
+}

@@ -10,6 +10,80 @@ decays into folklore, and folklore gets ignored. If you add one, bring the incid
 
 ---
 
+## A widget `query_one` can find has not necessarily composed its own children
+
+**TASK-36382, 2026-10-23.** `test_unfed_remount_restores_depth_and_running_state`
+waited until `screen.query(SkillEvalPanel)` was truthy, then called
+`set_options([])` on the panel's generator `Select`. Waiting for the `Select`
+itself instead was not enough: under four concurrent loops (load ~50) it still
+raised `NoMatches: 'SelectOverlay' on SetSelect(id='skill-eval-generator')`.
+Textual registers a mounted widget in the DOM first and composes its children
+later, in that widget's own message loop (`MessagePump._pre_process` dispatches
+`Compose`, then `Mount`), so each nesting level has its own window. Waiting for
+`select.is_mounted` (set after its `Mount`, which needs the composed children)
+made 32 of 32 concurrent runs pass. A second error in the same failure,
+`NoMatches '#label'` from `Select._on_mount`, came from app shutdown after the
+test body had raised; it was not a separate product bug.
+
+When a test calls a method that reaches into a widget's children, wait for
+that widget's `is_mounted`, not for a query to find it or its container.
+
+## `is_attached` stays True while a removal prunes the widget, so it misses in-flight renders (TASK-36527, 2026-11-03)
+
+**Incident.** The File Notes git panel's worker renders were guarded with
+`is_attached`. That guard covers quit, because `App._exit` makes every widget
+read as detached. It misses removal, the path every Library recomposition takes.
+`App._prune` sets `_pruning` on the whole subtree at once. The children exit
+first (`Widget._message_loop_exit` gathers them). The panel's own workers are
+cancelled only at its own Unmount, and `_detach` runs after that. So a render
+that resumed from `await list_view.clear()` during the removal still read
+`is_attached` True. Its `extend` then became a silent no-op, and the next query
+raised `NoMatches` (`#file-notes-git-empty`, or
+`#file-notes-git-commit-included-selected`). That `WorkerFailed` exits the app.
+A deferred `call_after_refresh` focus raised `NoMatches` the same way. The
+implementation notes had claimed that "a detach cancels the worker on the
+await". Review disproved it with a probe that removed the host or the panel
+0 to 8 ticks into a render. With the `is_attached`-only guard (f106a13c58),
+16 of 24 runs crashed: 15 with `WorkerFailed` and 1 with a focus `NoMatches`.
+Dev also crashed in 16 of 24. The pruning-aware head crashed in 0 of 48. A second
+review found the same gap one level out. The workspace's push observer is a
+plain `asyncio.create_task`, and workspace workers are cancelled only at the
+workspace's own Unmount. Either can call a panel entry point after the panel's
+children are gone, so every such entry point needed the guard too.
+
+**What to do.** For "is this widget still live" after an await or in a deferred
+callback, use the repo idiom `not self.is_attached or self._pruning`
+(`prompt_history_region.py`, `right_rail.py`). It matters most in a `finally`
+and in any code that follows a mount, because the mount itself is skipped
+quietly while the widget is pruning. To pin it, hold the render, call
+`host.remove()` (this sets `_pruning` synchronously), release the render, and
+then await the removal. Remove the panel itself when you test a
+`call_after_refresh` callback; in this case the host's removal never reached
+the callback. For an entry point that a task calls, start `host.remove()` and
+then `await asyncio.gather(*(c._task for c in panel.children))`. At that point
+the panel is attached, pruning, and has no children, and the panel's own
+Unmount has not run yet (`Tests/UI/test_library_file_notes_git.py`).
+
+A third review found the fix had over-reached. Early-return guards at the top
+of `return_to_commit_list` skipped the phase assignment as well as the DOM.
+The workspace remounts the same panel instance, and `_finish_mount` re-projects
+`_commit_phase`. So a commit that settled during a recomposition came back on
+its "executing" screen. Record persistent state (phase, operation ids, results)
+before the guard, and let the guard skip only DOM projection. Pin that with a
+state assertion next to the "does not raise" one.
+
+## Metadata mount echoes can cancel the worker that requested a recompose
+
+**TASK-32755.1, 2026-10-21.** Adding an off-thread transcription readiness
+check reused Library's busy-status recompose. Nonempty Title, Author and
+Keywords Inputs re-emitted their initial Changed events; their handlers
+invalidated the pending submission even when the stored draft value matched.
+A mounted canvas regression recorded six cancellations across mount and
+recompose; three direct handler checks reproduced the same cancellation.
+Returning on unchanged metadata before invalidation made all four checks pass,
+while actual edits still cancel the captured submission. Guard mount echoes
+before changing worker generations, including for metadata outside option panels.
+
 ## Covered screens retain old geometry, and a fixed number of Pilot pauses does not prove quiescence
 
 **TASK-32562 backup UAT, 2026-09-14–15.** Recomposition below stacked backup
@@ -37,6 +111,15 @@ and [remediation record](../../Docs/Development/backup-uat-remediation-2026-09-1
 Use actual screen visibility/layout events to resume deferred geometry work,
 and test quiescence as a bounded condition with a separate callback-stability
 check. A positive old region or a fixed count of Pilot turns establishes neither.
+
+**PR #3207 / TASK-34974, 2026-10-22.** The response-rule manager's
+Disable/Enable test exhausted fifteen Pilot pauses after Disable had committed
+but before its reload had enabled the button. The next `Button.press()` silently
+did nothing. Holding that real reload reproduced the failed enabled-state
+assertion; an independently released three-second delay failed the original
+test and passed a bounded wait for durable state, idle modal and enabled current
+control. Keep the original selection, revision and CAS assertions; a committed
+row alone does not establish readiness for the next action.
 
 ---
 
@@ -137,10 +220,35 @@ only surfaced because a test asserted the substring was in the rendered label:
 
 Escape with a raw string and a leading backslash (`r'\[Imported]'`) anywhere a
 literal bracket must reach the user, and **assert on the rendered label**
-(`str(widget.label)` / `str(static.renderable)`), never on the source constant —
+(`str(widget.label)` / `str(static.render())`), never on the source constant —
 a test that checks the constant passes while the UI shows nothing. This bites
 hardest on exactly the copy that most needs to be literal: names, prefixes,
 placeholders, file globs, `[Imported]`-style markers.
+
+**Correction, TASK-33008.5, 2026-10-04: `str(static.renderable)` is the source
+constant here, not the rendered text.** This entry used to recommend it. The
+repo's compatibility shim (`tldw_chatbook/__init__.py`) defines
+`Static.renderable` as `self.content`, which is what the constructor was handed.
+Measured on Textual 8.2.8:
+
+```python
+>>> w = Static('with "[Imported]" and ([bold]x)')
+>>> str(w.renderable)
+'with "[Imported]" and ([bold]x)'
+>>> str(w.render())
+'with "" and (x)'
+```
+
+The incident: the first-run wizard's model-step status line was mounted with
+`markup=False` because its copy embeds a typed endpoint, and its copy pins
+(twelve calls through one test helper, one more in the live-contract file) read
+it through `str(line.renderable)`. Those pins compare the same string with
+markup on or off, so none of them could see `markup=False` being removed; a
+reviewer found it by reading the shim. With the helper switched to
+`str(line.render())` and one case that passes `[bold]x` through the copy,
+removing `markup=False` fails that case and only that case. For a `Static`,
+read `render()`. `str(widget.label)` on a button or checkbox is rendered text,
+as the example above shows.
 
 ---
 
@@ -203,6 +311,136 @@ passes `layout=` nor carries a stated exemption. Two things that census taught:
 
 ---
 
+## A widget inside a `display: none` ancestor still costs a whole-screen reflow, and `Content.__eq__` ignores styling (TASK-36012, 2026-10-26)
+
+**Incident.** At 160x45 the Console's Inspector rail is collapsed to its
+handle (`display: none` on `#console-right-rail`). A headless probe of a send
+(wrapping `Widget.refresh` and `Screen._refresh_layout`) still counted layout
+requests from inside it on every send: the rail's own outer-fold reconcile,
+the rail cascade re-hiding Settings rows the Settings summary had just
+re-shown (eleven rows, twice per transition), and on a chat's first send a
+whole run-inspector recompose (about 30 mounts). Each one posted a `Layout`
+to the screen, and the screen reflowed everything. Textual 8.2.8's
+`Widget._check_refresh` posts `messages.Layout(self)` with no `display`
+check (only the repaint path checks `self.display`), so a hidden subtree's
+requests cost exactly what a visible one's do and paint nothing.
+
+Writing the in-place patch for the Conversations tray turned up a second
+trap: `textual.content.Content.__eq__` compares `.plain` only, so a Button
+label whose text is unchanged but whose style changed compares equal and an
+equality gate would skip the repaint. The patch compares `(plain, spans)`.
+
+**What to do.** When counting layout cost, include widgets under hidden
+ancestors: do not assume `display: none` makes a subtree free. Before
+skipping a hidden widget's layout, check what reopens it: a rail whose
+display flips gets a `Resize` and re-reconciles, but a child's content-height
+change written with `layout=False` leaves its ancestors' arrangement caches
+stale, so only a fixed box may skip the layout. Gate repaints on the
+content's spans as well as its text.
+
+## `Button.label` repaints but does not re-lay out: a longer label written in place wraps inside the old box (TASK-34000.22, 2026-10-20)
+
+**Incident.** The Media reader's Cancel button is relabelled "Discard
+changes" in place while the form is dirty (`sync_editor_drafts`, no
+recompose, so the field being typed in keeps its cursor). The label
+attribute read "Discard changes", the test's `str(button.label)` check
+passed, and the painted region read `    Discard`: the compact button was
+still the 16-cell box Textual's default `min-width: 16` had given the
+6-character "Cancel", and the 15-character label wrapped to its first word
+inside a 1-row button. `Button.label` is `reactive(...)` with no
+`layout=True` (Textual 8.2.8 `_button.py`), so the write repaints the
+button and leaves its `width: auto` size exactly where it was -- the
+inverse of the `Static.update()` entry above, which lays out when you
+would rather it did not.
+
+**What to do.** After writing a longer `label` to a mounted Button, call
+`button.refresh(layout=True)`. Assert the painted text, not the attribute:
+a region-cropped `render_strips()` read caught this; `button.label` never
+would have.
+
+## `call_after_refresh` is two message hops, not a layout pass — a refresh-counted wait can never see a widget's first `Resize` (TASK-34000.25, 2026-10-09)
+
+`MessagePump.call_after_refresh` posts `InvokeLater` to itself and then `call_later`s
+the callback on the app: it runs after the pending messages, with no real time and no
+compositor reflow in between. A chain that re-arms itself through it therefore burns
+its whole budget inside one frame. Incident: the Media Reader's reading-position
+restore (task-31968's `settle(8)`, one `scroll_to(immediate=True)` per hop, re-armed
+while the offset clamped short) was moved onto the rail-return path. The Raw view
+builds its wrap index on its FIRST `Resize` — delivered by the compositor after a
+layout, i.e. a frame later — so all eight re-applies ran on the same unindexed view at
+`max_scroll_y == 0`, and raising the budget to 48 changed nothing (the probe recorded 48
+of 48 at 0, then 287 rows one `pilot.pause()` later). Routing the hop through
+`call_later` was no better: same reason. The fix was a layout SIGNAL, not a count: the
+Raw view posts `Indexed` after `_build_index_now`, Textual's `Markdown` posts
+`TableOfContentsUpdated` after its last block batch mounts, and
+`LibraryMediaContentBody.run_when_laid_out` hands the continuation to whichever applies.
+Rule: `call_after_refresh` orders you after *messages already queued*; it says nothing
+about layout. To wait for geometry, wait for the event that produces it (`Resize`, a
+widget's own "built" message), and keep a refresh-count only as the bound on a body that
+is already laid out and merely growing.
+
+**Recurred under a dialog, TASK-33008 capture fix 4, 2026-10-13 -- it is the ACTIVE
+screen's refresh.** `_on_invoke_later` hands the callback to `app.screen`. The Console
+covered by a `ModalScreen` is still current (`Screen.is_current` counts
+`app._background_screens`, which always holds the screen right under the top one) and
+lays out under the dialog, but a tick after the dialog's own refresh has already run
+the callback: the dialog had nothing to lay out. A probe saw the covered screen report
+`is_current` True and its layout signal fire with the dialog still on top, after the
+callback had run. So the cost chip's refit (scheduled with `call_after_refresh` when
+the Provider and Model chips changed width) read the old chip places: 02c drew
+"Ctx 0% · No". In the real Switch model flow the strip syncs after dismiss, from
+`push_screen`'s result callback, and that callback can still beat the chips' `Layout`
+messages to the Console (red at the base in one of two probe runs). The fix subscribes
+to the widget's OWN screen's `screen_layout_refresh_signal` (published at the end of
+every `_refresh_layout`) and refits when the chip has moved; the per-change
+`call_after_refresh` refits were then deleted, since each one relabelled a second time
+and could draw the stale fit for a tick. Rule: for "after MY screen has laid out", use
+that signal, not `call_after_refresh`. A change made with a real `ModalScreen` on top
+loses the race every time, so that is the deterministic test; without a dialog it is
+lost only some of the time. A subscriber that stays subscribed also runs after every
+scroll (`reflow_visible`), so read only cached values there (`outer_size`, `display`,
+your own flags), never `region`/`size`/`virtual_region`: for a widget outside the
+visible map, each such read arranges the whole screen on every scroll frame
+(`reflow_visible` invalidates the full map, and `find_widget` rebuilds it). Capture fix 4
+round 2 measured 5 full arranges in 5 scroll frames at the base, for a cost chip past the
+strip's edge and for a collapsed strip.
+
+**Recurred during TASK-37173 shared-check repairs, 2026-10-28.** Adding the
+missing goal-setup quit hook exposed the same visibility/ownership distinction:
+launch completion saw `is_current` True under the quit prompt, and plain
+`dismiss()` popped that prompt instead of its own modal. The mounted regression
+`test_goal_completion_under_quit_prompt_survives_wait[launch]` failed at the
+prompt-preservation assertion. Completion now requires `app.screen is self`,
+retains its result while covered and retries after `ScreenResume`; configure and
+error updates remain owned by the mounted modal. All three covered-completion
+cases pass. Use exact top-screen identity for dismissal, never `is_current`.
+
+## A pane whose content just fits flips its scrollbar on focus — reserve the gutter
+
+**TASK-33007.6, 2026-10-04.** Folding the rarely used Providers & Models controls
+made the card fit the Settings detail pane at 211x44 (32 rows of content in a 32-row
+pane). Focusing the Default model picker opens two more rows. That brings in the
+vertical scrollbar, and leaving the picker takes it away. Each flip changed the
+content width by one column (122 → 121 → 122) and re-laid out the whole card.
+
+`test_an_invalid_custom_id_is_rolled_back_when_the_field_is_left[focus-moves-away]`
+went from 0/12 to 6/12 failures. Its 0.05 s blur timer now fired about 225 ms after
+the blur instead of about 85 ms, which is later than the test's `pause(0.2)`.
+
+A CSS bisect pinned it down. Restoring either the card's frame or the Advanced
+disclosures' old 3-row frames brought the delay back to about 82 ms. Both only make
+the content overflow all the time, so the scrollbar never flips. Removing the new
+draft-status refresh hook did nothing (8/10 still failed). `scrollbar-gutter: stable`
+on `#settings-detail-pane-body` fixed it: the delay returned to 82–91 ms, and the
+test failed 0 times in 12 runs.
+
+A pane whose content sits within a row of its height will meet this sooner or later,
+because any focus-driven growth crosses the fold. Reserve the gutter on the scroll
+container. Pin the width with a test: measure the card's width at rest and with the
+growing control focused. That test failed (121 vs 122) when the gutter was removed.
+
+---
+
 ## `set_timer(0.0)` never fires — silently
 
 **TASK-21110, 2026-08-23.** The splash/initial-screen overlap is armed with
@@ -228,6 +466,25 @@ what you mean, use `call_after_refresh` (or `call_later`); if a constant feeds t
 delay, branch on `> 0` rather than trusting whoever edits it next, and keep a test that
 the zero case still schedules. And when a perf arm comes back looking free, check that
 the thing you were measuring actually ran before you believe it.
+
+**It recurred: TASK-34000.1, found by the whole-branch review on 2026-10-04.** The
+Library note autosave got a maximum wait, and its delay was computed as
+`max(0.0, min(debounce, burst_start + max_wait - now))`. No constant was zero, so nothing
+looked like this entry; the zero appeared only once a burst outlived its max wait (a quit
+prompt held open, a rail switch away and back, or a key landing between the deadline and
+the callback). The timer callback was also the only thing that ended a burst, so every
+later keystroke armed another dead timer: autosave stopped for good under a header that
+still said "changes save automatically", and stopping the app raised
+`ZeroDivisionError`. The unit test asserted `delays[9] == 0.0`, with the comment "saves
+at once", against a fake `set_timer` that recorded the delay and never ran a timer, and
+it passed the task's own reviews.
+
+**What to do, in addition.** A *computed* delay is the same trap as a zero constant:
+clamp it to a small positive floor where it is computed (`AUTOSAVE_MIN_DELAY_SECONDS`,
+0.05 s), not at the call. A fake `set_timer` cannot tell a delay that fires from one that
+never will, so at least one test must arm the worst-case delay on a real message pump
+(`App().run_test()`, a dozen lines) and assert that the callback ran and that leaving
+`run_test()` did not raise.
 
 ---
 
@@ -373,6 +630,25 @@ re-introduces a `super().on_*()` call to a dispatched handler.
 
 ---
 
+## `is_mounted` is still False inside `on_mount` — a guard on it makes the mount-time apply a silent no-op (TASK-34000.25, 2026-10-09)
+
+Textual sets `_is_mounted = True` in the `finally` AFTER `_dispatch_message(events.Mount())`
+returns (`message_pump.py`, `_pre_process`), so any method called from an `on_mount` handler
+that early-returns on `not self.is_mounted` stores its input and applies nothing. Incident:
+`LibraryNotesCanvas.apply_session_state` guards on `is_mounted`; `on_mount` →
+`_apply_post_compose_state` called it to set the editor's `display` flags, and the call never
+passed the guard — a freshly composed editor kept every surface as composed, with the "This
+note changed elsewhere — Overwrite / Reload" callout visible under "Saved". Every other open
+path re-synced a moment later and masked it; the rail return to a retained, untouched note did
+not, which is the review's "false conflict render" (S-02), reproduced live at 160x45 and in a
+Pilot probe that logged `is_mounted=False` at both calls. Widening the guard to `is_attached`
+was NOT the fix: the dead apply had been dead since the canvas was written, and two pinned
+behaviours (the emptied-blank GC on Back, the compact Preview scroll memory) went red once it
+ran. The fix composes the display-gated surfaces from the state in `_compose_editor` itself.
+Rule: inside `on_mount`, `is_mounted` is False; a compose must not rely on a later apply to
+hide what it composed, and before "repairing" a dead mount-time call, run the pinned suite —
+code has grown around its absence.
+
 ## A cached widget reference cannot be validated by `is_mounted` — it lags detachment, and `_pruning` marks the corpse first
 
 **TASK-23025, 2026-08-28.** To get Library resize frames and focus changes off
@@ -394,6 +670,30 @@ hops — still ~zero cost next to a DOM walk). With that check the cache is
 bit-for-bit equivalent to querying; the mutation arm (validation weakened
 back to `is_mounted`-only) re-fails the same pre-existing scroll test.
 Related earlier incident: task-2200 ("`is_mounted` ≠ in-the-DOM").
+
+`_pruning` is private Textual state, so recheck its readers on any Textual
+upgrade. TASK-33621.20 (2026-10-20) added one more: the Console transcript
+region's `sync_recovery` skips a region that is being pruned. Textual prunes
+children before their parent, so during a center swap (opening the terminal)
+the recovery card was still in the DOM after its title had gone, and a sync
+then raised `NoMatches` in the console-sync worker, which exits the app.
+`test_a_recovery_sync_during_a_center_swap_never_fails_the_sync` steps the
+event loop into that window and fails if the flag stops covering it.
+TASK-34000.26 (2026-10-24) added seven more, all at the focus seam:
+`UI/Navigation/base_app_screen.py` `BaseAppScreen.set_focus` refuses a `_pruning` or
+detached target (Textual 8.2.8's `Screen.set_focus` checks only `focusable`, which reads
+`visible` and never `_pruning`, so a write landing after `App._prune`'s mark was kept and the
+keyboard died in that widget's closed pump — review S-10); four sites in
+`UI/Screens/library_screen.py` — `_library_media_empty_list_fallback_target` returns a
+`_pruning` preferred control rather than falling through to a lower-preference one, and
+`_focus_library_list_entry` skips `_pruning` rows (retrying when every row the query found is
+being replaced), a `_pruning` fallback filter, and a `_pruning` media fallback control;
+`Utils/text_selection_crash_guard.py` `DetachedFocusGuard` clears a `_pruning`/detached
+`focused` before a key is forwarded; and `UI/Console_Modules/right_rail.py`
+`_focus_library_activity` targets only an attached, non-`_pruning` selected-turn heading and
+re-attempts after the next refresh while every match is being removed.
+`Tests/App/test_detached_focus_guard.py` steps into the window and fails if the flag stops
+covering it (its negative control fails the other way if Textual starts refusing the write).
 
 ---
 
@@ -523,6 +823,34 @@ TUI. Instrument with a plain append-to-file probe gated by an env var (or a
 diagnostics event); a probe you cannot see is indistinguishable from a probe
 that never fired.
 
+## A button that disables or hides itself when pressed drops focus to None (TASK-34100.14, 2026-10-19)
+
+**What happened.** The shared model-download progress widget gained a "Cancel
+download" button that disables itself on press, and its host hides the whole
+widget when the download ends. On the live recheck, after clicking Cancel in
+the wizard's Voice step, Ctrl+N did nothing (three presses; the step stayed
+on 4 of 11). Esc still opened "Exit setup?", so input was not soft-locked, and
+after that modal closed Ctrl+N worked again. Every Pilot test was green: none
+pressed a key after Cancel.
+
+**Mechanism.** `Widget.watch_disabled` blurs a focused widget that becomes
+disabled, and `_on_hide` blurs one that becomes hidden. `Screen._reset_focus`
+then looks for a replacement. The button is no longer in the focus chain, so
+it falls back to the button's *visible focusable siblings*; inside that
+widget there were none (a Static, a ProgressBar), so it called
+`set_focus(None)`. With focus None, bindings on a container several levels up
+(the wizard's Ctrl+N/Ctrl+B) have no chain to resolve through. Screen-level
+and app-level bindings (Tab, Esc) still fire, which makes this look like a
+flaky key rather than lost focus. The Speech step hid the same bug, because
+its recompose runs `SetupStep._heal_orphaned_focus` (entry above).
+
+**The rule.** Before a widget disables or hides its own focused control, hand
+focus on (`self.screen.focus_next()`). A host that hides a subtree that may
+hold focus re-anchors afterwards (`call_after_refresh(self._heal_orphaned_focus)`
+in a `SetupStep`). The test that catches it focuses the control, triggers the
+disable or hide, and asserts something attached and on-screen (every ancestor
+displayed) has focus. A green press-and-assert-the-outcome test does not.
+
 ## Textual's focus order is VISUAL (y, x) order, not DOM order (TASK-21142, 2026-08-25)
 
 **What happened.** To make Tab reach Next before the abandon button, the
@@ -577,6 +905,31 @@ rail_nodes = set(rail.query("*").nodes) | {rail}
 [w for w in screen.focus_chain if w in rail_nodes]
 ```
 
+## `A:focus-within B` restyles B only if A carries a `:focus-within` rule of its own (TASK-33007.3, 2026-10-03)
+
+The Settings Default model picker opens across its row while it holds focus:
+`#settings-model-row:focus-within .settings-source-word { display: none; }` and a
+matching width rule on the picker. The picker's own `:focus-within` rules
+applied, but the live 211x44 capture showed the row's Source word and help still
+painted, and the picker squeezed to a third of the row (it now shared `1fr` with
+two siblings that should have gone).
+
+`Screen._update_focus_styles` does not re-match every selector. It walks the
+focused widget's ancestors from the screen down and restyles the subtree of the
+FIRST ancestor whose `_has_focus_within` is set, and `Stylesheet.apply` sets that
+flag on a node only when a rule whose selector ENDS on that node uses
+`:focus-within`. A descendant selector `A:focus-within B` ends on `B`, so it flags
+`B`, never `A`. Here the picker was the outermost flagged node, so only its
+subtree was restyled; its siblings in the row never heard about the focus change.
+
+**The rule:** when a `:focus-within` on a container must restyle that
+container's other children, give the container a `:focus-within` rule of its
+own (any property; `#settings-model-row:focus-within { height: auto; }` here),
+and pin the effect with an assertion on a sibling's `display`, not only on the
+focused widget's subtree. Related trap from the same task: `Button.press()`
+returns without posting `Pressed` while the button is `display: none`, so a test
+that presses a focus-revealed button must focus its owner first.
+
 ## `Widget.size` excludes borders and padding; `outer_size` includes them
 
 **TASK-23193, 2026-08-29.** Measuring the Context rail's vertical budget, section
@@ -619,6 +972,25 @@ Re-query after **every** await that could trigger a recompose, and take the refe
 the caller will act on *after* the last one — scrolling counts, because
 `scroll_to_widget` can itself provoke another reconciliation pass.
 
+## A canvas's own fields run ahead of its mounted children -- stamp what a child was composed for ON the child (TASK-34000.40, 2026-10-26)
+
+Escape in the Notes filter used to lose unsubmitted text, because the
+canvas-scoped sync's recompose rebuilt the box from the applied filter. The
+first fix carried a "draft" -- the box's text when it differed from the
+canvas's `filter_value` and from the incoming filter. dev's
+`test_library_shell_filtered_delete_refreshes_list_without_ghost` went red: a
+delete from a filtered list clears the filter in TWO syncs before one
+recompose. `sync_state` stores its fields and only schedules the rebuild, so on
+the second sync `filter_value` was already `""` while the mounted box still
+showed the applied `retro`, and `retro` was "carried" over the clear.
+
+**Rule.** To ask "did the user change this child since it was composed?",
+compare it with a value stamped on the child at compose time
+(`filter_box._library_applied_filter`), not with the container's field: a
+second sync before the first recompose has moved the field on. The same
+reason `LibraryNotesCanvas._apply_post_compose_state` gates on the mounted
+children rather than on `self.mode`.
+
 ## Textual focuses the clicked widget BEFORE the press bubbles — a click-outside dismissal must not restore the popup's opener
 
 **TASK-25709, 2026-08-30.** Wiring click-outside dismissal for the Context rail's
@@ -648,6 +1020,26 @@ end -> False`. Fence background work on the focus intent only when that work wil
 actually take focus; work that just repaints has no stake in it. Only the real gesture
 reproduces this — calling the same coroutine directly from a test posts no focus event
 and passes.
+
+**A list that cannot take focus loses a held click if it closes on blur (TASK-33007.2
+review round 1, 2026-10-03).** The Settings Provider combobox kept its list at
+`can_focus = False`, so the control stayed the one Tab stop, and closed the list 50 ms after
+the control blurred. A press on a row focuses the nearest focusable ANCESTOR instead, here
+the scrolling detail pane (`get_focusable_widget_at` walks `ancestors_with_self`). The
+control blurs, and the timer closes the list. `OptionList` chooses only on `Click`, which
+App builds at `MouseUp`, and only when the same widget is still under the pointer
+(`app.py` `on_event`). Measured in tmux with SGR mouse sequences: a 0 s hold chose Ollama,
+a 0.1 s hold chose a **wrong** row (Arcee AI), and 0.3 s or 1.0 s holds were lost.
+`pilot.click` could never show this: it forwards `MouseDown`, `MouseUp` and `Click`
+straight to the screen, so no focus change can come between them. To reproduce it,
+post the events through App the way the driver does
+(`app.post_message(events.MouseDown(None, x, y, 0, 0, 1, False, False, False, x, y))`,
+wait, then `MouseUp`). Then poll for the outcome: the Click, `OptionSelected` and
+`Select.Changed` chain is posted after `pause()`'s idle wait starts, so a fixed
+`pause(0.2)` flaked under `-n 8`. The fix: when the timer finds that focus went to a
+container of the open list and the pointer is over the list, re-focus the control
+instead of closing. Guard the lookup with `QueryError`, because the timer can fire
+during teardown.
 
 ## `Screen`'s Tab binding is not `priority`, so a burst types past it — and `pilot.press` can never show you
 
@@ -683,6 +1075,19 @@ a test written with it is green by construction. Post the keys yourself with no 
 one `pause()`. A task that says "1 s gaps behave" is telling you the drained-loop
 harness cannot see it.
 
+## A terminal's Alt+letter carries the letter, so a focused field types it — `pilot.press` sends none
+
+**TASK-33006.4, 2026-10-02.** Chat settings bound `Binding("alt+m", "change_model")` on
+the modal and a pilot test pressed `alt+m` with Temperature focused: green. Live in tmux
+(`send-keys M-m`), Alt+M typed an "m" into Temperature and nothing opened. Textual's
+xterm parser names the key `alt+m` but passes the letter through as `character="m"`, so
+the focused `Input` handles it as text before a non-priority screen binding is reached;
+`pilot.press("alt+m")` builds the `Key` with no character, so the test cannot see it (the
+composer met the same trap as TASK-1800, `console_composer_bar._is_modified_chord`). A
+screen-level Alt chord that must work from a text field needs `priority=True`, and its
+test should post the event the driver posts: `app.post_message(events.Key("alt+m",
+"m"))`, which failed before the fix and passes after (`test_alt_m_opens_pick_mode_from_a_focused_field`).
+
 ## `run_worker(exclusive=True)` CANCELS the group — it never queues behind it
 
 **schedules-redesign PR-3 Qodo round, 2026-09-03.** The Automations pane's in-place
@@ -705,6 +1110,22 @@ raised out of `pilot.app.workers.wait_for_complete()`.
 When every dispatch must actually land, that is the wrong primitive: hold an
 `asyncio.Lock` keyed by whatever must serialize, and leave the worker non-exclusive.
 The group name is then only a label for observability.
+
+
+**PR #3251, TASK-36931, Superpowers whole-branch review (2026-10-25).** Offloading
+inbox SQLite calls exposed the same cancellation boundary in a different form.
+The existing exclusive Mark-read/Dismiss worker could lose its awaiter while the
+native write kept running. Mounted tests held row A before its UPDATE, allowed
+row B's mutation and actual loader to finish first, then released A. Both real
+SQLite flags were correct, but A's cancelled continuation never requested the
+last refresh, leaving the visible row stale. Both action variants failed that
+exact final-table assertion, with no child errors.
+
+Keep each admitted finite mutation's completion-to-refresh path alive; cancelling
+its coroutine does not cancel its physical native write. These independent,
+idempotent row-flag updates need nonexclusive mutation workers, without another
+lock or queue; the shared read loader keeps latest-wins exclusivity. Connection
+retirement after physical work is necessary but does not itself publish UI completion.
 
 ---
 
@@ -731,6 +1152,25 @@ because `Select._update_selection` assigns only `if value != self.value`. So the
 echo from a real commit by the event alone — compare against the **stored** value and
 no-op when they match (`task_detail.py:1200`, `definition_detail.py:1391`). Never close,
 persist, or navigate on the first `Changed` after `begin_edit`/mount.
+
+**`Input` does the same (TASK-33007.2, 2026-10-03).** Settings' one-row Provider control is
+an `Input` composed with the chosen provider's name, whose `Changed` handler filters the
+provider list. Its mount echo arrived unfocused with the value "Anthropic" and filtered the
+resting list down to one row, so the help line read "1 found" before anyone typed. Ignoring
+that echo then left the help blank, because the resting copy had only ever been written by
+the echo's refresh. Treat a `Changed` whose value equals the committed display text as no
+query (`handle_provider_search_changed`), and compose the resting copy directly.
+
+**An echo guard knows only the values it was told about (TASK-33008.2, final fix wave,
+2026-10-11).** Settings' Default model field ignores its mount echo by comparing the posted
+value with the routed model (`_navigation_model`) and with Settings' own. A route that names
+no model was changed to show the routed provider's own saved model: a third value neither
+comparison knew. On the real app DeepSeek's page arrived with a draft nobody made (provider
+and model staged), no Return to Console and focus on the nav bar's Home button. The same
+change for a provider with no saved model passed, because an empty field posts no echo.
+When a mounted field gets a new source for its value, make that source the value the guard
+compares against (`routed_model` holds the resolved model as the route's own), and test it
+with a non-empty value.
 
 ---
 
@@ -819,6 +1259,85 @@ loads. **What to do:** give a widget added to a shared row geometry that holds w
 bundle: the widget type's own `DEFAULT_CSS`, or the owning class's `DEFAULT_CSS`. Then
 probe `region` once under a bare harness as well as under `TldwCli.CSS_PATH`.
 
+## A focus walker's geometry guard must PASS OVER an off-screen target, never rule it out
+
+**TASK-34000.8, 2026-10-09.** F6 landed on the Library note editor's Save while
+its region sat past the right edge of a 120-column terminal (the header was one
+strip shaped from the shell's breakpoint, not the pane's width). The obvious
+guard -- in `Widgets/workbench_focus.py`, skip a preferred target whose region is
+empty or outside `screen.region` -- fixed that and broke
+`test_narrow_f6_reveals_reader_and_returns_through_items_grip` at 50x25: the narrow
+Artifacts stage keeps its reader COLLAPSED until F6 focuses `#library-artifacts-body`,
+and that focus is what reveals it. An unseen target is sometimes the whole point of
+the walk. The rule that holds both: prefer the first preferred target that is on
+screen; only when none is, fall back to the first focusable one (focusing it may
+reveal its pane). "Empty region" is never disqualifying on its own -- a collapsed
+pane's child has one too. And "outside the screen" is not disqualifying either
+(review I-1 of the same task): a control a scrollable pane has merely SCROLLED out
+of view (`region.y < 0`, `allow_vertical_scroll` True on the pane) must stay the
+landing, because `focus()` scrolls it in -- F6 into a scrolled Settings form landed
+mid-form before that was pinned. The pass-over applies only to a control that no
+scrolling ancestor could reveal: clipped by a non-scrollable ancestor on an axis it
+cannot scroll (`_scrolling_could_reveal` in `Widgets/workbench_focus.py`). Measure
+visibility against the compositor's clip (`screen.find_widget(w).clip`), not
+`screen.region`: a control past its own pane's edge is inside the screen and still
+unseeable. And "a scrollable ancestor clips it" is not the end of the walk (PR #3055
+review, Important 2): the first version returned True at the first scrollable
+clipping ancestor, so a control scrolled out of a pane that was ITSELF laid out past
+a non-scrollable parent's edge counted as revealable and F6 landed on it
+(`test_workbench_focus_passes_over_a_scrolled_out_control_whose_pane_is_itself_clipped`).
+Scrolling brings the control into that pane's content region at best, so continue the
+walk with that region in hand: every clipping ancestor has to be scrollable on the
+overflowed axis.
+
+Two measurements from the same task worth keeping: (1) a content-sized compact
+`Button` is `len(label) + 4` cells on the wide stage -- `padding: 0 1` plus
+Textual's `line-pad: 1` on both sides -- and horizontal sibling margins COLLAPSE
+to the larger one (a `margin-left: 4` after a `margin-right: 1` costs 4, not 5),
+so derive a row's one-line minimum from the labels and measure the chrome once;
+(2) to keep a sibling from moving when a control comes and goes, hide the control
+with `visible = False` (cells reserved, dropped from `focus_chain` and
+`get_widget_at` in 8.2.8), not `display = False` -- it replaces a hand-measured
+`min-width` that was only ever right at one size.
+
+---
+
+## `allow_vertical_scroll` is False whenever the content fits -- a scroll-owner test needs overflow
+
+**TASK-34000.7, 2026-10-08.** The fix gave the wide `#library-notes-list` `overflow-y: auto`,
+and the gated test pinned it with `lst.allow_vertical_scroll is True` at 120x36 and 160x45
+(green). The extended sibling asserted the same at 200x50, 235x52, 100x50 and 119x40 and all
+four failed on the FIXED tree with `allow_vertical_scroll` False, `overflow_y=auto`. Textual's
+property is `is_scrollable and show_vertical_scrollbar`, and the scrollbar is shown only when
+`virtual_size` exceeds the container -- the 22-row first page simply fit those panes, so there
+was nothing to scroll. The assertion was measuring the fixture, not the rule.
+
+**What to do.** Assert the rule's intent (`styles.overflow_y == "auto"`) separately from the
+geometry, and make the content overflow before asserting `allow_vertical_scroll`, `scroll_y` or
+a reveal -- here by pressing the real "More notes" pager twice (which also proved the pager
+reachable). A `max_scroll_y > 0` sanity assertion first turns "fits" into a readable failure
+instead of a false RED. And re-resolve the list after any reload: the pager press replaces
+`#library-notes-list` (see the recompose entry above), so the pre-press handle has no children.
+
+## A reveal-on-open is not a reveal-on-resize -- Textual never re-scrolls the focused widget
+
+**TASK-34000.13, 2026-10-08.** The Library Notes delete prompt got its fix in two halves: an
+app-tier `height: auto` (it had been a `1fr` child squeezed to the one leftover row inside Info's
+`VerticalScroll`) and a `call_after_refresh` reveal that scrolls the whole prompt into Info and
+focuses Cancel in place. The gated arms were green. The extended arm that opened the prompt at
+160x45 and resized to 120x36 was RED on the FIXED tree: `max_scroll_y=3`, `scroll_y=0`, both
+buttons below Info's fold, Tab still trapped inside the prompt -- the review's blind-Enter shape
+again, one resize later. Textual re-lays out on resize but does not scroll a focused widget back
+into view; `focus()`'s `scroll_visible` happens once, at focus time.
+
+**What to do.** A "scroll X into view when it appears" fix needs a second owner for "keep X in view
+while it is open". The cheapest durable one here was the destination widget's own `on_resize`
+(`LibraryNotesCanvas._keep_delete_prompt_in_view`: if the prompt is displayed,
+`call_after_refresh(prompt.scroll_visible, immediate=True, force=True)`, no focus change -- the
+user may be on Delete by then), which also keeps the screen's already-breached size ratchet
+untouched. And put the resize-while-open arm in the extended sibling of any reveal fix: it is the
+one arm the open-time test cannot stand in for.
+
 ## A one-edge `margin-bottom` rule replaces the whole margin, not just its edge
 
 **TASK-33003.1, Chat settings disclosures, 2026-09-28.** A collapsed Chat
@@ -838,6 +1357,20 @@ one edge silently zeroes the other three that a lower rule set. Restate every
 edge you need in the winning rule, and measure `styles.margin` rather than
 reading the sheets. The same effect makes a `margin-bottom: 0` that sits next
 to `margin-left: 1` in the same rule redundant (`#remote-variant-sort`).
+
+## Widening `#card > .row` to `#card .row` also catches nested groups' rows
+
+**TASK-33007.6 fix round 1, 2026-10-04.** Task 6 moved two compact-workbench
+rows into Advanced disclosures, and it changed
+`#settings-providers-models-card > .settings-input-row` to a descendant selector
+so the rows still stacked at <=100 columns. That selector also matched Catalog
+refresh's per-provider rows and Custom endpoints' edit rows. Neither had matched
+before, and both have compact rules of their own. Each provider row gained the
+rule's `margin-bottom`, and the open catalog group grew from 71 to 96 rows at
+100x40. Full-screen captures cannot show this, because the rule applies only at
+<=100 columns. The fix names the containers that received the moved rows. When a
+selector follows rows into a new wrapper, list every row it matches before and
+after, by layout, height and `styles.margin`, at the width where it applies.
 
 ## An empty Static still takes its row: hide it, don't just clear it
 
@@ -867,7 +1400,33 @@ toggles `expanded`, whose watcher calls `overlay.select(None)` for a blank
 value; only `action_show_overlay`, bound to Enter/Down/Space/Up, then calls
 `action_first()`. Reproduced in a pilot probe on the modal's own Select
 construction; see the task-33003.8 Implementation Notes and the live captures
-in qa/model-config-p3-2026-09-28/task-8/.)
+in Docs/QA/model-config-p3-2026-09-28/task-8/.)
+
+## A gap that is only spare column width is gone when the column fits its text: make it padding
+
+**TASK-33641.3, Settings backend rows, 2026-10-10.** Image Gen and Video Gen
+name each backend in a label that is followed directly by its status. A
+`Static` wraps inside its column, and a one-row label shows the first line, so
+a column can come out exactly as wide as what it paints. The rider was filed
+for "SD.cpp videoNot configured": 12 cells, and "SD.cpp video" is 12. The
+first fix made the column 24 cells from 150 columns (the longest name is 23,
+so one cell was spare). A review round then made it `1fr` capped at 24, so
+that a long probe result could shorten the name instead of pushing Test out of
+the row. The width now depended on the status text, and at 151 columns a
+31-cell result left "SwarmUI (local)" exactly its 15 cells: "SwarmUI
+(local)Unreachable: connection refused". The tests ran at five sizes and
+passed, because at rest the column was always 24. The 12-cell column below 150
+columns still painted "SD.cpp videoNot configured" as well: its nodes asserted
+the column's width, not what was painted.
+
+**What to do.** Put the gap in the label's own `padding-right`. Padding is
+inside the width, so no column and no control moves. Assert the cell painted
+just before the neighbour (crop `screen._compositor.render_strips()[y]`), not
+region widths. Once a width is `fr` or `auto` it is a function of its
+siblings' content: sweep the content states and the columns between the sizes
+the criteria name. One scratch app per width over 150 to 171 columns, with ten
+status texts on each row, ran in about 35 seconds on six workers; run before
+the review, it would have shown the flush names.
 
 ## A Collapsible's background paints only its title row: the body is `Contents`
 
@@ -911,6 +1470,34 @@ budget's history is three cycles of silent regrowth."*
 before opening a PR that adds CSS, and attribute any growth to the segment that caused it —
 the failure message names segments and sources precisely so that attribution is not
 guesswork.
+
+## `DEFAULT_CSS` -> `BUNDLED_CSS` moves bytes onto the boot parse, and the boot budget can refuse it (TASK-35649, 2026-10-22)
+
+The allowlist ratchet (`test_class_level_css_stays_within_the_allowlist`) prescribes one
+fix: rename `DEFAULT_CSS` to `BUNDLED_CSS` and rebuild. That trades one live stylesheet
+source per class for bytes in `widget_defaults_{self,scoped}.tcss`, and those sheets are
+parsed before first paint. Converting six small declarations (padding, `height: auto`,
+two modals) took the headroom under `MAX_BOOT_PARSED_CSS_BYTES` from 2,363 B to a 94 B
+breach. The constant itself never moved. The per-segment diff charged 2,457 B to the six:
+each lifted class pays a `/* ===== WIDGET: X (path) ===== */` banner in every stream it
+lands in, about 75 B, and the class body's indentation and blank lines are copied
+verbatim. (Since TASK-36386, 2026-10-23, the generator dedents each block, so only the
+blank lines and the CSS's own indentation are still copied.) Rewriting the two modals'
+blocks as one-line rules recovered 267 B, but that left only 173 B, which is the near-zero
+headroom ADR-097's Context warns about. Review then kept the quit-only
+`SessionSummaryDialog` on `DEFAULT_CSS` with a reasoned allowlist entry, which left 775 B.
+Screenshots were byte-identical throughout.
+
+**What to do:**
+- Run `Tests/Performance/test_boot_css_byte_budget.py` with the allowlist test whenever
+  you convert a declaration, and write the moved block compactly.
+- An allowlist entry is sound only where the class's own source registers when no later
+  first mount can pay the parse-cache cliff: a quit-only dialog imported only at quit.
+- For a mid-session modal, per-class `DEFAULT_CSS` deferral was rejected (TASK-31500
+  AC#3). The repo's deferral mechanism is `MODAL_OWNED_SPLIT_SHEETS` in `build_css.py`:
+  a sheet the modal loads through its own `CSS_PATH` on first open (TASK-33628.2's
+  Console Delete receipt). Those rules load as app CSS, not widget defaults, so render
+  before and after.
 
 ## A UI-thread owner method must never take the owner's stop lock (TASK-31826)
 
@@ -960,6 +1547,103 @@ Corollary worth knowing: `Stylesheet.rules_map` is keyed by each rule's
 RIGHTMOST selector only, so "is this class in `rules_map`?" does NOT answer
 "can this class affect anything" — a rule like `.marker Button {}` is filed
 under `Button`. Scan the whole selector text.
+
+**Two more ways one state flip pays several restyles (TASK-36571, 2026-10-30).**
+A status swap written as one `set_class` per candidate class restyles twice
+per flip (one removal, one addition): the Console's Workbench header did that
+on every run start, over its 26-node subtree (the speech controls live inside
+it), 3.8 ms of thread CPU per flip in the harness. And assigning
+`Button.variant` runs Textual's `watch_variant`, which removes the old
+`-<variant>` class and adds the new one: two more restyles before the
+button's own state classes pay theirs (Stop paid four for one availability
+flip). Batch the swap with `update_classes`; for a class no rule uses on a
+descendant, restyle just the node (`update_classes(..., update=False)` then
+`app.stylesheet.update_nodes([node])`, with a parsed-rule guard as above).
+That is safe only while the class's rules set nothing the node's children
+read from it: a child caches its rendered style (`_visual_style_cache`,
+`_rich_style_cache`) keyed on its OWN pseudo-classes and clears it only when
+it is itself restyled, so a status rule setting `color`, `background`,
+`text-style`, `opacity`, `tint` or a `link-*` style would leave the children
+painting the old value. Have the guard reject those properties too (the
+Workbench status rules set only `border-title-color`, which the node paints).
+For a variant, set the reactive with `set_reactive` and fold the watcher's
+two classes into the same batch, and pin the watcher's source in a test so
+a Textual upgrade cannot change what you are mirroring
+(`Tests/UI/test_console_projection_restyles.py`).
+
+## Focus on a container, and a screen's first lazy CSS load, restyle whole subtrees too (TASK-33628.5.1, 2026-10-05)
+
+The entry above, "A class flip restyles the flipped node's ENTIRE subtree", has two
+twins that cost far more in a long Console chat.
+`Widget.watch_has_focus` calls `update_node_styles()`, so a focusable scroll container
+restyles every descendant each time it gains or loses focus. The Console's focus cue
+was a class on the transcript region, the ancestor of every row, so each focus change
+restyled every row twice. With 3,000 rows mounted, one change restyled 72,165 nodes and
+held the loop for 29-37 s. Even when the restyle is scoped, a `scrollbar-color` change
+inside it refreshes every descendant, because colours inherit: 7.2 s live with a
+scrolled-back window. The other twin is `App._load_screen_css`: the first push of a
+screen whose `CSS_PATH` is not loaded yet reads the sheet and then runs
+`stylesheet.update(app)`, which restyles every node of every screen. The first Delete
+receipt cost 9.3 s that way with 3,000 rows mounted.
+
+**What to do.** Count restyles by spying on `Stylesheet.apply` around the action, and
+count refreshes by spying on `Widget.refresh`; wall-clock hides which node paid. Scope a
+focus restyle to the nodes its rules can actually match:
+- override `watch_has_focus` to call `stylesheet.update_nodes((self,))`;
+- set an ancestor's cue class with `update=False`, then update that ancestor and the
+  one child its rule paints.
+To skip the colour refresh, `ConsoleTranscript.watch_has_focus` shadows its own
+`styles.base.refresh` with a `children=False` wrapper for the length of the update. That
+leans on Textual 8 internals, so recheck it on any Textual upgrade
+(`test_a_focus_change_restyles_no_transcript_row` fails if rows start refreshing again).
+Read a lazy sheet before the push with `stylesheet.read()` + `reparse()`. Each shortcut
+is exact only while no rule reaches another node, so pin that with a fidelity test.
+`Tests/UI/test_console_long_chat_bounds.py` has both: one walks every loaded rule, the
+other restyles the whole subtree and compares every computed style.
+
+**Third instance (TASK-33620.15.1.4, 2026-10-27).** The Console's edge focus cue
+(`console-edge-region-focused`) was still a plain `set_class` on each rail, so every
+focus move into or out of the Inspect rail restyled its ~160 nodes (the Context rail
+~140, conversation browser included). Live at 235x52 that was a median 47 ms of wall
+(39 ms CPU) per rail open and 62 ms of wall (43 ms CPU) per close, up to 293 ms of wall
+in one callback at load 12-16, found only by timing `sync_console_focus_paint` around
+Alt+I. The fix is the same two-node update, now one shared helper in
+`UI/Console_Modules/frame.py` (`_set_class_restyling_only`) that both cues call;
+`Tests/UI/test_console_edge_focus_restyle_scope.py` pins it and its fidelity. When you
+scope one cue, grep the same helper for its siblings, and route a fourth through that
+helper rather than writing the pattern by hand again.
+
+**Fourth instance: geometry utility classes (TASK-36511.1, 2026-11-05).** The Console attach's allocation batch restyled 158 nodes. Each `add_class("h-auto")` on a just-mounted rail section restyled its subtree, and `ConsoleInspectorMore._apply_open` removed its `h-*` class and added the same one back: two subtree restyles for no change. A remove-then-add of one class always pays twice, even when the classes end where they started. `set_height_class` (`Widgets/Console/console_bounded_section.py`) swaps an `h-*` class in one batch and restyles only the node. Use it for `h-*` flips; its rule guard is in `Tests/UI/test_console_projection_restyles.py`.
+
+## A batch of new widgets is laid out two or three times; pace by settled layout, not by size (TASK-33628.5.1, 2026-10-09)
+
+**Incident.** After the Console stopped mounting every later row, Undo of a
+3,000-message Delete still blocked the loop for 196-316 ms (harness, 160x48),
+and the same at 60 messages. It mounted one load-shaped window, 64 rows and
+about 520 widgets, in one batch. Counting arrange-cache misses per
+`Compositor.reflow` (wrap `textual.widget.arrange`) showed three passes of
+400-466 misses each. The first was the batch's own layout. The second was the
+relayout each new widget's `virtual_size` asks for: it is a `layout=True`
+reactive that `_size_updated` sets inside the pass. The third came after the
+transcript's scrollbar reappeared and changed its width. A relayout with
+nothing new cost 6-7 ms at 1,074 widgets. Mounting a screenful per batch
+helped only once each batch waited for the passes of the one before it.
+Gated on "the last row has a size", one pass still re-arranged two batches
+(158 ms, 299 misses), because the relayout requests were still in flight.
+
+**What to do.** To spread a large mount, start each batch only when nothing
+is pending: no `_layout_required` on the container's nodes or its screen,
+seen at two checks a poll apart. A widget clears its flag only as it posts
+the request to the screen, and by the next poll the screen holds it.
+`Tests/UI/test_console_undo_restore_pacing.py` records the flags at each
+mount; dropping the check fails it. Two more traps:
+- `call_after_refresh` queues on `app.screen`, the top screen. While a modal
+  is up, a transcript's callback waits on the modal's idle, not on the
+  screen being laid out.
+- The app's own `event_loop_stall` records start at 250 ms, so they cannot
+  show a block moving from 240 to 120 ms. A thread that pings the loop with
+  `call_soon_threadsafe` every 5 ms measures what input would wait, and it
+  holds no frames.
 
 ## A node's `@on` handlers run BEFORE its `on_<message>` method — `event.stop()` cannot un-run either (phase C task 3, 2026-09-09)
 
@@ -1218,6 +1902,71 @@ nor doing it *before* the snapshot landed.
   defect for every other branch of the same phase. Prefer a target the phase
   always composes.
 
+## Textual's own focus reset looks exactly like a user focus move (TASK-34000.28 fix rounds 1-2, 2026-10-25)
+
+Enter on the Notes tree's "more" pager loaded the next page and left focus in
+the filter, where the next printable key typed into it. The hand-off that
+should have focused the first added row already existed, and its mounted
+Pilot pins were green.
+
+- **Trace (a `set_focus` wrapper plus an `on_descendant_focus` wrapper that
+  records `focus_intent_generation`).** The loading-state recompose pruned the
+  focused pager. Textual's `Screen._reset_focus` then moved focus to the
+  Library grip. The screen counted that `DescendantFocus` as the user's own
+  move (generation 25 → 26). That vetoed both the canvas's pager retention
+  and the page's hand-off, and the identity restore fell back to the filter.
+- **Why the pins stayed green.** Every widget has its own message pump, so
+  the screen can read a queued `DescendantFocus` while another widget's
+  recompose is still mounting. The existing pins (a folder pager in
+  `LibraryHarness`) won the race: the canvas's `_after_recompose` ran first.
+  The root pager under the production stylesheet, at load ~35, lost it on
+  every run.
+- **Fix (final design).** Do not let Textual reset focus at all. The pager
+  press runs the loading sync, which captures the pager and only schedules
+  the recompose. It then parks focus itself, before the prune, through the
+  public API:
+  - mark the Library grip as `_library_notes_programmatic_focus_target`;
+  - call `screen.set_focus(grip)`;
+  - record the grip as the parked widget.
+
+  The landing is classified programmatic, so no generation bump happens, and
+  Textual's reset finds nothing focused to move. The hand-off holds while
+  focus is still on the pager or exactly on the parked widget, with the
+  generation unchanged.
+- **Two first cuts that failed review.**
+  - **A generation-only ownership check stole a user's move.** The user moved
+    to the filter, and in `LibraryHarness` that move never bumped the
+    generation, so the regression pin caught the hand-off taking focus back
+    (`test_mounted_pager_completion_does_not_steal_moved_focus[success]`).
+    The fix was keying the check on the parked widget.
+  - **Overriding the private `Screen._reset_focus` worked, but was ruled
+    out.** It changed every prune and blur landing screen-wide: Media and
+    Conversations read the same generation. A Textual rename would also have
+    silently dropped the override.
+- **Rule.** Any "has the user moved focus since X?" counter must not count
+  Textual's reset after a removal, which every recompose of the focused
+  control produces and which looks exactly like a click. Prefer parking focus
+  yourself (public `set_focus`, marked programmatic) before the recompose,
+  scoped to the flow that needs it, over reclassifying the framework's reset
+  globally.
+- **Two more incidents (PR #3259 CI fix round 1, 2026-10-26).**
+  - **A generation stamp at Back went stale with no key pressed.** Back's
+    hand-off to the row the note came from waits for the list's source
+    snapshot, and a `/` in that window had focus taken back to the row
+    (`focus_intent_generation` stamped at Back looked like the fix). The
+    editor's prune reset focus to the Library grip, the stamp was stale
+    before any key, and the no-move control went red. The fix withdraws the
+    hand-off from the real-input sites T5-a already uses (`on_key`, mouse,
+    wheel, the priority focus actions, suspend), never from
+    `on_descendant_focus`.
+  - **A restore's own queued event disarmed the arm made right after it.**
+    The Notes filter's Down landing restored focus to the box and then armed
+    the list-entry focus, whose first attempt runs after the next refresh.
+    When the box's queued `DescendantFocus` was handled first, it read as
+    the user leaving the list and disarmed the landing (1 of 10 runs under
+    CPU load; certain once the attempt is held). Landing at once, while the
+    rows are known to be mounted, takes the race away.
+
 ## Keep control choices outside the saved ID domain (TASK-32776, 2026-09-18)
 
 The real Persona service accepts `none` and `auto` as IDs. The workspace Select
@@ -1393,7 +2142,7 @@ exited with code 1, skipping the approved quit cleanup. Treating the vanish
 as Stay had fixed the hang and left the crash.
 
 **What to do.** Async self-closing (timers, polls, worker completions) must
-dismiss only when `self.app.screen is self` (ADR-031). That is now enforced at
+dismiss only when `self.app.screen is self` (ADR-299). That is now enforced at
 the shared primitive: `SafeModalDismissMixin.dismiss` refuses (logs at debug,
 returns a completed awaitable, delivers nothing) while the modal is covered or
 already popped, which covers the switcher, the video player and the other
@@ -1420,3 +2169,447 @@ only key that opens a screen over a modal -- is repaired by nothing. A static
 scan for plain modals that dismiss from a timer or worker found one:
 `LibraryCharacterRepairDialog._apply_owned`, which dismisses when its repair
 worker finishes (the quit prompt over it is handled; nothing else is).
+
+## A name shaped like markup exits the whole app, and one escaper fits only one parser (TASK-34400, 2026-10-04)
+
+**Incident.** A Roleplay character named `[/]` (an imported card can carry it) made the
+app exit as soon as the Inspector showed it: `Static.update(f"Selected: {name}")` on a
+markup-on `Static` raised `MarkupError` while the screen was drawn. TASK-32533's
+keep-alive (`app_lifecycle._handle_exception`) only covers exceptions inside a widget's
+message handler; render, compositor and tooltip-timer errors still go to Textual's
+default, which exits. A sweep of the Roleplay code then found about 30 more sinks of
+the same kind, and `[@click=app.quit]x` turned names into live click actions.
+
+**What parses a `str` as markup on Textual 8.2.8** (all measured): `Static`/`Label`
+(construct and `.update`), `Button` labels, `Select` option prompts (the current label
+and the dropdown), `OptionList`/`Option` and `SelectionList` prompts, `RadioButton` and
+`Checkbox` labels, `DataTable` string cells (at render), `border_title`, tooltips (the
+tooltip is a `Static`), `Collapsible` titles, and `notify()` unless `markup=False`.
+Literal forms: `markup=False` on an owned `Static`, `textual.content.Content(text)` or
+`rich.text.Text(text)` for prompts, labels, cells and tooltips.
+
+**The escaper trap.** `Utils.input_validation.escape_markup` is correct for Textual's
+parser (`Content.from_markup`), including backslashes. It is **wrong** for Rich's
+`Text.from_markup`: Rich reads `\\[` as an escaped backslash plus a live tag, so
+`a\[/]b` (or an ordinary LaTeX reply `\[x^2\]`) crashed the preview transcript, which
+escaped with `escape_markup` and then parsed with Rich. `textual.markup.escape` is
+wrong on Textual 8.2.8 for `[/` and `[TODO] y`. Prefer building literal `Text` or
+`Content` over escaping; escape only into a shared markup-on widget you do not own.
+
+**The test trap.** A markup sink crashes only when it is drawn. A hidden widget, a
+clipped dropdown label or an unopened dropdown never parses, so a test that only
+"sets the value" passes on the broken code. Paint the surface (open the dropdown,
+render the tooltip text through `Static.update` the way the tooltip timer does), or
+assert the literal type (`Text`/`Content`) when the surface cannot be painted in the
+test, and prove the test red on the unfixed code. Tests:
+`Tests/UI/test_roleplay_hostile_names.py`, `Tests/UI/test_roleplay_hostile_text_surfaces.py`.
+
+## A coroutine handed to `app.call_later` is awaited on the app pump: Enter froze every key, a click did not (TASK-33622.16, 2026-10-03)
+
+**Incident.** Found live during TASK-33622.15: after **Enter** sent
+`/generate-video` to MiniMax, the "Generate video?" confirm ignored Escape, F1
+and Ctrl+Q, and so did the storage choice after it, until the paid generation
+resolved; a click on **Send** did not freeze. An await-chain probe of each
+pump's task in a mounted test on dev (`01a2020981`) showed the APP pump parked in
+`MessagePump.on_callback` → `_send_console_message_from_visible_action` →
+`_dispatch_console_command` → `_console_command_generate_video` →
+`Worker.wait()` (the confirm's `push_screen_wait` worker). On the Send route
+the app pump was idle and the Console's own pump was parked in
+`on_button_pressed`, so the composer's Stop button was dead for the whole paid
+run. TASK-33621.28 had fixed this exact freeze for the send's hook review
+only. The same send also awaited every slash command inline, so the freeze came
+back through `/generate-video`.
+
+**Why (Textual 8.2.8).** Enter schedules the send with
+`app.call_later(coroutine_function)`, and `MessagePump.on_callback` AWAITS a
+coroutine callback on the pump it was posted to. That is the app pump, which
+dispatches every key. A `Button.Pressed` handler is awaited on the screen's
+pump instead. So "click works, Enter freezes" means the send awaited
+something user-paced.
+
+**What to do.** A send path reached from a key must not await anything with a
+user-paced lifetime (a modal, a remote job). Hand it to a worker, as
+`UI/Console_Modules/command_handoff.py` does for every slash command. When you
+fix "pump parked by awaiting X", list everything else that path awaits. Second
+trap, found live on the fix build: Ctrl+Q under the confirm quit the app, and
+shutdown cancelled the confirm's waiting worker. `Worker.wait()` then raised
+`WorkerCancelled` through the command's own worker, and that showed up as an
+`unhandled_exception` on the way out. A worker that waits on a modal must
+treat `WorkerCancelled` as "over", not "broken". Test it with keys delivered
+the way the driver does (`_key`), and use a bounded `_pump_runs` poll on BOTH
+pumps (`Tests/UI/test_console_video_send_freeze.py`). Do not use Pilot here:
+its idle wait never returns while a pump is parked.
+
+**Third trap: unfreezing a flow makes its "nobody can act now" code
+reachable (checkpoint review of the same fix).** Once the hand-off kept the
+Console live during a generation, the user could type, switch chats or press
+Stop -- and `/generate-video`'s failure path, written when none of that was
+possible, ran `composer.clear_draft()` then pasted the saved command back. A
+review repro on the fix build (Enter the command → Generate → type "what about
+a sailboat?" → Stop) wiped the typed text with no undo, and after a chat switch
+it wiped the OTHER chat's draft, because every Console chat shares one
+composer. The pasted-back command was also unusable: a draft holding a paste is
+never parsed as a command, so Enter sent it to the model as chat. Five mounted
+tests went red on exactly that. `/generate-image` had the same code. The fix
+(`UI/Console_Modules/command_draft.py`): take only the revision the send
+captured (`commit_captured_draft`), and put it back only into the same draft
+scope while that is still empty. A chat switch, a load or another send always
+advances the composer's draft generation; typing does not. Restore with
+`restore_stashed_draft`, which brings back the original segments, so the draft
+is not marked as a paste. **When a fix lets the user act during something that
+used to block them, grep that flow for every save/clear/restore of shared UI
+state and ask what happens if they typed in between.**
+
+**Fourth trap: the same holds for "the active chat", in every handler, not
+just the one you fixed (PR #3006 review).** Handing every slash command to a
+worker made all of them run with the Console live, and most handlers resolve
+"the active session" or clear "the composer" after an await -- written when
+the send parked the pump, so nothing could change in between. A mounted repro:
+`/system Terse`, prompt search parked, switch to a new chat, release -- the
+prompt applied to the NEW chat and wiped its typed draft. An audit of all 17
+handlers found four more that answered after an await (`/doctor`, `/skills`,
+`/fewer-permission-prompts`, `/stream-video`), and live, `/stream-video`
+against a loopback server holding the request posted its error into the chat
+switched to. The fix binds the command to its origin in the worker
+(`command_handoff.COMMAND_ORIGIN`): refuse at start and after an await when
+that chat no longer shows, and post awaited answers with an explicit
+`session_id`. **Making a call asynchronous changes the contract of everything
+it calls: list each handler's awaits and what it re-reads after them.**
+
+## A `Collapsible` scrolls itself into view on every `collapsed` change -- programmatic ones too
+
+**TASK-34100.6, 2026-10-04.** Arrowing through the first-run Provider list from a
+keyed row (its Authentication section expanded) to a keyless one (collapsed) scrolled
+the step so far that the focused list left the screen (list at y=-11 in a viewport
+starting at y=9). Nothing in the app scrolled: Textual 8's `Collapsible._watch_collapsed`
+ends with `call_after_refresh(self.scroll_visible)`, whoever set `collapsed`. It only
+showed once the list grew taller than 7 rows. Fix without private API: a subclass whose
+`scroll_visible` is held while the step sets `collapsed` and released by a
+`call_after_refresh` queued after the Collapsible's own
+(`first_run_provider_key_entry.AuthCollapsible`). A focus that relied on that scroll then
+needs to wait a refresh too (`call_after_refresh(field.focus)`), so focusing scrolls to
+the field's expanded position. Pinned by
+`test_arrowing_between_keyed_and_local_rows_keeps_the_list_in_view`.
+
+**Correction (review round 1, 2026-10-05): one refresh is not a layout.** Live at
+120x40 a mouse click on OpenAI (a click highlights and picks in one go) focused the key
+field below the fold. Temporary logging showed the after-refresh focus ran while the
+field's `region` was still `Region(0, 0, 0, 0)`: the expanded section had not been laid
+out, and `scroll_to_widget` reads `virtual_region_with_margin` at call time, so the
+focus scroll aimed at nothing (no `scroll_y` change at all). Pilot always laid out
+first, so the pilot test passed on the broken code. The fix focuses with
+`scroll_visible=False` and calls `scroll_visible(animate=False)` only once
+`widget.region` is non-empty, re-queuing `call_after_refresh` until it is
+(`first_run_provider_key_entry._reveal_after_layout`). The test that reproduces it runs
+the pick's first scheduled callback synchronously -- the live frame order --
+(`test_a_clicked_keyed_row_brings_its_key_field_on_screen`, RED at the live region).
+
+## Overriding `watch_<name>` replaces the base class's watcher -- call `super()`
+
+**TASK-34100.6 review round 2, 2026-10-05.** Round 1 added
+`ProviderChoiceList.watch_highlighted` to keep the browsed row inside the step's
+viewport. It never called `super()`. Textual 8 resolves a reactive's watcher with
+`getattr(obj, "watch_highlighted")` (`reactive.py`, `_check_watchers`), so the override
+*replaced* `OptionList.watch_highlighted`, which is the code that calls
+`scroll_to_highlight()` and posts `OptionHighlighted`. Arrowing past the 14-row list
+viewport at 120x40 kept selecting providers while the highlighted row sat below the
+list's own fold (two reviewers, a probe and a live capture: `scroll_y=0`, highlighted
+line 26). No test arrowed past the viewport, and the tests that existed scrolled
+explicitly. A Textual watcher is not a hook that chains: an override that adds
+behaviour must call `super().watch_<name>(...)` first. Pin it with a test that drives
+the base behaviour you kept (here: Down past the viewport, then assert the row's line is
+inside the list's scroll window). Pinned by
+`test_arrowing_past_the_lists_viewport_scrolls_the_list`.
+
+## `text-wrap: wrap` on a RadioButton only moves the cut -- ToggleButton is one row tall
+
+**TASK-34100.6 pass 2, 2026-10-06.** At 80x24 the Provider step's exported-key option
+read 'Use ANTHROPIC_API_KEY from your environment (found; no…', clipping the words the
+AC requires. The obvious fix, `text-wrap: wrap; height: auto` on the button, removed the
+ellipsis and still showed one row ('… (found; not'): Textual 8's
+`ToggleButton.get_content_height` returns 1 whatever the style says, so the wrapped
+second line is laid out into no space. A test that checked only for the missing `…`
+would have passed. The fix is a subclass that measures the wrapped label
+(`Widget.get_content_height`) when the stylesheet wraps it
+(`first_run_provider_key_entry.KeySourceRadioButton`), with a test that reads the
+button's rendered lines for the whole phrase, not just for the absence of an ellipsis
+(`test_the_env_choice_label_is_never_cut_short[80x24]`).
+
+---
+
+## A handler that awaits the removal of its own ancestor never returns -- and `asyncio.wait_for` cannot get you out (TASK-34000.4, 2026-10-04)
+
+**Incident.** Library ▸ Media ▸ "Export…" froze the whole app (review finding
+L-01): no repaint, no key read, Ctrl+Q dead, 0% CPU, no traceback anywhere.
+`LibraryMediaCanvas` owned the `@on` row for the button and was the one
+`async` forwarder of its sixteen, so the press ran on the CANVAS's pump:
+canvas handler → controller → `_open_library_export_canvas` →
+`_apply_library_open_item_surface` → `await self.recompose()` on the screen.
+An await-chain probe of every pump's task on the reproduced freeze showed two
+pumps parked on the same removal, not one: the canvas at `recompose:1713`,
+and the APP pump in `_flush_next_callbacks → AwaitRemove.__call__`, because
+`App._prune` always hands the removal to `app.call_next` as well. The app
+pump reads every key, which is why Ctrl+Q died; `Screen.recompose` also holds
+`App.batch_update` across the removal, which is why nothing painted.
+
+**Why (Textual 8.2.8).** `remove_children` / `recompose` return an
+`AwaitRemove` over the pump tasks of the removed ROOTS, leaving out only the
+current task. Each removed widget, as its loop exits, gathers its CHILDREN's
+pump tasks (`Widget._message_loop_exit`), with no timeout. So code running on
+the pump of a widget BELOW a removed root waits for the root, the root waits
+for its children, and the chain ends at the pump doing the waiting.
+
+**Which awaits hang -- measured, one process per shape, against a plain
+`Screen`.** Never landed: a handler on a descendant awaiting the screen's
+recompose; the same coroutine via the descendant's own `call_later`; a
+widget inside an outgoing child awaiting `host.remove_children`. Completed:
+the removed ROOT awaiting its own removal; `screen.call_next` /
+`screen.call_later` / `screen.call_after_refresh`; the descendant's own
+`call_after_refresh` (Textual runs it on the screen's task);
+`refresh(recompose=True)`; a screen-owned worker. A worker owned by a removed
+widget is a third outcome: it is cancelled when its owner unmounts, between
+the removal and the mount, and leaves the surface empty.
+
+**What to do.** A region widget forwards an event and returns; it never
+awaits the screen or the controller it forwards to. The controller hands a
+surface swap to the screen's pump (`self.call_next(...)`, already bound to
+the screen) or to a screen-owned worker. `BaseAppScreen.recompose` and
+`BaseAppScreen.children_safe_to_await_removing` now refuse the hanging shape
+with `SurfaceSwapSelfAwaitError` before anything is torn down
+(`UI/Navigation/surface_swap_guard.py`), and the Library wires the second at
+every awaited canvas-host child removal (projection, repair loop, snapshot
+reconcile, browse route swap); they do NOT cover the worker shape. A seam
+that already has a safe fallback may take it for a refusal -- the Library's
+open-surface seam logs the refusal at ERROR by widget name and schedules the
+whole-screen refresh on the screen's own pump, so the user still gets the
+surface; letting the error reach the handler instead had Textual close the
+offending canvas's pump, which blanked the Items pane behind the keep-alive
+toast. If you write such a check yourself, compare TASKS (`node._task is
+asyncio.current_task()`), not `textual._context.active_message_pump`: that
+variable names the pump that SCHEDULED the code, and it read "the canvas" on
+two of the shapes that complete.
+
+**The test trap, which cost a ten-minute hung run.** A red freeze test hangs
+the suite in three places unless you plan for each: Pilot's idle wait stops
+on the parked pump; `run_test`'s exit waits for the pump tasks; and
+`asyncio.wait_for` cannot cancel its way out -- `Task.cancel()` cancels the
+awaited future, a `gather` cancels its children, each child is a pump task
+awaiting the next `gather`, and around a wait CYCLE that recursion ends in
+`RecursionError` inside the timeout callback while the await stays parked.
+`Tests/UI/pump_probe.py` has the working recipe: poll on wall clock, read the
+pump tasks' `cr_await` chains to say who is parked and where (the failure
+message then names the handler), cut the cycle at one edge on a red run
+(`unpark`), and keep `@pytest.mark.timeout` as the outer bound -- SIGALRM is
+the only one that holds whatever the loop is doing.
+
+## `self.log` raises NoActiveAppError once the app has exited — shutdown paths must use the module logger
+
+**PR #3016 review round, 2026-10-06.** Surfacing an ignored retention result
+in `LibraryFileNotesWorkspace.shutdown()` (Qodo finding 10) added
+`self.log.warning(...)` on the result-failure path. Sixteen workspace tests
+that end with `await workspace.shutdown()` AFTER `run_test()` exits (e.g.
+`test_folder_files_save_copy_keeps_editor_editable`) failed with
+`textual._context.NoActiveAppError` from `message_pump.py`: the DOM logger
+resolves the `active_app` ContextVar, which no longer exists once the app
+unmounted. The pre-existing exception branch had the same latent hazard but
+only fired on thrown errors; a result-level failure (`replica-error` from
+`replica=None`) is routine, so the trap fired on every such test. Confirmed
+by file-swap A/B (HEAD pass, fixed fail, bisected to the workspace file).
+Fixed by logging through the module-level loguru `logger`, which needs no
+app context. **What to do:** any code that can run during or after app
+teardown (shutdown, workers outliving the app, `call_from_thread` stragglers)
+must not use `self.log` / DOM logging — use the module logger, and treat
+"16 tests suddenly fail with NoActiveAppError" as this exact signature.
+
+---
+
+## `width: auto` on a card container renders blank, and screenshot words
+are non-breaking (issue #365, 2026-10-07)
+
+Bisected a blank `ModalScreen` card property by property: every declaration
+was innocent except `width: auto` on the card `Container` — children
+measured 0×0 and the whole dialog exported as empty space, while the skip
+and auto-dismiss tests PASSED vacuously (`app.screen is not dialog` was
+true because nothing rendered). The repo's working `ConfirmationDialog`
+sizes its card with a FIXED `width` (`width: 60; height: auto`) — auto
+width on these containers is the trap, not the norm. Separately,
+`App.export_screenshot()` emits styled words as separate SVG `<text>`
+spans joined by `&#160;` (non-breaking space), so multi-word copy
+assertions like `"Session summary" in svg` fail on fully-rendered text.
+**Card modals: fixed width. Screenshot asserts: normalize `&#160;`/`\xa0`
+to spaces first, and pair any screen-popped assertion with a render
+assertion so it cannot pass vacuously.**
+
+---
+
+## A widget method named `_detach` silently replaces Textual's own, and closed widgets stay "attached" (TASK-37960, 2026-10-29)
+
+**Incident.** The Console's conversation- and workspace-row action menus named
+their memoized removal helper `_detach`. Textual already has a
+`MessagePump._detach` (it sets `_parent = None`), and
+`Widget._message_loop_exit` calls it at the end of every removal. The menus'
+version returned their `AwaitRemove` instead. So a closed menu left the DOM
+but kept its parent. Their registries (`*_action_menus_on_screen`, which skip
+`parent is None`) went on reporting it as open, and ChatScreen's Esc
+"dismissed" the ghost instead of returning focus to the composer. The ghost
+lasted for as long as anything referenced the menu: a young object went away
+at the next collection, a long-lived one at the next full GC. That is why
+nobody saw it. The tests that opened and closed these menus dropped their
+references, and live use usually outlived the ghost. It surfaced only when a
+test held its `menu` variable across an Esc (TASK-33622.3's fold test). The
+Personas widgets had already been bitten once: `personas_character_dictionaries.py`
+names its handler `_detach_pressed` with a comment saying why. `MeetingsScreen`
+still defines `_detach` (TASK-37622).
+
+**What to do.** Before giving a widget or screen a private `_name`, check that
+Textual does not already use it (`grep -rn "def _name" .venv/lib/python3.12/site-packages/textual/`).
+`_detach` and `_close_messages` (on `MessagePump`) and `_refresh_styles`
+(on `Widget`) are all called by Textual itself. A registry that decides "still open"
+from `parent is None` depends on `_detach` running. A test of a dismissal
+path should hold a reference to the dismissed widget and assert
+`widget.parent is None`, because dropping the reference lets GC hide this
+class of bug.
+
+
+## A focus cue can exist in its renderable but be cropped after Terminal release (PR3299, 2026-10-31)
+
+The PR3299 review repair suppressed the composer's Escape cue while Terminal owned Escape and repainted it on capture/release. With a draft exactly one row wide, leaving the composer removed its reserved caret row. Release restored a two-row draft-plus-cue renderable into the remaining93x1 surface; asserting only `renderable.plain` missed the cropped hint. The mounted RED r-7915a649 inspected `render_line` strips within the widget's actual content height and reproduced the missing paint. Refreshing measured draft geometry on cue ownership changes fixed both release and Terminal-to-Help transitions; cursor ticks keep their layout-free path. Those controls and the existing ordinary focus-height test passed in r-68903920. Check both content and available painted rows when a cue can return without its widget regaining focus.
+
+The same current-dev integration retained a newer U report shortcut but initially scoped only the incoming Y shortcut to transcript mode. A mounted prose-first U case reproduced report dispatch from Help. The fix applies the existing ADR299 ownership rule to both actions and moves U's footer/F1 hints with its scope. During a rebase, compare newly added base bindings against the branch's interaction contract as well as preserving their action implementations.
+
+## `Timer.pause()` cannot stop a screen tick that is already woken, so a queued recompose can lose to it (TASK-38650, 2026-11-03)
+
+**Incident.** A Console Inspector rail opened after a collapsed first send failed TASK-37000's painted-frame check once in 44 loaded runs. Its first two frames showed the rows from before the send. Another 130 loaded runs on dev did not reproduce it, and a reading of the opening said it could not happen. The cascade's `rebuild_if_deferred` queues `_check_recompose` with `call_next`, which wakes the widget's pump during the opening, and that pump enters the recompose's `App.batch_update` without suspending. The screen paints only from its update timer, and `Pilot.pause()` pauses that timer right before the test opens the rail. The gap is that `Timer.pause()` only clears an `asyncio.Event`. If the screen's idle had resumed the timer earlier in the same loop pass, the timer task's wait had already resolved. The task ran its tick in the next pass anyway, ahead of the widget's pump, because the event loop runs ready tasks in the order they were woken. That one `Screen._on_timer_update` calls `_compositor_refresh` twice, once from `_refresh_layout` and once for the repaint, which is why the failure showed exactly two stale frames. Calling `resume()` then `pause()` on the screen's `_update_timer` just before the opening reproduced the recorded frames in 4 of 4 full-app runs.
+
+**Second incident, same task: ending the hold with a timer.** The first fix held paints with `app.delay_update()` (50 ms). The review found that this made an existing widget test flaky, 3 of 32 whole-file runs. While a batch is open, `Screen._on_idle` runs `call_after_refresh` callbacks before any layout, so the bounded sections reconciled against a (0, 0) viewport and settled after the test's three fixed pauses. The review then asked for the smallest positive delay, and that would have frozen the app. `set_timer` (which `delay_update` uses) builds a `Timer` with `repeat=0` and `skip=True`. `Timer._run` skips the only tick when its first two clock reads are further apart than the delay. A probe showed the result: `delay_update(1e-6)` left the batch open for good, so the app never painted again. `delay_update(0.05)` did the same under a patched 60 ms stall between those reads.
+
+**What to do.**
+- A rebuild that must land before the next paint cannot rely on `call_next` ordering. Hold paints from the moment it is queued until it has run.
+  - The fast path: `app._begin_batch()` when queuing the rebuild, and an end-once release queued right behind it with `widget.call_next(release)`, so the widget's own pump ends the hold.
+  - A pump-ended batch needs a safety net that depends on neither that pump nor a Textual timer: also `asyncio.get_running_loop().call_later(1.0, release)`.
+  - The pump can drop its release. When a callback on it raises, `MessagePump._flush_next_callbacks` reports the error and `break`s, discarding the callbacks queued behind it. TldwCli keeps the app alive after a widget pump's error (TASK-32533), so the batch stays open and nothing paints again, not even the error toast; the second review's probe showed exactly this. A pump whose mount raised never runs its callbacks at all.
+- Never end a batch with Textual's `set_timer` or `delay_update`. Their one-shot timer never fires when a stall between its first two clock reads outlasts its delay. A zero delay fails another way, covered by the `set_timer(0.0)` entry above. asyncio's `call_later` has no skip logic.
+- In a test, wait for a settled condition rather than a fixed number of pauses: no batch open, no reconcile pending, and the witness unchanged across two pauses.
+- To test a "before the first paint" claim, queue the screen's tick ahead of the change with `loop.call_soon(screen._on_timer_update)`, instead of hoping load produces the interleaving.
+- A frame recorder patched onto `Screen._compositor_refresh` sees two calls for each tick that has both a layout and a repaint pending.
+
+## A Button label raises at two content cells, and no CSS rule fixes it without moving labels (TASK-38740, 2026-11-05)
+
+**Incident.** TASK-38710 crashed File Notes with `ValueError: range() arg 3 must not be zero`. Button's `line-pad: 1` a side leaves a fold width of 0 when the content box is 2 cells, and both Textual's no-wrap fold (`range(0, length, width)`) and Rich's `chop_cells` raise at 0. The audit first looked for Button rules with `min-width: 0`. The two crashes it then found on dev had no such rule: Settings' Workspaces row at 44 columns and Console behavior's jump button at 46. Both keep Textual's `min-width: 16`, but `max-width: 100%` of a 2-cell parent won, because max is applied after min. A grid's auto row ignores `min-width` as well. The Settings Theme list (an OptionList) raised the same way at a zero-width box.
+
+Two app-wide CSS fixes were then measured against dev:
+- `Button { text-overflow: ellipsis; }` stopped every raise. But in the wrap path Textual truncates a line that is not folded to the full content width and only then adds the line-pad. A word longer than the label budget painted two cells wider than its Button and shifted the rest of its row. The Research pane handles (`<---` in 4 cells) did this at every width, and 13 Settings buttons did below 62 columns.
+- Adding `text-wrap: nowrap` stopped that, but no-wrap ignores line-pad, so 2,013 of 4,610 painted labels at 211x44 and 235x52 moved one cell.
+
+The first overflow probe reported no overflow at all. `Strip.cell_length` gave the region width (4) for a strip whose text was 6 cells; `cell_len(strip.text)` found the overflows.
+
+**What to do.**
+- Do not fix this per rule or in CSS. The package's Textual shims guard `Content._wrap_and_format`, which every height and paint calls. At the zero fold width it renders one no-wrap, clipped line; every other width renders as upstream does (`Tests/Architecture/test_zero_width_fold_guard.py`).
+- To find a narrow-width crash, sweep each sub-view (each Settings category, each Library rail view) from about 100 columns down to 40, at heights 20 and 30. The default view of every destination, at heights 16 to 44, never reached it.
+- To check how wide a widget paints, measure `cell_len(line.text)` over its `render_lines` output, not `Strip.cell_length`.
+- Compare painted labels at wide sizes (211x44, 235x52). At 100x30 and 80x24, two dev runs of the same capture differed in 1,163 of 4,563 labels.
+
+## A queued screen tick paints nothing unless a layout is pending, and a collapsed rail marks only the children it had (TASK-38698, 2026-11-05)
+
+**Incident 1: the tick alone.** TASK-38698 drove the Console's other render-on-open deferrals with TASK-38650's trick, `loop.call_soon(screen._on_timer_update)` before the opening. On the Character section's disclosure, the test passed on the unfixed build. `Screen._on_timer_update` lays out only when the screen's own `_layout_required` is set. The disclosure sets no screen-level layout in the same callback, because its layout requests travel as `Layout` messages, so the queued tick had nothing to paint. TASK-38650's test passed because the rail cascade calls `screen.refresh(layout=True)` itself. The test then added `screen.refresh(layout=True)`, standing in for the layout that made the screen's idle wake the timer. With it, the base build painted two frames of old chats in 16 of 16 runs.
+
+**Incident 2: the first open.** A natural first open of the Inspector first painted "Checking workspace…", then the unbound rows. That frame was true. The Environment controller does not poll while the rail is closed, so its snapshot really was pending. The defect was a header-only frame, painted before the opening's landing rebuilt the section, and only a comparison of each frame's painted row ids with the ids the section held at that paint showed it. The first fix landed the snapshot before the cascade, so the hidden section would defer its rebuild to the cascade's held one. It passed 8 of 8 runs at load 10, then failed 17 of 24 under eight-way parallel load. A probe showed why. In the failing runs, the first rail sync ran before the right rail had mounted its sections, so the collapse cascade marked nothing. `hidden_by_console_rail` was False for every section, and nothing deferred. The kept fix holds paints for whatever rebuild the opening's landing queues (`recompose_count` before and after), whether or not the section was ever marked.
+
+**What to do.**
+- When you queue the screen's tick ahead of a change, also make sure a screen layout is pending (`screen.refresh(layout=True)`), unless the code under test sets one itself. Check that the unfixed build goes red before you trust a green result.
+- Judge each recorded frame against what the widget holds when it paints (`section.rows`, `browser.state`), not against the settled end state.
+- `CONSOLE_RAIL_PRIOR_DISPLAY` exists only on descendants that were present when the collapse cascade ran. A widget that mounts later inside a collapsed rail is not "hidden by the rail". Do not let a fix depend on that mark, and stress the test under parallel load before you call it fixed. (TASK-38946, 2026-11-06: `hidden_by_console_rail` now marks such a widget on its first ask, by finding the rail's `CONSOLE_RAIL_COLLAPSED` flag among its ancestors. Code that reads the raw attribute instead of asking the helper still sees no mark on a late mount.)
+
+## A Static with no width takes its whole row, and a button pushed past the row's clip still takes Tab (TASK-38757, 2026-11-05)
+
+**Incident.** The File Notes navigator's header is a `Horizontal` holding the "Folder files" `Static` and the **New** button. The Static sets no width, so it took the full row, and Button's default `min-width: 16` put New just past the row's right edge. Its region was 16 cells wide at x=33 at 40 columns, x=59 at 120 and x=94 at 211 in the real Library screen, and its clip ended exactly where it began. New painted nothing at any width, but it stayed in `screen.focus_chain`, so Tab could focus it. The existing tests asserted `new.region.width > 0` and `new.display`, and both pass for a button nobody can see. It came to light only when TASK-38757's width sweep checked each focusable widget's visible cells against its clip.
+
+**What to do.**
+- In a `Horizontal` that pairs a title with controls, give the title `width: 1fr`, and give each control a width that fits (`width: auto; min-width: 0`, or the compact group the pane already uses).
+- To check that a control can be seen, measure the cells of its region inside its compositor clip: `clip = screen.find_widget(w).clip`, then `min(region.right, clip.right) - max(region.x, clip.x) > 0`. `region.width > 0`, `display` and `in focus_chain` do not show it is visible.
+
+## Focusing a widget in a closed shell pane does nothing, and `Button.press()` never moves focus (TASK-38982, TASK-38981, 2026-11-06)
+
+**Incident 1.** File Notes' ‹ Files hides itself in the navigator view, so the fix moved focus to the files tree first. On the real Library screen focus still fell to None at every width from 40 to 79. The Library screen re-resolves the shared shell a message after the view switch, and until then the Files pane is closed. `AdaptivePaneShell.sync_layout` sets `pane.disabled = not open`, and `Widget.focusable` rejects a disabled ancestor, so `screen.set_focus(tree)` returned without doing anything. Back's own hide then reset focus to None. The working fix parks focus on the Files grip, which is never disabled, before the switch, and hands it to the tree once the pane shows (`_focus_once_shown`).
+
+**Incident 2.** The TASK-38981 Library sweep closed and reopened lists with `shell.items_grip.press()`. On Media, focus sat on `nav-home` at every width, outside the destination altogether. The real user path never ran: `Button.press()` posts `Pressed` but does not focus the button, so the shell's grip-focused branches (automatic reopen into the pane, and the return into the work pane) were never taken. `pilot.click(grip)` focuses the grip and then presses it, as a user does.
+
+**What to do.**
+- Before handing focus to a widget in a pane the layout is about to open, check `widget.focusable`. If it is False, park focus on something that is focusable now, and move it once the pane shows.
+- Drive grips, and anything whose behaviour depends on what holds focus, with `pilot.click`, and put focus where the user would have it first. A green test that uses `.press()` says nothing about focus.
+
+## A screen learns of a click only after the focus it caused; `get_focusable_widget_at` runs before it (TASK-39050, 2026-11-06)
+
+**Incident.** Library clears `resize_settling` only on real input, and it reads a focus change while settling as programmatic. TASK-38957's first test clicked the editor after a resize, and it stayed red after the fix. A click's focus reaches the screen before the click does. `Screen._forward_event` calls `set_focus(target)` and only then forwards the MouseDown. The target's `DescendantFocus` and the MouseDown then bubble the same hops, in that order, so the screen's `on_mouse_down` always runs second. The first click after every resize was classified as programmatic: the focus generation stayed 1 -> 1, and the compact transition's settled restore took the click back, in Database Notes and in Folder files. Tests that "simulate" a user's focus with `_mark_library_notes_user_interaction()` followed by `.focus()` cannot see this.
+
+**What to do.**
+- To know about a click before its focus lands, override the public `Screen.get_focusable_widget_at`. Textual 8.2.8 calls it only in that MouseDown branch, synchronously, just before `set_focus`. Mark the input there and return `super()`'s result. Do not override `_forward_event`.
+- Pin any "the user moved focus" rule with `pilot.click`, not with a mark plus `.focus()`. `pilot.click` calls `screen._forward_event` directly, so it takes the same path.
+
+## A resumed screen restyles every node unless its own `ScreenResume` handler clears `refresh_styles` first (TASK-38950, 2026-11-06)
+
+**Incident.** Every return to the Console restyled all of its nodes: 546 of 546 in the send harness, 94-162 ms of CPU per return at load 33-36. `switch_screen` and `push_screen` post `ScreenResume()`, whose `refresh_styles` defaults to True, and `Screen._on_screen_resume` restyles the whole screen while that flag is set. A height change across 24/25 rows then restyled all 555 nodes again: `Screen._on_resize` flips the `VERTICAL_BREAKPOINTS` class with `update_classes`.
+
+The fix patches nothing of Textual's.
+- **Resume.** The dispatcher walks the MRO most-derived first, so a subclass's own `ScreenResume` handler runs before Textual's private one and can clear `event.refresh_styles`. Textual's handler still does everything else: the suspended class, `stack_updates`, notifications, auto-focus, and the relayout after a size change.
+- **Breakpoints.** A screen whose `VERTICAL_BREAKPOINTS` is `[]` makes Textual skip its own breakpoint code. Its `on_resize` then sets the class itself, with `update=False`, and restyles only the nodes in the matching rules' `selector_names`, the key `rules_map` matches nodes by, plus their subtrees.
+
+**What to do.**
+- **What can go stale.** A class or pseudo-class change on any node restyles it at once, even on a suspended screen, because `App.update_styles` handles non-App nodes immediately. So a screen that is off the stack misses only two things:
+  - a reparse of the rules (a theme change, or a sheet another screen loaded). `stylesheet.rules` is a new list after every parse, so compare it by identity;
+  - a change to the App node's classes or pseudo-classes. `_watch_app_focus` restyles only `app.screen`, and `App.update_styles(app)` restyles only the screens on top.
+- **Keep the inputs conservatively.** Record the rules at each full restyle, and the App's classes and pseudo-classes at both the restyle and the suspend.
+- **Do not ignore a pop.** Every `pop_screen` posts `refresh_styles=False` (Textual 8.2.8 `app.py:3112`), not only a modal's, and Textual then restyles nothing. The first version learned nothing from it, and review r11c-rev1 found the gap: an App class that changed under a pushed screen left the nodes stale, and the next return skipped. On such a resume, compare the App's classes and pseudo-classes with the suspend record, and if they moved, drop the restyle record so that the next return restyles in full.
+- **Pin each check with its own input.** A theme switch moves the rules and the App classes together, so it cannot show that either check is needed on its own. Review r11c-rev1's mutants that dropped one check each passed the first suite.
+  - Give each input a case of its own: an `add_source` rule while away (the rules check), and an App class set while the screen is current and cleared while it is away (the suspend check).
+  - Compare every node's `_css_styles.get_rules()` with a forced `app.update_styles(screen)` (`Tests/UI/test_console_projection_restyles.py`).
+- **The same shape elsewhere.** `#console-shell`'s `-console-compact` class restyled all 528 shell nodes at each crossing of 34/35 rows (160x40). TASK-39132 moved it onto the same helper (`apply_scoped_breakpoints` takes any node; an empty class name means no class at or above its threshold). Its rules set padding, margin and border on six nodes, and their descendants read none of those, so the helper now restyles a target's subtree only when the rule sets a property in `frame.ANCESTOR_READ_RULES`: six nodes per crossing.
+  - **A reader of the class can undo the scoping.** After TASK-39132 merged, dev read 28 nodes per crossing: `ChatApprovalCard._sync_control_layout`, which the same resize handler calls, derives `approval-compact` from the shell's class and sets it with `set_class` (a whole-subtree restyle, 22 nodes) even while the card is `display: none` with no approval pending. The scoped test had passed only by accident: before PR #3036 the hidden card's width was 0, so `width < 55` kept it compact and it never flipped. A derived-class reader that skips itself while hidden (`set_batch`'s `ready()` reflows it on show) restored six.
+
+## A one-shot close gated on `is_mounted` is lost when it lands between push and mount (TASK-38979, 2026-11-06)
+
+**Incident.** `test_dialog_validation_is_coalesced_owned_and_drained[close]` hung in 4 of 19 serial runs, and once past `--timeout` it kept pytest alive in teardown for 26 minutes. `PortraitRegionEditor.retire()` dismissed only `if self.is_mounted`. `push_screen` puts the editor on the stack (`app.screen` is the editor) at once, but its Compose and Mount run later on its own task, so a `controller.close()` that landed in that window set `_retired`, skipped the dismiss, and left the editor on top for good. The regions worker stayed parked in `push_screen_wait`, and `close()` (awaited on a runtime-backend change and on Personas unmount) waited on that worker forever. A class-level async stand-in for `on_mount` that awaits an event holds the editor in exactly that window, and made the hang deterministic: 4 of 4 cases red in 5 s each.
+
+**What to do.** A retire or close that may run before the modal mounts must not drop its dismissal. Queue it to run after mount (`self.call_later(self.retire)`: the Callback message is handled after `_pre_process` sets `_is_mounted`), rather than gating on `is_mounted`. To test the window, hold `on_mount` on the class (Textual dispatches it from `cls.__dict__`), wait with plain `asyncio.wait(..., timeout=...)` rather than Pilot, and dismiss a leftover modal in the cleanup so a red case still ends.
+
+
+## Trace the coroutine allocation and follow stored refresh aliases (TASK-39435, 2026-11-05)
+
+The native mounted workflow warning printed textual/cache.py, but coroutine
+origin tracking and tracemalloc identified ChatScreen's finally replay as the
+allocation site. An uninstrumented run passed, while actual Textual cancellation
+before worker entry deterministically left three eager native refresh coroutines
+unawaited. Pass async callables for view-refresh work; Textual invokes them only
+inside its worker. Synchronous lambdas returning coroutines need an async
+late-binding forwarder, preserving the original result.
+
+The first review found another exact native callback stored as
+ConsoleContextReadSnapshot.refresh. Name-only searching missed it. Its real-worker
+cancellation case failed before the same one-line correction and passed afterward,
+with a separate admitted-publication control. Follow the callback binding and
+consumer, capture warnings/GC inside child processes, and preserve distinct failed
+and passing source epochs; the printed warning receiver is not allocation proof.
+
+## Re-pushing a dismissed screen before its pop finishes never mounts it again (TASK-39165, 2026-11-10)
+
+**Incident.** `test_stale_review_validation_cannot_mutate_or_commit_after_remount` dismisses its modal, waits one `pilot.pause()`, pushes the same instance again and asserts that `on_mount` bumped `_safe_mount_generation`. Under load (round-13 runs at load 54-106) a bounded wait on that generation ran out in 2 of 20 cases: the re-push never mounted. `App._get_screen` registers and mounts a pushed screen only when it is not `is_running`; a screen whose pop is still in flight is reused as is (`AwaitMount(screen, [])`), and no Mount follows. Waiting for `not modal.is_running` before the push was not enough either: it failed the same way in one whole-file run at load ~70, so the pump stops running before the pop's removal is over. Waiting for the pop itself (`popped = modal.dismiss(None)`, then a bounded wait on `popped.is_done`) passed 10 of 10 whole-file runs at load 75-93.
+
+**What to do.** Before pushing a dismissed screen instance again, wait for the `AwaitComplete` that `dismiss()` (or `pop_screen()`) returned: `is_done` lets a test bound it without awaiting it from a handler. Neither one `pilot.pause()` nor `is_running` marks the end of a pop.
+
+---
+
+## Overriding an `@on`-decorated handler by name does not replace the base's: both run, and the base's error wins (TASK-40132, 2026-11-10)
+
+**Incident.** `PluginAuthorityDialog(PasswordDialog)` overrides `on_submit`, and both
+classes decorate it `@on(Button.Pressed, "#submit-button")`. `_get_dispatch_methods`
+walks the MRO and yields each class's own decorated function, so after the subclass
+awaited a failed unlock, cleared the fields and showed its error, the base
+`on_submit` ran too, found the field empty and replaced the error with "Password
+cannot be empty". Every failed plugin unlock showed that text. The existing test
+asserted only `error.has_class("visible")`, which was true either way; the review
+round that asked for a test of the new restore-mismatch copy found it.
+
+**What to do.**
+- A subclass handler that must replace the base's takes the event and calls
+  `event.prevent_default()` first; that stops dispatch to base classes.
+- Pin dialog errors by their text, not their visibility.

@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from tldw_chatbook.Chat.assistant_generation_state import AssistantGenerationState
+from tldw_chatbook.DB.assistant_generation_state import AssistantGenerationState
 from tldw_chatbook.Chat.provider_continuation import (
     dump_provider_continuation_json,
     parse_provider_continuation_json,
@@ -14,6 +14,7 @@ from tldw_chatbook.Sync_Interop.chat_outbox_producer import ChatSyncV2OutboxProd
 from tldw_chatbook.Sync_Interop.crypto import decrypt_sync_payload, generate_dataset_key
 from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
+from tldw_chatbook.Sync_Interop.chat_sync_source import CharactersRAGDBChatSyncSource
 
 
 @pytest.mark.parametrize(
@@ -51,7 +52,7 @@ def test_source_proof_and_sync_v2_outbox_carry_explicit_generation_state(
                 parse_provider_continuation_json(private_json)
             )
         payload_hash = canonical_payload_hash(payload)
-        source = db.read_committed_chat_sync_intent(
+        source = CharactersRAGDBChatSyncSource(db).read_committed_chat_sync_intent(
             message_id=str(message_id),
             message_version=1,
             payload_hash=payload_hash,
@@ -64,7 +65,7 @@ def test_source_proof_and_sync_v2_outbox_carry_explicit_generation_state(
         result = ChatSyncV2OutboxProducer(
             state_repository=repo,
             dataset_keys={"dataset-1": dataset_key},
-            source=db,
+            source=CharactersRAGDBChatSyncSource(db),
         ).reconcile_chat_message_intent(
             server_profile_id="server-a",
             authenticated_principal_id="user-a",
@@ -75,9 +76,12 @@ def test_source_proof_and_sync_v2_outbox_carry_explicit_generation_state(
         )
 
         assert result["status"] == "enqueued"
-        assert _decrypt_payload(
-            result["outbox_entry"]["envelope"]["payload_ciphertext"], dataset_key
-        ) == payload
+        assert (
+            _decrypt_payload(
+                result["outbox_entry"]["envelope"]["payload_ciphertext"], dataset_key
+            )
+            == payload
+        )
     finally:
         db.close_connection()
 
@@ -115,11 +119,14 @@ def test_source_proof_normalizes_only_legacy_missing_generation_state(tmp_path) 
             }
         )
 
-        assert db.read_committed_chat_sync_intent(
-            message_id=str(message_id),
-            message_version=1,
-            payload_hash=payload_hash,
-        ) is not None
+        assert (
+            CharactersRAGDBChatSyncSource(db).read_committed_chat_sync_intent(
+                message_id=str(message_id),
+                message_version=1,
+                payload_hash=payload_hash,
+            )
+            is not None
+        )
 
         legacy_payload["unexpected"] = True
         connection.execute(
@@ -127,11 +134,14 @@ def test_source_proof_normalizes_only_legacy_missing_generation_state(tmp_path) 
             (json.dumps(legacy_payload), message_id),
         )
         connection.commit()
-        assert db.read_committed_chat_sync_intent(
-            message_id=str(message_id),
-            message_version=1,
-            payload_hash=payload_hash,
-        ) is None
+        assert (
+            CharactersRAGDBChatSyncSource(db).read_committed_chat_sync_intent(
+                message_id=str(message_id),
+                message_version=1,
+                payload_hash=payload_hash,
+            )
+            is None
+        )
     finally:
         db.close_connection()
 
@@ -174,11 +184,14 @@ def test_source_proof_rejects_malformed_wrong_role_and_mismatched_state(
                 (json.dumps(payload), message_id),
             )
             connection.commit()
-            assert db.read_committed_chat_sync_intent(
-                message_id=str(message_id),
-                message_version=1,
-                payload_hash=payload_hash,
-            ) is None
+            assert (
+                CharactersRAGDBChatSyncSource(db).read_committed_chat_sync_intent(
+                    message_id=str(message_id),
+                    message_version=1,
+                    payload_hash=payload_hash,
+                )
+                is None
+            )
     finally:
         db.close_connection()
 
@@ -211,11 +224,14 @@ def test_source_proof_rejects_illegal_nonassistant_persisted_state(tmp_path) -> 
                 "role": "user",
             }
         )
-        assert db.read_committed_chat_sync_intent(
-            message_id=str(message_id),
-            message_version=1,
-            payload_hash=payload_hash,
-        ) is None
+        assert (
+            CharactersRAGDBChatSyncSource(db).read_committed_chat_sync_intent(
+                message_id=str(message_id),
+                message_version=1,
+                payload_hash=payload_hash,
+            )
+            is None
+        )
     finally:
         db.close_connection()
 
@@ -244,11 +260,14 @@ def test_source_proof_rejects_continuation_active_without_continuation(
             }
         )
 
-        assert db.read_committed_chat_sync_intent(
-            message_id=str(message_id),
-            message_version=1,
-            payload_hash=payload_hash,
-        ) is None
+        assert (
+            CharactersRAGDBChatSyncSource(db).read_committed_chat_sync_intent(
+                message_id=str(message_id),
+                message_version=1,
+                payload_hash=payload_hash,
+            )
+            is None
+        )
     finally:
         db.close_connection()
 
@@ -309,11 +328,14 @@ def test_undelete_source_proof_rejects_invalid_prior_delete_state(
             }
         )
 
-        assert db.read_committed_chat_sync_intent(
-            message_id=str(message_id),
-            message_version=3,
-            payload_hash=payload_hash,
-        ) is None
+        assert (
+            CharactersRAGDBChatSyncSource(db).read_committed_chat_sync_intent(
+                message_id=str(message_id),
+                message_version=3,
+                payload_hash=payload_hash,
+            )
+            is None
+        )
     finally:
         db.close_connection()
 
@@ -561,7 +583,7 @@ def test_chachanotes_source_reads_only_exact_committed_message_intent(tmp_path) 
             }
         )
 
-        source = db.read_committed_chat_sync_intent(
+        source = CharactersRAGDBChatSyncSource(db).read_committed_chat_sync_intent(
             message_id=message_id,
             message_version=1,
             payload_hash=payload_hash,
@@ -578,7 +600,7 @@ def test_chachanotes_source_reads_only_exact_committed_message_intent(tmp_path) 
         assert source.base_payload_hash is None
         assert canary not in repr(source)
         assert (
-            db.read_committed_chat_sync_intent(
+            CharactersRAGDBChatSyncSource(db).read_committed_chat_sync_intent(
                 message_id=message_id,
                 message_version=2,
                 payload_hash=payload_hash,
@@ -586,7 +608,7 @@ def test_chachanotes_source_reads_only_exact_committed_message_intent(tmp_path) 
             is None
         )
         assert (
-            db.read_committed_chat_sync_intent(
+            CharactersRAGDBChatSyncSource(db).read_committed_chat_sync_intent(
                 message_id=message_id,
                 message_version=1,
                 payload_hash="sha256:" + "0" * 64,
@@ -634,7 +656,7 @@ def test_chachanotes_source_read_uses_database_transaction(
         monkeypatch.setattr(db, "transaction", recording_transaction)
 
         assert (
-            db.read_committed_chat_sync_intent(
+            CharactersRAGDBChatSyncSource(db).read_committed_chat_sync_intent(
                 message_id=message_id,
                 message_version=1,
                 payload_hash=payload_hash,
@@ -646,10 +668,10 @@ def test_chachanotes_source_read_uses_database_transaction(
         db.close_connection()
 
 
-def test_message_tombstone_read_uses_database_transaction(tmp_path, monkeypatch) -> None:
-    db = CharactersRAGDB(
-        tmp_path / "tombstone-transaction.db", client_id="sync-source"
-    )
+def test_message_tombstone_read_uses_database_transaction(
+    tmp_path, monkeypatch
+) -> None:
+    db = CharactersRAGDB(tmp_path / "tombstone-transaction.db", client_id="sync-source")
     try:
         conversation_id = db.add_conversation({"title": "Tombstone transaction"})
         message_id = db.add_message(
@@ -714,14 +736,14 @@ def test_delete_source_and_current_intent_list_use_database_transactions(
         deleted_hash = canonical_payload_hash({"deleted": True})
 
         assert (
-            db.read_committed_chat_delete_intent(
+            CharactersRAGDBChatSyncSource(db).read_committed_chat_delete_intent(
                 message_id=str(message_id),
                 message_version=2,
                 payload_hash=deleted_hash,
             )
             is not None
         )
-        intents = db.list_current_committed_chat_sync_intents(conversation_id)
+        intents = CharactersRAGDBChatSyncSource(db).list_current_committed_chat_sync_intents(conversation_id)
 
         assert intents == [
             {
@@ -734,6 +756,7 @@ def test_delete_source_and_current_intent_list_use_database_transactions(
         assert transaction_calls >= 3
     finally:
         db.close_connection()
+
 
 def test_chachanotes_source_rejects_uncommitted_ambiguous_and_deleted_intents(
     tmp_path,
@@ -776,7 +799,7 @@ def test_chachanotes_source_rejects_uncommitted_ambiguous_and_deleted_intents(
         connection.commit()
 
         assert (
-            db.read_committed_chat_sync_intent(
+            CharactersRAGDBChatSyncSource(db).read_committed_chat_sync_intent(
                 message_id=message_id,
                 message_version=1,
                 payload_hash=payload_hash,
@@ -796,7 +819,7 @@ def test_chachanotes_source_rejects_uncommitted_ambiguous_and_deleted_intents(
         )
         connection.execute("BEGIN")
         assert (
-            db.read_committed_chat_sync_intent(
+            CharactersRAGDBChatSyncSource(db).read_committed_chat_sync_intent(
                 message_id=message_id,
                 message_version=2,
                 payload_hash=canonical_payload_hash(
@@ -820,7 +843,7 @@ def test_chachanotes_source_rejects_uncommitted_ambiguous_and_deleted_intents(
             }
         )
         assert (
-            db.read_committed_chat_sync_intent(
+            CharactersRAGDBChatSyncSource(db).read_committed_chat_sync_intent(
                 message_id=message_id,
                 message_version=3,
                 payload_hash=deleted_hash,
@@ -860,7 +883,7 @@ def test_chat_producer_reconciles_only_from_exact_source_proof(tmp_path) -> None
         producer = ChatSyncV2OutboxProducer(
             state_repository=repo,
             dataset_keys={"dataset-1": dataset_key},
-            source=db,
+            source=CharactersRAGDBChatSyncSource(db),
         )
 
         result = producer.reconcile_chat_message_intent(
@@ -923,7 +946,7 @@ def test_reconcile_same_payload_later_version_gets_distinct_outbox_entry(
         producer = ChatSyncV2OutboxProducer(
             state_repository=repo,
             dataset_keys={"dataset-1": dataset_key},
-            source=db,
+            source=CharactersRAGDBChatSyncSource(db),
         )
         scope = {
             "server_profile_id": "server-a",
@@ -1015,7 +1038,7 @@ def test_reconcile_resumes_after_commit_before_producer_return(
         producer = ChatSyncV2OutboxProducer(
             state_repository=repo,
             dataset_keys={"dataset-1": generate_dataset_key()},
-            source=db,
+            source=CharactersRAGDBChatSyncSource(db),
         )
         original = repo.enqueue_sync_v2_outbox_envelope_with_source_receipt
         crashed = False

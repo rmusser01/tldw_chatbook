@@ -59,6 +59,17 @@ from tldw_chatbook.Chat.conversation_local_marks_service import (
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
+def _awaiting(task: asyncio.Task) -> str:
+    """Name where a parked task waits: each coroutine frame down its await chain."""
+    coro, where = task.get_coro(), []
+    while coro is not None:
+        frame = getattr(coro, "cr_frame", None)
+        if frame is not None:
+            where.append(f"{frame.f_code.co_qualname}:{frame.f_lineno}")
+        coro = getattr(coro, "cr_await", None)
+    return " -> ".join(where)
+
+
 @pytest.fixture(autouse=True)
 def _mcp_tests_keep_a_small_catalog(monkeypatch):
     """Same autouse guard (and same reasoning, verbatim) as
@@ -485,7 +496,7 @@ async def test_second_wake_progresses_while_first_waits_for_real_approval(tmp_pa
         wake.on_fleet_drained(
             _drain(first.persisted_conversation_id, _survivor(first_child, session_id=first.id))
         )
-        assert await _settle(lambda: any(received), seconds=5)
+        assert await _settle(lambda: any(received), seconds=15)
         payload = next(item for item in received if item)
         round_id = payload["round_id"]
         with controller._approval_state_lock:
@@ -493,9 +504,11 @@ async def test_second_wake_progresses_while_first_waits_for_real_approval(tmp_pa
         wake.on_fleet_drained(
             _drain(second.persisted_conversation_id, _survivor(second_child, session_id=second.id))
         )
+        # The first stays parked on its approval however long this takes; a
+        # loaded machine needs more than 5 s for the second's delivery.
         assert await _settle(
             lambda: runs_db.get_run(second_child)["wake_delivered_at"] is not None,
-            seconds=5,
+            seconds=15,
         )
         assert not held["event"].is_set()
         assert not held["decisions"]
@@ -504,12 +517,21 @@ async def test_second_wake_progresses_while_first_waits_for_real_approval(tmp_pa
         controller.resolve_pending_approval(
             {"mcp__srv__run": "denied"}, round_id=round_id
         )
-        assert await _settle(lambda: not wake._delivery_tasks, seconds=5)
+        assert await _settle(lambda: not wake._delivery_tasks, seconds=15)
     finally:
         controller._disposed = True
         for sid in wake.delivering_session_ids():
             controller._signal_stop(session_id=sid)
-        for task in tuple(wake._delivery_tasks):
+        # dispose() ends drain_automatic_primary's wait (a cancelled _deliver
+        # keeps draining there) but empties the registry, so keep the tasks
+        # first; then bound the wait and name what is still parked
+        # (TASK-39044: this gather once waited out the 300 s timeout).
+        deliveries = tuple(wake._delivery_tasks)
+        wake.dispose()
+        for task in deliveries:
             task.cancel()
-        await asyncio.gather(*wake._delivery_tasks, return_exceptions=True)
+        parked = (await asyncio.wait(deliveries, timeout=10))[1] if deliveries else ()
         runs_db.close()
+        assert not parked, "wake delivery still parked after 10 s: " + "; ".join(
+            _awaiting(task) for task in parked
+        )

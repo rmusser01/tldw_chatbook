@@ -21,6 +21,7 @@ from tldw_chatbook.Chat.console_trace_redaction import (
     CREDENTIAL_SANITIZER_UNAVAILABLE,
     PII_DETECTOR_UNAVAILABLE,
     PIIRedactionSpan,
+    READABLE_CREDENTIAL_FILTER_VERSIONS,
     CredentialSanitizer,
     CredentialSanitizationResult,
     apply_frozen_pii_masks,
@@ -107,6 +108,24 @@ def project_semantic_revision_provider_message(
     )
 
 
+def local_thinking_response_source_formats(
+    provider: object, model: object
+) -> list[str] | None:
+    """Return the closed parser formats for a supported local response profile."""
+    if (
+        not isinstance(provider, str)
+        or provider not in {"llama_cpp", "local_llamacpp", "vllm", "local_vllm"}
+        or not isinstance(model, str)
+        or not model.strip()
+    ):
+        return None
+    return (
+        ["start_anchored_think"]
+        if "kimi" in model.lower()
+        else ["start_anchored_think", "reasoning_content"]
+    )
+
+
 def _project_revision_response_envelope(
     cursor: sqlite3.Cursor,
     revision: SemanticRevisionRecord,
@@ -125,6 +144,8 @@ def _project_revision_response_envelope(
         return projected
     if (
         not isinstance(profile, Mapping)
+        or type(profile.get("version")) is not int
+        or profile["version"] not in {1, 2}
         or set(profile)
         != {
             "version",
@@ -133,29 +154,41 @@ def _project_revision_response_envelope(
             "provider",
             "model",
             "protocol",
-            "source_format",
+            "source_format" if profile["version"] == 1 else "source_formats",
         }
-        or type(profile["version"]) is not int
-        or profile["version"] != 1
         or type(profile["thinking_round_trip_version"]) is not int
         or profile["thinking_round_trip_version"] != 1
         or profile["thinking_stream_disposition"] not in {"displayable", "proprietary"}
-        or profile["source_format"]
-        != (
-            "start_anchored_think"
-            if profile["thinking_stream_disposition"] == "displayable"
-            else "reasoning_content"
-        )
         or profile["provider"] != call.provider_name
         or profile["model"] != call.model_name
         or profile["protocol"] not in {"chat_completions", "responses"}
         or revision.normalized_role != "assistant"
     ):
         raise ValueError("response_projection_unavailable")
+    if profile["version"] == 1:
+        expected_format = (
+            "start_anchored_think"
+            if profile["thinking_stream_disposition"] == "displayable"
+            else "reasoning_content"
+        )
+        if profile["source_format"] != expected_format:
+            raise ValueError("response_projection_unavailable")
+        source_formats = [expected_format]
+    else:
+        source_formats = local_thinking_response_source_formats(
+            profile["provider"], profile["model"]
+        )
+        if (
+            profile["thinking_stream_disposition"] != "displayable"
+            or source_formats is None
+            or type(profile["source_formats"]) is not tuple
+            or profile["source_formats"] != tuple(source_formats)
+        ):
+            raise ValueError("response_projection_unavailable")
     raw_thinking = envelope.get("thinking_blocks")
     if raw_thinking is None:
         return projected
-    from tldw_chatbook.Chat.thinking_blocks import (
+    from tldw_chatbook.Provider_Contract.thinking_blocks import (
         DisplayableThinkingBlock,
         ProprietaryThinkingBlock,
         parse_thinking_blocks_json,
@@ -188,8 +221,9 @@ def _project_revision_response_envelope(
         or block.status != expected_status
         or any(
             getattr(block, key) != profile[key]
-            for key in ("provider", "model", "protocol", "source_format")
+            for key in ("provider", "model", "protocol")
         )
+        or block.source_format not in source_formats
     ):
         raise ValueError("response_thinking_source_mismatch")
     evidence = {
@@ -357,7 +391,22 @@ def project_semantic_revision_trace_message(
         policy_id=policy_id,
         response_call=response_call,
     )
-    credential_projection = CredentialSanitizer().sanitize(projected)
+    # TASK-39123: a stored older policy's frozen PII spans index the projection
+    # of its own credential version, so they apply to that one; the current
+    # masks then go on top, below. Every other read uses the current masks.
+    legacy_spans = (
+        policy.pii_redaction_enabled
+        and revision.live_message_id is not None
+        and policy.credential_filter_version != CREDENTIAL_FILTER_VERSION
+        and policy.credential_filter_version in READABLE_CREDENTIAL_FILTER_VERSIONS
+    )
+    credential_projection = CredentialSanitizer(
+        version=(
+            policy.credential_filter_version
+            if legacy_spans
+            else CREDENTIAL_FILTER_VERSION
+        )
+    ).sanitize(projected)
     if not credential_projection.available or not isinstance(
         credential_projection.value, dict
     ):
@@ -402,10 +451,97 @@ def project_semantic_revision_trace_message(
                 row.detector_version,
             )
         )
-    masked = apply_frozen_pii_masks(projected, by_path)
+    masked = apply_frozen_pii_masks(
+        projected, by_path, widen_over_v2_credentials=legacy_spans
+    )
     if not isinstance(masked, dict):
         raise ValueError("semantic_revision_materialization_unavailable")
+    if legacy_spans:
+        remasked = CredentialSanitizer().sanitize(masked)
+        if not remasked.available or not isinstance(remasked.value, dict):
+            return {
+                "role": revision.normalized_role,
+                "content": f"[{CREDENTIAL_SANITIZER_UNAVAILABLE}]",
+            }
+        masked = remasked.value
     return masked
+
+
+def project_semantic_revision_trace_tool_fields(
+    cursor: sqlite3.Cursor, *, revision_id: str, expected_conversation_id: str,
+    policy_id: str, max_source_bytes: int = 65_536,
+) -> dict[str, object]:
+    """Project a plain tool result under its immutable policy, without media reads.
+
+    Unsupported or oversized envelopes remain unavailable rather than being
+    reconstructed through the provider-facing (unmasked) read path.
+    """
+    if type(max_source_bytes) is not int or not 1 <= max_source_bytes <= 65_536:
+        raise ValueError("report source byte limit")
+    repo = ConsoleTraceRepository()
+    revision = repo.get_semantic_revision(cursor, revision_id)
+    policy = repo.get_policy(cursor, policy_id)
+    if revision is None or policy is None or revision.source_conversation_id != expected_conversation_id:
+        raise ValueError("report revision owner or policy unavailable")
+    unavailable = {"unavailable": "governed_tool_field_unavailable"}
+    if revision.normalized_role not in {"tool", "tool_result"}:
+        return unavailable
+    binding = repo.get_revision_policy_binding(cursor, revision_id=revision_id, policy_id=policy_id)
+    if binding is not None and binding.omission_reason_code:
+        return unavailable
+    if revision.live_message_id is None:
+        # Materialized revisions can contain multimodal envelopes; do not use
+        # their broad canonical reconstruction as a tool-only fallback.
+        return unavailable
+    row = cursor.execute(
+        """SELECT conversation_id, id,
+                  CASE WHEN length(CAST(content AS BLOB)) <= ? THEN content ELSE NULL END
+             FROM messages WHERE id = ?""", (max_source_bytes, revision.live_message_id),
+    ).fetchone()
+    if row is None or row[0] != expected_conversation_id or row[1] != revision.source_message_id:
+        raise ValueError("report revision locator mismatch")
+    if not isinstance(row[2], str):
+        return unavailable
+    # Frozen offsets index the credential projection used when they were written.
+    version = (
+        policy.credential_filter_version
+        if policy.pii_redaction_enabled
+        else CREDENTIAL_FILTER_VERSION
+    )
+    if version not in READABLE_CREDENTIAL_FILTER_VERSIONS:
+        return unavailable
+    projected = CredentialSanitizer(version=version).sanitize(
+        {"role": revision.normalized_role, "content": row[2]}
+    )
+    if not projected.available or not isinstance(projected.value, dict):
+        return unavailable
+    value = projected.value
+    if policy.pii_redaction_enabled:
+        masks: dict[str, list[PIIRedactionSpan]] = {}
+        for span in repo.read_source_redaction_spans(
+            cursor, policy_id=policy_id, semantic_revision_id=revision_id, artifact_id=None,
+        ):
+            if span.field_path.startswith(TRACE_RESPONSE_PII_FIELD_PREFIX):
+                continue
+            if span.outcome != "applied":
+                return unavailable
+            masks.setdefault(span.field_path, []).append(PIIRedactionSpan(
+                span.start_codepoint, span.end_codepoint, span.category, span.rule_id, span.detector_version,
+            ))
+        if not masks:
+            return unavailable
+        legacy_spans = version != CREDENTIAL_FILTER_VERSION
+        value = apply_frozen_pii_masks(
+            value, masks, widen_over_v2_credentials=legacy_spans
+        )
+        if legacy_spans:
+            remasked = CredentialSanitizer().sanitize(value)
+            if not remasked.available:
+                return unavailable
+            value = remasked.value
+    if not isinstance(value, dict) or not isinstance(value.get("content"), str):
+        return unavailable
+    return {"result": value["content"]}
 
 
 def project_semantic_revision_provider_continuations(
@@ -886,7 +1022,9 @@ class SemanticRevisionCoordinator:
         supported = tuple(
             policy
             for policy in pending
-            if policy.credential_filter_version == CREDENTIAL_FILTER_VERSION
+            # TASK-39123: stored v1 policies still bind; what they materialize
+            # carries the current (v2) masks.
+            if policy.credential_filter_version in READABLE_CREDENTIAL_FILTER_VERSIONS
             and (
                 (
                     not policy.pii_redaction_enabled
@@ -1196,3 +1334,18 @@ def _decode_optional_json(value: object) -> object:
         return json.loads(value)
     except json.JSONDecodeError as exc:
         raise ValueError("semantic_envelope_json_invalid") from exc
+
+
+def install_semantic_coordination() -> None:
+    """Install the coordinator into the DB layer's port (idempotent).
+
+    Composition roots call this at startup; importing this module also calls it.
+    """
+    from tldw_chatbook.DB.transaction_observer import (
+        install_semantic_coordinator_factory,
+    )
+
+    install_semantic_coordinator_factory(SemanticRevisionCoordinator)
+
+
+install_semantic_coordination()

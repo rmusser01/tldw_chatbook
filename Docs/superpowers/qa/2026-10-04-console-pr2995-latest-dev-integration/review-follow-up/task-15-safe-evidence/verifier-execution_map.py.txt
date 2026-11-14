@@ -1,0 +1,65 @@
+import ast,hashlib,json,pathlib,subprocess,sys,tempfile
+sys.path.insert(0,'/private/tmp/pr2995-task15')
+from verify import *
+T=pathlib.Path(tempfile.mkdtemp(prefix='pr2995-execution-source-',dir='/private/tmp'))
+for p in OWN:
+ (T/p).parent.mkdir(parents=True,exist_ok=True);(T/p).write_bytes(git('show',BASE+':'+p))
+chat=OWN[3];db=OWN[4]
+(T/chat).write_text((T/chat).read_text()+(pathlib.Path('/private/tmp/pr2995-task15/new_chat_tests').read_text()))
+(T/db).write_text((T/db).read_text()+(pathlib.Path('/private/tmp/pr2995-task15/new_db_tests').read_text()))
+s=(T/chat).read_text();a=s.index("    # Another root's exact restriction must survive");b=s.index('    start = asyncio.create_task',a);s=s[:a]+'''    register = ledger._restrict_chat_start
+    def register_with_peer(*args, **kwargs):
+        if another_restriction:
+            register("another", owner_id=owner, chain_id=chain)
+        if registration_failure:
+            raise OSError("private identity failure")
+        return register(*args, **kwargs)
+    monkeypatch.setattr(ledger, "_restrict_chat_start", register_with_peer)
+'''+s[b:];(T/chat).write_text(s)
+result={}
+def defs(s):return {n.name:sha(ast.dump(n,include_attributes=False).encode()) for n in ast.walk(ast.parse(s)) if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef)) and n.name.startswith('test_')}
+def take(n):
+ receipt=json.loads((O/(n+'-argv.json')).read_text());hashes={p:sha((T/p).read_bytes()) for p in OWN};assert hashes==receipt['source_hashes'],(n,{p:(hashes[p],receipt['source_hashes'][p]) for p in OWN if hashes[p]!=receipt['source_hashes'][p]})
+ result[n]={'execution_source_hashes_confirmed':hashes,'execution_test_AST':{p:defs((T/p).read_bytes()) for p in (chat,db)},'production_AST':{p:sha(ast.dump(ast.parse((T/p).read_bytes()),include_attributes=False).encode()) for p in OWN[:3]}}
+take('red')
+s=(T/db).read_text();s=s.replace('''    if case in {"present", "foreign_attempt"}:
+        prepare(db, source, "target", "attempt")
+    if case == "foreign_attempt":
+        with db.transaction() as conn:
+            conn.execute("UPDATE automatic_chat_start_attempts SET owner_id='foreign' WHERE id='attempt'")
+''','''    if case == "present":
+        prepare(db, source, "target", "attempt")
+    if case == "foreign_attempt":
+        with db.transaction() as conn:
+            conn.execute("UPDATE automatic_work_runtime_owner SET owner_id='foreign'")
+        prepare(db, source, "target", "attempt", owner_id="foreign")
+        with db.transaction() as conn:
+            conn.execute("UPDATE automatic_work_runtime_owner SET owner_id='owner'")
+''');(T/db).write_text(s)
+(T/chat).write_text((T/chat).read_text()+pathlib.Path('/private/tmp/pr2995-task15/extra_chat_tests').read_text())
+take('red-extra')
+subprocess.run([sys.executable,'/private/tmp/pr2995-task15/implement.py'],cwd=T,check=True);take('green')
+subprocess.run([sys.executable,'/private/tmp/pr2995-task15/refine_tests.py'],cwd=T,check=True);take('green-boundaries');take('existing')
+s=(T/chat).read_text().replace('''            replacement_preparation = replace(
+                saved["preparation"], preparation_id="replacement-preparation"
+            )''','''            abandon(saved["preparation"].preparation_id)
+            replacement_preparation = replace(
+                saved["preparation"], preparation_id="replacement-preparation"
+            )''');(T/chat).write_text(s)
+R='/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff'
+for p in OWN:
+ r=subprocess.run([R,'format','--stdin-filename',str(W/p),'-'],input=(T/p).read_bytes(),cwd=W,capture_output=True);assert r.returncode==0;(T/p).write_bytes(r.stdout)
+take('replacement-green')
+s=(T/chat).read_text().replace('''            abandon(saved["preparation"].preparation_id)
+            replacement_preparation''','''            controller._rollback_committing_preparation(saved["preparation"].preparation_id)
+            assert store.preparation_for_session(target.id) is None
+            replacement_preparation''');(T/chat).write_text(s);take('replacement-final')
+finaltests={p:defs((W/p).read_bytes()) for p in (chat,db)}
+# Decorator expansion was extended in bounded guard tests; preserve the actual
+# original and final AST hashes, without claiming unchanged test declarations.
+for n,r in result.items():
+ r['test_declarations_different_from_final']={p:[k for k,h in m.items() if h!=finaltests[p].get(k)] for p,m in r['execution_test_AST'].items()}
+for p in OWN[:2]:
+ assert result['green']['production_AST'][p]==sha(ast.dump(ast.parse((W/p).read_bytes()),include_attributes=False).encode())
+dump('execution-source-AST-map.json',{'reconstructed_sources_match_actual_execution_hashes':True,'runs':result,'final_test_AST':finaltests,'green_production_executable_AST_matches_final':True,'fork_doc_only_map':'source-AST-import-authority-custody-map.json','source_reconstruction_contains_no_profile_data':True})
+print('Every RED/GREEN execution source reconstructed and byte-hash matched; final production AST exact to tested GREEN.')

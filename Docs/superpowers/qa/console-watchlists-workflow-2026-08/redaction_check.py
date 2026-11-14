@@ -16,9 +16,7 @@ _BUNDLE = Path(__file__).resolve().parent
 _REPOSITORY_ROOT = _BUNDLE.parents[3]
 _DEFAULT_TARGETS = (
     _BUNDLE,
-    _BUNDLE.parents[2]
-    / "UAT"
-    / "2026-08-27-console-watchlists-workflow-round-trip.md",
+    _BUNDLE.parents[2] / "UAT" / "2026-08-27-console-watchlists-workflow-round-trip.md",
 )
 
 
@@ -50,9 +48,7 @@ def _patterns(sentinel: str) -> tuple[tuple[str, re.Pattern[str]], ...]:
         ),
         (
             "real_home_path",
-            re.compile(
-                rf"{slash}(?:Users|home){slash}[A-Za-z0-9._-]+{slash}"
-            ),
+            re.compile(rf"{slash}(?:Users|home){slash}[A-Za-z0-9._-]+{slash}"),
         ),
         (
             "concrete_temporary_profile_path",

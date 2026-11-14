@@ -11,7 +11,7 @@ re-chunk one item; save a note).
 - Design: `Docs/superpowers/specs/2026-08-02-local-library-agent-tools-design.md`
   (the 18 read tools); `Docs/superpowers/specs/2026-08-22-chunking-agent-tools-design.md`
   (the four chunk tools)
-- ADR: `backlog/decisions/030-local-library-agent-tool-boundary.md`
+- ADR: `backlog/decisions/298-local-library-agent-tool-boundary.md`
 - Contract source of truth: `tldw_chatbook/Library/library_tool_contract.py`
 
 ## The 18 read tools

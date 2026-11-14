@@ -1,0 +1,25 @@
+{
+  "complete_provider_calls": 5,
+  "model_attempts": [
+    18,
+    19,
+    20,
+    21,
+    22
+  ],
+  "http200_sse_done": 5,
+  "terminal_search_response_verified_equal": true,
+  "v2_literal_structured_provenance": true,
+  "original_rows_messages_workspaces_unchanged": true,
+  "predecessor_calls_headers_links_reconstructions_text_thinking_exact": true,
+  "exact_current_user_source_pins": true,
+  "followup_handoffs": 0,
+  "actual_native_tools_supported": false,
+  "optional_rag_capture_failure": "co-occurs; not diagnosed or claimed causal",
+  "restore_confirmation_restore_open": "not reached",
+  "fresh_rag_only": "not launched after the same protocol gate was established",
+  "counter": 22,
+  "cap": 30,
+  "remaining": 8,
+  "normal_fingerprints_equal": true
+}

@@ -23,6 +23,10 @@ class BuddySpeechControls(Vertical):
     def __init__(self, coordinator: Any, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.coordinator = coordinator
+        # TASK-35028: the status copy this widget last wrote, so the 0.5 s
+        # self-poll with an unchanged queue state costs a compare instead of
+        # repainting the height:auto status line.
+        self._last_speech_status: str | None = None
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -80,7 +84,11 @@ class BuddySpeechControls(Vertical):
                 if self.coordinator.enabled
                 else "Buddy speech is off"
             )
-        self.query_one("#buddy-speech-status", Static).update(status)
+        # TASK-35028: the queue state rarely moves, so an unchanged poll
+        # tick must not repaint (and re-layout) the height:auto line.
+        if status != self._last_speech_status:
+            self._last_speech_status = status
+            self.query_one("#buddy-speech-status", Static).update(status)
         self.query_one("#buddy-speech-actions").display = bool(
             self.coordinator.enabled
             or self.coordinator.needs_consent

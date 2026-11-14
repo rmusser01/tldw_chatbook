@@ -35,7 +35,7 @@ No new universal memory formula, automatic profile overwrites, background trial 
 
 ### Architecture gate
 
-ADR required: yes, supplied by the TASK-32738 decision. ADR path: N/A until that decision is published; execution must link its canonical path and ADR-080/119. Reason: fitting and effective-state eligibility follow the approved new contract.
+ADR required: yes, supplied by the TASK-32738 decision. ADR path: N/A until that decision is published; execution must link its canonical path and ADR-327/119. Reason: fitting and effective-state eligibility follow the approved new contract.
 
 ### Affected areas
 

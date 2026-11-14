@@ -649,6 +649,20 @@ def check_dependency(module_name: str, feature_name: Optional[str] = None) -> bo
             f"⚠️ {module_name} dependency not found. Feature '{feature_name}' will be disabled. Reason: {e}"
         )
         return False
+    except Exception as e:
+        # TASK-38597: an installed-but-broken optional (OSError from a
+        # failed native dlopen, a protobuf mismatch, ...) used to escape
+        # here and crash the eager boot path
+        # (``initialize_dependency_checks`` at module scope). A broken
+        # install must degrade exactly like a missing one -- feature
+        # disabled, boot continues -- only the log wording differs, so
+        # missing vs broken stays distinguishable.
+        DEPENDENCIES_AVAILABLE[feature_name] = False
+        logger.warning(
+            f"⚠️ {module_name} dependency is installed but failed to import. "
+            f"Feature '{feature_name}' will be disabled. Reason: {type(e).__name__}: {e}"
+        )
+        return False
 
 
 def _check_dependency_installed(
@@ -1524,26 +1538,41 @@ def force_recheck_embeddings():
 # Check configuration for eager dependency checking
 eager_check = False
 
-# First check environment variable (highest priority)
+# The environment variable is the only import-time signal (no config file I/O).
+# The config-file flag is read when the app starts: see
+# ``apply_config_eager_flags``.
 if os.environ.get("TLDW_EAGER_DEPENDENCY_CHECK", "").lower() == "true":
     eager_check = True
     logger.info(
         "Eager dependency checking enabled via TLDW_EAGER_DEPENDENCY_CHECK environment variable"
     )
-else:
-    # Check config file if not in test environment
-    if "PYTEST_CURRENT_TEST" not in os.environ:
-        try:
-            # Import config lazily to avoid circular dependencies
-            from ..config import get_cli_setting
 
-            if get_cli_setting("rag", "performance", {}).get(
-                "eager_dependency_check", False
-            ):
-                eager_check = True
-                logger.info("Eager dependency checking enabled via config file")
-        except Exception as e:
-            logger.debug(f"Could not check config for eager_dependency_check: {e}")
+
+def apply_config_eager_flags() -> None:
+    """Run the dependency checks now if ``[rag] performance.eager_dependency_check`` is set.
+
+    Called once from each entry point (app_entry, tldw-serve, MCP server) before the UI loop (not at import, so importing this module
+    performs no config I/O). Skipped under pytest, as the import-time path was.
+    """
+    global _initialized
+    if _initialized or "PYTEST_CURRENT_TEST" in os.environ:
+        return
+    # The settings read is not wrapped: a read failure (RecoveryRequired among
+    # them) propagates, as it did when this ran at import.
+    from ..config import get_cli_setting
+
+    performance = get_cli_setting("rag", "performance", {})
+    if not isinstance(performance, dict):
+        return
+    if not performance.get("eager_dependency_check", False):
+        return
+    logger.info("Eager dependency checking enabled via config file")
+    try:
+        initialize_dependency_checks()
+        _initialized = True
+    except Exception as e:
+        logger.debug(f"Could not run eager dependency checks: {e}")
+
 
 if eager_check:
     initialize_dependency_checks()

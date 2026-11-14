@@ -1,0 +1,64 @@
+# TASK-38536 implementation report
+
+Status: implemented; In Progress awaiting independent review. ADR: `backlog/decisions/286-console-prompt-mix-ins.md`. AC 3 remains open pending review of an inherited migration-guard failure. No push or merge.
+
+Scope: schema-v3 `LiteralMixinDefinition` and strict dispatch; literal compatibility projections; local capability/size validation; exact UUID snapshot reads in one transaction with live SQLite bind-limit batching; local source create/update, optimistic checks, delete/restore, history, count/browse/search filters; ordinary Prompt and Recipe guards; v5-to-v6 SQL table rebuild, index/trigger/FK/FTS/sequence/history preservation and rollback; exact v4/v5/v6 backup catalogs and restricted staged migration; architecture notes. The direct local service and typed batch delete receipt are included because they are independent existing write/delete callers. Library block editing explicitly narrows v2 definitions. Files are listed in the commit diff; `.superpowers` briefs/report are ignored execution records.
+
+RED evidence (all used the shared interpreter, `-p no:cacheprovider` and private `/private/tmp` basetemps):
+- `Tests/Prompt_Management/test_prompt_mixins.py::test_mixin_v3_keeps_literal_body_and_has_no_system_lane`: rejected `mixin` type (1 failed); after codec implementation it passed.
+- `...::test_local_capabilities_validate_and_canonicalize_mixin`: source did not advertise (3, text_mixin) (1 failed); now passes.
+- `Tests/Prompts_DB/test_prompts_db_retained_history.py::test_v5_mixin_migration_preserves_records_and_history`: rejected `mixin` (1 failed); later exposed lost sqlite_sequence high-water mark (1 failed); both corrected.
+- `Tests/Backup_Recovery/test_sqlite_validation.py::test_prompt_v5_to_v6_recovery_migration_preserves_rows`: remained v5 (1 failed); exact v6 catalog and restricted migration added.
+- `Tests/Prompt_Management/test_prompt_mixins.py::test_mixin_is_not_a_normal_console_prompt`: legacy guard admitted it (1 failed); positive Prompt eligibility added.
+- `...::test_local_service_saves_filters_and_reads_snapshot`: rejected mixin type; later allowed conversion to Prompt and rejected explicit-type partial update (each failed); canonicalization and version fences added.
+- `...::test_direct_local_service_compiles_mixin_on_create_and_update` and `...::test_scope_local_adapter_validates_mixin_without_outer_scope`: compatibility body was stale or type mismatch was accepted (each failed); both source adapters now validate.
+- `...::test_snapshot_batches_and_refuses_wrong_type_and_deleted`: SQLite variable limit 20 exposed a 900-parameter assumption (1 failed); batch size now uses the actual limit.
+
+Final GREEN command, executed from the managed worktree (the two deselections are exact-base failures detailed below):
+```sh
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q -p no:cacheprovider --basetemp /private/tmp/mixin-task1-verified-last --deselect Tests/DB/test_migration_file_sources.py::TestNoDecorativeMigrationFiles::test_every_migration_file_is_load_bearing --deselect Tests/Prompt_Management/test_prompt_batch_models.py::test_prompt_management_lazy_public_exports_preserve_class_identities Tests/Prompt_Management/test_prompt_mixins.py Tests/Prompt_Management/test_prompt_artifact_codec.py Tests/Prompt_Management/test_prompt_block_compiler.py Tests/Prompt_Management/test_prompt_block_editor_state.py Tests/Prompt_Management/test_prompt_scope_service.py Tests/Prompt_Management/test_local_prompt_service.py Tests/Prompt_Management/test_prompt_history_normalizers.py Tests/Prompt_Management/test_prompt_batch_models.py Tests/Prompts_DB/test_prompts_db_retained_history.py Tests/DB/test_migration_file_sources.py Tests/Backup_Recovery/test_core_owners.py::test_schema_policy_matches_installed_store Tests/Backup_Recovery/test_core_owners.py::test_prompt_reader_accepts_current_and_retained_schema Tests/Backup_Recovery/test_core_owners.py::test_prompt_schema_rejects_other_supported_version_stamp Tests/Backup_Recovery/test_sqlite_validation.py::test_prompt_v4_staged_migration_preserves_source_and_prompt_data Tests/Backup_Recovery/test_sqlite_validation.py::test_prompt_migration_rejects_extra_trigger_before_writing Tests/Backup_Recovery/test_sqlite_validation.py::test_prompt_failed_migration_rolls_back_created_table Tests/Backup_Recovery/test_sqlite_validation.py::test_prompt_v5_to_v6_recovery_migration_preserves_rows Tests/Backup_Recovery/test_sqlite_validation.py::test_prompt_v6_recovery_migration_denial_rolls_back Tests/UI/test_console_prompt_picker.py::test_recipe_never_enters_legacy_prompt_picker_rows_or_selection Tests/UI/test_console_prompt_picker.py::test_recipe_detail_slipping_past_search_is_rejected_before_dismiss Tests/UI/test_console_prompt_picker.py::test_mixin_never_enters_or_dismisses_prompt_picker Tests/UI/test_console_prompts_controller.py::test_recipe_records_are_never_executable Tests/UI/test_console_prompts_controller.py::test_prompt_search_filters_recipes_and_uses_a_prefix_fts_query Tests/UI/test_console_prompts_modal.py::test_supported_prompt_recipe_copy_and_legacy_open_without_side_effects
+```
+Result: 472 passed, 2 deselected in 19.32 s.
+
+Direct migration evidence: `test_v5_mixin_migration_preserves_records_and_history` seeds a real v5 store, adds a real local collection membership and keyword, sets the ID high-water mark above live IDs, and compares rows, links, membership, sync rows and FTS after the executed file-backed migration; `test_v5_mixin_migration_rolls_back_on_failure` injects invalid SQL after the rebuild and checks v5 records, links, sync and FK integrity. Recovery tests migrate real v4 and v5 candidates to v6, verify schema, data and FTS, and deny the rebuild through the authorizer to check rollback.
+
+Exact BASE comparison: `git archive 76171c2750a0d0e501f2e8274e9dc9f80e533993 | tar -x -C /private/tmp/mixin-task1-head-baseline`; then from that directory:
+```sh
+PYTHONDONTWRITEBYTECODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q --tb=short -p no:cacheprovider --basetemp /private/tmp/mixin-head-guard2 Tests/DB/test_migration_file_sources.py::TestNoDecorativeMigrationFiles::test_every_migration_file_is_load_bearing
+PYTHONDONTWRITEBYTECODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q --tb=short -p no:cacheprovider --basetemp /private/tmp/mixin-head-exports Tests/Prompt_Management/test_prompt_batch_models.py::test_prompt_management_lazy_public_exports_preserve_class_identities
+```
+Both failed identically on BASE and this tree. The guard lists dreams_v1_to_v2 through dreams_v5_to_v6, guardian_v1_to_v2_crisis_provenance and library_collections_v4_to_v5_url_provenance; the Prompt migration is recognized. The export test expects four `__all__` entries while BASE already includes two draft-shelf exports. They are left unchanged.
+
+A broader pre-final run produced 444 passed/12 failed; two were updated capability/signature expectations corrected for this change. The ten remaining UI nodes all failed on the same BASE in this command (10 failed):
+```sh
+PYTHONDONTWRITEBYTECODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q --tb=no -p no:cacheprovider --basetemp /private/tmp/mixin-head-ui Tests/UI/test_console_prompt_picker.py::test_console_picker_captures_ordinary_segment_draft_at_opening Tests/UI/test_console_prompt_picker.py::test_console_picker_refuses_when_draft_changes_after_opening Tests/UI/test_console_prompt_picker.py::test_prompt_picker_css_blocks_pinned_in_source_and_bundle Tests/UI/test_console_prompts_controller.py::test_improvement_target_is_pinned_once_and_shared_across_callbacks Tests/UI/test_console_prompts_controller.py::test_improvement_activation_refuses_a_moved_system_prompt Tests/UI/test_console_prompts_controller.py::test_improvement_snapshot_refuses_an_unpinned_provider_target Tests/UI/test_console_prompts_modal.py::test_no_matches_retry_and_source_unavailable_are_explicit Tests/UI/test_console_prompts_modal.py::test_source_switch_clears_foreign_rows_before_unavailable_result Tests/UI/test_console_prompts_modal.py::test_real_recipe_fill_with_additional_context_reaches_block_review Tests/UI/test_console_prompts_modal.py::test_mapped_context_blocks_recipe_save_until_deleted
+```
+The earlier run also exposed one changed history classification; it was corrected, and the history plus mix-in suite then passed 65 tests. No full sweep was run.
+
+Scoped quality checks: `ruff check --no-cache` per-file diagnostic code/message multiplicities compared against the archived exact BASE: no introduced findings. New mix-in test file passes `ruff check` and `ruff format --check`; modified Python ranges formatted and `git diff --check` passed. Self-review checked all `artifact_type`/`supported_v2` consumers, exact lookup and source policy, malformed input, body disclosure, optimistic version fences, migration transaction/sequence/FKs and v4/v5 recovery catalog/authorizer. The ordinary Prompt picker refuses stale-system mix-ins in both insert/System modes. No source/side effects outside this worktree; no full suite.
+
+Local commit: `7f511816fc6c245ba3ba2921029e1a6b28087e29` (`feat: add literal mix-in prompt artifacts`). The managed worktree was clean after commit. Git reported an existing auto-gc warning about unreachable loose objects and an existing worktree `gc.log`; no cleanup was attempted. Final status remains In Progress for independent review, with AC 3 open because the inherited migration guard is red on exact BASE.
+
+## Independent review round 1 fix
+
+Review findings 1 and 2 were confirmed. The scope local adapter previously retained an explicit `expected_version=None` with `setdefault` after merging a stored mix-in, allowing an intervening body update to be overwritten. Both adapters now call `prepare_local_mixin_payload` in the existing `prompt_source_capabilities.py` validation owner. It performs candidate detection, type-change refusal, canonical validation, request-size checking, projection, and infers the exact merged record version whenever the supplied version is `None`. Both adapters retain their original separate storage calls. Ordinary Prompt and Recipe inputs continue through unchanged.
+
+RED (real SQLite, two database owners on one file; the second commits a body update between the first adapter's read and write):
+```sh
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q --tb=short -p no:cacheprovider --basetemp /private/tmp/mixin-review-red2 Tests/Prompt_Management/test_prompt_mixins.py::test_mixin_update_with_none_version_refuses_interleaved_write
+```
+Result: scope adapter failed because no conflict was raised; direct adapter passed (1 failed, 1 passed). The initial test run also exposed that the stored definition is JSON text; the assertion was corrected to decode it before the RED run above.
+
+GREEN:
+```sh
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q -p no:cacheprovider --basetemp /private/tmp/mixin-review-green Tests/Prompt_Management/test_prompt_mixins.py::test_mixin_update_with_none_version_refuses_interleaved_write
+```
+Result: 2 passed. Both cases assert `ExpectedVersionConflictError`, concurrent literal body and definition preserved, and version 2 retained.
+```sh
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q -p no:cacheprovider --basetemp /private/tmp/mixin-review-final Tests/Prompt_Management/test_prompt_mixins.py Tests/Prompt_Management/test_local_prompt_service.py Tests/Prompt_Management/test_prompt_scope_service.py
+```
+Result: 232 passed in 2.39 s, including existing ordinary Prompt/Recipe and both public-adapter coverage. No full 472-test matrix or unrelated inherited-failure nodes were rerun for this focused fix.
+
+Scoped verification: `ruff check --no-cache Tests/Prompt_Management/test_prompt_mixins.py` and `ruff format --no-cache --check Tests/Prompt_Management/test_prompt_mixins.py` passed; changed source ranges were formatted; per-file Ruff diagnostic code/message counts compared against commit `7f511816fc` showed no introduced findings; `git diff --check` passed. Self-review checked preservation of explicit non-None versions, unchanged non-mixin behavior, canonical request validation and the independent storage calls. The controller accepted the inherited migration-guard attribution; AC 3 is checked with the existing seven baseline findings documented in the task notes, and the task remains In Progress for scoped re-review.
+
+Review fix local commit: `79751133d760a5ebf3deb59e53163b117a55b1ab` (`fix: fence local mix-in updates`). The managed worktree is clean; the task remains In Progress for scoped re-review. Git repeated its pre-existing auto-gc/loose-object warning; no cleanup was attempted.

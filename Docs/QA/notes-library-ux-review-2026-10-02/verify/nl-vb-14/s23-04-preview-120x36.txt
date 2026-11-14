@@ -1,0 +1,36 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌────────────────────────────────────────────────────────┐  N  Saved 00:40 · Next: Press Edit to change this    │
+│   a  │ Library notes · Ready                                  │  o  note.                                            │
+│   v  │ Notes (1)                                              │  t      ‹ Notes      Todo                            │
+│      │ These notes live in the Library's own database — for   │  e                                                   │
+│      │ notes that live in a folder on disk, switch to Folder  │  s                                                   │
+│      │ files. To copy or keep a folder synced, choose Add     │      In the Library database only — no file on disk  │
+│      │ from files.                                            │     S                                                │
+│      │                                                        │              Edit           Preview            Info  │
+│      │ Filter                                                 │                                                      │
+│ ---> │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │     ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓ │
+│      │ ▊ Filter notes… (Enter)                              ▎ │     ┃Todo                                          ┃ │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     ┃ • [ ] Email draft by Friday                  ┃ │
+│      │                                                        │     ┃ • [x] Done thing                             ┃ │
+│      │    New     Sort: Newest     Select                     │<--- ┃                                              ┃ │
+│      │    Add from files…     Export                          │     ┃                                              ┃ │
+│      │ Folders & placement                                    │     ┃                                              ┃ │
+│      │    New folder     Add to folder     Move note          │     ┃                                              ┃ │
+│      │    ○ Remove placement                                  │     ┃                                              ┃ │
+│ ---> │                                                        │     ┃                                              ┃ │
+│      │                                                        │     ┃                                              ┃ │
+│      │  ▾ Unfiled                                             │     ┃                                              ┃ │
+│      │    Todo · now                                          │     ┃                                              ┃ │
+│      │                                                        │     ┃                                              ┃ │
+│      │                                                        │     ┃                                              ┃ │
+│      │                                                        │     ┃                                              ┃ │
+│      │                                                        │     ┃                                              ┃ │
+│      │                                                        │     ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ │
+│      └────────────────────────────────────────────────────────┘                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  pgup/pgdn scroll | esc back to notes | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

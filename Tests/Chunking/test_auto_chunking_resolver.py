@@ -10,8 +10,10 @@ import pytest
 # Skipped: Ingestion_Media_Processing.chunking_options — the resolver that consumes the auto-planner — remains server-side by the descope rulings (#3 is merged); the resolver behavior is covered by the ported planner suite (test_auto_chunking_planner.py). Terminal disposition (2026-08-23 program close):
 # pinned by Tests/Chunking/test_descope_ledger.py; a re-sync regenerates
 # this block verbatim.
-pytest.importorskip("tldw_chatbook.NoSuchDeferredModule",
-                    reason="skipped: Ingestion_Media_Processing.chunking_options — the resolver that consumes the auto-planner — remains server-side by the descope rulings (#3 is merged); the resolver behavior is covered by the ported planner suite (test_auto_chunking_planner.py)")
+pytest.importorskip(
+    "tldw_chatbook.NoSuchDeferredModule",
+    reason="skipped: Ingestion_Media_Processing.chunking_options — the resolver that consumes the auto-planner — remains server-side by the descope rulings (#3 is merged); the resolver behavior is covered by the ported planner suite (test_auto_chunking_planner.py)",
+)
 
 from tldw_chatbook.Chunking._shims.Ingestion_Media_Processing.chunking_options import (
     async_resolve_chunking_for_result,
@@ -297,7 +299,9 @@ async def test_async_resolver_preserves_api_name_model_when_provider_is_present(
 async def test_async_resolve_chunking_for_result_can_reuse_batch_llm_resolution():
     class Assistant:
         async def refine(self, request):
-            raise AssertionError("assistant should not be called when reusing batch resolution")
+            raise AssertionError(
+                "assistant should not be called when reusing batch resolution"
+            )
 
     default_options = {"method": "semantic", "max_size": 820, "overlap": 82}
     default_plan = {

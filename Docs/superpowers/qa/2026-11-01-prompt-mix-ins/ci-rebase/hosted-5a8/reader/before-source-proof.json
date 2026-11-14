@@ -1,0 +1,18 @@
+{
+  "tldw_chatbook/UI/Library_Modules/library_media_controller.py": {
+    "sha256": "0ae6bbd979af84482e989688dea88fcdcc534e3a400d1b1e1098bf86dbfacdf9",
+    "lines": 5281
+  },
+  "tldw_chatbook/UI/Library_Modules/canvas_sync.py": {
+    "sha256": "be3818993acb97c09b5ce98c951f8d7108cc1d48a4c65d52967bc9fe25847c19",
+    "lines": 1256
+  },
+  "tldw_chatbook/UI/Screens/library_screen.py": {
+    "sha256": "6d16398620b71765d1aaf49a35dedf3d61e8f275fb3f15c0db67ccaf8ede9eb4",
+    "lines": 38177
+  },
+  "Tests/UI/test_library_rail_switch_keeps_reader_and_note.py": {
+    "sha256": "6e0ea55da6d9cb4c57be3642e250562f44e9c18d979d44efbcfb17ec645eef0c",
+    "lines": 612
+  }
+}

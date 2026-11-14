@@ -1,0 +1,88 @@
+{
+  "head": "012ca47c39a16c10aa9b9b0a2298287945e22a89",
+  "base": "798f8fca75a7acba56da5f523329efa52c4a78f0",
+  "files": [
+    {
+      "path": "Tests/UI/test_library_media_actions_target_opened_item.py",
+      "working_sha256": "c143202062cab5e7381f96b0fbb5367b162d2fef5db54854237f46ab195bd5ee",
+      "head_blob": "b0c7a26c2ef745cd380ea9f84fd061b6812fc5e8",
+      "dev_blob": "b0c7a26c2ef745cd380ea9f84fd061b6812fc5e8",
+      "working_tracked_diff": ""
+    },
+    {
+      "path": "Tests/UI/test_library_shell.py",
+      "working_sha256": "24396eeb7956b84ce37c63944fc188d5919747fef64c208cc1fa2fc6256218a8",
+      "head_blob": "7e7ecd5bdb0d24c81a5b3c6a88235b91c79e6615",
+      "dev_blob": "7e7ecd5bdb0d24c81a5b3c6a88235b91c79e6615",
+      "working_tracked_diff": ""
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/library_screen.py",
+      "working_sha256": "abc900fa3a5fe315ed1b571037745b4368cf747e9a3d90369ea72f0b42eb9a86",
+      "head_blob": "8e099d9d41ab184b968ec2956a311c1ae386810b",
+      "dev_blob": "8e099d9d41ab184b968ec2956a311c1ae386810b",
+      "working_tracked_diff": ""
+    },
+    {
+      "path": "tldw_chatbook/UI/Library_Modules/library_media_controller.py",
+      "working_sha256": "8c969a66d373f3d24a6f8f4fb0a1cd60553edddee72d6665cf1dd92f81db19a2",
+      "head_blob": "679c0f977b7f034ff4035c7d6db61879873ec6e5",
+      "dev_blob": "679c0f977b7f034ff4035c7d6db61879873ec6e5",
+      "working_tracked_diff": ""
+    },
+    {
+      "path": "tldw_chatbook/UI/Library_Modules/library_media_browse_controller.py",
+      "working_sha256": "edcd715b209afc64436cba8b73771f76db35095d8afe7b992874453bb7509d69",
+      "head_blob": "bedb835d1b0d2460b264d7e984b41ab7293ce7da",
+      "dev_blob": "bedb835d1b0d2460b264d7e984b41ab7293ce7da",
+      "working_tracked_diff": ""
+    },
+    {
+      "path": "tldw_chatbook/UI/Library_Modules/canvas_sync.py",
+      "working_sha256": "68fc1a45fb796572650755cf50aceaae6e8ae0dcc2ff2119b89c54ea965f8504",
+      "head_blob": "786e4892d36d320e32c19266510cdea8716094f4",
+      "dev_blob": "786e4892d36d320e32c19266510cdea8716094f4",
+      "working_tracked_diff": ""
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Library/library_media_canvas.py",
+      "working_sha256": "c0776997e30986d59573311e26c1b3862f31e6e776356f77b685bc480f7c4c17",
+      "head_blob": "399853cbaf5c72c84292cf577f9ddf26f632b321",
+      "dev_blob": "399853cbaf5c72c84292cf577f9ddf26f632b321",
+      "working_tracked_diff": ""
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Library/library_canvas_sync.py",
+      "working_sha256": "f6e03dad8b059ee16235d6c5d8407a73964aa14615a69e63ed6292e1b2caf21d",
+      "head_blob": "8d971d0b893346f027d89781ac347e30174a6106",
+      "dev_blob": "8d971d0b893346f027d89781ac347e30174a6106",
+      "working_tracked_diff": ""
+    },
+    {
+      "path": "tldw_chatbook/Library/library_media_state.py",
+      "working_sha256": "bb5524fc2f08fd7d216920b3a28df8cf575060243ede3832cd4a115970b703b9",
+      "head_blob": "419a60d5869e6d6cc4838d64f153854a157b0ab5",
+      "dev_blob": "419a60d5869e6d6cc4838d64f153854a157b0ab5",
+      "working_tracked_diff": ""
+    },
+    {
+      "path": "tldw_chatbook/Library/library_media_reader_state.py",
+      "working_sha256": "941239f19ace763051fbe6dcc0c14a0297f33ec1b26e3ad56c03fa1e31d52fe1",
+      "head_blob": "a046f8b7a186c98230f4374475ceeabebc1413b3",
+      "dev_blob": "a046f8b7a186c98230f4374475ceeabebc1413b3",
+      "working_tracked_diff": ""
+    }
+  ],
+  "installed_textual": [
+    {
+      "path": "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\widget.py",
+      "sha256": "962dbb32409191bca29a554c22d825ee2a71d49648ba5385e7971bc44b839b5a"
+    },
+    {
+      "path": "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\app.py",
+      "sha256": "a1c04e978716b9e36a5e8c81876ac59e2038759c6cfaf92389c8a2a0917009dd"
+    }
+  ],
+  "all_head_base_blobs_identical": true,
+  "all_tracked_sources_clean": true
+}

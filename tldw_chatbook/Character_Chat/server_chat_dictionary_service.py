@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Protocol
 
 from tldw_chatbook.runtime_policy.bootstrap import (
     build_runtime_api_client_provider_from_config,
@@ -10,12 +10,50 @@ from tldw_chatbook.runtime_policy.bootstrap import (
 from tldw_chatbook.runtime_policy.types import PolicyDeniedError
 
 
+class ServerChatDictionaryClient(Protocol):
+    """Client methods ServerChatDictionaryService calls (TASK-36953.1)."""
+
+    async def add_chat_dictionary_entry(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def bulk_chat_dictionary_entry_operations(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+    async def create_chat_dictionary(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def delete_chat_dictionary(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def delete_chat_dictionary_entry(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def export_chat_dictionary_json(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def export_chat_dictionary_markdown(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+    async def get_chat_dictionary(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_chat_dictionary_statistics(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+    async def get_chat_dictionary_version(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def import_chat_dictionary_json(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def import_chat_dictionary_markdown(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+    async def list_chat_dictionaries(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def list_chat_dictionary_activity(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def list_chat_dictionary_entries(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def list_chat_dictionary_versions(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def process_chat_dictionaries(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def reorder_chat_dictionary_entries(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+    async def revert_chat_dictionary_version(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+    async def update_chat_dictionary(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def update_chat_dictionary_entry(self, *args: Any, **kwargs: Any) -> Any: ...
+
+
 class ServerChatDictionaryService:
     """Delegate chat dictionary/world-book operations to tldw_server."""
 
     def __init__(
         self,
-        client: Any | None = None,
+        client: ServerChatDictionaryClient | None = None,
         *,
         policy_enforcer: Any | None = None,
         client_provider: Any | None = None,
@@ -23,6 +61,23 @@ class ServerChatDictionaryService:
         self.client = client
         self.policy_enforcer = policy_enforcer
         self.client_provider = client_provider
+        # ADR-221 dictionary half, interface parity with the local service:
+        # a monotonic generation bumped by every successful remote mutation.
+        # Server-backed dictionaries never enter the local send-path resolve
+        # (which reads the local CharactersRAGDB only), so nothing keys a
+        # cache on this today; it exists so consumers of the service seam can
+        # observe "the store changed" uniformly across backends. Remote
+        # mutations performed outside this process are not observable.
+        self._generation = 0
+
+    @property
+    def generation(self) -> int:
+        """Monotonic counter of successful remote mutations through this
+        service; 0 until the first one. Reads and failed calls never bump."""
+        return self._generation
+
+    def _bump_generation(self) -> None:
+        self._generation += 1
 
     @classmethod
     def from_config(
@@ -45,7 +100,7 @@ class ServerChatDictionaryService:
     ) -> "ServerChatDictionaryService":
         return cls(client_provider=provider, policy_enforcer=policy_enforcer)
 
-    def _require_client(self) -> Any:
+    def _require_client(self) -> ServerChatDictionaryClient:
         if self.client is not None:
             return self.client
         if self.client_provider is not None:
@@ -113,9 +168,11 @@ class ServerChatDictionaryService:
 
     async def create_dictionary(self, request_data: Any) -> dict[str, Any]:
         self._enforce(self._dictionary_action("create"))
-        return await self._require_client().create_chat_dictionary(
+        result = await self._require_client().create_chat_dictionary(
             self._payload(request_data)
         )
+        self._bump_generation()
+        return result
 
     async def get_dictionary(self, dictionary_id: int) -> dict[str, Any]:
         self._enforce(self._dictionary_action("detail"))
@@ -125,20 +182,25 @@ class ServerChatDictionaryService:
         self, dictionary_id: int, request_data: Any
     ) -> dict[str, Any]:
         self._enforce(self._dictionary_action("update"))
-        return await self._require_client().update_chat_dictionary(
+        result = await self._require_client().update_chat_dictionary(
             dictionary_id, self._payload(request_data)
         )
+        self._bump_generation()
+        return result
 
     async def delete_dictionary(self, dictionary_id: int, **kwargs: Any) -> bool:
         self._enforce(self._dictionary_action("delete"))
         await self._require_client().delete_chat_dictionary(dictionary_id, **kwargs)
+        self._bump_generation()
         return True
 
     async def add_entry(self, dictionary_id: int, request_data: Any) -> dict[str, Any]:
         self._enforce(self._entry_action("create"))
-        return await self._require_client().add_chat_dictionary_entry(
+        result = await self._require_client().add_chat_dictionary_entry(
             dictionary_id, self._payload(request_data)
         )
+        self._bump_generation()
+        return result
 
     async def list_entries(self, dictionary_id: int, **kwargs: Any) -> Any:
         self._enforce(self._entry_action("list"))
@@ -148,28 +210,35 @@ class ServerChatDictionaryService:
 
     async def update_entry(self, entry_id: int, request_data: Any) -> dict[str, Any]:
         self._enforce(self._entry_action("update"))
-        return await self._require_client().update_chat_dictionary_entry(
+        result = await self._require_client().update_chat_dictionary_entry(
             entry_id, self._payload(request_data)
         )
+        self._bump_generation()
+        return result
 
     async def delete_entry(self, entry_id: int) -> bool:
         self._enforce(self._entry_action("delete"))
         await self._require_client().delete_chat_dictionary_entry(entry_id)
+        self._bump_generation()
         return True
 
     async def bulk_entries(self, request_data: Any) -> dict[str, Any]:
         self._enforce(self._entry_action("update"))
-        return await self._require_client().bulk_chat_dictionary_entry_operations(
+        result = await self._require_client().bulk_chat_dictionary_entry_operations(
             self._payload(request_data)
         )
+        self._bump_generation()
+        return result
 
     async def reorder_entries(
         self, dictionary_id: int, request_data: Any
     ) -> dict[str, Any]:
         self._enforce(self._entry_action("reorder"))
-        return await self._require_client().reorder_chat_dictionary_entries(
+        result = await self._require_client().reorder_chat_dictionary_entries(
             dictionary_id, self._payload(request_data)
         )
+        self._bump_generation()
+        return result
 
     async def process_text(self, request_data: Any) -> dict[str, Any]:
         self._enforce(self._dictionary_action("process"))
@@ -179,9 +248,11 @@ class ServerChatDictionaryService:
 
     async def import_markdown(self, request_data: Any) -> dict[str, Any]:
         self._enforce(self._dictionary_action("import"))
-        return await self._require_client().import_chat_dictionary_markdown(
+        result = await self._require_client().import_chat_dictionary_markdown(
             self._payload(request_data)
         )
+        self._bump_generation()
+        return result
 
     async def export_markdown(self, dictionary_id: int) -> dict[str, Any]:
         self._enforce(self._dictionary_action("export"))
@@ -195,9 +266,11 @@ class ServerChatDictionaryService:
 
     async def import_json(self, request_data: Any) -> dict[str, Any]:
         self._enforce(self._dictionary_action("import"))
-        return await self._require_client().import_chat_dictionary_json(
+        result = await self._require_client().import_chat_dictionary_json(
             self._payload(request_data)
         )
+        self._bump_generation()
+        return result
 
     async def list_activity(self, dictionary_id: int, **kwargs: Any) -> Any:
         self._enforce(self._activity_action("list"))
@@ -219,9 +292,11 @@ class ServerChatDictionaryService:
 
     async def revert_version(self, dictionary_id: int, revision: int) -> dict[str, Any]:
         self._enforce(self._version_action("restore"))
-        return await self._require_client().revert_chat_dictionary_version(
+        result = await self._require_client().revert_chat_dictionary_version(
             dictionary_id, revision
         )
+        self._bump_generation()
+        return result
 
     async def get_statistics(self, dictionary_id: int) -> dict[str, Any]:
         self._enforce(self._statistics_action("detail"))

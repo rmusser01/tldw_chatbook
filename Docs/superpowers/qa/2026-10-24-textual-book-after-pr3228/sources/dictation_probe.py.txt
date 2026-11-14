@@ -1,0 +1,133 @@
+"""Private mounted navigation probe; real Dictation service, fake I/O only."""
+from __future__ import annotations
+import os
+from pathlib import Path
+import sys
+ROOT = Path.cwd()
+OUT = Path(__file__).resolve().parent
+PROFILE = OUT / 'dictation-profile'
+(PROFILE / 'config').mkdir(parents=True, exist_ok=True)
+(PROFILE / 'data').mkdir(parents=True, exist_ok=True)
+(PROFILE / 'config' / 'config.toml').write_text('[paths]\ndata_dir = ' + repr((PROFILE / 'data').as_posix()) + '\n[model_catalog]\nenabled = false\n', encoding='utf-8')
+os.environ['TLDW_TEST_CONFIG_ROOT'] = str(PROFILE)
+os.environ['TLDW_TEST_CONFIG_ROOT_OWNER'] = str(Path(__file__).resolve())
+sys.path.insert(0, str(ROOT))
+import Tests.conftest as guards
+import asyncio
+import json
+from types import SimpleNamespace
+from textual.app import App
+from textual.widgets import Button
+from tldw_chatbook.UI.STTS_Window import STTSWindow
+from tldw_chatbook.UI.Speech.speech_runtime_status import SpeechLocalDependencyAvailability
+import tldw_chatbook.UI.Dictation_Window_Improved as widget_module
+from tldw_chatbook.Audio.dictation_service_lazy import LazyLiveDictationService
+
+class Recorder:
+    sample_rate = 16000
+    channels = 1
+    def __init__(self):
+        self.is_recording = False
+        self.stop_calls = 0
+    def start_recording(self, callback):
+        self.callback = callback
+        self.is_recording = True
+        return True
+    def stop_recording(self):
+        self.stop_calls += 1
+        self.is_recording = False
+        return b''
+
+class SpeechHost(App):
+    def compose(self):
+        yield Button('Leave Speech Recognition', id='leave')
+        self.window = STTSWindow(self, local_dependencies=SpeechLocalDependencyAvailability(False, False, False, False))
+        self.window.set_reactive(STTSWindow.current_view, 'dictation')
+        yield self.window
+    async def on_button_pressed(self, event):
+        if event.button.id == 'leave':
+            await self.window.request_view('effects')
+
+async def until(predicate, label):
+    async with asyncio.timeout(12):
+        while not predicate():
+            await asyncio.sleep(0.01)
+
+async def run_case(stop_first):
+    recorder = Recorder()
+    service = LazyLiveDictationService(
+        transcription_provider='faster-whisper',
+        recorder_factory=lambda **kwargs: recorder,
+        transcription_service_factory=lambda: SimpleNamespace(create_streaming_transcriber=lambda **kwargs: None),
+    )
+    original_factory = widget_module.LazyLiveDictationService
+    widget_module.LazyLiveDictationService = lambda **kwargs: service
+    app = SpeechHost()
+    result = {'case': 'stop_then_leave_control' if stop_first else 'leave_while_listening', 'start_method': 'existing ctrl+d binding with toggle button focused'}
+    try:
+        async with app.run_test(size=(130, 55)) as pilot:
+            await until(lambda: bool(app.window.query(widget_module.ImprovedDictationWindow)), 'real Speech Recognition view mounted')
+            view = app.window.query_one(widget_module.ImprovedDictationWindow)
+            await pilot.pause()
+            view.query_one('#dictation-toggle-btn', Button).focus()
+            await pilot.press('ctrl+d')
+            await until(lambda: recorder.is_recording, 'real service started capture collaborator')
+            assert service.processing_thread.is_alive()
+            result['capture_started'] = recorder.is_recording
+            result['processor_started'] = service.processing_thread.is_alive()
+            if stop_first:
+                button = view.query_one('#dictation-toggle-btn', Button)
+                await until(lambda: not button.has_class('-active'), 'button animation retired')
+                await pilot.press('ctrl+d')
+                await until(lambda: not recorder.is_recording, 'Stop releases capture')
+            assert await pilot.click('#leave')
+            await until(lambda: not view.is_attached, 'real request_view detached Dictation widget')
+            await until(lambda: bool(app.window.query('#speech-effects-placeholder')), 'replacement mounted')
+            await pilot.pause()
+            result.update({
+                'view_detached': not view.is_attached,
+                'service_is_widget_owned': view.dictation_service is service,
+                'recorder_callback_targets_service': recorder.callback.__self__ is service,
+                'final_callback_targets_detached_widget': service.on_final_transcript.__self__ is view,
+                'partial_callback_targets_detached_widget': service.on_partial_transcript.__self__ is view,
+                'state_callback_targets_detached_widget': service.on_state_change.__self__ is view,
+                'replacement_view': app.window.current_view,
+                'capture_still_recording_after_leave': recorder.is_recording,
+                'processor_alive_after_leave': service.processing_thread.is_alive(),
+                'stop_processing_set_after_leave': service.stop_processing.is_set(),
+                'stop_calls_after_leave': recorder.stop_calls,
+                'old_widget_still_thinks_dictating': view.is_dictating,
+            })
+        result['capture_still_recording_after_host_shutdown'] = recorder.is_recording
+        result['processor_alive_after_host_shutdown'] = service.processing_thread.is_alive()
+    finally:
+        # Explicit test-owned cleanup of the exact service after observations.
+        service.on_state_change = None
+        service.on_error = None
+        service.on_partial_transcript = None
+        service.on_final_transcript = None
+        service.abandon()
+        if service.processing_thread is not None:
+            service.processing_thread.join(2)
+            assert not service.processing_thread.is_alive()
+        widget_module.LazyLiveDictationService = original_factory
+    result['test_cleanup_released_capture'] = not recorder.is_recording
+    print(json.dumps(result), flush=True)
+    return result
+
+async def main():
+    cases = [await run_case(stop_first) for stop_first in (True, False)]
+    report = {'cases': cases, 'blocked_network_attempts': guards.network_guard.blocked_attempts(), 'profile_violations': guards._real_profile_guard.take_violations()}
+    (OUT / 'dictation-unmount.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
+    assert cases[0]['capture_still_recording_after_leave'] is False
+    assert cases[0]['processor_alive_after_leave'] is False
+    assert cases[1]['view_detached'] is True and cases[1]['capture_still_recording_after_leave'] is True
+    assert cases[1]['processor_alive_after_leave'] is True and cases[1]['stop_calls_after_leave'] == 0
+    assert not report['blocked_network_attempts']
+    assert not report['profile_violations']
+if __name__ == '__main__':
+    asyncio.run(main())
+
+
+
+

@@ -5,7 +5,7 @@ Amended by: [ADR-210](210-console-region-ownership.md) (accepted 2026-10-01)
 Date: 2026-08-25
 Related Task: [TASK-22305](../tasks/task-22305%20-%20Simplify-Console-change-review-around-per-turn-cards.md)
 Related Spec: [Console per-turn change review simplification](../../Docs/superpowers/specs/2026-08-25-console-turn-change-review-simplification-design.md)
-Amends: ADR-077
+Amends: ADR-319
 Preserves: ADR-083
 
 ## Decision
@@ -19,7 +19,7 @@ diffs, per-file revert, comments, and git actions.
 Inspector no longer owns a cross-turn Changed Files projection. Its
 latest-per-path aggregation, polling guard, worker/cache, rail widget, config
 switch, and rail-only supporting code are retired rather than hidden. This
-amends ADR-077 only by removing Changed Files from the set of bounded Inspector
+amends ADR-319 only by removing Changed Files from the set of bounded Inspector
 sections; every remaining bounded-section and scroll-ownership rule is
 unchanged. ADR-083's edge ownership, pinned send authority, and Inspector group
 hierarchy remain intact.

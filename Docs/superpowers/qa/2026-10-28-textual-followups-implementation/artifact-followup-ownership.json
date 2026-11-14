@@ -1,0 +1,63 @@
+{
+  "task": "TASK-37330",
+  "task_path": "backlog/tasks/task-37330 - Restore-Research-Runs-artifact-loading-through-the-real-scope-contract.md",
+  "priority": "medium",
+  "created_at": "2026-10-29T00:56:46.293091+00:00",
+  "task_sha256": "026bb232b99d9f305621cb3393c94b2030ca43fd6a0d8a93cedb2452e9fdf838",
+  "allocation": {
+    "max_major_id": 37300,
+    "lead_buffer": 30
+  },
+  "catalog": {
+    "observed_at": "2026-10-29T00:48:31.561285+00:00",
+    "refs": 412,
+    "task_trees": 366,
+    "unique_bodies": 8490,
+    "registered_worktrees": 55,
+    "uncommitted_task_records": 183,
+    "errors": [],
+    "sha256": "e60540c714e98b4ab6243f818cf271506f220bb190d760fb4e926454c8ddad9b"
+  },
+  "controller_ref_variants": [
+    {
+      "blob": "eced0db0812a1f64e2dcf51d40c1c4a710649f2b",
+      "refs": 407,
+      "calls": [
+        {
+          "positional": 2,
+          "keywords": [
+            "mode"
+          ]
+        }
+      ]
+    },
+    {
+      "blob": "2a69543806c859eacee62b42544fbb2203255cdc",
+      "refs": 5,
+      "calls": [
+        {
+          "positional": 2,
+          "keywords": [
+            "mode"
+          ]
+        }
+      ]
+    }
+  ],
+  "worktree_heads_checked": 54,
+  "controller_worktrees_checked": 55,
+  "pending_controller_edits": [],
+  "close_owners": {
+    "TASK-16483": "Done: readable/default bundle and artifact presentation, permissive fake-service auto-load coverage.",
+    "TASK-21127": "Done on dev: service executor, connection and transaction lifetime.",
+    "TASK-19300": "In Progress: durable execution and separate Artifacts-destination reopen.",
+    "TASK-21510": "To Do: Research Workspace Studio outputs, separate route and owner.",
+    "TASK-21512": "To Do: extended Workspace parity, separate route and owner.",
+    "TASK-37267": "Current timer/source publication repair; source-backed payload fixture preserves scope."
+  },
+  "source_hashes": {
+    "tldw_chatbook/UI/Research_Modules/research_controller.py": "28bbae033175802b9b82035bd9435f83dd2738f8110c4bbd9d2f68771f598bdd",
+    "tldw_chatbook/Research_Interop/research_scope_service.py": "4975029167aade5e8bbbf376d6545d8bc4aae770372432e8a291ddbf35deaddb"
+  },
+  "qualification": "No matching correction in discovered task versions, fetched refs, registered detached heads or pending controller edits at this snapshot. Unregistered checkouts and future edits are outside discovery. This is a separately tracked caller-contract correction; no claim that timer fixtures qualify the actual artifact button journey."
+}

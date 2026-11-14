@@ -42,6 +42,7 @@ import random
 from typing import Any, Dict, List, Union, Optional, Tuple
 from urllib.parse import urljoin, urlparse
 from xml.dom import minidom
+
 # Stdlib ElementTree for document BUILDING only (`Element`/
 # `SubElement`/`tostring`/`ElementTree` have no defusedxml
 # counterparts, and a tree we construct ourselves carries no
@@ -194,12 +195,15 @@ from tldw_chatbook.Web_Scraping.exceptions import (  # noqa: E402
     TimeoutError as ScrapingTimeoutError,
 )
 
+
 #
 #######################################################################################################################
 # Function Definitions
 #
 def load_and_log_configs():
     return {}
+
+
 # FIXME - Add a config file option/check for the user agent
 web_scraping_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
@@ -462,6 +466,15 @@ async def scrape_article(
             "web_scraper_retry_count", 3
         )
         retries = scrape_retry_count
+        # TASK-38603: ``retries = 0`` used to make ``range(0)`` skip the
+        # loop entirely and fall through to ``return ""`` -- a config typo
+        # masquerading as an empty page. Fail loudly instead: the retry
+        # count must be an integer >= 1.
+        if not isinstance(retries, int) or retries < 1:
+            raise ValueError(
+                "web_scraper.web_scraper_retry_count must be an integer >= 1, "
+                f"got {scrape_retry_count!r}"
+            )
         # Load retry timeout value from config
         web_scraper_retry_timeout = loaded_config["web_scraper"].get(
             "web_scraper_retry_timeout", 60
@@ -502,9 +515,7 @@ async def scrape_article(
                         await stealth_async(page)
 
                     # Navigate to the URL
-                    await check_url_or_raise_async(
-                        url, trusted_origins=trusted_origins
-                    )
+                    await check_url_or_raise_async(url, trusted_origins=trusted_origins)
                     nav_response = await page.goto(
                         url, wait_until="domcontentloaded", timeout=timeout_ms
                     )
@@ -538,6 +549,21 @@ async def scrape_article(
                 )
                 error_type = "timeout"
                 last_error = ScrapingTimeoutError(f"Page load timeout for {url}")
+
+                # TASK-38603: this branch used to fall through to the next
+                # attempt with no backoff and, after the final timeout,
+                # silently ``return ""`` from the bottom of the loop. Back
+                # off and raise exactly like the generic error branch so a
+                # timed-out URL reports failure instead of empty content.
+                if attempt < retries - 1:
+                    logging.info(f"Retrying in {2 * (attempt + 1)} seconds...")
+                    await asyncio.sleep(2 * (attempt + 1))  # Exponential backoff
+                else:
+                    logging.error("Max retries reached, giving up on this URL.")
+                    log_counter(
+                        "html_fetch_error", labels={"url": url, "error": error_type}
+                    )
+                    raise MaxRetriesExceededError(url, retries, last_error)
 
             except EgressBlockedError as e:
                 logging.warning(f"Navigation blocked by egress policy: {e}")
@@ -1106,7 +1132,9 @@ def scrape_by_url_level(base_url: str, level: int) -> list:
     return [article for link in filtered_links if (article := scrape_article(link))]
 
 
-def scrape_from_sitemap(sitemap_url: str, *, trusted_origins: frozenset[str] = frozenset()) -> list:
+def scrape_from_sitemap(
+    sitemap_url: str, *, trusted_origins: frozenset[str] = frozenset()
+) -> list:
     """Scrape articles from a sitemap URL.
 
     (TASK-19556 (c)) This used to compute ``origin_set(sitemap_url)`` and use
@@ -1181,7 +1209,9 @@ def scrape_from_sitemap(sitemap_url: str, *, trusted_origins: frozenset[str] = f
 # Sitemap/Crawling-related Functions
 
 
-def collect_internal_links(base_url: str, *, trusted_origins: frozenset[str] = frozenset()) -> set:
+def collect_internal_links(
+    base_url: str, *, trusted_origins: frozenset[str] = frozenset()
+) -> set:
     """
     Crawl a website and collect all internal links.
 
@@ -1951,7 +1981,9 @@ async def recursive_scrape(
                         await asyncio.sleep(random.uniform(delay * 0.8, delay * 1.2))
 
                         article_data = await scrape_article_async(
-                            context, current_url, trusted_origins=_hop_trust(current_url)
+                            context,
+                            current_url,
+                            trusted_origins=_hop_trust(current_url),
                         )
 
                         if article_data and article_data["extraction_successful"]:
@@ -1980,7 +2012,8 @@ async def recursive_scrape(
                                 )
 
                                 links = await page.eval_on_selector_all(
-                                    "a[href]", "(elements) => elements.map(el => el.href)"
+                                    "a[href]",
+                                    "(elements) => elements.map(el => el.href)",
                                 )
                                 for link in links:
                                     child_url = urljoin(base_url, link)

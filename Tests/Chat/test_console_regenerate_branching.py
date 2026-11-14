@@ -10,10 +10,15 @@ regenerate creates a real branch instead of mutating history in place.
 
 import pytest
 
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from Tests.console_provider_doubles import provider_resolution
+
+pytestmark = pytest.mark.bootstrap_profile
 
 
 class StreamingGateway:
@@ -31,45 +36,17 @@ class FailingBeforeAnyChunkGateway(StreamingGateway):
         yield ""  # pragma: no cover - unreachable, keeps this an async generator
 
 
-class _RegeneratePersistence:
-    """Records create_message calls; hands back predictable ``msg-N`` ids.
+def _restored_failure_row(store, session_id, result):
+    """The transcript-only failure row a failed regenerate leaves as the leaf.
 
-    Mirrors ``_RecordingPersistence`` in
-    ``test_console_chat_store_sibling.py::test_eager_persisted_sibling_emits_onpath_sync_sequence``.
+    Since a14733851c a failed regenerate re-homes the provider-failure SYSTEM
+    row from beneath the failed sibling onto the restored anchor, so the
+    failure stays visible while the anchor's branch is active again.
     """
-
-    def __init__(self):
-        self.created_messages = []
-
-    def create_conversation(self, **kwargs):
-        return "conv-1"
-
-    def create_message(
-        self,
-        *,
-        conversation_id,
-        sender,
-        content,
-        image_data,
-        image_mime_type,
-        message_id=None,
-        parent_message_id=None,
-        feedback=None,
-    ):
-        pid = f"msg-{len(self.created_messages) + 1}"
-        self.created_messages.append(
-            {
-                "id": pid,
-                "conversation_id": conversation_id,
-                "sender": sender,
-                "content": content,
-                "parent_message_id": parent_message_id,
-            }
-        )
-        return pid
-
-    def update_message_content(self, **kwargs):
-        return True
+    row = store.get_message(store.active_leaf(session_id))
+    assert row.role is ConsoleMessageRole.SYSTEM
+    assert row.content == result.visible_copy
+    return row
 
 
 @pytest.mark.asyncio
@@ -165,8 +142,10 @@ async def test_regenerate_stream_failure_retains_failed_sibling_and_restores_anc
     assert count == 2
     new_sibling = next(sibling for sibling in siblings if sibling.id != a1.id)
     assert new_sibling.status == "failed"
-    assert store.active_leaf(session.id) == a1.id
-    assert store.active_path_message_ids(session.id) == [u1.id, a1.id]
+    # a14733851c: the anchor's branch is active again, and the transcript-only
+    # failure row is re-homed beneath the anchor (it was under the sibling).
+    failure_row = _restored_failure_row(store, session.id, result)
+    assert store.active_path_message_ids(session.id) == [u1.id, a1.id, failure_row.id]
     assert {"role": "assistant", "content": "seed"} in (
         controller._provider_messages_for_session(session.id)
     )
@@ -192,7 +171,9 @@ async def test_regenerate_mid_conversation_failure_restores_selected_anchor_not_
 
     assert result.accepted is True
     assert "Provider stream failed:" in result.visible_copy
-    assert store.active_path_message_ids(session.id) == [u1.id, a1.id]
+    # a14733851c: the selected anchor's branch, plus the re-homed failure row.
+    failure_row = _restored_failure_row(store, session.id, result)
+    assert store.active_path_message_ids(session.id) == [u1.id, a1.id, failure_row.id]
     assert store.get_message(u2.id).content == "q2"
     assert store.get_message(a2.id).content == "a2-seed"
     assert u2.id not in store.active_path_message_ids(session.id)
@@ -233,7 +214,7 @@ async def test_regenerate_on_leading_greeting_still_blocks_without_mutating_tree
 
 
 @pytest.mark.asyncio
-async def test_regenerate_persists_new_sibling_when_store_has_persistence():
+async def test_regenerate_persists_new_sibling_when_store_has_persistence(tmp_path):
     """Critical regression: the regenerated sibling must be durably persisted.
 
     ``create_sibling`` defaults ``persist=False``. Before this fix,
@@ -247,33 +228,46 @@ async def test_regenerate_persists_new_sibling_when_store_has_persistence():
     normal production configuration, since ``chat_screen.py`` always wires
     real persistence when ``chachanotes_db`` exists), the regenerated reply
     was silently never written to the DB and vanished on resume.
+
+    TASK-39164: this drove a narrow create-message fake, which a persisted
+    chat outgrew -- the generation projection writer (67599acd6e), the
+    pre-provider mix-in attempt save (7970fbcada) and the branch-mutation
+    transaction each refuse it by design. It now drives the production
+    persistence over a real ChaChaNotes file and reads the row back.
     """
-    persistence = _RegeneratePersistence()
-    store = ConsoleChatStore(persistence=persistence)
-    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
-    session = store.create_session(title="t")
-    store.active_session_id = session.id
-    store.append_message(
-        session.id, role=ConsoleMessageRole.USER, content="Hi", persist=True
-    )
-    a1 = store.append_message(
-        session.id, role=ConsoleMessageRole.ASSISTANT, content="seed", persist=True
-    )
-    persistence.created_messages.clear()
+    chat_db = CharactersRAGDB(tmp_path / "regenerate.sqlite", "regenerate-persist")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(chat_db))
+        controller = ConsoleChatController(
+            store=store, provider_gateway=StreamingGateway()
+        )
+        session = store.create_session(
+            title="t", settings=ConsoleSessionSettings(provider="llama_cpp")
+        )
+        store.active_session_id = session.id
+        u1 = store.append_message(
+            session.id, role=ConsoleMessageRole.USER, content="Hi", persist=True
+        )
+        a1 = store.append_message(
+            session.id, role=ConsoleMessageRole.ASSISTANT, content="seed", persist=True
+        )
 
-    result = await controller.regenerate_message(a1.id)
+        result = await controller.regenerate_message(a1.id)
 
-    assert result.accepted is True
-    new_leaf_id = store.active_leaf(session.id)
-    assert new_leaf_id != a1.id
-    new_message = store.get_message(new_leaf_id)
-    assert new_message.content == "hello"
-    assert new_message.status == "complete"
+        assert result.accepted is True
+        new_leaf_id = store.active_leaf(session.id)
+        assert new_leaf_id != a1.id
+        new_message = store.get_message(new_leaf_id)
+        assert new_message.content == "hello"
+        assert new_message.status == "complete"
 
-    # The sibling must be durably persisted -- not left with a None id that
-    # would make it silently vanish from the DB.
-    assert new_message.persisted_message_id is not None
-    assert any(
-        entry["id"] == new_message.persisted_message_id and entry["content"] == "hello"
-        for entry in persistence.created_messages
-    )
+        # The sibling must be durably persisted -- not left with a None id that
+        # would make it silently vanish from the DB.
+        assert new_message.persisted_message_id is not None
+        row = chat_db.get_message_by_id(new_message.persisted_message_id)
+        assert row is not None
+        assert row["content"] == "hello"
+        # ...as a durable sibling of the anchor, under the same user row.
+        assert row["parent_message_id"] == store.get_message(u1.id).persisted_message_id
+    finally:
+        chat_db.close_connection()

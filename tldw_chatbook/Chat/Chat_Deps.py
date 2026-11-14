@@ -1,111 +1,11 @@
-# ---------------- Exceptions ----------------------------
-class ChatAPIError(Exception):
-    """Base exception for chat API call errors."""
+"""Moved to ``tldw_chatbook.Provider_Contract`` (TASK-36944.1).
 
-    def __init__(
-        self,
-        message="An error occurred during the chat API call.",
-        status_code=500,
-        provider=None,
-    ):
-        self.message = message
-        self.status_code = status_code  # Suggested HTTP status code for the endpoint
-        self.provider = provider
-        super().__init__(self.message)
+This name is an alias of the moved module, not a copy: imports, ``isinstance``
+checks and test patches through either path reach the same objects.
+"""
 
+import sys
 
-class ChatAuthenticationError(ChatAPIError):
-    """Exception for authentication issues (e.g., invalid API key)."""
+import tldw_chatbook.Provider_Contract as _moved
 
-    def __init__(
-        self, message="Authentication failed with the chat provider.", provider=None
-    ):
-        super().__init__(message, status_code=401, provider=provider)  # Default to 401
-
-
-class ChatConfigurationError(ChatAPIError):
-    """Exception for configuration issues (e.g., missing key, invalid model).
-
-    ``status_code`` defaults to 500 but accepts ``None`` for a failure that
-    never reached the provider at all -- a client-side request-preparation
-    error (task-32342). Carrying no status keeps such a failure out of every
-    surface that reads one as "the provider answered".
-    """
-
-    def __init__(
-        self,
-        message: str = "Chat provider configuration error.",
-        provider: str | None = None,
-        status_code: int | None = 500,
-    ) -> None:
-        """Build a configuration failure, with or without a provider status.
-
-        Args:
-            message: Human-readable description of the misconfiguration.
-            provider: Provider key the failure belongs to, when known.
-            status_code: The HTTP status the provider returned, or ``None``
-                when the failure never reached it -- a client-side local
-                configuration or data error raised during request
-                preparation. Callers that classify by status must treat
-                ``None`` as "no provider verdict", not as a server error.
-        """
-        super().__init__(message, status_code=status_code, provider=provider)
-
-
-class ChatBadRequestError(ChatAPIError):
-    """Exception for bad requests sent to the chat provider (e.g., invalid params).
-
-    ``status_code`` defaults to 400 but accepts the REAL 4xx: the dispatcher
-    previously collapsed every 4xx into a hardcoded 400, which erased the
-    difference between "our request is malformed" and "the account is out of
-    money" (402/403) -- making the credit-terminal fallback trigger
-    (`Agents/fallback_chain.is_credit_terminal`) unreachable with real traffic
-    (TASK-25902 review C3c). The type is unchanged so existing catchers keep
-    working; only the carried status got honest.
-    """
-
-    def __init__(
-        self,
-        message="Invalid request sent to the chat provider.",
-        provider=None,
-        status_code=400,
-    ):
-        super().__init__(message, status_code=status_code, provider=provider)
-
-
-class ChatRateLimitError(ChatAPIError):
-    """Exception for rate limit errors from the chat provider.
-
-    ``retry_after`` carries the provider's own Retry-After header, in seconds,
-    when one was sent and was numeric; None otherwise. Consumed by
-    `Agents/model_retry.retry_delay_seconds`, which honours it over computed
-    backoff (TASK-25901 AC#2 -- previously the classifier honoured the
-    attribute but nothing in the stack ever set it, review I3).
-    """
-
-    def __init__(
-        self,
-        message="Rate limit exceeded with the chat provider.",
-        provider=None,
-        retry_after=None,
-    ):
-        super().__init__(message, status_code=429, provider=provider)
-        self.retry_after = retry_after
-
-
-class ChatProviderError(ChatAPIError):
-    """Exception for general errors reported by the chat provider API."""
-
-    def __init__(
-        self,
-        message="Error received from the chat provider API.",
-        status_code=502,
-        provider=None,
-        details=None,
-    ):
-        # 502 Bad Gateway often suitable for upstream errors
-        self.details = details  # Store original error if available
-        super().__init__(message, status_code=status_code, provider=provider)
-
-
-# ---------------- End of Exceptions ----------------------------
+sys.modules[__name__] = _moved

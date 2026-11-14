@@ -14,7 +14,7 @@ labels:
 dependencies: []
 references:
   - Docs/superpowers/specs/2026-08-27-console-turns-survive-navigation-design.md
-  - backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md
+  - backlog/decisions/336-console-turn-lifetime-and-navigation-boundary.md
   - Docs/superpowers/plans/2026-08-27-console-turns-survive-navigation.md
 documentation:
   - Docs/superpowers/plans/2026-08-27-console-turns-survive-navigation.md
@@ -24,7 +24,7 @@ priority: high
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Make every accepted Console turn continue when the user switches screens. Navigation detaches the Console view without interrupting provider streaming, agent work, tools, or pending human decisions. Stop, session close, and confirmed app exit remain cancellation boundaries. Approved design: Docs/superpowers/specs/2026-08-27-console-turns-survive-navigation-design.md. Architecture decision: backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md.
+Make every accepted Console turn continue when the user switches screens. Navigation detaches the Console view without interrupting provider streaming, agent work, tools, or pending human decisions. Stop, session close, and confirmed app exit remain cancellation boundaries. Approved design: Docs/superpowers/specs/2026-08-27-console-turns-survive-navigation-design.md. Architecture decision: backlog/decisions/336-console-turn-lifetime-and-navigation-boundary.md.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

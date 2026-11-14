@@ -441,16 +441,24 @@ class FileExtractor:
         Returns:
             Filename if found, None otherwise
         """
-        # Get text before the code block
-        before_text = text[:code_block_start]
-        lines = before_text.split("\n")
+        # TASK-34394: bound the scan to the last `search_lines` lines before
+        # the code block by walking back at most `search_lines` newlines
+        # with rfind, instead of slicing + splitting the ENTIRE text prefix
+        # per code block (O(k*len) on k-block documents). If fewer than
+        # `search_lines` newlines precede the block, the window is the whole
+        # prefix -- byte-for-byte the same `"\n".join(lines[-search_lines:])`
+        # slice the old full-split produced, so matched hints are identical.
+        window_start = 0
+        pos = code_block_start
+        for _ in range(search_lines):
+            newline_index = text.rfind("\n", 0, pos)
+            if newline_index == -1:
+                window_start = 0
+                break
+            window_start = newline_index + 1
+            pos = newline_index
 
-        # Search the last few lines before the code block
-        search_text = (
-            "\n".join(lines[-search_lines:])
-            if len(lines) >= search_lines
-            else before_text
-        )
+        search_text = text[window_start:code_block_start]
 
         # Try each pattern
         for pattern in self.FILENAME_HINTS:

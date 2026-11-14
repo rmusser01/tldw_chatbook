@@ -1,0 +1,47 @@
+[
+  {
+    "path": "tldw_chatbook/Widgets/Library/library_entry_canvases.py",
+    "sha256": "20c2b3254062022297a366c4f224071e5822223b99429198ef59788b3bf0f073",
+    "lines": 566
+  },
+  {
+    "path": "tldw_chatbook/Widgets/Library/library_canvas_sync.py",
+    "sha256": "e013239c3071a42a550b8823a79b51b65f88f655280e9c6a6a9b6420df4d92a8",
+    "lines": 247
+  },
+  {
+    "path": "tldw_chatbook/UI/Library_Modules/canvas_sync.py",
+    "sha256": "cc43d84343e5f40581bede079d19fc5c64140366b2d053663423d0e6e221a341",
+    "lines": 1314
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/library_screen.py",
+    "sha256": "6d16398620b71765d1aaf49a35dedf3d61e8f275fb3f15c0db67ccaf8ede9eb4",
+    "lines": 38177
+  },
+  {
+    "path": "Tests/UI/test_library_entry_compose_once.py",
+    "sha256": "df9f58c000a37e20c7511ee1dbf792caa846a7dfdf80104b041951a25c0014e2",
+    "lines": 4035
+  },
+  {
+    "path": "Tests/UI/test_library_canvas_sync_defects.py",
+    "sha256": "bad7bc58218eb13a1aa198b7812199a7ba0f88b7760e3ed3bfc5478dd0a7c003",
+    "lines": 813
+  },
+  {
+    "path": "Tests/UI/test_library_note_links_picker_and_preview.py",
+    "sha256": "bc1804d9b9ebff3627254dcbadef20df6441ebd6c62eaa306d85a7f069bcffd1",
+    "lines": 277
+  },
+  {
+    "path": "Tests/UI/library_note_links_support.py",
+    "sha256": "27fc9262e89732e2fc93bf4564d2159a8f7da6502875ff1418e7a72d3a9a532c",
+    "lines": 451
+  },
+  {
+    "path": "Tests/UI/library_quit_guard_support.py",
+    "sha256": "abd8a5e7cdc1f2247d6b219d8a0773cbe60cd3182aded57ef0148605decefb10",
+    "lines": 268
+  }
+]

@@ -1,7 +1,7 @@
 ---
 id: TASK-661
 title: Hard-floor / never-allowable tool category
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-25'
 labels: [tools, security, agents]
@@ -21,9 +21,16 @@ This repo has no equivalent. Today's ceiling is per-tool: `resolve_builtin_state
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] A mechanism exists for marking a built-in tool (or a specific invocation shape, e.g. a command pattern) as never-allowable, checked ahead of / independent from `resolve_builtin_state`'s resolved decision
+- [x] A mechanism exists for marking a built-in tool (or a specific invocation shape, e.g. a command pattern) as never-allowable, checked ahead of / independent from `resolve_builtin_state`'s resolved decision
 - [ ] No stored permission-store state (`allow`, a persistent override, a server default) can cause a hard-floored tool/pattern to execute — a test constructs a store payload that sets `allow` for such a tool and asserts execution is still refused
-- [ ] The hard floor is enforced in the tool's own execution path (defense-in-depth, mirroring `BuiltinToolProvider.invoke`'s existing enforcement layer), not only at the UI/permission-store layer
-- [ ] The floor value/category is a named constant with an in-comment rationale, following `MAX_SCRIPT_WALL_CLOCK_SECONDS`'s precedent, not a magic literal buried in a conditional
+- [x] The hard floor is enforced in the tool's own execution path (defense-in-depth, mirroring `BuiltinToolProvider.invoke`'s existing enforcement layer), not only at the UI/permission-store layer
+- [x] The floor value/category is a named constant with an in-comment rationale, following `MAX_SCRIPT_WALL_CLOCK_SECONDS`'s precedent, not a magic literal buried in a conditional
 - [ ] The mechanism is generic to "a decision layer above the resolved permission state," not wired specifically to today's per-tool toggles, so a later permission-mode axis (if ever built) can enforce against it without re-deriving a separate floor
 <!-- AC:END -->
+
+
+## Closeout audit 2026-10-11
+
+Board-hygiene flip (cohort A, Jun-Jul 2026 status sweep). **Verdict: DONE** — evidence verified against origin/dev (a3c47c6c72).
+
+The hard floor exists as a named mechanism in the permission store: ALWAYS_ASK_TOOLS (permission_store.py:111-117, TASK-32956 rationale in-comment) floors (server_key, tool_name) pairs to ask EVEN UNDER an explicit tool-level allow, plus the risk floors (HIGH_RISK_TAGS / BUILTIN_HIGH_RISK_TAGS, lines 93-110) enforced in the execution providers' verdict application (mcp_tool_provider.py:417-418 'risk_floored'; local_tool_provider.py:2000-2001). Store-override-bypass tests (AC#2) and genericity-above-toggles (AC#5) were not individually re-verified.

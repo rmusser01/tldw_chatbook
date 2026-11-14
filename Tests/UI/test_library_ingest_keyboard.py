@@ -61,9 +61,7 @@ def _plain_rows(widget) -> list[str]:
     test here.
     """
     width, height = widget.size.width, widget.size.height
-    return [
-        strip.text for strip in widget.render_lines(Region(0, 0, width, height))
-    ]
+    return [strip.text for strip in widget.render_lines(Region(0, 0, width, height))]
 
 
 async def _enter_ingest_mode(screen, pilot):
@@ -92,9 +90,7 @@ async def test_entering_ingest_mode_focuses_the_path_field_and_typing_edits_it()
         await _wait_for_library_shell(screen, pilot)
 
         await pilot.press("i")
-        path_input = await _wait_for_selector(
-            screen, pilot, "#library-ingest-path"
-        )
+        path_input = await _wait_for_selector(screen, pilot, "#library-ingest-path")
         await _wait_for_condition(
             pilot,
             lambda: path_input.has_focus,
@@ -211,9 +207,7 @@ async def test_i_enters_ingest_from_a_non_landing_library_canvas():
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
 
         await pilot.press("i")
-        path_input = await _wait_for_selector(
-            screen, pilot, "#library-ingest-path"
-        )
+        path_input = await _wait_for_selector(screen, pilot, "#library-ingest-path")
         assert screen._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA
         await _wait_for_condition(
             pilot,
@@ -387,9 +381,9 @@ async def test_ingest_field_focus_is_glyph_level_under_the_real_stylesheet():
             "focus produced a byte-identical plain-text pane -- the "
             "color-only regression MI-05 pinned"
         )
-        assert any(
-            glyph in row for row in focused_rows for glyph in HEAVY_GLYPHS
-        ), f"focused field shows no structural (heavy-edge) cue: {focused_rows!r}"
+        assert any(glyph in row for row in focused_rows for glyph in HEAVY_GLYPHS), (
+            f"focused field shows no structural (heavy-edge) cue: {focused_rows!r}"
+        )
         # AC#5: dimensional stability -- same region, same painted row count.
         assert path_input.region == region_before
         assert len(focused_rows) == len(unfocused_rows)
@@ -428,9 +422,9 @@ async def test_canvas_action_button_focus_is_glyph_level_and_keeps_its_label():
             "focus produced a byte-identical plain-text button -- the "
             "color-only regression MI-05 pinned"
         )
-        assert any(
-            glyph in row for row in focused_rows for glyph in HEAVY_GLYPHS
-        ), f"focused button shows no structural cue: {focused_rows!r}"
+        assert any(glyph in row for row in focused_rows for glyph in HEAVY_GLYPHS), (
+            f"focused button shows no structural cue: {focused_rows!r}"
+        )
         # The structural cue must not eat the label (task-2041's trap:
         # a full `outline: heavy` overwrites a 1-row button's only row).
         assert any("Browse" in row for row in focused_rows), (
@@ -519,9 +513,9 @@ async def test_options_panel_header_focus_is_glyph_level_under_real_css():
             "focus produced a byte-identical plain-text header -- the "
             "color-only gap task-3312 (#4) pinned"
         )
-        assert any(
-            glyph in row for row in focused_rows for glyph in HEAVY_GLYPHS
-        ), f"focused header shows no structural cue: {focused_rows!r}"
+        assert any(glyph in row for row in focused_rows for glyph in HEAVY_GLYPHS), (
+            f"focused header shows no structural cue: {focused_rows!r}"
+        )
         # The cue must not eat the header text (task-2041's trap).
         assert any("Import behavior" in row for row in focused_rows), (
             f"focus treatment ate the header title: {focused_rows!r}"

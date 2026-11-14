@@ -24,9 +24,10 @@
 #         PYTHON=.venv/bin/python ./scripts/preflight.sh
 #         TLDW_CANVAS_MERMAID_INPUT_DIR=/verified/cache ./scripts/preflight.sh
 #
-# The Mermaid check downloads its declared hash/size-pinned public inputs by
-# default. Set TLDW_CANVAS_MERMAID_INPUT_DIR to reuse an existing offline cache;
-# missing or mismatched cached inputs fail closed rather than skipping the check.
+# The Mermaid check verifies repository-vendored inputs offline by default.
+# TLDW_CANVAS_MERMAID_INPUT_DIR can select another verified cache; missing or
+# mismatched inputs fail closed. Explicit input refresh is documented in
+# vendor/canvas-mermaid-inputs/README.md.
 #
 # Exits 0 when every check passes, 1 otherwise. Every check runs even after one
 # fails, so a single pass reports all of the drift.
@@ -114,6 +115,8 @@ run_check "backlog task ids" \
   "$PYTHON" scripts/check_backlog_task_ids.py
 run_check "readable backlog task files" \
   "$PYTHON" scripts/check_backlog_task_files.py
+run_check "unique ADR numbers" \
+  "$PYTHON" scripts/check_adr_numbers.py
 run_check "chachanotes table allowlist" \
   "$PYTHON" scripts/check_schema_table_allowlist.py
 run_check "index plan pins" \
@@ -122,6 +125,8 @@ run_check "textual worker contract" \
   "$PYTHON" scripts/check_textual_worker_contract.py
 run_check "timestamp writers" \
   "$PYTHON" scripts/check_timestamp_writers.py
+run_check "markup interpolation census" \
+  "$PYTHON" scripts/check_markup_interpolation.py
 run_check "gated Tests/UI census" \
   "$PYTHON" scripts/check_ui_pr_gate_census.py
 

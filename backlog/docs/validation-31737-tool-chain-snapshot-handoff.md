@@ -2,7 +2,7 @@
 
 Date: 2026-09-05. Base: `33a14b11c`, following the ordinary-send fix on
 `codex/chatbook-snapshot-trace-fix`. The shared dirty checkout was untouched.
-Architecture: [ADR-097](../decisions/097-console-reference-backed-semantic-trace-ledger.md),
+Architecture: [ADR-337](../decisions/337-console-reference-backed-semantic-trace-ledger.md),
 especially ordered call boundaries and conversation/turn/run/call ownership.
 No new schema, authority, capture policy or production build admission.
 
@@ -120,7 +120,7 @@ agent `run_id` now encodes the canonical UUIDv4 pair `actor_uuid:chain_uuid`.
 The same pair recovers from SQLite across factory reconstruction; a changed
 actor finds no authoritative origin and fails before reservation. Existing
 opaque-string consumers and legacy shadow binding accept this identity. No
-new schema or cache was introduced; ADR097 decision4 records the clarification.
+new schema or cache was introduced; ADR337 decision4 records the clarification.
 Historical chain-only traces remain readable but cannot authorize continuations.
 
 Both integration reads now use separate shared transaction contexts, with no

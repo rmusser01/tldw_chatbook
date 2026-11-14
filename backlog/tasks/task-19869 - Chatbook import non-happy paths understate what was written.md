@@ -2,8 +2,9 @@
 id: TASK-19869
 title: >-
   Chatbook import non-happy paths understate what was written
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@t1-chatbook'
 created_date: '2026-08-22'
 labels:
   - ux
@@ -67,23 +68,85 @@ decide whether to retry.
 
 ## Acceptance Criteria
 
-- [ ] When the import fails partway through, the completion surface states that
+- [x] When the import fails partway through, the completion surface states that
       items may already have been written and cannot be rolled back
-- [ ] Per-type rows do not remain frozen on a "preparing" state after a fatal
+- [x] Per-type rows do not remain frozen on a "preparing" state after a fatal
       error — each row says what is known about that type, including "unknown"
-- [ ] The wizard never reports "this chatbook contained no items" for a
+- [x] The wizard never reports "this chatbook contained no items" for a
       chatbook whose manifest it holds and which lists items
-- [ ] Server mode does not invent a `skipped_items` value the server did not
+- [x] Server mode does not invent a `skipped_items` value the server did not
       report; an unreported count is presented as unknown, not as zero
-- [ ] A server payload missing `successful_items` produces a message that
+- [x] A server payload missing `successful_items` produces a message that
       distinguishes "the server told us nothing" from "there was nothing to
       import"
-- [ ] Tests drive both paths — a fatal error raised after at least one item is
+- [x] Tests drive both paths — a fatal error raised after at least one item is
       committed, and a server payload with no counts — and assert the rendered
       text; both are mutation-checked against the current behaviour
-- [ ] The one-vocabulary rule TASK-19734 established (empty = a claim about the
+- [x] The one-vocabulary rule TASK-19734 established (empty = a claim about the
       file, excluded = a claim about the run) is extended to cover these two
       cases rather than bypassed
+
+## Implementation Plan
+
+1. Rewrite `_show_error` into a real failure surface: per-type rows from the
+   import's recorded results where they exist, "❓ Unknown — the import
+   stopped before X were reported" for types the manifest lists but the run
+   never reported on, the opted-out-media wording where that applies, and
+   "— No X in this chatbook" only when the manifest has none; render the
+   stats panel with the counts recorded before the failure; banner states
+   what was written, what is unknown, and that the import cannot be rolled
+   back.
+2. Server branch: record only counts the payload actually carries
+   (`successful_items`/`failed_items`/`skipped_items`); track
+   `_server_counts_unknown` when none were; include skipped in the total.
+3. `_show_completion`: a dedicated unknown-counts outcome (title, banner,
+   `outcome-unknown` state, "?" stats) when the server reported no counts;
+   and a manifest guard on the EMPTY outcome so "this chatbook contained no
+   items" cannot render for a chatbook whose manifest lists items (the
+   server-zeros-for-a-listed-chatbook edge).
+4. Born-red tests for both paths with mutation checks; run the wizard
+   suites for regressions.
+
+## Implementation Notes
+
+- Approach: both defects fixed on their shared surface (the progress step),
+  extending the task-19734 result-driven machinery rather than adding a
+  parallel vocabulary.
+- Fatal-error path (`_show_error` + `_error_surface_row` +
+  `_fatal_error_banner`): per-type rows report recorded results first;
+  types the manifest lists but the run never reported on read
+  "❓ Unknown — the import stopped before X were reported"; media the user
+  opted out of keeps the excluded wording; the stats panel renders the
+  counts recorded before the failure (Total = attempted at that point);
+  the banner names written items ("N item(s) were already written and stay
+  written"), mid-flight items ("may also have landed"), or — when nothing
+  at all was recorded — "it stopped before reporting any result", always
+  with "cannot be rolled back" and a retry warning. Applies to both the
+  exception path and the `success=False` return path.
+- Server path: only payload-carried counts are recorded; a payload with no
+  counts at all yields the "⚠️ Import Finished — Item Counts Unknown"
+  outcome (custom title, banner naming the manifest's item count, "?" in
+  every stat slot, `outcome-unknown` styling added to
+  `_wizards.tcss` and the bundle rebuilt); a payload reporting
+  `skipped_items` now displays it (Total includes skips) instead of the
+  invented zero; and a payload of explicit zeros for a manifest-listing
+  chatbook renders "Nothing was imported — the server reported no items
+  imported. This chatbook contains N item(s)." rather than the file claim
+  "contained no items" (the EMPTY outcome is manifest-guarded).
+- Tests: `Tests/Chatbooks/test_chatbook_import_wizard_failure_honesty.py`
+  (9 tests, green, `bootstrap_profile` marker). Mutation checks performed:
+  restoring the base server-count handling (default-0 + hard-zero skipped)
+  and the base `_show_error` (finalize row + title only) turns 6 of the 9
+  red; the fixed code passes all 9. No regressions across the wizard
+  suites (validation, backup honesty, conflict honesty, embeddings
+  honesty, failure honesty, design-token governance: 45 passed).
+- ADR required: no -- UI honesty fix on an existing surface; no schema,
+  sync, boundary or contract change (the server payload contract is read
+  more defensively, not changed).
+- Modified files: `tldw_chatbook/UI/Wizards/ChatbookImportWizard.py`,
+  `tldw_chatbook/css/features/_wizards.tcss`,
+  `tldw_chatbook/css/tldw_cli_modular.tcss` (rebuilt),
+  `Tests/Chatbooks/test_chatbook_import_wizard_failure_honesty.py` (new).
 
 ## Notes
 

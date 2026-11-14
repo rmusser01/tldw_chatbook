@@ -105,11 +105,33 @@ def _identity(path: Path) -> tuple[int, int]:
     return value.st_dev, value.st_ino
 
 
+# Installed owners whose tree holds one SQLite member among raw files.
+_SQLITE_TREE_MEMBERS = {
+    "recovered.media": "catalog.sqlite3",
+    "plugins": "registry.sqlite3",
+}
+
+
+def sqlite_tree_member(item: StorageItem) -> bool:
+    """Whether an item is its owner's SQLite store, not a raw member of its tree."""
+    member = _SQLITE_TREE_MEMBERS.get(item.owner)
+    if member is None:
+        return True
+    if item.metadata is not None:
+        return item.metadata.relative_path == member
+    return item.path is not None and item.path.name == member
+
+
 def _sqlite_sidecars(declared, adapters):
     """Exclude exact SQLite transient files without hiding unknown lookalikes.
 
     Both paths are declared even while absent so SQLite's ordinary WAL lifecycle
-    cannot expand reviewed scope. Unsafe aliases remain explicit blocking items.
+    cannot expand reviewed scope. The app constructs every installed
+    schema-policy SQLite store at startup, so those owners' sidecars stay
+    transient regardless of capture selection: each declared main path of such
+    an owner is claimed, not just selected included stores. Sidecars without a
+    registered schema-policy owner, and unsafe aliases, remain explicit
+    blocking items.
     """
     sqlite_owners = {
         adapter.owner_id
@@ -117,21 +139,13 @@ def _sqlite_sidecars(declared, adapters):
         if (policy := adapter.schema_policy()) is not None and policy.schema_sql
     }
     sidecars = []
+    claimed = set()
     declared_paths = {item.path for item in declared if item.path is not None}
-    for item in declared:
-        if (
-            item.owner not in sqlite_owners
-            or item.status != "included"
-            or item.path is None
-        ):
-            continue
-        # This installed adapter owns both its SQLite catalog and raw media.
-        # Mirror its capture dispatch; payload names never confer SQLite scope.
-        if item.owner == "recovered.media" and item.path.name != "catalog.sqlite3":
-            continue
-        main = os.stat(item.path, follow_symlinks=False)
+
+    def claim(main_path, logical_prefix):
+        main = os.stat(main_path, follow_symlinks=False)
         for suffix in ("-wal", "-shm"):
-            path = item.path.with_name(item.path.name + suffix)
+            path = main_path.with_name(main_path.name + suffix)
             safe = stat.S_ISREG(main.st_mode) and path not in declared_paths
             try:
                 info = os.stat(path, follow_symlinks=False)
@@ -144,15 +158,49 @@ def _sqlite_sidecars(declared, adapters):
                     and info.st_uid == os.geteuid()
                     and info.st_nlink == 1
                 )
+            claimed.add(path)
             sidecars.append(
                 StorageItem(
                     "sqlite.transient",
-                    item.logical_id + ":sqlite" + suffix,
+                    logical_prefix + ":sqlite" + suffix,
                     path,
                     "intentionally_excluded" if safe else "unsupported",
-                    (item.logical_id,),
+                    (logical_prefix,),
                 )
             )
+
+    for item in declared:
+        if (
+            item.owner not in sqlite_owners
+            or item.status != "included"
+            or item.path is None
+        ):
+            continue
+        # These installed adapters own both a SQLite store and raw files.
+        # Mirror their capture dispatch; payload names never confer SQLite scope.
+        if not sqlite_tree_member(item):
+            continue
+        claim(item.path, item.logical_id)
+    # An unselected store is still constructed at startup, so its sidecars must
+    # never resurface as unknown children: claim them from every declared main
+    # path of a schema-policy owner that the included-selection pass missed.
+    for item in declared:
+        if item.owner not in sqlite_owners or item.path is None:
+            continue
+        if not sqlite_tree_member(item):
+            continue
+        if any(
+            item.path.with_name(item.path.name + suffix) in claimed
+            for suffix in ("-wal", "-shm")
+        ):
+            continue
+        try:
+            os.stat(item.path, follow_symlinks=False)
+        except OSError:
+            # An absent or unreadable main store gains no sidecar scope;
+            # residual lookalikes beside it stay unknown-lookalike blockers.
+            continue
+        claim(item.path, item.logical_id)
     return tuple(sidecars)
 
 
@@ -714,6 +762,15 @@ def discover(
             selections.data_groups,
         )
         issues = set(result.issues)
+    # After group selection: an unselected Tools group excludes the marker, so
+    # live plugin writers never block a backup that leaves plugins out.
+    if any(
+        item.owner == "plugins"
+        and item.logical_id.endswith(":writers_active")
+        and item.status == "unavailable"
+        for item in result.items
+    ):
+        issues.add("plugin_writers_active")
     return replace(
         result,
         complete=result.complete and not issues,

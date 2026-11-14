@@ -42,14 +42,26 @@ from tldw_chatbook.Library.library_tool_contract import (
 )
 
 EXPECTED_LIBRARY_TOOLS = {
-    "library_list_media", "library_get_media", "library_search_media",
-    "library_list_notes", "library_get_note", "library_search_notes",
-    "library_list_prompts", "library_get_prompt", "library_search_prompts",
-    "library_list_skills", "library_get_skill", "library_search_skills",
-    "library_list_conversations", "library_get_conversation", "library_search_conversations",
+    "library_list_media",
+    "library_get_media",
+    "library_search_media",
+    "library_list_notes",
+    "library_get_note",
+    "library_search_notes",
+    "library_list_prompts",
+    "library_get_prompt",
+    "library_search_prompts",
+    "library_list_skills",
+    "library_get_skill",
+    "library_search_skills",
+    "library_list_conversations",
+    "library_get_conversation",
+    "library_search_conversations",
     # chunking-agent-tools siblings (spec §4; re-chunk landed with Task 5)
-    "library_get_media_structure", "library_get_media_chunk",
-    "library_list_chunk_specs", "library_save_chunk_spec",
+    "library_get_media_structure",
+    "library_get_media_chunk",
+    "library_list_chunk_specs",
+    "library_save_chunk_spec",
     "library_rechunk_media",
     # student-workflow (spec §4): the note write tool
     "library_save_note",
@@ -65,8 +77,14 @@ def test_descriptor_table_has_exact_canonical_surface():
     for descriptor in LIBRARY_TOOL_DESCRIPTORS.values():
         assert descriptor.item_type in LIBRARY_ITEM_TYPES
         assert descriptor.operation in {
-            "list", "get", "search",
-            "structure", "chunk", "spec_list", "spec_save", "rechunk",
+            "list",
+            "get",
+            "search",
+            "structure",
+            "chunk",
+            "spec_list",
+            "spec_save",
+            "rechunk",
             "save",
         }
         assert descriptor.description
@@ -192,9 +210,9 @@ def test_save_note_schema_has_exact_additive_organization_inputs():
     assert props["expected_organization_version"]["minLength"] == 64
     assert props["expected_organization_version"]["maxLength"] == 64
     assert props["expected_organization_version"]["pattern"] == "^[0-9a-f]{64}$"
-    assert "organization-changing" in props["expected_organization_version"][
-        "description"
-    ]
+    assert (
+        "organization-changing" in props["expected_organization_version"]["description"]
+    )
 
     validator = Draft202012Validator(schema)
     base = {"title": "Lesson", "content": "Verified evidence"}
@@ -312,7 +330,12 @@ def test_parse_rejects_wrong_type_before_any_storage_read():
 )
 def test_parse_rejects_malformed_ids(bad):
     with pytest.raises(LibraryToolError) as excinfo:
-        parse_public_id(bad, expected_type="note" if isinstance(bad, str) and bad.startswith("note") else None)
+        parse_public_id(
+            bad,
+            expected_type="note"
+            if isinstance(bad, str) and bad.startswith("note")
+            else None,
+        )
     assert excinfo.value.code == ERROR_INVALID_ARGUMENT
 
 
@@ -545,7 +568,7 @@ def _envelope(items: list[dict]) -> dict:
 
 def test_fit_page_payload_fifty_multibyte_rows_stays_under_ceiling():
     items = [
-        _brief(i, title=f"ノート {i} \"quoted\" \\ backslash " + "é" * 50)
+        _brief(i, title=f'ノート {i} "quoted" \\ backslash ' + "é" * 50)
         for i in range(50)
     ]
     fitted = fit_page_payload(_envelope(items))
@@ -563,7 +586,11 @@ def test_fit_page_payload_trims_in_fixed_order_and_reports_paths():
     # Long keyword values make the raw page exceed the 32 KiB ceiling while
     # the mandatory fields stay small, so the optional trim order is exercised.
     items = [
-        _brief(i, title=f"t-{i}", keywords=[f"keyword-value-{i}-{j:02d}" for j in range(20)])
+        _brief(
+            i,
+            title=f"t-{i}",
+            keywords=[f"keyword-value-{i}-{j:02d}" for j in range(20)],
+        )
         for i in range(50)
     ]
     assert serialized_size(_envelope(items)) > MAX_RESULT_BYTES

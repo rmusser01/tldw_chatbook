@@ -1,12 +1,15 @@
 # chat_rag_events.py
-# Description: Simplified event handlers for RAG functionality using pipeline system
+# Description: RAG event wiring for the Console and the legacy chat sidebar.
+#
+# The scope resolution, prompt-boundary authorization and evidence capture
+# logic lives in ``RAG_Search/scope_evidence.py`` and receives its services
+# explicitly; the pipeline search entry points live in
+# ``RAG_Search/pipeline_builder_simple.py`` (TASK-36947.3, ADR-250 section 7).
+# What stays here is the wiring: it reads the ``storage``, ``workspace`` and
+# ``chat.citation_trace_repository`` slices from ``app.services``, finds the
+# active Console session, owns the app-attached scope cache, and notifies.
 #
 # Imports
-import asyncio
-import copy
-import json
-from collections.abc import Mapping
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple
@@ -14,44 +17,19 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple
 from loguru import logger
 
 # Local Imports
-from ...Chat.citation_evidence_models import EvidenceBundle
-from ...Chat.citation_repair import CitationRepairContract
-from ...Chat.citation_source_locators import CanonicalSourceKind
-from ...Chat.citation_trace_builder import (
-    CitationTraceBuilder,
-    LocalRetrievalRunMetadata,
-)
-from ...Chat.citation_trace_identity import new_opaque_id
-from ...Chat.citation_trace_models import (
-    MarkerNamespace,
-    RETRIEVAL_CANDIDATES_PER_RUN_MAX,
-)
 from ...Chat.rag_scope import (
-    CONVERSATION_METADATA_SCOPE_KEY,
-    EffectiveScope,
-    RagScope,
-    SCOPE_VERSION,
     SCOPE_REASON_EMPTY,
     SCOPE_STATUS_EMPTY,
-    SOURCE_TYPE_MEDIA,
-    SOURCE_TYPE_NOTE,
+    EffectiveScope,
     ScopeCache,
-    SessionScopeHolder,
-    parse_scope,
     scope_empty_notice,
-    resolve_effective_scope,
 )
-from ...RAG_Search.fusion import resolve_hybrid_alpha
-from ...RAG_Search.local_citation_capture import (
-    LocalEvidenceContext,
-    LocalResultNormalizationError,
-    NormalizedLocalResult,
-    format_console_evidence_context,
-    format_local_evidence_context,
-    normalize_console_evidence_references,
-    normalize_local_result,
+from ...RAG_Search.pipeline_builder_simple import (
+    perform_full_rag_pipeline,
+    perform_hybrid_rag_search,
+    perform_plain_rag_search,
+    perform_search_with_pipeline,
 )
-from ...RAG_Search.pipeline_builder_simple import BUILTIN_PIPELINES, execute_pipeline
 from ...RAG_Search.pipeline_functions_simple import SCOPE_DIAGNOSTICS_KEY
 from ...RAG_Search.semantic_availability import (
     SEMANTIC_DIAGNOSTICS_KEY,
@@ -65,48 +43,18 @@ from ...RAG_Search.semantic_availability import (
 
 if TYPE_CHECKING:
     from ...app import TldwCli
+    from ...RAG_Search.local_citation_capture import (
+        LocalEvidenceContext,
+        NormalizedLocalResult,
+    )
+    from ...RAG_Search.scope_evidence import (
+        LocalRagContextResult,
+        RequestScopeSession,
+        ScopeResolution,
+    )
 
 # Configure logger with context
 logger = logger.bind(module="chat_rag_events")
-
-
-@dataclass(frozen=True)
-class LocalRagContextResult:
-    """RAG context with independent canonical capture and repair eligibility.
-
-    The optional ID is the authoritative prompt-evidence-set identity. Repair
-    eligibility remains available when canonical builder recording does not.
-    """
-
-    context: str | None
-    citation_builder: CitationTraceBuilder | None
-    prompt_evidence_set_id: str | None = None
-    citation_repair_contract: CitationRepairContract | None = None
-
-
-@dataclass(frozen=True)
-class _RequestScopeSession:
-    """Immutable request-start identity used for both scope reads."""
-
-    id: Any
-    persisted_conversation_id: Any
-    workspace_id: Any
-    rag_scope_holder: SessionScopeHolder | None
-
-
-@dataclass(frozen=True)
-class _PromptAuthorizationResult:
-    """Authorized candidates plus whether every authority read completed."""
-
-    candidates: Tuple[NormalizedLocalResult, ...]
-    completed: bool
-
-
-class _ScopeExistenceReadError(RuntimeError):
-    """A scoped dangling-id authority read did not complete."""
-
-
-_CURRENT_ACTIVE_SESSION = object()
 
 
 # Are the RAG dependencies available? Resolved on FIRST ASK, not at import
@@ -140,8 +88,8 @@ def _rag_services_available() -> bool:
     if _RAG_SERVICES_AVAILABLE is None:
         try:
             from ...RAG_Search.simplified import (
-                create_rag_service,  # noqa: F401
                 create_config_for_collection,  # noqa: F401
+                create_rag_service,  # noqa: F401
             )
 
             _RAG_SERVICES_AVAILABLE = True
@@ -172,291 +120,6 @@ def __getattr__(name: str) -> Any:
     if name == "RAG_SERVICES_AVAILABLE":
         return _rag_services_available()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-async def perform_plain_rag_search(
-    app: "TldwCli",
-    query: str,
-    sources: Dict[str, bool],
-    top_k: int = 5,
-    max_context_length: int = 10000,
-    enable_rerank: bool = True,
-    reranker_model: str = "flashrank",
-    keyword_filter_list: Optional[List[str]] = None,
-    diagnostics: Optional[Dict[str, Any]] = None,
-    scope: Optional[EffectiveScope] = None,
-) -> Tuple[List[Dict[str, Any]], str]:
-    """
-    Perform a plain RAG search using the pipeline system.
-
-    Args:
-        scope: Optional resolved RAG retrieval scope (rag-scope narrowing,
-            task-5). Forwarded to ``execute_pipeline`` so every leg
-            self-enforces it; ``None`` performs today's unrestricted search.
-    """
-    logger.info("RAG pipeline starting; mode=plain")
-
-    # Build pipeline configuration
-    config = BUILTIN_PIPELINES["plain"].copy()
-    config["parameters"] = {
-        "top_k": top_k,
-        "max_context_length": max_context_length,
-        "keyword_filter": keyword_filter_list,
-    }
-
-    # Adjust reranking step if needed
-    if not enable_rerank:
-        # Remove rerank step
-        config["steps"] = [
-            s for s in config["steps"] if s.get("function") != "rerank_results"
-        ]
-    elif reranker_model != "flashrank":
-        # Update reranker model
-        for step in config["steps"]:
-            if step.get("function") == "rerank_results":
-                step.setdefault("config", {})["model"] = reranker_model
-
-    # Execute pipeline
-    return await execute_pipeline(
-        config, app, query, sources, diagnostics=diagnostics, scope=scope, top_k=top_k
-    )
-
-
-async def perform_full_rag_pipeline(
-    app: "TldwCli",
-    query: str,
-    sources: Dict[str, bool],
-    top_k: int = 10,
-    max_context_length: int = 10000,
-    chunk_size: int = 400,
-    chunk_overlap: int = 100,
-    chunk_type: str = "words",
-    include_metadata: bool = True,
-    enable_rerank: bool = True,
-    reranker_model: str = "flashrank",
-    keyword_filter_list: Optional[List[str]] = None,
-    diagnostics: Optional[Dict[str, Any]] = None,
-    scope: Optional[EffectiveScope] = None,
-) -> Tuple[List[Dict[str, Any]], str]:
-    """
-    Perform a full semantic RAG pipeline using the pipeline system.
-
-    Args:
-        scope: Optional resolved RAG retrieval scope (rag-scope narrowing,
-            task-5). Forwarded to ``execute_pipeline`` so every leg
-            self-enforces it; ``None`` performs today's unrestricted search.
-    """
-    logger.info("RAG pipeline starting; mode=semantic")
-
-    # Build pipeline configuration
-    config = BUILTIN_PIPELINES["semantic"].copy()
-    config["parameters"] = {
-        "top_k": top_k,
-        "max_context_length": max_context_length,
-        "chunk_size": chunk_size,
-        "chunk_overlap": chunk_overlap,
-        "chunk_type": chunk_type,
-        "include_metadata": include_metadata,
-        "include_citations": include_metadata,
-    }
-
-    # Adjust reranking step if needed
-    if not enable_rerank:
-        config["steps"] = [
-            s for s in config["steps"] if s.get("function") != "rerank_results"
-        ]
-    elif reranker_model != "flashrank":
-        for step in config["steps"]:
-            if step.get("function") == "rerank_results":
-                step.setdefault("config", {})["model"] = reranker_model
-
-    # Execute pipeline
-    return await execute_pipeline(
-        config, app, query, sources, diagnostics=diagnostics, scope=scope, top_k=top_k
-    )
-
-
-async def perform_hybrid_rag_search(
-    app: "TldwCli",
-    query: str,
-    sources: Dict[str, bool],
-    top_k: int = 10,
-    max_context_length: int = 10000,
-    enable_rerank: bool = True,
-    reranker_model: str = "flashrank",
-    chunk_size: int = 400,
-    chunk_overlap: int = 100,
-    chunk_type: str = "words",
-    hybrid_alpha: Optional[float] = None,
-    bm25_weight: Optional[float] = None,
-    vector_weight: Optional[float] = None,
-    keyword_filter_list: Optional[List[str]] = None,
-    diagnostics: Optional[Dict[str, Any]] = None,
-    scope: Optional[EffectiveScope] = None,
-) -> Tuple[List[Dict[str, Any]], str]:
-    """Perform a hybrid RAG search using the pipeline system.
-
-    The FTS5 and semantic legs are fused via Reciprocal Rank Fusion plus an
-    alpha-weighted blend, matching the tldw_server design. Alpha weights the
-    vector leg: 0 = FTS only, 1 = vector only. The RRF constant k resolves
-    through ``fusion.resolve_rrf_k`` (step config -> active profile ->
-    shipped default (``config.DEFAULT_HYBRID_RRF_K``)); that shipped
-    default is 5 (TASK-4110).
-
-    Alpha precedence: ``hybrid_alpha`` argument -> legacy ``bm25_weight`` /
-    ``vector_weight`` (mapped to ``vector / (bm25 + vector)``) ->
-    ``[AppRAGSearchConfig.rag.retriever] hybrid_alpha`` config knob (0.7).
-
-    Args:
-        app: The TldwCli app instance providing database handles.
-        query: Search query text.
-        sources: Which sources to search (e.g. media/conversations/notes).
-        top_k: Maximum number of fused results to return.
-        max_context_length: Character budget for the formatted context.
-        enable_rerank: Whether to run the reranking step after fusion.
-        reranker_model: Reranker model name when reranking is enabled.
-        chunk_size: Chunk size forwarded to the pipeline parameters.
-        chunk_overlap: Chunk overlap forwarded to the pipeline parameters.
-        chunk_type: Chunking method forwarded to the pipeline parameters.
-        hybrid_alpha: Explicit fusion alpha (0 = FTS only, 1 = vector only);
-            overrides the legacy weights and the config knob.
-        bm25_weight: Legacy FTS-leg weight; mapped onto alpha together with
-            vector_weight when hybrid_alpha is not given.
-        vector_weight: Legacy vector-leg weight; see bm25_weight.
-        keyword_filter_list: Optional keywords the media FTS leg must match.
-        diagnostics: Optional dict receiving the semantic-leg availability
-            state (task-250) so callers can say when results are FTS-only.
-        scope: Optional resolved RAG retrieval scope (rag-scope narrowing,
-            task-5). Forwarded to ``execute_pipeline`` so every leg
-            self-enforces it; ``None`` performs today's unrestricted search.
-
-    Returns:
-        Tuple of (result dicts sorted by fused score, formatted context
-        string for the LLM).
-    """
-    logger.info("RAG pipeline starting; mode=hybrid")
-
-    # Map legacy weight parameters onto alpha for backwards compatibility
-    if hybrid_alpha is None and (bm25_weight is not None or vector_weight is not None):
-        bm25 = bm25_weight if bm25_weight is not None else 0.5
-        vector = vector_weight if vector_weight is not None else 0.5
-        total_weight = bm25 + vector
-        if total_weight > 0:
-            hybrid_alpha = vector / total_weight
-    alpha = resolve_hybrid_alpha(hybrid_alpha)
-
-    # Build pipeline configuration (deep copy: steps are nested dicts and the
-    # builtin definition must not be mutated across calls)
-    config = copy.deepcopy(BUILTIN_PIPELINES["hybrid"])
-
-    # Update config
-    config["parameters"] = {
-        "top_k": top_k,
-        "max_context_length": max_context_length,
-        "chunk_size": chunk_size,
-        "chunk_overlap": chunk_overlap,
-        "chunk_type": chunk_type,
-        "keyword_filter": keyword_filter_list,
-    }
-
-    # Pin the resolved alpha on the fusion step
-    for step in config["steps"]:
-        if step.get("type") == "parallel" and step.get("merge") == "rrf_merge":
-            step["config"] = {**step.get("config", {}), "alpha": alpha}
-
-    # Adjust reranking step if needed
-    if not enable_rerank:
-        config["steps"] = [
-            s for s in config["steps"] if s.get("function") != "rerank_results"
-        ]
-    elif reranker_model != "flashrank":
-        for step in config["steps"]:
-            if step.get("function") == "rerank_results":
-                step.setdefault("config", {})["model"] = reranker_model
-
-    # Execute pipeline
-    return await execute_pipeline(
-        config, app, query, sources, diagnostics=diagnostics, scope=scope, top_k=top_k
-    )
-
-
-async def perform_search_with_pipeline(
-    app: "TldwCli",
-    query: str,
-    sources: Dict[str, bool],
-    pipeline_id: str,
-    diagnostics: Optional[Dict[str, Any]] = None,
-    scope: Optional[EffectiveScope] = None,
-    **kwargs,
-) -> Tuple[List[Dict[str, Any]], str]:
-    """
-    Perform a search using a specific pipeline ID.
-
-    This allows using custom pipelines defined in TOML files.
-
-    Args:
-        scope: Optional resolved RAG retrieval scope (rag-scope narrowing,
-            task-5). Forwarded to ``execute_pipeline`` so every leg
-            self-enforces it, including custom TOML pipeline shapes;
-            ``None`` performs today's unrestricted search.
-    """
-    logger.info("RAG pipeline starting; mode=custom")
-
-    # Get pipeline configuration (from built-ins or TOML)
-    from ...RAG_Search.pipeline_builder_simple import get_pipeline
-
-    config = get_pipeline(pipeline_id)
-
-    if not config:
-        logger.error(
-            "RAG pipeline unavailable; reason=pipeline_not_found; "
-            f"pipeline_id={pipeline_id}; "
-            f"selected_source_count={sum(bool(value) for value in sources.values())}"
-        )
-        return [], f"Pipeline '{pipeline_id}' not found"
-
-    # Make a copy to avoid modifying the original
-    config = config.copy()
-
-    # Merge any pipeline-specific parameters with runtime parameters
-    pipeline_params = config.get("parameters", {})
-    merged_params = {**pipeline_params, **kwargs}
-
-    # Execute pipeline with merged parameters
-    return await execute_pipeline(
-        config,
-        app,
-        query,
-        sources,
-        diagnostics=diagnostics,
-        scope=scope,
-        **merged_params,
-    )
-
-
-# Helper function to format results (kept for compatibility)
-def format_results_for_llm(
-    results: List[Dict[str, Any]], max_chars: int = 10000
-) -> str:
-    """Format search results as context for LLM."""
-    from ...RAG_Search.pipeline_functions_simple import format_as_context
-    from ...RAG_Search.pipeline_types import SearchResult
-
-    # Convert dicts back to SearchResult objects
-    search_results = []
-    for r in results:
-        search_results.append(
-            SearchResult(
-                source=r["source"],
-                id=r["id"],
-                title=r["title"],
-                content=r["content"],
-                score=r.get("score", 1.0),
-                metadata=r.get("metadata", {}),
-            )
-        )
-
-    return format_as_context(search_results, max_chars)
 
 
 # Initialize/get RAG service (kept for compatibility)
@@ -652,222 +315,11 @@ def _active_console_session(app: "TldwCli") -> Optional[Any]:
     return None
 
 
-def _capture_request_scope_session(app: "TldwCli") -> _RequestScopeSession | None:
+def _capture_request_scope_session(app: "TldwCli") -> "RequestScopeSession | None":
     """Copy the active session identity before retrieval can change it."""
+    from ...RAG_Search.scope_evidence import request_scope_session_for
 
-    session = _active_console_session(app)
-    if session is None:
-        return None
-    try:
-        holder = getattr(session, "rag_scope_holder", None)
-        return _RequestScopeSession(
-            id=getattr(session, "id", None),
-            persisted_conversation_id=getattr(
-                session, "persisted_conversation_id", None
-            ),
-            workspace_id=getattr(session, "workspace_id", None),
-            rag_scope_holder=holder if isinstance(holder, SessionScopeHolder) else None,
-        )
-    except Exception:
-        logger.warning(
-            "RAG session identity unavailable; reason=session_identity_read_failure"
-        )
-        return None
-
-
-def _sensitive_fetchall(
-    db: Any,
-    query: str,
-    params: tuple[Any, ...],
-) -> list[Any]:
-    """Run an identity-bearing read without the public query logger.
-
-    Production database classes expose ``get_connection``; their public
-    ``execute_query`` helpers DEBUG-log parameters and therefore must not be
-    used for prompt-boundary identity reads. The fallback exists only for
-    deliberately small test doubles in test modules.
-    """
-
-    get_connection = getattr(db, "get_connection", None)
-    if callable(get_connection):
-        return list(get_connection().execute(query, params).fetchall())
-
-    module_name = type(db).__module__
-    is_test_double = (
-        module_name.startswith("Tests.")
-        or module_name.startswith("test_")
-        or ".test_" in module_name
-    )
-    execute_query = getattr(db, "execute_query", None)
-    if is_test_double and callable(execute_query):
-        return list(execute_query(query, params).fetchall())
-    raise RuntimeError("sensitive database read is unavailable")
-
-
-def _read_fresh_conversation_metadata_sync(db: Any, conversation_id: str) -> Any:
-    """Read prompt-boundary conversation metadata without logging its id."""
-
-    rows = _sensitive_fetchall(
-        db,
-        "SELECT metadata FROM conversations WHERE id = ? AND deleted = 0",
-        (conversation_id,),
-    )
-    if not rows:
-        raise LookupError("active conversation unavailable")
-    row = rows[0]
-    try:
-        return row["metadata"]
-    except (IndexError, KeyError, TypeError):
-        return row[0]
-
-
-def _read_cached_conversation_scope_sync(
-    db: Any,
-    conversation_id: str,
-) -> Optional[RagScope]:
-    """Read cached-path scope with legacy guarded parsing and silent identity."""
-
-    try:
-        raw_metadata = _read_fresh_conversation_metadata_sync(db, conversation_id)
-    except Exception:
-        logger.warning(
-            "RAG cached conversation scope unavailable; "
-            "reason=conversation_scope_read_failure"
-        )
-        return None
-    if raw_metadata in (None, ""):
-        metadata: Any = {}
-    else:
-        try:
-            metadata = json.loads(raw_metadata)
-        except (TypeError, ValueError):
-            return None
-    if not isinstance(metadata, dict):
-        return None
-    scope = parse_scope(metadata.get(CONVERSATION_METADATA_SCOPE_KEY))
-    if scope is not None and not scope.items:
-        return None
-    return scope
-
-
-def _existing_ids_sync(
-    app: "TldwCli", source_type: str, ids: "frozenset[str]"
-) -> "frozenset[str]":
-    """Cheap surviving-id check for scope resolution's dangling-drop step.
-
-    Runs a single ``id IN (SELECT value FROM json_each(...))`` query against
-    the media or notes table (whichever ``source_type`` names) so
-    ``resolve_effective_scope`` can drop references to since-deleted content.
-    Synchronous -- callers run this off the event loop themselves (via
-    ``asyncio.to_thread`` around the whole ``resolve_effective_scope`` call,
-    matching this file's existing threading discipline for DB work).
-
-    Missing DB handles or query errors raise ``_ScopeExistenceReadError`` so
-    callers can distinguish unavailable authority from a successful read in
-    which no rows survive.
-
-    Args:
-        app: App-like object exposing ``media_db``/``chachanotes_db``.
-        source_type: ``SOURCE_TYPE_MEDIA`` or ``SOURCE_TYPE_NOTE``.
-        ids: Candidate ids to check.
-
-    Returns:
-        The subset of ``ids`` that still exist (not soft-deleted).
-    """
-    if not ids:
-        return frozenset()
-    if source_type == SOURCE_TYPE_MEDIA:
-        db = getattr(app, "media_db", None)
-        table = "Media"
-    elif source_type == SOURCE_TYPE_NOTE:
-        db = getattr(app, "chachanotes_db", None)
-        table = "notes"
-    else:
-        return frozenset()
-    if db is None:
-        logger.warning(
-            "RAG scope existence unavailable; reason=scope_existing_ids_read_failure"
-        )
-        raise _ScopeExistenceReadError from None
-    try:
-        rows = _sensitive_fetchall(
-            db,
-            f"SELECT id FROM {table} "
-            "WHERE id IN (SELECT value FROM json_each(?)) AND deleted = 0",
-            (json.dumps(sorted(ids)),),
-        )
-        return frozenset(str(row[0]) for row in rows)
-    except Exception:
-        logger.warning(
-            "RAG scope existence unavailable; reason=scope_existing_ids_read_failure"
-        )
-        raise _ScopeExistenceReadError from None
-
-
-async def _resolve_scope_with_current_ids(
-    app: "TldwCli",
-    conv_scope: Optional[RagScope],
-    ws_scope: Optional[RagScope],
-) -> EffectiveScope:
-    """Resolve scope while routing each existence read for its own store."""
-
-    candidate_scope = resolve_effective_scope(
-        conv_scope,
-        ws_scope,
-        lambda _source_type, ids: ids,
-    )
-    if candidate_scope.state != "scoped":
-        return candidate_scope
-
-    survivors: dict[str, frozenset[str]] = {}
-    for source_type, ids in candidate_scope.allowlist.items():
-        if source_type == SOURCE_TYPE_MEDIA:
-            db = getattr(app, "media_db", None)
-        elif source_type == SOURCE_TYPE_NOTE:
-            db = getattr(app, "chachanotes_db", None)
-        else:
-            continue
-        if bool(getattr(db, "is_memory_db", False)):
-            survivors[source_type] = _existing_ids_sync(app, source_type, ids)
-        else:
-            survivors[source_type] = await asyncio.to_thread(
-                _existing_ids_sync,
-                app,
-                source_type,
-                ids,
-            )
-
-    return resolve_effective_scope(
-        conv_scope,
-        ws_scope,
-        lambda source_type, _ids: survivors.get(source_type, frozenset()),
-    )
-
-
-@dataclass(frozen=True)
-class ScopeResolution:
-    """The three pieces produced by resolving a session's RAG retrieval scope.
-
-    Shared by the enforcement entry point (``resolve_effective_scope_for_
-    chat``, used to gate/filter the actual retrieval) and the Console
-    display layer (``ChatScreen``'s Inspector "Retrieval scope" row and
-    header chip, task-13), which additionally needs the two raw,
-    un-intersected scopes' item counts for the chip's two-level breakdown
-    tooltip ("Only searching: conversation scope (A items) and workspace
-    scope (B items) — N in both.") -- information
-    ``effective.allowlist`` alone cannot reconstruct once dangling ids have
-    been dropped.
-
-    Attributes:
-        conv_scope: The conversation's own stored/held scope, or ``None``.
-        ws_scope: The linked workspace's stored scope, or ``None``.
-        effective: The resolved intersection (see ``resolve_effective_
-            scope``).
-    """
-
-    conv_scope: Optional[RagScope]
-    ws_scope: Optional[RagScope]
-    effective: EffectiveScope
+    return request_scope_session_for(_active_console_session(app))
 
 
 def _scope_cache_for(app: "TldwCli") -> ScopeCache:
@@ -899,297 +351,45 @@ def _scope_cache_for(app: "TldwCli") -> ScopeCache:
     return cache
 
 
-def _read_fresh_workspace_scope_sync(
-    registry_service: Any, workspace_id: str
-) -> Optional[RagScope]:
-    """Read a workspace scope without collapsing malformed rows into unset."""
-
-    if not isinstance(workspace_id, str) or not workspace_id:
-        raise ValueError("workspace authority identifier is invalid")
-    registry_db = getattr(registry_service, "db", None)
-    if registry_db is None:
-        raise RuntimeError("workspace authority database is unavailable")
-    with registry_db.connection() as conn:
-        row = conn.execute(
-            """
-            SELECT records.workspace_id, scopes.payload
-            FROM workspace_records AS records
-            LEFT JOIN workspace_rag_scopes AS scopes
-                ON scopes.workspace_id = records.workspace_id
-            WHERE records.workspace_id = ?
-            """,
-            (workspace_id,),
-        ).fetchone()
-    if row is None:
-        raise LookupError("linked workspace authority is unavailable")
-    try:
-        payload = row["payload"]
-    except (IndexError, KeyError, TypeError):
-        payload = row[1]
-    if payload is None:
-        return None
-    raw_scope = json.loads(payload)
-    scope = _parse_fresh_scope(raw_scope)
-    if scope is None:
-        raise ValueError("workspace scope authority is malformed")
-    if not scope.items:
-        return None
-    return scope
-
-
-def _parse_fresh_scope(raw_scope: Any) -> Optional[RagScope]:
-    """Parse fresh authority without exposing an untrusted version in logs."""
-
-    if raw_scope is None:
-        return None
-    if not isinstance(raw_scope, dict):
-        raise ValueError("fresh scope authority is malformed")
-    version = raw_scope.get("version")
-    if type(version) is not int or version != SCOPE_VERSION:
-        raise ValueError("fresh scope authority version is invalid")
-    scope = parse_scope(raw_scope)
-    if scope is None:
-        raise ValueError("fresh scope authority is malformed")
-    return scope
-
-
 async def resolve_scope_for_session(
-    app: "TldwCli", session: Optional[Any], *, use_cache: bool = True
-) -> ScopeResolution:
-    """Resolve conversation + workspace RAG retrieval scope for ``session``.
+    app: "TldwCli",
+    session: Optional[Any],
+    *,
+    use_cache: bool = True,
+    retain_display_reads: bool = False,
+) -> "ScopeResolution":
+    """Resolve ``session``'s RAG retrieval scope with the app's services.
 
-    Shared resolution core for both ``resolve_effective_scope_for_chat``
-    (the enforcement entry point, which derives ``session`` itself via
-    ``_active_console_session``) and ``ChatScreen``'s display layer
-    (task-13), which already holds the exact session object it wants to
-    resolve for (e.g. a just-restored resume target) and needs the raw
-    conversation/workspace scopes alongside the resolved intersection.
-
-    Conversation identity comes from ``session.persisted_conversation_id``.
-    When the conversation is persisted, its scope is read from storage
-    through a local non-logging raw-connection read with the same guarded
-    parsing semantics as ``read_conversation_scope``. When the session has
-    not been persisted yet, an in-session ``SessionScopeHolder`` attached to
-    the session object (``session.rag_scope_holder``, duck-typed) is consulted
-    instead (task-9).
-
-    Workspace identity comes from ``session.workspace_id`` (the Console
-    session's linked local-workspace-registry id, duck-typed via
-    ``getattr`` so callers/tests that pass a session double without this
-    attribute degrade to "no workspace scope" rather than raising -- task-13
-    Phase 3 of the rag-scope-narrowing program). The workspace's stored
-    scope is normally read through ``workspace_registry_service``'s
-    ``get_workspace_scope`` method. Fresh prompt authorization instead reads
-    workspace record and optional scope row together so an existing workspace
-    with no scope remains unscoped while a missing workspace or malformed
-    stored scope fails closed. A missing service or a missing/empty
-    ``workspace_id`` degrades to ``ws_scope=None`` only outside fresh
-    authorization. A storage READ FAILURE does NOT degrade to ``ws_scope=None``,
-    because that would silently drop the workspace bound and widen a hard-filter
-    feature on error. Instead this function returns early with an EMPTY
-    ``EffectiveScope`` (``cause="workspace-scope-
-    unavailable"``), regardless of whether the conversation itself has a
-    scope, since conv-scope-alone is always wider than the (conv ∩
-    workspace) intersection that can no longer be computed.
-
-    Both cases end retrieval; only the empty-scope short-circuit's cause is
-    used to give the user an honest, distinguishable notice. This mirrors
-    the caller-side EMPTY handling ``get_rag_context_for_chat`` already has
-    for a configured-but-nothing-left scope.
-
-    Both DB reads apply the same in-memory-connection guard (PR #747
-    review, extended here to the workspace registry's own DB): in-memory
-    SQLite connections are thread-local/per-call, so offloading to
-    ``asyncio.to_thread`` would hit a blank connection and silently read a
-    genuinely scoped conversation/workspace back as unscoped. Each read is
-    offloaded only when its own backing DB is file-backed.
-
-    Once at least one of ``conv_scope``/``ws_scope`` is set, a per-app
-    ``ScopeCache`` (see ``_scope_cache_for``) is consulted, keyed on the
-    ``(conversation_id_or_session_id, workspace_id, conv_stamp, ws_stamp)``
-    4-tuple, before re-running the (conv ∩ ws) intersection and the
-    per-item dangling-drop existence check -- both stamps come from each
-    scope's own ``updated_at``, so any edit at either level (a changed
-    stamp) or a conversation re-linked to a different workspace (a changed
-    workspace_id, same stamps) misses the cache and re-resolves.
+    The resolution itself is ``RAG_Search.scope_evidence.
+    resolve_scope_for_session`` (patch that name to reach the logic); this
+    wrapper supplies the ``storage`` and ``workspace`` slices from
+    ``app.services`` and the app-attached ``ScopeCache``.
 
     Args:
-        app: The running app instance.
+        app: The running app; only ``app.services`` and its scope cache are
+            read.
         session: The Console session to resolve scope for, or ``None`` (no
-            active session -- resolves fully unscoped with zero DB work).
-        use_cache: Whether to consult and populate the per-app scope cache.
-            Prompt-boundary evidence authorization passes ``False`` so
-            retrieval-time scope state cannot authorize stale evidence.
+            active session, unscoped with no DB work).
+        use_cache: Whether to consult and populate the scope cache. Pass
+            ``False`` at a provider prompt boundary.
+        retain_display_reads: Console display workers retain each stock
+            finite read before propagating cancellation.
 
     Returns:
-        A ``ScopeResolution`` carrying the raw conversation scope, the raw
-        workspace scope, and the resolved ``EffectiveScope``.
+        The raw conversation and workspace scopes and the resolved
+        ``EffectiveScope``.
     """
-    conversation_id = (
-        getattr(session, "persisted_conversation_id", None)
-        if session is not None
-        else None
+    from ...RAG_Search import scope_evidence
+
+    services = app.services
+    return await scope_evidence.resolve_scope_for_session(
+        services.storage,
+        services.workspace,
+        session,
+        scope_cache=lambda: _scope_cache_for(app),
+        use_cache=use_cache,
+        retain_display_reads=retain_display_reads,
     )
-
-    db = getattr(app, "chachanotes_db", None)
-    conversation_is_memory_db = bool(getattr(db, "is_memory_db", False))
-
-    conv_scope: Optional[RagScope] = None
-    if conversation_id and db is not None:
-        if use_cache:
-            if conversation_is_memory_db:
-                conv_scope = _read_cached_conversation_scope_sync(
-                    db, str(conversation_id)
-                )
-            else:
-                conv_scope = await asyncio.to_thread(
-                    _read_cached_conversation_scope_sync,
-                    db,
-                    str(conversation_id),
-                )
-        else:
-            try:
-                if conversation_is_memory_db:
-                    raw_metadata = _read_fresh_conversation_metadata_sync(
-                        db, str(conversation_id)
-                    )
-                else:
-                    raw_metadata = await asyncio.to_thread(
-                        _read_fresh_conversation_metadata_sync,
-                        db,
-                        str(conversation_id),
-                    )
-                if raw_metadata in (None, ""):
-                    metadata = {}
-                else:
-                    metadata = json.loads(raw_metadata)
-                    if not isinstance(metadata, dict):
-                        raise ValueError("conversation metadata is not an object")
-                raw_scope = metadata.get(CONVERSATION_METADATA_SCOPE_KEY)
-                conv_scope = _parse_fresh_scope(raw_scope)
-                if raw_scope is not None and conv_scope is None:
-                    raise ValueError("conversation scope is malformed")
-                if conv_scope is not None and not conv_scope.items:
-                    conv_scope = None
-            except Exception:
-                logger.warning(
-                    "Prompt-boundary authority unavailable; status=unavailable; "
-                    "reason=conversation_scope_read_failure"
-                )
-                return ScopeResolution(
-                    None,
-                    None,
-                    EffectiveScope(
-                        state="empty",
-                        allowlist={},
-                        cause="conversation-scope-unavailable",
-                    ),
-                )
-    elif conversation_id and not use_cache:
-        return ScopeResolution(
-            None,
-            None,
-            EffectiveScope(
-                state="empty",
-                allowlist={},
-                cause="conversation-scope-unavailable",
-            ),
-        )
-    elif session is not None:
-        holder = getattr(session, "rag_scope_holder", None)
-        if isinstance(holder, SessionScopeHolder):
-            conv_scope = holder.scope
-
-    workspace_id = (
-        getattr(session, "workspace_id", None) if session is not None else None
-    )
-    ws_scope: Optional[RagScope] = None
-    registry_service = getattr(app, "workspace_registry_service", None)
-    if workspace_id and registry_service is None and not use_cache:
-        return ScopeResolution(
-            conv_scope,
-            None,
-            EffectiveScope(
-                state="empty",
-                allowlist={},
-                cause="workspace-scope-unavailable",
-            ),
-        )
-    if workspace_id and registry_service is not None:
-        registry_db = getattr(registry_service, "db", None)
-        registry_is_memory = bool(getattr(registry_db, "is_memory_db", False))
-        try:
-            if not use_cache and registry_is_memory:
-                ws_scope = _read_fresh_workspace_scope_sync(
-                    registry_service, workspace_id
-                )
-            elif not use_cache:
-                ws_scope = await asyncio.to_thread(
-                    _read_fresh_workspace_scope_sync,
-                    registry_service,
-                    workspace_id,
-                )
-            elif registry_is_memory:
-                ws_scope = registry_service.get_workspace_scope(workspace_id)
-            else:
-                ws_scope = await asyncio.to_thread(
-                    registry_service.get_workspace_scope, workspace_id
-                )
-        except Exception:
-            # A malformed or unreadable stored scope is not equivalent to no
-            # stored row. Dropping that workspace bound would widen retrieval,
-            # so authority failures always resolve EMPTY.
-            logger.warning(
-                "Prompt-boundary authority unavailable; status=unavailable; "
-                "reason=workspace_scope_read_failure"
-            )
-            return ScopeResolution(
-                conv_scope,
-                None,
-                EffectiveScope(
-                    state="empty",
-                    allowlist={},
-                    cause="workspace-scope-unavailable",
-                ),
-            )
-
-    if conv_scope is None and ws_scope is None:
-        # No DB-backed existence check needed for the both-unset case --
-        # resolve_effective_scope's own early return covers it
-        # synchronously; nothing to cache either (trivially cheap already).
-        effective = resolve_effective_scope(conv_scope, ws_scope, lambda st, ids: ids)
-        return ScopeResolution(conv_scope, ws_scope, effective)
-
-    cache_key_id = conversation_id or (
-        getattr(session, "id", None) if session is not None else None
-    )
-    conv_stamp = conv_scope.updated_at if conv_scope is not None else None
-    ws_stamp = ws_scope.updated_at if ws_scope is not None else None
-    cache = _scope_cache_for(app)
-    if use_cache:
-        cached = cache.get(cache_key_id, workspace_id, conv_stamp, ws_stamp)
-        if cached is not None:
-            return ScopeResolution(conv_scope, ws_scope, cached)
-
-    try:
-        effective = await _resolve_scope_with_current_ids(
-            app,
-            conv_scope,
-            ws_scope,
-        )
-    except _ScopeExistenceReadError:
-        return ScopeResolution(
-            conv_scope,
-            ws_scope,
-            EffectiveScope(
-                state="empty",
-                allowlist={},
-                cause="scope-existence-unavailable",
-            ),
-        )
-    if use_cache:
-        cache.put(cache_key_id, workspace_id, conv_stamp, ws_stamp, effective)
-    return ScopeResolution(conv_scope, ws_scope, effective)
 
 
 async def resolve_effective_scope_for_chat(
@@ -1227,182 +427,11 @@ async def resolve_effective_scope_for_chat(
 _resolve_effective_scope_for_chat = resolve_effective_scope_for_chat
 
 
-def _current_media_evidence_ids_sync(
-    media_db: Any,
-    media_ids: frozenset[str],
-) -> Optional[frozenset[tuple[CanonicalSourceKind, str]]]:
-    """Return current media identities with one batched database read."""
-
-    try:
-        rows = _sensitive_fetchall(
-            media_db,
-            "SELECT id FROM Media "
-            "WHERE id IN (SELECT value FROM json_each(?)) AND deleted = 0",
-            (json.dumps(sorted(media_ids)),),
-        )
-    except Exception:
-        logger.warning(
-            "Prompt-boundary authority unavailable; status=unavailable; "
-            "reason=media_existence_read_failure"
-        )
-        return None
-    return frozenset((CanonicalSourceKind.MEDIA_DB, str(row[0])) for row in rows)
-
-
-def _current_chacha_evidence_ids_sync(
-    db: Any,
-    note_ids: frozenset[str],
-    conversation_ids: frozenset[str],
-) -> Optional[frozenset[tuple[CanonicalSourceKind, str]]]:
-    """Return current note/conversation identities with one batched DB read."""
-
-    try:
-        rows = _sensitive_fetchall(
-            db,
-            "SELECT 'notes' AS source_kind, id FROM notes "
-            "WHERE id IN (SELECT value FROM json_each(?)) AND deleted = 0 "
-            "UNION ALL "
-            "SELECT 'chat_history' AS source_kind, id FROM conversations "
-            "WHERE id IN (SELECT value FROM json_each(?)) AND deleted = 0",
-            (
-                json.dumps(sorted(note_ids)),
-                json.dumps(sorted(conversation_ids)),
-            ),
-        )
-    except Exception:
-        logger.warning(
-            "Prompt-boundary authority unavailable; status=unavailable; "
-            "reason=chacha_existence_read_failure"
-        )
-        return None
-    source_kinds = {
-        "notes": CanonicalSourceKind.NOTES,
-        "chat_history": CanonicalSourceKind.CHAT_HISTORY,
-    }
-    return frozenset((source_kinds[str(row[0])], str(row[1])) for row in rows)
-
-
-async def _current_local_evidence_ids(
-    app: "TldwCli",
-    ids_by_source: Dict[CanonicalSourceKind, frozenset[str]],
-) -> Optional[frozenset[tuple[CanonicalSourceKind, str]]]:
-    """Read each backing store on the thread required by that store."""
-
-    found: set[tuple[CanonicalSourceKind, str]] = set()
-    media_ids = ids_by_source.get(CanonicalSourceKind.MEDIA_DB, frozenset())
-    if media_ids:
-        media_db = getattr(app, "media_db", None)
-        if media_db is None:
-            return None
-        if bool(getattr(media_db, "is_memory_db", False)):
-            media_found = _current_media_evidence_ids_sync(media_db, media_ids)
-        else:
-            media_found = await asyncio.to_thread(
-                _current_media_evidence_ids_sync, media_db, media_ids
-            )
-        if media_found is None:
-            return None
-        found.update(media_found)
-
-    note_ids = ids_by_source.get(CanonicalSourceKind.NOTES, frozenset())
-    conversation_ids = ids_by_source.get(CanonicalSourceKind.CHAT_HISTORY, frozenset())
-    if note_ids or conversation_ids:
-        db = getattr(app, "chachanotes_db", None)
-        if db is None:
-            return None
-        if bool(getattr(db, "is_memory_db", False)):
-            chacha_found = _current_chacha_evidence_ids_sync(
-                db, note_ids, conversation_ids
-            )
-        else:
-            chacha_found = await asyncio.to_thread(
-                _current_chacha_evidence_ids_sync,
-                db,
-                note_ids,
-                conversation_ids,
-            )
-        if chacha_found is None:
-            return None
-        found.update(chacha_found)
-
-    return frozenset(found)
-
-
-async def _authorize_local_results_for_prompt(
-    app: "TldwCli",
-    normalized_results: Sequence[NormalizedLocalResult],
-    *,
-    request_session: _RequestScopeSession | None | object = _CURRENT_ACTIVE_SESSION,
-) -> _PromptAuthorizationResult:
-    """Re-read one request's authority and backing rows before markers."""
-
-    if not normalized_results:
-        return _PromptAuthorizationResult((), True)
-    try:
-        if request_session is _CURRENT_ACTIVE_SESSION:
-            effective_scope = await resolve_effective_scope_for_chat(
-                app, use_cache=False
-            )
-        else:
-            resolution = await resolve_scope_for_session(
-                app,
-                request_session,
-                use_cache=False,
-            )
-            effective_scope = resolution.effective
-    except Exception:
-        logger.warning(
-            "Prompt-boundary authority unavailable; status=unavailable; "
-            "reason=scope_resolution_failure"
-        )
-        return _PromptAuthorizationResult((), False)
-    if effective_scope.state == "empty":
-        authority_failed = effective_scope.cause in {
-            "conversation-scope-unavailable",
-            "scope-existence-unavailable",
-            "workspace-scope-unavailable",
-        }
-        return _PromptAuthorizationResult((), not authority_failed)
-
-    ids_by_source: Dict[CanonicalSourceKind, set[str]] = {}
-    for result in normalized_results:
-        if not isinstance(result, NormalizedLocalResult):
-            return _PromptAuthorizationResult((), False)
-        ids_by_source.setdefault(result.source_kind, set()).add(result.source_id)
-    frozen_ids = {
-        source_kind: frozenset(source_ids)
-        for source_kind, source_ids in ids_by_source.items()
-    }
-    existing = await _current_local_evidence_ids(app, frozen_ids)
-    if existing is None:
-        return _PromptAuthorizationResult((), False)
-
-    scope_source_types = {
-        CanonicalSourceKind.MEDIA_DB: SOURCE_TYPE_MEDIA,
-        CanonicalSourceKind.NOTES: SOURCE_TYPE_NOTE,
-    }
-    authorized: list[NormalizedLocalResult] = []
-    for result in normalized_results:
-        identity = (result.source_kind, result.source_id)
-        if identity not in existing:
-            continue
-        if effective_scope.state == "scoped":
-            source_type = scope_source_types.get(result.source_kind)
-            if source_type is None:
-                continue
-            if result.source_id not in effective_scope.allowlist.get(
-                source_type, frozenset()
-            ):
-                continue
-        authorized.append(result)
-    return _PromptAuthorizationResult(tuple(authorized), True)
-
-
 async def authorize_local_results_for_prompt(
     app: "TldwCli",
-    normalized_results: Sequence[NormalizedLocalResult],
-) -> Tuple[NormalizedLocalResult, ...]:
-    """Re-read current authority and backing rows before assigning markers.
+    normalized_results: Sequence["NormalizedLocalResult"],
+) -> Tuple["NormalizedLocalResult", ...]:
+    """Authorize candidates against the active Console session's scope.
 
     Args:
         app: Running app with current session and local DB authorities.
@@ -1412,12 +441,15 @@ async def authorize_local_results_for_prompt(
         Current, authorized candidates in their original order. Any authority
         or existence read failure returns an empty tuple.
     """
+    from ...RAG_Search import scope_evidence
 
-    authorization = await _authorize_local_results_for_prompt(
-        app,
+    services = app.services
+    return await scope_evidence.authorize_local_results_for_prompt(
+        services.storage,
+        services.workspace,
         normalized_results,
+        active_session=lambda: _active_console_session(app),
     )
-    return authorization.candidates
 
 
 async def assemble_local_evidence_for_prompt(
@@ -1425,8 +457,8 @@ async def assemble_local_evidence_for_prompt(
     results: List[Any],
     *,
     max_length: int = 90,
-) -> LocalEvidenceContext:
-    """Opt in to strict normalization, fresh authorization, and formatting.
+) -> "LocalEvidenceContext":
+    """Normalize, authorize against the active session, and format evidence.
 
     Args:
         app: Running app with current session and local DB authorities.
@@ -1436,224 +468,16 @@ async def assemble_local_evidence_for_prompt(
     Returns:
         Exact prompt context and canonical per-entry snapshot captures.
     """
+    from ...RAG_Search import scope_evidence
 
-    normalized: list[NormalizedLocalResult] = []
-    for candidate_rank, result in enumerate(results, start=1):
-        try:
-            normalized.append(
-                normalize_local_result(result, candidate_rank=candidate_rank)
-            )
-        except LocalResultNormalizationError:
-            continue
-    authorized = await authorize_local_results_for_prompt(app, tuple(normalized))
-    return format_local_evidence_context(authorized, max_length=max_length)
-
-
-def _create_local_capture_builder(app: "TldwCli") -> CitationTraceBuilder | None:
-    """Ask the configured repository for one opaque request-scoped builder."""
-
-    request_id = new_opaque_id("request")
-    generation_id = new_opaque_id("generation")
-    repository = getattr(app, "citation_trace_repository", None)
-    factory = getattr(repository, "create_local_trace_builder", None)
-    if not callable(factory):
-        return None
-    try:
-        builder = factory(
-            request_id=request_id,
-            generation_id=generation_id,
-        )
-    except Exception:
-        logger.warning(
-            "Canonical RAG capture unavailable; reason=builder_factory_failure"
-        )
-        return None
-    return builder if isinstance(builder, CitationTraceBuilder) else None
-
-
-def _repair_contract_for_local_evidence(
-    formatted: LocalEvidenceContext,
-) -> CitationRepairContract | None:
-    """Build bounded repair eligibility from exact formatted entry metadata."""
-
-    if not isinstance(formatted, LocalEvidenceContext):
-        return None
-    if not formatted.context or not formatted.entries:
-        return None
-    try:
-        return CitationRepairContract(
-            schema_version=1,
-            marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
-            allowed_ordinals=tuple(range(1, len(formatted.entries) + 1)),
-            evidence_context=formatted.context,
-        )
-    except (TypeError, ValueError, UnicodeEncodeError):
-        logger.warning(
-            "Citation repair contract unavailable; "
-            "reason=repair_contract_validation_failure"
-        )
-        return None
-
-
-def _selected_source_kinds(
-    sources: Dict[str, bool],
-) -> Tuple[CanonicalSourceKind, ...]:
-    """Map selected UI source families to the canonical local allowlist."""
-
-    mappings = (
-        ("media", CanonicalSourceKind.MEDIA_DB),
-        ("notes", CanonicalSourceKind.NOTES),
-        ("conversations", CanonicalSourceKind.CHAT_HISTORY),
+    services = app.services
+    return await scope_evidence.assemble_local_evidence_for_prompt(
+        services.storage,
+        services.workspace,
+        results,
+        active_session=lambda: _active_console_session(app),
+        max_length=max_length,
     )
-    return tuple(source_kind for key, source_kind in mappings if sources.get(key))
-
-
-async def _capture_local_pipeline_results(
-    app: "TldwCli",
-    *,
-    builder: CitationTraceBuilder | None,
-    request_session: _RequestScopeSession | None,
-    user_message: str,
-    search_mode: str,
-    sources: Dict[str, bool],
-    top_k: int,
-    max_context_length: int,
-    enable_rerank: bool,
-    effective_scope: EffectiveScope,
-    results: List[Any],
-    retrieval_started_at: datetime,
-    retrieval_ended_at: datetime,
-    retrieval_elapsed_ms: int,
-    legacy_context: str | None,
-) -> LocalRagContextResult:
-    """Assemble exact local evidence and optionally record canonical objects."""
-
-    try:
-        selected_source_kinds = _selected_source_kinds(sources)
-        selected_source_kind_set = frozenset(selected_source_kinds)
-        normalized: list[NormalizedLocalResult] = []
-        rejected_count = 0
-        off_selection_count = 0
-        canonical_candidate_seen = False
-        for candidate_rank, result in enumerate(results, start=1):
-            try:
-                candidate = normalize_local_result(
-                    result,
-                    candidate_rank=candidate_rank,
-                )
-                canonical_candidate_seen = True
-                if candidate.source_kind not in selected_source_kind_set:
-                    off_selection_count += 1
-                    continue
-                normalized.append(candidate)
-            except LocalResultNormalizationError:
-                rejected_count += 1
-        if rejected_count:
-            logger.warning(
-                "RAG candidates rejected; "
-                f"count={rejected_count}; reason=invalid_local_result"
-            )
-        if off_selection_count:
-            logger.info(
-                "RAG candidates excluded; "
-                f"count={off_selection_count}; reason=source_not_selected"
-            )
-
-        authorization = await _authorize_local_results_for_prompt(
-            app,
-            tuple(normalized),
-            request_session=request_session,
-        )
-        if not authorization.completed:
-            logger.warning(
-                "Canonical RAG capture unavailable; reason=prompt_authority_failure"
-            )
-            return LocalRagContextResult(None, None)
-        excluded_count = len(normalized) - len(authorization.candidates)
-        if excluded_count:
-            logger.info(
-                "RAG candidates excluded; "
-                f"count={excluded_count}; reason=not_currently_authorized"
-            )
-
-        formatted = format_local_evidence_context(
-            authorization.candidates,
-            max_length=max_context_length,
-        )
-        context = formatted.context if formatted.context.strip() else None
-        repair_contract = _repair_contract_for_local_evidence(formatted)
-        if (
-            context is None
-            and not canonical_candidate_seen
-            and legacy_context
-            and legacy_context.strip()
-        ):
-            logger.info("RAG context retained; reason=legacy_pipeline_fallback")
-            return LocalRagContextResult(legacy_context, None)
-        if builder is None:
-            return LocalRagContextResult(
-                context,
-                None,
-                citation_repair_contract=repair_contract,
-            )
-    except Exception:
-        logger.error(
-            "Canonical RAG capture failed; reason=canonical_capture_failure; "
-            f"mode={search_mode}; requested_top_k={top_k}; "
-            f"scope_state={effective_scope.state}"
-        )
-        return LocalRagContextResult(None, None)
-
-    try:
-        retrieval_metadata = LocalRetrievalRunMetadata(
-            search_mode=search_mode,
-            requested_top_k=top_k,
-            max_context_characters=max_context_length,
-            rerank_enabled=bool(enable_rerank),
-            source_kinds=selected_source_kinds,
-            scope_state=effective_scope.state,
-        )
-        candidates = tuple(
-            result.to_candidate_capture() for result in authorization.candidates
-        )
-        run_id = builder.record_retrieval_run(
-            stage=search_mode,
-            raw_query=user_message,
-            candidates=candidates,
-            retrieval_metadata=retrieval_metadata,
-            started_at=retrieval_started_at,
-            ended_at=retrieval_ended_at,
-        )
-        prompt_evidence_set_id = None
-        if formatted.entries:
-            prompt_evidence_set_id = builder.record_prompt_evidence_set(
-                run_id=run_id,
-                evidence=formatted.entries,
-                created_at=datetime.now(UTC),
-            )
-        logger.info(
-            "Canonical RAG capture completed; "
-            f"mode={search_mode}; candidates={len(candidates)}; "
-            f"prompt_entries={len(formatted.entries)}; "
-            f"duration_ms={retrieval_elapsed_ms}"
-        )
-        return LocalRagContextResult(
-            context,
-            builder,
-            prompt_evidence_set_id,
-            repair_contract,
-        )
-    except Exception:
-        logger.error(
-            "Canonical RAG capture failed; reason=canonical_capture_failure; "
-            f"mode={search_mode}; requested_top_k={top_k}; "
-            f"scope_state={effective_scope.state}"
-        )
-        return LocalRagContextResult(
-            context,
-            None,
-            citation_repair_contract=repair_contract,
-        )
 
 
 async def capture_console_staged_evidence_for_chat(
@@ -1661,156 +485,81 @@ async def capture_console_staged_evidence_for_chat(
     launch: Any,
     *,
     user_message: str,
-) -> LocalRagContextResult:
-    """Capture Console-staged local evidence at the provider prompt boundary.
+) -> "LocalRagContextResult":
+    """Capture Console-staged local evidence with the app's services.
 
-    Console Library-RAG retrieval is staged separately from the eventual
-    generation request. This adapter re-validates the serialized evidence
-    bundle, re-reads local source authority, formats the exact prompt blocks,
-    and creates a generation-scoped builder only when canonical capture is
-    available.
+    The capture itself is ``RAG_Search.scope_evidence.
+    capture_console_staged_evidence``; this wrapper supplies the ``storage``,
+    ``workspace`` and citation trace repository from ``app.services`` and
+    authorizes against the active Console session.
 
     Args:
-        app: Running app with local source databases and citation repository.
+        app: The running app; ``app.services`` and the active Console
+            session are read.
         launch: Current ``ConsoleLiveWorkLaunch``-like staged context.
         user_message: Current Console draft, used only when the staged bundle
             has no retrieval query.
 
     Returns:
         Exact provider context, an optional request-local citation builder,
-        and its authoritative prompt-evidence-set ID. The ID is present only
-        after a non-empty prompt evidence set is recorded successfully;
-        otherwise it is ``None``.
+        its prompt-evidence-set ID and the repair contract; empty fields when
+        nothing is authorized or recorded.
     """
+    from ...RAG_Search import scope_evidence
 
-    payload = getattr(launch, "payload", None)
-    if not isinstance(payload, Mapping):
-        return LocalRagContextResult(None, None)
-    bundle_payload = payload.get("evidence_bundle")
-    if not isinstance(bundle_payload, Mapping):
-        return LocalRagContextResult(None, None)
-    try:
-        bundle = EvidenceBundle.from_payload(bundle_payload)
-    except Exception:
-        logger.warning(
-            "Console RAG evidence unavailable; reason=invalid_evidence_bundle"
-        )
-        return LocalRagContextResult(None, None)
-
-    references = bundle.available_references()
-    normalized = normalize_console_evidence_references(references)
-    rejected_count = len(references) - len(normalized)
-    if rejected_count:
-        logger.info(
-            "Console RAG evidence excluded; "
-            f"count={rejected_count}; reason=not_canonical_local_evidence"
-        )
-    if not normalized:
-        return LocalRagContextResult(None, None)
-
-    request_session = _capture_request_scope_session(app)
-    authorization = await _authorize_local_results_for_prompt(
-        app,
-        normalized,
-        request_session=request_session,
+    services = app.services
+    return await scope_evidence.capture_console_staged_evidence(
+        services.storage,
+        services.workspace,
+        services.chat.citation_trace_repository,
+        launch,
+        user_message=user_message,
+        active_session=lambda: _capture_request_scope_session(app),
     )
-    if not authorization.completed:
-        logger.warning(
-            "Console RAG evidence unavailable; reason=prompt_authority_failure"
-        )
-        return LocalRagContextResult(None, None)
-    formatted = format_console_evidence_context(authorization.candidates)
-    context = formatted.context if formatted.context.strip() else None
-    if context is None:
-        return LocalRagContextResult(None, None)
-    repair_contract = _repair_contract_for_local_evidence(formatted)
 
-    builder = _create_local_capture_builder(app)
-    if builder is None:
-        return LocalRagContextResult(
-            context,
-            None,
-            citation_repair_contract=repair_contract,
-        )
 
-    try:
-        scope_resolution = await resolve_scope_for_session(
-            app,
-            request_session,
-            use_cache=False,
-        )
-        source_kinds = tuple(
-            dict.fromkeys(
-                candidate.source_kind for candidate in authorization.candidates
-            )
-        )
-        requested_top_k = payload.get("requested_top_k", len(normalized))
-        if isinstance(requested_top_k, bool):
-            requested_top_k = len(normalized)
-        try:
-            requested_top_k = int(requested_top_k)
-        except (TypeError, ValueError):
-            requested_top_k = len(normalized)
-        requested_top_k = max(
-            1,
-            min(requested_top_k, RETRIEVAL_CANDIDATES_PER_RUN_MAX),
-        )
-        captured_at = datetime.now(UTC)
-        run_id = builder.record_retrieval_run(
-            stage="console_rag",
-            raw_query=bundle.query or user_message,
-            candidates=tuple(
-                candidate.to_candidate_capture(candidate_rank=rank)
-                for rank, candidate in enumerate(
-                    authorization.candidates,
-                    start=1,
-                )
-            ),
-            retrieval_metadata=LocalRetrievalRunMetadata(
-                search_mode="console_rag",
-                requested_top_k=requested_top_k,
-                max_context_characters=len(context),
-                rerank_enabled=False,
-                source_kinds=source_kinds,
-                scope_state=scope_resolution.effective.state,
-            ),
-            started_at=captured_at,
-            ended_at=captured_at,
-        )
-        prompt_evidence_set_id = builder.record_prompt_evidence_set(
-            run_id=run_id,
-            evidence=formatted.entries,
-            created_at=captured_at,
-        )
-    except Exception:
-        logger.error(
-            "Console canonical RAG capture failed; "
-            "reason=canonical_capture_failure; "
-            f"normalized_candidates={len(normalized)}; "
-            f"authorized_candidates={len(authorization.candidates)}"
-        )
-        return LocalRagContextResult(
-            context,
-            None,
-            citation_repair_contract=repair_contract,
-        )
+async def capture_console_prepared_evidence_for_chat(
+    app: "TldwCli",
+    bundle: Any,
+    *,
+    user_message: str,
+    session: Any = None,
+) -> "LocalRagContextResult":
+    """Capture an Automatic send's prepared bundle with the app's services.
 
-    logger.info(
-        "Console canonical RAG capture completed; "
-        f"candidates={len(authorization.candidates)}; "
-        f"prompt_entries={len(formatted.entries)}"
-    )
-    return LocalRagContextResult(
-        context,
-        builder,
-        prompt_evidence_set_id,
-        repair_contract,
+    The capture itself is ``RAG_Search.scope_evidence.
+    capture_console_prepared_evidence``; this wrapper supplies the
+    ``storage``, ``workspace`` and citation trace repository from
+    ``app.services``.
+
+    Args:
+        app: The running app; ``app.services`` is read, and the active Console
+            session only when ``session`` yields no scope identity.
+        bundle: The ``EvidenceBundle`` an Automatic preparation produced.
+        user_message: The executed draft, used when the bundle has no query.
+        session: The turn's own Console session, which authorizes the
+            evidence even after a tab switch.
+
+    Returns:
+        The same contract as ``capture_console_staged_evidence_for_chat``.
+    """
+    from ...RAG_Search import scope_evidence
+
+    services = app.services
+    return await scope_evidence.capture_console_prepared_evidence(
+        services.storage,
+        services.workspace,
+        services.chat.citation_trace_repository,
+        bundle,
+        user_message=user_message,
+        session=session,
+        active_session=lambda: _capture_request_scope_session(app),
     )
 
 
 async def get_rag_context_capture_for_chat(
     app: "TldwCli", user_message: str
-) -> LocalRagContextResult:
+) -> "LocalRagContextResult":
     """Get local RAG context with optional request-scoped citation capture.
 
     Pipelines retain their legacy ``(results, context)`` tuple. Recognized
@@ -1822,7 +571,14 @@ async def get_rag_context_capture_for_chat(
     """
     from textual.css.query import NoMatches
 
-    builder = _create_local_capture_builder(app)
+    from ...RAG_Search.scope_evidence import (
+        LocalRagContextResult,
+        capture_local_pipeline_results,
+        create_local_capture_builder,
+    )
+
+    services = app.services
+    builder = create_local_capture_builder(services.chat.citation_trace_repository)
     request_session = _capture_request_scope_session(app)
 
     # Check if RAG is enabled
@@ -2024,8 +780,9 @@ async def get_rag_context_capture_for_chat(
         retrieval_elapsed_ms = int((perf_counter() - retrieval_started_clock) * 1000)
         _notify_semantic_leg_state(app, diagnostics, results)
 
-        return await _capture_local_pipeline_results(
-            app,
+        return await capture_local_pipeline_results(
+            services.storage,
+            services.workspace,
             builder=builder,
             request_session=request_session,
             user_message=user_message,

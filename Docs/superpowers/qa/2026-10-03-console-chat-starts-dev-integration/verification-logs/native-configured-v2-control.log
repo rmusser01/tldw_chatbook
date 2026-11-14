@@ -1,0 +1,7 @@
+..                                                                       [100%]
+============================= slowest 25 durations =============================
+2.08s call     Tests/Chat/test_console_chat_start.py::test_native_configured_v2_initialization_and_stop_proposal[True]
+1.59s call     Tests/Chat/test_console_chat_start.py::test_native_configured_v2_initialization_and_stop_proposal[False]
+
+(4 durations < 1s hidden.)
+2 passed in 4.51s

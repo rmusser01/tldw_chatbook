@@ -216,6 +216,9 @@ class _RealActivateStub(_Stub):
     def _capture_console_draft_switch_snapshot(self):
         pass
 
+    def _bind_composer_after_switch(self):
+        pass
+
     def _sync_console_temporary_chip(self):
         pass
 

@@ -183,8 +183,11 @@ print("RAW_CLI_CONSTRUCTION_OK")
 
 
 _REAL_USE_PATH_SNIPPET = """
+import os
 import sys
 from pathlib import Path
+
+working_directory = Path(os.environ["XDG_DATA_HOME"]).resolve()
 
 import pydantic
 
@@ -208,7 +211,7 @@ ok = LocalCommandCallArgs(
     invocation_id="inv-1",
     command="echo hello",
     shell="bash",
-    cwd="/tmp",
+    cwd=str(working_directory),
 )
 assert ok.command == "echo hello"
 
@@ -217,7 +220,7 @@ try:
         invocation_id="inv-2",
         command="x" * (MAX_RAW_COMMAND_BYTES + 1),
         shell="bash",
-        cwd="/tmp",
+        cwd=str(working_directory),
     )
 except pydantic.ValidationError:
     pass
@@ -229,7 +232,7 @@ def _result_args(**overrides):
     fields = dict(
         invocation_id="inv-r",
         shell="bash",
-        cwd="/tmp",
+        cwd=str(working_directory),
         stdout_preview="out",
         stderr_preview="err",
         elapsed_seconds=1.0,
@@ -270,7 +273,7 @@ request = RawCliRequest(
     caller="user",
     console_session_id="session-1",
     command="echo hello",
-    initial_directory=Path("/tmp"),
+    initial_directory=working_directory,
     shell="bash",
     timeout_seconds=1.0,
 )

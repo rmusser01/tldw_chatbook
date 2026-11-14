@@ -11,7 +11,7 @@ dependencies:
 references:
   - Docs/superpowers/specs/2026-08-31-workspace-files-inspector-design.md
   - >-
-    backlog/decisions/079-workspace-file-inspector-direct-user-authority-and-save-publication.md
+    backlog/decisions/326-workspace-file-inspector-direct-user-authority-and-save-publication.md
   - task-26042
   - task-26043
 ---
@@ -38,7 +38,7 @@ Add useful Git status to the completed Workspace Files inspector without allowin
 ## Definition of Done
 <!-- DOD:BEGIN -->
 - [ ] #1 All acceptance criteria are checked only after their behavior and prohibited side effects are evidenced.
-- [ ] #2 The task is moved to In Progress before an Implementation Plan is added, and that plan records ADR required: yes, ADR-079, and the reason.
+- [ ] #2 The task is moved to In Progress before an Implementation Plan is added, and that plan records ADR required: yes, ADR-326, and the reason.
 - [ ] #3 Targeted automated tests, relevant static checks, and git diff --check pass; a full suite is run only after explicit user approval.
 - [ ] #4 Production-shaped Textual evidence and an isolated live scratch verification cover the user-facing path and preserve unrelated Console and profile state.
 - [ ] #5 Relevant documentation and concise Implementation Notes identify the approach, trade-offs, files changed, verification, and any plan deviation.

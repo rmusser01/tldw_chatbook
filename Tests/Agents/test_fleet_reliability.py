@@ -65,6 +65,7 @@ def test_uncopyable_transcript_refuses_retention_without_claiming_steering():
     assert not terminal.can_resume
 
 
+@pytest.mark.bootstrap_profile
 def test_service_reports_a_full_live_mailbox_without_calling_it_finished(tmp_path):
     db = AgentRunsDB(tmp_path / "runs.db", client_id="review")
     holder = {}

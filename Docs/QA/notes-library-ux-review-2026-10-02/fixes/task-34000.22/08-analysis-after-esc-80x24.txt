@@ -1,0 +1,24 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 S  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  N  Media (23)      Sets              I       ‹ Back
+  a  Media · 23 of 23 · all types ·…   t  Workshop handout
+  v   ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ Clear filter    e  Seed
+      ▊  Title/keyw  ▎                 m    ○ Find  Note  Read later
+      ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                 s    Use in Console  More
+        type: All types    sort: New      Finish editing the analysis first.
+--->
+        Export…     Trash     Select        Read  Analysis (selected)  Highligh
+        Review these                      ┌────────────────────────────────────┐
+      ▸ Workshop handout             <--- │ Key points: the handout covers     │
+          pdf · updated 1m · loaded ▆     │ the roadmap.                       │
+        Garden plan 2027               ╭─────────────────────────────────────╮ │
+--->      document · updated 1m        │                                     │ │
+        Interview with a librarian     │ Unsaved analysis — Save or Discard  │ │
+          audio · updated 1m           │ changes first.                      │ │
+        Changelog 2026-09              │                                     │ │
+         1-20 of 23 · Page 1 of 2      ╰─────────────────────────────────────╯ │
+        Already on the first page.        └────────────────────────────────────┘
+           ○ Previous     Next                   Save         Discard changes
+  typing in field | esc save or discard first | F1 · F6 · Ctrl+P · Ctrl+Q

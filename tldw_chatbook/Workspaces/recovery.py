@@ -13,4 +13,6 @@ class _ChangeTracking(_RawDeclaration):
 
 
 def recovery_adapters() -> tuple[OwnerAdapter, ...]:
-    return (_ChangeTracking("workspaces.change_tracking"),)
+    from .project_index.recovery import recovery_adapters as project_adapters
+
+    return (_ChangeTracking("workspaces.change_tracking"), *project_adapters())

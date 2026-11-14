@@ -1,0 +1,401 @@
+diff --git a/Tests/Chat/test_console_chat_start.py b/Tests/Chat/test_console_chat_start.py
+index 8266c39b8f..e903a5e1c6 100644
+--- a/Tests/Chat/test_console_chat_start.py
++++ b/Tests/Chat/test_console_chat_start.py
+@@ -3709,3 +3709,200 @@ async def test_post_drain_cleanup_keeps_outcome_and_exact_capacity_release(
+         await controller.shutdown()
+         runs.close()
+         store.persistence.db.close_connection()
++
++
++@pytest.mark.asyncio
++@pytest.mark.parametrize("failure", ["canonical_resolution", "persistent_registration"])
++@pytest.mark.parametrize("worker", ["commit", "provider"])
++@pytest.mark.parametrize("replacement", [False, True])
++async def test_persistent_registration_and_settlement_failure_retains_native_denial(
++    tmp_path, monkeypatch, failure, worker, replacement
++):
++    """Drained accepted work remains charged and denied despite both cleanup faults."""
++    import asyncio
++    from copy import copy
++    from pathlib import Path
++    import sys
++    from threading import Event
++    from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
++    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
++
++    controller, store, runs, source, target, chain, request = await _native_start_rig(
++        tmp_path
++    )
++    ledger = runs.automatic_work
++    owner = controller.fleet_wake.runtime_owner_id
++    ledger.recover(current_owner_id=owner)
++    unrelated = ledger.create_chain("unrelated", root_submission_id="unrelated")
++    alias = tmp_path / "alias"
++    alias.mkdir()
++    peer = AgentRunsDB(
++        alias / ".." / runs.db_path.name, client_id="peer", reconcile_on_init=False
++    )
++    peer_ledger = peer.automatic_work
++    entered, release, exited = Event(), Event(), Event()
++    original = (
++        store.commit_durable_turn
++        if worker == "commit"
++        else controller._agent_bridge.run_reply
++    )
++
++    def held(*args, **kwargs):
++        entered.set()
++        try:
++            assert release.wait(10)
++            return original(*args, **kwargs)
++        finally:
++            exited.set()
++
++    monkeypatch.setattr(
++        store if worker == "commit" else controller._agent_bridge,
++        "commit_durable_turn" if worker == "commit" else "run_reply",
++        held,
++    )
++    # Real SQLite rejects the durable settlement transaction, after acceptance.
++    with runs.transaction() as conn:
++        conn.execute(
++            "CREATE TRIGGER deny_review BEFORE UPDATE OF state ON automatic_chat_start_attempts WHEN NEW.state='review_required' BEGIN SELECT RAISE(ABORT, 'private settlement failure'); END"
++        )
++    resolve = Path.resolve
++
++    def fail_resolution(path, *args, **kwargs):
++        if (
++            path == runs.db_path
++            and sys._getframe(1).f_globals.get("__name__")
++            == "tldw_chatbook.DB.automatic_work"
++        ):
++            raise OSError("private canonical identity failure")
++        return resolve(path, *args, **kwargs)
++
++    registrations = []
++
++    def fail_registration(*args, **kwargs):
++        registrations.append(kwargs["chain_id"])
++        raise OSError("private persistent registration failure")
++
++    start = asyncio.create_task(controller._chat_start.start(request))
++    try:
++        assert await asyncio.to_thread(entered.wait, 5)
++        item = controller._chat_start._active[target.id]
++        captured_owner, token = item.capacity_owner, item.token
++        if worker == "provider":
++            assert (await start).launch_status == "started"
++            item.receipted = False
++        # Identity is known before this real filesystem failure starts.
++        monkeypatch.setattr(Path, "resolve", fail_resolution)
++        if failure == "persistent_registration":
++            monkeypatch.setattr(ledger, "_restrict_chat_start", fail_registration)
++        item.task.cancel()
++        await asyncio.sleep(0.05)
++        item.task.cancel()
++        await asyncio.sleep(0.05)
++        assert captured_owner._automatic_primary_claims[target.id] is token
++        assert not item.task.done() and not exited.is_set()
++        if worker == "commit":
++            assert not item.outcome.done()
++        if replacement:
++            replacement_item = copy(item)
++            replacement_item.token = object()
++            controller._chat_start._active[target.id] = replacement_item
++            captured_owner._automatic_primary_claims[target.id] = replacement_item.token
++        release.set()
++        assert await asyncio.gather(item.task, return_exceptions=True) == [None]
++        assert exited.is_set() and item.outcome.done()
++        if worker == "commit":
++            outcome = await start
++            assert (outcome.launch_status, outcome.reason) == (
++                "review_required",
++                "settlement_unconfirmed",
++            )
++        if replacement:
++            assert controller._chat_start._active[target.id] is replacement_item
++            assert (
++                captured_owner._automatic_primary_claims[target.id]
++                is replacement_item.token
++            )
++        else:
++            assert target.id not in controller._chat_start._active
++            assert target.id not in captured_owner._automatic_primary_claims
++        if failure == "persistent_registration":
++            assert len(registrations) == 2
++        assert (
++            ledger.read_chat_start_attempt(request.attempt_id, owner_id=owner).state
++            == "accepted"
++        )
++        assert ledger.snapshot(chain).used["generation"] == 1
++        assert ledger.snapshot(chain).status == "active"
++        # Only transient same-key denial can protect this healthy alias handle.
++        with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
++            peer_ledger.check_active(chain, owner_id=owner)
++        peer_ledger.check_active(unrelated, owner_id=owner)
++    finally:
++        release.set()
++        monkeypatch.setattr(Path, "resolve", resolve)
++        start.cancel()
++        await asyncio.gather(start, return_exceptions=True)
++        await asyncio.gather(*controller._chat_start.tasks(), return_exceptions=True)
++        controller._chat_start._active.pop(target.id, None)
++        controller.fleet_wake._automatic_primary_claims.pop(target.id, None)
++        ledger._clear_chat_start_restriction(request.attempt_id, owner_id=owner)
++        peer.close()
++        await controller.shutdown()
++        runs.close()
++        store.persistence.db.close_connection()
++
++
++@pytest.mark.asyncio
++async def test_initial_identity_failure_precedes_native_start_authority(
++    tmp_path, monkeypatch
++):
++    """An unresolved canonical key refuses start before a slot or attempt exists."""
++    from pathlib import Path
++    import sys
++
++    controller, store, runs, source, target, chain, request = await _native_start_rig(
++        tmp_path
++    )
++    # The real start boundary must construct a fresh ledger, as on first access.
++    ledger = runs.__dict__.pop("automatic_work")
++    resolve = Path.resolve
++
++    def fail_resolution(path, *args, **kwargs):
++        if (
++            path == runs.db_path
++            and sys._getframe(1).f_globals.get("__name__")
++            == "tldw_chatbook.DB.automatic_work"
++        ):
++            raise OSError("private initial identity failure")
++        return resolve(path, *args, **kwargs)
++
++    monkeypatch.setattr(Path, "resolve", fail_resolution)
++    try:
++        with pytest.raises(OSError):
++            await controller._chat_start.start(request)
++        assert not controller._chat_start._active
++        assert not controller._chat_start.tasks()
++        assert not controller.fleet_wake._automatic_primary_claims
++        with runs.connection() as conn:
++            assert (
++                conn.execute(
++                    "SELECT count(*) FROM automatic_chat_start_attempts"
++                ).fetchone()[0]
++                == 0
++            )
++            assert (
++                conn.execute(
++                    "SELECT count(*) FROM automatic_work_reservations"
++                ).fetchone()[0]
++                == 0
++            )
++        assert target.draft == "original"
++        assert not store.persistence.db.get_messages_for_conversation(
++            request.conversation_id
++        )
++    finally:
++        monkeypatch.setattr(Path, "resolve", resolve)
++        runs.__dict__["automatic_work"] = ledger
++        await controller.shutdown()
++        runs.close()
++        store.persistence.db.close_connection()
+diff --git a/Tests/DB/test_automatic_chat_starts.py b/Tests/DB/test_automatic_chat_starts.py
+index 79692d136e..5599710f8d 100644
+--- a/Tests/DB/test_automatic_chat_starts.py
++++ b/Tests/DB/test_automatic_chat_starts.py
+@@ -746,3 +746,111 @@ def test_missing_start_confirmation_requires_successful_owned_transaction(
+             == reservations
+         )
+     assert ledger.snapshot(root).used["generation"] == 0
++
++
++@pytest.mark.parametrize("memory", [False, True])
++def test_restriction_identity_is_captured_for_aliases_and_memory_peers(
++    tmp_path, monkeypatch, memory
++):
++    """Cleanup and admission keep the same key when filesystem observation fails."""
++    from pathlib import Path
++    import sys
++    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
++    from tldw_chatbook.DB.automatic_work import AutomaticWorkLedger
++
++    db = AgentRunsDB(
++        ":memory:" if memory else tmp_path / "identity.sqlite", client_id="identity"
++    )
++    other = AgentRunsDB(
++        ":memory:" if memory else tmp_path / "other.sqlite", client_id="other"
++    )
++    peer = None
++    ledger = db.automatic_work
++    ledger.recover(current_owner_id="owner")
++    root, _ = source_run(db)
++    other_root, _ = source_run(other)
++    if memory:
++        sibling = AutomaticWorkLedger(db)
++        assert ledger._restriction_database().startswith("memory:")
++        assert (
++            ledger._restriction_database()
++            != other.automatic_work._restriction_database()
++        )
++    else:
++        alias = tmp_path / "alias"
++        alias.mkdir()
++        peer = AgentRunsDB(
++            alias / ".." / db.db_path.name, client_id="alias", reconcile_on_init=False
++        )
++        sibling = peer.automatic_work
++    assert sibling._restriction_database() == ledger._restriction_database()
++    resolve = Path.resolve
++
++    def fail_resolution(path, *args, **kwargs):
++        if (
++            path == db.db_path or (peer is not None and path == peer.db_path)
++        ) and sys._getframe(1).f_globals.get(
++            "__name__"
++        ) == "tldw_chatbook.DB.automatic_work":
++            raise OSError("private canonical identity failure")
++        return resolve(path, *args, **kwargs)
++
++    monkeypatch.setattr(Path, "resolve", fail_resolution)
++    try:
++        ledger._restrict_chat_start("uncertain", owner_id="owner", chain_id=root)
++        with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
++            sibling.check_active(root, owner_id="owner")
++        other.automatic_work.check_active(other_root, owner_id="owner")
++        sibling.recover(current_owner_id="owner")
++        with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
++            sibling.check_active(root, owner_id="owner")
++        sibling._clear_chat_start_restriction("uncertain", owner_id="owner")
++        ledger.check_active(root, owner_id="owner")
++        ledger._restrict_chat_start("uncertain", owner_id="owner", chain_id=root)
++        sibling.recover(current_owner_id="replacement")
++        sibling.check_active(root, owner_id="replacement")
++        assert ledger._restriction_database() == sibling._restriction_database()
++    finally:
++        monkeypatch.setattr(Path, "resolve", resolve)
++        ledger._clear_chat_start_restriction("uncertain", owner_id="owner")
++        if peer is not None:
++            peer.close()
++        db.close()
++        other.close()
++
++
++def test_initial_restriction_identity_failure_refuses_automatic_authority(
++    tmp_path, monkeypatch
++):
++    """A failed initial canonical key must not produce an authority-capable ledger."""
++    from pathlib import Path
++    import sys
++    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
++
++    db = AgentRunsDB(tmp_path / "uncertain.sqlite", client_id="identity")
++    resolve = Path.resolve
++
++    def fail_resolution(path, *args, **kwargs):
++        if (
++            path == db.db_path
++            and sys._getframe(1).f_globals.get("__name__")
++            == "tldw_chatbook.DB.automatic_work"
++        ):
++            raise OSError("private initial identity failure")
++        return resolve(path, *args, **kwargs)
++
++    monkeypatch.setattr(Path, "resolve", fail_resolution)
++    try:
++        with pytest.raises(OSError):
++            db.automatic_work
++        assert "automatic_work" not in db.__dict__
++        with db.connection() as conn:
++            for table in (
++                "automatic_work_chains",
++                "automatic_work_reservations",
++                "automatic_chat_start_attempts",
++            ):
++                assert conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
++    finally:
++        monkeypatch.setattr(Path, "resolve", resolve)
++        db.close()
+diff --git a/tldw_chatbook/Chat/console_chat_start.py b/tldw_chatbook/Chat/console_chat_start.py
+index cc6b21c973..241cfb9f29 100644
+--- a/tldw_chatbook/Chat/console_chat_start.py
++++ b/tldw_chatbook/Chat/console_chat_start.py
+@@ -375,6 +375,21 @@ class ConsoleChatStartCoordinator:
+                 "Chat start failed (phase=restriction, exception_type={})",
+                 type(exc).__name__,
+             )
++            try:
++                # Ordinary registration may fail repeatedly. Preserve denial
++                # with the same pre-established key, without filesystem or SQL.
++                item.ledger._retain_chat_start_restriction(
++                    item.request.attempt_id,
++                    owner_id=item.runtime_owner_id,
++                    chain_id=item.context.chain_id
++                    if item.context is not None
++                    else None,
++                )
++            except BaseException as retain_error:
++                logger.warning(
++                    "Chat start failed (phase=restriction_fallback, exception_type={})",
++                    type(retain_error).__name__,
++                )
+ 
+     async def _run(self, item: AgentChatStartAuthorization) -> None:
+         from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+diff --git a/tldw_chatbook/DB/automatic_work.py b/tldw_chatbook/DB/automatic_work.py
+index 7404c41c7f..45ff19e293 100644
+--- a/tldw_chatbook/DB/automatic_work.py
++++ b/tldw_chatbook/DB/automatic_work.py
+@@ -63,25 +63,38 @@ class AutomaticWorkLedger:
+         self._wall_clock = wall_clock
+         self._monotonic_clock = monotonic_clock
+ 
++        # Establish the existing canonical key before this ledger can authorize
++        # work. Cleanup must never need a fresh filesystem observation.
++        if not db.is_memory_db:
++            self._restriction_database_id = str(db.db_path.resolve())
++        else:
++            # Independent memory stores retain private UUIDs; ledgers for the
++            # same store share the identity even if the property is rebuilt.
++            with _UNCONFIRMED_STARTS_LOCK:
++                identity = getattr(db, "_automatic_work_restriction_id", None)
++                if identity is None:
++                    identity = "memory:" + uuid4().hex
++                    db._automatic_work_restriction_id = identity
++                self._restriction_database_id = identity
++
+     def _restriction_database(self) -> str:
+-        if not self._db.is_memory_db:
+-            return str(self._db.db_path.resolve())
+-        # Repeated :memory: names and eventual Python object-ID reuse must not
+-        # couple independent stores. A ledger shares its DB's private identity.
+-        with _UNCONFIRMED_STARTS_LOCK:
+-            identity = getattr(self._db, "_automatic_work_restriction_id", None)
+-            if identity is None:
+-                identity = "memory:" + uuid4().hex
+-                self._db._automatic_work_restriction_id = identity
+-            return identity
++        return self._restriction_database_id
+ 
+     def _restrict_chat_start(
+         self, attempt_id: str, *, owner_id: str, chain_id: str | None
+     ) -> None:
+         """Retain uncertain authority before settlement I/O, without reading DB."""
++        self._retain_chat_start_restriction(
++            attempt_id, owner_id=owner_id, chain_id=chain_id
++        )
++
++    def _retain_chat_start_restriction(
++        self, attempt_id: str, *, owner_id: str, chain_id: str | None
++    ) -> None:
++        """Insert denial using only captured identity and the existing registry."""
+         with _UNCONFIRMED_STARTS_LOCK:
+             _UNCONFIRMED_STARTS[
+-                (self._restriction_database(), owner_id, attempt_id)
++                (self._restriction_database_id, owner_id, attempt_id)
+             ] = (chain_id, object())
+ 
+     def _clear_chat_start_restriction(self, attempt_id: str, *, owner_id: str) -> None:

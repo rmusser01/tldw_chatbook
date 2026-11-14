@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+from Tests.UI.console_controller_stubs import context_spend_for_test
+
 import asyncio
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
-from rich.cells import cell_len
+
+# The harness mounts the real ChatScreen/config chain; per-test env redirect
+# trips the config-participant admission (sibling strip suites' opt-in).
+pytestmark = pytest.mark.bootstrap_profile
 from textual.app import App, ComposeResult
 from textual.widgets import Button
 
@@ -14,6 +20,7 @@ from Tests.UI.app_factory import attach_chachanotes_db
 from Tests.UI.test_console_cost_chip_screen import (
     _AnthropicWaitingGateway,
     _configure_anthropic_ready_console,
+    _settle_successful_full,
 )
 from Tests.UI.test_destination_shells import (
     _build_test_app,
@@ -41,9 +48,11 @@ from tldw_chatbook.UI.Console_Modules.send_price import (
     ConsoleSendPriceController,
     build_next_send_price,
 )
+from tldw_chatbook.Widgets.Console.console_status_chips import ConsoleStatusChips
 from tldw_chatbook.Widgets.Console.console_composer_bar import (
     BASE_ACTIONS_WIDTH,
     ConsoleComposerBar,
+    send_button_width_for,
 )
 
 
@@ -72,14 +81,19 @@ class _Catalog:
 
 
 class _PriceComposerApp(App[None]):
+    CSS_PATH = str(Path(__file__).resolve().parents[2] / "tldw_chatbook/css/tldw_cli_modular.tcss")
+
     def __init__(self, tooltip_provider=None):
         super().__init__()
         self.tooltip_provider = tooltip_provider
+        #: Stands in for the screen's send gate (TASK-33620.15.22).
+        self.attachment_staged = False
 
     def compose(self) -> ComposeResult:
         yield ConsoleComposerBar(
             id="console-native-composer",
             send_price_tooltip_provider=self.tooltip_provider,
+            sendable_attachment_provider=lambda: self.attachment_staged,
         )
 
 
@@ -147,8 +161,9 @@ async def test_composer_price_affordance_tracks_send_queue_attachment_and_width(
         send_button = composer.query_one("#console-send-message", Button)
         actions = composer.query_one("#console-composer-actions")
 
+        initial_region = send_button.region
         assert send_button.label.plain == "Send"
-        assert send_button.styles.width.value == 6
+        assert send_button.styles.width.value == send_button_width_for("Send")
         assert send_button.tooltip == "Type a message to send."
         assert calls == []
 
@@ -159,13 +174,14 @@ async def test_composer_price_affordance_tracks_send_queue_attachment_and_width(
         assert calls == []
         assert send_button.tooltip == ConsoleComposerBar.SEND_READY_TOOLTIP
 
-        await pilot.hover("#console-send-message")
+        assert send_button.region == initial_region
+        assert await pilot.hover("#console-send-message")
         assert send_button.tooltip == (
             "Next request: up to ~$0.01\nDraft: priced draft"
         )
         assert calls == ["priced draft"]
-        assert send_button.styles.width.value == cell_len("Send | $") + 2
-        assert actions.styles.width.value == BASE_ACTIONS_WIDTH + 4
+        assert send_button.styles.width.value == send_button_width_for("Send | $")
+        assert actions.styles.width.value == BASE_ACTIONS_WIDTH + send_button_width_for("Send | $") - 6
 
         composer._sync_current_action_state()
         composer._sync_current_action_state()
@@ -180,7 +196,7 @@ async def test_composer_price_affordance_tracks_send_queue_attachment_and_width(
             send_label="Queue",
         )
         assert send_button.label.plain == "Queue | $"
-        assert send_button.styles.width.value == cell_len("Queue | $") + 2
+        assert send_button.styles.width.value == send_button_width_for("Queue | $")
         assert composer._send_label == "Queue"
 
         composer.clear_draft()
@@ -191,7 +207,12 @@ async def test_composer_price_affordance_tracks_send_queue_attachment_and_width(
             send_blocked=False,
             send_label="Send",
         )
+        # TASK-33620.15.22: the label alone is presentation, not payload.
         composer.set_pending_attachment_label("photo.png · 5 B")
+        composer._sync_current_action_state()
+        assert send_button.label.plain == "Send"
+        assert send_button.disabled is True
+        app.attachment_staged = True
         composer._sync_current_action_state()
         await pilot.pause()
         assert send_button.label.plain == "Send | $"
@@ -247,7 +268,7 @@ async def test_composer_blocker_tooltip_and_unsuffixed_label_win_over_price(
 
         assert send_button.disabled is True
         assert send_button.label.plain == "Queue"
-        assert send_button.styles.width.value == 7
+        assert send_button.styles.width.value == send_button_width_for("Queue")
         assert send_button.tooltip == expected_tooltip
         assert calls_before_block == len(calls)
 
@@ -275,7 +296,7 @@ async def test_composer_without_price_provider_keeps_existing_send_behavior():
         composer.load_draft("ordinary draft")
 
         assert send_button.label.plain == "Send"
-        assert send_button.styles.width.value == 6
+        assert send_button.styles.width.value == send_button_width_for("Send")
         assert send_button.tooltip == "Send the active Console session draft."
 
 
@@ -312,7 +333,7 @@ def test_console_send_price_controller_counts_canonical_draft_and_staged_context
                 {"role": "system", "content": "system"},
                 {"role": "user", "content": "history"},
                 {"role": "user", "content": "  live draft  "},
-                {"role": "user", "content": "staged evidence"},
+                {"role": "user", "content": "[S1] NOTES — Source\nstaged evidence"},
             ],
             "model-a",
             "anthropic",
@@ -532,6 +553,7 @@ def test_console_send_price_controller_missing_store_and_broader_failures_degrad
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_mounted_console_refreshes_send_price_without_changing_cost_chip():
     app = _build_test_app()
     attach_chachanotes_db(app)
@@ -543,19 +565,23 @@ async def test_mounted_console_refreshes_send_price_without_changing_cost_chip()
         await _wait_for_selector(console, pilot, "#console-native-composer")
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         send_button = console.query_one("#console-send-message", Button)
-        cost_chip = console.query_one("#console-cost-chip")
-        cost_before = (
-            cost_chip.display,
-            str(cost_chip.render()),
-            console._last_console_cost_state,
+        # TASK-35160: the cost chip is the strip line's "cost" segment.
+        status_strip = console.query_one(
+            "#console-status-chips", ConsoleStatusChips
         )
 
         composer.load_draft("hello")
+        await _settle_successful_full(console, pilot)
 
         assert send_button.label.plain == "Send | $"
         # TASK-23018: the price is derived on hover, and every resync below
         # happens under this parked pointer -- which is exactly the state the
         # freshness guarantee has to hold in.
+        cost_before = (
+            status_strip.segment_visible("cost"),
+            status_strip.segment_text("cost"),
+            context_spend_for_test(console)._last_console_cost_state,
+        )
         await pilot.hover("#console-send-message")
         tooltip = str(send_button.tooltip)
         assert "Next request:" in tooltip
@@ -565,9 +591,9 @@ async def test_mounted_console_refreshes_send_price_without_changing_cost_chip()
         assert "claude-sonnet-4-6" in tooltip
         assert "rates as of" in tooltip
         assert (
-            cost_chip.display,
-            str(cost_chip.render()),
-            console._last_console_cost_state,
+            status_strip.segment_visible("cost"),
+            status_strip.segment_text("cost"),
+            context_spend_for_test(console)._last_console_cost_state,
         ) == cost_before
 
         composer.load_draft("hello with a substantially longer live draft")
@@ -647,6 +673,7 @@ async def test_mounted_console_refreshes_send_price_without_changing_cost_chip()
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_mounted_console_prices_a_sendable_follow_up_as_queue():
     gateway = _AnthropicWaitingGateway()
     app = _build_test_app()
@@ -1060,6 +1087,7 @@ async def test_composer_hover_price_is_inert_once_send_is_gone():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_mounted_console_quits_cleanly_with_the_pointer_on_send():
     """Shutdown walk: hover-triggered pricing must not hold up quit.
 
@@ -1088,6 +1116,7 @@ async def test_mounted_console_quits_cleanly_with_the_pointer_on_send():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_mounted_console_never_derives_the_send_price_while_typing():
     """TASK-23018: printable keys must not re-derive the next request.
 
@@ -1140,9 +1169,51 @@ async def test_mounted_console_never_derives_the_send_price_while_typing():
             f"({len(projections)} whole-session projections for 8 keys)"
         )
 
-        await pilot.hover("#console-send-message")
+        # TASK-23018 also refreshes money on sync while the pointer stays parked.
+        import sys
+        from collections import Counter
 
-        assert len(projections) == 1
+        presentation = type(controller).presentation_for_draft
+        enter_code = ConsoleComposerBar.on_enter.__code__
+        sync_code = ConsoleComposerBar.sync_action_state.__code__
+        calls = Counter()
+        errors = []
+        monitor = sys.monitoring
+        slot = next(
+            number for number in range(5, 0, -1)
+            if number != monitor.DEBUGGER_ID and monitor.get_tool(number) is None
+        )
+        monitor.use_tool_id(slot, "send-price-hover-ancestry")
+
+        def returned(code, offset, value):
+            try:
+                frame = sys._getframe()
+                while frame is not None and frame.f_code is not code:
+                    frame = frame.f_back
+                assert frame is not None and frame.f_locals["self"] is controller
+                parent = frame.f_back
+                while parent is not None:
+                    if parent.f_code in (enter_code, sync_code):
+                        assert parent.f_locals["self"] is composer
+                        calls["hover" if parent.f_code is enter_code else "parked_sync"] += 1
+                        return
+                    parent = parent.f_back
+                errors.append("unattributed-price-derivation")
+            except BaseException as error:  # noqa: BLE001 - observe without interrupting the original callback.
+                errors.append(type(error).__name__)
+
+        try:
+            monitor.register_callback(slot, monitor.events.PY_RETURN, returned)
+            monitor.set_local_events(slot, presentation.__code__, monitor.events.PY_RETURN)
+            assert await pilot.hover("#console-send-message")
+        finally:
+            monitor.set_local_events(slot, presentation.__code__, 0)
+            monitor.register_callback(slot, monitor.events.PY_RETURN, None)
+            monitor.free_tool_id(slot)
+        assert monitor.get_tool(slot) is None
+        assert not errors
+        assert calls["hover"] == 1
+        assert len(projections) == calls["hover"] + calls["parked_sync"]
         tooltip = str(send_button.tooltip)
         assert "Next request:" in tooltip
         assert "Input:" in tooltip

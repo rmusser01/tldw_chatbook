@@ -1,0 +1,10 @@
+{
+  "run": "root-ci-final02",
+  "cases": 91,
+  "failures": 0,
+  "errors": 0,
+  "skips": 0,
+  "xml_sha256": "72e9d4947ab80dcee3ebf1c9109e9d02d019f396d74f754e508916d3983572a7",
+  "census": 1078,
+  "coverage_note": "95 task selectors represent97 current concrete cases; unchanged17shards/1200s. Current-head hosted evidence remains required."
+}

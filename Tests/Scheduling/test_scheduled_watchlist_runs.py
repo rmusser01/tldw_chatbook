@@ -553,8 +553,7 @@ async def test_launch_failure_uses_safe_fallback_for_logs_and_source_row(
     tmp_path, monkeypatch
 ):
     canary = (
-        "SCHEDULED-LAUNCH-CANARY?token=secret /private/watchlists.db "
-        "CERTIFICATE-CANARY"
+        "SCHEDULED-LAUNCH-CANARY?token=secret /private/watchlists.db CERTIFICATE-CANARY"
     )
     subs_db = SubscriptionsDB(tmp_path / "subs.db")
     subscription_id = _add_due_source(
@@ -590,7 +589,10 @@ async def test_final_scheduled_failure_write_cannot_escape_or_leak_to_loop_logs(
     fallback_canary = "FINAL-FALLBACK-CANARY /private/watchlists.db CERTIFICATE-CANARY"
     subs_db = SubscriptionsDB(tmp_path / "subs.db")
     subscription_id = _add_due_source(
-        subs_db, name="Dead final fallback", type="url", source="https://example.com/dead"
+        subs_db,
+        name="Dead final fallback",
+        type="url",
+        source="https://example.com/dead",
     )
     service = _service(subs_db)
 

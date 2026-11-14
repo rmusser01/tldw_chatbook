@@ -22,7 +22,7 @@ Brief: first-time and power-user workflows — create a repeating scheduled task
 | 1 | Visibility of System Status | 2 | Disabled task still shows Status "Waiting" + concrete Next Run (live-verified); "Sync completed." toast while bar reads "Last pull: — Last push: —" |
 | 2 | Match System / Real World | 2 | Detail humanizes ("Daily at 09:00 UTC") but form demands raw ISO-8601, 5-field cron, IANA tz; reminder/task/schedule noun drift |
 | 3 | User Control and Freedom | 3 | Dirty-form discard guard, delete confirm, Esc clears marks; no undo after delete |
-| 4 | Consistency and Standards | 3 | Footer 1:1 with bindings (ADR-031); but queue shortcuts advertised on Conflicts tab; create modal breaks workbench idiom |
+| 4 | Consistency and Standards | 3 | Footer 1:1 with bindings (ADR-299); but queue shortcuts advertised on Conflicts tab; create modal breaks workbench idiom |
 | 5 | Error Prevention | 2 | Past-time guard, cron/tz validation — undermined by focusable invisible cron field that accepts typing (P0) |
 | 6 | Recognition Rather Than Recall | 2 | Empty state teaches `c`; 3 presets; custom recurrence = cron recall; ●/◇ glyphs have no legend |
 | 7 | Flexibility and Efficiency | 3 | Single-letter verbs, real bulk ops (x + space/d), run-now, debounced filter; no sort, no palette "create task" |

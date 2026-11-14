@@ -52,9 +52,16 @@ At 80 columns, Sample, Configure, and Results are separate regions. Results scro
 with keyboard focus so paging controls and the full-text inspector remain
 reachable. At wider sizes an input region can sit beside Results; a sufficiently
 wide Results view shows A/B equally. Tab/Shift+Tab navigate native controls; F6
-cycles task regions and F1 remains global help. The r/p/s shortcuts operate only
-outside text/control editors; terminal copy/paste and global Ctrl+P/Ctrl+Q retain
-their normal ownership. Footer hints change with focus.
+cycles task regions. F1 opens the Lab's current action help, including at narrow
+widths where the footer has limited room. The r/p/s shortcuts operate only outside
+Input, TextArea and Select controls; terminal copy/paste and global Ctrl+P/Ctrl+Q
+retain their normal ownership. Footer hints follow focus, running previews,
+recovery transitions, leaving and candidate readiness. Run is hidden while busy;
+authoring hints are hidden while a guarded transition settles. Pin is advertised
+only for a completed current B result with unchanged inputs. The Pin control and
+shortcut still explain missing/stale results when authoring is available, and
+Run/Save still explain invalid drafts without discarding them. Escape returns to
+the opener from editors; an expanded Select or help panel closes first.
 
 ## Supported execution and limits
 

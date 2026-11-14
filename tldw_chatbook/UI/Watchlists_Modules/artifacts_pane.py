@@ -660,9 +660,7 @@ def _audio_detail_renderable(row: dict[str, Any] | None) -> RenderableType:
         # never parses Rich markup -- exactly like `_detail_renderable`'s
         # own `error` handling; this is model/provider data, never a
         # trusted string.
-        return Group(
-            header, Text(str(row.get("error") or _AUDIO_UNEXPLAINED_FAILURE))
-        )
+        return Group(header, Text(str(row.get("error") or _AUDIO_UNEXPLAINED_FAILURE)))
     if status == STATUS_GENERATING:
         return Group(header, Text(_AUDIO_GENERATING_COPY))
     if status == STATUS_COMPLETE:
@@ -1014,18 +1012,23 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
         `value=self.default_preset_id` would raise `InvalidSelectValueError`
         the moment a stale id was not among the legal option values.
         """
-        options: list[tuple[str, int | None]] = [
-            (_APP_DEFAULT_PRESET_LABEL, None)
-        ]
+        options: list[tuple[str, int | None]] = [(_APP_DEFAULT_PRESET_LABEL, None)]
         known_ids: set[int] = set()
         for preset in self.presets:
             preset_id = preset.get("id")
             if preset_id is None:
                 continue
             known_ids.add(preset_id)
-            options.append((str(preset.get("name") or f"Preset {preset_id}"), preset_id))
-        if self.default_preset_id is not None and self.default_preset_id not in known_ids:
-            options.append((f"Preset {self.default_preset_id} (deleted)", self.default_preset_id))
+            options.append(
+                (str(preset.get("name") or f"Preset {preset_id}"), preset_id)
+            )
+        if (
+            self.default_preset_id is not None
+            and self.default_preset_id not in known_ids
+        ):
+            options.append(
+                (f"Preset {self.default_preset_id} (deleted)", self.default_preset_id)
+            )
         return options
 
     def _cadence_select_options(self) -> list[tuple[str, int | None]]:
@@ -1235,13 +1238,11 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
         # wrap that protects `scope_label` (user-authored) above.
         scope_text = (
             self.scope_label
-            or "Briefings are written on this device from the local "
-            "watchlist store."
+            or "Briefings are written on this device from the local watchlist store."
         )
         if self.can_generate and self.default_provider_display:
             scope_text = (
-                f"{scope_text} Generate will use "
-                f"{self.default_provider_display}."
+                f"{scope_text} Generate will use {self.default_provider_display}."
             )
         yield Static(
             Text(
@@ -1534,8 +1535,7 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
                     compact=True,
                     disabled=cast_disabled,
                     tooltip=(
-                        "Create a briefing preset (Presets…) before casting "
-                        "a script."
+                        "Create a briefing preset (Presets…) before casting a script."
                         if cast_disabled
                         else "Cast this briefing into a spoken-style script "
                         "using the current default preset."
@@ -1543,9 +1543,7 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
                 )
 
             selected_script_key = (
-                str(self.selected_script.get("id"))
-                if self.selected_script
-                else None
+                str(self.selected_script.get("id")) if self.selected_script else None
             )
             scripts_table = DataTable(id="artifacts-scripts-table")
             # The keys are kept so `_restyle_script_row` can update cells on
@@ -1560,18 +1558,12 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
                 if row_key == selected_script_key:
                     selected_script_index = index
                 style = (
-                    self._SELECTED_ROW_STYLE
-                    if row_key == selected_script_key
-                    else ""
+                    self._SELECTED_ROW_STYLE if row_key == selected_script_key else ""
                 )
-                scripts_table.add_row(
-                    *self._script_row_cells(row, style), key=row_key
-                )
+                scripts_table.add_row(*self._script_row_cells(row, style), key=row_key)
             if selected_script_index is not None:
                 # Same TASK-1105 seeding as the briefings table above.
-                scripts_table.cursor_coordinate = Coordinate(
-                    selected_script_index, 0
-                )
+                scripts_table.cursor_coordinate = Coordinate(selected_script_index, 0)
             yield scripts_table
 
             # Task-16852: everything below the scripts table is SCRIPT-
@@ -1659,7 +1651,8 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
         status = _status_text(row)
         header = Text()
         header.append(
-            humane_timestamp(row.get("created_at")) if row.get("created_at")
+            humane_timestamp(row.get("created_at"))
+            if row.get("created_at")
             else "unknown time",
             style="bold",
         )
@@ -1693,9 +1686,7 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
             # parses Rich markup, so no escaping is needed or wanted here
             # (see `content_pane.render_article` on why "defensive" escaping
             # corrupts ordinary content while protecting nothing).
-            return Group(
-                header, Text(str(row.get("error") or _UNEXPLAINED_FAILURE))
-            )
+            return Group(header, Text(str(row.get("error") or _UNEXPLAINED_FAILURE)))
         if status == STATUS_EMPTY:
             return Group(header, Text(_EMPTY_COPY))
         if status == STATUS_GENERATING:
@@ -1720,7 +1711,10 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
         # would have -- see the compose()-site comment on why there is no
         # separate title `Static` here.
         header.append("Script: ", style="dim")
-        header.append(strip_control_characters(row.get("preset_name") or "Untitled preset"), style="bold")
+        header.append(
+            strip_control_characters(row.get("preset_name") or "Untitled preset"),
+            style="bold",
+        )
         header.append(" · ")
         header.append(status or "unknown status")
         # Batch-4 review, I1: stripped for the same reason every other
@@ -1732,7 +1726,8 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
             header.append(strip_control_characters(model_used))
         header.append("\n")
         header.append(
-            humane_timestamp(row.get("created_at")) if row.get("created_at")
+            humane_timestamp(row.get("created_at"))
+            if row.get("created_at")
             else "unknown time",
             style="dim",
         )
@@ -1759,11 +1754,7 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     def select_briefing_by_id(self, briefing_id: str) -> None:
         """Select one visible briefing by its row id."""
         self.selected_briefing = next(
-            (
-                row
-                for row in self.briefings
-                if str(row.get("id")) == str(briefing_id)
-            ),
+            (row for row in self.briefings if str(row.get("id")) == str(briefing_id)),
             None,
         )
 
@@ -1868,15 +1859,11 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
         if table.cursor_coordinate.row != row_index:
             table.move_cursor(row=row_index)
 
-    def _restyle_briefing_row(
-        self, table: DataTable, row_key: str, style: str
-    ) -> None:
+    def _restyle_briefing_row(self, table: DataTable, row_key: str, style: str) -> None:
         """Rewrite one row's cells with `style`, by key, on the mounted
         table. Characters are identical either way -- `_briefing_row_cells`
         is the single source for both the build and this patch."""
-        row = next(
-            (r for r in self.briefings if str(r.get("id")) == row_key), None
-        )
+        row = next((r for r in self.briefings if str(r.get("id")) == row_key), None)
         if row is None:
             return
         cells = self._briefing_row_cells(row, style)
@@ -1945,16 +1932,12 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
         if table.cursor_coordinate.row != row_index:
             table.move_cursor(row=row_index)
 
-    def _restyle_script_row(
-        self, table: DataTable, row_key: str, style: str
-    ) -> None:
+    def _restyle_script_row(self, table: DataTable, row_key: str, style: str) -> None:
         """Rewrite one scripts-table row's cells with `style`, by key, on
         the mounted table. Characters are identical either way --
         `_script_row_cells` is the single source for both the build and
         this patch (mirrors `_restyle_briefing_row`)."""
-        row = next(
-            (r for r in self.scripts if str(r.get("id")) == row_key), None
-        )
+        row = next((r for r in self.scripts if str(r.get("id")) == row_key), None)
         if row is None:
             return
         cells = self._script_row_cells(row, style)
@@ -2055,9 +2038,7 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
         one region rebuild per drain, and the table above is never touched.
         """
         try:
-            region = self.query_one(
-                "#artifacts-detail-region", BriefingDetailRegion
-            )
+            region = self.query_one("#artifacts-detail-region", BriefingDetailRegion)
         except NoMatches:
             return
         region.refresh(recompose=True)

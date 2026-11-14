@@ -547,14 +547,10 @@ def test_construction_performs_no_staging_filesystem_io(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """task-22216: __init__ records paths only — no sweep, no directory."""
-    db = CharactersRAGDB(
-        str(tmp_path / "profile.db"), client_id="actor-pack-construct"
-    )
+    db = CharactersRAGDB(str(tmp_path / "profile.db"), client_id="actor-pack-construct")
 
     def forbidden(*_args: object, **_kwargs: object) -> None:
-        pytest.fail(
-            "construction must not touch the staging filesystem (task-22216)"
-        )
+        pytest.fail("construction must not touch the staging filesystem (task-22216)")
 
     monkeypatch.setattr(importer_module, "secure_private_directory", forbidden)
     monkeypatch.setattr(importer_module.os, "scandir", forbidden)

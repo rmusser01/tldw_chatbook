@@ -241,6 +241,7 @@ class ConsoleCostSnapshot:
     row_count: int
     fleet_tokens: int = 0
     available: bool = True
+    auxiliary_usage_unknown: int = 0
 
 
 @dataclass(frozen=True)
@@ -596,6 +597,8 @@ def build_cost_snapshot(
     model: Optional[str],
     fleet_tokens: int = 0,
     estimate_cache: Optional[TokenEstimateCache] = None,
+    auxiliary_usage: Sequence[ProviderUsage | None] = (),
+    pricing_catalog: Any | None = None,
 ) -> ConsoleCostSnapshot:
     """Sum dollar/token totals across a Console session's transcript rows.
 
@@ -653,7 +656,7 @@ def build_cost_snapshot(
         failure is logged and degrades to an empty/unknown snapshot.
     """
     try:
-        catalog = get_pricing_catalog()
+        catalog = get_pricing_catalog() if pricing_catalog is None else pricing_catalog
         provider_key = provider_config_key(provider)
         total_usd_accum = 0.0
         usd_known = True
@@ -716,6 +719,22 @@ def build_cost_snapshot(
                 )
                 total_usd_accum += estimated_tokens * rate / 1_000_000
 
+        auxiliary_unknown = 0
+        for usage in auxiliary_usage:
+            if usage is None:
+                auxiliary_unknown += 1
+                usd_known = False
+                continue
+            total_tokens += usage.total_tokens
+            row_count += 1
+            if usage.partial:
+                auxiliary_unknown += 1
+                usd_known = False
+            breakdown = catalog.cost_for_usage(usage)
+            if breakdown is None:
+                usd_known = False
+            else:
+                total_usd_accum += breakdown.total
         pricing_known = usd_known and row_count > 0
         total_usd = round(total_usd_accum, 6) if pricing_known else None
         # Real, measured tokens (not estimated) -- always folded into the
@@ -730,6 +749,7 @@ def build_cost_snapshot(
             has_estimated_entries=has_estimated,
             row_count=row_count,
             fleet_tokens=fleet_tokens,
+            auxiliary_usage_unknown=auxiliary_unknown,
         )
     except Exception:
         logger.opt(exception=True).warning(
@@ -827,6 +847,10 @@ def build_cost_state(
             tooltip_lines = [f"Tokens: {_format_tokens(snapshot.total_tokens)}"]
             if snapshot.has_estimated_entries:
                 tooltip_lines.append("Includes locally estimated transcript rows.")
+            if snapshot.auxiliary_usage_unknown:
+                tooltip_lines.append(
+                    f"Rule helpers: usage unavailable for {snapshot.auxiliary_usage_unknown} request(s)."
+                )
             if snapshot.fleet_tokens:
                 tooltip_lines.append(
                     f"Sub-agents: {_format_tokens(snapshot.fleet_tokens)} tok "
@@ -844,10 +868,11 @@ def build_cost_state(
                     projected_delta_usd=projected_delta_usd,
                 )
             )
-            tooltip_lines.append(
-                "Pricing unknown for this model -- add a [pricing] override "
-                "in config to see a dollar total."
-            )
+            if not snapshot.auxiliary_usage_unknown:
+                tooltip_lines.append(
+                    "Pricing unknown for this model -- add a [pricing] override "
+                    "in config to see a dollar total."
+                )
             tooltip = "\n".join(tooltip_lines)
             return ConsoleCostState(
                 label=label,
@@ -1067,3 +1092,7 @@ def build_cost_rows_totals(rows: Sequence[ConsoleCostRow]) -> ConsoleCostRowTota
 #
 # End of console_cost_tracker.py
 #######################################################################################################################
+
+
+_COST_SNAPSHOT_SOURCE = (build_cost_snapshot, build_cost_snapshot.__code__,
+    build_cost_snapshot.__defaults__, build_cost_snapshot.__kwdefaults__)

@@ -1,0 +1,16 @@
+.................................                                        [100%]
+============================= slowest 25 durations =============================
+3.38s call     Tests/UI/test_library_prompt_mixins.py::test_library_mixin_save_conflict_export_and_dirty_escape
+3.12s call     Tests/UI/test_library_prompts_reader.py::test_detail_failure_keeps_prior_prompt_locked_and_retry_loads_selection
+2.97s call     Tests/UI/test_library_prompt_mixins.py::test_library_mixin_create_and_filtered_pagination_totals
+2.78s call     Tests/UI/test_library_prompt_mixins.py::test_real_console_mixin_consumer_enables_without_touching_composer_or_system
+2.56s call     Tests/UI/test_library_prompts_reader.py::test_mixin_enable_refuses_absent_target_and_replaced_source
+2.45s call     Tests/UI/test_library_prompts_reader.py::test_prompts_global_f6_reaches_permanent_work_region
+2.39s call     Tests/UI/test_library_prompts_reader.py::test_basic_save_preserves_advanced_only_prompt_fields
+2.30s call     Tests/UI/test_library_prompt_mixins.py::test_literal_editor_production_size_capture[size0]
+2.28s call     Tests/UI/test_library_prompt_mixins.py::test_literal_editor_production_size_capture[size2]
+2.08s call     Tests/UI/test_library_prompt_mixins.py::test_literal_editor_production_size_capture[size1]
+1.35s call     Tests/UI/test_library_prompt_mixins.py::test_editor_preserves_literal_body
+
+(14 durations < 1s hidden.)
+33 passed, 335 deselected in 37.61s

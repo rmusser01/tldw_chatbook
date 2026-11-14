@@ -19,7 +19,6 @@ from types import MappingProxyType
 from typing import Any, cast
 from urllib.parse import quote
 
-from tldw_chatbook.DB import private_sqlite_files
 from tldw_chatbook.DB.private_sqlite_process import (
     HELPER_ADMISSION,
     HelperLease,
@@ -119,6 +118,11 @@ _SQLITE_OWNER_POLICIES = {
         _PRIVATE_MEMORY_AND_READ_ONLY,
         "Private plugin intent and process recovery metadata; disk mutation requires the runtime owner.",
     ),
+    "recovery.plugins.registry": SQLiteOwnerPolicy(
+        "tldw_chatbook/Plugins/backup", _PRIVATE_AND_READ_ONLY,
+        "Installed plugin registry snapshot; restored plugins stay inactive until authority recovery.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True, recovery_capture_allowed=True,
+    ),
     "recovery.credentials": SQLiteOwnerPolicy(
         "tldw_chatbook/Backup_Recovery/credentials",
         _PRIVATE_FILE,
@@ -135,7 +139,7 @@ _SQLITE_OWNER_POLICIES = {
         "Restricted disposable Chroma candidate metadata with copied WAL visibility; never a live root.",
     ),
     "recovery.validation_schema": SQLiteOwnerPolicy(
-        "tldw_chatbook/Backup_Recovery/sqlite_validation",
+        "tldw_chatbook/DB/recovery_workflow_schema",
         _MEMORY,
         "Installed SQL only, in-memory reference for exact physical schema metadata.",
     ),
@@ -212,6 +216,18 @@ _SQLITE_OWNER_POLICIES = {
         _PRIVATE_FILE,
         "ensure_site_configs_schema declares site_configs on a caller-supplied "
         "path without opening the whole SubscriptionsDB.",
+    ),
+    "recovery.operations.dreams": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/recovery_dreams_guardian", _PRIVATE_AND_READ_ONLY,
+        "Installed Dreams history snapshot; restored behavior remains inactive.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
+    "recovery.operations.guardian": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/recovery_dreams_guardian", _PRIVATE_AND_READ_ONLY,
+        "Installed local Guardian snapshot; restored behavior remains inactive.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
     ),
     "recovery.operations.workspaces": SQLiteOwnerPolicy(
         "tldw_chatbook/DB/recovery_operations", _PRIVATE_AND_READ_ONLY,
@@ -395,6 +411,11 @@ _SQLITE_OWNER_POLICIES = {
         _PRIVATE_OR_MEMORY,
         "Prompts owns private file and in-memory primary databases.",
     ),
+    "db.workspace_project_index": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/Workspace_Project_Index_DB",
+        _PRIVATE_FILE,
+        "Rebuildable per-binding keyword cache; excluded from backup and sync.",
+    ),
     "db.rag_indexing": SQLiteOwnerPolicy(
         "tldw_chatbook/DB/RAG_Indexing_DB",
         _PRIVATE_OR_MEMORY,
@@ -493,22 +514,6 @@ _SQLITE_OWNER_POLICIES = {
         "tldw_chatbook/runtime_policy/server_parity_state",
         _PRIVATE_FILE,
         "Server parity repositories use file-backed storage below this parent.",
-    ),
-    "settings.bulk_backup": SQLiteOwnerPolicy(
-        "tldw_chatbook/UI/Tools_Settings_Window",
-        _PRIVATE_AND_READ_ONLY,
-        "Settings bulk backup reads a checked source into a private target.",
-        centralized_backup_allowed=True,
-    ),
-    "settings.integrity": SQLiteOwnerPolicy(
-        "tldw_chatbook/UI/Tools_Settings_Window",
-        _READ_ONLY_URI,
-        "Settings integrity checks require validated read-only access.",
-    ),
-    "settings.vacuum": SQLiteOwnerPolicy(
-        "tldw_chatbook/UI/Tools_Settings_Window",
-        _PRIVATE_FILE,
-        "Settings VACUUM requires a checked writable private database.",
     ),
     "sync.notes_mirror": SQLiteOwnerPolicy(
         "tldw_chatbook/Sync_Interop/notes_mirror",
@@ -1443,7 +1448,7 @@ class _SQLiteAdmissionOutcome:
 def _independent_sqlite_helpers() -> Iterator[None]:
     """Keep outer raw ownership live while independently admitted SQLite opens."""
     raw = sys.modules.get("tldw_chatbook.Backup_Recovery.raw_participants")
-    discover = getattr(raw, "_runtime_operation", None)
+    discover = getattr(raw, "runtime_operation", None)
     previous = discover() if discover is not None else None
     if previous is None:
         yield
@@ -1456,7 +1461,7 @@ def _independent_sqlite_helpers() -> Iterator[None]:
     finally:
         primary = sys.exception()
         try:
-            raw._check(previous)
+            raw.check(previous)
         except BaseException as cleanup:
             if primary is not None and (
                 not isinstance(primary, Exception) or isinstance(cleanup, Exception)
@@ -1580,10 +1585,10 @@ def _with_storage_admission(function):
                             participant = getattr(lease, "resource_participant", None)
                             if participant is not None:
                                 from tldw_chatbook.Backup_Recovery.participants import (
-                                    _retired_core_connections,
+                                    retired_core_connections,
                                 )
 
-                                _retired_core_connections.add(self)
+                                retired_core_connections.add(self)
                                 participant.connections.pop(self, None)
                                 lease.resource_participant = None
                             storage._changed.notify_all()
@@ -1942,6 +1947,21 @@ def connect_private_sqlite(
     )
 
 
+def _connect_recovery_candidate(
+    candidate: Path, *, writable: bool
+) -> sqlite3.Connection:
+    return _connect_registered_sqlite(
+        "recovery.validation",
+        candidate,
+        read_only=not writable,
+        must_exist=True,
+        immutable=not writable,
+        isolation_level=None,
+        cached_statements=0,
+        timeout=0,
+    )
+
+
 @contextlib.contextmanager
 def open_recovery_validation(
     owner_id: str,
@@ -1965,18 +1985,8 @@ def open_recovery_validation(
     )
 
     _installed_owner(owner_id)
-    with contextlib.closing(
-        _connect_registered_sqlite(
-            "recovery.validation",
-            candidate,
-            read_only=not writable,
-            must_exist=True,
-            immutable=not writable,
-            isolation_level=None,
-            cached_statements=0,
-            timeout=0,
-        )
-    ) as connection:
+    connection = _connect_recovery_candidate(candidate, writable=writable)
+    with contextlib.closing(connection):
         restrictions = _restrict_connection(connection, cancel)
         with _recovery_restriction_scope(connection, restrictions):
             yield (connection, restrictions) if with_restrictions else connection
@@ -2723,6 +2733,7 @@ def _backup_pages(
     *,
     restore: bool,
     progress_guard: Callable[[], None] | None = None,
+    pages: int = 1,
 ) -> None:
     def abort_busy(status: int, _remaining: int, _total: int) -> None:
         if status in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}:
@@ -2737,7 +2748,7 @@ def _backup_pages(
 
     source.backup(
         destination,
-        pages=1,
+        pages=pages,
         progress=abort_busy,
         sleep=0.0,
     )

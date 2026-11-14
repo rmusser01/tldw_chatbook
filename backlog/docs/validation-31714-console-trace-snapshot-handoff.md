@@ -3,7 +3,7 @@
 Date: 2026-09-05. Base: `c14dadd77080be929d47e3acef41be790ee5d8d1` (`dev`).
 Branch: `codex/chatbook-snapshot-trace-fix` in an isolated temporary worktree.
 The dirty shared Chatbook checkout was not modified.
-Existing architecture: [ADR-097](../decisions/097-console-reference-backed-semantic-trace-ledger.md).
+Existing architecture: [ADR-337](../decisions/337-console-reference-backed-semantic-trace-ledger.md).
 No schema, trace ownership contract, capture policy or snapshot support gate changed.
 
 ## Diagnosis and correction

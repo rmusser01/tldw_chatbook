@@ -1,0 +1,3 @@
+01d4137720e91344281f918c98eacb6687f7264a 2026-10-20T20:20:06-07:00 2026-10-21T21:46:04-07:00 docs: design workspace guidance and optional project indexing
+85161d7094d06799b4c4987c5d69ebfadcd8e3ba 2026-10-20T20:20:06-07:00 2026-10-20T20:20:06-07:00 docs: design workspace guidance and optional project indexing
+669a3dec3c94cc378a8455c157eec46ade65be2a 2026-10-18T12:53:41-07:00 2026-10-20T00:47:10Z docs: renumber ADR-237 to 240 (237 contested by PR 3157; 238-239 taken) (task-35150)

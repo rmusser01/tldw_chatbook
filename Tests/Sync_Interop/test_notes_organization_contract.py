@@ -31,15 +31,20 @@ def test_notes_organization_domains_use_the_server_order() -> None:
 
 
 def test_organization_link_ids_match_server_vectors() -> None:
-    assert organization_link_id(
-        "notes.keyword_link", ["note", "note-123", "kw-456"]
-    ) == "notes.keyword_link:sha256:10f9eab3be80b6e439ce1bcf8fae952527bde7d7e026d0e227f0a87ada963be0"
-    assert organization_link_id(
-        "notes.keyword_collection_link", ["collection-123", "kw-456"]
-    ) == "notes.keyword_collection_link:sha256:e9427c2d8bc4cfa8586130bc1fcc54cf432ca6dbb3df77bab3e65033b6148199"
-    assert organization_link_id(
-        "notes.folder_link", ["note-123", "folder-456"]
-    ) == "notes.folder_link:sha256:9076b60d9d8476f852736928ef3661cb06d9ba55696dd4504657c753f414b670"
+    assert (
+        organization_link_id("notes.keyword_link", ["note", "note-123", "kw-456"])
+        == "notes.keyword_link:sha256:10f9eab3be80b6e439ce1bcf8fae952527bde7d7e026d0e227f0a87ada963be0"
+    )
+    assert (
+        organization_link_id(
+            "notes.keyword_collection_link", ["collection-123", "kw-456"]
+        )
+        == "notes.keyword_collection_link:sha256:e9427c2d8bc4cfa8586130bc1fcc54cf432ca6dbb3df77bab3e65033b6148199"
+    )
+    assert (
+        organization_link_id("notes.folder_link", ["note-123", "folder-456"])
+        == "notes.folder_link:sha256:9076b60d9d8476f852736928ef3661cb06d9ba55696dd4504657c753f414b670"
+    )
 
 
 @pytest.mark.parametrize(
@@ -87,7 +92,9 @@ def test_resource_sync_ids_are_canonical_lowercase_uuid4() -> None:
     ):
         with pytest.raises(NotesOrganizationValidationError) as exc_info:
             validate_resource_sync_id(invalid)
-        assert exc_info.value.error_code == "notes_organization_resource_sync_id_invalid"
+        assert (
+            exc_info.value.error_code == "notes_organization_resource_sync_id_invalid"
+        )
 
 
 @pytest.mark.parametrize(
@@ -120,7 +127,9 @@ def test_resource_sync_ids_are_canonical_lowercase_uuid4() -> None:
         ),
     ],
 )
-def test_payloads_reject_unknown_fields(domain: str, payload: dict[str, object]) -> None:
+def test_payloads_reject_unknown_fields(
+    domain: str, payload: dict[str, object]
+) -> None:
     with pytest.raises(NotesOrganizationValidationError) as exc_info:
         parse_notes_organization_payload(domain, "upsert", {**payload, "extra": True})
 
@@ -140,9 +149,12 @@ def test_resource_names_are_trimmed_and_enforce_server_bounds(
     field: str,
     maximum: int,
 ) -> None:
-    assert parse_notes_organization_payload(domain, "upsert", {field: f"  {'x' * maximum}  "})[
-        field
-    ] == "x" * maximum
+    assert (
+        parse_notes_organization_payload(
+            domain, "upsert", {field: f"  {'x' * maximum}  "}
+        )[field]
+        == "x" * maximum
+    )
 
     for invalid in ("   ", "x" * (maximum + 1)):
         with pytest.raises(NotesOrganizationValidationError) as exc_info:
@@ -247,7 +259,9 @@ def test_conversation_keyword_link_accepts_non_uuid_subject_identity() -> None:
         "keyword_sync_id": CANONICAL_SYNC_ID,
     }
 
-    assert parse_notes_organization_payload("notes.keyword_link", "upsert", payload) == {
+    assert parse_notes_organization_payload(
+        "notes.keyword_link", "upsert", payload
+    ) == {
         **payload,
         "subject_id": "conversation-1",
     }

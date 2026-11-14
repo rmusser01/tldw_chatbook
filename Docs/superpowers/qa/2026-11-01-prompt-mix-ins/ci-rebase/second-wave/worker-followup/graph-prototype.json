@@ -1,0 +1,6 @@
+{
+  "absent_safe": [],
+  "actual_waiting_selector": [
+    "tldw_chatbook/owner.py::Controller.start->run => tldw_chatbook/owner.py::Screen._select_project_instruction_binding"
+  ]
+}

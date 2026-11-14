@@ -58,8 +58,7 @@ def test_character_conversation_stores_canonical_assistant_id(
     conversation = db_instance.get_conversation_by_id(conversation_id)
     assert conversation["assistant_id"] == str(character_id)
     assert (
-        conversation["assistant_authority_id"]
-        == db_instance.get_local_authority_id()
+        conversation["assistant_authority_id"] == db_instance.get_local_authority_id()
     )
     assert conversation["runtime_backend"] == "local"
     assert conversation["discovery_owner"] == "ccp_character"

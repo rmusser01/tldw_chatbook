@@ -172,6 +172,7 @@ class TestSaveImageToastEscaping:
             NO_APP,
             stub_fleet_controller,
             stub_library_activity_controller,
+            stub_session_controller,
         )
         from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
@@ -216,6 +217,14 @@ class TestSaveImageToastEscaping:
             # reaches a library-activity seam.
             app_instance=NO_APP,
         )
+        # TASK-19642.8.1: the `_console_chat_store` setter below reaches
+        # `ConsoleRuntime.attach_view` -> `ChatScreen.console_view_hooks`,
+        # which registers the project-instruction hooks off `self._session`
+        # (ADR-317 support). The raiser-wired stub provides them
+        # (TASK-38988); no scenario here dispatches a project instruction.
+        stub_session_controller(
+            screen, context="attachment riders bare screen", app_instance=NO_APP
+        )
         screen._console_chat_store = store
         screen._ensure_console_chat_store = lambda: store
         screen.app_instance = SimpleNamespace(
@@ -237,6 +246,7 @@ class TestSaveImageToastEscaping:
             current_chat_store_accessor=lambda: store,
             ensure_console_chat_controller=_unreached,
             current_chat_controller_accessor=lambda: None,
+            generation_refusal_copy=_unreached,
             sync_native_console_chat_ui=_unreached,
             active_session_is_ephemeral=_unreached,
             active_native_console_session=_unreached,

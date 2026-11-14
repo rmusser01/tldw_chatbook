@@ -67,28 +67,32 @@ def resolve_process_options(
         except CHUNKER_NONCRITICAL_EXCEPTIONS as exc:
             raise InvalidInputError(f"Invalid overlap value: {overlap_opt}") from exc
         if overlap < 0:
-            logger.warning(f"Negative overlap ({overlap}) adjusted to 0 in process_text")
+            logger.warning(
+                f"Negative overlap ({overlap}) adjusted to 0 in process_text"
+            )
             overlap = 0
 
     language = options.get("language")
     # Support explicit auto/detect override and default autodetect when not provided
-    if (not language) or (isinstance(language, str) and language.strip().lower() in {"auto", "detect"}):
+    if (not language) or (
+        isinstance(language, str) and language.strip().lower() in {"auto", "detect"}
+    ):
         # Lightweight language detection by Unicode script ranges
         try:
             if re.search(r"[\u3040-\u309f\u30a0-\u30ff]", processed_text):
-                language = "ja"       # Hiragana/Katakana (Japanese)
+                language = "ja"  # Hiragana/Katakana (Japanese)
             elif re.search(r"[\u4e00-\u9fff]", processed_text):
-                language = "zh"       # CJK Unified Ideographs (Chinese)
+                language = "zh"  # CJK Unified Ideographs (Chinese)
             elif re.search(r"[\u0e00-\u0e7f]", processed_text):
-                language = "th"       # Thai
+                language = "th"  # Thai
             elif re.search(r"[\u0900-\u097f]", processed_text):
-                language = "hi"       # Devanagari (Hindi)
+                language = "hi"  # Devanagari (Hindi)
             elif re.search(r"[\u0400-\u04ff]", processed_text):
-                language = "ru"       # Cyrillic (Russian)
+                language = "ru"  # Cyrillic (Russian)
             elif re.search(r"[\uac00-\ud7af]", processed_text):
-                language = "ko"       # Hangul (Korean)
+                language = "ko"  # Hangul (Korean)
             elif re.search(r"[\u0600-\u06ff]", processed_text):
-                language = "ar"       # Arabic
+                language = "ar"  # Arabic
             else:
                 language = context.config.language
         except CHUNKER_NONCRITICAL_EXCEPTIONS:
@@ -116,7 +120,13 @@ def resolve_process_options(
         method_options_for_chunk["code_mode"] = code_mode_for_method
 
     adaptive = _coerce_bool_option(options.get("adaptive"), False)
-    if adaptive and method_lower not in ("semantic", "json", "xml", "ebook_chapters", "rolling_summarize"):
+    if adaptive and method_lower not in (
+        "semantic",
+        "json",
+        "xml",
+        "ebook_chapters",
+        "rolling_summarize",
+    ):
         try:
             base_adaptive = int(options.get("base_adaptive_chunk_size") or max_size)
             min_adaptive = int(options.get("min_adaptive_chunk_size") or max_size)
@@ -129,7 +139,10 @@ def resolve_process_options(
             if _coerce_bool_option(options.get("adaptive_overlap"), False):
                 try:
                     base_overlap = int(options.get("base_overlap") or overlap or 0)
-                    max_overlap = int(options.get("max_adaptive_overlap") or max(0, base_overlap + 100))
+                    max_overlap = int(
+                        options.get("max_adaptive_overlap")
+                        or max(0, base_overlap + 100)
+                    )
                     # Increase overlap slightly for denser/longer docs; cap to avoid waste
                     tuned = int(base_overlap + (density * 10))
                     overlap = max(0, min(max_overlap, tuned))
@@ -139,13 +152,19 @@ def resolve_process_options(
             pass
 
     hierarchical = _coerce_bool_option(options.get("hierarchical"), False)
-    hier_template = options.get("hierarchical_template") if isinstance(options.get("hierarchical_template"), dict) else None
+    hier_template = (
+        options.get("hierarchical_template")
+        if isinstance(options.get("hierarchical_template"), dict)
+        else None
+    )
     multi_level = (
         _coerce_bool_option(options.get("multi_level"), False)
         and method_lower in ("words", "sentences")
         and not (hierarchical or hier_template)
     )
-    align_text_to_source = _coerce_bool_option(options.get("align_text_to_source"), True)
+    align_text_to_source = _coerce_bool_option(
+        options.get("align_text_to_source"), True
+    )
 
     return ResolvedProcessOptions(
         method=method,

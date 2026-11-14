@@ -1262,6 +1262,7 @@ def test_original_attempt_is_an_exceptional_diagnostic_in_more() -> None:
         "more",
     )
     assert tuple(action.action_id for action in groups.overflow) == (
+        "copy-all",
         "save-as",
         "view-original-attempt",
         "feedback-up",
@@ -1692,6 +1693,7 @@ def test_action_groups_separate_primary_overflow_and_media_actions() -> None:
         "more",
     ]
     assert [action.label for action in groups.overflow] == [
+        "Copy all",
         "Save as…",
         "Helpful",
         "Not helpful",
@@ -1780,7 +1782,7 @@ def test_user_and_stopped_assistant_action_groups_are_exact(
     )
 
     assert tuple(action.action_id for action in groups.primary) == expected_primary
-    assert tuple(action.action_id for action in groups.overflow) == (
+    expected_overflow = (
         "save-as",
         "feedback-up",
         "feedback-down",
@@ -1788,6 +1790,9 @@ def test_user_and_stopped_assistant_action_groups_are_exact(
         "summarize-note",
         "save-transcript-note",
     )
+    if message.role is ConsoleMessageRole.ASSISTANT:
+        expected_overflow = ("copy-all", *expected_overflow)
+    assert tuple(action.action_id for action in groups.overflow) == expected_overflow
     assert groups.media == ()
 
 
@@ -1819,6 +1824,7 @@ def test_video_actions_are_an_exact_separate_media_group() -> None:
         "more",
     )
     assert tuple(action.action_id for action in groups.overflow) == (
+        "copy-all",
         "save-as",
         "feedback-up",
         "feedback-down",

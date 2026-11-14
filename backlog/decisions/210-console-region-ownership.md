@@ -35,12 +35,12 @@ Amends:
   - The 2026-08-19 amendment's 40-column transcript floor becomes 60.
   - Handles no longer hide below `CONSOLE_SINGLE_PANE_COLUMNS` (84).
   - Kept: collapse as a rendering override that never writes the preference, and the :43 rejection of overlays.
-- [ADR-077](077-console-bounded-rail-section-scrolling.md):
+- [ADR-319](319-console-bounded-rail-section-scrolling.md):
   - :38-41 the 20-row ceiling now applies per Inspect group, and "Scope remains a compact row" is kept inside Next send.
   - :55-56 `n/p` moves between groups.
   - :76-83 the direct-section ownership map is rewritten as the three-group map. The STRICT/RESILIENT policy is kept.
 - [ADR-079](079-console-library-conversation-authority.md) :270-273: the fixed-order chip `Library · Auto {off|on} · Agent {blocked|allowed}` keeps its grammar, order, modal and always-visible guarantee. Its home moves from the status strip to the header, and in focus mode to the strip, where it never folds. :259 and :277 (the Selected turn group) are unchanged.
-- [ADR-014](014-retire-legacy-navigation-chrome.md) :12, :21 and :39: on Console the chat title renders in the tab strip, token/cost in the status strip, and database sizes in the header's `Local ▾` details. The Console footer carries key hints only. :41's kept "rail Model readouts" retire with the Model section.
+- [ADR-290](290-retire-legacy-navigation-chrome.md) :12, :21 and :39: on Console the chat title renders in the tab strip, token/cost in the status strip, and database sizes in the header's `Local ▾` details. The Console footer carries key hints only. :41's kept "rail Model readouts" retire with the Model section.
 - [ADR-015](015-shell-destination-ia.md):
   - :30-32: Console's DestinationHeader is one row carrying workspace, authority and three actions, with no title or purpose line (a documented DESIGN.md:311 exception; see Consequences). The hidden legacy statics stay until their contract tests migrate (migration step 8).
   - :36's deferred "control bar/chips" step is this ADR.
@@ -67,12 +67,12 @@ Preserves:
 - [ADR-011](011-chatbook-workbench-ui-system.md):46: the palette is never a hiding place.
 - [ADR-027 (Default chats)](027-default-workspace-chats-in-chats-section.md) :26-28 and [ADR-082](082-console-per-chat-private-scratch-space.md) :21: everyday chatting uses no workspace vocabulary. Default chats stay outside the Workspaces Tree, labelled "Everyday chats" (the switcher's existing gloss), and the header names Default the same way, `Everyday chats ▾` (open question 5, resolved 2026-10-01).
 - [ADR-028 (workspace folders)](028-settings-workspaces-category-and-folder-roots.md) :19-20: access is set per folder, so the header reads `files: mixed` when bound folders differ.
-- [ADR-031 (keybindings)](031-tui-keybinding-and-footer-hint-conventions.md): no `ctrl+c`/`ctrl+w` bindings; footer hints stay truthful.
+- [ADR-299 (keybindings)](299-tui-keybinding-and-footer-hint-conventions.md): no `ctrl+c`/`ctrl+w` bindings; footer hints stay truthful.
 - [ADR-068 (text selection)](068-console-text-selection-and-annotations.md):157-158: the header hosts only the active-playback lifecycle.
 - [ADR-085](085-console-activity-receipts-and-switcher-ownership.md):22-24: the rails do not read the switcher's model.
-- [ADR-098 (duplex voice)](098-low-latency-speculative-duplex-voice-pipeline.md) :327-328 and :343-345: Esc discards a provisional voice turn before it returns to the draft (rule 9), and `Dictate ▾` carries the pipeline's state words.
+- [ADR-338 (duplex voice)](338-low-latency-speculative-duplex-voice-pipeline.md) :327-328 and :343-345: Esc discards a provisional voice turn before it returns to the draft (rule 9), and `Dictate ▾` carries the pipeline's state words.
 - [ADR-136](136-scoped-child-progress-and-supervisor-relay.md) :229-230: waiting sub-agent reports stay reachable with no live sub-agents.
-- [ADR-184 (draft shelf)](184-local-console-prompt-draft-shelf.md) :13-14: the Prompt Workbench stays the sole draft-shelf surface, so the deck has no draft-shelf row.
+- [ADR-350 (draft shelf)](350-local-console-prompt-draft-shelf.md) :13-14: the Prompt Workbench stays the sole draft-shelf surface, so the deck has no draft-shelf row.
 - [ADR-195](195-console-live-tool-call-presentation.md): the approval card remains the decision surface.
 - [ADR-197](197-console-hook-configuration-review.md):28-31: Hooks stays in the visible ConsoleControlBar, now the header's action cluster.
 
@@ -136,7 +136,7 @@ Root cause: every region projects its own copy of shared facts. The sibling unif
 9. **Focus follows layout.**
    - F6 and Shift+F6 cycle five regions in reading order: Top (the header, then the tab strip) → Chats → Transcript → Inspect → Composer region (deck, status strip, composer row). Hidden rails are skipped.
    - Tab stays in visual order within a region.
-   - Esc with no transient surface open first exits hands-free or discards a provisional voice turn when one is active (ADR-098 duplex :327-328; Esc already does this today). Otherwise it returns to the draft (TASK-33622 AC#4).
+   - Esc with no transient surface open first exits hands-free or discards a provisional voice turn when one is active (ADR-338 duplex :327-328; Esc already does this today). Otherwise it returns to the draft (TASK-33622 AC#4).
    - Alt+A focuses the oldest pending decision in any tab, switching tabs and announcing the switch. This is new: today Alt+A reaches only the current tab's card. If a pane swap is showing, Alt+A closes it first.
 
 ### 2. Region → job
@@ -160,13 +160,13 @@ This table is the Console variant of DESIGN.md:107's screen grammar:
 | Status strip | What is this tab doing, and what will it cost? | Four fixed slots plus `+N ▾` (Decision 4) | Library policy (except in focus mode); tool count; zero or default values; provider as its own chip; a collapse control |
 | Composer region | Write the next instruction, and control this tab's run. | <ul><li>The deck: staged evidence, the ADR-098 queue shelf, a pending handoff with `Review…`, and dispatch recovery. Each shows only when non-empty.</li><li>The composer row (Decision 5)</li></ul> | "Send disabled: type a message"; a price suffix on Send; a collapse control |
 | Footer | Which keys work here, right now? | <ul><li>Registry-generated hints (TASK-33623), ranked by focused region and state</li><li>The `F1 keys` anchor</li></ul> | State values; token/cost on Console; keys that do nothing in the focused region |
-| Overlays, palette, slash | Speed up what is visible, and hold rare or diagnostic views. | <ul><li>The Ctrl+K switcher (ADR-085 data model)</li><li>Chat details, Trace, Library Access, Chat settings, the workspace switcher and the `Local ▾` details</li><li>The Prompt Workbench and its draft shelf (ADR-184)</li><li>Settings ▸ Diagnostics (integrations)</li><li>A twin for every visible action</li></ul> | Being the only home of anything |
+| Overlays, palette, slash | Speed up what is visible, and hold rare or diagnostic views. | <ul><li>The Ctrl+K switcher (ADR-085 data model)</li><li>Chat details, Trace, Library Access, Chat settings, the workspace switcher and the `Local ▾` details</li><li>The Prompt Workbench and its draft shelf (ADR-350)</li><li>Settings ▸ Diagnostics (integrations)</li><li>A twin for every visible action</li></ul> | Being the only home of anything |
 
 ### 3. Inspect: three fixed groups
 
 The groups use one header grammar, `▾ Title ──── summary`, with the whole row as the toggle and ADR-034's glyphs.
 
-- **Scrolling:** each body keeps ADR-077's 20-row ceiling. The Next send header row is pinned above the scroll owner, replacing the pinned card.
+- **Scrolling:** each body keeps ADR-319's 20-row ceiling. The Next send header row is pinned above the scroll owner, replacing the pinned card.
 - **Disclosure** persists through ADR-083's layout scopes. Three group ids replace `inspector_more`, and `environment`/`tasks` survive as Run subsection ids.
 - **Defaults:** Next send and Run are open, and Selected turn opens when a turn is selected.
 
@@ -606,7 +606,7 @@ Twins marked (new) do not exist today and ship with the step that moves the cont
 | Dictate | Composer | `Dictate ▾`; Menu ▸ Voice when folded | Palette (new) |
 | 📎 n files and a distant ✕ | Composer | Named attachment chips, each with its own ✕ | — |
 | Staged evidence, queue shelf | Above the composer | Unchanged (the deck) | — |
-| Draft shelf | Prompt Workbench | Unchanged (ADR-184 :13-14); reached from Menu ▸ Draft | Palette ("Save draft to shelf…", "Insert prompt…") |
+| Draft shelf | Prompt Workbench | Unchanged (ADR-350 :13-14); reached from Menu ▸ Draft | Palette ("Save draft to shelf…", "Insert prompt…") |
 | Fixed hints led by Ctrl+Shift+F | Footer | Ranked by region and state from the registry | — |
 | `Y trace` | Footer | Shown only while the transcript is focused. Visible homes: Run `Trace…` and Selected turn `Trace this turn…`. | y |
 | Conversation Inspector modal | Overlay | Renamed Chat details; opened from `Preview…`, the Context slot and `Details…` | Ctrl+Shift+P, /context |
@@ -651,7 +651,7 @@ Twins marked (new) do not exist today and ship with the step that moves the cont
 - **Test churn:**
   - task-400's `test_console_live_work_card_swap_keeps_tray_on_top_and_cards_at_bottom`
   - TASK-24611's boundary inventory
-  - ADR-077's STRICT ownership map
+  - ADR-319's STRICT ownership map
   - the `CONSOLE_RAIL_SECTION_IDS` preference migration
   - `status_chips_collapsed`
   - `TOP_ACTION_IDS`
@@ -756,7 +756,7 @@ Measure live, before and after each step, with the review's B2 SGR census on tmu
   - change model: Alt+M;
   - open Inspect: Alt+I.
 - **Focus:** the F6 order matches the visual order; Tab never leaves a region's visual order; no container is a Tab stop.
-- **Registry:** no action is palette-only; the footer advertises only bindings that work in the focused region (ADR-031 rule 4).
+- **Registry:** no action is palette-only; the footer advertises only bindings that work in the focused region (ADR-299 rule 4).
 - **Glance test** with three operators and three first-timers, on the live mid-run and idle first-run screens at 80x24 and 235x52. The five questions:
   - Is anything waiting on you?
   - Where will this write land?

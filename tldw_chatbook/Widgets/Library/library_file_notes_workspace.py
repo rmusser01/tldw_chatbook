@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Collection, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from functools import partial
@@ -13,6 +14,7 @@ from time import monotonic
 from typing import Any, Literal, Protocol, cast
 from uuid import uuid4
 
+from loguru import logger
 from rich.cells import cell_len
 from rich.text import Text
 from textual import on
@@ -25,7 +27,8 @@ from textual.screen import ModalScreen
 from textual.timer import Timer
 from textual.widget import Widget
 from textual.worker import Worker
-from textual.widgets import Button, Input, ListView, Static, TextArea, Tree
+from textual.widgets import Button, Input, ListView, OptionList, Static, TextArea, Tree
+from textual.widgets.option_list import Option
 
 from tldw_chatbook.config import (
     apply_settings_mutation_to_cli_config,
@@ -78,7 +81,10 @@ from tldw_chatbook.Notes.file_notes_git_push import (
     PushReviewHandle,
     PushRecoveryProjection,
 )
-from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica
+from tldw_chatbook.Notes.file_notes_replica import (
+    FileNotesReplica,
+    ReplicaRevisionInfo,
+)
 from tldw_chatbook.Notes.file_notes_session_owner import (
     FileNotesSessionOwner,
     FileNotesSessionSnapshot,
@@ -91,6 +97,7 @@ from tldw_chatbook.Notes.file_notes_session_owner import (
     SessionTransitionKind,
 )
 from tldw_chatbook.Notes.file_notes_service import (
+    ACTIVATION_WARNING,
     LARGE_FILE_EXCERPT_CHARS,
     FileNoteEntry,
     FileNotesService,
@@ -224,6 +231,10 @@ def resolve_file_note_status_channels(
         content, safe = "No file open.", None
     else:
         content, safe = "Saved", None
+    if unavailable and root is not None and (conflict or save_failed or saving or dirty):
+        # TASK-38983: an unsaved draft refuses a folder change, and Save Copy
+        # writes into the same unreachable folder, so neither step works.
+        safe = "Reconnect the folder"
 
     if git_failure:
         failure_lower = git_failure.casefold()
@@ -297,6 +308,8 @@ ROOT_CHANGE_TIMEOUT_SECONDS = 30.0
 #: beside a folder change, long enough not to spin.
 SERVICE_LOCK_POLL_SECONDS = 0.05
 ROOT_CHANGE_CANCELLED_COPY = "Folder change cancelled · previous folder kept"
+#: TASK-38983: the leave guard refused a folder change; it used to say nothing.
+ROOT_CHANGE_DRAFT_COPY = "Folder not changed · your draft is not saved yet."
 ROOT_CHANGE_TIMEOUT_COPY = (
     "Folder change timed out · previous folder kept. "
     "Try again or choose a different folder."
@@ -318,12 +331,33 @@ FOLDER_FILES_EMPTY_COPY = (
 )
 FILE_TREE_BATCH_SIZE = 100
 
+#: TASK-34938: search-box debounce, matching the repo picker/filter family
+#: (media 0.3s, artifacts 0.2s, emoji 0.3s).
+FILE_NOTES_SEARCH_DEBOUNCE_SECONDS = 0.2
+
 
 #: How many deferred re-fits one geometry change may queue before the path
 #: lines keep whatever they last fitted (task-32614, review F6). Settling took
 #: two passes in every size x mode combination measured; four is slack, and a
 #: pair of widths that alternated would otherwise re-arm each other forever.
 _PATH_FIT_ATTEMPT_LIMIT = 4
+
+#: TASK-38757: the narrowest work pane the narrow navigator keeps: what it
+#: leaves at 60 columns, where the save and recovery status is pinned to paint
+#: whole (the 60x20 authority tests). Below it (2 cells at 44, none at 42) the
+#: pane is a sliver whose controls Tab reached off screen, so it is hidden and
+#: the Files pane takes its columns.
+_NARROW_WORK_MIN_WIDTH = 18
+
+
+#: task-11: poll backoff for the reconcile timer. The vault signature gate
+#: makes quiet ticks nearly free (walk stats only), but the cadence itself
+#: still costs wakeups; after four consecutive signature-unchanged ticks
+#: the interval decays to the backoff ceiling and snaps back to the active
+#: cadence on the first real change. The ceiling never overrides a slower
+#: configured ``poll_interval``.
+_POLL_BACKOFF_SECONDS = 6.0
+_POLL_BACKOFF_AFTER_TICKS = 4
 
 
 class _ServiceLockBusy(Exception):
@@ -346,6 +380,30 @@ _FILE_NOTES_WORKSPACE_BINDINGS = [
 ]
 
 
+class _FolderRowStatus(Static):
+    """Folder-row status that fits itself again once layout changes its width.
+
+    TASK-38710: the fit is deferred with ``call_after_refresh``, which runs no
+    layout pass. When it ran before the layout that seats "Review…", it fitted
+    the old width and nothing fitted again. Layout sets this width (``1fr``,
+    one row, no wrap), so a refit cannot resize it. The prompt's
+    ``-empty-root`` auto width is never fitted, but it is still recorded: a
+    relink back to the old width must refit.
+    """
+
+    def __init__(self, *args: Any, refit: Callable[[], None], **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._refit = refit
+        self._seen_width = -1
+
+    def on_resize(self, event: Resize) -> None:
+        if event.size.width == self._seen_width:
+            return
+        self._seen_width = event.size.width
+        if not self.has_class("-empty-root"):
+            self._refit()
+
+
 class FileNotesEditorTextArea(TextArea):
     """The Folder files editor, with document-end and document-start keys.
 
@@ -361,6 +419,15 @@ class FileNotesEditorTextArea(TextArea):
     """
 
     BINDINGS = _FILE_NOTES_EDITOR_BINDINGS
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        # TASK-34000.28 (N-32, fix round 1): the Library note body's F6
+        # release, one widget over -- F6 leaves the file body for the next
+        # pane instead of selecting the line. Imported here (ADR-097).
+        from tldw_chatbook.Widgets.text_area_pane_key import release_pane_key
+
+        release_pane_key(self)
 
     def action_cursor_document_end(self) -> None:
         """Move the caret to the end of the file body."""
@@ -469,6 +536,26 @@ class _ConflictCompareRequest:
     session_key: str
     opened: OpenedFileNote
     draft: str
+
+
+@dataclass(frozen=True, slots=True)
+class _HistoryActionRequest:
+    """One revision action chosen in the protected-file History dialog.
+
+    The request carries the exact revision-row identity and the service and
+    root generation that supplied the dialog's listing, so a dismissed
+    dialog's worker can never act on a different root's same-named revision
+    (PR #3016 review findings 2 and 13).
+    """
+
+    action: Literal["verify", "export", "restore"]
+    relative_path: str
+    kind: str
+    session_key: str | None
+    service: FileNotesService
+    root_generation: int
+    revision_id: int
+    destination_path: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -686,6 +773,206 @@ class FileNotesRootDetailsDialog(SafeModalDismissMixin, ModalScreen[None]):
         self.dismiss_safe_once(None)
 
 
+class FileNotesHistoryDialog(
+    SafeModalDismissMixin,
+    ModalScreen[_HistoryActionRequest | None],
+):
+    """Browse one protected file's bounded revision history and act on it.
+
+    task-34381: the dialog only PRESENTS the bounded listing and collects a
+    chosen action; every service call runs in the workspace under the same
+    transition guards as its other file actions, so a dialog opened against
+    one root can never publish into a root that changed beneath it.
+
+    TASK-36386 / ADR-097: the ``file-notes-history*`` rules in ``features/_notes.tcss``
+    leave the boot path: ``build_css.py`` splits them into the sheet this ``CSS_PATH``
+    loads on first open. Its ``App.-wide-viewport`` tier rule goes with them
+    (TASK-38719).
+    """
+
+    BINDINGS = [("escape", "request_safe_cancel", "Close")]
+    SAFE_MODAL_CONTENT = "#file-notes-history-dialog"
+    CSS_PATH = str(
+        Path(__file__).resolve().parents[2]
+        / "css"
+        / "screen_modal_file_notes_history.tcss"
+    )
+
+    def __init__(
+        self,
+        relative_path: str,
+        revisions: tuple[ReplicaRevisionInfo, ...],
+        suggested_destination: str,
+        service: FileNotesService,
+        root_generation: int,
+    ) -> None:
+        """Initialize the dialog with one file's bounded revision listing.
+
+        Args:
+            relative_path: Protected file path relative to the notes root.
+            revisions: Bounded listing entries, most recent first.
+            suggested_destination: Pre-filled absent destination suggestion.
+            service: Service that supplied the listing; carried onto every
+                action request so a root change cannot redirect it (PR
+                #3016 review finding 13).
+            root_generation: Root generation that supplied the listing.
+        """
+        super().__init__(id="file-notes-history-dialog-screen")
+        self._relative_path = relative_path
+        self._revisions = revisions
+        self._suggested_destination = suggested_destination
+        self._service = service
+        self._root_generation = root_generation
+
+    def compose(self) -> ComposeResult:
+        """Compose the bounded listing, destination field, and actions."""
+        with Vertical(id="file-notes-history-dialog"):
+            yield Static(
+                f"Revision history: {self._relative_path}",
+                id="file-notes-history-title",
+                markup=False,
+            )
+            yield OptionList(id="file-notes-history-list")
+            yield Static(
+                "New path for Export/Restore (never replaces a file)",
+                id="file-notes-history-destination-label",
+                markup=False,
+            )
+            yield Input(
+                self._suggested_destination,
+                id="file-notes-history-destination",
+            )
+            with Horizontal(id="file-notes-history-actions"):
+                yield Button(
+                    "Verify", id="file-notes-history-verify", compact=True
+                )
+                yield Button(
+                    "Export", id="file-notes-history-export", compact=True
+                )
+                yield Button(
+                    "Restore", id="file-notes-history-restore", compact=True
+                )
+                yield Button(
+                    "Close", id="file-notes-history-close", compact=True
+                )
+            yield Static("", id="file-notes-history-status", markup=False)
+
+    def on_mount(self) -> None:
+        """Populate the bounded listing and focus it for keyboard selection."""
+        option_list = self.query_one("#file-notes-history-list", OptionList)
+        option_list.add_options(
+            Option(_history_option_label(revision)) for revision in self._revisions
+        )
+        option_list.focus()
+
+    def _selected_revision(self) -> ReplicaRevisionInfo | None:
+        """Return the highlighted revision, or ``None`` with a reason shown."""
+        option_list = self.query_one("#file-notes-history-list", OptionList)
+        highlighted = option_list.highlighted
+        if highlighted is None or not 0 <= highlighted < len(self._revisions):
+            self._set_status("Select a revision first.")
+            return None
+        return self._revisions[highlighted]
+
+    def _set_status(self, text: str) -> None:
+        self.query_one("#file-notes-history-status", Static).update(text)
+
+    def _destination(self) -> str | None:
+        """Return the validated destination, or ``None`` with a reason.
+
+        PR #3016 review finding 4: the destination passes the workspace's
+        shared text validator (the same check ``#file-notes-path`` input
+        gets) before it is carried onto an export or restore request; the
+        service's own path-safety checks still apply afterwards.
+        """
+        raw_value = self.query_one("#file-notes-history-destination", Input).value
+        destination = raw_value.strip()
+        if not destination:
+            self._set_status("Name a new path for this action.")
+            return None
+        if not validate_text_input(raw_value, max_length=4096, allow_html=True):
+            self._set_status("Destination text is not supported.")
+            return None
+        return destination
+
+    @on(Button.Pressed, "#file-notes-history-close")
+    def _close(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.dismiss_safe_once(None)
+
+    @on(Button.Pressed, "#file-notes-history-verify")
+    def _verify(self, event: Button.Pressed) -> None:
+        event.stop()
+        revision = self._selected_revision()
+        if revision is None:
+            return
+        self.dismiss_safe_once(
+            _HistoryActionRequest(
+                action="verify",
+                relative_path=self._relative_path,
+                kind=revision.kind,
+                session_key=revision.session_key,
+                service=self._service,
+                root_generation=self._root_generation,
+                revision_id=revision.revision_id,
+            )
+        )
+
+    @on(Button.Pressed, "#file-notes-history-export")
+    def _export(self, event: Button.Pressed) -> None:
+        event.stop()
+        revision = self._selected_revision()
+        if revision is None:
+            return
+        destination = self._destination()
+        if destination is None:
+            return
+        self.dismiss_safe_once(
+            _HistoryActionRequest(
+                action="export",
+                relative_path=self._relative_path,
+                kind=revision.kind,
+                session_key=revision.session_key,
+                service=self._service,
+                root_generation=self._root_generation,
+                revision_id=revision.revision_id,
+                destination_path=destination,
+            )
+        )
+
+    @on(Button.Pressed, "#file-notes-history-restore")
+    def _restore(self, event: Button.Pressed) -> None:
+        event.stop()
+        revision = self._selected_revision()
+        if revision is None:
+            return
+        destination = self._destination()
+        if destination is None:
+            return
+        self.dismiss_safe_once(
+            _HistoryActionRequest(
+                action="restore",
+                relative_path=self._relative_path,
+                kind=revision.kind,
+                session_key=revision.session_key,
+                service=self._service,
+                root_generation=self._root_generation,
+                revision_id=revision.revision_id,
+                destination_path=destination,
+            )
+        )
+
+
+def _history_option_label(revision: ReplicaRevisionInfo) -> str:
+    """Return the bounded one-line label for one revision listing entry."""
+    session = revision.session_key if revision.session_key else "deletion"
+    stamp = revision.created_at[:16]
+    return (
+        f"{stamp}  {revision.kind}  {session}  {revision.size}B  "
+        f"{revision.content_hash[:8]}"
+    )
+
+
 class FileNotesConflictCompareDialog(SafeModalDismissMixin, ModalScreen[None]):
     """Show one immutable, bounded Base/Draft/Disk comparison."""
 
@@ -861,8 +1148,6 @@ class LibraryFileNotesWorkspace(Vertical):
     }
 
     #file-notes-save-status.-error {
-        color: $text;
-        background: $error 14%;
         text-style: bold;
     }
 
@@ -899,6 +1184,12 @@ class LibraryFileNotesWorkspace(Vertical):
 
     #file-notes-root-details {
         display: none;
+    }
+
+    /* TASK-36513: "Review…" must not take Button's 16-cell floor. */
+    #file-notes-recovery-review {
+        width: auto;
+        min-width: 0;
     }
 
     #file-notes-body {
@@ -945,6 +1236,13 @@ class LibraryFileNotesWorkspace(Vertical):
     #file-notes-tree-header {
         height: auto;
         min-height: 1;
+    }
+
+    /* TASK-38757: the title took the whole row and Button's 16-cell floor
+       pushed New past the row's clip at every width, so Tab focused a
+       control nobody could see. */
+    #file-notes-tree-header .destination-section {
+        width: 1fr;
     }
 
     #file-notes-search-row,
@@ -1122,7 +1420,13 @@ class LibraryFileNotesWorkspace(Vertical):
         display: none;
     }
 
+    /* TASK-38710: one row, so never wrap. A stacked toolbar's grid measures
+       a label at its column width minus padding and Button's line-pad, and
+       a 4-cell column made that 0: Rich's fold raised and the app exited.
+       Truncation is defined at every width. */
     .file-notes-toolbar Button,
+    #file-notes-new,
+    #file-notes-navigator-manage,
     #file-notes-back,
     #file-notes-session-changes {
         width: auto;
@@ -1132,6 +1436,8 @@ class LibraryFileNotesWorkspace(Vertical):
         padding: 0 1;
         border: none;
         background: transparent;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
     }
 
     #file-notes-session-changes {
@@ -1272,6 +1578,9 @@ class LibraryFileNotesWorkspace(Vertical):
             replica if isinstance(replica, FileNotesReplica) else None
         )
         self._owns_replica = replica is _UNSET
+        # TASK-36531: a file-backed replica closes only on the thread that
+        # opened its connection, so an owned one opens and closes here.
+        self._replica_thread: ThreadPoolExecutor | None = None
         self._session_owner = (
             FileNotesSessionOwner() if session_owner is None else session_owner
         )
@@ -1282,8 +1591,16 @@ class LibraryFileNotesWorkspace(Vertical):
         self._runtime_warning = ""
         self._root_status_detail = "Choose a notes folder."
         self._root_status_summary = "Choose a notes folder."
+        # (state words, folder name) while the summary is the linked line.
+        self._root_status_parts: tuple[str, str] | None = None
 
         self._poll_interval = max(0.02, poll_interval)
+        self._poll_base_interval = self._poll_interval
+        self._poll_backoff_interval = max(
+            self._poll_base_interval,
+            _POLL_BACKOFF_SECONDS,
+        )
+        self._poll_quiet_ticks = 0
         self._autosave_delay = max(0.01, autosave_delay)
         self._poll_timer: Timer | None = None
         self._autosave_timer: Timer | None = None
@@ -1332,13 +1649,23 @@ class LibraryFileNotesWorkspace(Vertical):
         self._root_action_reason = ""
 
         self._entries: dict[str, FileNoteEntry] = {}
+        # TASK-34938: pre-folded entry paths for the replica-less search
+        # fallback, rebuilt whenever _entries is assigned.
+        self._entries_folded: tuple[str, ...] = ()
         self._deleted_paths: tuple[str, ...] = ()
         self._folder_children: dict[str, tuple[_FolderItem, ...]] = {}
         self._search_paths: tuple[str, ...] = ()
+        # TASK-34938: debounced search execution + cached navigator refs.
+        self._search_debounce_timer: Timer | None = None
+        self._navigator_refs: Any = None
         self._restore_expanded_folders: set[str] = set()
         self._opened: OpenedFileNote | None = None
         self._current_path = ""
         self._selected_deleted_path = ""
+        # task-34383: the tombstone whose restore was refused (occupied or
+        # missing parent) and whose exact bytes the Export deleted copy
+        # fallback can still publish to a new path.
+        self._restore_refusal_path = ""
         self._session_key = ""
         self._save_state: SaveState = "idle"
         self._save_detail = ""
@@ -1350,8 +1677,14 @@ class LibraryFileNotesWorkspace(Vertical):
         self._action_detail = ""
         self._initialized = False
         self._root_offline: bool | None = None
+        #: TASK-38982: a failed background reconcile, until the next healthy pass.
+        self._refresh_failure = ""
         self._narrow = False
         self._narrow_view: Literal["navigator", "editor"] = "navigator"
+        # TASK-38757: the user chose the narrow navigator (Back or the Files
+        # grip) since the save state last changed, so a standing failure does
+        # not pull the work pane back over that choice.
+        self._navigator_chosen = False
         self._navigator_mode: Literal["files", "search", "git"] = "files"
         self._navigator_mode_before_git: Literal["files", "search"] = "files"
         self._editor_action_layout_sync_scheduled = False
@@ -1370,7 +1703,11 @@ class LibraryFileNotesWorkspace(Vertical):
         self._path_task: FileNotesPathTask = "none"
         self._path_task_opener_id = ""
         self._path_task_editor_lease: _EditorReadOnlyLease | None = None
+        self._path_task_brought_work_forward = False
         self._git_observed_changes: tuple[SequencedSessionChange, ...] | None = None
+        # task-11: the owner's session revision as of the last session
+        # refresh. None forces the first refresh after every binding reset.
+        self._git_observed_change_version: tuple[int, int] | None = None
         self._git_refresh_timer: Timer | None = None
         self._git_refresh_after_mutation = False
         self._git_last_action: _GitLastAction | None = None
@@ -1394,6 +1731,8 @@ class LibraryFileNotesWorkspace(Vertical):
         self._push_review_projection: PushPanelReviewProjection | None = None
         self._push_result: object | None = None
         self._push_result_projection: PushPanelResultProjection | None = None
+        # TASK-38700: attention only this workspace knows (no owner record).
+        self._push_attention_projection: PushPanelResultProjection | None = None
         self._push_authorization_dialog_operation_id: int | None = None
         self._push_observer_task: asyncio.Task[None] | None = None
         self._push_settlement_tasks: set[asyncio.Task[None]] = set()
@@ -1463,10 +1802,17 @@ class LibraryFileNotesWorkspace(Vertical):
 
     def _build_reader_items_pane(self) -> Widget:
         """Build the retained Folder navigator role once."""
+        # TASK-38982: the hidden work pane's Manage (and Session Git), shown
+        # only while the narrow navigator hides that pane.
+        self._navigator_manage = Button(
+            "Manage", id="file-notes-navigator-manage", compact=True
+        )
+        self._navigator_manage.display = False
         return Vertical(
             Horizontal(
                 Static("Folder files", classes="destination-section", markup=False),
                 Button("New", id="file-notes-new", compact=True),
+                self._navigator_manage,
                 id="file-notes-tree-header",
             ),
             # task-32621 AC#2 (A cap 29, B cap 35): the tree silently omitted
@@ -1587,10 +1933,20 @@ class LibraryFileNotesWorkspace(Vertical):
                 self._editor_widget,
                 Horizontal(
                     Button("Restore", id="file-notes-restore", compact=True),
+                    Button(
+                        "Export deleted copy",
+                        id="file-notes-export-deleted",
+                        compact=True,
+                    ),
                     Button("Compare", id="file-notes-compare", compact=True),
                     Button(
                         "Resolve conflict",
                         id="file-notes-resolve-conflict",
+                        compact=True,
+                    ),
+                    Button(
+                        "Retry save",
+                        id="file-notes-recovery-retry",
                         compact=True,
                     ),
                     Button(
@@ -1660,6 +2016,7 @@ class LibraryFileNotesWorkspace(Vertical):
                 ),
                 Horizontal(
                     Button("Protect", id="file-notes-protect", compact=True),
+                    Button("History", id="file-notes-history", compact=True),
                     Button("Refresh", id="file-notes-refresh", compact=True),
                     id="file-notes-maintenance-actions",
                     classes="file-notes-toolbar",
@@ -1716,6 +2073,34 @@ class LibraryFileNotesWorkspace(Vertical):
         manual_reopen: PaneName | None = None,
     ) -> None:
         """Patch the mounted shared shell without recomposing its roles."""
+        if (
+            self._narrow
+            and self._narrow_view == "editor"
+            and layout.items_open
+            and layout.reader_width < _NARROW_WORK_MIN_WIDTH
+        ):
+            # TASK-38757 re-review: the Files grip reopened the navigator from
+            # the narrow editor. That is the navigator view, chosen as Back
+            # chooses it, so the work pane hides instead of keeping a sliver.
+            self._narrow_view = "navigator"
+            self._navigator_chosen = True
+            self.query_one("#file-notes-back", Button).display = False
+        if (
+            self._navigator_hides_work(layout)
+            and self._save_state in {"conflict", "error"}
+            and not self._navigator_chosen
+        ):
+            # TASK-38757 re-review: a resize must not hide a failure; show the
+            # work pane through the editor view (this re-resolves the layout).
+            # An explicit navigator choice (Back, the Files grip) still wins.
+            self._set_narrow_view("editor")
+            return
+        if self._navigator_hides_work(layout):
+            layout = replace(
+                layout,
+                items_width=layout.items_width + layout.reader_width,
+                reader_width=0,
+            )
         self._reader_layout = layout
         shell = self._reader_shell
         if shell is not None:
@@ -1726,6 +2111,58 @@ class LibraryFileNotesWorkspace(Vertical):
             # paint the file panes back into the empty state.
             self._sync_body_panes()
         self._schedule_editor_action_layout()
+
+    def _navigator_hides_work(self, layout: AdaptiveReaderEffectiveLayout) -> bool:
+        """Whether the narrow navigator's work pane would be a sliver."""
+        return (
+            self._narrow
+            and self._narrow_view == "navigator"
+            and layout.items_open
+            and layout.reader_width < _NARROW_WORK_MIN_WIDTH
+        )
+
+    def _set_narrow_view(self, view: Literal["navigator", "editor"]) -> None:
+        """Switch the narrow view and re-lay out whichever shell owns it.
+
+        The Library screen resolves an external shell's layout, so it is
+        asked to re-resolve: ``_apply_responsive_layout`` alone does not reach
+        it (TASK-38757 review: a selected deleted note stayed hidden).
+        """
+        self._narrow_view = view
+        if view == "editor":
+            self._navigator_chosen = False
+        self._apply_responsive_layout(self.size.width)
+        if self._reader_shell_external:
+            self._sync_body_panes()
+            self.post_message(AdaptiveReaderShellResized())
+
+    def _bring_work_forward(self) -> bool:
+        """Show a hidden narrow work pane whose content must be seen.
+
+        TASK-38757 review: below 60 columns the navigator hides the work pane,
+        so a failure, a refusal or a path task written there showed nowhere.
+
+        Returns:
+            Whether the pane was hidden and is now brought forward.
+        """
+        if not self._navigator_hides_work(self._reader_layout):
+            return False
+        self._set_narrow_view("editor")
+        return True
+
+    def _focus_once_shown(self, widget: Widget, attempts: int = 20) -> None:
+        """Focus ``widget`` once its pane shows again.
+
+        The Library screen re-lays out an external shell a message later, so
+        the navigator a cancelled New returns to is not displayed yet.
+        """
+        if not self._active or not self.is_mounted:
+            return
+        shown = all(node.display for node in widget.ancestors_with_self)
+        if widget.focusable and shown:
+            widget.focus()
+        elif attempts:
+            self.call_after_refresh(self._focus_once_shown, widget, attempts - 1)
 
     def _ensure_standalone_reader_shell(self) -> LibraryAdaptiveReaderShell:
         """Supply the shared structure for direct workspace harnesses."""
@@ -1930,7 +2367,7 @@ class LibraryFileNotesWorkspace(Vertical):
     ) -> bool:
         """Open one guarded target-path task and remember its focus origin."""
         if task == "none":
-            self._close_path_task()
+            self._close_path_task(cancelled=True)
             return True
         if task not in {"new", "move", "save_copy"}:
             raise ValueError(f"Unsupported File Notes path task: {task}")
@@ -1985,13 +2422,22 @@ class LibraryFileNotesWorkspace(Vertical):
         self._path_task_editor_lease = path_task_lease
         path = self.query_one("#file-notes-path", Input)
         path.value = self._current_path if task == "move" else ""
+        # New opens from the navigator; its form is in the work pane.
+        self._path_task_brought_work_forward = self._bring_work_forward()
         self._sync_path_task_surface(focus_target=True)
         return True
 
-    def _close_path_task(self, *, restore_focus: bool = True) -> None:
+    def _close_path_task(
+        self,
+        *,
+        restore_focus: bool = True,
+        cancelled: bool = False,
+    ) -> None:
         """Close the named task and restore its actual invoking control."""
         closed_task = self._path_task
         opener_id = self._path_task_opener_id
+        brought_forward = self._path_task_brought_work_forward
+        self._path_task_brought_work_forward = False
         self._path_task = "none"
         self._path_task_opener_id = ""
         path_task_lease = self._path_task_editor_lease
@@ -1999,6 +2445,17 @@ class LibraryFileNotesWorkspace(Vertical):
         if path_task_lease is not None:
             path_task_lease.release()
         self._sync_path_task_surface()
+        returned = (
+            cancelled
+            and brought_forward
+            and self._active
+            and self._narrow
+            and self._narrow_view == "editor"
+        )
+        if returned:
+            # TASK-38757 re-review: the task brought the hidden work pane
+            # forward from the navigator, so a cancel goes back there.
+            self._set_narrow_view("navigator")
         if (
             not restore_focus
             or not opener_id
@@ -2010,6 +2467,9 @@ class LibraryFileNotesWorkspace(Vertical):
         if not matches:
             return
         opener = matches.first(Button)
+        if returned:
+            self.call_after_refresh(self._focus_once_shown, opener)
+            return
         opener_is_visible = opener.display and all(
             ancestor.display for ancestor in opener.ancestors if ancestor is not self
         )
@@ -2035,7 +2495,7 @@ class LibraryFileNotesWorkspace(Vertical):
         """Cancel a visible path task for the screen-level guarded Escape path."""
         if self._path_task == "none":
             return False
-        self._close_path_task(restore_focus=True)
+        self._close_path_task(restore_focus=True, cancelled=True)
         return True
 
     async def _submit_path_task(self) -> bool:
@@ -2120,10 +2580,11 @@ class LibraryFileNotesWorkspace(Vertical):
             markup=False,
         )
         with Horizontal(id="file-notes-root-row"):
-            root_status = Static(
+            root_status = _FolderRowStatus(
                 "Choose a notes folder.",
                 id="file-notes-root-status",
                 markup=False,
+                refit=self._fit_root_status,
             )
             # task-2850: match ``_update_root_surface``'s class so the very
             # first paint (before ``on_mount`` runs) already keeps the
@@ -2140,9 +2601,13 @@ class LibraryFileNotesWorkspace(Vertical):
                 id="file-notes-choose-root",
                 compact=True,
             )
-            yield Button(
-                "Review recovered pairing…", id="file-notes-recovery-review", compact=True,
-            )
+            # TASK-36513: shown only while a restored pairing awaits review
+            # (``_update_root_surface``); always shown, it left a linked
+            # folder's status 11 cells at 60 columns.
+            review = Button("Review…", id="file-notes-recovery-review", compact=True)
+            review.tooltip = "Review the recovered folder pairing"
+            review.display = False
+            yield review
             # task-32055: the way out of a structural wait, next to the
             # control that starts one. Display-toggled (never conditionally
             # yielded) so the in-place wait updates always find it.
@@ -2239,6 +2704,8 @@ class LibraryFileNotesWorkspace(Vertical):
         authority_running = ""
         if self._root is not None and self._root_offline is True:
             authority_failure = "Folder unavailable"
+        elif self._refresh_failure:
+            authority_failure = "Refresh failed"
         elif self._runtime_warning:
             authority_uncertain = "Folder warning"
         elif self._root_transitioning:
@@ -2453,14 +2920,39 @@ class LibraryFileNotesWorkspace(Vertical):
                 await asyncio.shield(save_task)
             except (asyncio.CancelledError, Exception):
                 pass
+        # task-34382 (ADR-351): the session-end retention pass, after any
+        # in-flight save settles and before the owner/replica retire.
+        # PR #3016 review finding 10: the service reports replica cleanup
+        # failures as results, so the result is inspected too -- a failed
+        # session-end sweep must not leave zero trace. Both paths log via
+        # the module logger: shutdown routinely runs after the Textual app
+        # has exited, where the DOM ``self.log`` raises NoActiveAppError.
+        service = self._service
+        if service is not None:
+            try:
+                retention = await asyncio.to_thread(service.enforce_retention)
+            except Exception as error:
+                logger.warning(f"File Notes retention cleanup failed: {error}")
+            else:
+                if not retention.succeeded:
+                    logger.warning(
+                        "File Notes retention cleanup failed: {}",
+                        retention.message or retention.status,
+                    )
         if self._owns_session_owner:
             await asyncio.to_thread(self._session_owner.shutdown)
         elif self._owns_replica:
             await asyncio.to_thread(
                 self._session_owner.wait_for_root_commit,
             )
-        if self._owns_replica:
-            await asyncio.to_thread(self._close_owned_replica)
+        owner_thread = self._replica_thread
+        if self._owns_replica and owner_thread is not None:
+            try:
+                await asyncio.get_running_loop().run_in_executor(
+                    owner_thread, self._close_owned_replica
+                )
+            finally:
+                owner_thread.shutdown(wait=False)
 
     def _close_owned_replica(self) -> None:
         with self._runtime_lock:
@@ -2571,7 +3063,13 @@ class LibraryFileNotesWorkspace(Vertical):
                     replica_path = self._replica_path or (
                         get_user_data_dir() / "file_notes.sqlite"
                     )
-                    replica = FileNotesReplica(replica_path)
+                    if self._replica_thread is None:
+                        self._replica_thread = ThreadPoolExecutor(
+                            1, thread_name_prefix="file-notes-replica"
+                        )
+                    replica = self._replica_thread.submit(
+                        FileNotesReplica, replica_path
+                    ).result()
                     # Keep the handle even if the awaiting mount is cancelled.
                     # A rapid remount will reuse it instead of opening a second
                     # connection after the background thread completes.
@@ -2688,6 +3186,9 @@ class LibraryFileNotesWorkspace(Vertical):
                         "Selected notes root changed; the commit draft was cleared."
                     )
                     self._git_observed_changes = None
+                    # task-11: the new binding's log is a different fact
+                    # stream; force its first refresh to run.
+                    self._git_observed_change_version = None
                     self._git_status_task = None
                     self._git_status_task_binding = None
                     self._git_status_failure = ""
@@ -2701,6 +3202,11 @@ class LibraryFileNotesWorkspace(Vertical):
                 self._root = root
                 self._session_binding = binding
                 self._service = service
+                # PR #3016 review finding 8: the export-deleted fallback
+                # belongs to THIS root's tombstone refusals only. A newly
+                # adopted root never inherits the marker -- not even when
+                # it carries a same-named tombstone.
+                self._restore_refusal_path = ""
                 self._clear_open_document(
                     announce_identity_cleared=previous_root == root
                 )
@@ -2725,6 +3231,50 @@ class LibraryFileNotesWorkspace(Vertical):
         finally:
             reservation.release()
 
+    async def _enforce_retention(
+        self,
+        service: FileNotesService,
+        generation: int,
+    ) -> str | None:
+        """Run one ADR-351 retention pass for a scanned root (task-34382).
+
+        Args:
+            service: Service bound to the root candidate just scanned.
+            generation: Root generation the candidate belongs to.
+
+        Returns:
+            A warning to surface, or ``None`` when cleanup ran clean.
+        """
+        try:
+            result = await asyncio.to_thread(service.enforce_retention)
+        except Exception as error:
+            return f"Retention cleanup failed: {error}"
+        if self._path_result_is_stale(service, generation):
+            return None
+        if not result.succeeded:
+            return f"Retention cleanup failed: {result.message or result.status}"
+        return None
+
+    async def _read_replica(self, read: Callable[..., Any], *args: object) -> Any:
+        """Run one direct replica read that quit can close behind (TASK-38711).
+
+        These reads skip the service lock. ``_core_closing`` silently refuses
+        to close a file-backed replica while one is in flight, and a closed one
+        reopens on its next use. So an owned replica's reads share its owner
+        thread, where the close queues behind them, and a read that starts once
+        quit has begun returns None without touching the replica.
+        """
+
+        def run() -> Any:
+            return None if self._shutdown else read(*args)
+
+        owner = self._replica_thread
+        if self._shutdown:
+            return None
+        if owner is None:
+            return await asyncio.to_thread(run)
+        return await asyncio.get_running_loop().run_in_executor(owner, run)
+
     async def _load_deleted_paths(
         self,
         *,
@@ -2736,14 +3286,11 @@ class LibraryFileNotesWorkspace(Vertical):
         if replica is None or service is None:
             return ()
         try:
-            paths = await asyncio.to_thread(
-                replica.list_deleted,
-                service.root_key,
-            )
+            paths = await self._read_replica(replica.list_deleted, service.root_key)
         except Exception as error:
             self._runtime_warning = f"Recovery unavailable: {error}"
             return ()
-        return tuple(paths)
+        return tuple(paths or ())
 
     def _apply_scan(
         self,
@@ -2768,8 +3315,12 @@ class LibraryFileNotesWorkspace(Vertical):
     ) -> None:
         """Install a scan projection without requiring mounted widgets."""
         self._entries = {entry.relative_path: entry for entry in result.entries}
+        self._entries_folded = tuple(
+            path.casefold() for path in self._entries
+        )
         self._deleted_paths = deleted
         self._root_offline = result.offline
+        self._clear_refresh_failure()
         self._runtime_warning = "; ".join(
             warning
             for warning in (result.replica_warning, additional_warning)
@@ -2816,13 +3367,24 @@ class LibraryFileNotesWorkspace(Vertical):
             new_entries != self._entries or deleted != self._deleted_paths
         )
         self._entries = new_entries
+        self._entries_folded = tuple(
+            path.casefold() for path in self._entries
+        )
         self._deleted_paths = deleted
         self._root_offline = result.offline
         self._runtime_warning = result.replica_warning or ""
+        self._clear_refresh_failure()
         return self._render_projection(
             offline=result.offline,
             rebuild_tree=navigator_changed,
         )
+
+    def _clear_refresh_failure(self) -> None:
+        """A healthy pass ends a failed reconcile's report (TASK-38982)."""
+        if self._refresh_failure:
+            self._refresh_failure = ""
+            if self._action_detail.startswith("Refresh failed:"):
+                self._action_detail = ""
 
     def _show_root_row_button(
         self,
@@ -2838,6 +3400,11 @@ class LibraryFileNotesWorkspace(Vertical):
             return
         if label is not None and str(button.label) != label:
             button.label = label
+            # A label write repaints without re-layout (lessons-textual,
+            # TASK-34000.22): "Change…" kept "Choose folder…"'s 18 cells.
+            button.refresh(layout=True)
+            if button.parent is not None:
+                button.parent.refresh(layout=True)
         button.display = visible
 
     def _structural_wait_line(self, wait: StructuralWait) -> str:
@@ -2909,7 +3476,9 @@ class LibraryFileNotesWorkspace(Vertical):
             shell.items.display = linked and shell.effective_layout.items_open
             shell.items_grip.display = linked
             shell.library_grip.display = linked
-            shell.work.display = linked
+            hides_work = self._navigator_hides_work(shell.effective_layout)
+            shell.work.display = linked and not hides_work
+            self._navigator_manage.display = linked and hides_work
         try:
             body = self.query_one("#file-notes-body")
         except NoMatches:
@@ -2963,12 +3532,19 @@ class LibraryFileNotesWorkspace(Vertical):
             wait is None and sync_folder is not None,
             label=None if sync_folder is None else f"Use {_folder_label(sync_folder)}",
         )
+        self._show_root_row_button(
+            "#file-notes-recovery-review",
+            wait is None
+            and self._root is not None
+            and ACTIVATION_WARNING in self._runtime_warning,
+        )
         try:
             self.query_one("#file-notes-empty-purpose", Static).display = (
                 self._root is None
             )
         except NoMatches:
             pass
+        self._root_status_parts = None
         if wait is not None:
             # task-32055: the wait owns this slot while it runs -- the line
             # says what is happening, then that it is still working, and the
@@ -3014,8 +3590,9 @@ class LibraryFileNotesWorkspace(Vertical):
             status.set_class(False, "-warning")
             status.set_class(False, "-offline")
             details.display = False
-            choose.label = "Choose folder…"
-            choose.display = True
+            self._show_root_row_button(
+                "#file-notes-choose-root", True, label="Choose folder…"
+            )
             self._render_status_channels()
             if reason:
                 self.call_after_refresh(self._fit_root_status)
@@ -3040,16 +3617,17 @@ class LibraryFileNotesWorkspace(Vertical):
             else ("Warning" if self._runtime_warning else state)
         )
         self._root_status_summary = f"{display_state} · Local folder: {folder_name}"
+        self._root_status_parts = (display_state, folder_name)
         if self._root_action_reason:
             # task-32121: the reason a folder change ended owns the row the
             # user was watching until they try again; the folder it kept
             # stays in the tooltip and in Details.
             self._root_status_summary = self._root_action_reason
+            self._root_status_parts = None
         status.tooltip = Text(detail)
         status.update(self._root_status_summary)
         details.display = True
-        choose.label = "Change…"
-        choose.display = True
+        self._show_root_row_button("#file-notes-choose-root", True, label="Change…")
         self._render_status_channels()
         self._apply_responsive_layout(self.size.width)
         self.call_after_refresh(self._fit_root_status)
@@ -3148,8 +3726,22 @@ class LibraryFileNotesWorkspace(Vertical):
         except NoMatches:
             return
         width = status.content_region.width
-        if width > 0:
-            status.update(_middle_elide_cells(self._root_status_summary, width))
+        if width <= 0:
+            return
+        summary = self._root_status_summary
+        if self._root_status_parts is not None and cell_len(summary) > width:
+            # TASK-36513: the state words stay whole; "Local folder:" goes
+            # first, then the folder name's middle, then the name itself.
+            state, folder = self._root_status_parts
+            room = width - cell_len(state) - 3
+            if room >= 5:
+                summary = f"{state} · {_middle_elide_cells(folder, room)}"
+            elif cell_len(state) <= width:
+                summary = state
+            else:
+                # "Offline · Warning": Offline outranks Warning in one word.
+                summary = state.split(" · ")[0]
+        status.update(_middle_elide_cells(summary, width))
 
     def _apply_responsive_layout(self, width: int) -> None:
         if not self._active or not self.is_mounted:
@@ -3171,6 +3763,8 @@ class LibraryFileNotesWorkspace(Vertical):
             # document. Transition-only on purpose: while ALREADY narrow,
             # Back's explicit navigator choice must keep winning.
             self._narrow_view = "editor"
+            if self._reader_shell_external:
+                self.post_message(AdaptiveReaderShellResized())
         back = self.query_one("#file-notes-back", Button)
         back.display = self._narrow and self._narrow_view == "editor"
         if not self._reader_shell_external:
@@ -3200,25 +3794,18 @@ class LibraryFileNotesWorkspace(Vertical):
         """Show one retained navigator surface without remounting its peers."""
         if not self._active or not self.is_mounted:
             return
-        search_row = self.query_one("#file-notes-search-row")
-        tree = self.query_one("#file-notes-tree", Tree)
-        results = self.query_one("#file-notes-search-results", Tree)
-        entry = self.query_one("#file-notes-session-changes", Button)
-        panel = self.query_one(
-            "#file-notes-git-panel",
-            LibraryFileNotesGitPanel,
-        )
+        refs = self._navigator_surface_refs()
         git_visible = self._navigator_mode == "git" and self._work_mode == "manage"
         file_mode = (
             self._navigator_mode_before_git
             if self._navigator_mode == "git"
             else self._navigator_mode
         )
-        panel.display = git_visible
-        search_row.display = True
-        entry.display = not git_visible
-        tree.display = file_mode == "files"
-        results.display = file_mode == "search"
+        refs.panel.display = git_visible
+        refs.search_row.display = True
+        refs.entry.display = not git_visible
+        refs.tree.display = file_mode == "files"
+        refs.results.display = file_mode == "search"
         self.set_class(
             git_visible and not self._narrow,
             "-prepare-session-wide",
@@ -3545,6 +4132,18 @@ class LibraryFileNotesWorkspace(Vertical):
         binding = self._session_binding
         changes: tuple[SequencedSessionChange, ...] = ()
         if binding is not None:
+            # task-11: one tuple compare decides whether anything was
+            # appended, merged, retired, cleared, or re-trusted since the
+            # last refresh. Equal means the snapshot below would be
+            # bit-identical for everything this method reads, so the
+            # coalesce, the tuple compare, the label validation, and the
+            # push-state rehydrate are all provably no-ops -- skip them.
+            # (Push operations have their own observer tasks; they do not
+            # ride this refresh.)
+            revision = self._session_owner.session_revision()
+            if revision == self._git_observed_change_version:
+                return
+            self._git_observed_change_version = revision
             snapshot = self._session_owner.snapshot(binding)
             changes = snapshot.changes
             service = self._session_git_service()
@@ -3803,7 +4402,14 @@ class LibraryFileNotesWorkspace(Vertical):
                     self._render_session_git_label()
                     self._render_current_push_view()
             result = await operation.wait()
-        except (asyncio.CancelledError, Exception):
+        except asyncio.CancelledError:
+            task = asyncio.current_task()
+            if task is not None and task.cancelling():
+                raise  # TASK-38700: this observer was cancelled (loop teardown).
+            # A cancelled settlement is an observation failure like any other.
+            self._publish_push_observer_failure(operation, key, operation_id)
+            return
+        except Exception:
             self._publish_push_observer_failure(operation, key, operation_id)
             return
         if not self._push_operation_is_current(operation, key, operation_id):
@@ -3833,7 +4439,7 @@ class LibraryFileNotesWorkspace(Vertical):
             return
         pre_network = operation.kind in {"local_proof", "preflight"}
         self._push_phase = "needs_attention"
-        self._set_push_result_projection(
+        self._set_push_attention(
             PushPanelResultProjection(
                 title=(
                     "Push check needs attention"
@@ -4076,6 +4682,19 @@ class LibraryFileNotesWorkspace(Vertical):
         self._push_view_phase = "result"
         self._render_current_push_view()
 
+    def _set_push_attention(self, projection: PushPanelResultProjection) -> None:
+        """Show attention the owner has no record of (TASK-38700)."""
+        self._push_attention_projection = projection
+        self._set_push_result_projection(projection)
+
+    def _push_attention_shown(self) -> bool:
+        """Whether the panel still shows that attention, so rehydrate keeps it."""
+        return (
+            self._push_view_phase == "result"
+            and self._push_attention_projection is not None
+            and self._push_result_projection is self._push_attention_projection
+        )
+
     def _publish_push_review_admission_failure(self) -> None:
         """Replace a silent local-review start failure with safe copy."""
         if self._push_view_phase == "list":
@@ -4086,7 +4705,7 @@ class LibraryFileNotesWorkspace(Vertical):
             self._push_observer_task = None
             self._push_result = None
         self._push_phase = "needs_attention"
-        self._set_push_result_projection(
+        self._set_push_attention(
             PushPanelResultProjection(
                 title="Push review unavailable",
                 message=(
@@ -4397,7 +5016,9 @@ class LibraryFileNotesWorkspace(Vertical):
                 self._return_push_to_list()
             self._push_key = candidate_key
             self._push_phase = (
-                "needs_attention" if snapshot.push_recovery is not None else "idle"
+                "needs_attention"
+                if snapshot.push_recovery is not None or self._push_attention_shown()
+                else "idle"
             )
             self._render_session_git_label()
             return availability is not None or snapshot.push_recovery is not None
@@ -4439,14 +5060,21 @@ class LibraryFileNotesWorkspace(Vertical):
                 and self._push_operation_key == operation_key
                 and self._push_result is None
                 and not operation.settled
+                and not self._push_attention_shown()
             ):
-                self._push_key = operation_key
-                self._push_phase = (
-                    "pushing"
-                    if operation.kind == "push" and operation.child_started
-                    else "checking"
-                )
-                self._push_view_phase = self._push_view_for_operation(operation)
+                observer = self._push_observer_task
+                if observer is None or observer.done():
+                    # TASK-38700 review: after Back from a failed observer,
+                    # nothing would ever show this operation's settlement.
+                    self._start_push_observer(operation, operation_key)
+                else:
+                    self._push_key = operation_key
+                    self._push_phase = (
+                        "pushing"
+                        if operation.kind == "push" and operation.child_started
+                        else "checking"
+                    )
+                    self._push_view_phase = self._push_view_for_operation(operation)
             refreshed = self._refresh_push_recovery_readiness(snapshot)
             if (
                 not refreshed
@@ -5184,16 +5812,24 @@ class LibraryFileNotesWorkspace(Vertical):
             self._start_git_refresh()
 
     def _set_save_state(self, state: SaveState, detail: str = "") -> None:
+        entering_failure = state in {"conflict", "error"} and state != self._save_state
+        if state != self._save_state:
+            self._navigator_chosen = False
         self._save_state = state
         self._save_detail = detail
         if state != "conflict":
             self._conflict_resolution_active = False
+        if state == "saved" and self._root_action_reason == ROOT_CHANGE_DRAFT_COPY:
+            self._root_action_reason = ""
+            self._update_root_surface()
         if self._active and self.is_mounted:
             status = self.query_one("#file-notes-save-status", Static)
             status.set_class(state == "conflict", "-conflict")
             status.set_class(state == "error", "-error")
             self._render_status_channels()
             self._update_controls()
+            if entering_failure:
+                self._bring_work_forward()
 
     def _set_action_status(self, text: str) -> None:
         self._action_detail = text
@@ -5415,16 +6051,19 @@ class LibraryFileNotesWorkspace(Vertical):
                 "file-notes-move",
                 "file-notes-delete",
                 "file-notes-restore",
+                "file-notes-export-deleted",
                 "file-notes-compare",
                 "file-notes-resolve-conflict",
                 "file-notes-resolution-keep",
                 "file-notes-resolution-save-new",
                 "file-notes-resolution-discard",
                 "file-notes-protect",
+                "file-notes-history",
                 "file-notes-reload",
                 "file-notes-save-copy",
                 "file-notes-recovery-save-copy",
                 "file-notes-recovery-reload",
+                "file-notes-recovery-retry",
                 "file-notes-refresh",
                 "file-notes-maintenance-toggle",
             }
@@ -5443,6 +6082,12 @@ class LibraryFileNotesWorkspace(Vertical):
             )
         self.query_one("#file-notes-protect", Button).disabled = not (
             has_document and structurally_available
+        )
+        self.query_one("#file-notes-history", Button).disabled = not (
+            has_document
+            and structurally_available
+            and self._opened is not None
+            and self._opened.protected
         )
         self.query_one("#file-notes-compare", Button).disabled = not (
             has_document and structurally_available and self._save_state == "conflict"
@@ -5500,6 +6145,11 @@ class LibraryFileNotesWorkspace(Vertical):
         self.query_one("#file-notes-restore", Button).disabled = (
             not has_service or not has_deleted or not structurally_available
         )
+        self.query_one("#file-notes-export-deleted", Button).disabled = (
+            not has_service
+            or not structurally_available
+            or not self._restore_refusal_path
+        )
         self.query_one("#file-notes-refresh", Button).disabled = (
             self._service is None or not structurally_available
         )
@@ -5533,6 +6183,9 @@ class LibraryFileNotesWorkspace(Vertical):
                 reload_button.parent.refresh(layout=True)
         recovery_reload.label = reload_label
         recovery_reload.disabled = reload_button.disabled
+        self.query_one("#file-notes-recovery-retry", Button).disabled = (
+            reload_button.disabled
+        )
         self._sync_editor_action_visibility()
         self.query_one(
             "#file-notes-reload-cancel", Button
@@ -5626,6 +6279,9 @@ class LibraryFileNotesWorkspace(Vertical):
             "file-notes-move": has_document,
             "file-notes-delete": has_document and not resolving_conflict,
             "file-notes-restore": has_deleted,
+            "file-notes-export-deleted": (
+                has_deleted and bool(self._restore_refusal_path)
+            ),
             "file-notes-compare": (has_document and self._save_state == "conflict"),
             "file-notes-resolve-conflict": (
                 has_document
@@ -5633,6 +6289,11 @@ class LibraryFileNotesWorkspace(Vertical):
                 and not resolving_conflict
             ),
             "file-notes-protect": has_document,
+            "file-notes-history": (
+                has_document
+                and self._opened is not None
+                and self._opened.protected
+            ),
             "file-notes-reload": has_document,
             "file-notes-save-copy": (
                 has_document
@@ -5642,6 +6303,7 @@ class LibraryFileNotesWorkspace(Vertical):
                 )
             ),
             "file-notes-refresh": has_service,
+            "file-notes-recovery-retry": has_document and self._save_state == "error",
             "file-notes-recovery-reload": (
                 has_document and self._save_state in {"conflict", "error"}
             ),
@@ -5655,6 +6317,7 @@ class LibraryFileNotesWorkspace(Vertical):
         }
         maintenance_ids = {
             "file-notes-protect",
+            "file-notes-history",
             "file-notes-reload",
             "file-notes-refresh",
         }
@@ -5925,6 +6588,8 @@ class LibraryFileNotesWorkspace(Vertical):
         if not self._active or self._path_transitioning or self._shutdown:
             return False
         if not await self.flush_pending_work():
+            if self._save_state in {"conflict", "error"}:
+                self._report_root_change_reason(ROOT_CHANGE_DRAFT_COPY)
             return False
         if not self._active or self._path_transitioning or self._shutdown:
             return False
@@ -5996,6 +6661,20 @@ class LibraryFileNotesWorkspace(Vertical):
                 if generation == self._root_generation:
                     self._report_root_change_reason(ROOT_CHANGE_TIMEOUT_COPY)
                 return False
+            # task-34382 (ADR-351): retention runs after the scan adopts the
+            # candidate and BEFORE Recently-deleted is read, so the listing
+            # never names entries the policy just expired. Failure warns; it
+            # never blocks the root change.
+            retention_warning = await self._enforce_retention(service, generation)
+            if not self._active or generation != self._root_generation:
+                return False
+            if retention_warning:
+                merged = "; ".join(
+                    warning
+                    for warning in (result.replica_warning, retention_warning)
+                    if warning
+                )
+                result = replace(result, replica_warning=merged or None)
             deleted = await self._load_deleted_paths(
                 replica=self._replica,
                 service=service,
@@ -6034,6 +6713,9 @@ class LibraryFileNotesWorkspace(Vertical):
         ):
             return False
         if self._opened is not None and not await self.flush_pending_work():
+            # The refusal's reason (a failed save, a conflict) is in the work
+            # pane; show it rather than ignore the open (TASK-38757 review).
+            self._bring_work_forward()
             return False
         if (
             not self._active
@@ -6045,6 +6727,7 @@ class LibraryFileNotesWorkspace(Vertical):
             return False
         with self._hold_path_transition() as transition:
             if transition is None:
+                self._bring_work_forward()
                 return False
             try:
                 opened = await asyncio.to_thread(
@@ -6053,6 +6736,7 @@ class LibraryFileNotesWorkspace(Vertical):
                 )
             except Exception as error:
                 self._set_action_status(f"Open failed: {error}")
+                self._bring_work_forward()
                 return False
             if (
                 not self._active
@@ -6099,10 +6783,7 @@ class LibraryFileNotesWorkspace(Vertical):
             self._root_action_reason = ""
             self._update_root_surface()
         if self._narrow:
-            self._narrow_view = "editor"
-            self._apply_responsive_layout(self.size.width)
-            if self._reader_shell_external:
-                self.post_message(AdaptiveReaderShellResized())
+            self._set_narrow_view("editor")
         self._update_controls()
         self._sync_work_mode()
         if announce_editable and opened.editable:
@@ -6150,13 +6831,16 @@ class LibraryFileNotesWorkspace(Vertical):
         self._work_mode = "edit"
         self._sync_work_mode()
         self._selected_deleted_path = relative_path
+        # task-34383: the export fallback belongs to the tombstone whose
+        # restore was refused; a different selection retires it.
+        if self._restore_refusal_path and self._restore_refusal_path != relative_path:
+            self._restore_refusal_path = ""
         self._clear_open_document(keep_restore_path=True)
         self.query_one("#file-notes-path", Input).value = relative_path
         self._fit_path_surfaces()
         self._set_action_status("Ready to restore.")
         if self._narrow:
-            self._narrow_view = "editor"
-            self._apply_responsive_layout(self.size.width)
+            self._set_narrow_view("editor")
         self._update_controls()
         return True
 
@@ -6178,17 +6862,31 @@ class LibraryFileNotesWorkspace(Vertical):
                 return False
             try:
                 result = await asyncio.to_thread(service.reconcile)
-                deleted = await self._load_deleted_paths(
-                    replica=self._replica,
-                    service=service,
+                # task-11: the tombstone list cannot move while the vault
+                # signature is unchanged (only a full reconcile or a user
+                # restore/delete changes it, and both refresh it
+                # themselves), so the quiet tick reuses the retained
+                # tuple instead of re-reading the replica.
+                deleted = (
+                    self._deleted_paths
+                    if result.vault_unchanged
+                    else await self._load_deleted_paths(
+                        replica=self._replica,
+                        service=service,
+                    )
                 )
             except Exception as error:
+                self._refresh_failure = str(error)
                 self._set_action_status(f"Refresh failed: {error}")
+                # A failed reconcile never earns backoff: stay active so
+                # the first healthy pass is picked up immediately.
+                self._record_poll_activity(vault_unchanged=False)
                 return False
             if self._path_result_is_stale(service, generation) or (
                 not self.children or self._path_transitioning
             ):
                 return False
+            self._record_poll_activity(vault_unchanged=result.vault_unchanged)
             if not self._apply_reconcile(result, deleted):
                 return False
             await self._handle_open_external_change(result)
@@ -6245,6 +6943,40 @@ class LibraryFileNotesWorkspace(Vertical):
             self._set_action_status(reloaded.replica_warning or "")
             return
         self._apply_opened_document(reloaded)
+
+    def _set_poll_interval(self, seconds: float) -> None:
+        """Re-arm the poll timer only when the cadence changes (task-11).
+
+        Stopping and recreating is safe even from inside a tick callback:
+        Textual delivers the cancellation to the timer task after the
+        callback returns. Re-arming on every call would reset the phase, so
+        unchanged cadences are a no-op. Before mount (``_poll_timer`` is
+        None) only the interval value moves; ``on_mount`` arms the timer
+        with whatever the value is then.
+        """
+        if self._poll_timer is not None and seconds == self._poll_interval:
+            return
+        self._poll_interval = seconds
+        if self._poll_timer is not None:
+            self._poll_timer.stop()
+            self._poll_timer = self.set_interval(seconds, self._start_poll)
+
+    def _record_poll_activity(self, *, vault_unchanged: bool) -> None:
+        """Advance the poll backoff from one reconcile outcome (task-11).
+
+        A vault whose discovery signature moved keeps the active cadence;
+        four consecutive quiet ticks decay the timer to the backoff
+        ceiling. Errors and offline results arrive as ``vault_unchanged``
+        False, so a struggling root never backs off.
+        """
+        if not vault_unchanged:
+            if self._poll_quiet_ticks:
+                self._poll_quiet_ticks = 0
+                self._set_poll_interval(self._poll_base_interval)
+            return
+        self._poll_quiet_ticks += 1
+        if self._poll_quiet_ticks == _POLL_BACKOFF_AFTER_TICKS:
+            self._set_poll_interval(self._poll_backoff_interval)
 
     def _start_poll(self) -> None:
         # TASK-22219: skip the filesystem walk while this widget's screen is
@@ -6516,13 +7248,48 @@ class LibraryFileNotesWorkspace(Vertical):
         self._set_save_state("dirty")
         self._arm_autosave()
 
+    def _stop_search_debounce_timer(self) -> None:
+        if self._search_debounce_timer is not None:
+            self._search_debounce_timer.stop()
+            self._search_debounce_timer = None
+
+    def _navigator_surface_refs(self) -> Any:
+        """Cached refs to the five navigator surfaces (TASK-34938).
+
+        Display toggles keep the widgets attached, so the refs stay valid;
+        if a rebuild ever detaches them, the staleness check re-queries.
+        Five attribute reads replace five query_one DOM walks per call.
+        """
+
+        class _Refs:
+            __slots__ = ("search_row", "tree", "results", "entry", "panel")
+
+        refs = self._navigator_refs
+        if refs is not None and all(
+            getattr(refs, name).is_attached for name in _Refs.__slots__
+        ):
+            return refs
+        refs = _Refs()
+        refs.search_row = self.query_one("#file-notes-search-row")
+        refs.tree = self.query_one("#file-notes-tree", Tree)
+        refs.results = self.query_one("#file-notes-search-results", Tree)
+        refs.entry = self.query_one("#file-notes-session-changes", Button)
+        refs.panel = self.query_one(
+            "#file-notes-git-panel",
+            LibraryFileNotesGitPanel,
+        )
+        self._navigator_refs = refs
+        return refs
+
     @on(Input.Changed, "#file-notes-search")
     def _search_changed(self, event: Input.Changed) -> None:
         event.stop()
         query = event.value.strip()
         self._search_query = event.value
-        results = self.query_one("#file-notes-search-results", Tree)
+        results = self._navigator_surface_refs().results
         if not query:
+            # Clearing the box restores the files navigator immediately.
+            self._stop_search_debounce_timer()
             self._search_generation += 1
             if self._navigator_mode == "git":
                 self._navigator_mode_before_git = "files"
@@ -6532,6 +7299,24 @@ class LibraryFileNotesWorkspace(Vertical):
             self._search_paths = ()
             results.reset(Text("Search results"))
             return
+        # TASK-34938: repo-standard debounce -- the mode flip, worker
+        # spawn, and query all run once typing pauses.
+        self._stop_search_debounce_timer()
+        self._search_debounce_timer = self.set_timer(
+            FILE_NOTES_SEARCH_DEBOUNCE_SECONDS,
+            partial(self._begin_search, query),
+        )
+
+    @on(Input.Submitted, "#file-notes-search")
+    def _search_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        query = event.value.strip()
+        if query:
+            self._stop_search_debounce_timer()
+            self._begin_search(query)
+
+    def _begin_search(self, query: str) -> None:
+        self._search_debounce_timer = None
         if self._navigator_mode == "git":
             self._navigator_mode_before_git = "search"
         else:
@@ -6552,16 +7337,21 @@ class LibraryFileNotesWorkspace(Vertical):
     async def _run_search(self, query: str, generation: int) -> None:
         if self._replica is not None and self._service is not None:
             try:
-                paths = await asyncio.to_thread(
-                    self._replica.search,
-                    self._service.root_key,
-                    query,
+                paths = await self._read_replica(
+                    self._replica.search, self._service.root_key, query
                 )
             except Exception:
                 paths = []
+            paths = paths or []
         else:
+            # TASK-34938: match against the pre-folded path list -- no
+            # per-keystroke casefold over every entry.
             folded = query.casefold()
-            paths = [path for path in self._entries if folded in path.casefold()]
+            paths = [
+                path
+                for path, folded_path in zip(self._entries, self._entries_folded)
+                if folded in folded_path
+            ]
         if generation != self._search_generation or not self._active:
             return
         self._rebuild_search_results(tuple(paths))
@@ -7039,10 +7829,17 @@ class LibraryFileNotesWorkspace(Vertical):
     @on(Button.Pressed, "#file-notes-back")
     def _back_to_navigator(self, event: Button.Pressed) -> None:
         event.stop()
-        self._narrow_view = "navigator"
-        self._apply_responsive_layout(self.size.width)
-        if self._reader_shell_external:
-            self.post_message(AdaptiveReaderShellResized())
+        self._navigator_chosen = True
+        # TASK-38982: Back hides itself in the navigator view, and the Files
+        # pane is still closed (disabled) until the layout reopens it. Park
+        # focus on the Files grip first, so it is never None; the files take
+        # it once their pane shows.
+        shell = self._reader_shell
+        if shell is not None:
+            self.screen.set_focus(shell.items_grip, scroll_visible=False)
+        self._set_narrow_view("navigator")
+        results = self._search_results_widget
+        self._focus_once_shown(results if results.display else self._tree_widget)
 
     @on(Button.Pressed, "#file-notes-session-changes")
     def _session_git_pressed(self, event: Button.Pressed) -> None:
@@ -8346,7 +9143,7 @@ class LibraryFileNotesWorkspace(Vertical):
     @on(Button.Pressed, "#file-notes-path-cancel")
     def _cancel_named_path_task(self, event: Button.Pressed) -> None:
         event.stop()
-        self._close_path_task(restore_focus=True)
+        self._close_path_task(restore_focus=True, cancelled=True)
 
     @on(Button.Pressed, "#file-notes-edit")
     def _show_edit_mode(self, event: Button.Pressed) -> None:
@@ -8355,16 +9152,20 @@ class LibraryFileNotesWorkspace(Vertical):
         self._sync_work_mode()
         self.call_after_refresh(self._editor_widget.focus)
 
+    @on(Button.Pressed, "#file-notes-navigator-manage")
+    def _show_manage_from_navigator(self, event: Button.Pressed) -> None:
+        """Open Manage from a navigator that hides the work pane (TASK-38982)."""
+        # Hand focus on before this button hides with the navigator view.
+        self.screen.set_focus(self.query_one("#file-notes-manage", Button))
+        self._show_manage_mode(event)
+
     @on(Button.Pressed, "#file-notes-manage")
     def _show_manage_mode(self, event: Button.Pressed) -> None:
         event.stop()
         self._work_mode = "manage"
         self._sync_work_mode()
         if self._narrow:
-            self._narrow_view = "editor"
-            self._apply_responsive_layout(self.size.width)
-            if self._reader_shell_external:
-                self.post_message(AdaptiveReaderShellResized())
+            self._set_narrow_view("editor")
 
     @on(Button.Pressed, "#file-notes-maintenance-toggle")
     def _toggle_maintenance_actions(self) -> None:
@@ -8444,6 +9245,8 @@ class LibraryFileNotesWorkspace(Vertical):
                 return
             deleted_path = opened.relative_path
             self._selected_deleted_path = deleted_path
+            # A fresh tombstone is restorable; no refusal is pending for it.
+            self._restore_refusal_path = ""
             self._work_mode = "edit"
             self._sync_work_mode()
             self._clear_open_document(keep_restore_path=True)
@@ -8456,6 +9259,7 @@ class LibraryFileNotesWorkspace(Vertical):
 
     @on(Button.Pressed, "#file-notes-restore")
     async def _restore_file(self, event: Button.Pressed) -> None:
+        """Restore tombstoned bytes, naming each refusal (task-34383)."""
         event.stop()
         service = self._service
         if service is None:
@@ -8465,11 +9269,85 @@ class LibraryFileNotesWorkspace(Vertical):
             relative_path = self._validated_path_input("Restore")
             if relative_path is None:
                 return
-        await self._complete_path_action(
-            "Restore",
-            relative_path,
-            service.restore_file,
-            relative_path,
+        with self._hold_path_transition() as transition:
+            if transition is None:
+                return
+            service, generation = transition
+            result = await asyncio.to_thread(service.restore_file, relative_path)
+            if self._path_result_is_stale(service, generation):
+                return
+            if not result.succeeded:
+                if result.status in {"exists", "missing"}:
+                    # task-34383: both no-replace refusals name their reason
+                    # and offer the exact-export fallback for these bytes.
+                    self._restore_refusal_path = relative_path
+                    reason = result.message or result.status
+                    self._set_action_status(
+                        f"Restore refused: {reason}. Export deleted copy can "
+                        "write the exact bytes to a new path instead."
+                    )
+                    self._update_controls()
+                    return
+                self._operation_error("Restore", result)
+                return
+            self._restore_refusal_path = ""
+            if not await self._rescan_after_action():
+                return
+            try:
+                opened = await asyncio.to_thread(service.open_file, relative_path)
+            except Exception as error:
+                self._set_action_status(f"Open failed: {error}")
+                return
+            if self._path_result_is_stale(service, generation):
+                return
+            self._apply_opened_document(opened, announce_editable=True)
+            self._update_controls()
+
+    @on(Button.Pressed, "#file-notes-export-deleted")
+    async def _export_deleted_copy(self, event: Button.Pressed) -> None:
+        """Exact-export refused-restore bytes to a new absent path."""
+        event.stop()
+        service = self._service
+        deleted_path = self._restore_refusal_path
+        if service is None or not deleted_path:
+            return
+        destination = self._validated_path_input("Export deleted copy")
+        if destination is None:
+            return
+        with self._hold_path_transition() as transition:
+            if transition is None:
+                return
+            service, generation = transition
+            result = await asyncio.to_thread(
+                service.export_revision_file,
+                deleted_path,
+                destination,
+                kind="delete",
+                session_key=None,
+            )
+            if self._path_result_is_stale(service, generation):
+                return
+            if not result.succeeded:
+                self._action_refusal("Export deleted copy", result)
+                return
+            self._restore_refusal_path = ""
+            if not await self._rescan_after_action():
+                return
+            receipt = f"Exported the deleted bytes exactly to {destination}."
+            if result.replica_warning:
+                receipt = f"{receipt} {result.replica_warning}"
+            self._set_action_status(receipt)
+            self._update_controls()
+
+    def _action_refusal(self, action: str, result: OperationResult) -> None:
+        """Report a non-editor action refusal without touching save state.
+
+        Recovery actions (history, deleted-copy export) never touch the open
+        document, so a refusal is an action-line fact -- never an editor
+        conflict the way ``_operation_error`` paints disk-changing failures.
+        """
+        self._set_action_status(
+            f"{action} failed: {result.message or result.status}"
         )
 
     @on(Button.Pressed, "#file-notes-protect")
@@ -8494,6 +9372,133 @@ class LibraryFileNotesWorkspace(Vertical):
         self._opened = replace(current, protected=target)
         self._set_action_status("Protected." if target else "Unprotected.")
         self._update_controls()
+
+    @on(Button.Pressed, "#file-notes-history")
+    async def _show_history(self, event: Button.Pressed) -> None:
+        """Open the bounded revision-history dialog for a protected file."""
+        event.stop()
+        opened = self._opened
+        service = self._service
+        generation = self._root_generation
+        if service is None or opened is None or not opened.protected:
+            return
+        history = await asyncio.to_thread(
+            service.list_revision_history,
+            opened.relative_path,
+        )
+        # PR #3016 review finding 13: the dialog belongs to the exact file
+        # and root whose listing it awaited -- not whatever is open now.
+        if (
+            self._path_result_is_stale(service, generation)
+            or self._opened is not opened
+        ):
+            return
+        if not history.entries:
+            detail = history.replica_warning or "no revisions are stored yet"
+            self._set_action_status(
+                f"History unavailable for {opened.relative_path}: {detail}."
+            )
+            return
+        self.app.push_screen(
+            FileNotesHistoryDialog(
+                opened.relative_path,
+                history.entries,
+                self._history_destination_suggestion(opened.relative_path),
+                service,
+                generation,
+            ),
+            self._history_action_requested,
+        )
+
+    @staticmethod
+    def _history_destination_suggestion(relative_path: str) -> str:
+        """Return one absent-path suggestion derived from the note's name."""
+        path = PurePosixPath(relative_path)
+        return str(path.with_name(f"{path.stem}-recovered{path.suffix}"))
+
+    def _history_action_requested(
+        self,
+        request: _HistoryActionRequest | None,
+    ) -> None:
+        """Receive the History dialog's chosen action after it dismisses."""
+        if request is None or not self._active or self._shutdown:
+            return
+        self.run_worker(
+            self._execute_history_action(request),
+            name="file-notes-history-action",
+            group="file-notes-history-action",
+            exclusive=True,
+        )
+
+    async def _execute_history_action(
+        self,
+        request: _HistoryActionRequest,
+    ) -> None:
+        """Run one History dialog action under the workspace's file guards."""
+        if (
+            self._service is not request.service
+            or self._root_generation != request.root_generation
+        ):
+            # PR #3016 review finding 13: the root that supplied the listed
+            # revision is gone; acting now would target another root's
+            # same-named revision.
+            self._set_action_status(
+                "History action stopped: the File Notes root changed. "
+                "Reopen History for the current root."
+            )
+            return
+        with self._hold_path_transition() as transition:
+            if transition is None:
+                return
+            service, generation = transition
+            if request.action == "verify":
+                result = await asyncio.to_thread(
+                    service.verify_revision,
+                    request.relative_path,
+                    kind=request.kind,
+                    session_key=request.session_key,
+                    revision_id=request.revision_id,
+                )
+                if self._path_result_is_stale(service, generation):
+                    return
+                if result.succeeded:
+                    self._set_action_status(
+                        "Revision verified: stored bytes match the recorded hash."
+                    )
+                else:
+                    self._action_refusal("History verify", result)
+                return
+            operation = (
+                service.export_revision_file
+                if request.action == "export"
+                else service.restore_revision
+            )
+            result = await asyncio.to_thread(
+                operation,
+                request.relative_path,
+                request.destination_path,
+                kind=request.kind,
+                session_key=request.session_key,
+                revision_id=request.revision_id,
+            )
+            if self._path_result_is_stale(service, generation):
+                return
+            action = (
+                "History export" if request.action == "export" else "History restore"
+            )
+            if not result.succeeded:
+                self._action_refusal(action, result)
+                return
+            if not await self._rescan_after_action():
+                return
+            receipt = (
+                f"{action} succeeded: {request.destination_path} now holds the "
+                "exact revision bytes."
+            )
+            if result.replica_warning:
+                receipt = f"{receipt} {result.replica_warning}"
+            self._set_action_status(receipt)
+            self._update_controls()
 
     @on(Button.Pressed, "#file-notes-reload")
     async def _reload_file(self, event: Button.Pressed) -> None:
@@ -8835,6 +9840,18 @@ class LibraryFileNotesWorkspace(Vertical):
     @on(Button.Pressed, "#file-notes-recovery-reload")
     async def _reload_from_recovery(self, event: Button.Pressed) -> None:
         await self._reload_file(event)
+
+    @on(Button.Pressed, "#file-notes-recovery-retry")
+    def _retry_failed_save(self, event: Button.Pressed) -> None:
+        """Re-run a failed save from the unchanged editor text (TASK-38983)."""
+        event.stop()
+        if self._save_state != "error" or self._opened is None:
+            return
+        # The button hides as the state leaves "error"; move focus first
+        # (synchronously, so the hide's focus fallback sees it).
+        self.screen.set_focus(self._editor_widget)
+        self._set_save_state("dirty")
+        self._start_autosave()
 
     @on(Button.Pressed, "#file-notes-resolution-save-new")
     async def _save_conflict_draft_as_new_note(

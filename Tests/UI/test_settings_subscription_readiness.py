@@ -89,6 +89,21 @@ async def wait_for_copy(screen, selector, expected):
             await asyncio.sleep(0.01)
 
 
+async def held_reread_keeps(credential_io, screen, selector, expected):
+    """Wait for the lapsed snapshot's re-read, then hold it past a poll tick.
+
+    TASK-38948: the copy keeps ``expected`` (the last observed state) while
+    the re-read is held, and never shows a "checking" pending state.
+    """
+    async with asyncio.timeout(3):
+        while not credential_io.entered.is_set():
+            await asyncio.sleep(0.01)
+    await asyncio.sleep(0.3)  # More than one 0.25 s readiness poll.
+    rendered = str(screen.query_one(selector, Static).renderable)
+    assert expected in rendered and "check" not in rendered, rendered
+    assert not credential_io.release.is_set()
+
+
 @pytest.mark.asyncio
 @private_profile_test
 async def test_settings_mount_and_overview_refresh_without_another_edit(
@@ -118,10 +133,11 @@ async def test_settings_mount_and_overview_refresh_without_another_edit(
         credential_io.entered.clear()
         credential_io.release.clear()
         credential_io.monotonic_clock[0] = 106.0
-        await wait_for_copy(
-            screen, "#settings-overview-configuration", "Not ready · checking login"
+        # TASK-38948 (owner ruling 2026-11-10): the lapsed snapshot is re-read
+        # while the Overview keeps "Status: Ready"; no "checking login" flicker.
+        await held_reread_keeps(
+            credential_io, screen, "#settings-overview-configuration", "Status: Ready"
         )
-        assert credential_io.entered.is_set()
         assert len(credential_io.readers) == 2
         credential_io.release.set()
         await wait_for_copy(screen, "#settings-overview-configuration", "Status: Ready")
@@ -170,8 +186,12 @@ async def test_settings_provider_check_refreshes_and_preserves_unsaved_fields(
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         assert credential_io.readers[0] != threading.get_ident()
+        # TASK-33007.2, rewritten on purpose: the Credentials status line is
+        # gone; the API key row's help carries the subscription copy.
+        # Review of PR #3057 (R1 #11), rewritten on purpose: the row's help
+        # is one line, so the subscription sentences are their short forms.
         await wait_for_copy(
-            screen, "#settings-provider-credential-status", "Checking Claude"
+            screen, "#settings-provider-api-key-help", "checking the Claude Code login"
         )
         model = screen.query_one("#settings-model-value", Input)
         model.value = "unsaved-model"
@@ -183,7 +203,7 @@ async def test_settings_provider_check_refreshes_and_preserves_unsaved_fields(
         )
         credential_io.release.set()
         await wait_for_copy(
-            screen, "#settings-provider-credential-status", "Claude subscription"
+            screen, "#settings-provider-api-key-help", "Claude Code login · not verified"
         )
         # TASK-33002.2: labelled rows; the Config row states the outcome.
         await wait_for_copy(
@@ -201,17 +221,18 @@ async def test_settings_provider_check_refreshes_and_preserves_unsaved_fields(
         credential_io.entered.clear()
         credential_io.release.clear()
         credential_io.monotonic_clock[0] = 106.0
-        # TASK-33002.2 round-1 I2: the pending state is the Key row's fact.
-        await wait_for_copy(
-            screen, "#settings-provider-test-result", "Claude subscription, being checked"
+        # TASK-38948: the lapsed snapshot's re-read keeps the last result; the
+        # "being checked" pending copy is only for a never-read credential.
+        await held_reread_keeps(
+            credential_io, screen, "#settings-provider-test-result",
+            "Anthropic is configured",
         )
-        assert credential_io.entered.is_set()
         credential_io.release.set()
         await wait_for_copy(
             screen, "#settings-provider-test-result", "Anthropic is configured"
         )
         credential_io.clock[0] = 102.0
-        await wait_for_copy(screen, "#settings-provider-credential-status", "expired")
+        await wait_for_copy(screen, "#settings-provider-api-key-help", "expired")
         await wait_for_copy(screen, "#settings-provider-test-result", "expired")
         result = str(
             screen.query_one("#settings-provider-test-result", Static).renderable
@@ -250,17 +271,21 @@ async def test_settings_late_subscription_result_does_not_replace_edited_draft(
                 await asyncio.sleep(0.01)
         await pilot.pause(0.3)
         status = str(
-            screen.query_one("#settings-provider-credential-status", Static).renderable
+            screen.query_one("#settings-provider-api-key-help", Static).renderable
         )
         assert screen._provider_test_result == before
         if changed_field == "provider":
-            assert "local config key saved" in status
+            # TASK-33007.2, rewritten on purpose: the API key row's Source
+            # word says where the key is; its help no longer repeats it.
+            assert str(
+                screen.query_one("#settings-provider-key-status", Static).renderable
+            ) == "saved in config"
             assert "Claude" not in status
             assert (
                 screen.query_one("#settings-provider-value", Select).value == "openai"
             )
         else:
-            assert "Claude subscription" in status
+            assert "Claude Code login" in status  # R1 #11: the short form
             assert (
                 screen.query_one("#settings-model-value", Input).value
                 == "another-model"
@@ -282,8 +307,8 @@ async def test_settings_missing_subscription_reports_owner_recovery_after_comple
         credential_io.release.set()
         await wait_for_copy(
             screen,
-            "#settings-provider-credential-status",
-            "missing; log in with Claude Code",
+            "#settings-provider-api-key-help",
+            "missing · log in with Claude Code",  # R1 #11: the short form
         )
         await wait_for_copy(
             screen, "#settings-provider-test-result", "Anthropic is not ready"
@@ -323,3 +348,56 @@ async def test_settings_dismissal_stops_projection_of_pending_credentials(
                 await asyncio.sleep(0.01)
         await pilot.pause(0.3)
         assert screen._provider_test_result == before
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_poll_skips_resolution_until_the_gate_changes(
+    credential_io, monkeypatch, request
+):
+    """TASK-34913: the 0.25s poll must not resolve readiness on unchanged inputs."""
+    from tldw_chatbook.UI.Screens import settings_screen as settings_module
+
+    original_set_interval = SettingsScreen.set_interval
+
+    def start_paused(screen, interval, callback, *args, **kwargs):
+        timer = original_set_interval(screen, interval, callback, *args, **kwargs)
+        if getattr(callback, "__name__", "") == "_poll_subscription_readiness":
+            timer.pause()
+        return timer
+
+    monkeypatch.setattr(SettingsScreen, "set_interval", start_paused)
+
+    revision = [subscription.subscription_readiness_revision()]
+    monkeypatch.setattr(
+        subscription,
+        "subscription_readiness_revision",
+        lambda: revision[0],
+    )
+    calls = []
+    real_readiness = settings_module.get_provider_readiness
+
+    def counting_readiness(*args, **kwargs):
+        calls.append(None)
+        return real_readiness(*args, **kwargs)
+
+    monkeypatch.setattr(settings_module, "get_provider_readiness", counting_readiness)
+
+    host = DestinationHarness(settings_app(), "settings")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        baseline = len(calls)  # mount/render paths resolve readiness directly
+        screen._poll_subscription_readiness()
+        first = len(calls)
+        assert first > baseline, "first poll must resolve readiness"
+
+        screen._poll_subscription_readiness()
+        screen._poll_subscription_readiness()
+        assert len(calls) == first, "unchanged gate must skip resolution"
+
+        revision[0] += 1
+        screen._poll_subscription_readiness()
+        assert (
+            len(calls) > first
+        ), "a background-refresh revision bump must re-resolve"

@@ -1,0 +1,59 @@
+{
+  "profile": "[disposable native profile]",
+  "stdout_tty": true,
+  "stderr_tty": true,
+  "checks": [
+    "production UI ready",
+    "existing Console store mounted",
+    "palette report mounted",
+    "palette bounded collection finished",
+    "palette editable review generated",
+    "palette copy validation finished",
+    "palette sanitized re-review copy finished",
+    "palette: client request matches exact reviewed bytes",
+    "palette discard guard",
+    "palette dismissed",
+    "Logs entry visible",
+    "logs report mounted",
+    "logs bounded collection finished",
+    "logs editable review generated",
+    "logs copy validation finished",
+    "logs sanitized re-review copy finished",
+    "logs: client request matches exact reviewed bytes",
+    "logs discard guard",
+    "logs dismissed"
+  ],
+  "driver": "WindowsDriver",
+  "capture_debug": {
+    "conversation": "eb8291a2-ab76-4df3-a3d0-6fd8ce0db45b",
+    "trace_count": 2,
+    "tool_refs": 2,
+    "valid": true
+  },
+  "reports": [
+    {
+      "via": "palette",
+      "bytes": 2281,
+      "sha256": "21e0a8f4fa9d56f6f55c684cbe034a669f444b56a7982c595697555f3c4fac38",
+      "tool_opt_in": false,
+      "tool_available": false
+    },
+    {
+      "via": "logs",
+      "bytes": 4089,
+      "sha256": "ca39fa581544387d61d91397850a5647137c00cb9ab3adcebbe2994e4d82115d",
+      "tool_opt_in": true,
+      "tool_available": true
+    }
+  ],
+  "passed": false,
+  "error_type": "TypeError",
+  "screen_stack": [
+    "Screen",
+    "LogsScreen"
+  ],
+  "ui_ready": true,
+  "active_category_on_error": null,
+  "report_pending": false,
+  "qualification_scope": "Palette and Logs journeys passed; the later probe navigation argument error is preserved. Separate About receipt qualifies that entry."
+}

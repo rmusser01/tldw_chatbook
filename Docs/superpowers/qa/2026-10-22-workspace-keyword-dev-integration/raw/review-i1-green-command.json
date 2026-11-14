@@ -1,0 +1,26 @@
+{
+  "command": [
+    "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-m",
+    "pytest",
+    "Tests/Workspaces/test_project_index_service.py::test_failed_start_history_race_retires_unrecorded_production_pin",
+    "Tests/Workspaces/test_project_index_service.py::test_production_runtime_pin_drains_idle_and_spans_writer_retirement",
+    "Tests/Workspaces/test_project_index_service.py::test_failed_supervisor_dispatch_waits_for_started_writer_retirement",
+    "Tests/Chat/test_console_chat_controller.py::test_controller_retry_retains_reservation_after_repreparation_failure",
+    "-q",
+    "--tb=short",
+    "--show-capture=no",
+    "--no-showlocals"
+  ],
+  "source_sha256": {
+    "tldw_chatbook/Workspaces/project_index/service.py": "aa764965e2a0d87737d47e1f9f5411d123af64e06e471eb0c0e27d346c6cd648",
+    "Tests/Workspaces/test_project_index_service.py": "ac0b4dcb0849213a01be69c21a8424990fb2516718512699247691eb8c339653",
+    "Tests/Chat/test_console_chat_controller.py": "e6d89b430e020d7f7af6fd8bdbc6d0fdc21cea0bbe1940d9c5557e76cd2ed078"
+  },
+  "started_unix": 1792649078.6732411,
+  "cwd": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui",
+  "expected_cases": 5,
+  "mutation_qualification": "Test thread removes actual physically retired run from actual history under production lock; no production collector invocation or fabricated iterator exception.",
+  "exit_code": 0,
+  "elapsed_seconds": 142.24106740951538
+}

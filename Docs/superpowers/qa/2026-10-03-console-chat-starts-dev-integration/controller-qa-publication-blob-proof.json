@@ -1,0 +1,13 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "/private/tmp/console-dev-live-01a0fa6c/verify_qa_blobs.py"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "env": {},
+  "started_at": 1791068665.156714,
+  "elapsed_seconds": 0.6926510334014893,
+  "returncode": 0,
+  "stdout": "{\"head\": \"ee351749710ca0fdf065bbb3f7ba2a8a034d5b12\", \"source_archive_records\": 649, \"live_records\": 172, \"verified_git_tree_blobs\": 1286, \"method\": \"Every committed QA tree blob ID equals its independently computed local Git blob digest; SHA256, length, gzip decompression and readable-copy equality are then checked against the committed manifests.\", \"all_committed_blob_lengths_hashes_decompression_and_readable_copies_equal\": true}\n",
+  "head": "ee351749710ca0fdf065bbb3f7ba2a8a034d5b12"
+}

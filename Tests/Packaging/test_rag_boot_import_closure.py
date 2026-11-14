@@ -132,7 +132,9 @@ def resident():
 """.format(prefixes=DEFERRED_PREFIXES)
 
 
-_APP_IMPORT_SNIPPET = _RESIDENT_HELPER + """
+_APP_IMPORT_SNIPPET = (
+    _RESIDENT_HELPER
+    + """
 import tldw_chatbook.app  # noqa: F401
 
 loaded = resident()
@@ -152,6 +154,7 @@ for expected in (
 
 print("APP_CLOSURE_OK")
 """
+)
 
 
 def test_app_import_does_not_execute_the_deferred_rag_packages(
@@ -174,7 +177,9 @@ def test_app_import_does_not_execute_the_deferred_rag_packages(
     assert "APP_CLOSURE_OK" in result.stdout
 
 
-_CHAT_SCREEN_IMPORT_SNIPPET = _RESIDENT_HELPER + """
+_CHAT_SCREEN_IMPORT_SNIPPET = (
+    _RESIDENT_HELPER
+    + """
 CHAT_LEG_DEFERRED_MODULES = {chat_leg!r}
 
 import tldw_chatbook.UI.Screens.chat_screen  # noqa: F401
@@ -235,6 +240,7 @@ assert (
 ), "trajectory_export's TraceExportProfile drifted from the trace_export_profiles leaf"
 print("CHAT_SCREEN_CLOSURE_OK")
 """.format(chat_leg=CHAT_LEG_DEFERRED_MODULES)
+)
 
 
 def test_chat_screen_import_does_not_execute_the_deferred_packages(
@@ -262,7 +268,9 @@ def test_chat_screen_import_does_not_execute_the_deferred_packages(
     assert "CHAT_SCREEN_CLOSURE_OK" in result.stdout
 
 
-_CHAT_RAG_EVENTS_SNIPPET = _RESIDENT_HELPER + """
+_CHAT_RAG_EVENTS_SNIPPET = (
+    _RESIDENT_HELPER
+    + """
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_rag_events
 
 loaded = resident()
@@ -291,6 +299,7 @@ from tldw_chatbook.RAG_Search.simplified import (  # noqa: E402
 assert callable(create_rag_service) and callable(create_config_for_collection)
 print("CHAT_RAG_EVENTS_LAZY_OK")
 """
+)
 
 
 def test_chat_rag_events_import_is_lazy_but_the_probe_still_resolves(
@@ -315,7 +324,9 @@ def test_chat_rag_events_import_is_lazy_but_the_probe_still_resolves(
     assert "CHAT_RAG_EVENTS_LAZY_OK" in result.stdout
 
 
-_SEARCH_MODES_SNIPPET = _RESIDENT_HELPER + """
+_SEARCH_MODES_SNIPPET = (
+    _RESIDENT_HELPER
+    + """
 from tldw_chatbook.RAG_Search import search_modes
 
 loaded = resident()
@@ -346,9 +357,12 @@ from tldw_chatbook.RAG_Search.simplified.search_service import (  # noqa: E402
 assert search_service_normalize is search_modes.normalize_rag_search_mode
 print("SEARCH_MODES_OK")
 """
+)
 
 
-_PROFILE_RAG_FROM_DEFERRED_STATE_SNIPPET = _RESIDENT_HELPER + """
+_PROFILE_RAG_FROM_DEFERRED_STATE_SNIPPET = (
+    _RESIDENT_HELPER
+    + """
 import asyncio
 from types import SimpleNamespace
 
@@ -418,6 +432,7 @@ assert [r["id"] for r in rows] == ["media-1"], rows
 assert rows[0]["media_type"] == "video"
 print("PROFILE_RAG_FROM_DEFERRED_STATE_OK")
 """
+)
 
 
 def test_profile_driven_rag_still_works_from_the_deferred_boot_state(

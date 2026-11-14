@@ -854,7 +854,7 @@ _EXPECTED_CPU_BACKENDS = tuple(
         backend=AudioCppBackendPreference.CPU,
         state=AudioCppBackendEvidenceState.EXPECTED,
         evidence_reference=(
-            "backlog/decisions/050-audio-cpp-generated-model-setup-ownership.md"
+            "backlog/decisions/308-audio-cpp-generated-model-setup-ownership.md"
             "#decision"
         ),
     )

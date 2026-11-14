@@ -1,0 +1,60 @@
+TASK-32633 slice (N-03) -- live evidence, isolated harness, 160x45, 2026-10-04 (local clock)
+Code: worktree task-34000-wave1 (APP_WT), tmux socket w1-t4-1, run profile golden + one seeded
+lasting-sync root ("VSync" <-> <run>-vault/quotes.md, bound note t4-note-quotes, 74 bytes).
+Captures 01-08 (.txt/.ansi) are the screen at each step; this file is the disk and the stores.
+
+Before (01, 02): list "Library notes · Ready", tree "▾ VSync  ⇄ Sync managed", editor
+"In a synced folder · …quotes.md"; notes_sync_roots.last_status_code = up_to_date.
+
+After Info ▸ Delete ▸ confirm (04, 05):
+  $ ls -la <vault>/quotes.md            -> -rw-r--r--  74 bytes, mtime 07:33 (UNCHANGED)
+  $ cat <vault>/quotes.md               -> the two quotes, byte for byte as seeded
+  notes: id=t4-note-quotes deleted=1 version=4            (tombstone)
+  notes_sync_roots: t4-root | needs_attention              (planner hold)
+  notes_sync_operations: count 0                           (no Recovery entry opened)
+  screen: list "Library notes · ⚠ A sync folder needs attention · Next: Open Manage sync folders."
+          tree "▾ VSync  ⚠ Needs attention"; receipt "✓ deleted · quotes  [Undo] Dismiss"
+          Manage: "⚠ Needs attention · Next: Review changes"
+
+After Undo (06, 07):
+  $ ls -la / cat <vault>/quotes.md       -> 74 bytes, UNCHANGED
+  notes: deleted=0 version=5
+  notes_sync_roots: t4-root | up_to_date ; notes_sync_operations: count 0
+  screen: list "Library notes · Ready", tree "▾ VSync  ⇄ Sync managed", row "quotes · now"
+          Manage: "✓ Up to date as of 07:40 · Next: Check changes"   ($ date +%H:%M -> 07:40)
+
+Disk edit while sitting on Manage sync folders, no keypress (08):
+  file appended at 07:41 -> within ~5 s the row read "✓ Up to date as of 07:41 · Next: Check changes"
+  notes: deleted=0 version=6, content ends "...on disk while Manage sync folders was open."
+  (binding.note_version was set to the restored note's version by hand first; without that the
+   pass is refused as stale_observation -- TASK-34000.49, pre-existing, filed from this slice)
+
+App log: 0 Tracebacks, 0 ERROR/WARNING lines (cyberpunk_glitch splash noise excluded);
+0 references to the real ~/.config or ~/.local; no nlrev processes left after kill-server.
+Harness note: a vault under the run's HOME is refused with private_path_overlap (first attempt,
+"✕ Blocked · Next: Review settings"); the vault was moved to a sibling of the run directory.
+
+==== Fix round 1 (2026-10-04, 11:17-11:25 local) -- fresh re-seed of the same run, same code line + fixes
+Captures 09-16. Harness note: the run was re-seeded (fresh golden copy + seed script), nothing set by hand
+in the stores during this round; the only hand action is the disk edit named below.
+
+09 (160x45) Info ▸ Delete on the synced note -- the prompt now reads:
+  "Delete this note? Its file stays on disk; the synced folder waits for review until the note is
+   restored. Undo will be available in the Notes list."
+10 after confirm: list "⚠ A sync folder needs attention", tree "▾ VSync  ⚠ Needs attention".
+  notes: deleted=1 version=2 ; notes_sync_roots: needs_attention ; operations: 0 ; quotes.md 74 bytes.
+Quit (Ctrl+Q) -> relaunch with the same data (REUSE=1).
+11 / 11b after the restart, no action taken: list "⚠ A sync folder needs attention", tree
+  "▸ VSync  ⚠ Needs attention", Manage "⚠ Needs attention · Next: Review changes" (persisted hold).
+12 Filter "quotes" -> "Recently deleted (3)" -> the Trash view lists "quotes · 3m  Restore".
+13 Restore pressed, NO Check pressed: list "Library notes · Ready", row "quotes · VSync · now".
+  notes: deleted=0 version=3 ; notes_sync_roots: up_to_date ; operations: 0 ; quotes.md 74 bytes unchanged.
+14 Manage sync folders: "✓ Up to date as of 11:21 · Next: Check changes"   ($ date +%H:%M -> 11:21)
+15 Disk edit of quotes.md while sitting on Manage (one line appended), binding note_version as the app
+  left it (1, note at 3): within ~5 s the row repainted, without a keypress, to
+  "⚠ Needs attention · Next: Review changes". notes: version 3, length 74 (edit NOT taken);
+  operations: 0. This is TASK-34000.49 (version-only move after the restore), reported as it is.
+16 (120x36) Info ▸ Delete on the synced note, Info pane scrolled to the bottom: the first wrapped line
+  "Delete this note? Its file stays on disk;" is visible; the remaining lines and Cancel/Delete sit
+  below the Info fold -- N-10's clip, pre-existing (the base copy's buttons are hidden there too).
+App log across the round: 0 Tracebacks, 0 ERROR/WARNING; 0 real-profile paths; no nlrev processes left.

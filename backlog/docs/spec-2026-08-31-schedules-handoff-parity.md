@@ -3,7 +3,7 @@
 Date: 2026-08-31
 Status: Draft — awaiting owner approval
 Baselines: tldw_server `origin/dev` @ `5921014aa9`; tldw_chatbook `origin/dev` @ `30a70ef5c`
-Related: ADR-018 (hybrid storage/sync), ADR-077 (server-offloaded execution; this spec's ADR will amend its §1), ADR-099 (editor shape: modal, upgraded in place), TASK-18940 (this program absorbs its remaining authoring slice), tasks 23100–23111 (UX burn-down this spec builds on)
+Related: ADR-291 (hybrid storage/sync), ADR-077 (server-offloaded execution; this spec's ADR will amend its §1), ADR-339 (editor shape: modal, upgraded in place), TASK-18940 (this program absorbs its remaining authoring slice), tasks 23100–23111 (UX burn-down this spec builds on)
 Companion analysis: "Schedules Against the Reference" rev 2 (artifact 6283950d)
 
 ## 1. Purpose
@@ -25,7 +25,7 @@ transfer target requires.
 | 3 | This program **absorbs TASK-18940's remaining authoring slice** (create/preview/submit) | owner |
 | 4 | Server-run **results sync down** into the local results store; `review_state` changes push back | owner |
 | 5 | Transfer mechanism: **create-on-target + tombstone-on-source**, composed from existing primitives, eventually-atomic, zero server-side changes in v1 (Approach 1) | owner |
-| 6 | Editor shape: **modal, upgraded in place** (ADR-099 — decided before this program; followed, not revisited) | ADR-099 |
+| 6 | Editor shape: **modal, upgraded in place** (ADR-339 — decided before this program; followed, not revisited) | ADR-339 |
 
 ## 3. Invariant
 
@@ -139,7 +139,7 @@ Add local: `transfer_state` TEXT NULL (§6). Also added to
 ## 5. Sync
 
 `SyncEngine` grows two primitives beside `reminder_task`, under the same
-ADR-018 discipline (server-wins, pending mutations, tombstones, conflicts
+ADR-291 discipline (server-wins, pending mutations, tombstones, conflicts
 into the existing `sync_conflicts` surface).
 
 ### 5.1 `automation_definition`
@@ -343,7 +343,7 @@ consulted by transfer refusals (§6.4).
 
 ## 8. Authoring (absorbs 18940's remaining slice)
 
-Modal, upgraded in place, per ADR-099. One create/edit modal for
+Modal, upgraded in place, per ADR-339. One create/edit modal for
 `recurring_question` definitions with a **"Runs on: This device |
 Server (<id>)"** selector (default = current screen owner), and one
 preview seam dispatched by owner:

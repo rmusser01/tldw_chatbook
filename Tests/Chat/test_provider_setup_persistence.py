@@ -1,8 +1,12 @@
+import os
 import threading
+from pathlib import Path
 from dataclasses import fields, replace
 from types import MappingProxyType
 
 import pytest
+
+from Tests.private_profile import private_profile_test
 
 from tldw_chatbook import config as config_module
 from tldw_chatbook.Chat import provider_setup_persistence as persistence_module
@@ -916,10 +920,7 @@ def test_credential_replacement_and_clear_are_sparse_and_secret_safe():
         {},
     )
     assert "api_key" not in cleared.section_values["api_settings.openai"]
-    assert (
-        cleared.section_values["api_settings.openai"]["credential_source"]
-        == "none"
-    )
+    assert cleared.section_values["api_settings.openai"]["credential_source"] == "none"
     assert cleared.delete_keys["api_settings.openai"] == (
         "api_key",
         "api_key_env_var",
@@ -965,12 +966,58 @@ def test_credential_source_is_persisted_for_each_authoritative_auth_decision():
     assert cleared.section_values["api_settings.custom"]["credential_source"] == (
         "none"
     )
-    assert kept.section_values["api_settings.custom"]["credential_source"] == (
-        "stored"
+    assert kept.section_values["api_settings.custom"]["credential_source"] == ("stored")
+    assert (
+        environment.section_values["api_settings.custom"]["credential_source"]
+        == "environment"
     )
-    assert environment.section_values["api_settings.custom"][
-        "credential_source"
-    ] == "environment"
+
+
+@pytest.mark.parametrize(
+    ("stored_key", "legacy_tables", "written"),
+    [
+        ("sk-legacy-33001-15", ("openai",), True),
+        ("sk-own-table-33001-15", (), False),
+        ("sk-own-table-33001-15", ("anthropic",), False),
+        ("sk-legacy-33001-15", "openai", False),
+        ("sk-over-limit-" + "x" * 8200, ("openai",), False),
+    ],
+    ids=[
+        "copied-from-legacy-api",
+        "own-table-key",
+        "another-provider-copied",
+        "malformed-marker",
+        "copied-but-over-the-setup-limit",
+    ],
+)
+def test_keep_stored_writes_only_a_key_the_loader_copied_from_legacy_api(
+    stored_key, legacy_tables, written
+):
+    """TASK-33001.15: a kept "stored" key is written into the provider table
+    only when the loader says that table got it from legacy ``[API]``.
+
+    A key the table already holds stays out of the mutation (TASK-33001.13:
+    kept in place, never revalidated). A copied key the setup validator would
+    refuse is left unwritten too, so the save still succeeds as it did.
+    """
+    config = {
+        "api_settings": {"openai": {"api_key": stored_key}},
+        "legacy_api_key_providers": legacy_tables,
+    }
+
+    mutation = build_provider_setup_mutation(
+        _draft(provider="openai", endpoint="", credential_source="stored"),
+        config,
+        keep_stored_credential=True,
+    )
+
+    table = mutation.section_values["api_settings.openai"]
+    assert table["credential_source"] == "stored"
+    assert ("api_key" in table) is written
+    if written:
+        assert table["api_key"] == stored_key
+        assert stored_key not in repr(mutation)
+    assert "api_key" not in mutation.delete_keys.get("api_settings.openai", ())
 
 
 def test_unset_environment_declaration_changes_credential_routing_identity(
@@ -1247,6 +1294,8 @@ def test_setup_types_are_frozen_slotted_and_have_secret_free_repr():
         "section_values",
         "delete_keys",
         "semantic_identity",
+        # TASK-34100.6 AC#6: other exported keys, by variable name only.
+        "environment_records",
     ]
     assert not hasattr(draft, "__dict__")
     assert not hasattr(mutation, "__dict__")
@@ -1909,9 +1958,10 @@ def test_guarded_provider_setup_holds_identity_lease_through_atomic_writer(
     ],
     ids=["moonshot-region", "huggingface-router", "custom-endpoint"],
 )
+@pytest.mark.asyncio
+@private_profile_test
 def test_guarded_setup_rejects_completed_relevant_config_write(
-    tmp_path,
-    monkeypatch,
+    request,
     provider,
     endpoint,
     initial_settings,
@@ -1922,12 +1972,11 @@ def test_guarded_setup_rejects_completed_relevant_config_write(
 
     import toml
 
-    config_path = tmp_path / "config.toml"
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     config_path.write_text(
         toml.dumps({"api_settings": {provider: initial_settings}}),
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
     snapshot = config_module.get_atomic_config_snapshot()
     mutation, _guard, _expected_state = _build_bound_first_run_mutation(
         snapshot=snapshot,
@@ -1947,9 +1996,10 @@ def test_guarded_setup_rejects_completed_relevant_config_write(
     assert saved.get("chat_defaults", {}).get("model") != "selected-model"
 
 
+@pytest.mark.asyncio
+@private_profile_test
 def test_guarded_setup_rejects_completed_stored_credential_replacement(
-    tmp_path,
-    monkeypatch,
+    request,
 ):
     import tomllib
 
@@ -1958,7 +2008,7 @@ def test_guarded_setup_rejects_completed_stored_credential_replacement(
 
     first_secret = "locked-stored-credential-a"
     second_secret = "locked-stored-credential-b"
-    config_path = tmp_path / "config.toml"
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     config_path.write_text(
         toml.dumps(
             {
@@ -1972,7 +2022,6 @@ def test_guarded_setup_rejects_completed_stored_credential_replacement(
         ),
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
     messages = []
     sink_id = loguru_logger.add(messages.append, level="DEBUG", format="{message}")
     try:
@@ -2006,15 +2055,16 @@ def test_guarded_setup_rejects_completed_stored_credential_replacement(
     assert saved.get("chat_defaults", {}).get("model") != "selected-model"
 
 
+@pytest.mark.asyncio
+@private_profile_test
 def test_guarded_setup_allows_unrelated_generation_advance(
-    tmp_path,
-    monkeypatch,
+    request,
 ):
     import tomllib
 
     import toml
 
-    config_path = tmp_path / "config.toml"
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     config_path.write_text(
         toml.dumps(
             {
@@ -2029,7 +2079,6 @@ def test_guarded_setup_allows_unrelated_generation_advance(
         ),
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
     snapshot = config_module.get_atomic_config_snapshot()
     mutation, _guard, _expected_state = _build_bound_first_run_mutation(
         snapshot=snapshot,
@@ -2117,6 +2166,54 @@ def test_combined_provider_settings_boundary_rejects_connection_without_setup(
     assert calls == []
 
 
+@pytest.mark.parametrize("auth_source", ["api_key", "claude_subscription"])
+def test_combined_boundary_writes_a_known_anthropic_sign_in_choice(monkeypatch, auth_source):
+    """TASK-34201: Settings' "Sign in with" save is an auth_source-only write."""
+    calls = []
+    expected = ConfigMutationResult(True, True, None)
+    monkeypatch.setattr(
+        persistence_module,
+        "apply_settings_mutation_to_cli_config",
+        lambda values, *, delete_keys=None: calls.append(values) or expected,
+    )
+    section_values = {"api_settings.anthropic": {"auth_source": auth_source}}
+
+    result = persistence_module.persist_provider_settings_atomic(
+        None,
+        provider="anthropic",
+        model="claude-sonnet-4-6",
+        section_values=section_values,
+        delete_keys={},
+    )
+
+    assert result is expected
+    assert calls == [section_values]
+
+
+@pytest.mark.parametrize(
+    ("provider", "auth_source"),
+    [("anthropic", "oauth"), ("anthropic", ""), ("openai", "claude_subscription")],
+)
+def test_combined_boundary_refuses_other_sign_in_writes(monkeypatch, provider, auth_source):
+    calls = []
+    monkeypatch.setattr(
+        persistence_module,
+        "apply_settings_mutation_to_cli_config",
+        lambda *_args, **_kwargs: calls.append(True),
+    )
+
+    with pytest.raises(ValueError):
+        persistence_module.persist_provider_settings_atomic(
+            None,
+            provider=provider,
+            model="some-model",
+            section_values={f"api_settings.{provider}": {"auth_source": auth_source}},
+            delete_keys={},
+        )
+
+    assert calls == []
+
+
 def test_explicit_confirmation_is_authoritative_and_sparse():
     config = {
         "provider_setup": {"confirmed": {"llama_cpp": True, "custom": False}},
@@ -2166,12 +2263,16 @@ def test_template_endpoint_without_user_acceptance_is_not_explicitly_configured(
 
 _ENGINE_PRESET_RECORDS = [
     record
-    for record in __import__("tldw_chatbook.provider_registry", fromlist=["ALL_RECORDS"]).ALL_RECORDS
+    for record in __import__(
+        "tldw_chatbook.provider_registry", fromlist=["ALL_RECORDS"]
+    ).ALL_RECORDS
     if record.engine_driven and record.key != "custom-hosted"
 ]
 
 
-@pytest.mark.parametrize("record", _ENGINE_PRESET_RECORDS, ids=lambda record: record.key)
+@pytest.mark.parametrize(
+    "record", _ENGINE_PRESET_RECORDS, ids=lambda record: record.key
+)
 def test_every_engine_preset_is_owned_by_setup_persistence(record):
     """Settings and first-run setup could save no engine preset but Databricks;
     each one must resolve by key and display name to its own section."""
@@ -2204,7 +2305,9 @@ def test_every_engine_preset_saves_its_documented_url_unchanged(record):
     """The endpoint contract used to force a ``/v1`` model onto every URL:
     DeepInfra's ``/v1/openai`` was rejected and BytePlus/Kilo/Qianfan gained a
     bogus ``/v1``. Each preset's documented base must save exactly."""
-    section = _saved_engine_endpoint(record.config_key, record.key, record.default_base_url)
+    section = _saved_engine_endpoint(
+        record.config_key, record.key, record.default_base_url
+    )
     assert section["api_base_url"] == record.default_base_url
     assert section["api_key"] == "sk-test-canary-1234567890"
     assert section["model"] == "some-model"
@@ -2213,15 +2316,31 @@ def test_every_engine_preset_saves_its_documented_url_unchanged(record):
 @pytest.mark.parametrize(
     ("provider", "key", "entered", "saved"),
     [
-        ("Azure", "azure", "https://my-resource.openai.azure.com",
-         "https://my-resource.openai.azure.com/openai/v1"),
-        ("Databricks", "databricks", "https://dbc-1.cloud.databricks.com",
-         "https://dbc-1.cloud.databricks.com/openai/v1"),
-        ("Cloudflare", "cloudflare", "https://api.cloudflare.com/client/v4/accounts/abc/ai/v1",
-         "https://api.cloudflare.com/client/v4/accounts/abc/ai/v1"),
+        (
+            "Azure",
+            "azure",
+            "https://my-resource.openai.azure.com",
+            "https://my-resource.openai.azure.com/openai/v1",
+        ),
+        (
+            "Databricks",
+            "databricks",
+            "https://dbc-1.cloud.databricks.com",
+            "https://dbc-1.cloud.databricks.com/openai/v1",
+        ),
+        (
+            "Cloudflare",
+            "cloudflare",
+            "https://api.cloudflare.com/client/v4/accounts/abc/ai/v1",
+            "https://api.cloudflare.com/client/v4/accounts/abc/ai/v1",
+        ),
         ("Kilo", "kilo", "https://api.kilo.ai", "https://api.kilo.ai/api/gateway"),
-        ("Together", "together", "https://api.together.xyz/v1/chat/completions",
-         "https://api.together.xyz/v1"),
+        (
+            "Together",
+            "together",
+            "https://api.together.xyz/v1/chat/completions",
+            "https://api.together.xyz/v1",
+        ),
     ],
 )
 def test_engine_preset_bare_hosts_and_pasted_chat_urls_save_the_api_base(

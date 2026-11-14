@@ -58,9 +58,7 @@ def test_valid_side_panes_round_trip(monkeypatch):
 
     monkeypatch.setattr(region_layout_store, "save_settings_to_cli_config", writer)
     layout = RegionLayout(
-        collapsed=frozenset(
-            {Region.LEFT_RAIL, Region.ITEMS, Region.RIGHT_RAIL}
-        )
+        collapsed=frozenset({Region.LEFT_RAIL, Region.ITEMS, Region.RIGHT_RAIL})
     )
 
     assert region_layout_store.save_region_layout(layout) is True

@@ -215,7 +215,7 @@ def test_before_read_is_last_check_and_open_is_readonly(tmp_path, monkeypatch):
 
 @pytest.fixture
 def notes_bridge(tmp_path, monkeypatch):
-    from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryMigrationSeed
+    from tldw_chatbook.DB.ChaChaNotes_DB import ConsoleLibraryMigrationSeed
     from tldw_chatbook.Workflows.local_steps import capture_local_note_destination
 
     # This bridge exercises real temporary Notes owners, not process-lived config

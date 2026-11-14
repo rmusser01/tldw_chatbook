@@ -9,6 +9,39 @@ from typing import Any, Callable
 from ...Chat.console_image_view import fit_image_cell_size
 from ...Utils.mosaic_render import mosaic_contain_cell_size
 
+CHARACTER_AVATAR_COLS = 16
+CHARACTER_AVATAR_LINES = 8
+#: task-1661: the rail avatar used to paint into the fixed box above no
+#: matter how wide the rail was, leaving a ~50-column rail showing a
+#: 16-column portrait pinned to the corner of an unsized (1fr) holder.
+#: The box is now derived from the rail's live width, clamped so a very
+#: tall portrait cannot swallow the whole rail.
+CHARACTER_AVATAR_MAX_COLS = 44
+CHARACTER_AVATAR_MAX_LINES = 22
+
+
+def character_avatar_box(available_cols: int) -> tuple[int, int]:
+    """Avatar box (cols, lines) for a rail of ``available_cols`` width.
+
+    task-1661: keeps the portrait proportional to the rail instead of a
+    fixed 16x8 corner thumb, while clamping so a tall image cannot claim
+    the entire rail. Lines are half the columns because terminal cells are
+    roughly twice as tall as wide, which keeps the box near-square on
+    screen.
+
+    Args:
+        available_cols: The holder's usable width in columns; values below
+            the historical minimum fall back to it (layout not settled).
+
+    Returns:
+        ``(cols, lines)`` for `fit_image_cell_size`.
+    """
+    cols = max(CHARACTER_AVATAR_COLS, min(CHARACTER_AVATAR_MAX_COLS, available_cols))
+    lines = max(
+        CHARACTER_AVATAR_LINES, min(CHARACTER_AVATAR_MAX_LINES, round(cols / 2))
+    )
+    return cols, lines
+
 
 def fit_character_avatar_cell_box(
     image: Any,

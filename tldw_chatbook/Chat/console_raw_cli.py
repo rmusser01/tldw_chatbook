@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from contextlib import nullcontext
 from dataclasses import dataclass
+import asyncio
 import math
 import threading
 import time
 from types import ModuleType
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias
+from typing import TYPE_CHECKING, Any, ContextManager, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -27,6 +29,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
         RawCliRequest,
         RawCliResult,
         RawCliStreamEvent,
+        RequiredCliOutput,
     )
 
 
@@ -62,12 +65,47 @@ LOCAL_COMMAND_RUN_LOG_DIR = "local-command-runs"
 
 _RAW_CLI_COMPACT_OUTPUT_BYTES = 4 * 1024
 
+#: The raw-CLI danger disclosure, shown on the Settings card. Moved here from
+#: ``settings_screen`` (TASK-33622.9) so the Console composer's in-place arm
+#: shows the same lines without importing the Settings screen.
+RAW_CLI_DISCLOSURE_LINES = (
+    "Commands run with the same OS permissions as Chatbook.",
+    "Commands can read, modify, or delete any accessible file, including Chatbook's "
+    "config and permission store.",
+    "Commands can access the network, invoke credentialed clients, launch background "
+    "processes, and exhaust machine resources.",
+    "The environment is scrubbed, but commands can still read credential files and "
+    "other user data.",
+    "Cancellation attempts to terminate the owned process group/job; deliberately "
+    "detached descendants may survive.",
+    "Command text and bounded output may persist in local run logs.",
+    "This is not a sandbox and is not limited to your workspace.",
+)
+#: Every arm confirmation (Settings > Privacy & Security and the Console
+#: composer's in-place Arm…) also says what ADR-093 registers while armed.
+RAW_CLI_ARM_DISCLOSURE_LINES = RAW_CLI_DISCLOSURE_LINES + (
+    "Arming also gives models the host-shell tool shell_exec while local tools "
+    "are on. A model must ask before it runs a command: you can run it once, "
+    "allow shell commands for that Console session, or deny. There is no "
+    "permanent Allow.",
+)
+
 RawCliArmReason: TypeAlias = Literal["armed", "locked", "shutdown"]
+#: What the Console composer shows for a trusted ``! `` draft (TASK-33622.9).
+RawCliAuthority: TypeAlias = Literal["armed", "unarmed", "locked"]
+
 # Forward-referenced so the alias does not resolve `RawCliStreamEvent` at
 # import time (it lives in the deferred `Tools.raw_cli_executor`).
 RawCliEventSink: TypeAlias = Callable[["RawCliStreamEvent"], None]
 RawCliRegisteredSink: TypeAlias = Callable[[], None]
 RawCliStartedSink: TypeAlias = Callable[[float], None]
+
+
+def raw_cli_authority(runtime: object) -> RawCliAuthority:
+    """Classify a raw-CLI runtime for presentation; anything unknown is locked."""
+    if getattr(runtime, "permitted", False) is not True:
+        return "locked"
+    return "armed" if getattr(runtime, "armed", False) is True else "unarmed"
 
 
 def _literal_terminal_text(value: str) -> str:
@@ -492,6 +530,79 @@ class _ActiveInvocation:
     done_event: threading.Event
 
 
+class NativeRawCliSource:
+    """App attachment; never grants authority from a session ID or caller label."""
+
+    def __init__(self, runtime):
+        self.runtime, self.app = runtime, runtime._app
+        self.raw = self.app.raw_cli_runtime
+        self.pending = set()
+
+    def capture(self, raw, session_id, invocation_id):
+        from tldw_chatbook.Agents.execution_capacity import CapacityRefused, WorkOrigin
+        from tldw_chatbook.Workspaces.worktree_activity import WorktreeFootprint
+
+        from .console_raw_cli_custody import _UserRawCliCall
+
+        with self.runtime._first_send_source_scope():
+            if raw is not self.raw:
+                raise RuntimeError("original RawCLI runtime changed")
+            call = _UserRawCliCall(self, session_id, invocation_id)
+            with call.activate():
+                call.check()
+                call.capacity = call.capacity or self.runtime.execution_capacity
+                call.activity = call.activity or self.runtime.worktree_activity
+                call.check()
+                with call.activity.prelaunch(
+                    footprint=WorktreeFootprint(opaque=True)
+                ) as claim:
+                    if claim is None:
+                        raise CapacityRefused("raw_cli_activity_busy")
+                    owner = call.capacity.begin_execution(
+                        origin=WorkOrigin.MANUAL,
+                        conversation_id=call.session.persisted_conversation_id or "",
+                    )
+                    try:
+                        operation = owner.reserve_tool()
+                    except BaseException:
+                        owner.finish_root()
+                        raise
+                    try:
+                        with self.runtime._execution_capacity_lock:
+                            call.check_memory()
+                            claim.bind_owner(owner)
+                            call.owner, call.operation, call.claim = (
+                                owner,
+                                operation,
+                                claim,
+                            )
+                            self.pending.add(call)
+                            # Overlap capture with this original pending lifetime.
+                            self.runtime._first_send_sources += 1
+                    except BaseException:
+                        operation.finish()
+                        owner.finish_root()
+                        raise
+            return call
+
+    async def drain(self):
+        pending = tuple(self.pending)
+        for call in pending:
+            call.cancel_unstarted()
+        if not pending:
+            return False
+        task = asyncio.create_task(
+            asyncio.to_thread(lambda: [c.retired.wait() for c in pending])
+        )
+        cancelled = False
+        while True:
+            try:
+                await asyncio.shield(task)
+                return cancelled
+            except asyncio.CancelledError:
+                cancelled = True
+
+
 class RawCliRuntime:
     """Own one launch-local arm bit and all active raw CLI invocations."""
 
@@ -579,14 +690,20 @@ class RawCliRuntime:
         """Grant model raw-shell authority for one Console session in memory."""
         if not isinstance(console_session_id, str) or not console_session_id.strip():
             raise ValueError("console_session_id must be a nonblank string")
+        from tldw_chatbook.Agents.approval_observation import publish_grant_application
+
         with self._lock:
-            if (
+            applied = not (
                 self._shutdown_started
                 or not self._armed
                 or not self._latest_permitted_locked()
-            ):
-                return
-            self._model_session_grants.add(console_session_id)
+            )
+            if applied:
+                self._model_session_grants.add(console_session_id)
+        publish_grant_application(
+            "applied" if applied else "not_applied",
+            actual_scope="raw_shell_session" if applied else None,
+        )
 
     def model_session_granted(self, console_session_id: str) -> bool:
         """Return whether this process currently holds the session grant."""
@@ -602,6 +719,15 @@ class RawCliRuntime:
             self._clear_model_session_grants_locked()
             return revoked
 
+    def review_check_boundary_factory(self):
+        """Return an executor's enforcing boundary factory, absent on stock Raw CLI.
+
+        The factory must enforce aggregate bytes and file counts before any
+        materialization or execution, and own deletion/settlement receipts.
+        Output clipping and per-file limits do not qualify.
+        """
+        return getattr(self._executor_or_default(), "reserve_review_boundary", None)
+
     def execute(
         self,
         request: RawCliRequest,
@@ -609,9 +735,23 @@ class RawCliRuntime:
         *,
         on_registered: RawCliRegisteredSink | None = None,
         on_started: RawCliStartedSink | None = None,
+        admission_scope: Callable[[], ContextManager[None]] | None = None,
+        required_output: RequiredCliOutput | None = None,
     ) -> RawCliResult:
-        """Synchronously execute one request through the guarded admission seam."""
+        """Execute through native admission, optionally retaining bounded required output.
+
+        Required output is accepted only by the actual native executor. It remains
+        sanitized and obtains completeness only from native stream/cleanup proof.
+        """
+        from tldw_chatbook.Tools.raw_cli_executor import current_raw_cli_call
+
+        try:
+            custody = current_raw_cli_call(self, request)
+        except (ValueError, RuntimeError):
+            return self._refused_result(request)
         request = _raw_cli_executor().validate_raw_cli_request(request)
+        if custody is not None:
+            custody.request = request
         if not callable(on_event):
             raise TypeError("on_event must be callable")
         if on_registered is not None and not callable(on_registered):
@@ -648,34 +788,65 @@ class RawCliRuntime:
                     or active.cancel_event.is_set()
                 )
 
+            if custody is not None:
+                custody.check()
             with self._admission_lock:
                 with self._lock:
                     if not authority_allows_launch_locked():
                         return False
                 tree.admit()
-                with self._lock:
-                    # The second check and commit are the atomic launch boundary.
-                    if not authority_allows_launch_locked():
+                # Optional native owner fence encloses only commit/acceptance.
+                # Ordinary calls retain the existing admission path unchanged.
+                with (
+                    admission_scope() if admission_scope is not None else nullcontext()
+                ):
+                    with self._lock:
+                        # The second check and commit are the atomic launch boundary.
+                        if custody is not None:
+                            custody.check_memory()
+                        if not authority_allows_launch_locked():
+                            return False
+                        started_at = commit_launch()
+                    if started_at is None:
                         return False
-                    started_at = commit_launch()
-                if started_at is None:
-                    return False
-                if on_started is not None:
-                    try:
-                        on_started(started_at)
-                    except Exception:
-                        pass
-                return True
+                    if on_started is not None:
+                        try:
+                            on_started(started_at)
+                        except Exception:
+                            pass
+                    return True
 
         try:
             if on_registered is not None:
                 on_registered()
-            return self._executor_or_default().execute(
+            executor = self._executor_or_default()
+            extra = {}
+            if required_output is not None:
+                native = _raw_cli_executor()
+                if (
+                    type(executor) is not native.RawShellExecutor
+                    or type(required_output) is not native.RequiredCliOutput
+                ):
+                    raise ValueError("native_required_output_owner")
+                extra["required_output"] = required_output
+            if custody is not None:
+                from ..Agents.activation import worker_guard
+
+                if type(executor) is not _raw_cli_executor().RawShellExecutor:
+                    raise ValueError("native RawCLI executor changed")
+                admit_worker = worker_guard()(admit_worker)
+                extra["_join_helpers"] = True
+                custody.physical_proven = False
+            result = executor.execute(
                 request,
                 cancel_event=active.cancel_event,
                 on_event=on_event,
                 admit_worker=admit_worker,
+                **extra,
             )
+            if custody is not None:
+                custody.physical_proven = result.cleanup_proven is True
+            return result
         finally:
             with self._lock:
                 if self._active_invocations.get(request.invocation_id) is active:
@@ -832,3 +1003,9 @@ __all__ = [
     "raw_cli_activity_presentation",
     "raw_cli_terminal_lifecycle",
 ]
+
+_NATIVE_RAW_CLI_RUNTIME_TYPE = RawCliRuntime
+_NATIVE_RAW_CLI_POLICY_DESCRIPTORS = tuple(
+    (name, vars(RawCliRuntime)[name])
+    for name in ("permitted", "armed", "_latest_permitted_locked")
+)

@@ -254,7 +254,7 @@ def test_dictionary_import_finishes_core_after_parser_pause(configured_db, monke
     from contextlib import contextmanager
     from tldw_chatbook.Backup_Recovery import raw_participants as raw
 
-    original = raw._file
+    original = raw.file
     pauses = []
 
     @contextmanager
@@ -264,7 +264,7 @@ def test_dictionary_import_finishes_core_after_parser_pause(configured_db, monke
             if raw._states[token].source is cdl and mode == "r" and not pauses:
                 pauses.append(storage._begin_local_pause())
 
-    monkeypatch.setattr(raw, "_file", pause_after_parser)
+    monkeypatch.setattr(raw, "file", pause_after_parser)
     try:
         result = cdl.import_dictionary_from_file(db, str(path))
         assert result is not None, (
@@ -317,7 +317,7 @@ def test_dictionary_history_publication_flushes_its_own_bytes(
 ):
     """A durable rename over non-durable contents is the classic corruption.
 
-    ``raw_participants._replace`` fsynced the destination DIRECTORY after
+    ``raw_participants.replace`` fsynced the destination DIRECTORY after
     ``os.replace`` while ``_file`` closed the temporary without ever flushing
     its descriptor. A power loss could then persist the directory entry and
     leave it pointing at a file whose blocks were never written. The config
@@ -474,7 +474,7 @@ def test_pause_between_pair_acquisitions_has_no_core_or_cache_effect(
 
     db, _ = configured_db
     source = chat.build_dictionary_service(db)
-    original = raw._scope
+    original = raw.scope
     pauses = []
 
     @contextmanager
@@ -484,7 +484,7 @@ def test_pause_between_pair_acquisitions_has_no_core_or_cache_effect(
         with original(actual_source, route, **kwargs) as token:
             yield token
 
-    monkeypatch.setattr(raw, "_scope", interrupted)
+    monkeypatch.setattr(raw, "scope", interrupted)
     try:
         with pytest.raises(RecoveryRequired, match="storage_locally_paused"):
             source.create_dictionary({"name": "not committed"})
@@ -551,6 +551,58 @@ def test_citation_pair_migration_and_compatibility_writer_keep_exact_relationshi
     source.citation_legacy_migration = None
     with pytest.raises(RecoveryRequired, match="chat_source_relationship_changed"):
         source._load_rag_context_store()
+
+
+def test_citation_pair_abort_rolls_back_staged_rag_context_records(
+    configured_db, monkeypatch
+):
+    import copy
+
+    from Tests.Chat.test_citation_legacy_migration import (
+        _conversation_with_messages,
+        _repository,
+    )
+    from tldw_chatbook.Backup_Recovery import chat_source_participants as chat
+    from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+    from tldw_chatbook.Chat.citation_legacy_migration import (
+        CitationLegacyMigrationService,
+    )
+
+    db, config = configured_db
+    conversation, messages = _conversation_with_messages(db, 2)
+    path = config.get_user_data_dir() / "tldw_chatbook_chat_rag_context.json"
+    migration = CitationLegacyMigrationService(
+        db=db, repository=_repository(db, enabled=False), sidecar_path=path
+    )
+    source = ChatConversationService(
+        db, rag_context_store_path=path, citation_legacy_migration=migration
+    )
+    chat.bind_citation_services(source, migration)
+
+    # A record staged by a completed operation stays staged until flush.
+    source.record_message_rag_context(
+        conversation, messages[0], rag_context={"query": "kept"}, stage=True
+    )
+    before = copy.deepcopy(source._staged_rag_context_records)
+    assert (conversation, messages[0]) in before
+    original = chat.write_text
+
+    def refused(*args, **kwargs):
+        raise OSError("sidecar write refused")
+
+    monkeypatch.setattr(chat, "write_text", refused)
+    with pytest.raises(OSError, match="sidecar write refused"):
+        source.record_message_rag_context(
+            conversation, messages[1], rag_context={"query": "rolled back"}
+        )
+    # The aborted operation's staged record is rolled back with the rest of
+    # the operation snapshot; the earlier staged record survives untouched.
+    assert source._staged_rag_context_records == before
+    monkeypatch.setattr(chat, "write_text", original)
+    source.flush_rag_context_store()
+    stored = json.loads(path.read_text())["conversations"][conversation]
+    assert set(stored) == {messages[0]}
+    assert stored[messages[0]]["rag_context"] == {"query": "kept"}
 
 
 @pytest.mark.parametrize("mode", ["queued", "preexisting", "executor_cancel"])
@@ -706,7 +758,7 @@ def test_native_pair_close_failure_retains_exclusion(
     # Actual source/core holds now provide the independent native exclusion proof.
     startup = storage._startups[(os.getpid(), str(local_root))]
     startup.close()
-    real_replace, real_close = raw._replace, os.close
+    real_replace, real_close = raw.replace, os.close
     target = []
 
     def arm_after_publication(token, temporary, destination):
@@ -722,7 +774,7 @@ def test_native_pair_close_failure_retains_exclusion(
             raise OSError("injected native close ambiguity")
         return real_close(fd)
 
-    monkeypatch.setattr(raw, "_replace", arm_after_publication)
+    monkeypatch.setattr(raw, "replace", arm_after_publication)
     monkeypatch.setattr(os, "close", ambiguous_close)
     with pytest.raises(RecoveryRequired, match="raw_resources_not_retired"):
         source.create_dictionary({"name": "durably published"})
@@ -1366,7 +1418,7 @@ def test_library_external_copy_native_maintenance_lifetime(
 
     monkeypatch.setenv("PYTHONPATH", str(Path(__file__).resolve().parents[2]))
     storage._startups[(os.getpid(), str(local_root))].close()
-    real_file = raw._file
+    real_file = raw.file
     pauses, children = [], []
 
     @contextmanager
@@ -1381,7 +1433,7 @@ def test_library_external_copy_native_maintenance_lifetime(
                 children.append(child)
                 assert not select.select([child.stdout], [], [], 0.05)[0]
 
-    monkeypatch.setattr(raw, "_file", parse_pause)
+    monkeypatch.setattr(raw, "file", parse_pause)
     try:
         ident = cdl.import_dictionary_from_file(db, external.name)
         assert ident is not None

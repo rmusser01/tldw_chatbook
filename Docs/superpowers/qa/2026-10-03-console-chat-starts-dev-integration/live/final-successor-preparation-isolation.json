@@ -1,0 +1,30 @@
+{
+  "time": 1791063753.446941,
+  "real_config_sha256": "15c6cb224a6a51c7de5c3f716fbe9dfaef7b7ca05cf9daa7e3ebe247df9310da",
+  "real_config_bytes": 54970,
+  "real_config_mtime_ns": 1790431296768447552,
+  "predecessor_app_pids": [
+    {
+      "boot": "boot1",
+      "pid": 11791,
+      "absent": true,
+      "exit_code": 0
+    },
+    {
+      "boot": "boot2",
+      "pid": 96377,
+      "absent": true,
+      "exit_code": 0
+    },
+    {
+      "boot": "boot3",
+      "pid": 6210,
+      "absent": true,
+      "exit_code": 0
+    }
+  ],
+  "initial_sandbox_probe": {
+    "returncode": 1,
+    "error": "PermissionError: ps Operation not permitted; no app launched or state changed"
+  }
+}

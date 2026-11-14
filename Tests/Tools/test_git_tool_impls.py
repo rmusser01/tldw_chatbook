@@ -29,7 +29,9 @@ from tldw_chatbook.Tools.git_tool_impls import (
 from tldw_chatbook.Tools.local_tool_impls import LocalToolError
 
 GIT_AVAILABLE = shutil.which("git") is not None
-pytestmark = pytest.mark.skipif(not GIT_AVAILABLE, reason="git is not available on this system")
+pytestmark = pytest.mark.skipif(
+    not GIT_AVAILABLE, reason="git is not available on this system"
+)
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -265,6 +267,70 @@ def test_git_status_porcelain(tmp_git_repo: Path) -> None:
     assert "untracked" in out
 
 
+@pytest.mark.bootstrap_profile
+def test_git_status_description_matches_the_scoping_implementation() -> None:
+    """TASK-19874 AC: the model-facing description cannot drift from the argv.
+
+    The implementation applies ``path`` as a positive ``:(literal)``
+    pathspec (see ``git_status``); the provider's schema description must
+    say the parameter LIMITS the output, and must not carry the old
+    repository-discovery-only phrasing that made an agent narrowing to a
+    subdirectory silently receive the whole repository.
+    """
+    import ast
+
+    from Tests.Agents.test_local_tool_provider import InProcessWorkspaceExecutor
+    from tldw_chatbook.Agents.local_tool_provider import (
+        LocalToolExposure,
+        LocalToolProvider,
+    )
+    from tldw_chatbook.Tools import git_tool_impls
+
+    provider = LocalToolProvider(
+        workspace_root=Path.cwd(),
+        workspace_executor=InProcessWorkspaceExecutor(Path.cwd()),
+    )
+    spec = next(
+        candidate
+        for candidate in provider.specs_for_exposure(
+            LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP
+        )
+        if candidate.name == "git_status"
+    )
+    description = spec.parameters["properties"]["path"]["description"]
+    assert "Limit" in description and "status" in description.lower(), (
+        f"git_status's path description no longer states the scoping "
+        f"contract:\n{description!r}"
+    )
+    assert "default: the workspace root" not in description, (
+        "the old discovery-only phrasing is back"
+    )
+
+    # The implementation side of the agreement: git_status itself must
+    # build a positive literal pathspec (the structural magic tripwire in
+    # test_git_tool_sensitive_paths.py then guarantees it is spelled
+    # safely). If this ever disappears, the description above lies.
+    source = Path(git_tool_impls.__file__).read_text()
+    tree = ast.parse(source)
+    function = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "git_status"
+    )
+    calls = {
+        node.func.id
+        for node in ast.walk(function)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in {"_literal_pathspec", "_denylist_pathspecs"}
+    }
+    assert "_literal_pathspec" in calls, (
+        "git_status no longer applies `path` as a positive literal pathspec; "
+        "its description (and git_diff/git_log symmetry) now overstates it"
+    )
+    assert "_denylist_pathspecs" in calls, "the denylist exclusions were dropped"
+
+
 def test_git_status_not_repo(tmp_path: Path) -> None:
     with pytest.raises(LocalToolError, match="not a git repository"):
         git_status(tmp_path)
@@ -307,7 +373,9 @@ def test_read_only_git_operations_use_cwd_without_dash_c(
     operation_calls = [
         (argv, kwargs)
         for argv, kwargs in captured
-        if any(command in argv for command in ("status", "diff", "log", "blame", "branch"))
+        if any(
+            command in argv for command in ("status", "diff", "log", "blame", "branch")
+        )
     ]
     assert len(operation_calls) == 5
     for argv, kwargs in operation_calls:
@@ -484,7 +552,9 @@ def test_git_diff_truncated_returns_partial_output(tmp_git_repo: Path) -> None:
     assert out.rstrip().endswith("...[output truncated]")
 
 
-def test_run_git_kills_process_group(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_git_kills_process_group(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # A fake git that spawns a long-lived child: the timeout kill must reap
     # the whole process group, not just the direct child.
     import os
@@ -494,7 +564,9 @@ def test_run_git_kills_process_group(tmp_path: Path, monkeypatch: pytest.MonkeyP
     bin_dir.mkdir()
     pid_file = tmp_path / "child.pid"
     fake_git = bin_dir / "git"
-    fake_git.write_text(f"#!/bin/sh\nsleep 60 &\necho $! > {pid_file}\nwait\n", encoding="utf-8")
+    fake_git.write_text(
+        f"#!/bin/sh\nsleep 60 &\necho $! > {pid_file}\nwait\n", encoding="utf-8"
+    )
     fake_git.chmod(0o755)
 
     monkeypatch.setattr(git_tool_impls.shutil, "which", lambda _name: str(fake_git))
@@ -524,3 +596,110 @@ def test_run_git_kills_process_group(tmp_path: Path, monkeypatch: pytest.MonkeyP
 def test_run_git_bare_argv_requires_subcommand() -> None:
     with pytest.raises(LocalToolError, match="requires a subcommand"):
         run_git(["git"])
+
+
+def test_internal_review_reader_preserves_bytes_and_refuses_options(tmp_git_repo):
+    from tldw_chatbook.Agents.code_review_source import ReviewGitReader
+
+    path = tmp_git_repo / "raw.bin"
+    path.write_bytes(b"\xff\x00\r\n")
+    subprocess.run(["git", "add", "raw.bin"], cwd=tmp_git_repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "binary"], cwd=tmp_git_repo, check=True)
+    reader = ReviewGitReader(tmp_git_repo)
+    head = reader.head()
+    entry = reader.entry(head, "raw.bin")
+    assert reader.blob(entry) == b"\xff\x00\r\n"
+    with pytest.raises(LocalToolError):
+        reader.commit("--help")
+    with pytest.raises(LocalToolError):
+        reader.entry(head, "../escape")
+
+
+def test_internal_review_reader_propagates_pipe_failure(tmp_git_repo, monkeypatch):
+    from tldw_chatbook.Agents.code_review_source import ReviewGitReader
+    from tldw_chatbook.Tools import git_tool_impls as module
+
+    def fail(*args):
+        raise OSError("injected read failure")
+
+    monkeypatch.setattr(module, "_read_bounded_stream", fail)
+    with pytest.raises(LocalToolError, match="read failed"):
+        ReviewGitReader(tmp_git_repo)
+
+
+def test_review_reader_ignores_replace_and_rejects_promisor(tmp_git_repo):
+    from tldw_chatbook.Agents.code_review_source import ReviewGitReader
+
+    reader = ReviewGitReader(tmp_git_repo)
+    old = reader.head()
+    (tmp_git_repo / "replacement.txt").write_text("replacement\n")
+    subprocess.run(["git", "add", "."], cwd=tmp_git_repo, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "replacement"], cwd=tmp_git_repo, check=True
+    )
+    new = reader.head()
+    subprocess.run(["git", "replace", old, new], cwd=tmp_git_repo, check=True)
+    assert reader.entry(old, "replacement.txt") is None
+    subprocess.run(
+        ["git", "config", "remote.origin.promisor", "true"],
+        cwd=tmp_git_repo,
+        check=True,
+    )
+    with pytest.raises(LocalToolError, match="history_unavailable"):
+        ReviewGitReader(tmp_git_repo)
+
+
+def test_review_reader_validates_repository_object_format(tmp_path):
+    from tldw_chatbook.Agents.code_review_source import ReviewGitReader
+
+    root = tmp_path / "sha256"
+    root.mkdir()
+    result = subprocess.run(
+        ["git", "init", "--object-format=sha256", "-q"], cwd=root, capture_output=True
+    )
+    if result.returncode:
+        pytest.skip("installed Git has no SHA256 repository support")
+    for args in [
+        ("config", "user.name", "Test"),
+        ("config", "core.autocrlf", "false"),
+        ("config", "user.email", "test@example.invalid"),
+    ]:
+        subprocess.run(["git", *args], cwd=root, check=True)
+    (root / "safe.py").write_bytes("utf8 café\r\n".encode("utf-8"))
+    subprocess.run(["git", "add", "."], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-qm", "source"], cwd=root, check=True)
+    reader = ReviewGitReader(root)
+    assert len(reader.head()) == 64
+    assert (
+        reader.blob(reader.entry(reader.head(), "safe.py")) == "utf8 café\r\n".encode()
+    )
+    with pytest.raises(LocalToolError, match="invalid_object_id"):
+        reader.commit("0" * 40)
+
+
+@pytest.mark.parametrize("ignorecase", ["true", "false"])
+def test_review_index_case_variant_matches_a_single_literal_lookup(
+    tmp_git_repo, ignorecase
+):
+    """Batched index reads agree with the old per-path literal lookup.
+
+    A literal pathspec is case-sensitive even with core.ignorecase, so git
+    returns no record for a case variant of a tracked file: the old single-
+    path read and the batch both answer None (no new acceptance).
+    """
+    from tldw_chatbook.Agents.code_review_source import ReviewGitReader
+
+    _git(tmp_git_repo, "config", "core.ignorecase", ignorecase)
+    raw = subprocess.run(
+        ["git", "ls-files", "--stage", "-z", "--", ":(literal)FILE.TXT"],
+        cwd=tmp_git_repo,
+        check=True,
+        capture_output=True,
+    ).stdout
+    assert raw == b""
+    reader = ReviewGitReader(tmp_git_repo)
+    entries = reader.index_entries(("FILE.TXT", "file.txt"))
+    assert entries["FILE.TXT"] is None
+    assert entries["file.txt"] is not None
+    assert entries["file.txt"].path == "file.txt"
+    assert reader.index("FILE.TXT") is None

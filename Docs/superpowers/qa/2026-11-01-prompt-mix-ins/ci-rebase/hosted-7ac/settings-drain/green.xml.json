@@ -1,0 +1,4 @@
+{
+  "sha256": "e1581e3304ecad227da31cc719fcf3c77a639718d135ba2ead37c48fd39174d4",
+  "raw_text": "<?xml version=\"1.0\" encoding=\"utf-8\"?><testsuites name=\"pytest tests\"><testsuite name=\"pytest\" errors=\"0\" failures=\"0\" skipped=\"0\" tests=\"2\" time=\"10.858\" timestamp=\"2026-11-02T09:11:03.641617-08:00\" hostname=\"Roberts-MacBook-Pro-2.local\"><testcase classname=\"Tests.UI.test_console_provider_apply_defaults_flow\" name=\"test_settings_task_drain_yields_for_completed_task_retirement\" time=\"0.146\" /><testcase classname=\"Tests.UI.test_console_settings_hidden_fields\" name=\"test_applying_on_anthropic_submits_none_of_the_hidden_fields\" time=\"9.197\" /></testsuite></testsuites>"
+}

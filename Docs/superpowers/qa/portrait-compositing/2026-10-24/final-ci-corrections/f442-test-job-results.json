@@ -1,0 +1,197 @@
+{
+  "head": "f4422372003676badd0d36342ea81b6ea94a3af8",
+  "checks": [
+    {
+      "bucket": "pending",
+      "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157958351/job/121068995575",
+      "name": "Derived artifacts reproduce from their sources",
+      "state": "IN_PROGRESS"
+    },
+    {
+      "bucket": "pass",
+      "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157958351/job/121063279575",
+      "name": "UI Fast Lane (4)",
+      "state": "SUCCESS"
+    },
+    {
+      "bucket": "pass",
+      "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157958351/job/121063279476",
+      "name": "PR Fast Lane (admission-sensitive)",
+      "state": "SUCCESS"
+    },
+    {
+      "bucket": "pass",
+      "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157958351/job/121063279597",
+      "name": "UI Fast Lane (7)",
+      "state": "SUCCESS"
+    },
+    {
+      "bucket": "pass",
+      "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157958351/job/121063279514",
+      "name": "UI Fast Lane (3)",
+      "state": "SUCCESS"
+    },
+    {
+      "bucket": "pass",
+      "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157958351/job/121063279567",
+      "name": "UI Fast Lane (5)",
+      "state": "SUCCESS"
+    },
+    {
+      "bucket": "pass",
+      "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157958351/job/121063279541",
+      "name": "UI Fast Lane (1)",
+      "state": "SUCCESS"
+    },
+    {
+      "bucket": "pass",
+      "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157958351/job/121063279558",
+      "name": "UI Fast Lane (9)",
+      "state": "SUCCESS"
+    },
+    {
+      "bucket": "pass",
+      "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157958351/job/121063279562",
+      "name": "UI Fast Lane (6)",
+      "state": "SUCCESS"
+    },
+    {
+      "bucket": "pass",
+      "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157958351/job/121063279584",
+      "name": "UI Fast Lane (17)",
+      "state": "SUCCESS"
+    },
+    {
+      "bucket": "pass",
+      "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157958351/job/121063279569",
+      "name": "UI Fast Lane (15)",
+      "state": "SUCCESS"
+    },
+    {
+      "bucket": "pass",
+      "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157958351/job/121063279570",
+      "name": "UI Fast Lane (13)",
+      "state": "SUCCESS"
+    },
+    {
+      "bucket": "pass",
+      "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157958351/job/121063279553",
+      "name": "UI Fast Lane (10)",
+      "state": "SUCCESS"
+    },
+    {
+      "bucket": "pass",
+      "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157958351/job/121063279457",
+      "name": "Dreams tracking tests",
+      "state": "SUCCESS"
+    },
+    {
+      "bucket": "fail",
+      "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157958351/job/121063279531",
+      "name": "UI Fast Lane (11)",
+      "state": "FAILURE"
+    },
+    {
+      "bucket": "pass",
+      "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157958351/job/121063279423",
+      "name": "UI Fast Lane (14)",
+      "state": "SUCCESS"
+    },
+    {
+      "bucket": "pass",
+      "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157958351/job/121063279397",
+      "name": "UI Fast Lane (16)",
+      "state": "SUCCESS"
+    },
+    {
+      "bucket": "pass",
+      "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157958306/job/121063278892",
+      "name": "Eval recovery (macos-15)",
+      "state": "SUCCESS"
+    },
+    {
+      "bucket": "pass",
+      "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157958351/job/121063279509",
+      "name": "UI Fast Lane (2)",
+      "state": "SUCCESS"
+    },
+    {
+      "bucket": "pass",
+      "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157958351/job/121063279407",
+      "name": "PR Fast Lane",
+      "state": "SUCCESS"
+    },
+    {
+      "bucket": "pass",
+      "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157958306/job/121063278868",
+      "name": "Eval recovery (windows-2022)",
+      "state": "SUCCESS"
+    },
+    {
+      "bucket": "pass",
+      "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157958351/job/121063279532",
+      "name": "UI Fast Lane (12)",
+      "state": "SUCCESS"
+    },
+    {
+      "bucket": "pass",
+      "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157958351/job/121063279370",
+      "name": "Dreams and Guardian boundary contracts",
+      "state": "SUCCESS"
+    },
+    {
+      "bucket": "pass",
+      "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157958351/job/121063279424",
+      "name": "UI Fast Lane (8)",
+      "state": "SUCCESS"
+    },
+    {
+      "bucket": "pass",
+      "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157958351/job/121063279416",
+      "name": "PR Fast Lane (admission-sensitive 2)",
+      "state": "SUCCESS"
+    },
+    {
+      "bucket": "pass",
+      "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157958351/job/121063279152",
+      "name": "Console P0 regression gate",
+      "state": "SUCCESS"
+    },
+    {
+      "bucket": "pass",
+      "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157958300/job/121063278907",
+      "name": "UI latency guardrails",
+      "state": "SUCCESS"
+    },
+    {
+      "bucket": "pass",
+      "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157958306/job/121063278722",
+      "name": "Eval recovery (ubuntu-24.04)",
+      "state": "SUCCESS"
+    },
+    {
+      "bucket": "skipping",
+      "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157958287/job/121063304332",
+      "name": "Linux storage - Python ${{ matrix.python }}",
+      "state": "SKIPPED"
+    },
+    {
+      "bucket": "skipping",
+      "link": "https://www.cubic.dev/pr/rmusser01/tldw_chatbook/pull/3244",
+      "name": "cubic \u00b7 AI code reviewer",
+      "state": "NEUTRAL"
+    },
+    {
+      "bucket": "skipping",
+      "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40157958293/job/121063280054",
+      "name": "platform-evidence",
+      "state": "SKIPPED"
+    },
+    {
+      "bucket": "pass",
+      "link": "",
+      "name": "CodeRabbit",
+      "state": "SUCCESS"
+    }
+  ]
+}

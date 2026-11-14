@@ -277,7 +277,10 @@ async def test_library_study_related_modes_explain_handoff_context_and_wip(
         # task-32069: the ownership line now also carries the carry-over
         # promise the rail rows used to repeat three times.
         assert "generation and review run in Study." in visible
-        assert "Source snapshot is ready." in visible
+        # TASK-34000.6 (S-05): local mode says what needs a server instead of
+        # promising a generation it cannot run.
+        assert "Generating a pack from sources needs a tldw server" in visible
+        assert "Source snapshot is ready." not in visible
 
         open_button = screen.query_one(
             f"#{row_id.replace('create-', 'library-open-')}", Button

@@ -1,0 +1,56 @@
+[
+  {
+    "path": "tldw_chatbook/DB/Workspace_DB.py",
+    "baseline": 0,
+    "current": 0,
+    "new": []
+  },
+  {
+    "path": "tldw_chatbook/DB/private_sqlite.py",
+    "baseline": 6,
+    "current": 6,
+    "new": []
+  },
+  {
+    "path": "tldw_chatbook/DB/recovery_operations.py",
+    "baseline": 4,
+    "current": 4,
+    "new": []
+  },
+  {
+    "path": "tldw_chatbook/Workspaces/registry_service.py",
+    "baseline": 15,
+    "current": 15,
+    "new": []
+  },
+  {
+    "path": "tldw_chatbook/Workspaces/recovery.py",
+    "baseline": 0,
+    "current": 0,
+    "new": []
+  },
+  {
+    "path": "tldw_chatbook/Backup_Recovery/participants.py",
+    "baseline": 0,
+    "current": 0,
+    "new": []
+  },
+  {
+    "path": "Tests/DB/test_workspace_db.py",
+    "baseline": 0,
+    "current": 0,
+    "new": []
+  },
+  {
+    "path": "Tests/Workspaces/test_workspace_registry_service.py",
+    "baseline": 0,
+    "current": 0,
+    "new": []
+  },
+  {
+    "path": "Tests/DB/test_private_sqlite_inventory.py",
+    "baseline": 0,
+    "current": 0,
+    "new": []
+  }
+]

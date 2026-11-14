@@ -17,6 +17,8 @@
 -- whose agent_definitions/agent_runs tables lack these columns (plain
 -- ALTER TABLE is not idempotent on its own).
 
+BEGIN IMMEDIATE;
+
 ALTER TABLE agent_definitions ADD COLUMN provider TEXT NOT NULL DEFAULT '';
 ALTER TABLE agent_definitions ADD COLUMN params_json TEXT NOT NULL DEFAULT '{}';
 
@@ -24,3 +26,6 @@ ALTER TABLE agent_runs ADD COLUMN resolved_provider TEXT;
 ALTER TABLE agent_runs ADD COLUMN resolved_model TEXT;
 ALTER TABLE agent_runs ADD COLUMN resolved_base_url TEXT;
 ALTER TABLE agent_runs ADD COLUMN resolved_params_json TEXT;
+
+INSERT OR IGNORE INTO schema_version (version) VALUES (21);
+COMMIT;

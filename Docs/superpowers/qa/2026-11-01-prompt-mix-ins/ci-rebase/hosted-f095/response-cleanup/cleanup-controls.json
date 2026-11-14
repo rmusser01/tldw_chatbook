@@ -1,0 +1,19 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/UI/test_console_response_rules.py::test_fixture_failure_retires_held_transport",
+    "-vv",
+    "-p",
+    "no:cacheprovider",
+    "-p",
+    "probe",
+    "--timeout=180",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui28-hud_keud/cleanup-controls-tmp",
+    "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui28-hud_keud/cleanup-controls.xml"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+  "code": 0,
+  "elapsed": 11.865588624961674
+}

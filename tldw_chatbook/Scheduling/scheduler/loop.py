@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, asynccontextmanager, contextmanager
 from functools import wraps
 import threading
 import time
@@ -17,6 +17,7 @@ from loguru import logger
 from tldw_chatbook.Backup_Recovery.activation import execution_scope
 from tldw_chatbook.Metrics.metrics_logger import log_counter
 from tldw_chatbook.Utils.persistent_diagnostics import persist_event
+
 # ADR-097 boot ratchet: deferred off the boot path (loads on first use). (emergency_stop imports at its read site.)
 # ADR-097 boot ratchet: deferred off the boot path (loads on first use). (scheduler_heartbeat imports at its write site.)
 from tldw_chatbook.Scheduling.constants import (
@@ -35,8 +36,12 @@ from tldw_chatbook.Scheduling.services.watchlist_projection import WatchlistProj
 
 # dreams phase 1: typing only -- see the matching guard in `queue.py`
 # (module-level import would put the Dreams chain on every boot census).
+# guardian task 2: same guard for the Guardian projection.
 if TYPE_CHECKING:
     from tldw_chatbook.Scheduling.services.dreams_projection import DreamsProjection
+    from tldw_chatbook.Scheduling.services.guardian_projection import (
+        GuardianProjection,
+    )
 
 Handler = Callable[[dict[str, Any]], Coroutine[Any, Any, None]]
 
@@ -46,10 +51,7 @@ def _admitted_dispatch(method):
 
     @wraps(method)
     async def admitted(self, *args, **kwargs):
-        with (
-            self._maintenance_operation(),
-            execution_scope(("db.scheduled_tasks",), self.db.db_path) as allowed,
-        ):
+        async with self._admitted() as allowed:
             if not allowed:
                 return False
             return await method(self, *args, **kwargs)
@@ -57,11 +59,56 @@ def _admitted_dispatch(method):
     return admitted
 
 
+class _OffLoopExecutionScope:
+    """One ``execution_scope`` whose entry and release both run on a worker.
+
+    TASK-33620.15.24: storage admission stats and resolves paths and reads
+    control records. Entered on the app's event loop, the 30-second tick's two
+    admissions held keyboard input for up to ~60 ms. The lease itself has no
+    thread affinity, so it is acquired and closed on worker threads and only
+    held across the awaited body. That is what this seam relies on: if a
+    storage lease ever gains thread affinity, this must change (guarded by
+    ``test_scope_lease_acquired_on_one_thread_closes_on_another``).
+
+    A release that overtakes an entry still in flight (its waiter was
+    cancelled) marks the scope released; the entry then closes the lease it
+    acquired itself, so a cancelled wait can never leak admission.
+    """
+
+    def __init__(self, owners: tuple[str, ...], path: Path | None) -> None:
+        self._owners = owners
+        self._path = path
+        self._lock = threading.Lock()
+        self._stack: ExitStack | None = None
+        self._released = False
+
+    def enter(self) -> bool:
+        """Acquire admission (worker thread); False for a refusal."""
+        stack = ExitStack()
+        # Looked up at call time: the module global is the seam tests replace.
+        allowed = stack.enter_context(execution_scope(self._owners, self._path))
+        with self._lock:
+            if not self._released:
+                self._stack = stack
+                return allowed
+        stack.close()
+        return False
+
+    def release(self) -> None:
+        """Close the acquired lease (worker thread). Idempotent."""
+        with self._lock:
+            self._released = True
+            stack, self._stack = self._stack, None
+        if stack is not None:
+            stack.close()
+
+
 @dataclass(frozen=True)
 class QueueReloadToken:
     """Identity for one scheduler queue-reload request."""
 
     value: int
+
 
 #: Why a dispatch was late (`_report_lateness_cause`). These three strings are
 #: simultaneously branch outcomes, the `cause` label on the
@@ -92,6 +139,11 @@ class SchedulerLoop:
     #: never wedge the loop (AC#6).
     _PREFLIGHT_TIMEOUT_SECONDS = 10.0
 
+    #: Hard bound on each startup gate the first dispatch waits for (see
+    #: ``first_dispatch_gates``): startup work that hangs delays the first
+    #: tick by this much and no more.
+    _FIRST_DISPATCH_GATE_TIMEOUT_SECONDS = 10.0
+
     def __init__(
         self,
         db: Any,
@@ -101,6 +153,7 @@ class SchedulerLoop:
         watchlist_projection: WatchlistProjection | None = None,
         briefing_projection: BriefingProjection | None = None,
         dreams_projection: "DreamsProjection | None" = None,  # dreams phase 1
+        guardian_projection: GuardianProjection | None = None,  # guardian task 2
         queue_reload_interval_ticks: int = 60,
         expected_unhandled_types: frozenset[str] = frozenset(),
         missed_fire_grace_seconds: float = MISSED_FIRE_GRACE_SECONDS,
@@ -178,6 +231,8 @@ class SchedulerLoop:
         #: "an earlier handler held the loop", which is simply false.
         self._last_tick_dispatch_seconds: float = 0.0
         self._tick_count = 0
+        #: TASK-33620.1: the last tick held its due work for the emergency stop.
+        self._held_by_emergency_stop = False
         self._reload_condition = threading.Condition()
         self._reload_requested_serial = 0
         self._reload_acknowledged_serial = 0
@@ -189,11 +244,24 @@ class SchedulerLoop:
         self._maintenance_changed = asyncio.Event()
         self._maintenance_open = asyncio.Event()
         self._maintenance_open.set()
+        #: Zero-arg callables returning awaitables that must finish before
+        #: the FIRST tick dispatches anything. For startup work that
+        #: decides what may be dispatched at all and is started beside this
+        #: loop, not before it -- Dreams' boot reconcile stops the watches
+        #: of a Dreams the config says is off, and an overdue one must not
+        #: be dispatched before that has landed (review of #2921, round 3,
+        #: T14a). Registered before ``run`` starts; each is waited for
+        #: once, bounded by ``_FIRST_DISPATCH_GATE_TIMEOUT_SECONDS``.
+        self.first_dispatch_gates: list[Callable[[], Any]] = []
+        # Startup owners may keep individual occurrences held after the
+        # responsiveness wait expires. Guards are synchronous and fail closed.
+        self.dispatch_guards: list[Callable[[dict[str, Any], str], bool]] = []
         self.queue = PriorityQueue(
             db,
             watchlist_projection=watchlist_projection,
             briefing_projection=briefing_projection,
             dreams_projection=dreams_projection,  # dreams phase 1
+            guardian_projection=guardian_projection,  # guardian task 2
         )
 
     @contextmanager
@@ -211,6 +279,24 @@ class SchedulerLoop:
             else:
                 del self._maintenance_tasks[task]
             self._maintenance_changed.set()
+
+    @asynccontextmanager
+    async def _admitted(self):
+        """Hold a maintenance operation and this loop's storage admission.
+
+        The maintenance fence is entered on the loop (no I/O), so a closed
+        fence still refuses at once. Admission is resolved and released
+        through :meth:`_offload` (TASK-33620.15.24): the body waits for it, so
+        nothing runs before admission resolves and a refusal still yields
+        False, while the event loop stays free. Both hops are owned by the
+        maintenance drain even when their awaiter is cancelled.
+        """
+        with self._maintenance_operation():
+            scope = _OffLoopExecutionScope(("db.scheduled_tasks",), self.db.db_path)
+            try:
+                yield await self._offload(scope.enter)
+            finally:
+                await self._offload(scope.release)
 
     def _maintenance_close_admission(self) -> None:
         """Fence new ticks/manual dispatch; admitted work finishes naturally."""
@@ -236,6 +322,23 @@ class SchedulerLoop:
         """Reopen after the capture coordinator releases storage maintenance."""
         self._maintenance_closed = False
         self._maintenance_open.set()
+
+    async def wait_for_maintenance_admission(self) -> bool:
+        """Wait until storage maintenance lets new work in.
+
+        The public seam for work that writes the stores this loop works
+        on without being dispatched by it -- Dreams' boot reconcile
+        (review of #2921, round 4). It used to wait on the private
+        ``_maintenance_open`` event, which :meth:`stop` also sets to wake
+        this loop's own waiters while a capture may still be open.
+
+        Returns:
+            True when admission is open. False when the wait ended only
+            because the loop was stopped with admission still closed: the
+            caller must hold, not write under the capture.
+        """
+        await self._maintenance_open.wait()
+        return not self._maintenance_closed
 
     async def _offload(self, callback, *args, **kwargs):
         """Retain ownership of worker work even when its awaiter is cancelled."""
@@ -319,9 +422,7 @@ class SchedulerLoop:
         if should_wake:
             reload_event.set()
 
-    def wait_for_reload_blocking(
-        self, token: QueueReloadToken, timeout: float
-    ) -> bool:
+    def wait_for_reload_blocking(self, token: QueueReloadToken, timeout: float) -> bool:
         """Block for at most ``timeout`` seconds for ``token`` to be loaded."""
         deadline = time.monotonic() + max(timeout, 0.0)
         with self._reload_condition:
@@ -334,9 +435,7 @@ class SchedulerLoop:
                 self._reload_condition.wait(remaining)
             return True
 
-    async def wait_for_reload(
-        self, token: QueueReloadToken, timeout: float
-    ) -> bool:
+    async def wait_for_reload(self, token: QueueReloadToken, timeout: float) -> bool:
         """Wait asynchronously and boundedly for ``token`` to be loaded."""
         return await asyncio.to_thread(
             self.wait_for_reload_blocking, token, timeout=timeout
@@ -435,10 +534,7 @@ class SchedulerLoop:
                 if not self._maintenance_closed:
                     break
                 self._maintenance_open.clear()
-            with (
-                self._maintenance_operation(),
-                execution_scope(("db.scheduled_tasks",), self.db.db_path) as allowed,
-            ):
+            async with self._admitted() as allowed:
                 if not allowed:
                     return
                 await self._reload_queue()
@@ -450,6 +546,7 @@ class SchedulerLoop:
                 # boundary needed (unlike the watchlist sweep, which runs
                 # alongside live work). Never lets maintenance break startup.
                 await self._reconcile_and_prune_run_ledger()
+            await self._await_first_dispatch_gates()
             while self.running:
                 await self._maintenance_open.wait()
                 if not self.running:
@@ -465,12 +562,14 @@ class SchedulerLoop:
                 # handler was active and then put the loop to sleep for a full
                 # poll interval despite the still-pending serial.
                 reload_event.clear()
-                with (
-                    self._maintenance_operation(),
-                    execution_scope(("db.scheduled_tasks",), self.db.db_path) as allowed,
-                ):
+                async with self._admitted() as allowed:
                     if not allowed:
                         return
+                    if self._maintenance_closed or not self.running:
+                        # Admission resolves off the loop, so a pause or stop()
+                        # can land while it does. This tick had not begun:
+                        # skip it, and let the loop top hold or exit.
+                        continue
                     if (
                         self._tick_count > 0
                         and self._tick_count % self.queue_reload_interval_ticks == 0
@@ -487,8 +586,7 @@ class SchedulerLoop:
                     await self.tick()
                 with self._reload_condition:
                     reload_pending = (
-                        self._reload_requested_serial
-                        > self._reload_acknowledged_serial
+                        self._reload_requested_serial > self._reload_acknowledged_serial
                     )
                 if reload_pending:
                     continue
@@ -505,6 +603,32 @@ class SchedulerLoop:
                 self._owner_loop = None
                 self._reload_event = None
                 self._reload_condition.notify_all()
+
+    async def _await_first_dispatch_gates(self) -> None:
+        """Wait, bounded, for the startup gates before the first tick.
+
+        Outside the maintenance operation on purpose: a gate that is slow
+        to open must not hold a backup capture's drain open with it. A
+        gate that times out or raises is logged and passed -- startup work
+        that fails or hangs must never stop the scheduler.
+
+        Individual startup owners retain per-task dispatch guards after this
+        bounded wait. A timeout keeps unrelated work responsive without
+        authorizing the pending owner's occurrences.
+        """
+        gates, self.first_dispatch_gates = self.first_dispatch_gates, []
+        for gate in gates:
+            try:
+                await asyncio.wait_for(
+                    gate(), timeout=self._FIRST_DISPATCH_GATE_TIMEOUT_SECONDS)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Scheduler: a startup gate did not open within {}s; "
+                    "dispatching anyway",
+                    self._FIRST_DISPATCH_GATE_TIMEOUT_SECONDS)
+            except Exception as exc:  # noqa: BLE001 - never stops the loop
+                logger.warning(
+                    "Scheduler: a startup gate failed: {}", type(exc).__name__)
 
     @_admitted_dispatch
     async def tick(self) -> None:
@@ -557,9 +681,7 @@ class SchedulerLoop:
             except Exception:  # noqa: BLE001 -- observation never breaks the loop
                 logger.debug("scheduler heartbeat offload failed")
 
-    def _record_heartbeat(
-        self, tick_at: datetime, *, error: str | None
-    ) -> None:
+    def _record_heartbeat(self, tick_at: datetime, *, error: str | None) -> None:
         """Persist one liveness snapshot (TASK-26025). Never raises."""
         if error is None:
             self._last_success_at = tick_at
@@ -583,15 +705,33 @@ class SchedulerLoop:
                 last_error=self._last_error,
                 poll_interval=self.poll_interval,
                 tick_count=self._tick_count,
+                held_by_emergency_stop=getattr(
+                    self, "_held_by_emergency_stop", False
+                ),
             ),
         )
 
     async def _emergency_stopped(self) -> bool:
         """Whether the global emergency stop holds new dispatches (26004).
 
-        The stop-state read is blocking file I/O, so it runs off the event
-        loop (TASK-31507). Fail-safe is preserved: an offload failure reads
-        as stopped, holding work rather than proceeding on doubt.
+        The whole check runs off the event loop: the stop-state read is
+        blocking file I/O (TASK-31507), and resolving the default path is a
+        guarded config read that can enter storage admission
+        (TASK-33620.15.24; live, 98 ms on the loop in one tick). Fail-safe is
+        preserved: a refused lookup or a failed read reads as stopped,
+        holding work rather than proceeding on doubt.
+        """
+        try:
+            return await self._offload(self._read_emergency_stop)
+        except Exception:  # noqa: BLE001 -- doubt holds work (AC#4 of 26004)
+            return True
+
+    def _read_emergency_stop(self) -> bool:
+        """Resolve the stop path and read its state (worker thread).
+
+        The deferred import sits inside this guarded hop too, so a failure to
+        import the stop module also reads as stopped (it used to raise out of
+        the tick): the fail-safe direction, holding work on doubt.
         """
         # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
         from tldw_chatbook.emergency_stop import (
@@ -599,16 +739,13 @@ class SchedulerLoop:
             is_emergency_stopped,
         )
 
-        try:
-            # Config can refuse this lookup when native backup intent arrives
-            # before local scheduler settlement. An unknown stop state holds
-            # dispatch just like an unreadable sentinel; the next tick retries.
-            path = getattr(self, "_emergency_stop_path", None) or (
-                default_emergency_stop_path()
-            )
-            return await self._offload(is_emergency_stopped, path)
-        except Exception:  # noqa: BLE001 -- doubt holds work (AC#4 of 26004)
-            return True
+        # Config can refuse this lookup when native backup intent arrives
+        # before local scheduler settlement. An unknown stop state holds
+        # dispatch just like an unreadable sentinel; the next tick retries.
+        path = getattr(self, "_emergency_stop_path", None) or (
+            default_emergency_stop_path()
+        )
+        return is_emergency_stopped(path)
 
     async def _reconcile_and_prune_run_ledger(self) -> None:
         """Startup maintenance for the TASK-26026 run ledger. Never raises."""
@@ -635,7 +772,9 @@ class SchedulerLoop:
         Fail-safe: an unreadable stop state reads as stopped, so a doubt
         holds work rather than proceeding (AC#4).
         """
-        if await self._emergency_stopped():
+        # TASK-33620.1: the heartbeat this tick writes says whether it held.
+        self._held_by_emergency_stop = await self._emergency_stopped()
+        if self._held_by_emergency_stop:
             logger.debug("scheduler: emergency stop active; holding due dispatches")
             return
         due = self.queue.pop_due(now)
@@ -772,6 +911,12 @@ class SchedulerLoop:
                 reporting it as a loop-blocking delay would be noise
                 dressed as a diagnostic.
         """
+        try:
+            if any(not guard(task, task_type) for guard in self.dispatch_guards):
+                return False
+        except Exception as exc:  # noqa: BLE001 - uncertain admission fails closed
+            logger.warning("Scheduler startup dispatch admission unavailable: {}", type(exc).__name__)
+            return False
         task_id = task.get("id")
         if scheduled:
             self._report_lateness_cause(task, task_type, now)

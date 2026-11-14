@@ -1,0 +1,42 @@
+[
+  {
+    "store": "/private/tmp/archive-capture-task1-fix1-final-stores/test_native_archive_reseal_rel0/chat.sqlite",
+    "calls": [
+      [
+        "e2352a90-3c3a-466b-bafe-a872aef60021",
+        "complete",
+        3
+      ]
+    ],
+    "archived_targets": [
+      [
+        "Original",
+        1
+      ],
+      [
+        "Second exact target",
+        1
+      ]
+    ]
+  },
+  {
+    "store": "/private/tmp/archive-capture-task1-fix1-final-stores/test_native_archive_reseal_rel1/chat.sqlite",
+    "calls": [
+      [
+        "73989b7f-04d2-4a67-a09b-f9cad4e5aaad",
+        "complete",
+        3
+      ]
+    ],
+    "archived_targets": [
+      [
+        "Original",
+        1
+      ],
+      [
+        "Second exact target",
+        1
+      ]
+    ]
+  }
+]

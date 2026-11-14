@@ -1,0 +1,36 @@
+{
+  "temporary_profile": "C:\\Users\\GDesktop-1\\.tmp-windows-perf-hfxuif2b",
+  "measurements": [
+    {
+      "characters": 1000,
+      "tokens": 230,
+      "warm_backend_uncached_median_ms": 0.12069998774677515,
+      "warm_backend_uncached_max_ms": 12.89060000272002,
+      "memo_hit_median_ms": 0.0028999929782003164
+    },
+    {
+      "characters": 10000,
+      "tokens": 2255,
+      "warm_backend_uncached_median_ms": 1.0151999886147678,
+      "warm_backend_uncached_max_ms": 1.0459000041009858,
+      "memo_hit_median_ms": 0.0043000036384910345
+    },
+    {
+      "characters": 100000,
+      "tokens": 22505,
+      "warm_backend_uncached_median_ms": 5.295599999953993,
+      "warm_backend_uncached_max_ms": 5.598100004135631,
+      "memo_hit_median_ms": 0.006100002792663872
+    },
+    {
+      "characters": 1000000,
+      "tokens": 225005,
+      "warm_backend_uncached_median_ms": 64.94349999411497,
+      "warm_backend_uncached_max_ms": 90.5347000079928,
+      "memo_hit_median_ms": 0.018499995348975062
+    }
+  ],
+  "readiness_check_mean_ms": 0.0315332999889506,
+  "blocked_network_attempts": 0,
+  "real_profile_refusals": 0
+}

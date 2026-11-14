@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐  N  ┌──────────────────────────────────────────────────────┐  I  paper-retrieval-practice                                 │
+│ │ Navigation                     │  a  │ Media (5)      Sets                                  │  t  file:///Users/macbook-dev/Documents/GitHub/tldw_chatbook │
+│ │     Import…                    │  v  │ Media · 5 of 5 · all types · sort: Newest            │  e  /.worktrees/.nlrev-harness/fixtures/import-docs/paper-re │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  │     │  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ Clear filter   │  m  trieval-practice.md                                      │
+│ │ ▊ Search Library…        ▎▊x▎  │     │  ▊  Title/keyword…                  ▎                │  s    Find  Note  Read later  Use in Console  More           │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  │     │  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                │       Read (selected)  Analysis  Highlights  Info            │
+│ │                                │     │    type: All types    sort: Newest                   │      Rendered (selected) |      Raw                          │
+│ │ ─────────────────────────────  │     │                                                      │     ┌──────────────────────────────────────────────────────┐ │
+│ │ Browse                    ▾    │     │    Export…     Trash     Select                      │     │                                                      │ │
+│ │  ▸ Media (5) — your files      │     │    Review these                                      │     │                                                      │ │
+│ │    Conversations (0)           │     │  ▸ paper-retrieval-practice                          │     │   Paper: retrieval practice                          │ │
+│ │    Notes (0)                   │     │      plaintext · updated just now · loaded           │     │                                                      │ │
+│ │    Prompts (0) — reuse         │     │    meeting-notes                                     │     │   Retrieval practice is the act of recalling         │ │
+│ │    Skills (1) — AI add-ons     │<--- │      plaintext · updated just now                    │     │   information from memory rather than re-reading     │ │
+│ │    Collections (0)             │     │    reading-list                                      │     │   it. Across many studies, a single retrieval        │ │
+│ │    Search / RAG — find all     │     │      plaintext · updated just now                    │     │   attempt produces better long-term retention than   │ │
+│ │ ─────────────────────────────  │     │    glossary                                          │     │   an equal amount of time spent re-studying.         │ │
+│ │ Artifacts                 ▾    │     │      plaintext · updated just now                    │     │                                                      │ │
+│ │    All artifacts               │     │    team-handbook                                     │<--- │                                                      │ │
+│ │    Chatbooks                   │     │      plaintext · updated just now                    │     │   Method                                             │ │
+│ │    Reports                     │     │                                                      │     │                                                      │ │
+│ │    Dreams                      │     │                                                      │     │   Participants studied short passages, then either   │ │
+│ │ ─────────────────────────────  │     │                                                      │     │   re-read them or answered free-recall prompts. A    │ │
+│ │ Create                    ▾    │     │                                                      │     │   week later both groups took the same test.         │ │
+│ │    New note                    │<--- │                                                      │     │                                                      │ │
+│ │    New prompt                  │     │                                                      │     │                                                      │ │
+│ │    New skill                   │     │                                                      │     │   Findings                                           │ │
+│ │ ─────────────────────────────  │     │                                                      │     │                                                      │ │
+│ │ Study                     ▾    │     │                                                      │     │   The retrieval group remembered more, and the gap   │ │
+│ │    Study decks (0)             │     │                                                      │     │   widened with the delay. The effect held for        │ │
+│ │    Flashcards due: 0           │     │                                                      │     │   prose, vocabulary and procedural material.         │ │
+│ │    Quizzes (0)                 │     │                                                      │     │                                                      │ │
+│ │ ─────────────────────────────  │     │                                                      │     │                                                      │ │
+│ │ Import / Export           ▾    │     │                                                      │     │                                                      │ │
+│ │    Import…                     │     │                                                      │     │                                                      │ │
+│ │    Export                      │     │                                                      │     │                                                      │ │
+│ │ ─────────────────────────────▇ │     │                       1-5 of 5                       │     └──────────────────────────────────────────────────────┘ │
+│ └────────────────────────────────┘     └──────────────────────────────────────────────────────┘                                                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus search | F6 next pane | ] next item | ctrl+f find | n note | l read later | c use in Console | t trash | F1 help · Ctrl+P palette · Ctrl+Q quit

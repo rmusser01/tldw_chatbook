@@ -54,7 +54,7 @@ async def test_stop_renders_stopped_state_even_when_direct_sync_coalesces():
     async with host.run_test(size=(120, 40)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         await _start_held_stream(console, pilot, gateway)
 
         # Reproduce the freeze vector: the coalescing guard is held while
@@ -93,7 +93,7 @@ async def test_stop_click_acknowledges_synchronously_and_records_stop_row():
     async with host.run_test(size=(120, 40)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         store = await _start_held_stream(console, pilot, gateway)
 
         stop_button = console.query_one("#console-stop-generation", Button)

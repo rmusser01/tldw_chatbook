@@ -17,8 +17,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
-from uuid import UUID
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from tldw_chatbook.TTS.profile_repository import _BackupNativeState
@@ -30,7 +29,6 @@ from tldw_chatbook.DB.private_sqlite import (
     _connect_registered_sqlite,
     connect_private_sqlite,
 )
-from tldw_chatbook.DB.sql_validation import escape_identifier, validate_identifier
 from tldw_chatbook.Utils.platform_files import os
 from tldw_chatbook.DB.private_sqlite_process import (
     HELPER_ADMISSION,

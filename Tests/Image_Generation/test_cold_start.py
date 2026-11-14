@@ -23,7 +23,9 @@ def test_importing_package_pulls_no_adapters_or_pillow():
             and n.endswith("_adapter")
             for n in loaded
         ), "adapters must be lazy"
-        assert "tldw_chatbook.Image_Generation.adapters.image_format_utils" not in loaded
+        assert (
+            "tldw_chatbook.Image_Generation.adapters.image_format_utils" not in loaded
+        )
         assert "PIL" not in loaded, "Pillow must not import at package import time"
     finally:
         # Drop whatever this test (re-)imported, then restore the original

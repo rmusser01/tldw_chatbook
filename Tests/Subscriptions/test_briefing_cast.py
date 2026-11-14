@@ -823,7 +823,9 @@ async def test_the_cast_claim_is_released_after_a_cast_failure(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_the_cast_claim_is_released_when_a_db_error_escapes(tmp_path, monkeypatch):
+async def test_the_cast_claim_is_released_when_a_db_error_escapes(
+    tmp_path, monkeypatch
+):
     db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     briefing_id = _complete_briefing(db, watchlist)
@@ -940,8 +942,7 @@ async def test_row_scoped_exclude_sweeps_a_same_briefing_zombie_while_sparing_th
     assert db.get_briefing_script(zombie_id)["error"] == "interrupted"
     live_id = next(iter(live_ids))
     assert db.get_briefing_script(live_id)["status"] == "generating", (
-        "row-scoped exclude must not falsify the row a live claim is "
-        "actually writing"
+        "row-scoped exclude must not falsify the row a live claim is actually writing"
     )
 
     release.set()
@@ -1028,9 +1029,7 @@ def test_a_cast_claim_with_no_recorded_row_id_yet_survives_a_sweep_of_its_own_ro
         assert row_ids == frozenset(), "the row id is not recorded in this window"
         assert briefing_id in pending
 
-        swept = fail_interrupted_scripts(
-            db, exclude=row_ids, exclude_briefings=pending
-        )
+        swept = fail_interrupted_scripts(db, exclude=row_ids, exclude_briefings=pending)
 
     assert swept == 0
     assert db.get_briefing_script(live_row)["status"] == "generating", (
@@ -1518,7 +1517,9 @@ async def test_a_reasoning_typed_deepseek_cast_gets_a_larger_completion_budget(
     )
 
     assert row["status"] == STATUS_COMPLETE
-    assert chat.calls[0]["max_tokens"] == briefing_cast.CAST_REASONING_MAX_TOKENS == 12000
+    assert (
+        chat.calls[0]["max_tokens"] == briefing_cast.CAST_REASONING_MAX_TOKENS == 12000
+    )
 
 
 @pytest.mark.asyncio

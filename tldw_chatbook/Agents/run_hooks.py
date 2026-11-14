@@ -1,6 +1,6 @@
 """Console run hooks: user-configured external commands on session/run lifecycle events.
 
-Spec: Docs/superpowers/specs/2026-09-11-console-run-hooks-design.md (ADR-148).
+Spec: Docs/superpowers/specs/2026-09-11-console-run-hooks-design.md (ADR-345).
 Deny-only guardrails, argv-list commands, JSON-on-stdin protocol, per-purpose
 fail direction (PreToolUse fails closed, UserPromptSubmit fails open).
 """
@@ -20,7 +20,8 @@ import threading
 import time
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
-from contextlib import AbstractContextManager, ExitStack
+from contextlib import AbstractContextManager, ExitStack, contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, get_args
 
@@ -59,6 +60,84 @@ HOOK_NOTIFY_MAX_DEPTH = 64
 # prerequisite for closing readers and reaping the owned subprocess.
 HOOK_POST_KILL_REAP_TIMEOUT_S: float = 5.0
 BLOCKING_EVENTS: frozenset[str] = frozenset({"UserPromptSubmit", "PreToolUse"})
+
+
+_prompt_handoff = ContextVar("legacy_prompt_hook_handoff", default=None)
+native_hook_submission = ContextVar("native_plugin_hook_submission", default=None)
+
+
+class _PromptHandoff:
+    def __init__(self, controller):
+        self.controller = controller
+        import asyncio
+
+        self.loop = asyncio.get_running_loop()
+        self.cancelled = self.closed = self.failed_write = self.deferred = False
+        self.event = None
+        self._lock = threading.Lock()
+
+    def attach(self, event):
+        with self._lock:
+            self.event = event
+            closed, failed = self.closed, self.failed_write
+        if closed:
+            event.host_done(required_write_ok=not failed)
+
+    def check(self):
+        if self.event is not None and not self.event.source.current_memory(
+            handoff=True
+        ):
+            raise RuntimeError("original hook outcome source changed")
+
+    def discard(self):
+        # Retirement is invoked under the existing store lock. Publish native
+        # retirement on the original host loop only after that lock returns.
+        if not self.loop.is_closed():
+            self.loop.call_soon_threadsafe(self.complete)
+
+    def complete(self, *, required_write_ok=True):
+        with self._lock:
+            self.closed = True
+            self.failed_write |= not required_write_ok
+            event, failed = self.event, self.failed_write
+        if event is not None:
+            event.cancel_queued_if_requested()
+            event.host_done(required_write_ok=not failed)
+
+
+@contextmanager
+def prompt_handoff(controller: Any) -> Iterator[None]:
+    """The original submit coroutine owns outcome consumption and all discards."""
+    handoff = _PromptHandoff(controller)
+    token = _prompt_handoff.set(handoff)
+    try:
+        yield
+    except BaseException:
+        handoff.cancelled = True
+        raise
+    finally:
+        if not handoff.deferred:
+            handoff.complete()
+        _prompt_handoff.reset(token)
+
+
+def prompt_handed_off(*, required_write_ok: bool = True) -> None:
+    handoff = _prompt_handoff.get()
+    if handoff is not None:
+        handoff.complete(required_write_ok=required_write_ok)
+
+
+def pending_prompt_handoff() -> _PromptHandoff | None:
+    handoff = _prompt_handoff.get()
+    if handoff is not None and handoff.event is not None and not handoff.closed:
+        return handoff
+    return None
+
+
+def check_prompt_handoff() -> None:
+    handoff = _prompt_handoff.get()
+    if handoff is not None:
+        handoff.check()
 
 
 @dataclass(frozen=True)
@@ -607,8 +686,17 @@ class _HookProtocol(asyncio.SubprocessProtocol):
 
     def __init__(self) -> None:
         self.done = asyncio.get_running_loop().create_future()
+        self.exited = asyncio.get_running_loop().create_future()
+        self.transport = None
         self.output = {1: bytearray(), 2: bytearray()}
         self.overflow = {1: False, 2: False}
+
+    def connection_made(self, transport) -> None:
+        self.transport = transport
+
+    def process_exited(self) -> None:
+        if not self.exited.done():
+            self.exited.set_result(None)
 
     def pipe_data_received(self, fd: int, data: bytes) -> None:
         retained = self.output[fd]
@@ -656,6 +744,10 @@ async def _capture_hook(
     protocol = _HookProtocol()
     transport = None
     timed_out = False
+    cleanup_deadline = None
+    from .legacy_hook_ownership import current_target
+
+    native = current_target()
     try:
         if closed is not None and closed.is_set():
             raise RuntimeError("engine closed")
@@ -673,12 +765,24 @@ async def _capture_hook(
                 raise HookLaunchRefused(
                     "Hook authority unavailable at launch."
                 ) from None
-            transport, _ = await asyncio.get_running_loop().subprocess_exec(
-                lambda: protocol,
-                *spec.command,
-                cwd=cwd,
-                start_new_session=(sys.platform != "win32"),
-            )
+            if native is not None:
+                from tldw_chatbook.Utils.platform_files import supports_native_process_groups
+
+                native.event.source.check()
+                if not supports_native_process_groups():
+                    raise RuntimeError("native hook group proof unavailable")
+                native.process_attempted()
+            try:
+                transport, _ = await asyncio.get_running_loop().subprocess_exec(
+                    lambda: protocol,
+                    *spec.command,
+                    cwd=cwd,
+                    start_new_session=(sys.platform != "win32"),
+                )
+            except (OSError, ValueError):
+                if native is not None and protocol.transport is None:
+                    native.process_terminal(True)
+                raise
         writer = transport.get_pipe_transport(0)
         writer.write(stdin)
         writer.close()
@@ -692,6 +796,7 @@ async def _capture_hook(
                 break
             await asyncio.wait({protocol.done}, timeout=min(0.05, remaining))
         if timed_out:
+            cleanup_deadline = time.monotonic() + HOOK_POST_KILL_REAP_TIMEOUT_S
             _kill_process_group(transport.get_pid())
             # Close readers explicitly: an escaped descendant may retain
             # the write ends forever. Process reaping is independent of EOF.
@@ -701,7 +806,38 @@ async def _capture_hook(
             )
         return transport.get_returncode(), protocol, timed_out
     finally:
-        if transport is not None:
+        transport = transport or protocol.transport
+        if native is not None and transport is not None:
+            # EOF/connection_lost and a bounded reap are never exit/group proof.
+            _kill_process_group(transport.get_pid())
+            for fd in (0, 1, 2):
+                pipe = transport.get_pipe_transport(fd)
+                if pipe is not None:
+                    pipe.close()
+            deadline = cleanup_deadline or (
+                time.monotonic() + HOOK_POST_KILL_REAP_TIMEOUT_S
+            )
+            proven = False
+            while True:
+                if protocol.exited.done() and transport.get_returncode() is not None:
+                    try:
+                        os.killpg(transport.get_pid(), 0)
+                    except ProcessLookupError:
+                        proven = True
+                        break
+                    except OSError:
+                        pass
+                if time.monotonic() >= deadline:
+                    break
+                await asyncio.sleep(min(0.01, max(0, deadline - time.monotonic())))
+            native.process_terminal(proven)
+            transport.close()
+            if not proven:
+                logger.warning(
+                    "run-hooks: native process/group cleanup remains unproven"
+                )
+                raise RuntimeError("native hook cleanup unproven")
+        elif transport is not None:
             if not protocol.done.done():
                 _kill_process_group(transport.get_pid())
             transport.close()
@@ -769,7 +905,7 @@ def _execute_hook(
     )
     stdout, stderr = capture.text(1), capture.text(2)
     if timed_out:
-        logger.warning("run-hooks: {} timeout; process reaped", identity)
+        logger.warning("run-hooks: {} timeout; bounded reap attempted", identity)
         decision = (
             _Decision(
                 denied=True,
@@ -912,6 +1048,8 @@ class RunHooksEngine:
         launch_guard: Callable[..., AbstractContextManager[None]],
     ) -> None:
         self._closed = threading.Event()
+        self._native_source = None
+        self._native_attached = False
         self._admission_lock = threading.Lock()
         self._notify_slots = threading.BoundedSemaphore(HOOK_NOTIFY_CAPACITY)
         self._target_provider = target_provider
@@ -927,9 +1065,46 @@ class RunHooksEngine:
             max_workers=4, thread_name_prefix="run-hook-observe"
         )
 
-    def _matching(self, event: str, tool_name: str | None) -> tuple[HookTarget, ...]:
+    def _attempt_targets(
+        self, authority_read: Any, event: str, tool_name: str | None
+    ) -> tuple[()] | None:
+        """Answer "no hook to launch" from the firing attempt's earlier read.
+
+        ADR-230 decision 3: a Send attempt that already performed one full
+        consent read passes it here instead of having ``_target_provider``
+        repeat it -- but only to learn that nothing matches. Used only when
+        that read came from the very owner whose ``targets`` and
+        ``launch_guard`` this engine was built with, and only when its answer
+        is the empty selection. A non-empty selection from an earlier read
+        could be stale: a hook another process disabled since would still be
+        launched into its fresh ``launch_guard`` and refused, which blocks a
+        blocking event where a fresh selection would just have omitted it.
+        ``None`` (another owner, a stale read, any target or refusal) means
+        the provider's fresh read selects, exactly as without sharing.
+        """
+        owner = getattr(authority_read, "owner", None)
+        select = getattr(owner, "attempt_targets", None)
+        if (
+            select is None
+            or self._target_provider != getattr(owner, "targets", None)
+            or self._launch_guard != getattr(owner, "launch_guard", None)
+        ):
+            return None
+        # The owner already answers only "none"; never launch from a read
+        # even if a future owner answered more.
+        return () if select(authority_read, event, tool_name) == () else None
+
+    def _matching(
+        self, event: str, tool_name: str | None, authority_read: Any = None
+    ) -> tuple[HookTarget, ...]:
         try:
-            targets = self._target_provider(event, tool_name)
+            targets = (
+                self._attempt_targets(authority_read, event, tool_name)
+                if authority_read is not None
+                else None
+            )
+            if targets is None:
+                targets = self._target_provider(event, tool_name)
             if not isinstance(targets, tuple) or not all(
                 isinstance(target, HookTarget) for target in targets
             ):
@@ -970,6 +1145,7 @@ class RunHooksEngine:
         run_id: str | None = None,
         data: dict[str, Any] | None = None,
         cwd: str | None = None,
+        authority_read: Any = None,
     ) -> HookOutcome:
         """Run matching hooks and return the combined outcome. Never raises.
 
@@ -985,12 +1161,22 @@ class RunHooksEngine:
             cwd: Fire-site override for the payload's ``cwd`` (Ruling R18) —
                 the session's bound workspace root when one is resolvable.
                 ``None`` falls back to the engine's cwd_provider.
+            authority_read: The firing Send attempt's own earlier full consent
+                read (``HookAuthorityRead``). While it stands it may answer
+                only that no hook matches; any matching hook is selected by a
+                fresh read, as with ``None``. Launches re-check authority
+                fresh either way.
         """
         try:
             if self._closed.is_set():
                 raise RuntimeError("engine closed")
             return self._fire(
-                event, session_id=session_id, run_id=run_id, data=data, cwd=cwd
+                event,
+                session_id=session_id,
+                run_id=run_id,
+                data=data,
+                cwd=cwd,
+                authority_read=authority_read,
             )
         except HookLaunchRefused as refusal:
             logger.warning("run-hooks: event={} consent refused", event)
@@ -1024,30 +1210,79 @@ class RunHooksEngine:
         data: dict[str, Any] | None,
         cwd: str | None = None,
         targets: tuple[HookTarget, ...] | None = None,
+        authority_read: Any = None,
+        _custody=None,
     ) -> HookOutcome:
-        tool_name: str | None = None
-        if isinstance(data, dict):
-            candidate = data.get("tool_name")
-            if isinstance(candidate, str):
-                tool_name = candidate
-        targets = self._matching(event, tool_name) if targets is None else targets
-        if not targets:
-            return HookOutcome()
-        payload = self._payload(
-            event, session_id, run_id, data if isinstance(data, dict) else {}, cwd
+        from contextlib import nullcontext
+
+        tool_name = data.get("tool_name") if isinstance(data, dict) else None
+        tool_name = tool_name if isinstance(tool_name, str) else None
+        if self._native_attached and self._native_source is None:
+            raise RuntimeError("native hook source unavailable")
+        capture = (
+            self._native_source.capture(session_id)
+            if self._native_attached and _custody is None
+            else nullcontext(None)
         )
-        with self._admission_lock:
-            if self._closed.is_set():
-                raise RuntimeError("engine closed")
-            pool = self._pool if event in BLOCKING_EVENTS else self._notification_pool
-            futures = {
-                pool.submit(
-                    _run_hook, target, payload, self._closed, self._launch_guard
-                ): target.spec
-                for target in targets
-            }
-        results = self._results_from_futures(futures)
-        return self._reduce(results)
+        custody = _custody
+        futures = {}
+        try:
+            with capture as source:
+                targets = (
+                    self._matching(event, tool_name, authority_read) if targets is None else targets
+                )
+                if not targets:
+                    return HookOutcome()
+                payload = self._payload(
+                    event,
+                    session_id,
+                    run_id,
+                    data if isinstance(data, dict) else {},
+                    cwd,
+                )
+                if source is not None:
+                    if event != "UserPromptSubmit":
+                        source.handoff = None
+                    custody = source.admit(targets)
+                if custody is not None:
+                    custody.source.check()
+                with self._admission_lock:
+                    if self._closed.is_set() or (
+                        custody is not None and not custody.source.current_memory()
+                    ):
+                        raise RuntimeError("hook source closed or changed")
+                    pool = (
+                        self._pool
+                        if event in BLOCKING_EVENTS
+                        else self._notification_pool
+                    )
+                    for index, target in enumerate(targets):
+                        args = (target, payload, self._closed, self._launch_guard)
+                        future = (
+                            pool.submit(custody.targets[index].invoke, _run_hook, *args)
+                            if custody is not None
+                            else pool.submit(_run_hook, *args)
+                        )
+                        futures[future] = target.spec
+                        if custody is not None:
+                            custody.targets[index].future = future
+                if custody is not None:
+                    custody.cancel_queued_if_requested()
+                return self._reduce(self._results_from_futures(futures))
+        finally:
+            if custody is not None:
+                for future, target in zip(futures, custody.targets, strict=False):
+                    future.add_done_callback(
+                        lambda done, target=target: (
+                            target.cancel_before_start() if done.cancelled() else None
+                        )
+                    )
+                # A submit failure may leave some targets accepted by the pool.
+                # Only positively cancelled/never-submitted targets can unwind.
+                for target in custody.targets[len(futures) :]:
+                    target.cancel_before_start()
+                if custody.source.handoff is None and _custody is None:
+                    custody.host_done()
 
     @staticmethod
     def _results_from_futures(
@@ -1106,7 +1341,29 @@ class RunHooksEngine:
                 )
             return HookOutcome()
 
-    def notify(self, event: str, *, cwd: str | None = None, **kwargs: Any) -> None:
+    def prepare_notification(self, event: str, session_id: str, tool_name=None):
+        """Prehold this original ordinary producer's optional legacy notification."""
+        if not self._native_attached or self._native_source is None:
+            return None
+        try:
+            with self._native_source.capture(session_id) as source:
+                targets = self._notification_targets(event, tool_name)
+                if not targets:
+                    return None
+                source.handoff = None
+                custody = source.admit(targets)
+                custody.notification = (event, session_id, tool_name)
+                custody.notification_claimed = False
+                return custody
+        except Exception as exc:  # noqa: BLE001 - optional notification stays fail-open
+            logger.warning(
+                "run-hooks: future notification omitted ({})", type(exc).__name__
+            )
+            return None
+
+    def notify(
+        self, event: str, *, cwd: str | None = None, _prepared=None, **kwargs: Any
+    ) -> None:
         """Admit a bounded immutable notification or drop it whole with a diagnostic.
 
         Args:
@@ -1114,8 +1371,27 @@ class RunHooksEngine:
             cwd: Optional working-directory override.
             **kwargs: Arguments to fire, serialized within the notification budget.
         """
+        custody = _prepared
+        if custody is not None:
+            from .legacy_hook_ownership import _EventCustody
+
+            data = kwargs.get("data")
+            tool_name = data.get("tool_name") if isinstance(data, dict) else None
+            if (
+                type(custody) is not _EventCustody
+                or custody.source.issuer.engine is not self
+                or getattr(custody, "notification", None)
+                != (event, kwargs.get("session_id"), tool_name)
+            ):
+                raise ValueError("original notification custody required")
+            with custody._lock:
+                if custody.notification_claimed:
+                    raise ValueError("notification already consumed")
+                custody.notification_claimed = True
         if self._closed.is_set() or not self._notify_slots.acquire(blocking=False):
             logger.warning("run-hooks: notify dropped (closed or queue full)")
+            if custody is not None:
+                custody.abandon_unstarted()
             return
         submitted = False
         try:
@@ -1139,24 +1415,57 @@ class RunHooksEngine:
             frozen = json.loads("".join(chunks))
             data = frozen.get("data")
             tool_name = data.get("tool_name") if isinstance(data, dict) else None
-            targets = self._notification_targets(event, tool_name)
-            if not targets:
-                return
-            with self._admission_lock:
-                if self._closed.is_set():
-                    logger.warning("run-hooks: notify dropped (closed)")
-                    return
-                future = self._notify_worker.submit(
-                    self._fire,
-                    event,
-                    session_id=frozen["session_id"],
-                    run_id=frozen.get("run_id"),
-                    data=frozen.get("data"),
-                    cwd=frozen.get("cwd"),
-                    targets=targets,
+            from contextlib import nullcontext
+
+            if self._native_attached and self._native_source is None:
+                raise RuntimeError("native hook source unavailable")
+            capture = (
+                self._native_source.capture(frozen["session_id"])
+                if self._native_attached and custody is None
+                else nullcontext(None)
+            )
+            with capture as source:
+                targets = (
+                    custody.source.targets
+                    if custody is not None
+                    else self._notification_targets(event, tool_name)
                 )
-                future.add_done_callback(self._notification_done)
-                submitted = True
+                if not targets:
+                    return
+                if source is not None:
+                    # Notifications have their own conclusive discard consumer.
+                    source.handoff = None
+                    custody = source.admit(targets)
+                with self._admission_lock:
+                    if self._closed.is_set() or (
+                        custody is not None and not custody.source.current_memory()
+                    ):
+                        logger.warning("run-hooks: notify dropped (closed or changed)")
+                        return
+                    future = self._notify_worker.submit(
+                        self._fire,
+                        event,
+                        session_id=frozen["session_id"],
+                        run_id=frozen.get("run_id"),
+                        data=frozen.get("data"),
+                        cwd=frozen.get("cwd"),
+                        targets=targets,
+                        _custody=custody,
+                    )
+                    submitted = True
+                original_discard = self._notification_done
+
+                def discarded(done):
+                    try:
+                        original_discard(done)
+                    finally:
+                        if custody is not None:
+                            if done.cancelled():
+                                custody.abandon_unstarted()
+                            else:
+                                custody.host_done()
+
+                future.add_done_callback(discarded)
         except Exception as exc:  # noqa: BLE001 - notifications never propagate
             logger.warning(
                 "run-hooks: notify dropped (exception_type={})", type(exc).__name__
@@ -1164,6 +1473,8 @@ class RunHooksEngine:
         finally:
             if not submitted:
                 self._notify_slots.release()
+                if custody is not None:
+                    custody.abandon_unstarted()
 
     def _notification_done(self, future: Any) -> None:
         self._notify_slots.release()
@@ -1186,8 +1497,8 @@ class RunHooksEngine:
             if self._closed.is_set():
                 return
             self._closed.set()
-            for pool in (self._notify_worker, self._notification_pool, self._pool):
-                pool.shutdown(wait=False, cancel_futures=True)
+        for pool in (self._notify_worker, self._notification_pool, self._pool):
+            pool.shutdown(wait=False, cancel_futures=True)
 
     def wrap_review(
         self, inner: Callable[[list[ToolCall], str], dict[str, str]], *, session_id: str

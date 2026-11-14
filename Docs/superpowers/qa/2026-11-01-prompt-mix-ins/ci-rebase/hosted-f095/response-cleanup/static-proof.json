@@ -1,0 +1,16 @@
+{
+  "Tests/UI/response_rules_fixtures.py": {
+    "sha256": "98272ace16c4b897d713911a826b2745f669dc2351ef88aebf31d2adfdf95e40",
+    "baselinelint": [],
+    "baselineformat_code": 0,
+    "currentlint": [],
+    "currentformat_code": 0
+  },
+  "Tests/UI/test_console_response_rules.py": {
+    "sha256": "1bfd03dd30ed0e57085fd1183f3f32f3c7bae24ffc9591facb735b900486a4bf",
+    "baselinelint": [],
+    "baselineformat_code": 1,
+    "currentlint": [],
+    "currentformat_code": 1
+  }
+}

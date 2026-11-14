@@ -503,17 +503,38 @@ def test_cancel_during_wait_refuses_delayed_launch_commit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from multiprocessing.synchronize import Event as ProcessEvent
+
     callback_waiting = threading.Event()
     allow_callback = threading.Event()
     callback_finished = threading.Event()
     cancel_event = threading.Event()
     process_events: list[Any] = []
+    signaled_events: list[Any] = []
+    late_abort_signals: list[Any] = []
+    cleanup_finished = threading.Event()
+    real_cleanup = raw_cli._cleanup_tree
+    real_set = ProcessEvent.set
     real_event = multiprocessing.context.BaseContext.Event
 
     def recording_event(context: Any) -> Any:
         event = real_event(context)
         process_events.append(event)
         return event
+
+    def recording_set(event: Any) -> None:
+        if cleanup_finished.is_set() and event is process_events[2]:
+            # Fault injection: a dead worker may have stranded this lock.
+            late_abort_signals.append(event)
+            return
+        signaled_events.append(event)
+        real_set(event)
+
+    def recording_cleanup(tree: ExecutorProcessTree, *, terminate: bool) -> bool:
+        proven = real_cleanup(tree, terminate=terminate)
+        if terminate and proven:
+            cleanup_finished.set()
+        return proven
 
     def admit(tree: ExecutorProcessTree, commit_launch: Any) -> None:
         callback_waiting.set()
@@ -525,6 +546,8 @@ def test_cancel_during_wait_refuses_delayed_launch_commit(
             callback_finished.set()
 
     monkeypatch.setattr(multiprocessing.context.BaseContext, "Event", recording_event)
+    monkeypatch.setattr(ProcessEvent, "set", recording_set)
+    monkeypatch.setattr(raw_cli, "_cleanup_tree", recording_cleanup)
     results: list[Any] = []
     thread = threading.Thread(
         target=lambda: results.append(
@@ -548,7 +571,12 @@ def test_cancel_during_wait_refuses_delayed_launch_commit(
     assert thread.is_alive() is False
     assert callback_finished.wait(5.0)
     assert results[0].terminal_state == "cancelled"
-    assert process_events[1].is_set() is False
+    assert cleanup_finished.is_set()
+    assert late_abort_signals == []
+    # A killed worker can leave its Event lock held; observe parent signaling
+    # without acquiring that dead process's semaphore after cleanup.
+    assert process_events[2] in signaled_events  # the real abort gate was signaled
+    assert process_events[1] not in signaled_events  # the launch gate was not
 
 
 def test_commit_between_failed_wait_and_parent_settlement_is_honored(
@@ -791,6 +819,25 @@ def test_streams_stay_distinct_invalid_utf8_is_replaced_and_nonzero_is_exited(
     assert "[stdout] out:\ufffd" in result.record_output
     assert "[stderr] err:\ufffd" in result.record_output
     assert {event.stream for event in events} == {"stdout", "stderr"}
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native cmd command text")
+def test_cmd_preserves_quoted_spaces_and_shell_metacharacters(tmp_path):
+    command = _python_command(
+        "import os;os.write(1,b'quoted spaces & literal | characters');"
+        "os.write(2,b'error details');raise SystemExit(4)"
+    )
+    result = _executor().execute(
+        _request(tmp_path, command),
+        cancel_event=threading.Event(),
+        on_event=lambda _: None,
+        admit_worker=_admit,
+    )
+    assert result.terminal_state == "exited"
+    assert result.exit_code == 4
+    assert result.stdout_preview == "quoted spaces & literal | characters"
+    assert result.stderr_preview == "error details"
+    assert result.cleanup_proven
 
 
 def test_timeout_and_cancellation_share_idempotent_tree_cleanup(
@@ -1819,3 +1866,102 @@ def test_posix_ordinary_finalization_removes_redirected_background_child(
     assert result.exit_code == 0
     assert result.cleanup_proven is True
     assert _wait_for_pid_exit(child_pid)
+
+
+def test_standalone_held_admission_return_cannot_claim_cleanup(tmp_path):
+    """A completed shell does not prove its still-running admission callback returned."""
+    entered, release = threading.Event(), threading.Event()
+    original_admit = _admit
+
+    def held(tree, commit):
+        original_admit(tree, commit)
+        entered.set()
+        assert release.wait(15)
+
+    try:
+        result = _executor().execute(
+            _request(tmp_path, "printf helper-return"),
+            cancel_event=threading.Event(),
+            on_event=lambda event: None,
+            admit_worker=held,
+        )
+        assert entered.is_set()
+        assert result.cleanup_proven is False, "admission helper is still executing"
+    finally:
+        release.set()
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("join_helpers", [True, False])
+@pytest.mark.parametrize("helper_kind", ["relay", "admission"])
+def test_required_output_stays_unsealed_until_actual_helper_return(
+    tmp_path, monkeypatch, helper_kind, join_helpers
+):
+    entered, release, body_returned = (threading.Event() for _ in range(3))
+    original_relay = raw_cli._QueueRelay._run
+    original_body = raw_cli.RawShellExecutor._execute
+    output = raw_cli.RequiredCliOutput()
+    results, errors, helpers = [], [], []
+
+    def held_relay(relay):
+        original_relay(relay)
+        entered.set()
+        assert release.wait(15)
+
+    def held_admission(tree, commit):
+        _admit(tree, commit)
+        entered.set()
+        assert release.wait(15)
+
+    def observed_body(self, *args, **kwargs):
+        result = original_body(self, *args, **kwargs)
+        helpers.extend(kwargs["_helpers"])
+        body_returned.set()
+        return result
+
+    if helper_kind == "relay":
+        monkeypatch.setattr(raw_cli._QueueRelay, "_run", held_relay)
+    monkeypatch.setattr(raw_cli.RawShellExecutor, "_execute", observed_body)
+
+    def execute():
+        try:
+            results.append(
+                _executor().execute(
+                    _request(tmp_path, "printf original-output"),
+                    cancel_event=threading.Event(),
+                    on_event=lambda event: None,
+                    admit_worker=held_admission
+                    if helper_kind == "admission"
+                    else _admit,
+                    required_output=output,
+                    _join_helpers=join_helpers,
+                )
+            )
+        except BaseException as exc:  # noqa: BLE001 -- report worker failure to the test
+            errors.append(repr(exc))
+
+    worker = threading.Thread(target=execute)
+    worker.start()
+    try:
+        assert body_returned.wait(15), errors
+        assert entered.is_set()
+        assert output.stdout == "original-output"
+        assert output.sealed is False, "required output sealed before helper returned"
+        if join_helpers:
+            assert worker.is_alive() and not results
+        else:
+            worker.join(15)
+            assert not worker.is_alive()
+            assert len(results) == 1 and results[0].cleanup_proven is False
+            assert output.sealed is False
+    finally:
+        release.set()
+        worker.join(15)
+        for helper in helpers:
+            helper.join(15)
+        assert not worker.is_alive() and all(
+            not helper.is_alive() for helper in helpers
+        )
+        assert not errors, errors
+    assert len(results) == 1 and results[0].cleanup_proven is join_helpers
+    assert output.sealed is join_helpers

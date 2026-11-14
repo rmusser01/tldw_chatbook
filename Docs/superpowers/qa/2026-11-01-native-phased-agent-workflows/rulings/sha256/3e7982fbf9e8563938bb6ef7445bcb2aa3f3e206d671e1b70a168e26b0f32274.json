@@ -1,0 +1,11 @@
+{
+  "gate_sha256": "ba84a7dbd0cdc5cb11458528bde0431c2a1d4d93f034618b23d676799e00d2c6",
+  "exact_hunk_sha256": "4b8a5924fc3f1f0debc52f592356b13868f9844b8ab58e7f3559023e88d386c0",
+  "current_6_head_index_worktree_and_3_retained_equal": true,
+  "cached61_c5_equal": true,
+  "protected279_equal": true,
+  "full_support13_original_frozen_equal": true,
+  "root_read": "complete production diff and new test hunks; concrete release call sites and method inventory",
+  "static_and_8317_map": "writer-attributed evidence in verified gate artifact; no duplicate run",
+  "native_attempts_by_root": 0
+}

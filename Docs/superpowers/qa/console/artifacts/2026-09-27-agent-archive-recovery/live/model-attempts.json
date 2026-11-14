@@ -1,0 +1,408 @@
+{
+  "observed_at": "2026-09-27T23:53:24.370815+00:00",
+  "count_semantics": "Runtime model_request_started events and model_response_completed events; not raw HTTP request counts. Adapter retries may make multiple HTTP requests; trace refusal can record an attempt before provider contact.",
+  "total_model_attempt_events": 62,
+  "runs": [
+    {
+      "id": "2691dab9-0339-44a1-bc5e-afdc61cb0e49",
+      "status": "done",
+      "conversation_id": "977ae8bc-336e-4d04-9ae2-4a4584b6c168",
+      "created_at": "2026-09-27T22:46:49.300850Z",
+      "updated_at": "2026-09-27T22:47:11.330127Z",
+      "model_attempt_events": 4,
+      "model_response_completions": 4,
+      "tool_outcomes": [
+        {
+          "name": "find_tools",
+          "kind": "tool_succeeded",
+          "outcome": "success",
+          "summary": "find_tools success"
+        },
+        {
+          "name": "load_tools",
+          "kind": "tool_succeeded",
+          "outcome": "success",
+          "summary": "load_tools success"
+        },
+        {
+          "name": "search_archived_conversations",
+          "kind": "tool_succeeded",
+          "outcome": "success",
+          "summary": "search_archived_conversations success"
+        }
+      ],
+      "returned_archive_titles": [
+        "Zebra archival notes",
+        "Orchid planning conversation",
+        "Amber itinerary conversation"
+      ]
+    },
+    {
+      "id": "45cd230e-f2b7-47fd-b6ca-46d8dbbf424e",
+      "status": "error",
+      "conversation_id": "977ae8bc-336e-4d04-9ae2-4a4584b6c168",
+      "created_at": "2026-09-27T22:54:10.550100Z",
+      "updated_at": "2026-09-27T22:54:10.838413Z",
+      "model_attempt_events": 1,
+      "model_response_completions": 0,
+      "tool_outcomes": [],
+      "returned_archive_titles": []
+    },
+    {
+      "id": "b4f50b9f-f596-45c7-a241-0abaa05c6a0e",
+      "status": "error",
+      "conversation_id": "977ae8bc-336e-4d04-9ae2-4a4584b6c168",
+      "created_at": "2026-09-27T22:54:42.907490Z",
+      "updated_at": "2026-09-27T22:55:50.045174Z",
+      "model_attempt_events": 15,
+      "model_response_completions": 12,
+      "tool_outcomes": [
+        {
+          "name": "find_tools",
+          "kind": "tool_succeeded",
+          "outcome": "success",
+          "summary": "find_tools success"
+        },
+        {
+          "name": "find_tools",
+          "kind": "tool_succeeded",
+          "outcome": "success",
+          "summary": "find_tools success"
+        },
+        {
+          "name": "find_tools",
+          "kind": "tool_succeeded",
+          "outcome": "success",
+          "summary": "find_tools success"
+        },
+        {
+          "name": "find_tools",
+          "kind": "tool_succeeded",
+          "outcome": "success",
+          "summary": "find_tools success"
+        },
+        {
+          "name": "find_tools",
+          "kind": "tool_succeeded",
+          "outcome": "success",
+          "summary": "find_tools success"
+        },
+        {
+          "name": "find_tools",
+          "kind": "tool_succeeded",
+          "outcome": "success",
+          "summary": "find_tools success"
+        },
+        {
+          "name": "find_tools",
+          "kind": "tool_succeeded",
+          "outcome": "success",
+          "summary": "find_tools success"
+        },
+        {
+          "name": "find_tools",
+          "kind": "tool_succeeded",
+          "outcome": "success",
+          "summary": "find_tools success"
+        },
+        {
+          "name": "find_tools",
+          "kind": "tool_succeeded",
+          "outcome": "success",
+          "summary": "find_tools success"
+        },
+        {
+          "name": "find_tools",
+          "kind": "tool_succeeded",
+          "outcome": "success",
+          "summary": "find_tools success"
+        },
+        {
+          "name": "find_tools",
+          "kind": "tool_succeeded",
+          "outcome": "success",
+          "summary": "find_tools success"
+        },
+        {
+          "name": "find_tools",
+          "kind": "tool_succeeded",
+          "outcome": "success",
+          "summary": "find_tools success"
+        }
+      ],
+      "returned_archive_titles": []
+    },
+    {
+      "id": "9089bbd7-2ab1-488f-aec0-9d915c7c1cd1",
+      "status": "done",
+      "conversation_id": "dd4a9fce-31be-4528-802d-0f5f6f3e0c2c",
+      "created_at": "2026-09-27T23:02:02.155038Z",
+      "updated_at": "2026-09-27T23:02:25.423909Z",
+      "model_attempt_events": 4,
+      "model_response_completions": 4,
+      "tool_outcomes": [
+        {
+          "name": "find_tools",
+          "kind": "tool_succeeded",
+          "outcome": "success",
+          "summary": "find_tools success"
+        },
+        {
+          "name": "load_tools",
+          "kind": "tool_succeeded",
+          "outcome": "success",
+          "summary": "load_tools success"
+        },
+        {
+          "name": "search_archived_conversations",
+          "kind": "tool_succeeded",
+          "outcome": "success",
+          "summary": "search_archived_conversations success"
+        }
+      ],
+      "returned_archive_titles": [
+        "Orchid planning conversation",
+        "Amber itinerary conversation"
+      ]
+    },
+    {
+      "id": "2ae35af0-181d-484b-ba78-d1114f03c191",
+      "status": "error",
+      "conversation_id": "dd4a9fce-31be-4528-802d-0f5f6f3e0c2c",
+      "created_at": "2026-09-27T23:13:39.532116Z",
+      "updated_at": "2026-09-27T23:13:39.638642Z",
+      "model_attempt_events": 1,
+      "model_response_completions": 0,
+      "tool_outcomes": [],
+      "returned_archive_titles": []
+    },
+    {
+      "id": "b8e2ee81-3dd2-4240-aba4-7e3b1d26192b",
+      "status": "stuck",
+      "conversation_id": "dd4a9fce-31be-4528-802d-0f5f6f3e0c2c",
+      "created_at": "2026-09-27T23:14:05.302994Z",
+      "updated_at": "2026-09-27T23:14:36.228555Z",
+      "model_attempt_events": 6,
+      "model_response_completions": 6,
+      "tool_outcomes": [
+        {
+          "name": "find_tools",
+          "kind": "tool_succeeded",
+          "outcome": "success",
+          "summary": "find_tools success"
+        },
+        {
+          "name": "find_tools",
+          "kind": "tool_succeeded",
+          "outcome": "success",
+          "summary": "find_tools success"
+        },
+        {
+          "name": "find_tools",
+          "kind": "tool_succeeded",
+          "outcome": "success",
+          "summary": "find_tools success"
+        },
+        {
+          "name": "search_run_log",
+          "kind": "tool_succeeded",
+          "outcome": "success",
+          "summary": "search_run_log success"
+        },
+        {
+          "name": "search_run_log",
+          "kind": "tool_succeeded",
+          "outcome": "success",
+          "summary": "search_run_log success"
+        }
+      ],
+      "returned_archive_titles": []
+    },
+    {
+      "id": "084bf530-621c-425c-8071-f2edf4a05ea4",
+      "status": "done",
+      "conversation_id": "91e884de-d787-4a7b-91de-3c8afcabd0c5",
+      "created_at": "2026-09-27T23:17:57.617359Z",
+      "updated_at": "2026-09-27T23:18:10.200828Z",
+      "model_attempt_events": 4,
+      "model_response_completions": 4,
+      "tool_outcomes": [
+        {
+          "name": "find_tools",
+          "kind": "tool_succeeded",
+          "outcome": "success",
+          "summary": "find_tools success"
+        },
+        {
+          "name": "load_tools",
+          "kind": "tool_succeeded",
+          "outcome": "success",
+          "summary": "load_tools success"
+        },
+        {
+          "name": "search_archived_conversations",
+          "kind": "tool_succeeded",
+          "outcome": "success",
+          "summary": "search_archived_conversations success"
+        }
+      ],
+      "returned_archive_titles": [
+        "Orchid planning conversation",
+        "Amber itinerary conversation"
+      ]
+    },
+    {
+      "id": "24233d0a-9eee-4503-b85c-04c7502fe005",
+      "status": "error",
+      "conversation_id": "91e884de-d787-4a7b-91de-3c8afcabd0c5",
+      "created_at": "2026-09-27T23:20:12.234544Z",
+      "updated_at": "2026-09-27T23:20:35.634599Z",
+      "model_attempt_events": 5,
+      "model_response_completions": 2,
+      "tool_outcomes": [
+        {
+          "name": "find_tools",
+          "kind": "tool_succeeded",
+          "outcome": "success",
+          "summary": "find_tools success"
+        },
+        {
+          "name": "load_tools",
+          "kind": "tool_failed",
+          "outcome": "failed",
+          "summary": "load_tools failed"
+        }
+      ],
+      "returned_archive_titles": []
+    },
+    {
+      "id": "54f52cf9-8c91-47cc-8e3c-635a43f86a19",
+      "status": "error",
+      "conversation_id": "91e884de-d787-4a7b-91de-3c8afcabd0c5",
+      "created_at": "2026-09-27T23:21:53.022169Z",
+      "updated_at": "2026-09-27T23:22:25.790877Z",
+      "model_attempt_events": 3,
+      "model_response_completions": 0,
+      "tool_outcomes": [],
+      "returned_archive_titles": []
+    },
+    {
+      "id": "3d4da9bc-a589-4e45-a3ae-21017f086bff",
+      "status": "done",
+      "conversation_id": "296cea5d-8714-4aca-9ea6-b89a239fd687",
+      "created_at": "2026-09-27T23:40:30.107269Z",
+      "updated_at": "2026-09-27T23:40:50.613104Z",
+      "model_attempt_events": 7,
+      "model_response_completions": 7,
+      "tool_outcomes": [
+        {
+          "name": "find_tools",
+          "kind": "tool_succeeded",
+          "outcome": "success",
+          "summary": "find_tools success"
+        },
+        {
+          "name": "find_tools",
+          "kind": "tool_succeeded",
+          "outcome": "success",
+          "summary": "find_tools success"
+        },
+        {
+          "name": "find_tools",
+          "kind": "tool_succeeded",
+          "outcome": "success",
+          "summary": "find_tools success"
+        },
+        {
+          "name": "find_tools",
+          "kind": "tool_succeeded",
+          "outcome": "success",
+          "summary": "find_tools success"
+        },
+        {
+          "name": "load_tools",
+          "kind": "tool_succeeded",
+          "outcome": "success",
+          "summary": "load_tools success"
+        },
+        {
+          "name": "search_archived_conversations",
+          "kind": "tool_succeeded",
+          "outcome": "success",
+          "summary": "search_archived_conversations success"
+        }
+      ],
+      "returned_archive_titles": [
+        "Amber itinerary conversation"
+      ]
+    },
+    {
+      "id": "95e9edb0-181e-47c0-81b4-5e69a2f33664",
+      "status": "error",
+      "conversation_id": "296cea5d-8714-4aca-9ea6-b89a239fd687",
+      "created_at": "2026-09-27T23:42:08.854242Z",
+      "updated_at": "2026-09-27T23:42:44.105060Z",
+      "model_attempt_events": 7,
+      "model_response_completions": 4,
+      "tool_outcomes": [
+        {
+          "name": "find_tools",
+          "kind": "tool_succeeded",
+          "outcome": "success",
+          "summary": "find_tools success"
+        },
+        {
+          "name": "find_tools",
+          "kind": "tool_succeeded",
+          "outcome": "success",
+          "summary": "find_tools success"
+        },
+        {
+          "name": "load_tools",
+          "kind": "tool_succeeded",
+          "outcome": "success",
+          "summary": "load_tools success"
+        },
+        {
+          "name": "find_tools",
+          "kind": "tool_succeeded",
+          "outcome": "success",
+          "summary": "find_tools success"
+        }
+      ],
+      "returned_archive_titles": []
+    },
+    {
+      "id": "14f813c9-bcc8-41f3-bbf6-f25c9e4ee106",
+      "status": "done",
+      "conversation_id": "f5cb61d8-993a-4406-8df0-0f54f356af2b",
+      "created_at": "2026-09-27T23:46:47.787672Z",
+      "updated_at": "2026-09-27T23:47:12.271271Z",
+      "model_attempt_events": 5,
+      "model_response_completions": 4,
+      "tool_outcomes": [
+        {
+          "name": "find_tools",
+          "kind": "tool_succeeded",
+          "outcome": "success",
+          "summary": "find_tools success"
+        },
+        {
+          "name": "load_tools",
+          "kind": "tool_succeeded",
+          "outcome": "success",
+          "summary": "load_tools success"
+        },
+        {
+          "name": "search_archived_conversations",
+          "kind": "tool_succeeded",
+          "outcome": "success",
+          "summary": "search_archived_conversations success"
+        }
+      ],
+      "returned_archive_titles": [
+        "Amber itinerary conversation"
+      ]
+    }
+  ]
+}

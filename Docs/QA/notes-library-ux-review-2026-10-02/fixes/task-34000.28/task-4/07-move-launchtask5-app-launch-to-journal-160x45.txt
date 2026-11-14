@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌──────────────────────────────────────────────────────────────┐  N  Saved · Next: Keep editing; changes save automatically.                            │
+│   a  │ Library notes · Folder organization updated.                 │  o    ‹ Notes   Launch task 5                                                          │
+│   v  │ Notes (122)                                                  │  t                                                                                     │
+│      │ These notes live in the Library's own database — for notes   │  e                                                                                     │
+│      │ that live in a folder on disk, switch to Folder files. To    │  s   In the Library database only — no file on disk                                    │
+│      │ copy or keep a folder synced, choose Add from files.         │     Saved                                                                              │
+│      │                                                              │         Edit     Preview     Info                                                      │
+│      │ Filter                                                       │         Save     Use in Console                                                        │
+│      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │     Title                                                                              │
+│      │ ▊ Filter notes… (Enter)                                    ▎ │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     ▊ Launch task 5                                                                  ▎ │
+│      │                                                              │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      │    ○ New     ○ Sort: Newest     ○ Select                     │                                                                                        │
+│ ---> │    ○ Add from files…     ○ Export                            │     Keywords                                                                           │
+│      │ Folders & placement                                          │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │    New folder     Rename     Move     Remove                 │     ▊ launch                                                                         ▎ │
+│      │ Folder organization updated.                                 │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      │                                                              │                                                                                        │
+│      │  ▸ Agent_Lessons                                             │<--- Body                                                                               │
+│      │  ▸ Journal                                                   │     ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓ │
+│      │  ▸ Meetings                                                  │     ┃ # Launch task 5                                                                ┃ │
+│      │  ▾ Projects                                                  │     ┃                                                                                ┃ │
+│      │    ▾ App launch                                              │     ┃ Checklist item.                                                                ┃ │
+│ ---> │       0 folders loaded · May be out of date · Retry          │     ┃                                                                                ┃ │
+│      │      Untitled · 12m                                          │     ┃                                                                                ┃ │
+│      │      Launch task 8 · 12m                                     │     ┃                                                                                ┃ │
+│      │      Launch task 7 · 12m                                     │     ┃                                                                                ┃ │
+│      │      Launch task 6 · 12m                                   ▁ │     ┃                                                                                ┃ │
+│      │      Launch task 4 · 12m                                     │     ┃                                                                                ┃ │
+│      │      Launch task 3 · 12m                                     │     ┃                                                                                ┃ │
+│      │      Launch task 2 · 12m                                     │     ┃                                                                                ┃ │
+│      │      Launch task 1 · 12m                                     │     ┃                                                                                ┃ │
+│      │       8 placements loaded · May be out of date · Retry       │     ┃                                                                                ┃ │
+│      │    ▾ Thesis                                                  │     ┃                                                                                ┃ │
+│      │      Thesis outline — retrieval-augmented tutoring · 12m     │     ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ │
+│      │      Quotes · 12m                                            │                                                                                        │
+│      └──────────────────────────────────────────────────────────────┘                                                                         6 words · 1:1  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  esc back to notes | ctrl+end end of note | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

@@ -184,7 +184,9 @@ class SimpleRAGCache:
         search_type: str,
         top_k: int,
         filters: Optional[Dict[str, Any]] = None,
-        metadata_allowlist: Optional[Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]] = None,
+        metadata_allowlist: Optional[
+            Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]
+        ] = None,
         keyword_source_types: Optional[Collection[str]] = None,
         hybrid_fusion: Optional[Tuple[float, int, int]] = None,
         fts_match_construction: Optional[str] = None,
@@ -298,8 +300,7 @@ class SimpleRAGCache:
             # leg") and must not collapse onto `None`, which is why the
             # presence of the part -- not its truthiness -- is the test.
             key_parts.append(
-                "kst:"
-                + json.dumps(sorted(str(x) for x in keyword_source_types))
+                "kst:" + json.dumps(sorted(str(x) for x in keyword_source_types))
             )
 
         if hybrid_fusion is not None:
@@ -307,7 +308,11 @@ class SimpleRAGCache:
             key_parts.append(
                 "fusion:"
                 + json.dumps(
-                    {"alpha": alpha, "rrf_k": rrf_k, "pool_multiplier": pool_multiplier},
+                    {
+                        "alpha": alpha,
+                        "rrf_k": rrf_k,
+                        "pool_multiplier": pool_multiplier,
+                    },
                     sort_keys=True,
                 )
             )
@@ -334,7 +339,9 @@ class SimpleRAGCache:
         search_type: str,
         top_k: int,
         filters: Optional[Dict[str, Any]] = None,
-        metadata_allowlist: Optional[Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]] = None,
+        metadata_allowlist: Optional[
+            Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]
+        ] = None,
         *,
         keyword_source_types: Optional[Collection[str]] = None,
         hybrid_fusion: Optional[Tuple[float, int, int]] = None,
@@ -442,7 +449,9 @@ class SimpleRAGCache:
         search_type: str,
         top_k: int,
         filters: Optional[Dict[str, Any]] = None,
-        metadata_allowlist: Optional[Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]] = None,
+        metadata_allowlist: Optional[
+            Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]
+        ] = None,
         keyword_source_types: Optional[Collection[str]] = None,
         hybrid_fusion: Optional[Tuple[float, int, int]] = None,
         fts_match_construction: Optional[str] = None,
@@ -520,7 +529,9 @@ class SimpleRAGCache:
         search_type: str,
         top_k: int,
         filters: Optional[Dict[str, Any]],
-        metadata_allowlist: Optional[Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]] = None,
+        metadata_allowlist: Optional[
+            Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]
+        ] = None,
         keyword_source_types: Optional[Collection[str]] = None,
         hybrid_fusion: Optional[Tuple[float, int, int]] = None,
         fts_match_construction: Optional[str] = None,
@@ -602,7 +613,9 @@ class SimpleRAGCache:
         results: List[Any],
         context: str,
         filters: Optional[Dict[str, Any]] = None,
-        metadata_allowlist: Optional[Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]] = None,
+        metadata_allowlist: Optional[
+            Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]
+        ] = None,
         *,
         keyword_source_types: Optional[Collection[str]] = None,
         hybrid_fusion: Optional[Tuple[float, int, int]] = None,
@@ -736,7 +749,9 @@ class SimpleRAGCache:
         results: List[Any],
         context: str,
         filters: Optional[Dict[str, Any]] = None,
-        metadata_allowlist: Optional[Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]] = None,
+        metadata_allowlist: Optional[
+            Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]
+        ] = None,
         keyword_source_types: Optional[Collection[str]] = None,
         hybrid_fusion: Optional[Tuple[float, int, int]] = None,
         fts_match_construction: Optional[str] = None,
@@ -812,7 +827,9 @@ class SimpleRAGCache:
         results: List[Any],
         context: str,
         filters: Optional[Dict[str, Any]],
-        metadata_allowlist: Optional[Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]] = None,
+        metadata_allowlist: Optional[
+            Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]
+        ] = None,
         keyword_source_types: Optional[Collection[str]] = None,
         hybrid_fusion: Optional[Tuple[float, int, int]] = None,
         fts_match_construction: Optional[str] = None,
@@ -1079,9 +1096,7 @@ class SimpleRAGCache:
             )
 
         if expired_keys:
-            log_gauge(
-                "cache_memory_mb", self._current_memory_bytes / 1024 / 1024
-            )
+            log_gauge("cache_memory_mb", self._current_memory_bytes / 1024 / 1024)
             avg_age = total_age / len(expired_keys)
             avg_accesses = total_accesses / len(expired_keys)
             log_counter("cache_entries_expired", value=len(expired_keys))

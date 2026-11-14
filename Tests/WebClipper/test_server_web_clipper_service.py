@@ -3,11 +3,7 @@ from unittest.mock import Mock
 
 import pytest
 
-import tldw_chatbook.WebClipper.server_web_clipper_service as web_clipper_module
 import tldw_chatbook.Web_Clipper_Interop.server_web_clipper_service as web_clipper_interop_module
-from tldw_chatbook.WebClipper import (
-    ServerWebClipperService as PublicServerWebClipperService,
-)
 from tldw_chatbook.Web_Clipper_Interop import ServerWebClipperService
 from tldw_chatbook.runtime_policy.types import PolicyDecision, PolicyDeniedError
 
@@ -69,16 +65,11 @@ class ExplodingClientProvider:
         raise AssertionError("provider should not be used when direct client exists")
 
 
-async def _exercise_public_web_clipper(service, clip_id="clip-1"):
-    return await service.get_clip_status(clip_id)
-
-
 async def _exercise_interop_web_clipper(service, clip_id="clip-1"):
     return await service.get_status(clip_id)
 
 
 WEB_CLIPPER_IMPORT_PATHS = [
-    (PublicServerWebClipperService, web_clipper_module, _exercise_public_web_clipper),
     (
         ServerWebClipperService,
         web_clipper_interop_module,

@@ -1,0 +1,33 @@
+{
+  "initial_fixture_error": "5 setup errors: missing bootstrap_profile; source guard refused before tests",
+  "corrected_red": "3 failed, 2 passed; unnecessary FULL for unsaved/no-token/refused",
+  "green": "57 passed in 94.92s",
+  "native_unread": "10 passed, 6 unrelated geometry cases deselected, in 295.29s",
+  "full_sweep": false,
+  "review": "Independent read-only review: no correctness/safety findings",
+  "owned_temporary_roots": [
+    "C:\\Users\\GDesktop-1\\.tmp-windows-perf-pb_8muxe",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-perf-x9rwphzg",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-perf-m0qdkp3k",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-perf-kw2ir4ku",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-perf-n_s5vfca",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-perf-4qd7uh99",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-perf-0ep7hrw9",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-perf-iljm17gr",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-perf-xhbvapei",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-perf-be8i4wri",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-matching-tests-qo8qj7n0",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-matching-tests-c4bq6jxx",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-matching-tests-vrqumxh2",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-matching-tests-cg72nhgx"
+  ],
+  "diagnostic_exit_codes": {
+    "discovery": 0,
+    "draft-trace": 0,
+    "queue-trace": 0,
+    "timer-experiment": 0,
+    "handoff-experiment": 0,
+    "request-trace": 0
+  },
+  "cleaned_temporary_roots": 14
+}

@@ -1,7 +1,7 @@
 ---
 id: TASK-742
 title: TTS OpenAI backend reads nothing from config via get_cli_setting
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-26 08:00'
 labels:
@@ -21,7 +21,14 @@ priority: medium
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] Each of the three `get_cli_setting` call sites in `TTS/backends/openai.py` is fixed to read the specific key it actually needs from the relevant section
-- [ ] Configured values (e.g. API key or app-level TTS setting) are observably used by the OpenAI TTS backend instead of always falling through to `None`
-- [ ] Unit test confirms a configured value at each fixed call site is used, and that the fallback only applies when the section/key is genuinely absent
+- [x] Each of the three `get_cli_setting` call sites in `TTS/backends/openai.py` is fixed to read the specific key it actually needs from the relevant section
+- [x] Configured values (e.g. API key or app-level TTS setting) are observably used by the OpenAI TTS backend instead of always falling through to `None`
+- [x] Unit test confirms a configured value at each fixed call site is used, and that the fallback only applies when the section/key is genuinely absent
 <!-- AC:END -->
+
+
+## Closeout audit 2026-10-11
+
+Board-hygiene flip (cohort A, Jun-Jul 2026 status sweep). **Verdict: DONE** — evidence verified against origin/dev (a3c47c6c72).
+
+TASK-32894 rework (TTS/backends/openai.py:87-107): the API key resolves through the shared accessor get_api_key('openai') + resolve_provider_api_key implementing ADR-012 precedence, with the app_tts fallback reading its key via an isinstance-guarded dict get; the old bare get_cli_setting('openai_api')/get_cli_setting('API') reads are gone.

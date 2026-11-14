@@ -90,16 +90,16 @@ class QualifiedWorkspaceRef:
         except (TypeError, ValueError):
             raise ValueError("data_source must be local or server") from None
         workspace_id = _required_text(self.workspace_id, "workspace_id")
-        server_profile_id = _safe_identity(
-            self.server_profile_id, "server_profile_id"
-        )
+        server_profile_id = _safe_identity(self.server_profile_id, "server_profile_id")
         principal_id = _safe_identity(self.principal_id, "principal_id")
         if data_source is WorkspaceDataSource.SERVER and not server_profile_id:
             raise ValueError("server_profile_id is required for Server workspace refs")
         if data_source is WorkspaceDataSource.LOCAL and (
             server_profile_id or principal_id
         ):
-            raise ValueError("Local workspace refs cannot carry server identity metadata")
+            raise ValueError(
+                "Local workspace refs cannot carry server identity metadata"
+            )
         object.__setattr__(self, "data_source", data_source)
         object.__setattr__(self, "workspace_id", workspace_id)
         object.__setattr__(self, "server_profile_id", server_profile_id)
@@ -242,8 +242,7 @@ class ResearchSourceSummary:
         ):
             raise ValueError("version must be a non-negative integer or None")
         if self.catalog_item_version is not None and (
-            type(self.catalog_item_version) is not int
-            or self.catalog_item_version < 0
+            type(self.catalog_item_version) is not int or self.catalog_item_version < 0
         ):
             raise ValueError(
                 "catalog_item_version must be a non-negative integer or None"
@@ -287,8 +286,7 @@ class ResearchCatalogItem:
             self, "updated_at", _optional_text(self.updated_at, "updated_at")
         )
         if self.catalog_item_version is not None and (
-            type(self.catalog_item_version) is not int
-            or self.catalog_item_version < 0
+            type(self.catalog_item_version) is not int or self.catalog_item_version < 0
         ):
             raise ValueError(
                 "catalog_item_version must be a non-negative integer or None"
@@ -325,9 +323,7 @@ class SourceReadiness:
                     "catalog_item_id may be null only for Server readiness"
                 )
         else:
-            catalog_item_id = _required_text(
-                self.catalog_item_id, "catalog_item_id"
-            )
+            catalog_item_id = _required_text(self.catalog_item_id, "catalog_item_id")
             if catalog_item_id == "0":
                 raise ValueError("catalog_item_id must be a positive canonical id")
             object.__setattr__(
@@ -394,9 +390,7 @@ class ResearchSourcePreview:
                     "catalog_item_id may be null only for an unavailable Server preview"
                 )
         else:
-            catalog_item_id = _required_text(
-                self.catalog_item_id, "catalog_item_id"
-            )
+            catalog_item_id = _required_text(self.catalog_item_id, "catalog_item_id")
             if catalog_item_id == "0":
                 raise ValueError("catalog_item_id must be a positive canonical id")
             object.__setattr__(
@@ -422,7 +416,9 @@ class ProcessingRoute:
         except (TypeError, ValueError):
             raise ValueError("data_source must be local or server") from None
         object.__setattr__(self, "data_source", data_source)
-        object.__setattr__(self, "processor", _required_text(self.processor, "processor"))
+        object.__setattr__(
+            self, "processor", _required_text(self.processor, "processor")
+        )
         object.__setattr__(self, "provider", _optional_text(self.provider, "provider"))
         object.__setattr__(self, "model", _optional_text(self.model, "model"))
 
@@ -446,9 +442,7 @@ class BoundedPageResult(Generic[PageItem]):
             raise ValueError("page contains more items than limit")
         if type(self.offset) is not int or self.offset < 0:
             raise ValueError("offset must be a non-negative integer")
-        if self.total is not None and (
-            type(self.total) is not int or self.total < 0
-        ):
+        if self.total is not None and (type(self.total) is not int or self.total < 0):
             raise ValueError("total must be a non-negative integer or None")
 
 

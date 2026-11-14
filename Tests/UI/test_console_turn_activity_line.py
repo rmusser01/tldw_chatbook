@@ -296,7 +296,9 @@ async def test_between_tool_calls_the_row_says_thinking_not_a_stale_tool_name():
         transcript = app.query_one(ConsoleTranscript)
         snapshot = _snapshot(
             AgentLiveStep(STEP_TOOL_CALL, "read_file", AGENT_KIND_PRIMARY, 100.0),
-            AgentLiveStep(STEP_TOOL_RESULT, "read_file → ok", AGENT_KIND_PRIMARY, 104.0),
+            AgentLiveStep(
+                STEP_TOOL_RESULT, "read_file → ok", AGENT_KIND_PRIMARY, 104.0
+            ),
         )
         text = await _paint(
             transcript,
@@ -323,9 +325,13 @@ async def test_a_pending_approval_says_waiting_not_thinking_or_generating():
         transcript = app.query_one(ConsoleTranscript)
         snapshot = _snapshot(
             AgentLiveStep(STEP_TOOL_CALL, "read_file", AGENT_KIND_PRIMARY, 100.0),
-            AgentLiveStep(STEP_TOOL_RESULT, "read_file → ok", AGENT_KIND_PRIMARY, 104.0),
+            AgentLiveStep(
+                STEP_TOOL_RESULT, "read_file → ok", AGENT_KIND_PRIMARY, 104.0
+            ),
         )
-        activity = console_turn_activity_text(snapshot, now=109.0, pending_approval=True)
+        activity = console_turn_activity_text(
+            snapshot, now=109.0, pending_approval=True
+        )
         assert activity == f"{CONSOLE_TURN_ACTIVITY_WAITING_APPROVAL} · 5s", activity
         text = await _paint(transcript, [_user(), _in_flight_assistant()], activity)
         await pilot.pause()
@@ -380,7 +386,9 @@ async def test_a_finished_turn_drops_the_activity_line_from_the_row():
         assert "read_file" in during, during
 
         done = _snapshot(
-            AgentLiveStep(STEP_TOOL_RESULT, "read_file → ok", AGENT_KIND_PRIMARY, 104.0),
+            AgentLiveStep(
+                STEP_TOOL_RESULT, "read_file → ok", AGENT_KIND_PRIMARY, 104.0
+            ),
             status="done",
         )
         assert console_turn_activity_text(done, now=110.0) == ""
@@ -425,7 +433,9 @@ async def test_only_the_elapsed_changing_repaints_the_default_markdown_row():
 
         first = await _paint(transcript, messages, "⚙ read_file · 4s")
         await pilot.pause()
-        assert isinstance(transcript.query_one("#console-message-a1"), ConsoleMarkdownMessage)
+        assert isinstance(
+            transcript.query_one("#console-message-a1"), ConsoleMarkdownMessage
+        )
         assert "4s" in first, first
         builds = transcript.row_build_counts().get(row_key, 0)
 
@@ -513,7 +523,10 @@ async def test_a_partially_streamed_reply_is_never_replaced_by_the_line():
     app = _ActivityHarness()
     async with app.run_test(size=(80, 24)) as pilot:
         transcript = app.query_one(ConsoleTranscript)
-        messages = [_user(), _in_flight_assistant(content="Once upon", status="streaming")]
+        messages = [
+            _user(),
+            _in_flight_assistant(content="Once upon", status="streaming"),
+        ]
         assert transcript.apply_turn_activity("⚙ read_file · 4s") == ""
         text = await _paint(transcript, messages, "⚙ read_file · 4s")
         await pilot.pause()
@@ -681,7 +694,10 @@ async def test_the_activity_line_never_pushes_the_row_past_the_screen():
         transcript = app.query_one(ConsoleTranscript)
         snapshot = _snapshot(
             AgentLiveStep(
-                STEP_TOOL_CALL, "read_file_with_a_very_long_name", AGENT_KIND_PRIMARY, 1.0
+                STEP_TOOL_CALL,
+                "read_file_with_a_very_long_name",
+                AGENT_KIND_PRIMARY,
+                1.0,
             )
         )
         await _paint(
@@ -823,7 +839,9 @@ def test_a_bare_run_state_double_without_a_round_registry_is_never_pending():
     controller = _GateController(
         run_status=ConsoleRunStatus.STREAMING, bridge=bridge, conversation_id="conv-7"
     )
-    assert CONSOLE_TURN_ACTIVITY_WAITING_APPROVAL not in controller.console_turn_activity()
+    assert (
+        CONSOLE_TURN_ACTIVITY_WAITING_APPROVAL not in controller.console_turn_activity()
+    )
 
 
 def test_an_outstanding_approval_round_overrides_the_bound_methods_own_line():
@@ -1126,52 +1144,132 @@ async def test_an_ineffective_activity_never_repaints_an_idle_transcript():
 # --------------------------------------------------------------------------
 
 
-
 def _child(*steps):
     return AgentLiveSnapshot(status="running", step=len(steps), steps=tuple(steps))
 
 
 def test_a_fleet_turn_names_the_children_and_their_longest_running_tool():
     primary = _snapshot(
-        AgentLiveStep(kind=STEP_TOOL_RESULT, text="spawn", agent_kind=AGENT_KIND_PRIMARY, started_at=100.0),
+        AgentLiveStep(
+            kind=STEP_TOOL_RESULT,
+            text="spawn",
+            agent_kind=AGENT_KIND_PRIMARY,
+            started_at=100.0,
+        ),
     )
-    quick = _child(AgentLiveStep(kind=STEP_TOOL_CALL, text="read_file", agent_kind=AGENT_KIND_SUBAGENT, started_at=108.0))
-    slow = _child(AgentLiveStep(kind=STEP_TOOL_CALL, text="grep_files", agent_kind=AGENT_KIND_SUBAGENT, started_at=98.0))
-    thinking = _child(AgentLiveStep(kind=STEP_MODEL, text="…", agent_kind=AGENT_KIND_SUBAGENT, started_at=105.0))
-    text = console_turn_activity_text(primary, now=110.0, children=[quick, slow, thinking])
-    assert text == f"3 sub-agents{CONSOLE_TURN_ACTIVITY_SEPARATOR}⚙ grep_files{CONSOLE_TURN_ACTIVITY_SEPARATOR}12s"
+    quick = _child(
+        AgentLiveStep(
+            kind=STEP_TOOL_CALL,
+            text="read_file",
+            agent_kind=AGENT_KIND_SUBAGENT,
+            started_at=108.0,
+        )
+    )
+    slow = _child(
+        AgentLiveStep(
+            kind=STEP_TOOL_CALL,
+            text="grep_files",
+            agent_kind=AGENT_KIND_SUBAGENT,
+            started_at=98.0,
+        )
+    )
+    thinking = _child(
+        AgentLiveStep(
+            kind=STEP_MODEL, text="…", agent_kind=AGENT_KIND_SUBAGENT, started_at=105.0
+        )
+    )
+    text = console_turn_activity_text(
+        primary, now=110.0, children=[quick, slow, thinking]
+    )
+    assert (
+        text
+        == f"3 sub-agents{CONSOLE_TURN_ACTIVITY_SEPARATOR}⚙ grep_files{CONSOLE_TURN_ACTIVITY_SEPARATOR}12s"
+    )
     # No child inside a tool call: the count still replaces "Thinking…".
-    assert console_turn_activity_text(primary, now=110.0, children=[thinking]) == "1 sub-agent working"
+    assert (
+        console_turn_activity_text(primary, now=110.0, children=[thinking])
+        == "1 sub-agent working"
+    )
     # A child whose run has not attached (no live feed yet) still counts.
-    assert console_turn_activity_text(primary, now=110.0, children=[None, slow]).startswith("2 sub-agents")
-    assert console_turn_activity_text(primary, now=110.0, children=[None]) == "1 sub-agent working"
+    assert console_turn_activity_text(
+        primary, now=110.0, children=[None, slow]
+    ).startswith("2 sub-agents")
+    assert (
+        console_turn_activity_text(primary, now=110.0, children=[None])
+        == "1 sub-agent working"
+    )
 
 
 def test_a_primary_tool_call_still_wins_over_the_fleet_and_single_agent_turns_are_unchanged():
     running_tool = _snapshot(
-        AgentLiveStep(kind=STEP_TOOL_CALL, text="fs_write", agent_kind=AGENT_KIND_PRIMARY, started_at=100.0),
+        AgentLiveStep(
+            kind=STEP_TOOL_CALL,
+            text="fs_write",
+            agent_kind=AGENT_KIND_PRIMARY,
+            started_at=100.0,
+        ),
     )
-    child = _child(AgentLiveStep(kind=STEP_TOOL_CALL, text="grep_files", agent_kind=AGENT_KIND_SUBAGENT, started_at=90.0))
-    assert console_turn_activity_text(running_tool, now=103.0, children=[child]).startswith("⚙ fs_write")
+    child = _child(
+        AgentLiveStep(
+            kind=STEP_TOOL_CALL,
+            text="grep_files",
+            agent_kind=AGENT_KIND_SUBAGENT,
+            started_at=90.0,
+        )
+    )
+    assert console_turn_activity_text(
+        running_tool, now=103.0, children=[child]
+    ).startswith("⚙ fs_write")
     between = _snapshot(
-        AgentLiveStep(kind=STEP_TOOL_RESULT, text="x", agent_kind=AGENT_KIND_PRIMARY, started_at=100.0),
+        AgentLiveStep(
+            kind=STEP_TOOL_RESULT,
+            text="x",
+            agent_kind=AGENT_KIND_PRIMARY,
+            started_at=100.0,
+        ),
     )
-    assert console_turn_activity_text(between, now=103.0).startswith(CONSOLE_TURN_ACTIVITY_THINKING)
-    assert console_turn_activity_text(between, now=103.0, children=[]) == console_turn_activity_text(between, now=103.0)
+    assert console_turn_activity_text(between, now=103.0).startswith(
+        CONSOLE_TURN_ACTIVITY_THINKING
+    )
+    assert console_turn_activity_text(
+        between, now=103.0, children=[]
+    ) == console_turn_activity_text(between, now=103.0)
 
 
 def test_the_abandon_action_appears_only_for_a_primary_tool_call_that_has_run_long_enough():
-    step = AgentLiveStep(kind=STEP_TOOL_CALL, text="slow", agent_kind=AGENT_KIND_PRIMARY, started_at=100.0)
+    step = AgentLiveStep(
+        kind=STEP_TOOL_CALL,
+        text="slow",
+        agent_kind=AGENT_KIND_PRIMARY,
+        started_at=100.0,
+    )
     snapshot = _snapshot(step)
     before = 100.0 + CONSOLE_TURN_ACTIVITY_ABANDON_AFTER_SECONDS - 0.1
     after = 100.0 + CONSOLE_TURN_ACTIVITY_ABANDON_AFTER_SECONDS
     assert console_turn_activity_abandon_action(snapshot, now=before) == ""
-    assert console_turn_activity_abandon_action(snapshot, now=after) == CONSOLE_TURN_ACTIVITY_ABANDON_ACTION
-    child_only = _snapshot(AgentLiveStep(kind=STEP_TOOL_CALL, text="c", agent_kind=AGENT_KIND_SUBAGENT, started_at=1.0))
+    assert (
+        console_turn_activity_abandon_action(snapshot, now=after)
+        == CONSOLE_TURN_ACTIVITY_ABANDON_ACTION
+    )
+    child_only = _snapshot(
+        AgentLiveStep(
+            kind=STEP_TOOL_CALL,
+            text="c",
+            agent_kind=AGENT_KIND_SUBAGENT,
+            started_at=1.0,
+        )
+    )
     assert console_turn_activity_abandon_action(child_only, now=after) == ""
-    thinking = _snapshot(AgentLiveStep(kind=STEP_MODEL, text="m", agent_kind=AGENT_KIND_PRIMARY, started_at=1.0))
+    thinking = _snapshot(
+        AgentLiveStep(
+            kind=STEP_MODEL, text="m", agent_kind=AGENT_KIND_PRIMARY, started_at=1.0
+        )
+    )
     assert console_turn_activity_abandon_action(thinking, now=after) == ""
-    assert console_turn_activity_abandon_action(_snapshot(step, status="done"), now=after) == ""
+    assert (
+        console_turn_activity_abandon_action(_snapshot(step, status="done"), now=after)
+        == ""
+    )
 
 
 @pytest.mark.asyncio
@@ -1182,10 +1280,14 @@ async def test_the_row_offers_abandon_call_only_while_the_action_is_set():
         transcript = app.query_one(ConsoleTranscript)
         row = _in_flight_assistant()
         transcript.set_messages([_user(), row])
-        transcript.apply_turn_activity("⚙ slow · 6s", action=CONSOLE_TURN_ACTIVITY_ABANDON_ACTION)
+        transcript.apply_turn_activity(
+            "⚙ slow · 6s", action=CONSOLE_TURN_ACTIVITY_ABANDON_ACTION
+        )
         await transcript.refresh_messages()
         await pilot.pause()
-        assert CONSOLE_TURN_ACTIVITY_ABANDON_COPY in _rendered_row_text(transcript, row.id)
+        assert CONSOLE_TURN_ACTIVITY_ABANDON_COPY in _rendered_row_text(
+            transcript, row.id
+        )
         transcript.apply_turn_activity("⚙ slow · 7s")
         await transcript.refresh_messages()
         await pilot.pause()
@@ -1224,7 +1326,9 @@ def test_setup_with_no_start_time_still_names_the_state():
 def test_setup_gives_way_to_the_running_states():
     """Once the provider call starts, the ordinary states own the line."""
     running = _snapshot()
-    assert console_turn_activity_text(running, now=1.0) == CONSOLE_GENERATING_PLACEHOLDER
+    assert (
+        console_turn_activity_text(running, now=1.0) == CONSOLE_GENERATING_PLACEHOLDER
+    )
     assert console_turn_activity_text(AgentLiveSnapshot(), now=1.0) == ""
 
 

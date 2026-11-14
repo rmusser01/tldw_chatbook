@@ -1,0 +1,182 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+......F...FF.F..FF..............................sssssss                  [100%]
+================================== FAILURES ===================================
+__________________ test_private_creation_and_native_identity __________________
+
+tmp_path = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-70/test_private_creation_and_nati0')
+
+    def test_private_creation_and_native_identity(tmp_path):
+        directory = tmp_path / "private"
+        create_private_directory(directory)
+        with create_private_file(directory / "candidate") as fd:
+            os.write(fd, b"candidate")
+>       assert directory.stat().st_mode & 0o777 == 0o700
+E       AssertionError: assert (16895 & 511) == 448
+E        +  where 16895 = os.stat_result(st_mode=16895, st_ino=2814749770826891, st_dev=10718190542197972492, st_nlink=1, st_uid=0, st_gid=0, st_size=0, st_atime=1792429810, st_mtime=1792429810, st_ctime=1792429810).st_mode
+E        +    where os.stat_result(st_mode=16895, st_ino=2814749770826891, st_dev=10718190542197972492, st_nlink=1, st_uid=0, st_gid=0, st_size=0, st_atime=1792429810, st_mtime=1792429810, st_ctime=1792429810) = stat()
+E        +      where stat = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-70/test_private_creation_and_nati0/private').stat
+
+Tests\Backup_Recovery\test_native_files.py:109: AssertionError
+_________ test_unqualified_operations_and_symlink_storage_are_visible _________
+
+tmp_path = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-70/test_unqualified_operations_an0')
+
+    def test_unqualified_operations_and_symlink_storage_are_visible(tmp_path):
+        for operation in ("replacement", "isolated_restore", "invented"):
+            assert qualified_for(operation, tmp_path) == (False, "operation_not_qualified")
+        alias = tmp_path / "alias"
+>       alias.symlink_to(tmp_path, target_is_directory=True)
+
+Tests\Backup_Recovery\test_native_files.py:138:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-70/test_unqualified_operations_an0/alias')
+target = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-70/test_unqualified_operations_an0')
+target_is_directory = True
+
+    def symlink_to(self, target, target_is_directory=False):
+        """
+        Make this path a symlink pointing to the target path.
+        Note the order of arguments (link, target) is the reverse of os.symlink.
+        """
+        if not hasattr(os, "symlink"):
+            raise NotImplementedError("os.symlink() not available on this system")
+>       os.symlink(target, self, target_is_directory)
+E       OSError: [WinError 1314] A required privilege is not held by the client: 'C:\\Users\\GDesktop-1\\.tmp-windows-settings-tests\\pytest-of-GDesktop-1\\pytest-70\\test_unqualified_operations_an0' -> 'C:\\Users\\GDesktop-1\\.tmp-windows-settings-tests\\pytest-of-GDesktop-1\\pytest-70\\test_unqualified_operations_an0\\alias'
+
+C:\Python312\Lib\pathlib.py:1386: OSError
+____________ test_non_private_staged_objects_are_refused[symlink] _____________
+
+tmp_path = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-70/test_non_private_staged_object0')
+kind = 'symlink'
+
+    @pytest.mark.parametrize("kind", ["symlink", "hardlink", "fifo"])
+    def test_non_private_staged_objects_are_refused(tmp_path, kind):
+        original = tmp_path / "original"
+        original.write_bytes(b"original")
+        stage = tmp_path / "stage"
+        if kind == "symlink":
+>           stage.symlink_to(original)
+
+Tests\Backup_Recovery\test_native_files.py:153:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-70/test_non_private_staged_object0/stage')
+target = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-70/test_non_private_staged_object0/original')
+target_is_directory = False
+
+    def symlink_to(self, target, target_is_directory=False):
+        """
+        Make this path a symlink pointing to the target path.
+        Note the order of arguments (link, target) is the reverse of os.symlink.
+        """
+        if not hasattr(os, "symlink"):
+            raise NotImplementedError("os.symlink() not available on this system")
+>       os.symlink(target, self, target_is_directory)
+E       OSError: [WinError 1314] A required privilege is not held by the client: 'C:\\Users\\GDesktop-1\\.tmp-windows-settings-tests\\pytest-of-GDesktop-1\\pytest-70\\test_non_private_staged_object0\\original' -> 'C:\\Users\\GDesktop-1\\.tmp-windows-settings-tests\\pytest-of-GDesktop-1\\pytest-70\\test_non_private_staged_object0\\stage'
+
+C:\Python312\Lib\pathlib.py:1386: OSError
+______________ test_non_private_staged_objects_are_refused[fifo] ______________
+
+tmp_path = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-70/test_non_private_staged_object2')
+kind = 'fifo'
+
+    @pytest.mark.parametrize("kind", ["symlink", "hardlink", "fifo"])
+    def test_non_private_staged_objects_are_refused(tmp_path, kind):
+        original = tmp_path / "original"
+        original.write_bytes(b"original")
+        stage = tmp_path / "stage"
+        if kind == "symlink":
+            stage.symlink_to(original)
+        elif kind == "hardlink":
+            os.link(original, stage)
+        else:
+>           os.mkfifo(stage)
+E           AttributeError: module 'os' has no attribute 'mkfifo'
+
+Tests\Backup_Recovery\test_native_files.py:157: AttributeError
+______________ test_directory_publication_refuses_linked_payload ______________
+
+tmp_path = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-70/test_directory_publication_ref0')
+
+    def test_directory_publication_refuses_linked_payload(tmp_path):
+        external = tmp_path / "external"
+        external.write_bytes(b"external")
+        stage = tmp_path / "stage"
+        stage.mkdir()
+>       (stage / "payload").symlink_to(external)
+
+Tests\Backup_Recovery\test_native_files.py:227:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-70/test_directory_publication_ref0/stage/payload')
+target = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-70/test_directory_publication_ref0/external')
+target_is_directory = False
+
+    def symlink_to(self, target, target_is_directory=False):
+        """
+        Make this path a symlink pointing to the target path.
+        Note the order of arguments (link, target) is the reverse of os.symlink.
+        """
+        if not hasattr(os, "symlink"):
+            raise NotImplementedError("os.symlink() not available on this system")
+>       os.symlink(target, self, target_is_directory)
+E       OSError: [WinError 1314] A required privilege is not held by the client: 'C:\\Users\\GDesktop-1\\.tmp-windows-settings-tests\\pytest-of-GDesktop-1\\pytest-70\\test_directory_publication_ref0\\external' -> 'C:\\Users\\GDesktop-1\\.tmp-windows-settings-tests\\pytest-of-GDesktop-1\\pytest-70\\test_directory_publication_ref0\\stage\\payload'
+
+C:\Python312\Lib\pathlib.py:1386: OSError
+__________ test_preexisting_target_of_any_type_is_preserved[symlink] __________
+
+tmp_path = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-70/test_preexisting_target_of_any0')
+target_kind = 'symlink'
+
+    @pytest.mark.parametrize("target_kind", ["symlink", "hardlink", "directory"])
+    def test_preexisting_target_of_any_type_is_preserved(tmp_path, target_kind):
+        original = tmp_path / "original"
+        original.write_bytes(b"previous")
+        target = tmp_path / "target"
+        if target_kind == "symlink":
+>           target.symlink_to(original)
+
+Tests\Backup_Recovery\test_native_files.py:240:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-70/test_preexisting_target_of_any0/target')
+target = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-70/test_preexisting_target_of_any0/original')
+target_is_directory = False
+
+    def symlink_to(self, target, target_is_directory=False):
+        """
+        Make this path a symlink pointing to the target path.
+        Note the order of arguments (link, target) is the reverse of os.symlink.
+        """
+        if not hasattr(os, "symlink"):
+            raise NotImplementedError("os.symlink() not available on this system")
+>       os.symlink(target, self, target_is_directory)
+E       OSError: [WinError 1314] A required privilege is not held by the client: 'C:\\Users\\GDesktop-1\\.tmp-windows-settings-tests\\pytest-of-GDesktop-1\\pytest-70\\test_preexisting_target_of_any0\\original' -> 'C:\\Users\\GDesktop-1\\.tmp-windows-settings-tests\\pytest-of-GDesktop-1\\pytest-70\\test_preexisting_target_of_any0\\target'
+
+C:\Python312\Lib\pathlib.py:1386: OSError
+============================== warnings summary ===============================
+Tests/Backup_Recovery/test_native_files.py::test_installed_object_metadata_barrier_failure_propagates[file]
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 25 durations =============================
+
+(25 durations < 1s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ===========================
+SKIPPED [3] Tests\Backup_Recovery\test_config_companion_missing_record_eligibility.py:29: ordinary derived-evidence reuse is POSIX-only
+SKIPPED [1] Tests\Backup_Recovery\test_config_companion_missing_record_eligibility.py:91: ordinary derived-evidence reuse is POSIX-only
+SKIPPED [1] Tests\Backup_Recovery\test_config_companion_missing_record_eligibility.py:113: ordinary derived-evidence reuse is POSIX-only
+SKIPPED [1] Tests\Backup_Recovery\test_config_companion_missing_record_eligibility.py:143: ordinary derived-evidence reuse is POSIX-only
+SKIPPED [1] Tests\Backup_Recovery\test_config_companion_missing_record_eligibility.py:161: ordinary derived-evidence reuse is POSIX-only
+FAILED Tests/Backup_Recovery/test_native_files.py::test_private_creation_and_native_identity
+FAILED Tests/Backup_Recovery/test_native_files.py::test_unqualified_operations_and_symlink_storage_are_visible
+FAILED Tests/Backup_Recovery/test_native_files.py::test_non_private_staged_objects_are_refused[symlink]
+FAILED Tests/Backup_Recovery/test_native_files.py::test_non_private_staged_objects_are_refused[fifo]
+FAILED Tests/Backup_Recovery/test_native_files.py::test_directory_publication_refuses_linked_payload
+FAILED Tests/Backup_Recovery/test_native_files.py::test_preexisting_target_of_any_type_is_preserved[symlink]
+6 failed, 42 passed, 7 skipped, 1 warning in 4.46s

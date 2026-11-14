@@ -1,0 +1,129 @@
+{
+  "scope": "Actual Windows dispatch and independently viewed card/feedback on repaired source. Timing validation FAILED at terminal settlement; no product defect inferred.",
+  "revision": "f66a2b49fff0b2cd218f21ff31215f062b6e9711",
+  "frozen_source_inputs": 3484,
+  "source_freeze_SHA256": "837e4e9ba21a6d32d9dbd44356c249b770645ba3199aa37e50ea02dae01cbdf4",
+  "source_before_after_stable": true,
+  "code_manifest_SHA256": "52fd53b0442642bdf64d4b5f8094da348c835ca85fae2af430cff2f89798567d",
+  "protocol_SHA256": "4b6a2b1e17b9f83a31b8fad50fbeac6f8f6ab69a5148bd09330079e5d64af923",
+  "actual_driver": "WindowsResizeDriver",
+  "terminal_cells": [
+    120,
+    40
+  ],
+  "diagnostic_stack": false,
+  "root_independent_card_and_feedback_review": true,
+  "actual_card_PNG_SHA256": "581ac1dfe0042181c3254dde6f023d41e24b2563b0f01fa6031acea7ff40c8da",
+  "actual_feedback_PNG_SHA256": "3cb4a7ecb949f86adc5bf1d46e8d68c17b0aa575372251071262fba4c7e6744b",
+  "actual_gesture_events_admitted": 2,
+  "actual_decision": "approve_once",
+  "actual_submit_result": {
+    "type": "tldw_chatbook.Chat.console_chat_controller.ConsoleSubmitResult",
+    "accepted": true,
+    "should_clear_draft": true,
+    "session_closed": false,
+    "provider_started": true,
+    "terminal_status": "completed",
+    "blocker": null
+  },
+  "owned_scripted_HTTP_turns": 4,
+  "actual_model_API_calls": 0,
+  "physical_isolated_worker": true,
+  "fixture": {
+    "size_bytes": 33,
+    "SHA256": "1087ac39939689bac57d564f34d4b74c19c69ec4510a0a9a0b51ce38c2f4a810"
+  },
+  "process_closures": [
+    {
+      "isolated_worker": false,
+      "module_count": 1858,
+      "source_mismatches": [],
+      "profile_refusals": 0,
+      "network": {
+        "owned_connects": 4,
+        "stdlib_selfpipe_connects": 3,
+        "refused_connects": 0,
+        "refused_dns": 0,
+        "loopback_auth_validations": 0
+      },
+      "receipt_SHA256": "1e9906520f974b1050443660bad13adceacf36e5b6f7ff0877415ee6251d5bb2"
+    },
+    {
+      "isolated_worker": false,
+      "module_count": 0,
+      "source_mismatches": [],
+      "profile_refusals": 0,
+      "network": {
+        "owned_connects": 30,
+        "stdlib_selfpipe_connects": 0,
+        "refused_connects": 0,
+        "refused_dns": 0,
+        "loopback_auth_validations": 0
+      },
+      "receipt_SHA256": "c3e3edc5dacd3ffbc42991adefb53510a0410f89f8e0d4996d0e9a862a4b9db5"
+    },
+    {
+      "isolated_worker": true,
+      "module_count": 18,
+      "source_mismatches": [],
+      "profile_refusals": 0,
+      "network": {
+        "owned_connects": 0,
+        "stdlib_selfpipe_connects": 0,
+        "refused_connects": 0,
+        "refused_dns": 0,
+        "loopback_auth_validations": 0
+      },
+      "receipt_SHA256": "03cbf5712a84d820af66b16fe9f5ec35a8b33a0b82f64d96d51453ed82125649"
+    }
+  ],
+  "all_owned_processes_absent": true,
+  "app_exit_code": 0,
+  "launcher_exit_code": 0,
+  "observer_health": {
+    "loss": false,
+    "write_failure": false,
+    "observer_failure": false,
+    "rows": 29,
+    "bytes": 12580,
+    "enqueue_max_ns": 403100,
+    "write_max_ns": 10826100
+  },
+  "timing_validation_status": "invalid",
+  "timing_qualified": false,
+  "timing_product_samples": 0,
+  "settlement_cap": {
+    "observations": 20,
+    "seconds": 2,
+    "actual_elapsed_ns": 2062000000,
+    "missing_is_not_product_inconsistency": true
+  },
+  "settlement_capture_count": 19,
+  "settlement_missing": "Two fresh current-generation settled ROI candidates missing within observational cap; no terminal defect inferred",
+  "source_investigation": "The QA fixture directly submitted through the controller, bypassing the normal visible-send lifecycle. A fixture-only correction will use the real visible-send admission and custody task. Actual timer absence and causal product defect are not established by this failed run.",
+  "partial_stages_retained": true,
+  "sealed_private_receipt_SHA256": "9e524133e1bd2d7f3cbd153eb0d4e50f42aefef6eee67daf486b13e748c4c99e",
+  "original_result_SHA256": "2d45cdbfc0e1f111bc7133105289d4f78ee6c0b70c7434233e7cffff55fcc622",
+  "limitations": [
+    "No terminal settled-frame reference",
+    "No qualified cold/warm distribution or p95 target claim",
+    "No native deny/batch/raw/large or geometry matrix in this witness",
+    "No real model generation or continuation"
+  ],
+  "worker_frames": [
+    {
+      "outcome": "admitted",
+      "code": "root_pinned",
+      "cleanup_proven": true,
+      "truncated": false
+    },
+    {
+      "outcome": "success",
+      "code": "ok",
+      "cleanup_proven": true,
+      "truncated": false
+    }
+  ],
+  "worker_result_bytes": 115,
+  "worker_result_SHA256": "306fef2f9a26df9100fdd56ab33165229c15ffe33ae7a69092b22c2ccac8976e"
+}

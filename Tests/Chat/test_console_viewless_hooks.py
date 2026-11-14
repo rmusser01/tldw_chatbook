@@ -686,7 +686,9 @@ async def test_every_slot_names_a_real_attribute_on_the_target_it_declares():
 
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=None)
+    runtime = ConsoleRuntime(app=None)
     targets = {
+        "archive_recovery": runtime.ensure_archive_recovery(),
         "controller": controller,
         "store": store,
         "wake": controller.fleet_wake,
@@ -699,7 +701,6 @@ async def test_every_slot_names_a_real_attribute_on_the_target_it_declares():
         )
         assert slot.why, f"slot {slot.name!r} has no viewless justification"
 
-    runtime = ConsoleRuntime(app=None)
     runtime.set_chat_store(store)
     runtime.set_chat_controller(controller)
     view = _View({})
@@ -738,6 +739,22 @@ def _pre_tool_use_hook() -> dict:
     import sys
 
     return {"event": "PreToolUse", "command": [sys.executable, "-c", "pass"]}
+
+
+def test_hook_custody_attaches_when_runtime_is_published(hook_file):
+    app = _HooksApp(None)
+    runtime = ConsoleRuntime(app)
+    engine = runtime.ensure_run_hooks()
+    try:
+        assert runtime._legacy_hooks_source is None
+        app.console_runtime = runtime
+        assert runtime.ensure_run_hooks() is engine
+        source = runtime._legacy_hooks_source
+        assert source.runtime is runtime and source.engine is engine
+        assert source.permissions is runtime.ensure_hook_permissions()
+        assert engine._native_source is source
+    finally:
+        engine.close()
 
 
 def test_same_engine_detects_saved_hooks_added_mid_session(hook_file):
@@ -882,3 +899,128 @@ async def test_dispose_closes_previously_built_hooks(hook_file):
     assert runtime.ensure_run_hooks() is None
     # Existing per-run closures can retain the engine after runtime disposal.
     assert (await engine.fire_async("PreToolUse", session_id="s")).blocked
+
+
+# ---------------------------------------------------------------------------
+# TASK-38751 -- a send refused because the chat changed mid hook check.
+# ---------------------------------------------------------------------------
+
+
+async def _hook_admission_copy(accessor_effect):
+    """Run the stock admission read for one bound session.
+
+    ``accessor_effect(store, session)`` runs inside the permission read --
+    the window in which the user can switch or close the chat.
+    """
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_hook_preparation import (
+        bind_hook_preparation_session,
+    )
+
+    store = ConsoleChatStore()
+    session = store.create_session(session_id="hook-owner", ephemeral=True)
+    ready = SimpleNamespace(snapshot=lambda: SimpleNamespace(blocked_reason=None))
+
+    def accessor():
+        accessor_effect(store, session)
+        return ready
+
+    controller = ConsoleChatController(
+        store=store, provider_gateway=None, hook_permissions_accessor=accessor
+    )
+    with bind_hook_preparation_session(controller, session.id):
+        return await controller.hook_admission_reason()
+
+
+@pytest.mark.asyncio
+async def test_a_chat_closed_during_the_hook_check_says_send_again():
+    """The owner moved; nothing is wrong with the hooks, so no hooks advice."""
+
+    def close_chat(store, session):
+        store.close_session(session.id)
+        assert all(row.id != session.id for row in store.sessions())
+
+    reason = await _hook_admission_copy(close_chat)
+
+    assert reason == "Chat changed during the hook check; send again."
+    assert "review" not in reason and "disable" not in reason
+
+
+@pytest.mark.asyncio
+async def test_a_failed_hooks_read_still_says_review_or_disable_hooks():
+    def fail(_store, _session):
+        raise OSError("hooks file unreadable")
+
+    reason = await _hook_admission_copy(fail)
+
+    assert reason == "Hooks unavailable; review or disable hooks before sending."
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("closer", ["store", "fence"])
+async def test_a_chat_closed_during_v2_hook_preparation_says_send_again(
+    hook_file, monkeypatch, closer
+):
+    """The v2 preparation read is voided the same way, not "failed".
+
+    ``fence`` is the first step of the app's own close
+    (``ConsoleRuntime._close_session_after_voice_drain`` adds the session to
+    ``_admission_fenced_sessions``). The full close then cancels the
+    submission, so only a fence that lands without that cancel reaches the
+    copy; ``require_hook_preparation_source`` checks the fence first.
+    """
+    from Tests.Chat.test_console_hook_preparation_demand import _save_hooks
+    from tldw_chatbook.Agents.hook_permissions import HookPermissions
+    from tldw_chatbook.Chat.console_automatic_submission import (
+        prepare_submission_hooks,
+    )
+    from tldw_chatbook.Chat.console_chat_models import ConsoleSubmissionOrigin
+
+    _save_hooks(hook_file, {})
+    store = ConsoleChatStore()
+    session = store.create_session(session_id="hook-v2-owner", ephemeral=True)
+    runtime = ConsoleRuntime(app=None)
+    owner = runtime.ensure_hook_permissions()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=None,
+        hook_permissions_accessor=runtime.ensure_hook_permissions,
+    )
+    runtime.set_chat_store(store)
+    runtime.set_chat_controller(controller)
+    entered, release = threading.Event(), threading.Event()
+    original = HookPermissions.v2_configuration
+
+    def paused_read(self):
+        entered.set()
+        assert release.wait(5), "the test never released the read"
+        return original(self)
+
+    monkeypatch.setattr(HookPermissions, "v2_configuration", paused_read)
+    try:
+        task = asyncio.ensure_future(
+            prepare_submission_hooks(
+                controller, session, None, ConsoleSubmissionOrigin.MANUAL
+            )
+        )
+        for _ in range(250):
+            if entered.is_set():
+                break
+            await asyncio.sleep(0.02)
+        assert entered.is_set(), "v2 preparation never read the configuration"
+        if closer == "store":
+            store.close_session(session.id)  # the chat closes mid-read
+            assert all(row.id != session.id for row in store.sessions())
+        else:
+            runtime._admission_fenced_sessions.add(session.id)
+        release.set()
+        result = await asyncio.wait_for(task, 5)
+    finally:
+        runtime._admission_fenced_sessions.discard(session.id)
+        release.set()
+        await runtime.dispose()
+        owner.close()
+
+    assert result is not None and not result.accepted
+    assert result.visible_copy == "Chat changed during the hook check; send again."

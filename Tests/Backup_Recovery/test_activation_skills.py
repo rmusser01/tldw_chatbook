@@ -22,7 +22,7 @@ from tldw_chatbook.Skills_Interop.skill_trust_store import KeyringSkillTrustKeyC
 route, state = sys.argv[1:]
 selector = Path(os.environ['TLDW_CONFIG_PATH'])
 base = selector.parent.parent
-selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir="' + str(base/'data') + '"\n')
+selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir="' + (base/'data').as_posix() + '"\n')
 selector.chmod(0o600)
 store = base / 'data' / 'skills-store'
 skills = store / 'skills'
@@ -101,6 +101,10 @@ if route == 'posture':
     trust._keys = None
     assert trust.trust_posture() == ('locked' if denied else 'ready')
     assert (not probes) if denied else probes
+elif route == 'retry':
+    trust._keys = None
+    assert trust.retry_trust_posture() == ('recovery_review' if denied else 'ready')
+    assert (not probes) if denied else probes
 elif route == 'inspection':
     result = asyncio.run(local.list_skills())
     assert result
@@ -149,6 +153,7 @@ print('retired and reopened')
         "read",
         "run",
         "posture",
+        "retry",
         "inspection",
         "review",
     ],

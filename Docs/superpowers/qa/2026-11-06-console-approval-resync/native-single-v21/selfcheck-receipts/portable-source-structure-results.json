@@ -1,0 +1,23 @@
+{
+  "status": "GREEN",
+  "qualified": false,
+  "product_samples": 0,
+  "GUI_launched": false,
+  "run_seeded": false,
+  "AST_count": 18,
+  "checks": {
+    "approval_fixture_driver.py_semantic_AST_preserved": true,
+    "approval_fixture_workload_v7.py_semantic_AST_preserved": true,
+    "common_activity_observer.py_semantic_AST_preserved": true,
+    "native_bootstrap.py_semantic_AST_preserved": true,
+    "native_window_api.py_semantic_AST_preserved": true,
+    "owned_roi_capture.py_semantic_AST_preserved": true,
+    "NativeConsoleProcess_original_AST_preserved": true,
+    "same_eligible_action_button_original_AST_preserved": true,
+    "CardEvents_original_AST_preserved": true,
+    "StageWatchdog_original_AST_preserved": true,
+    "reference_hashes_match": true,
+    "no_original_home_worktree_private_run_literal": true
+  },
+  "scope": "Source/fixture comparison only. Import splits and unused dataclasses normalization explicit; no original owner calls changed."
+}

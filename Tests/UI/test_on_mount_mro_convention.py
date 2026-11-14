@@ -20,7 +20,8 @@ the explicit call). ``_ALLOWED_OFFENDERS`` below is the escape hatch for that
 case; it is empty because the TASK-31822 audit found none -- every live
 ``super().on_mount()`` in the repo resolved to a base whose ``on_mount`` is
 defined in its own class ``__dict__`` (SafeModalDismissMixin or
-LibraryAdaptiveReaderShell), so all 19 were redundant and removed. The one
+LibraryAdaptiveReaderShell, whose ``on_mount`` now lives on the shared
+``AdaptivePaneShell``), so all 19 were redundant and removed. The one
 genuine run-once-and-callable need in the repo (``BaseWizard``) uses the
 plain-method pattern (``_post_mount_hook()``) instead of ``super()``, so it
 never appears in this scan.

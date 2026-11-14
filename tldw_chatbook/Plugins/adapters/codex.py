@@ -15,3 +15,6 @@ def inspect_codex(root: Path, catalog_overlay: dict | None = None) -> PackageIns
     from ..inspection import inspect_package
 
     return inspect_package(root, dialect="openai", catalog_overlay=catalog_overlay)
+
+
+ADAPTER_VERSION = "chatbook-codex/2"

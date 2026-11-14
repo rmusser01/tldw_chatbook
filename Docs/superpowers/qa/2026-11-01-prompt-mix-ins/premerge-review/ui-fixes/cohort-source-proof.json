@@ -1,0 +1,9 @@
+{
+  "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": "b0206056d9162e5f5282eb011d45068fa395f5a8bc43cc97ba6d42c9f2c9591c",
+  "tldw_chatbook/UI/Library_Modules/prompt_save_ack.py": "3708cb9b0b723bcefb29e6434aa5ff1304c49c70d3f8fff0585bbe11e6136a85",
+  "tldw_chatbook/Widgets/Console/console_prompts_modal.py": "f8aaab28d51ee796ee206401607a878d926b3f05a32e97af5b6151dbcb5b1c04",
+  "tldw_chatbook/Widgets/Console/console_conversation_inspector.py": "b8009203644d94c0a14aa7f808285574232e3a5a7a9b13f87da0a56a9e791e6d",
+  "Tests/UI/test_library_prompt_mixins.py": "1ddcadbffede3c5e35e6d242de0f90c9b8fb2d08fc3597d085304e9b6ecb1079",
+  "Tests/UI/test_console_prompt_mixins.py": "ababb0c65788c36371393d34f245aaf821164543bda22210461f1350d270c895",
+  "Tests/UI/test_console_conversation_inspector.py": "f0ff4f20f8de8aa5677ce70dcb759e06a164e7de14f2e5e6f0eda39ec1eeed7f"
+}

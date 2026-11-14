@@ -191,12 +191,9 @@ class CommitPanelReviewProjection:
         included_notes = tuple(self.included_notes)
         if (
             type(self.repository) is not RepositoryIdentity
-            or tuple(item.note for item in included_notes)
-            != self.review.included_notes
+            or tuple(item.note for item in included_notes) != self.review.included_notes
         ):
-            raise ValueError(
-                "included note projections must exactly match the review"
-            )
+            raise ValueError("included note projections must exactly match the review")
         object.__setattr__(self, "included_notes", included_notes)
 
     @property
@@ -204,8 +201,7 @@ class CommitPanelReviewProjection:
         """Return non-zero change counts in the stable review order."""
         counts = {
             change_type: sum(
-                note.change_type == change_type
-                for note in self.included_notes
+                note.change_type == change_type for note in self.included_notes
             )
             for change_type in ("New", "Modified", "Deleted", "Moved")
         }
@@ -246,9 +242,7 @@ class PushPanelReviewProjection:
             or len(self.review.candidate.included_notes)
             != len(self.availability.change_types)
         ):
-            raise ValueError(
-                "push review provenance must exactly match its candidate"
-            )
+            raise ValueError("push review provenance must exactly match its candidate")
 
 
 @dataclass(frozen=True, slots=True)
@@ -326,8 +320,7 @@ def _grapheme_spans(text: str) -> list[tuple[int, int, int]]:
         if index + 1 < len(spans):
             next_start, next_end, next_width = spans[index + 1]
             current_is_indicator = (
-                end == start + 1
-                and 0x1F1E6 <= ord(text[start]) <= 0x1F1FF
+                end == start + 1 and 0x1F1E6 <= ord(text[start]) <= 0x1F1FF
             )
             next_is_indicator = (
                 next_end == next_start + 1
@@ -385,11 +378,7 @@ def _middle_elide_cells(text: str, width: int) -> str:
 
 def _fit_two_line_copy(text: str, width: int) -> str:
     """Fit copy to explicit lines so word wrapping cannot create a third."""
-    text = (
-        text.replace("\r\n", r"\n")
-        .replace("\r", r"\r")
-        .replace("\n", r"\n")
-    )
+    text = text.replace("\r\n", r"\n").replace("\r", r"\r").replace("\n", r"\n")
     if width <= 0 or cell_len(text) <= width:
         return text
 
@@ -433,15 +422,9 @@ def _group_path_for_display(row: SessionGitRow) -> str:
 
 def _push_destination_summary(destination: PushDestinationProjection) -> str:
     """Format only the sanitized projection without reconstructing a URL."""
-    host = (
-        f"[{destination.host}]"
-        if ":" in destination.host
-        else destination.host
-    )
+    host = f"[{destination.host}]" if ":" in destination.host else destination.host
     principal = (
-        host
-        if destination.ssh_user is None
-        else f"{destination.ssh_user}@{host}"
+        host if destination.ssh_user is None else f"{destination.ssh_user}@{host}"
     )
     return (
         f"{destination.scheme} · {principal}:{destination.port} · "
@@ -558,14 +541,14 @@ def _row_secondary_copy(row: SessionGitRow, width: int | None = None) -> str:
         return _middle_elide_cells(full, width)
 
     suffix = recovery
-    if narrow_recovery and cell_len(prefix) + cell_len(suffix) > width:
+    room = width - cell_len(prefix) - 4  # a reason needs one cell beside "..."
+    # Narrow; then drop a reason that has no room or a standalone recovery replaces.
+    if narrow_recovery and cell_len(suffix) > room:
         suffix = narrow_recovery
-    detail_width = max(
-        0,
-        width - cell_len(prefix) - cell_len(suffix),
-    )
-    fitted_detail = _middle_elide_cells(detail, detail_width)
-    fitted = f"{prefix}{fitted_detail}{suffix}"
+        if not suffix.startswith(";") or cell_len(suffix) > room:
+            detail, suffix = "", suffix.removeprefix("; ")
+    detail = _middle_elide_cells(detail, room + 4 - cell_len(suffix))
+    fitted = f"{prefix}{detail}{suffix}"
     return fitted if cell_len(fitted) <= width else _middle_elide_cells(fitted, width)
 
 
@@ -641,6 +624,33 @@ class _CommitIncludedNoteListItem(ListItem):
         width = copy.content_region.width
         if width > 0:
             copy.update(self._copy(width))
+
+
+class _FixedRegionLine(Static):
+    """One fixed-region line whose copy stays fitted to its own width.
+
+    TASK-38755: the list surface's scrollbar can take a cell from this line
+    without resizing the panel, so the panel's ``on_resize`` alone left the
+    old fit showing. The line refits on its own ``Resize`` too.
+    """
+
+    def __init__(self, copy: str, *, id: str) -> None:
+        super().__init__(copy, id=id, markup=False)
+        self._copy = copy
+        self._complete = False
+
+    def show_copy(self, text: str, *, complete: bool, fallback_width: int) -> None:
+        """Keep ``text`` as this line's copy and fit it to the current width."""
+        self._copy = text
+        self._complete = complete
+        self.set_class(complete, "-complete-copy")
+        width = self.content_region.width or fallback_width
+        self.update(text if complete or width <= 0 else _fit_two_line_copy(text, width))
+
+    def on_resize(self, _event: Resize) -> None:
+        width = self.content_region.width
+        if width > 0 and not self._complete:
+            self.update(_fit_two_line_copy(self._copy, width))
 
 
 class _WorkflowScroll(VerticalScroll):
@@ -765,6 +775,10 @@ class LibraryFileNotesGitPanel(Vertical):
         overflow: hidden hidden;
     }
 
+    /* TASK-38710: one row, so never wrap. A 1fr column measures a label at
+       its width minus padding and Button's line-pad; at 0 Rich's fold
+       raised and the app exited (49x24 list "Refresh", 50x44 result "Back
+       to session"). Truncation is defined at every width. */
     LibraryFileNotesGitPanel Button {
         width: auto;
         min-width: 0;
@@ -773,6 +787,8 @@ class LibraryFileNotesGitPanel(Vertical):
         padding: 0 1;
         border: none;
         background: transparent;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
     }
 
     LibraryFileNotesGitPanel Button.-style-default:focus {
@@ -1275,10 +1291,8 @@ class LibraryFileNotesGitPanel(Vertical):
                 id="file-notes-git-title",
                 markup=False,
             )
-            yield Static(
-                "Repository: not checked",
-                id="file-notes-git-repository",
-                markup=False,
+            yield _FixedRegionLine(
+                "Repository: not checked", id="file-notes-git-repository"
             )
             yield Static(
                 "Review and commit only notes changed during this Chatbook session.",
@@ -1296,21 +1310,9 @@ class LibraryFileNotesGitPanel(Vertical):
                 id="file-notes-git-empty",
                 markup=False,
             )
-            yield Static(
-                "Status: NOT CHECKED",
-                id="file-notes-git-status",
-                markup=False,
-            )
-            yield Static(
-                "",
-                id="file-notes-git-action-status",
-                markup=False,
-            )
-            yield Static(
-                "",
-                id="file-notes-git-selected-note",
-                markup=False,
-            )
+            yield _FixedRegionLine("Status: NOT CHECKED", id="file-notes-git-status")
+            yield _FixedRegionLine("", id="file-notes-git-action-status")
+            yield _FixedRegionLine("", id="file-notes-git-selected-note")
             with Horizontal(id="file-notes-git-selected-actions"):
                 yield Button(
                     "Stage",
@@ -1428,8 +1430,7 @@ class LibraryFileNotesGitPanel(Vertical):
                         "What",
                         id="file-notes-git-commit-review-what-heading",
                         classes=(
-                            "file-notes-git-commit-copy "
-                            "file-notes-git-review-heading"
+                            "file-notes-git-commit-copy file-notes-git-review-heading"
                         ),
                         markup=False,
                     )
@@ -1448,8 +1449,7 @@ class LibraryFileNotesGitPanel(Vertical):
                         "Where",
                         id="file-notes-git-commit-review-where-heading",
                         classes=(
-                            "file-notes-git-commit-copy "
-                            "file-notes-git-review-heading"
+                            "file-notes-git-commit-copy file-notes-git-review-heading"
                         ),
                         markup=False,
                     )
@@ -1469,8 +1469,7 @@ class LibraryFileNotesGitPanel(Vertical):
                         "Impact",
                         id="file-notes-git-commit-review-impact-heading",
                         classes=(
-                            "file-notes-git-commit-copy "
-                            "file-notes-git-review-heading"
+                            "file-notes-git-commit-copy file-notes-git-review-heading"
                         ),
                         markup=False,
                     )
@@ -1534,8 +1533,7 @@ class LibraryFileNotesGitPanel(Vertical):
                         "Recovery",
                         id="file-notes-git-commit-review-recovery-heading",
                         classes=(
-                            "file-notes-git-commit-copy "
-                            "file-notes-git-review-heading"
+                            "file-notes-git-commit-copy file-notes-git-review-heading"
                         ),
                         markup=False,
                     )
@@ -1661,8 +1659,7 @@ class LibraryFileNotesGitPanel(Vertical):
                         "What",
                         id="file-notes-git-push-review-what-heading",
                         classes=(
-                            "file-notes-git-push-copy "
-                            "file-notes-git-review-heading"
+                            "file-notes-git-push-copy file-notes-git-review-heading"
                         ),
                         markup=False,
                     )
@@ -1690,8 +1687,7 @@ class LibraryFileNotesGitPanel(Vertical):
                         "Where",
                         id="file-notes-git-push-review-where-heading",
                         classes=(
-                            "file-notes-git-push-copy "
-                            "file-notes-git-review-heading"
+                            "file-notes-git-push-copy file-notes-git-review-heading"
                         ),
                         markup=False,
                     )
@@ -1721,8 +1717,7 @@ class LibraryFileNotesGitPanel(Vertical):
                         "Impact",
                         id="file-notes-git-push-review-impact-heading",
                         classes=(
-                            "file-notes-git-push-copy "
-                            "file-notes-git-review-heading"
+                            "file-notes-git-push-copy file-notes-git-review-heading"
                         ),
                         markup=False,
                     )
@@ -1742,8 +1737,7 @@ class LibraryFileNotesGitPanel(Vertical):
                         "Recovery",
                         id="file-notes-git-push-review-recovery-heading",
                         classes=(
-                            "file-notes-git-push-copy "
-                            "file-notes-git-review-heading"
+                            "file-notes-git-push-copy file-notes-git-review-heading"
                         ),
                         markup=False,
                     )
@@ -1850,7 +1844,7 @@ class LibraryFileNotesGitPanel(Vertical):
 
     def _finish_mount(self) -> None:
         """Project child-dependent state after the composed rows are mounted."""
-        if not self.is_mounted:
+        if not self.is_mounted or self._going_away():
             return
         self._sync_action_layout(self.size.width)
         self._show_commit_phase(self._commit_phase)
@@ -1907,9 +1901,7 @@ class LibraryFileNotesGitPanel(Vertical):
         if not self.is_mounted:
             return
         footer = self.query_one("#file-notes-git-push-footer")
-        visible = tuple(
-            button for button in footer.query(Button) if button.display
-        )
+        visible = tuple(button for button in footer.query(Button) if button.display)
         requirements = tuple(
             cell_len(str(button.label)) + button.styles.padding.width
             for button in visible
@@ -1934,6 +1926,8 @@ class LibraryFileNotesGitPanel(Vertical):
         return row.content_region.width or fallback
 
     def _fit_fixed_regions(self) -> None:
+        if self._going_away():
+            return
         for selector, text, complete in (
             ("#file-notes-git-repository", self._repository_text, False),
             (
@@ -1948,15 +1942,11 @@ class LibraryFileNotesGitPanel(Vertical):
             ),
             ("#file-notes-git-selected-note", self._selected_note_text, False),
         ):
-            widget = self.query_one(selector, Static)
-            widget.set_class(complete, "-complete-copy")
-            width = widget.content_region.width or self.content_region.width
-            fitted = (
-                text
-                if complete or width <= 0
-                else _fit_two_line_copy(text, width)
+            self.query_one(selector, _FixedRegionLine).show_copy(
+                text,
+                complete=complete,
+                fallback_width=self.content_region.width,
             )
-            widget.update(fitted)
 
     def _set_repository_text(self, text: str) -> None:
         self._repository_text = text
@@ -1982,15 +1972,11 @@ class LibraryFileNotesGitPanel(Vertical):
         self._sync_commit_availability()
 
     def _sync_commit_availability(self) -> None:
-        if not self.is_mounted:
+        if not self.is_mounted or self._going_away():
             return
         focused = self.screen.focused
         available = self._commit_availability is not None
-        count = (
-            self._commit_availability.staged_note_count
-            if available
-            else 0
-        )
+        count = self._commit_availability.staged_note_count if available else 0
         button = self.query_one("#file-notes-git-commit-staged", Button)
         zero = self.query_one("#file-notes-git-commit-zero", Static)
         button.label = f"Commit staged ({count})"
@@ -2020,7 +2006,7 @@ class LibraryFileNotesGitPanel(Vertical):
         self._sync_push_availability()
 
     def _sync_push_availability(self) -> None:
-        if not self.is_attached:
+        if self._going_away():
             return
         focused = self.screen.focused
         button = self.query_one("#file-notes-git-push-review", Button)
@@ -2039,6 +2025,9 @@ class LibraryFileNotesGitPanel(Vertical):
     def return_to_push_list(self) -> None:
         """Clear workflow-only projections and restore the Session Git list."""
         self._push_result = None
+        if self._going_away():
+            self._push_phase, self._push_operation_id = "list", None
+            return
         self._show_push_phase("list", None)
         target = (
             "#file-notes-git-push-review"
@@ -2049,7 +2038,7 @@ class LibraryFileNotesGitPanel(Vertical):
 
     def _focus_push_list_control(self, selector: str) -> None:
         """Focus the requested list action or its first safe fallback."""
-        if not self.is_attached or self._push_phase != "list":
+        if self._going_away() or self._push_phase != "list":
             return
         candidates = dict.fromkeys(
             (
@@ -2076,6 +2065,8 @@ class LibraryFileNotesGitPanel(Vertical):
         selector: str,
     ) -> None:
         """Restore modal-return focus only for the exact visible operation."""
+        if self._going_away():
+            return
         self.call_after_refresh(
             partial(
                 self._focus_push_control_if_current,
@@ -2092,6 +2083,9 @@ class LibraryFileNotesGitPanel(Vertical):
         operation_id: int,
     ) -> None:
         """Render one immutable projection without consulting live rows."""
+        if self._going_away():
+            self._push_phase, self._push_operation_id = "review", operation_id
+            return
         review = projection.review
         candidate = review.candidate
         destination = review.destination
@@ -2126,9 +2120,7 @@ class LibraryFileNotesGitPanel(Vertical):
             # complete ref IS the audit evidence (task-32265 is scoped to
             # the pre-commit disclosure).
             "local-branch": f"Local branch: {candidate.local_branch_ref}",
-            "remote": (
-                f"Configured remote: {review.configured_remote_label}"
-            ),
+            "remote": (f"Configured remote: {review.configured_remote_label}"),
             "ref": f"Full destination ref: {destination.destination_ref}",
             "endpoint": (
                 f"Sanitized endpoint: {_push_destination_summary(destination)}"
@@ -2208,6 +2200,9 @@ class LibraryFileNotesGitPanel(Vertical):
         operation_id: int,
     ) -> None:
         """Render one typed guarded-push progress phase."""
+        if self._going_away():
+            self._push_phase, self._push_operation_id = phase, operation_id
+            return
         copy, detail, focus = _PUSH_PROGRESS[phase]
         self.query_one(
             "#file-notes-git-push-progress-copy",
@@ -2228,6 +2223,9 @@ class LibraryFileNotesGitPanel(Vertical):
     ) -> None:
         """Render complete selectable outcome copy and one typed next action."""
         self._push_result = projection
+        if self._going_away():
+            self._push_phase, self._push_operation_id = "result", operation_id
+            return
         self.query_one(
             "#file-notes-git-push-result-title",
             Static,
@@ -2261,11 +2259,7 @@ class LibraryFileNotesGitPanel(Vertical):
             else (
                 "file-notes-git-push-result"
                 if phase == "result"
-                else (
-                    "file-notes-git-push-progress"
-                    if phase != "list"
-                    else None
-                )
+                else ("file-notes-git-push-progress" if phase != "list" else None)
             )
         )
         for widget in self.query(".file-notes-git-push-phase"):
@@ -2284,9 +2278,7 @@ class LibraryFileNotesGitPanel(Vertical):
             visible = {"file-notes-git-push-back-session", action_id}
         else:
             visible = set()
-        for button in self.query_one(
-            "#file-notes-git-push-footer"
-        ).query(Button):
+        for button in self.query_one("#file-notes-git-push-footer").query(Button):
             button.display = button.id in visible
             button.disabled = False
         self.query_one("#file-notes-git-push-back-to-files", Button).label = (
@@ -2296,9 +2288,9 @@ class LibraryFileNotesGitPanel(Vertical):
         )
         if phase == "result" and self._push_result is not None:
             action_id = _PUSH_RESULT_ACTION_BUTTON[self._push_result.action]
-            self.query_one(f"#{action_id}", Button).disabled = (
-                not self._push_result.action_enabled
-            )
+            self.query_one(
+                f"#{action_id}", Button
+            ).disabled = not self._push_result.action_enabled
         self._sync_disabled_action_presentation()
         self._sync_push_footer_layout(self.size.width)
 
@@ -2351,7 +2343,7 @@ class LibraryFileNotesGitPanel(Vertical):
     ) -> None:
         """Reject stale focus repair across either phase or operation ID."""
         if (
-            not self.is_attached
+            self._going_away()
             or self._push_phase != phase
             or self._push_operation_id != operation_id
         ):
@@ -2367,6 +2359,9 @@ class LibraryFileNotesGitPanel(Vertical):
     def render_commit_form(self, projection: CommitDraftProjection) -> None:
         """Render the literal binding-scoped draft and its inline errors."""
         self._active_commit_draft = projection
+        if self._going_away():
+            self._commit_phase = "form"
+            return
         branch = _branch_for_display(projection.branch)
         self.query_one(
             "#file-notes-git-commit-form-meta",
@@ -2419,6 +2414,9 @@ class LibraryFileNotesGitPanel(Vertical):
 
     def render_commit_checking(self) -> None:
         """Render cancelable read-only preflight progress."""
+        if self._going_away():
+            self._commit_phase = "checking"
+            return
         self.query_one(
             "#file-notes-git-commit-checking-copy",
             Static,
@@ -2432,6 +2430,11 @@ class LibraryFileNotesGitPanel(Vertical):
     ) -> None:
         """Render one immutable, literal review without owning its authority."""
         self._commit_review = projection
+        self._commit_notes = projection.included_notes
+        self._commit_included_expanded = False
+        if self._going_away():
+            self._commit_phase = "review"
+            return
         review = projection.review
         repository = projection.repository
         branch = _branch_for_display(review.branch)
@@ -2439,8 +2442,7 @@ class LibraryFileNotesGitPanel(Vertical):
             "#file-notes-git-commit-review-repository",
             Static,
         ).update(
-            "Repository: "
-            f"{_repository_path_for_display(repository.worktree_root)}"
+            f"Repository: {_repository_path_for_display(repository.worktree_root)}"
         )
         self.query_one(
             "#file-notes-git-commit-review-branch",
@@ -2486,8 +2488,7 @@ class LibraryFileNotesGitPanel(Vertical):
             "Chatbook will select no unrelated worktree paths"
         )
         counts = " · ".join(
-            f"{label} {amount}"
-            for label, amount in projection.change_counts
+            f"{label} {amount}" for label, amount in projection.change_counts
         )
         self.query_one(
             "#file-notes-git-commit-review-change-counts",
@@ -2550,8 +2551,6 @@ class LibraryFileNotesGitPanel(Vertical):
             Collapsible,
         ).collapsed = True
 
-        self._commit_notes = projection.included_notes
-        self._commit_included_expanded = False
         disclosure = self.query_one(
             "#file-notes-git-commit-included-toggle",
             Button,
@@ -2563,6 +2562,9 @@ class LibraryFileNotesGitPanel(Vertical):
 
     def render_commit_confirming(self) -> None:
         """Render cancelable final checking before the commit child starts."""
+        if self._going_away():
+            self._commit_phase = "confirming"
+            return
         self.query_one(
             "#file-notes-git-commit-checking-copy",
             Static,
@@ -2575,22 +2577,24 @@ class LibraryFileNotesGitPanel(Vertical):
         projection: CommitExecutionProjection,
     ) -> None:
         """Render non-cancelable branch mutation progress."""
+        if self._going_away():
+            self._commit_phase = "executing"
+            return
         self.query_one(
             "#file-notes-git-commit-execution-title",
             Static,
-        ).update(
-            f"Committing {_session_note_count(projection.staged_note_count)}..."
-        )
+        ).update(f"Committing {_session_note_count(projection.staged_note_count)}...")
         self.query_one(
             "#file-notes-git-commit-execution-detail",
             Static,
-        ).update(
-            "Git is updating the branch; cancellation is unavailable."
-        )
+        ).update("Git is updating the branch; cancellation is unavailable.")
         self._show_commit_phase("executing")
 
     def render_commit_recovery_checking(self) -> None:
         """Render non-cancelable proof-only recovery without implying a commit."""
+        if self._going_away():
+            self._commit_phase = "executing"
+            return
         self.query_one(
             "#file-notes-git-commit-execution-title",
             Static,
@@ -2607,6 +2611,9 @@ class LibraryFileNotesGitPanel(Vertical):
     ) -> None:
         """Render a complete typed outcome without fixed-region elision."""
         self._commit_result = projection
+        if self._going_away():
+            self._commit_phase = "result"
+            return
         outcome = projection.outcome
         state_labels = {
             "cancelled": "Cancelled",
@@ -2652,13 +2659,8 @@ class LibraryFileNotesGitPanel(Vertical):
         self._show_commit_phase("result")
         if outcome.state in {"blocked", "failed_unchanged"}:
             self._focus_commit_control("#file-notes-git-commit-edit")
-        elif (
-            outcome.state == "uncertain"
-            and projection.recovery is not None
-        ):
-            self._focus_commit_control(
-                "#file-notes-git-commit-check-again"
-            )
+        elif outcome.state == "uncertain" and projection.recovery is not None:
+            self._focus_commit_control("#file-notes-git-commit-check-again")
 
     def return_to_commit_list(
         self,
@@ -2671,6 +2673,9 @@ class LibraryFileNotesGitPanel(Vertical):
         self._commit_result = None
         self._commit_notes = ()
         self._commit_included_expanded = False
+        if self._going_away():  # focus requests below are DOM work too
+            self._commit_phase = "list"
+            return
         self._commit_list_focus_pending = True
         self._commit_list_preferred_group_id = preferred_group_id
         self._commit_list_focus_selector = None
@@ -2712,8 +2717,7 @@ class LibraryFileNotesGitPanel(Vertical):
         visible_selector = phase_selectors.get(phase)
         for widget in self.query(".file-notes-git-commit-phase"):
             widget.display = (
-                visible_selector is not None
-                and f"#{widget.id}" == visible_selector
+                visible_selector is not None and f"#{widget.id}" == visible_selector
             )
 
         disclosure = self.query_one(
@@ -2749,8 +2753,7 @@ class LibraryFileNotesGitPanel(Vertical):
         elif (
             phase == "result"
             and self._commit_result is not None
-            and self._commit_result.outcome.state
-            in {"blocked", "failed_unchanged"}
+            and self._commit_result.outcome.state in {"blocked", "failed_unchanged"}
         ):
             visible_footer = (
                 "#file-notes-git-commit-edit",
@@ -2761,15 +2764,11 @@ class LibraryFileNotesGitPanel(Vertical):
             and self._commit_result is not None
             and self._commit_result.outcome.state == "uncertain"
         ):
-            visible_footer = (
-                "#file-notes-git-commit-check-again",
-            )
+            visible_footer = ("#file-notes-git-commit-check-again",)
         else:
             visible_footer = ()
         self._set_commit_footer_buttons(visible_footer)
-        self._sync_commit_footer_layout(
-            self.content_region.width or self.size.width
-        )
+        self._sync_commit_footer_layout(self.content_region.width or self.size.width)
         self.call_after_refresh(self._sync_commit_body_height)
 
     def _sync_commit_body_height(self) -> None:
@@ -2786,7 +2785,7 @@ class LibraryFileNotesGitPanel(Vertical):
         to. Deferred one refresh because the phase's display was only just
         switched -- its region is still the previous phase's.
         """
-        if not self.is_mounted:
+        if not self.is_mounted or self._going_away():
             return
         try:
             body = self.query_one("#file-notes-git-commit-body", _WorkflowScroll)
@@ -2808,9 +2807,7 @@ class LibraryFileNotesGitPanel(Vertical):
         self,
         visible_selectors: tuple[str, ...],
     ) -> None:
-        for button in self.query_one(
-            "#file-notes-git-commit-footer"
-        ).query(Button):
+        for button in self.query_one("#file-notes-git-commit-footer").query(Button):
             selector = f"#{button.id}"
             button.display = selector in visible_selectors
             button.disabled = False
@@ -2824,6 +2821,10 @@ class LibraryFileNotesGitPanel(Vertical):
                 Button,
             ).disabled = recovery is None
         self._sync_disabled_action_presentation()
+
+    def _going_away(self) -> bool:
+        """Quit's `App._exit` fence, or a removal (it prunes the children first)."""
+        return not self.is_attached or self._pruning
 
     def _focus_commit_control(self, selector: str) -> None:
         self.call_after_refresh(
@@ -2840,7 +2841,7 @@ class LibraryFileNotesGitPanel(Vertical):
         selector: str,
     ) -> None:
         """Ignore deferred focus after its workflow phase became stale."""
-        if self._commit_phase != phase:
+        if self._commit_phase != phase or self._going_away():
             return
         control = self.query_one(selector, Widget)
         if any(
@@ -2870,23 +2871,18 @@ class LibraryFileNotesGitPanel(Vertical):
         generation: int,
         notes: tuple[CommitReviewNoteProjection, ...],
     ) -> None:
-        # TASK-32800.5: this is a worker body, so the panel may already be
-        # detached by the time it runs; `exit_on_error` defaults to True, so an
-        # unguarded lookup here exits the whole app rather than abandoning a
-        # stale render. The generation checks below already treat "too late" as
-        # a no-op -- a missing subtree is the same situation.
+        # Worker body, exit_on_error=True: a raise exits the app. "Too late" is a
+        # no-op: a missing subtree (TASK-32800.5), or a newer generation or
+        # `_going_away()` after an await (TASK-36527).
         found = self.query("#file-notes-git-commit-included-notes")
         if not found:
             return
         list_view = found.first(ListView)
         await list_view.clear()
-        if generation != self._commit_note_render_generation:
+        if generation != self._commit_note_render_generation or self._going_away():
             return
-        await list_view.extend(
-            _CommitIncludedNoteListItem(note)
-            for note in notes
-        )
-        if generation != self._commit_note_render_generation:
+        await list_view.extend(_CommitIncludedNoteListItem(note) for note in notes)
+        if generation != self._commit_note_render_generation or self._going_away():
             return
         list_view.index = 0 if notes else None
         self._update_commit_included_selection()
@@ -2909,8 +2905,7 @@ class LibraryFileNotesGitPanel(Vertical):
         path = _repository_path_for_display(note.display_path)
         selected.update(f"{note.change_type}: {path}")
         selected.display = (
-            self._commit_phase == "review"
-            and self._commit_included_expanded
+            self._commit_phase == "review" and self._commit_included_expanded
         )
 
     def render_status(
@@ -3088,17 +3083,21 @@ class LibraryFileNotesGitPanel(Vertical):
             detail: Latest-action copy to render.
             complete: Preserve the complete copy instead of fitting two lines.
         """
-        widget = self.query_one("#file-notes-git-action-status", Static)
         self._last_action_text = detail
         self._last_action_complete = complete
+        if self._going_away():
+            return
+        widget = self.query_one("#file-notes-git-action-status", Static)
         self._fit_fixed_regions()
         widget.display = bool(detail)
 
     def clear_last_action(self) -> None:
         """Clear an obsolete latest-action presentation."""
-        widget = self.query_one("#file-notes-git-action-status", Static)
         self._last_action_text = ""
         self._last_action_complete = False
+        if self._going_away():
+            return
+        widget = self.query_one("#file-notes-git-action-status", Static)
         self._fit_fixed_regions()
         widget.display = False
 
@@ -3151,11 +3150,9 @@ class LibraryFileNotesGitPanel(Vertical):
         self._replace_rows(None)
 
     def _sync_empty_state(self) -> None:
-        ready_empty = (
-            not self._replacing_rows
-            and self._status_ready
-            and not self._rows
-        )
+        if self._going_away():
+            return
+        ready_empty = not self._replacing_rows and self._status_ready and not self._rows
         self.query_one("#file-notes-git-empty", Static).display = ready_empty
         self.query_one("#file-notes-git-rows", ListView).display = (
             bool(self._rows) and not self._replacing_rows
@@ -3236,6 +3233,8 @@ class LibraryFileNotesGitPanel(Vertical):
         generation = self._row_render_generation
         group_id = self._selected_group_id
         self._replacing_rows = True
+        if self._going_away():
+            return
         self.query_one("#file-notes-git-rows", ListView).display = False
         self.run_worker(
             partial(
@@ -3255,17 +3254,15 @@ class LibraryFileNotesGitPanel(Vertical):
         group_id: int | None,
         rows: tuple[SessionGitRow, ...],
     ) -> None:
-        # TASK-32800.5: the lookup sat OUTSIDE the try below, so the one
-        # statement that can raise when the panel is detached was the one
-        # statement not covered. Worker body + exit_on_error=True means that is
-        # an app exit, not a dropped render.
+        # Worker body, exit_on_error=True: a raise exits the app. TASK-32800.5
+        # guards the lookup; TASK-36527 each step after an await (`_going_away`).
         found = self.query("#file-notes-git-rows")
         if not found:
             return
         list_view = found.first(ListView)
         try:
             await list_view.clear()
-            if generation != self._row_render_generation:
+            if generation != self._row_render_generation or self._going_away():
                 return
             await list_view.extend(_SessionGitListItem(row) for row in rows)
             if generation != self._row_render_generation:
@@ -3278,7 +3275,7 @@ class LibraryFileNotesGitPanel(Vertical):
             )
             self._selected_group_id = group_id
         finally:
-            if generation == self._row_render_generation:
+            if generation == self._row_render_generation and not self._going_away():
                 self._replacing_rows = False
                 self._sync_empty_state()
                 self._update_actions()
@@ -3309,16 +3306,12 @@ class LibraryFileNotesGitPanel(Vertical):
 
     def _selected_row(self) -> SessionGitRow | None:
         return next(
-            (
-                row
-                for row in self._rows
-                if row.group_id == self._selected_group_id
-            ),
+            (row for row in self._rows if row.group_id == self._selected_group_id),
             None,
         )
 
     def _update_actions(self) -> None:
-        if not self.is_mounted:
+        if not self.is_mounted or self._going_away():
             return
         focused = self.screen.focused
         back = self.query_one("#file-notes-git-back", Button)
@@ -3357,14 +3350,10 @@ class LibraryFileNotesGitPanel(Vertical):
             self._fit_fixed_regions()
             selected_note.display = True
         can_mutate = (
-            self._status_ready
-            and not self._mutating
-            and not self._replacing_rows
+            self._status_ready and not self._mutating and not self._replacing_rows
         )
         show_stage = (
-            self._trusted
-            and selected is not None
-            and selected.stage_action is not None
+            self._trusted and selected is not None and selected.stage_action is not None
         )
         stage_selected.display = show_stage
         stage_selected.disabled = not can_mutate
@@ -3386,24 +3375,15 @@ class LibraryFileNotesGitPanel(Vertical):
         unstage_count = sum(row.unstage_eligible for row in self._rows)
         stage_all.label = f"Stage all ({stage_count})"
         unstage_all.label = f"Unstage all ({unstage_count})"
-        bulk_available = (
-            self._trusted
-            and (stage_count > 0 or unstage_count > 0)
-        )
-        if (
-            focused is not None
-            and (
-                (
-                    not (show_stage or show_unstage)
-                    and focused in {stage_selected, unstage_selected}
-                )
-                or (
-                    not bulk_available
-                    and (
-                        focused is bulk_toggle
-                        or focused in {stage_all, unstage_all}
-                    )
-                )
+        bulk_available = self._trusted and (stage_count > 0 or unstage_count > 0)
+        if focused is not None and (
+            (
+                not (show_stage or show_unstage)
+                and focused in {stage_selected, unstage_selected}
+            )
+            or (
+                not bulk_available
+                and (focused is bulk_toggle or focused in {stage_all, unstage_all})
             )
         ):
             if self._trust_available and trust.display:
@@ -3455,10 +3435,10 @@ class LibraryFileNotesGitPanel(Vertical):
         not pull focus into Session Git. Consuming the arm is guarded by
         identity instead -- see `_entry_focus_anchor`.
         """
+        if self._going_away():
+            return False
         focused = self.screen.focused
-        return focused is not None and (
-            focused is self or self in focused.ancestors
-        )
+        return focused is not None and (focused is self or self in focused.ancestors)
 
     def _entry_focus_is_still_ours(self, anchor: Widget | None) -> bool:
         """Return whether the armed entry focus may still be taken.
@@ -3525,6 +3505,8 @@ class LibraryFileNotesGitPanel(Vertical):
 
     def _settle_action_focus(self, target: Button) -> None:
         """Finish action focus repair without stealing focus outside the panel."""
+        if self._going_away():
+            return
         focused = self.screen.focused
         if focused is not None and self not in focused.ancestors:
             return
@@ -3694,10 +3676,7 @@ class LibraryFileNotesGitPanel(Vertical):
             focused is not None
             and focused.id is not None
             and focused.can_focus
-            and any(
-                node is list_surface
-                for node in focused.ancestors_with_self
-            )
+            and any(node is list_surface for node in focused.ancestors_with_self)
         ):
             self._commit_entry_focus = (
                 projection.binding_key,
@@ -3705,9 +3684,7 @@ class LibraryFileNotesGitPanel(Vertical):
             )
         else:
             self._commit_entry_focus = None
-        self.post_message(
-            self.CommitStagedRequested(projection.binding_key)
-        )
+        self.post_message(self.CommitStagedRequested(projection.binding_key))
         active = self._active_commit_draft
         if active is not None and active.binding_key == projection.binding_key:
             projection = replace(
@@ -3766,13 +3743,10 @@ class LibraryFileNotesGitPanel(Vertical):
         event.stop()
         operation_id = self._push_operation_id
         if (
-            self._push_phase
-            in {"checking_candidate", "checking_remote"}
+            self._push_phase in {"checking_candidate", "checking_remote"}
             and operation_id is not None
         ):
-            self.post_message(
-                self.PushOperationRequested("cancel_check", operation_id)
-            )
+            self.post_message(self.PushOperationRequested("cancel_check", operation_id))
 
     @on(Button.Pressed, "#file-notes-git-push-back-to-files")
     def _back_to_files_push_continues_pressed(
@@ -3801,10 +3775,7 @@ class LibraryFileNotesGitPanel(Vertical):
             or projection is None
             or (
                 action != "back_to_session"
-                and (
-                    projection.action != action
-                    or not projection.action_enabled
-                )
+                and (projection.action != action or not projection.action_enabled)
             )
         ):
             return
@@ -3985,8 +3956,7 @@ class LibraryFileNotesGitPanel(Vertical):
         elif (
             self._commit_phase == "result"
             and self._commit_result is not None
-            and self._commit_result.outcome.state
-            in {"blocked", "failed_unchanged"}
+            and self._commit_result.outcome.state in {"blocked", "failed_unchanged"}
         ):
             self._edit_commit_message()
 
@@ -4094,8 +4064,7 @@ class PushEndpointDetailsDialog(SafeModalDismissMixin, ModalScreen[None]):
             )
             yield TextArea(
                 "\n".join(
-                    f"{label}: {value}"
-                    for label, value in self.selectable_details
+                    f"{label}: {value}" for label, value in self.selectable_details
                 ),
                 id="file-notes-push-endpoint-details-text",
                 read_only=True,

@@ -7,6 +7,7 @@ templates, async_chunker, server Metrics) are skipped at module level with
 documented reasons. (auto_planner is vendored — sub-project #3, Task 1 —
 and its planner suite runs un-skipped.)
 """
+
 import os
 from pathlib import Path
 
@@ -181,6 +182,7 @@ def real_hf_cache(monkeypatch):
     monkeypatch.setattr(hf_constants, "HUGGINGFACE_HUB_CACHE", cache)
     monkeypatch.setattr(hf_constants, "HF_HUB_OFFLINE", True)
     import transformers  # noqa: F401  (pre-import under corrected env)
+
     return cache
 
 

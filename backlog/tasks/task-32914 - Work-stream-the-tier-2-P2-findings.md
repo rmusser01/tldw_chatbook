@@ -1,7 +1,7 @@
 ---
 id: TASK-32914
 title: "Work stream: the tier-2 P2 findings"
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-21 23:05'
 labels:
@@ -96,3 +96,17 @@ necessarily closes S06's first P1 as well (keep one copy in `_sse_request`/`_str
 
 **Remaining: 71 of 115 P2 findings**, in the slices not covered by these two batches.
 <!-- SECTION:NOTES:END -->
+
+## Closeout audit 2026-10-11
+
+Board audit (branch `chore/board-prune-prune-d`, dev at a3c47c6c72): this task's work is
+landed on `origin/dev` but the status field was never flipped. Verdict: **Done**.
+
+The tier-2 P2 wave completed on dev: p2a/p2b (S01/S02/S05/S12 + S06/S14/S11) landed with
+in-file disposition notes (24 fixed / 17 closed-with-reason / 3 retracted), then p2c (TTS,
+Audio/STT, Scheduling, Backup_Recovery; PR #2811), p2d (Chunking, Canvas, Media; PR #2812) and
+p2e (UI screens, root windows and widgets; PR #2813) merged 2026-09-24..27, all citing
+TASK-32914. The task's notes end "Remaining: 71 of 115" only because they predate p2c-p2e; the
+five batches together cover the slice families named in that ledger.
+
+AC checkboxes are left as found; this section is the audit's evidence record.

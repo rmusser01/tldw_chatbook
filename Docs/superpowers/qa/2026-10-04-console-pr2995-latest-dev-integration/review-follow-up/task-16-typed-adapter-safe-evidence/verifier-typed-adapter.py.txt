@@ -1,0 +1,76 @@
+exec(open('/private/tmp/pr2995-task16-fixture-fix.py').read().rsplit('\nmode=sys.argv[1]',1)[0])
+E=P/'task-16-typed-adapter-safe-evidence';E.mkdir(exist_ok=True)
+BASE='f817cbefabdb57896b40371bcdc9346f5bb0659b'
+KEYWORDS=['_console_pending_send','_console_visible_draft_session_id','_console_visible_send_session_id','_ui_responsiveness_monitor','_send_console_message_from_visible_action_observed']
+def snapshot_manifest(name,report_snapshot,fixture_manifest_snapshot=False):
+ m=json.loads((P/name).read_text());rows={}
+ for rel,pin in m['files'].items():
+  actualrel=report_snapshot if rel=='task-16-report.md' else 'task-16-fixture-fix-safe-evidence-manifest-before-typed-adapter.json' if fixture_manifest_snapshot and rel=='task-16-fixture-fix-safe-evidence-manifest.json' else rel
+  b=(P/actualrel).read_bytes();actual={'sha256':sha(b),'bytes':len(b)};assert actual==pin,(name,actualrel);rows[actualrel]=actual
+ return rows
+
+def carry():
+ rows=private_carry();rows.update(snapshot_manifest('task-16-safe-evidence-manifest-before-fixture-fix.json','task-16-report-before-fixture-fix.md'))
+ rows.update(snapshot_manifest('task-16-fixture-fix-safe-evidence-manifest-before-typed-adapter.json','task-16-report-before-typed-adapter.md'))
+ rows.update(snapshot_manifest('task-16-safe-evidence-manifest-before-typed-adapter.json','task-16-report-before-typed-adapter.md',True))
+ for name in ['task-16-safe-evidence-manifest-before-fixture-fix.json','task-16-fixture-fix-safe-evidence-manifest-before-typed-adapter.json','task-16-safe-evidence-manifest-before-typed-adapter.json','task-16-report-before-fixture-fix.md','task-16-report-before-typed-adapter.md','task-16-brief-before-fixture-fix.md','task-16-brief-before-typed-adapter.md','task-16-fixture-fix-safe-evidence-manifest.json']:
+  b=(P/name).read_bytes();rows[name]={'sha256':sha(b),'bytes':len(b)}
+ return rows
+
+mode=sys.argv[1]
+if mode=='prepare':
+ assert git('rev-parse','HEAD').decode().strip()==BASE and not git('diff','--cached','--name-only')
+ assert set(git('diff','--name-only').decode().splitlines())==set(OWNED)
+ for r in PROPOSAL['rows']:assert sha((WT/r['path']).read_bytes())==r['proposed_sha256']
+ assert (P/'task-16-report.md').read_bytes()==(P/'task-16-report-before-typed-adapter.md').read_bytes()
+ files={}
+ for p in git('ls-files','-z').decode().split('\0'):
+  if p and (WT/p).is_file():b=(WT/p).read_bytes();files[p]={'sha256':sha(b),'bytes':len(b)}
+ save('before-tracked',{'HEAD':BASE,'marker_overlay_paths':OWNED,'files':files});save('before-frozen-evidence-carry',{'files':carry()})
+ r=capture('pin-typed-adapter-recovery',['git','update-ref','refs/recovery/pr2995-task16-typed-adapter-f817cbef',BASE]);assert not r.returncode
+ print('Prepared exact typed-adapter phase',len(files),'tracked',len(carry()),'frozen evidence paths')
+elif mode=='apply':
+ patch=P/'task-16-fixture-fix-safe-evidence/proposed-typed-harness-current-send-seams.patch'
+ r=capture('apply-exact-five-keyword-proposal',['git','apply',str(patch)]);assert not r.returncode
+ p=OWNED[0];raw=(WT/p).read_text();formatted=subprocess.run([PYTHON,'-m','ruff','format','--stdin-filename',p,'-'],input=raw.encode(),stdout=subprocess.PIPE,stderr=subprocess.PIPE,check=True).stdout.decode()
+ fn='async def '+PROPOSAL['rows'][0]['function']+'(';start=raw.index(fn);fstart=formatted.index(fn);needle='            screen = SimpleNamespace(\n';a=raw.index(needle,start)+len(needle);b=raw.index('                _console_pending_send_stash=',a);fa=formatted.index(needle,fstart)+len(needle);fb=formatted.index('                _console_pending_send_stash=',fa)
+ block=formatted[fa:fb];new=raw[:a]+block+raw[b:];(WT/p).write_text(new)
+ save('added-hunk-only-format',{'selected_raw_proposal_sha256':sha(raw.encode()),'actual_sha256':sha(new.encode()),'inserted_block':block,'formatting_changed_only_authorized_inserted_keyword_lines':True,'raw_to_added_hunk_format_patch':''.join(difflib.unified_diff(raw.splitlines(keepends=True),new.splitlines(keepends=True)))})
+ capture('selected-source-overlay',['git','diff','--',*OWNED],hashpaths=OWNED)
+elif mode=='verify':
+ before=json.loads((E/'before-tracked.json').read_text())['files'];actual={}
+ for p,pin in before.items():
+  b=(WT/p).read_bytes();row={'sha256':sha(b),'bytes':len(b)};actual[p]=row
+  if p!=OWNED[0]:assert row==pin,p
+ frozen=carry();assert frozen==json.loads((E/'before-frozen-evidence-carry.json').read_text())['files']
+ for r in S['source_exceptions']:assert actual[r['path']]['sha256']==r['expected_after_sha256']
+ for r in S['protected_feature_sources']:assert actual[r['path']]['sha256']==r['expected_sha256']
+ rows=[]
+ for r in PROPOSAL['rows']:
+  p=r['path'];original=git('show',BASE+':'+p).decode();current=(WT/p).read_text();ot=ast.parse(original);ct=ast.parse(current);node=next(n for n in ast.walk(ct) if isinstance(n,ast.AsyncFunctionDef) and n.name==r['function']);assert ast.unparse(node.decorator_list.pop())=='pytest.mark.bootstrap_profile'
+  if p==OWNED[0]:
+   call=next(n for n in ast.walk(node) if isinstance(n,ast.Call) and isinstance(n.func,ast.Name) and n.func.id=='SimpleNamespace' and any(k.arg=='_console_pending_send_stash' for k in n.keywords));assert [k.arg for k in call.keywords[:5]]==KEYWORDS;del call.keywords[:5]
+   block=json.loads((E/'added-hunk-only-format.json').read_text())['inserted_block'];assert current.count(block)==1;reverse=current.replace(block,'',1)
+  else:reverse=current
+  indent='    ' if p==OWNED[1] else '';marker=indent+'@pytest.mark.bootstrap_profile\n'+indent+'async def '+r['function']+'(';assert reverse.count(marker)==1;reverse=reverse.replace(marker,indent+'async def '+r['function']+'(',1)
+  assert reverse==original and ast.dump(ct,include_attributes=False)==ast.dump(ot,include_attributes=False),p
+  rows.append({'path':p,'original_metadata_BASE_sha256':sha(original.encode()),'final_sha256':sha(current.encode()),'reverse_selected_keywords_and_marker_exact_entire_owner_bytes_and_AST':True,'original_namespace_keys_signatures_bodies_assertions_waits_deadlines_imports_unowned_definitions_exact':True})
+  def fmt(text):return subprocess.run([PYTHON,'-m','ruff','format','--stdin-filename',p,'-'],input=text.encode(),stdout=subprocess.PIPE,stderr=subprocess.PIPE,check=True).stdout.decode()
+  pf=fmt(original);cf=fmt(current);units=lambda text,f:sum(max(i2-i1,j2-j1) for tag,i1,i2,j1,j2 in difflib.SequenceMatcher(a=text.splitlines(),b=f.splitlines(),autojunk=False).get_opcodes() if tag!='equal')
+  assert units(original,pf)==units(current,cf)==r['actual_formatter_debt_units'],(p,units(original,pf),units(current,cf))
+  rows[-1].update({'before_formatter_debt_units':units(original,pf),'after_formatter_debt_units':units(current,cf),'added_hunk_format_exact_without_owner_reflow':True})
+ save('source-AST-body-marker-keyword-reversal',{'rows':rows,'five_added_keywords':KEYWORDS,'all_production_and_shared_fixture_sources_unchanged':True})
+ save('source-QA-evidence-ZIP-limits-carry',{'HEAD':git('rev-parse','HEAD').decode().strip(),'metadata_BASE':BASE,'files':actual,'unowned_tracked_paths_exact':len(actual)-2,'incoming47dev_plus_two_compositions_exact':True,'protected_feature132exact':True,'frozen_evidence_pins_verified':len(frozen),'initial140_interim81_and_snapshot_receipts_exact':True,'QA1983_exact':'entire tracked byte map unchanged outside two test owners','originalZIP2118entries':json.loads((P/'task-16-safe-evidence/before-original-zip.json').read_text()),'named_loading_AST_import_Close_runtime_authority_worker_route_limits_carry':'exact preserved initial maps + all production/test limit files unchanged','prior57distinct_passes_not_replayed':True,'original_source_attribution_preserved':{'749e_runtime23_CI24_rows8_payload1':56,'b084_with_two_markers_Persona':1}})
+ print('Full final-source reversal/carry verified',len(actual)-2,'unowned',len(frozen),'evidence pins')
+elif mode=='test':
+ paths=sorted(set(OWNED)|set(r['path'] for r in S['protected_feature_sources'])|set(r['path'] for r in S['source_exceptions'] if r['path'].endswith('.py'))|{'Tests/conftest.py','Tests/UI/conftest.py','tldw_chatbook/Chat/console_send_diagnostics.py'})
+ argv=[PYTHON,'-m','pytest','-q','-p','no:randomly','--basetemp=/private/tmp/pr2995-task16/final-typed-adapter-only',NODES[0],'--junitxml='+str(E/'typed-node.xml')]
+ r=capture('typed-node',argv,{'PYTHONPATH':str(WT)},paths)
+ root=ET.parse(E/'typed-node.xml').getroot();cases=[]
+ for c in root.iter('testcase'):
+  outcome=next((n.tag for n in c if n.tag in ['failure','error','skipped']),'passed');cases.append({'classname':c.get('classname'),'name':c.get('name'),'time':c.get('time'),'outcome':outcome})
+ save('typed-node-cases',{'actual_cases':len(cases),'outcomes':dict(collections.Counter(x['outcome'] for x in cases)),'cases':cases});print('Actual typed result',cases);sys.exit(r.returncode)
+elif mode=='static':
+ r=capture('fatal-ruff',[PYTHON,'-m','ruff','check','--select','E9,F63,F7,F82',*OWNED],hashpaths=OWNED);assert not r.returncode
+ capture('whole-owner-format-check',[PYTHON,'-m','ruff','format','--check','--diff',*OWNED],hashpaths=OWNED)
+ r=capture('whitespace',['git','diff','--check',BASE],hashpaths=OWNED);assert not r.returncode

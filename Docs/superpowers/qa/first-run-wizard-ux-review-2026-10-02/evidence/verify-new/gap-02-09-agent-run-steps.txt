@@ -1,0 +1,18 @@
+# vn4-b agent_runs.db (read-only) -- persistent saved-chat send with kimi-k3, 2026-10-03 00:54
+2026-10-03T07:54:37.864484Z agent_run_created | created | Agent run created
+2026-10-03T07:54:37.960567Z agent_run_started | started | Agent run started
+2026-10-03T07:54:37.975720Z model_request_started | started | Model request started
+2026-10-03T07:54:37.980215Z context_attached | completed | system context attached
+2026-10-03T07:54:37.980215Z context_injected | completed | system context injected
+2026-10-03T07:54:42.732863Z model_response_completed | completed | Model response completed
+2026-10-03T07:54:42.737509Z error |  | Provider continuation could not be persisted; retry or recover the interrupted run.
+2026-10-03T07:54:42.743054Z agent_run_failed | error | Agent run failed
+2026-10-03T07:56:59.048996Z agent_run_created | created | Agent run created
+2026-10-03T07:56:59.173550Z agent_run_started | started | Agent run started
+2026-10-03T07:56:59.175677Z model_request_started | started | Model request started
+2026-10-03T07:56:59.179844Z context_attached | completed | system context attached
+2026-10-03T07:56:59.179844Z context_injected | completed | system context injected
+2026-10-03T07:57:01.528703Z model_response_completed | completed | Model response completed
+2026-10-03T07:57:01.530467Z model |  | vn4 temporary ok
+2026-10-03T07:57:01.537406Z agent_run_completed | done | Agent run completed
+agent_runs.status = error

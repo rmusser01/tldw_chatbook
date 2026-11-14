@@ -1,0 +1,13 @@
+{
+  "project_owned_executable_ast": true,
+  "local_review_entire_ast": true,
+  "durability_executable_ast": true,
+  "citation_executable_ast": true,
+  "outer_scope_guard_ast_except_delegate": true,
+  "compile_all": true,
+  "controller_lines": 29043,
+  "interrupt_lines": 6307,
+  "lifecycle_lines": 2338,
+  "ratchet_controller_exact": true,
+  "ratchet_interrupt_exact": true
+}

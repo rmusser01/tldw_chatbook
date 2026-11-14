@@ -1,0 +1,77 @@
+{
+  "pre_evidence_commit_head": "2a695c12e79080407ee35b3fe7d4bb73bfec4eb6",
+  "dev_base": "139333920d2a87cb011e4f3aa5f8319b59c44a5c",
+  "installed": {
+    "summary": "1 passed in 42.98s",
+    "log_sha256": "525d77346626e451a6abf0eab7c0d63678153000c9879b524f19f267a266d1d9",
+    "wheel_sha256": "0b98a83c98fe1bb82f1da714b2dfea6dcfbe220bc701418fde3f9e8f41107828",
+    "production_files_checked": 53,
+    "mismatches": []
+  },
+  "required_source_checks": [
+    {
+      "command": "tldw_chatbook/css/check_bundle_sync.py",
+      "exit_code": 0,
+      "output_sha256": "f693e0a86ca887da319dc9d5e2d97026e208783e55fb4824f7e5e5a2c568fb5e"
+    },
+    {
+      "command": "scripts/check_canvas_mermaid_assets.py",
+      "exit_code": 0,
+      "output_sha256": "946ad482960841baf0583b8eb17f26fa7b6563b9c356549a3df9213f2bc59af8"
+    },
+    {
+      "command": "scripts/check_profile_owned_path_inventory.py",
+      "exit_code": 0,
+      "output_sha256": "2ad6393fb27acf6bd0027ca0a32f4ab5ade51379d70e2826b2d38c9ee641265f"
+    },
+    {
+      "command": "scripts/check_persistent_diagnostic_inventory.py",
+      "exit_code": 0,
+      "output_sha256": "7aafb96d43984c35e3753653486788d2bef5363e3ff9db61fae81d7dc1ca60c9"
+    },
+    {
+      "command": "scripts/check_backlog_task_ids.py",
+      "exit_code": 0,
+      "output_sha256": "78a4af0f95c92a75ef09cca9a349bf725ee5aacbdf2b8d4682adecd6f1da0116"
+    },
+    {
+      "command": "scripts/check_backlog_task_files.py",
+      "exit_code": 0,
+      "output_sha256": "7c6f30f5738c0faa5376938cc5094e46a568dc03c2eaf540800d59e8f981c234"
+    },
+    {
+      "command": "scripts/check_schema_table_allowlist.py",
+      "exit_code": 0,
+      "output_sha256": "d5d8fa30d19ef62e3d0c11d30ddae83eed29ead7511830da7d8233a7c52591c3"
+    },
+    {
+      "command": "scripts/check_index_plan_pins.py",
+      "exit_code": 0,
+      "output_sha256": "42cd79bd30f599dc51a96b856944323b7842ede4e10ff7b037311b417ec8adac"
+    },
+    {
+      "command": "scripts/check_textual_worker_contract.py",
+      "exit_code": 0,
+      "output_sha256": "00b3ead883a541812ef9ef5f2aa3d09ad8cf04b966480e42665fc504a7d53ac8"
+    },
+    {
+      "command": "scripts/check_timestamp_writers.py",
+      "exit_code": 0,
+      "output_sha256": "c7d9f8c695e6b6d5ffea7b08b9fdf60bec11ab91f2f79b97b6ead504b948b102"
+    },
+    {
+      "command": "scripts/check_markup_interpolation.py",
+      "exit_code": 0,
+      "output_sha256": "f29d9eb03ebe1ee656306ba2fe68a5cf8e075eef0a0bed6fe3cd0f7f75e48cf6"
+    },
+    {
+      "command": "scripts/check_ui_pr_gate_census.py",
+      "exit_code": 0,
+      "output_sha256": "cf28f1f0432002acc2ed3778a4af442ab2d133ae02dfb38a0a04746d37cc26ba"
+    }
+  ],
+  "submitted_reviews": 0,
+  "review_threads": 0,
+  "live_image_requests": 0,
+  "live_qualified": false
+}

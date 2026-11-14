@@ -2,13 +2,33 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Mapping, Optional
+from typing import Any, Mapping, Optional, Protocol
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
 
-if TYPE_CHECKING:
-    from ..tldw_api import TLDWAPIClient
+
+class ServerResearchSearchClient(Protocol):
+    """Client methods ServerResearchSearchService calls (TASK-36953.1)."""
+
+    async def get_arxiv_paper_by_id(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_biorxiv_paper_by_doi(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_medrxiv_paper_by_doi(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_pubmed_paper_by_id(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_semantic_scholar_paper_by_id(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+    async def paper_search(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def paper_search_detail(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def paper_search_ingest(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def research_websearch(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def search_arxiv_papers(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def search_biorxiv_papers(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def search_medrxiv_papers(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def search_pubmed_papers(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def search_semantic_scholar_papers(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
 
 
 class ServerResearchSearchService:
@@ -16,7 +36,7 @@ class ServerResearchSearchService:
 
     def __init__(
         self,
-        client: Optional[TLDWAPIClient],
+        client: Optional[ServerResearchSearchClient],
         *,
         client_provider: Any | None = None,
         policy_enforcer: Any | None = None,
@@ -51,7 +71,7 @@ class ServerResearchSearchService:
             policy_enforcer=policy_enforcer,
         )
 
-    def _require_client(self) -> TLDWAPIClient:
+    def _require_client(self) -> ServerResearchSearchClient:
         if self.client is not None:
             return self.client
         if self.client_provider is not None:
@@ -139,15 +159,7 @@ class ServerResearchSearchService:
         self._enforce("research.search.providers.launch.server")
         request = PaperSearchRequest(endpoint=endpoint, params=self._params(**params))
         client = self._require_client()
-        method = getattr(client, "run_paper_search", None)
-        if callable(method):
-            return self._dump(await method(request))
-        response = await client._request(
-            "GET",
-            f"/api/v1/paper-search/{request.endpoint}",
-            params=request.params,
-        )
-        return self._dump(response)
+        return self._dump(await client.paper_search(request))
 
     async def paper_detail(self, *, endpoint: str, **params: Any) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
@@ -158,15 +170,7 @@ class ServerResearchSearchService:
             endpoint=endpoint, params=self._params(**params)
         )
         client = self._require_client()
-        method = getattr(client, "get_paper_search_detail", None)
-        if callable(method):
-            return self._dump(await method(request))
-        response = await client._request(
-            "GET",
-            f"/api/v1/paper-search/{request.endpoint}",
-            params=request.params,
-        )
-        return self._dump(response)
+        return self._dump(await client.paper_search_detail(request))
 
     async def paper_ingest(
         self,
@@ -183,16 +187,7 @@ class ServerResearchSearchService:
             endpoint=endpoint, params=self._params(**params), payload=payload
         )
         client = self._require_client()
-        method = getattr(client, "run_paper_search_ingest", None)
-        if callable(method):
-            return self._dump(await method(request))
-        response = await client._request(
-            "POST",
-            f"/api/v1/paper-search/{request.endpoint}",
-            params=request.params,
-            json_data=request.payload,
-        )
-        return self._dump(response)
+        return self._dump(await client.paper_search_ingest(request))
 
     async def search_arxiv(
         self,

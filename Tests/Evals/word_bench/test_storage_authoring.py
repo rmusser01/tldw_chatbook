@@ -35,9 +35,14 @@ def test_duplicate_bench_copies_every_config_field_and_shares_the_dataset(
     source_id = save_bench(
         db,
         BenchConfig(
-            name=config.name, description="Original description.",
-            prompt_mode="chat", top_k=7, dataset_id=config.dataset_id,
-            target_ids=config.target_ids, probes=(" a", " b"), concurrency=3,
+            name=config.name,
+            description="Original description.",
+            prompt_mode="chat",
+            top_k=7,
+            dataset_id=config.dataset_id,
+            target_ids=config.target_ids,
+            probes=(" a", " b"),
+            concurrency=3,
         ),
     )
 
@@ -65,8 +70,11 @@ def test_duplicate_bench_preserves_the_capture_continuations_flag(db, config, ta
     source_id = save_bench(
         db,
         BenchConfig(
-            name=config.name, prompt_mode=config.prompt_mode, top_k=config.top_k,
-            dataset_id=config.dataset_id, target_ids=config.target_ids,
+            name=config.name,
+            prompt_mode=config.prompt_mode,
+            top_k=config.top_k,
+            dataset_id=config.dataset_id,
+            target_ids=config.target_ids,
             capture_continuations=True,
         ),
     )
@@ -86,11 +94,17 @@ def test_duplicate_bench_copies_no_run_history(db, config, targets, snippets):
     from tldw_chatbook.Evals.word_bench.models import CellCapture, TokenProb
 
     save_cell(
-        db, run_ids[targets[0].id], snippets[0],
+        db,
+        run_ids[targets[0].id],
+        snippets[0],
         CellCapture(
-            prompt_mode="raw", k_requested=20, k_returned=1, content_offset=0,
+            prompt_mode="raw",
+            k_requested=20,
+            k_returned=1,
+            content_offset=0,
             top_k=(TokenProb(token=" a", logprob=-0.1, token_id=1),),
-            canary="pass", captured_at="2026-07-30T00:00:00Z",
+            canary="pass",
+            captured_at="2026-07-30T00:00:00Z",
         ),
     )
     runs_before = len(db.list_runs(limit=10_000))
@@ -133,10 +147,15 @@ def test_duplicate_bench_dedupes_a_legacy_duplicate_target_id_preserving_order(
     target_a = db.create_model(name="a", provider="llama_cpp", model_id="m")
     target_b = db.create_model(name="b", provider="llama_cpp", model_id="m")
     source_id = db.create_task(
-        name="legacy dupe bench", task_type="logprob", config_format="custom",
+        name="legacy dupe bench",
+        task_type="logprob",
+        config_format="custom",
         config_data={
-            "bench_type": BENCH_TYPE, "prompt_mode": "raw", "top_k": 20,
-            "probes": [], "target_ids": [target_b, target_a, target_b],
+            "bench_type": BENCH_TYPE,
+            "prompt_mode": "raw",
+            "top_k": 20,
+            "probes": [],
+            "target_ids": [target_b, target_a, target_b],
             "concurrency": 1,
         },
         dataset_id=dataset,
@@ -195,7 +214,9 @@ def test_a_deleted_benchs_name_still_blocks_an_exact_name_create(db, config):
 
     with pytest.raises(ConflictError):
         db.create_task(
-            name=config.name, task_type="logprob", config_format="custom",
+            name=config.name,
+            task_type="logprob",
+            config_format="custom",
             config_data={"bench_type": BENCH_TYPE},
         )
 
@@ -210,7 +231,9 @@ def test_unique_name_sidesteps_the_deleted_bench_name_trap(db, config):
 
     # Must not raise.
     db.create_task(
-        name=_unique_name(config.name), task_type="logprob", config_format="custom",
+        name=_unique_name(config.name),
+        task_type="logprob",
+        config_format="custom",
         config_data={"bench_type": BENCH_TYPE},
     )
 
@@ -245,7 +268,9 @@ def test_update_task_rejects_a_name_that_is_blank_once_control_characters_are_st
 def test_renaming_onto_a_live_names_bench_raises_conflict_error(db, config):
     save_bench(db, config)
     other_id = db.create_task(
-        name="some other bench", task_type="logprob", config_format="custom",
+        name="some other bench",
+        task_type="logprob",
+        config_format="custom",
         config_data={"bench_type": BENCH_TYPE},
     )
 
@@ -261,7 +286,9 @@ def test_renaming_onto_a_soft_deleted_benchs_name_raises_conflict_error(db, conf
     deleted_id = save_bench(db, config)
     db.delete_task(deleted_id)
     other_id = db.create_task(
-        name="some other bench", task_type="logprob", config_format="custom",
+        name="some other bench",
+        task_type="logprob",
+        config_format="custom",
         config_data={"bench_type": BENCH_TYPE},
     )
 

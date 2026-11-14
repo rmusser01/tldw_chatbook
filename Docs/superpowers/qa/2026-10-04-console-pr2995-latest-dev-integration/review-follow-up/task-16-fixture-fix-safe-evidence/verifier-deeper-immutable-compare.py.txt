@@ -1,0 +1,27 @@
+exec(open('/private/tmp/pr2995-task16-fixture-fix.py').read().rsplit('\nmode=sys.argv[1]',1)[0])
+BRANCH='codex/console-chat-starts-dev';assert git('rev-parse','HEAD').decode().strip()==BASE
+current={p:(WT/p).read_bytes() for p in OWNED}
+for r in PROPOSAL['rows']:assert sha(current[r['path']])==r['proposed_sha256']
+assert set(git('diff','--name-only').decode().splitlines())==set(OWNED) and not git('diff','--cached','--name-only')
+capture('before-deeper-comparison-authorized-patch',['git','diff','--',*OWNED],hashpaths=OWNED)
+try:
+ r=capture('deeper-immutable-base-checkout',['git','switch','--detach',START]);assert not r.returncode
+ (WT/OWNED[1]).write_bytes(git('show',START+':'+OWNED[1]))
+ assert sha((WT/OWNED[0]).read_bytes())==PROPOSAL['rows'][0]['proposed_sha256']
+ assert git('diff','--name-only').decode().splitlines()==[OWNED[0]]
+ baselinepatch=git('diff','--',OWNED[0]);assert baselinepatch.count(b'+@pytest.mark.bootstrap_profile')==1
+ capture('deeper-immutable-exact-typed-marker-overlay',['git','diff','--',OWNED[0]],hashpaths=OWNED)
+ paths=sorted(set(OWNED)|set(r['path'] for r in S['protected_feature_sources'])|{'Tests/conftest.py','Tests/UI/conftest.py','tldw_chatbook/Chat/console_send_diagnostics.py'})
+ argv=[PYTHON,'-m','pytest','-q','-p','no:randomly','--basetemp=/private/tmp/pr2995-task16/deeper-immutable-typed-only',NODES[0],'--junitxml='+str(E/'deeper-immutable-typed-only.xml')]
+ r=capture('deeper-immutable-typed-only',argv,{'PYTHONPATH':str(WT)},paths)
+ root=ET.parse(E/'deeper-immutable-typed-only.xml').getroot();cases=[]
+ for c in root.iter('testcase'):
+  f=c.find('failure');cases.append({'classname':c.get('classname'),'name':c.get('name'),'failure_message':f.get('message') if f is not None else None,'outcome':'failure' if f is not None else 'passed'})
+ save('deeper-immutable-typed-only-cases',{'actual_cases':len(cases),'cases':cases});print(cases,flush=True)
+finally:
+ r=capture('restore-metadata-base-and-authorized-patch',['git','switch',BRANCH]);assert not r.returncode
+ for p,b in current.items():(WT/p).write_bytes(b)
+ assert git('rev-parse','HEAD').decode().strip()==BASE
+ assert set(git('diff','--name-only').decode().splitlines())==set(OWNED) and not git('diff','--cached','--name-only')
+ for p,b in current.items():assert (WT/p).read_bytes()==b
+ print('Restored exact b084 metadata HEAD +two selected markers',flush=True)

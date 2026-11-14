@@ -50,16 +50,26 @@ class CardRow(Button):
     Textual: ``textual.widgets._button.Button.validate_label`` ->
     ``Content.from_text``)."""
 
-    def __init__(self, card_id: int, card_name: str, selected: bool, index: int) -> None:
-        self.card_id = card_id
-        self.card_name = card_name
-        self._selected = selected
+    def __init__(
+        self, card_id: int, card_name: str, selected: bool, index: int
+    ) -> None:
+        # super() FIRST, then instance attributes -- the same ordering
+        # ``Widgets/emoji_picker.py``'s own Button subclasses use (e.g.
+        # ``EmojiButton.__init__``). Setting attributes on a Textual widget
+        # before its own ``__init__`` runs means an exception (or a debug
+        # repr, or a message dispatched mid-mount) can observe a
+        # half-initialized Button; ``super().__init__`` here takes no value
+        # off ``self`` (the label is composed from the ARGUMENTS), so the
+        # reorder is behaviour-neutral (task-1913 AC7).
         super().__init__(
             self._compose_label(card_name, selected),
             id=f"evals-card-row-{index}",
             classes="evals-card-row",
             compact=True,
         )
+        self.card_id = card_id
+        self.card_name = card_name
+        self._selected = selected
 
     @staticmethod
     def _compose_label(card_name: str, selected: bool) -> Text:

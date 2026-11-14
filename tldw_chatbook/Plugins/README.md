@@ -711,3 +711,50 @@ ordinary user text: no retained body, automatic rule or executable authority is 
 No original Codex/Cursor host execution, GUI or cross-platform certification is
 claimed. See [fixture provenance](../../Tests/Plugins/fixtures/interop/README.md)
 and the [integration evidence](../../Docs/superpowers/reviews/2026-09-30-expanded-hooks-integration.md).
+
+
+## Declared values and retained unavailable requirements
+
+`PluginService.create_variable_reference(installation_id, name, value)` creates
+an installation/name/type/secret-bound protected record through the existing MCP
+credential owner; `revoke_variable_reference(installation_id, reference_id)` checks
+installation ownership atomically. `review_configuration(..., variables=...)`
+accepts only versioned opaque reference handles. HTTP credential schema 1 remains
+unchanged; plugin-variable schema 2 is a separate record kind with no HTTP origin.
+`Plugins.variables` resolves values only at command launch, after exact reference,
+revision, scope and root checks. UI management uses the same public service flow.
+
+`RunPluginSnapshot.unavailable_hooks` carries selected valid unavailable explicit
+requirements and event controls independently of executable `selection`.
+`PluginAdmission.check_requirement` is an internal projection gate; ordinary
+execution checks still reject these IDs. `NativeHooks` keeps their original
+matcher, reports them unavailable and refuses process ownership. It never creates
+a placeholder ready handler or falls back to the default process owner. Required
+initialization and matching guards therefore survive readiness filtering while
+nonmatches and independent siblings retain their existing behavior.
+
+Narrowing and authenticated continuation preserve original requirement metadata
+only after the original installation, revision, scope and generation ceiling is
+verified. The service's private resume wrapper reuses the existing signed pin
+comparison. It neither extends the pin schema nor restores arbitrary current
+installations. Unknown, omitted producer custody or changed original authority
+refuses; ordinary execution/render/catalog interfaces keep their stricter gate.
+
+Native command roots come from actual host grants. The unscoped workspace root is
+`ConsoleScratchSpaceManager`'s captured capability, leased before launch and kept
+until terminal cleanup. Named workspace and shared roots are exact single current
+saved-data grants. No workspace-name-derived path or ambient reserved value grants
+access. Bare command lookup uses trusted host PATH independently of the reviewed
+child environment, for both native hooks and managed MCP profiles.
+
+Tool snapshots carry an optional host-classified `operation`. Exact definition
+identity includes that classification; PreToolUse and both post-outcome events
+receive it. Local file read/write classification comes from the actual provider,
+and managed MCP delegates its owning provider's `mcp.call` classification. Unknown
+providers do not gain an operation from their display name. Existing permission
+review still follows hook preparation and sees the final arguments.
+
+Cancellation dispatches by original lease token, not run ID. Retained stdio cleanup
+cannot settle custody solely because a retry found an emptied exit stack; the
+original direct child must be terminal and cleanup must complete. Saved-data
+unlink continues to wait on that exact custody.

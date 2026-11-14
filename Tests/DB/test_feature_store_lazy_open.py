@@ -168,9 +168,7 @@ class TestSyncStateRepositoryLazyOpen:
 
 
 class TestLazyOpenSingleFlight:
-    def test_concurrent_first_use_initializes_schema_once(
-        self, tmp_path: Path
-    ) -> None:
+    def test_concurrent_first_use_initializes_schema_once(self, tmp_path: Path) -> None:
         """Racing first operations must not double-run the executescript."""
         import threading
 
@@ -182,9 +180,7 @@ class TestLazyOpenSingleFlight:
         def first_use() -> None:
             try:
                 barrier.wait(timeout=10)
-                store.insert_notification(
-                    category="watchlist", title="t", message="m"
-                )
+                store.insert_notification(category="watchlist", title="t", message="m")
             except BaseException as exc:  # noqa: BLE001 - collected for assert
                 errors.append(exc)
 

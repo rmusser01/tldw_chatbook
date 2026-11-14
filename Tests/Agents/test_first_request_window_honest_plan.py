@@ -1,0 +1,553 @@
+"""TASK-34100.5 AC#6 (new-entry-exit-handoff-01): plain chat to a small server.
+
+Live, 2026-10-03: the first 'Reply with just: hi' to a llama.cpp server
+started with ``-c 4096`` carried a ~20.8 KB system prompt (the agent operating
+prompt plus the fenced protocol for 16 runtime tools) and llama-server
+answered ``request (4730 tokens) exceeds the available context size (4096
+tokens)``. The agent planner sized that preamble against the 32,000-token
+application fallback -- a window nobody had verified -- while the Console's
+own send preflight used the window attached to the send's resolution.
+
+The planner now plans against the same window the send resolved. A window
+the app cannot vouch for never licenses the full preamble: it is planned as
+the smallest common local window. ADR-253 retains fitting compact discovery
+before falling back to the session-only prompt when even that cannot fit.
+"""
+
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+import pytest
+
+from tldw_chatbook.Agents.agent_runtime import render_tool_protocol
+from tldw_chatbook.Agents.tool_catalog import (
+    ToolCatalogEntry,
+    ToolCatalogRegistry,
+    ToolResult,
+    ToolSchema,
+)
+from tldw_chatbook.Chat.console_agent_bridge import build_console_first_request_plan
+from tldw_chatbook.Utils.token_counter import ContextWindowResolution
+
+pytestmark = pytest.mark.bootstrap_profile
+
+_MODEL = "qwen2.5-0.5b-instruct-q4_k_m.gguf"
+_SESSION_PROMPT = "You are a helpful AI assistant."
+
+
+class _BuiltinLikeProvider:
+    """Sixteen ask-gated tools with real-sized descriptions, like the
+    built-in MCP source a fresh profile exposes."""
+
+    def __init__(self) -> None:
+        self._names = tuple(f"notes_tool_{index}" for index in range(16))
+
+    def list_catalog(self):
+        return [
+            ToolCatalogEntry(
+                id=f"mcp:{name}",
+                name=name,
+                one_line_description="Read or change the user's notes.",
+                source="mcp",
+            )
+            for name in self._names
+        ]
+
+    def load_schema(self, tool_id):
+        return ToolSchema(
+            id=tool_id,
+            name=tool_id.split(":", 1)[1],
+            description="Read or change the user's notes. " * 12,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "What to find."},
+                    "limit": {"type": "integer", "description": "How many."},
+                },
+            },
+        )
+
+    def invoke(self, tool_id, args):
+        return ToolResult(ok=True, content="ok")
+
+
+def _plan(
+    window: ContextWindowResolution | None,
+    *,
+    max_tokens: int = 4096,
+    message: str = "Reply with just: hi",
+    provider: str = "llama_cpp",
+    model: str = _MODEL,
+    session_system_prompt: str | None = _SESSION_PROMPT,
+    native_tools: bool = False,
+    fleet_max_live: int = 4,
+):
+    registry = ToolCatalogRegistry()
+    registry.register_provider(_BuiltinLikeProvider())
+    allowed = tuple(entry.name for entry in registry.list_catalog())
+    resolution = SimpleNamespace(
+        model=model,
+        execution_key=provider,
+        provider=provider,
+        max_tokens=max_tokens,
+        context_window=window,
+    )
+    return build_console_first_request_plan(
+        shared_registry=registry,
+        shared_allowed_tools=allowed,
+        context={},
+        skills_present=False,
+        mcp_provider=None,
+        builtin_gate=None,
+        local_provider=None,
+        library_provider=None,
+        library_authority=None,
+        workspace_id=None,
+        ephemeral=False,
+        diff_sink=None,
+        scratch_root=None,
+        scratch_lease=None,
+        resolution=resolution,
+        fallback_model=model,
+        session_system_prompt=session_system_prompt,
+        native_tools=native_tools,
+        turn_skill_bindings=(),
+        turn_bundle_block="",
+        install_skill_enabled=True,
+        run_skill_script_enabled=True,
+        fork_chat_enabled=True,
+        new_chat_enabled=True,
+        worktree_merge_enabled=True,
+        agent_messages=[{"role": "user", "content": message}],
+        fleet_max_live=fleet_max_live,
+    )
+
+
+def _system_content(plan) -> str:
+    schemas = [*plan.schemas.runtime_schemas, *plan.schemas.active_schemas]
+    protocol = render_tool_protocol(schemas)
+    prompt = plan.schemas.system_prompt
+    return f"{prompt}\n\n{protocol}" if protocol else prompt
+
+
+@pytest.mark.parametrize(
+    "provider", ["llama_cpp", "custom-openai-api", "custom-hosted", "ollama"]
+)
+def test_an_unverified_window_never_licenses_the_full_agent_preamble(provider) -> None:
+    """The shipped first-run shape: llama.cpp, a model no catalog knows, the
+    32,000-token application fallback, max_tokens 4,096. A Custom
+    OpenAI-compatible endpoint (the handler key, or the engine's
+    ``custom-hosted``) is self-hosted too."""
+
+    plan = _plan(
+        ContextWindowResolution(32000, "application fallback", False),
+        provider=provider,
+    )
+
+    content = _system_content(plan)
+    # A llama-server started with -c 4096 must be able to take it with room
+    # for the reply: the live failure was 4,730 tokens (~20.8 KB).
+    from tldw_chatbook.Utils.token_counter import count_tokens_messages
+
+    assert (
+        count_tokens_messages(
+            [
+                {"role": "system", "content": content},
+                {"role": "user", "content": "Reply with just: hi"},
+            ],
+            _MODEL,
+            provider=provider,
+        )
+        + 1024
+        <= 4096
+    )
+    assert {s.name for s in plan.schemas.runtime_schemas} == {
+        "find_tools",
+        "load_tools",
+        "read_agent_messages",
+    }
+    assert plan.schemas.active_schemas == ()
+    assert plan.schemas.request_fits
+    assert plan.schemas.system_prompt.startswith(_SESSION_PROMPT)
+
+
+@pytest.mark.parametrize("session_prompt", [None, "", "   "])
+def test_a_tool_less_request_with_the_system_prompt_off_carries_no_tool_talk(
+    session_prompt,
+) -> None:
+    """Review round 2 (V2-F2), live g5-v2-local: with the session prompt off
+    (the post-setup default) the tool-less request fell back to the agent's
+    operating prompt -- 'call exactly one tool per reply using the fenced
+    protocol described below ... Use spawn_subagent' -- with no tools and no
+    protocol below it, inviting a small model to fake tool calls."""
+    plan = _plan(
+        ContextWindowResolution(512, "server metadata", True),
+        max_tokens=128,
+        session_system_prompt=session_prompt,
+    )
+
+    assert plan.schemas.runtime_schemas == ()
+    assert plan.schemas.active_schemas == ()
+    content = _system_content(plan)
+    for tool_talk in ("tool", "protocol", "fence", "spawn_subagent", "sub-task"):
+        assert tool_talk not in content.lower(), content
+    assert content.strip(), "a neutral one-liner, never an empty system row"
+
+
+def test_a_detected_small_window_plans_against_the_server_value() -> None:
+    """llama.cpp reported n_ctx 4096 through /props: the planner uses it,
+    not the 32,000-token fallback."""
+
+    plan = _plan(
+        ContextWindowResolution(4096, "server metadata", True), max_tokens=1024
+    )
+
+    assert {s.name for s in plan.schemas.runtime_schemas} == {
+        "find_tools",
+        "load_tools",
+        "read_agent_messages",
+    }
+    assert plan.schemas.request_fits
+
+
+def test_a_verified_large_window_keeps_the_agent_tools() -> None:
+    """A model the catalog knows to be large keeps its tools: the fix sizes
+    the preamble, it does not remove agent features."""
+
+    plan = _plan(ContextWindowResolution(1_047_576, "model catalog", True))
+
+    names = {schema.name for schema in plan.schemas.runtime_schemas} | {
+        schema.name for schema in plan.schemas.active_schemas
+    }
+    assert "spawn_subagent" in names
+    assert any(name.startswith("notes_tool_") for name in names) or (
+        "find_tools" in names
+    )
+
+
+@pytest.mark.parametrize("window", [None])
+def test_callers_without_a_window_keep_the_legacy_plan(window) -> None:
+    """Sub-agents and other callers pass no resolution window; their plans
+    are unchanged by this fix."""
+
+    plan = _plan(window)
+
+    assert plan.schemas.runtime_schemas, "legacy planning still discloses tools"
+
+
+def test_a_long_message_to_an_unverified_window_is_not_refused_by_the_planner() -> None:
+    """The conservative window only shapes tool disclosure. Whether a long
+    message fits a window nobody verified is the send preflight's call: the
+    earlier live slow-model run sent a ~4,400-token prompt to a server that
+    took it, and the planner must not refuse that first request."""
+
+    long_message = "Summarize this paragraph about rivers and their banks. " * 400
+    plan = _plan(
+        ContextWindowResolution(32000, "application fallback", False),
+        message=long_message,
+    )
+
+    assert plan.schemas.runtime_schemas == ()
+    assert plan.schemas.active_schemas == ()
+    assert plan.schemas.request_fits
+
+
+@pytest.mark.parametrize(
+    ("provider", "model", "tokens", "source"),
+    [
+        # Review round 1 (F1): the live Anthropic run used claude-sonnet-5-5,
+        # which no catalog row names -- a provider fallback of 200,000.
+        ("anthropic", "claude-sonnet-5-5", 200_000, "provider fallback"),
+        ("google", "gemini-9-pro", 30_720, "provider fallback"),
+        # A hosted provider with no fallback row lands on the application
+        # default; the base planned that as 32,000 too.
+        ("deepseek", "deepseek-chat-v9", 32_000, "application fallback"),
+    ],
+)
+def test_a_hosted_model_outside_the_catalog_keeps_its_tools_on_the_first_send(
+    provider, model, tokens, source
+) -> None:
+    """The 4,096-token guess is for a self-hosted server whose ``-c`` nobody
+    read. A hosted model the catalog has not caught up with is not a small
+    local server: planning it as 4,096 tokens removed every agent tool from
+    its first send, and later sends got them back once a probe verified the
+    window. It is planned against the provider's own window, as before."""
+
+    plan = _plan(
+        ContextWindowResolution(tokens, source, False),
+        provider=provider,
+        model=model,
+    )
+
+    names = {schema.name for schema in plan.schemas.runtime_schemas} | {
+        schema.name for schema in plan.schemas.active_schemas
+    }
+    assert "spawn_subagent" in names, sorted(names)
+    assert plan.schemas.request_fits
+
+
+@pytest.mark.parametrize("verified", [False, True], ids=["unknown", "verified"])
+@pytest.mark.parametrize("native", [False, True], ids=["fence", "native"])
+def test_compact_discovery_survives_full_runtime_budget_failure(verified, native):
+    plan = _plan(
+        ContextWindowResolution(4096, "probe", verified),
+        max_tokens=1024,
+        native_tools=native,
+        provider="openai" if native else "llama_cpp",
+    )
+    names = {schema.name for schema in plan.schemas.runtime_schemas}
+    assert {"find_tools", "load_tools", "read_agent_messages"} <= names
+    assert names == {"find_tools", "load_tools", "read_agent_messages"}
+    assert plan.schemas.active_schemas == ()
+    assert plan.schemas.offer_find_load
+    assert not plan.schemas.log_active
+    assert plan.schemas.request_fits
+    assert plan.schemas.system_prompt.startswith(_SESSION_PROMPT)
+    assert "spawn_subagent" not in plan.schemas.system_prompt
+
+
+@pytest.mark.parametrize("compact", [False, True], ids=["plain", "compact"])
+def test_service_keeps_the_planned_surface_with_a_live_progress_inbox(
+    tmp_path, compact
+):
+    from Tests.Agents.test_agent_service import ScriptedChat, fence
+    from tldw_chatbook.Agents.agent_service import AgentService
+    from tldw_chatbook.Agents.fleet_messages import MessageStore
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    # The plain arm plans a 384-token input budget. TASK-34100.5.3 plans
+    # within the Console gateway's ceiling (window - reply - max(512,
+    # window/50)), so that budget needs a 1,024-token window: a 512-token
+    # one leaves the gateway no input at all (512 - 128 - 512 < 0).
+    plan = _plan(
+        ContextWindowResolution(4096 if compact else 1024, "server metadata", True),
+        max_tokens=1024 if compact else 128,
+    )
+    replies = (
+        [
+            fence("find_tools", {"query": "notes_tool_0"}),
+            fence("load_tools", {"ids": ["mcp:notes_tool_0"]}),
+            fence("notes_tool_0", {}),
+        ]
+        if compact
+        else []
+    ) + ["done"]
+    chat = ScriptedChat(replies)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="compact-plan")
+    service = AgentService(
+        db=db,
+        registry=plan.registry,
+        chat_call=chat,
+        message_inbox=MessageStore().open_inbox("c"),
+    )
+    try:
+        _, outcome = service.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "Describe the project"}],
+            config=plan.config,
+            api_endpoint="llama_cpp",
+            first_request_schema_plan=plan.schemas,
+        )
+        assert outcome.status == "done"
+        first = chat.calls[0]["messages_payload"][0]["content"]
+        if compact:
+            assert "find_tools" in first and "load_tools" in first
+            assert "spawn_subagent" not in first
+            results = [s for s in outcome.steps if s.kind == "tool_result"]
+            assert [s.tool_name for s in results] == [
+                "find_tools",
+                "load_tools",
+                "notes_tool_0",
+            ]
+            assert all(s.tool_outcome == "success" for s in results)
+        else:
+            assert plan.schemas.runtime_schemas == ()
+            assert plan.schemas.active_schemas == ()
+            assert "read_agent_messages" not in first
+            assert "find_tools" not in first
+            assert "load_tools" not in first
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("native", [False, True], ids=["fence", "native"])
+def test_compact_discovery_does_not_load_a_schema_beyond_its_input_budget(
+    tmp_path, monkeypatch, native
+):
+    from dataclasses import replace
+    from Tests.Agents.test_agent_service import ScriptedChat, fence, native_call
+    from tldw_chatbook.Agents.agent_service import AgentService
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    original = _BuiltinLikeProvider.load_schema
+
+    def large_schema(self, tool_id):
+        schema = original(self, tool_id)
+        return replace(schema, description="oversized schema " * 5000)
+
+    monkeypatch.setattr(_BuiltinLikeProvider, "load_schema", large_schema)
+    provider = "openai" if native else "llama_cpp"
+    plan = _plan(
+        ContextWindowResolution(4096, "server metadata", True),
+        max_tokens=1024,
+        native_tools=native,
+        provider=provider,
+    )
+    call = (
+        {
+            "content": None,
+            "tool_calls": [native_call("load_tools", {"ids": ["notes_tool_0"]})],
+        }
+        if native
+        else fence("load_tools", {"ids": ["notes_tool_0"]})
+    )
+    chat = ScriptedChat([call, "done"])
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="compact-budget")
+    try:
+        service = AgentService(db=db, registry=plan.registry, chat_call=chat)
+        _, outcome = service.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "Inspect"}],
+            config=plan.config,
+            api_endpoint=provider,
+            first_request_schema_plan=plan.schemas,
+        )
+        assert ("tools" in chat.calls[0]) is native
+        result = next(s for s in outcome.steps if s.kind == "tool_result")
+        assert result.result == "not loaded (request budget): notes_tool_0"
+        assert "oversized schema" not in str(chat.calls[-1])
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("native", [False, True], ids=["fence", "native"])
+@pytest.mark.parametrize("addition", ["startup", "late-inbox"])
+def test_compact_request_budget_survives_runtime_context_additions(
+    tmp_path, native, addition
+):
+    from dataclasses import replace
+    from hashlib import sha256
+    from Tests.Agents.test_agent_service import ScriptedChat
+    from Tests.Chat.test_console_agent_project_instructions import _candidate
+    from tldw_chatbook.Agents.agent_service import AgentService, ModelRequest
+    from tldw_chatbook.Agents.fleet_messages import MessageStore
+    from tldw_chatbook.Chat.console_prepared_request import resolve_request_capacity
+
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    provider = "openai" if native else "llama_cpp"
+    message = (
+        "Repository workflow guidance. " * 650
+        if addition == "late-inbox"
+        else "Reply with just: hi"
+    )
+    # A 3,072-token compact budget. TASK-34100.5.3 plans within the Console
+    # gateway's ceiling (window - reply - max(512, window/50)), so that
+    # budget needs a 4,608-token window; on a 4,096 one the gateway accepts
+    # 2,560 and refuses the late-inbox message (~2,616 tokens) outright.
+    plan = _plan(
+        ContextWindowResolution(4608, "server metadata", True),
+        max_tokens=1024,
+        native_tools=native,
+        provider=provider,
+        message=message,
+        fleet_max_live=1 if addition == "late-inbox" else 4,
+    )
+    assert plan.schemas.request_fits
+    assert plan.schemas.schema_input_budget_tokens == 3072
+    # The ceiling a compact plan carries through runtime additions is the
+    # gateway's own, so nothing it admits is refused at send.
+    assert (
+        plan.schemas.schema_input_budget_tokens
+        == resolve_request_capacity(
+            context_window_tokens=4608, requested_response_tokens=1024
+        ).effective_input_ceiling_tokens
+    )
+    candidate = None
+    if addition == "startup":
+        candidate = _candidate(tmp_path)
+        body = "Repository documentation and workflow guidance. " * 650
+        candidate = replace(
+            candidate,
+            source=replace(
+                candidate.source,
+                body=body,
+                byte_count=len(body.encode()),
+                digest=sha256(body.encode()).hexdigest(),
+            ),
+        )
+    chat = ScriptedChat(["done"])
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="compact-additions")
+    service = AgentService(
+        db=db,
+        registry=plan.registry,
+        chat_call=chat,
+        startup_instruction_candidate=candidate,
+        confirm_project_instruction_dispatch=lambda snapshot: "proceed",
+        message_inbox=MessageStore().open_inbox("c")
+        if addition == "late-inbox"
+        else None,
+    )
+    try:
+        _, outcome = service.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": message}],
+            config=plan.config,
+            api_endpoint=provider,
+            first_request_schema_plan=plan.schemas,
+        )
+        assert outcome.status == "done"
+        call = chat.calls[0]
+        assert ("tools" in call) is native
+        assert service._project_instruction_request_fits(
+            plan.config,
+            provider,
+            ModelRequest(tuple(call["messages_payload"]), tuple(call.get("tools", ()))),
+            input_budget_tokens=plan.schemas.schema_input_budget_tokens,
+        )
+        if addition == "startup":
+            assert not service._startup_instruction_snapshot.primary_delivery.source_digests
+            assert (
+                "omitted_token_budget"
+                in service._startup_instruction_snapshot.warning_codes
+            )
+        else:
+            assert "read_agent_messages" not in str(call)
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize(
+    ("tokens", "source", "verified", "provider"),
+    [
+        (8_192, "model catalog", True, "openai"),
+        (8_192, "server metadata", True, "llama_cpp"),
+        (1_047_576, "model catalog", True, "openai"),
+        # A hosted model's unverified provider fallback is planned as is.
+        (200_000, "provider fallback", False, "anthropic"),
+    ],
+)
+def test_a_window_planned_as_is_leaves_the_gateways_safety_margin(
+    tokens, source, verified, provider
+) -> None:
+    """TASK-34100.5.3 review round 2 (V2-2, R2-1): the planner kept tools
+    whenever the request fit ``window - reply reserve``; the Console gateway
+    refuses anything over ``window - reply reserve - safety margin``. So the
+    planner chose surfaces the gateway then refused -- live, Full agent tools
+    on gpt-4 (8k) failed every send with "(4033 > 3584)". A window planned
+    as is now leaves exactly the gateway's ceiling for the request."""
+    from tldw_chatbook.Agents.first_request_window import planning_window
+    from tldw_chatbook.Chat.console_prepared_request import resolve_request_capacity
+
+    window = ContextWindowResolution(tokens, source, verified)
+
+    limit, reserve = planning_window(window, 4096, provider=provider)
+
+    ceiling = resolve_request_capacity(
+        context_window_tokens=tokens,
+        requested_response_tokens=4096,
+        context_window_verified=verified,
+    ).effective_input_ceiling_tokens
+    assert limit == tokens
+    assert limit - reserve == ceiling

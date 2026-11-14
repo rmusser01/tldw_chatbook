@@ -261,7 +261,7 @@ What changes:
     provider and model would resolve (`build_default_console_session_settings`).
     That is the full saved default chain, in precedence order: the model profile,
     the saved Console provider defaults (`[console.provider_defaults.<provider>]`),
-    any applicable extra sources (ADR-147 registry params), `chat_defaults`, and
+    any applicable extra sources (ADR-344 registry params), `chat_defaults`, and
     then the raw provider settings.
   - It uses the controller's existing rebase path, and carries over no
     deliberate edits.

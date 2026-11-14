@@ -5,9 +5,10 @@ the PAYLOAD layer (``build_hosted_chat_payload``). Both port their
 ``LLM_Calls/zai.py`` counterparts, parameterized by a
 ``provider_registry.ProviderRecord`` preset instead of hardcoded Z.ai
 constants: error copy is ``record.display_name``-prefixed, provider identity
-is ``record.key``, env candidates are ``record.api_key_env_candidates``,
-numeric/streaming defaults come from ``record.settings_defaults``, and the
-payload surface is gated by ``record.payload_flags``.
+is ``record.key``, the default key variable is ``record.api_key_env_var``
+(read through readiness's resolver), numeric/streaming defaults come from
+``record.settings_defaults``, and the payload surface is gated by
+``record.payload_flags``.
 
 Deliberate divergences from the zai template (spec: Generic hosted provider
 engine and presets design, "Data flow" step 2):
@@ -28,13 +29,15 @@ engine and presets design, "Data flow" step 2):
   payload layer; a user-supplied blank model still fails closed here.
 - Credentials and endpoint are resolved before the model so missing-key and
   missing-URL errors surface with their actionable copy first.
-- Credential precedence follows the repo rule (env vars -> config.toml ->
-  defaults; Qodo finding 4): the env chain beats a USABLE stored
-  ``api_key``, while a present-but-unusable stored key still fails closed.
-  zai/moonshot keep their own legacy stored-key-first order.
+- Credential precedence follows ADR-012 (TASK-36941.3): a caller key, then
+  readiness's own ``resolve_provider_credential`` -- a recorded
+  ``credential_source`` decides, and with none recorded the stored
+  ``api_key`` outranks the environment variable -- so a call with no caller
+  key spends the key readiness reports. A present-but-unusable stored key
+  the source reads still fails closed.
 - ``record.auth_scheme`` gates credential strictness (Phase 2, Task 3):
   ``"bearer"`` (the default) keeps the hard key requirement, while
-  ``"bearer_optional"`` lets keyless endpoints (ADR-146 custom endpoints)
+  ``"bearer_optional"`` lets keyless endpoints (ADR-343 custom endpoints)
   execute -- an unresolved chain yields ``api_key == ""`` and the transport
   sends no Authorization header at all. ``"api_key_header"`` is Phase 3.
 
@@ -129,18 +132,22 @@ from pydantic import (
     field_validator,
 )
 
-from tldw_chatbook.Chat.Chat_Deps import ChatBadRequestError, ChatProviderError
-from tldw_chatbook.Chat.provider_continuation import (
+from tldw_chatbook.Provider_Contract import ChatBadRequestError, ChatProviderError
+from tldw_chatbook.Provider_Contract.provider_continuation import (
     ContinuationCall,
     ContinuationRestoreTarget,
     ContinuationRound,
     ProviderContinuationCheckpoint,
     dump_provider_continuation_json,
     parse_provider_continuation_json,
-    validate_continuation_restore,
+    validate_continuation_execution_target,
 )
-from tldw_chatbook.Chat.provider_readiness import configured_workspace_base_url
-from tldw_chatbook.Chat.sampling_params import REASONING_EFFORT_VALUES
+from tldw_chatbook.Chat.provider_readiness import (
+    configured_provider_credential_source,
+    configured_workspace_base_url,
+    resolve_provider_credential,
+)
+from tldw_chatbook.Provider_Contract.sampling_params import REASONING_EFFORT_VALUES
 from tldw_chatbook.LLM_Calls.hosted_chat import (
     HostedChatProtocolError,
     HostedChatStream,
@@ -460,6 +467,7 @@ def resolve_hosted_request(
         record,
         explicit=explicit_api_key,
         settings=settings,
+        settings_key=settings_key,
         environ=environment,
         resolved=api_key_resolved,
     )
@@ -603,6 +611,7 @@ def _resolve_api_key(
     *,
     explicit: object,
     settings: Mapping[str, object],
+    settings_key: str,
     environ: Mapping[str, str],
     resolved: bool | None = None,
 ) -> str:
@@ -615,17 +624,18 @@ def _resolve_api_key(
     ``bearer_optional`` records (the transport then sends no Authorization
     header at all) and still fails closed for strict ``bearer`` records.
 
-    Otherwise the chain follows the repo precedence rule (env vars ->
-    config.toml -> defaults; Qodo finding 4): explicit, then the env
-    candidates (the configured name plus the record's canonical
-    candidates), then the stored settings ``api_key``. A present-but-
-    unusable stored key still fails closed with the settings-path error
-    even when the environment would have won -- a placeholder the user
-    typed is surfaced, never silently shadowed.
+    Otherwise a usable explicit key wins, and then readiness's
+    ``resolve_provider_credential`` decides from the ``settings_key`` table
+    (ADR-012): a recorded ``credential_source`` decides ("none" no key,
+    "stored" the table's key, "environment" the variable the table names);
+    with none recorded the stored ``api_key`` outranks the variable. A
+    present-but-unusable stored key fails closed with the settings-path
+    error whenever the recorded source reads it (no source, or "stored") --
+    a placeholder the user typed is surfaced, never silently shadowed.
 
     ``"bearer"`` (the default) hard-requires a key: an unusable explicit or
     stored value, or an unresolved env chain, is an actionable configuration
-    error. ``"bearer_optional"`` lets keyless endpoints (ADR-146) execute:
+    error. ``"bearer_optional"`` lets keyless endpoints (ADR-343) execute:
     an explicit blank string is "no key" (not an invalid one) and falls
     through to the settings/env chain, and an unresolved chain resolves to
     ``""`` -- the transport then sends no Authorization header at all.
@@ -651,45 +661,28 @@ def _resolve_api_key(
             )
         # bearer_optional: an explicit blank ("no key configured") defers to
         # the settings/env chain instead of winning with an unusable value.
-    # Precedence (repo rule: env vars -> config.toml -> defaults; Qodo
-    # finding 4): a present-but-unusable stored key still fails closed
-    # first -- a placeholder the user typed is an error to surface, never a
-    # value to silently shadow -- but between two USABLE credentials the
-    # environment now beats the stored settings key.
-    stored_key: str | None = None
-    if "api_key" in settings:
-        # Pydantic boundary: type failures surface with the stored-key copy
-        # the placeholder check below already raised.
-        stored_key = resolve_provider_api_key(
-            _typed_setting(record, settings, "api_key")
-        )
-        if stored_key is None:
-            raise validators.configuration_error(
-                f"{record.display_name} api_settings.{record.key}.api_key is invalid."
-            )
-    env_name: object = record.api_key_env_var
-    if "api_key_env_var" in settings:
-        # Pydantic boundary: a non-string, non-None configured name keeps
-        # its existing fail-closed copy.
-        env_name = _typed_setting(record, settings, "api_key_env_var")
-    names: tuple[str, ...] = ()
-    if isinstance(env_name, str):
-        if env_name.strip():
-            names = (env_name.strip(),)
-        # A blank name is "no name set", not an invalid one: a keyless
-        # preset ships neither a name nor candidates, so the name-validity
-        # check is skipped and the record's shipped candidates still run.
-    elif env_name is not None:
+    # ADR-012 (TASK-36941.3): readiness's resolver picks the key, so a call
+    # with no caller key spends the key readiness reports -- except that a
+    # present-but-unusable stored key fails closed wherever the recorded
+    # source reads it, where readiness skips it and reports the variable.
+    # A placeholder the user typed is an error to surface, never a value to
+    # silently shadow. "none" and "environment" never read it.
+    if (
+        "api_key" in settings
+        and configured_provider_credential_source(settings) in (None, "stored")
+        # Pydantic boundary: a non-string key raises the same copy.
+        and resolve_provider_api_key(_typed_setting(record, settings, "api_key"))
+        is None
+    ):
         raise validators.configuration_error(
-            f"{record.display_name} api_settings.{record.key}.api_key_env_var "
-            "is invalid."
+            f"{record.display_name} api_settings.{record.key}.api_key is invalid."
         )
-    for candidate in dict.fromkeys((*names, *record.api_key_env_candidates)):
-        env_key = resolve_provider_api_key(environ.get(candidate))
-        if env_key is not None:
-            return env_key
-    if stored_key is not None:
-        return stored_key
+    # Pydantic boundary: a non-string, non-None configured name keeps its
+    # existing fail-closed copy.
+    _typed_setting(record, settings, "api_key_env_var")
+    api_key = resolve_provider_credential(settings_key, settings, environ=environ)[0]
+    if api_key is not None:
+        return api_key
     if optional:
         return ""
     raise validators.configuration_error(
@@ -950,7 +943,7 @@ def build_hosted_chat_payload(
         logprobs: Boolean logprob request; requires its flag.
         top_logprobs: Count in [0, 20]; requires ``logprobs`` and its flag.
         thinking_budget_tokens: Positive thinking budget; requires its flag.
-            Accepted-and-dropped per the ADR-066 custom row (the record's
+            Accepted-and-dropped per the ADR-311 custom row (the record's
             reasoning composition decides emission; the custom family drops
             it so strict OpenAI proxies never see llama.cpp-specific fields).
         **_generic: Unknown keywords are ignored (one shared per-provider
@@ -1080,7 +1073,7 @@ def build_hosted_chat_payload(
         validators.positive_integer(
             "thinking_budget_tokens", thinking_budget_tokens
         )
-        # ADR-066 composition is record data: only a record whose
+        # ADR-311 composition is record data: only a record whose
         # composition consumes a budget emits one. Today every engine
         # record follows the custom row (accepted, validated, dropped).
         logger.debug(
@@ -1097,9 +1090,16 @@ def build_hosted_chat_payload(
     if reasoning_effort is not None:
         toggle_key = thinking_toggle_key(record, resolution.model)
         if record.reasoning_effort:
-            payload[record.reasoning_effort_key or "reasoning_effort"] = (
-                _bounded_identifier(record, "reasoning effort", reasoning_effort)
-            )
+            level = _bounded_identifier(record, "reasoning effort", reasoning_effort)
+            level = record.reasoning_effort_map.get(level, level)
+            if (
+                record.reasoning_effort_values is not None
+                and level not in record.reasoning_effort_values
+            ):
+                raise bad_request(
+                    f"{record.display_name} does not accept that reasoning effort level."
+                )
+            payload[record.reasoning_effort_key or "reasoning_effort"] = level
         elif toggle_key is not None:
             # A boolean switch cannot pass an unknown level through for the
             # provider to reject, so validate against the shared set (Qodo).
@@ -1166,7 +1166,12 @@ def _normalize_messages(
             if call_id != pending_ids[0] or not isinstance(content, str):
                 raise bad_request(f"{display} tool result ordering is invalid.")
             pending_ids.pop(0)
-            result.append(deepcopy(dict(raw_message)))
+            # Tool-result messages carry exactly {role, tool_call_id,
+            # content}, and every leaf was validated immutable (role and
+            # tool_call_id equal validated strings, content a string), so
+            # a fresh shallow dict fully isolates the payload from the
+            # caller-owned message (perf remediation, wave 3).
+            result.append(dict(raw_message))
             continue
         if pending_ids:
             raise bad_request(f"{display} tool call batch is incomplete.")
@@ -1229,7 +1234,21 @@ def _normalize_tools(
         ):
             raise bad_request(f"{display} function tool is malformed.")
         names.add(name)
-        result.append(deepcopy(dict(raw_tool)))
+        # Fresh dicts at the type/function levels (name/description are
+        # validated strings); ``parameters`` is a caller-owned JSON schema
+        # whose leaves may nest arbitrarily, so exactly that key path
+        # keeps its deepcopy (perf remediation, wave 3 -- pinned by
+        # Tests/LLM_Calls/test_hosted_streaming_copy_tax.py).
+        result.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": function["description"],
+                    "parameters": deepcopy(parameters),
+                },
+            }
+        )
     return result
 
 
@@ -1261,7 +1280,7 @@ def _apply_continuations(
     cursor = 0
     for checkpoint in checkpoints:
         try:
-            validate_continuation_restore(
+            validate_continuation_execution_target(
                 checkpoint,
                 ContinuationRestoreTarget(
                     provider=record.key,
@@ -1666,6 +1685,7 @@ def normalize_hosted_provider_response(
             allowed_choice_keys=record.choice_allowances,
             allowed_message_keys=record.message_allowances,
             tolerant_top_level_extras=record.tolerant_response_extras,
+            allowed_tool_call_keys=record.tool_call_allowances,
         )
     except ChatProviderError:
         raise
@@ -1724,11 +1744,18 @@ class HostedProviderStream(Iterator[dict[str, Any]]):
     def __next__(self) -> dict[str, Any]:
         """Return the next visible chunk.
 
-        The underlying validated event is deep-copied and projected for
-        visibility: ``reasoning_content`` is stripped from deltas unless
-        the record's disposition is ``"displayable"``, and reasoning/
-        control frames carry an explicit empty ``content`` so generic
-        consumers do not render fallback diagnostics.
+        The underlying validated event is projected for visibility:
+        ``reasoning_content`` is stripped from deltas unless the record's
+        disposition is ``"displayable"``, and reasoning/control frames
+        carry an explicit empty ``content`` so generic consumers do not
+        render fallback diagnostics.
+
+        No copy is taken here: the boundary stream parses each SSE record
+        fresh and its ``_filtered_event`` chain already returns newly
+        allocated dicts at every level (validated immutable leaves), so
+        mutating the deltas below only touches this wrapper's own frame.
+        The isolation contract is pinned by
+        ``Tests/LLM_Calls/test_hosted_streaming_copy_tax.py``.
 
         Returns:
             One caller-visible stream event.
@@ -1738,7 +1765,7 @@ class HostedProviderStream(Iterator[dict[str, Any]]):
                 or state violation, propagated from the shared boundary.
             StopIteration: After the clean terminal frame.
         """
-        event = deepcopy(next(self._stream))
+        event = next(self._stream)
         for choice in event.get("choices", ()):
             if isinstance(choice, dict) and isinstance(choice.get("delta"), dict):
                 delta = choice["delta"]
@@ -2081,6 +2108,18 @@ def build_hosted_chat_handler(
     return chat_with_hosted_provider
 
 
+def _engine_read_timeout(record: ProviderRecord, configured: float) -> float:
+    """A self-hosted record's read timeout outlasts the first-token window.
+
+    TASK-34100.5 review (B-F1): see ``self_hosted_read_timeout``.
+    """
+    if record.classification != "local":
+        return configured
+    from tldw_chatbook.Chat.stream_stall_watchdog import self_hosted_read_timeout
+
+    return self_hosted_read_timeout(configured)
+
+
 def _send_hosted_chat_request(
     record: ProviderRecord,
     *,
@@ -2159,11 +2198,15 @@ def _send_hosted_chat_request(
                 provider=record.key,
                 base_url=resolution.base_url,
                 api_key=resolution.api_key,
-                timeout=resolution.timeout,
+                timeout=_engine_read_timeout(record, resolution.timeout),
                 retries=resolution.retries,
                 retry_delay=resolution.retry_delay,
                 auth_scheme=record.auth_scheme,
                 extra_headers=resolution.extra_headers,
+                display_name=record.display_name,
+                retry_without_stream_options=(
+                    record.tolerant_response_extras or record.stream_usage_optional
+                ),
             ),
             route="chat/completions",
             payload=payload,

@@ -4,6 +4,7 @@ import threading
 from dataclasses import replace
 from types import SimpleNamespace
 
+import pytest
 from loguru import logger
 
 from tldw_chatbook.Persona_Buddy.preferences import (
@@ -13,6 +14,8 @@ from tldw_chatbook.Persona_Buddy.preferences import (
     parse_persona_buddy_preferences,
     serialize_persona_buddy_preferences,
 )
+
+pytestmark = pytest.mark.bootstrap_profile
 
 
 def test_unclaimed_migration_commits_before_first_controller_can_read(monkeypatch):

@@ -1,0 +1,29 @@
+{
+  "baseRefName": "dev",
+  "headRefName": "codex/textual-book-followups-after-3247",
+  "headRefOid": "42243f8efcfd40996051c3359bfd3599fbc4d1f1",
+  "mergeCommit": {
+    "oid": "7a5e2513c5d7e00ef57f3d19cd8e81a01e006d05"
+  },
+  "mergedAt": "2026-10-25T23:15:01Z",
+  "state": "MERGED",
+  "url": "https://github.com/rmusser01/tldw_chatbook/pull/3248",
+  "audited_dev": "7a5e2513c5d7e00ef57f3d19cd8e81a01e006d05",
+  "merge_tree": "e0be2ad598d08036ea38c9c48c071d702adb5dd6",
+  "tested_tree": "e0be2ad598d08036ea38c9c48c071d702adb5dd6",
+  "parents": [
+    "b166a47c41d458d0789df5468f7b86c28eb1ce9a",
+    "42243f8efcfd40996051c3359bfd3599fbc4d1f1"
+  ],
+  "review_method": "Existing Superpowers requesting-code-review plus patch-identical rebase; user replaced Qodo.",
+  "queue_mode": "on",
+  "merge_method": "Queue-owned auto-merge",
+  "rebase_base": "b166a47c41d458d0789df5468f7b86c28eb1ce9a",
+  "final_review_check": {
+    "checked_utc": "2026-10-25T23:16:41.368668+00:00",
+    "head": "42243f8efcfd40996051c3359bfd3599fbc4d1f1",
+    "state": "MERGED",
+    "github_review_submissions": 0,
+    "unresolved_threads": 0
+  }
+}

@@ -54,6 +54,7 @@ _ARGUMENTS_BY_OPERATION: dict[str, dict[str, Any]] = {
         "new_string": "after",
         "sensitive_exclusions": [],
     },
+    "fs_mkdir": {"path": "new/dir", "sensitive_exclusions": []},
     "fs_patch": {
         "diff": "--- a/file\n+++ b/file\n",
         "sensitive_exclusions": [],
@@ -73,7 +74,7 @@ _ARGUMENTS_BY_OPERATION: dict[str, dict[str, Any]] = {
     "ping": {},
 }
 
-_WRITE_OPERATIONS = frozenset({"fs_write", "fs_edit", "fs_patch"})
+_WRITE_OPERATIONS = frozenset({"fs_write", "fs_edit", "fs_mkdir", "fs_patch"})
 
 
 def _valid_request_payload() -> dict[str, Any]:

@@ -1,0 +1,4 @@
+{
+  "sha256": "869c806048d786a589c3df9c3bf0ce4de2eaab0d7731116f677e3dae3106b2d1",
+  "raw_text": "...............                                                          [100%]\n============================= slowest 25 durations =============================\n2.91s setup    Tests/UI/test_console_first_send_preimport.py::test_no_warm_up_step_loads_a_third_party_package_it_does_not_name\n\n(24 durations < 1s hidden.)\n15 passed, 8 deselected in 4.12s\n"
+}

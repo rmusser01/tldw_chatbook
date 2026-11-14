@@ -1,0 +1,174 @@
+{
+  "original": {
+    "reads": 6,
+    "median_read_ms": 151.78794999519596,
+    "median_max_loop_overshoot_ms": 142.07705000648275,
+    "max_loop_overshoot_ms": 183.45520000206307,
+    "main_thread_context_admission_samples": 59,
+    "top_overlapping_main_thread_functions": [
+      [
+        "local_content_lifetime.py",
+        "asynchronous",
+        60
+      ],
+      [
+        "skills_scope_service.py",
+        "_call",
+        60
+      ],
+      [
+        "local_content_lifetime.py",
+        "admitted",
+        60
+      ],
+      [
+        "storage_admission.py",
+        "_acquire_storage",
+        60
+      ],
+      [
+        "skills_scope_service.py",
+        "get_context",
+        60
+      ],
+      [
+        "storage_admission.py",
+        "acquire_storage",
+        60
+      ],
+      [
+        "skill.py",
+        "_fetch_console_skill_context",
+        60
+      ],
+      [
+        "skills_scope_service.py",
+        "_maybe_await",
+        60
+      ],
+      [
+        "local_content_lifetime.py",
+        "operation",
+        59
+      ],
+      [
+        "windows_files.py",
+        "open_handle",
+        36
+      ],
+      [
+        "control_records.py",
+        "admission_authority",
+        28
+      ],
+      [
+        "windows_files.py",
+        "open",
+        26
+      ],
+      [
+        "private_paths.py",
+        "_open_verified_parent",
+        18
+      ],
+      [
+        "private_paths.py",
+        "_walk_verified_parent",
+        18
+      ],
+      [
+        "bootstrap.py",
+        "pinned_directory",
+        18
+      ]
+    ],
+    "blocked_network_attempts": 0,
+    "real_profile_refusals": 0
+  },
+  "fixed": {
+    "reads": 6,
+    "median_read_ms": 189.1436000005342,
+    "median_max_loop_overshoot_ms": 14.460849999741185,
+    "max_loop_overshoot_ms": 176.6191000008257,
+    "main_thread_context_admission_samples": 0,
+    "top_overlapping_main_thread_functions": [
+      [
+        "wiring.py",
+        "<lambda>",
+        12
+      ],
+      [
+        "chat_screen.py",
+        "_sync_console_settings_summary",
+        8
+      ],
+      [
+        "context_spend.py",
+        "_refresh_settings_summary",
+        8
+      ],
+      [
+        "chat_screen.py",
+        "<lambda>",
+        7
+      ],
+      [
+        "chat_screen.py",
+        "_poll_console_credential_readiness",
+        6
+      ],
+      [
+        "context_spend.py",
+        "_build_console_settings_summary_state",
+        6
+      ],
+      [
+        "console_session_settings.py",
+        "_estimate_tokens_locally",
+        6
+      ],
+      [
+        "token_counter.py",
+        "estimate_tokens",
+        6
+      ],
+      [
+        "token_counter.py",
+        "count_tokens_messages",
+        6
+      ],
+      [
+        "console_session_settings.py",
+        "build_console_context_estimate",
+        6
+      ],
+      [
+        "chat_screen.py",
+        "sync",
+        6
+      ],
+      [
+        "context_spend.py",
+        "_active_console_settings_context_estimate",
+        6
+      ],
+      [
+        "context_spend.py",
+        "_console_settings_context_estimate_for_session",
+        6
+      ],
+      [
+        "token_counter.py",
+        "count_tokens_tiktoken",
+        4
+      ],
+      [
+        "token_counter.py",
+        "get_tiktoken_encoding",
+        4
+      ]
+    ],
+    "blocked_network_attempts": 0,
+    "real_profile_refusals": 0
+  }
+}

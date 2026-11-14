@@ -1,0 +1,451 @@
+{
+  "base": "ba1cafc55dd5ac9b6b1f066c936206e652ed6b65",
+  "moved_declarations": [
+    {
+      "source": "tldw_chatbook/UI/Screens/personas_screen.py",
+      "destination": "tldw_chatbook/Widgets/Persona_Widgets/personas_state.py",
+      "name": "_CharacterTTSControlSnapshot",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Screens/personas_screen.py",
+      "destination": "tldw_chatbook/Widgets/Persona_Widgets/personas_state.py",
+      "name": "_ActorPackExportUIAuthority",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Screens/personas_screen.py",
+      "destination": "tldw_chatbook/Widgets/Persona_Widgets/personas_state.py",
+      "name": "_CharacterTTSAuthorityUnavailable",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Screens/personas_screen.py",
+      "destination": "tldw_chatbook/Widgets/Persona_Widgets/personas_state.py",
+      "name": "_CharacterTTSMixedSnapshot",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Screens/personas_screen.py",
+      "destination": "tldw_chatbook/Widgets/Persona_Widgets/personas_state.py",
+      "name": "_CharacterVisualIdentityLoadSnapshot",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Screens/personas_screen.py",
+      "destination": "tldw_chatbook/Widgets/Persona_Widgets/personas_state.py",
+      "name": "_VisualIdentityPreviewSnapshot",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Screens/personas_screen.py",
+      "destination": "tldw_chatbook/Widgets/Persona_Widgets/personas_state.py",
+      "name": "_VisualIdentityAuthorSnapshot",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Screens/personas_screen.py",
+      "destination": "tldw_chatbook/Widgets/Persona_Widgets/personas_state.py",
+      "name": "_VisualIdentityAuthoringState",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Screens/personas_screen.py",
+      "destination": "tldw_chatbook/Widgets/Persona_Widgets/personas_state.py",
+      "name": "_PersonaVisualAuthorSnapshot",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Screens/personas_screen.py",
+      "destination": "tldw_chatbook/Widgets/Persona_Widgets/personas_state.py",
+      "name": "_PersonaSharedVisualIdentityLoadSnapshot",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Screens/personas_screen.py",
+      "destination": "tldw_chatbook/Widgets/Persona_Widgets/personas_state.py",
+      "name": "_PersonaSharedVisualIdentityAuthorSnapshot",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Screens/personas_screen.py",
+      "destination": "tldw_chatbook/Widgets/Persona_Widgets/personas_state.py",
+      "name": "_PersonaSharedVisualIdentityAuthoringState",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Screens/personas_screen.py",
+      "destination": "tldw_chatbook/Widgets/Persona_Widgets/personas_state.py",
+      "name": "_PersonaVisualAuthoringState",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Screens/personas_screen.py",
+      "destination": "tldw_chatbook/Widgets/Persona_Widgets/personas_state.py",
+      "name": "_CharacterSaveAuthority",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Screens/personas_screen.py",
+      "destination": "tldw_chatbook/Widgets/Persona_Widgets/personas_state.py",
+      "name": "_ActorPackPortraitChoice",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Screens/personas_screen.py",
+      "destination": "tldw_chatbook/Widgets/Persona_Widgets/personas_state.py",
+      "name": "_ActorPackCreateSession",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Screens/personas_screen.py",
+      "destination": "tldw_chatbook/UI/Persona_Modules/personas_preview_coordinator.py",
+      "name": "_DrainedTaskResult",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Screens/personas_screen.py",
+      "destination": "tldw_chatbook/UI/Persona_Modules/personas_preview_coordinator.py",
+      "name": "_drain_async",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Screens/personas_screen.py",
+      "destination": "tldw_chatbook/UI/Persona_Modules/personas_preview_coordinator.py",
+      "name": "_drain_to_thread",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Screens/personas_screen.py",
+      "destination": "tldw_chatbook/UI/Persona_Modules/personas_preview_coordinator.py",
+      "name": "_join_task",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Screens/personas_screen.py",
+      "destination": "tldw_chatbook/UI/Persona_Modules/personas_preview_coordinator.py",
+      "name": "_persona_visual_ui_lifetime",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Screens/personas_screen.py",
+      "destination": "tldw_chatbook/UI/Persona_Modules/personas_preview_coordinator.py",
+      "name": "_visual_identity_ui_lifetime",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Screens/personas_screen.py",
+      "destination": "tldw_chatbook/Widgets/Persona_Widgets/personas_character_tts_widget.py",
+      "name": "_character_tts_availability_map",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Screens/personas_screen.py",
+      "destination": "tldw_chatbook/Widgets/Persona_Widgets/personas_character_tts_widget.py",
+      "name": "_character_tts_presentation_from_snapshot",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Screens/personas_screen.py",
+      "destination": "tldw_chatbook/Widgets/Persona_Widgets/personas_character_tts_widget.py",
+      "name": "_character_tts_profile_tokens",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Screens/personas_screen.py",
+      "destination": "tldw_chatbook/UI/Persona_Modules/character_avatar_helpers.py",
+      "name": "_unbound_persona_shared_visual_identity_metadata",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Screens/personas_screen.py",
+      "destination": "tldw_chatbook/UI/Persona_Modules/character_avatar_helpers.py",
+      "name": "_visual_identity_pack_metadata",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Screens/personas_screen.py",
+      "destination": "tldw_chatbook/UI/Persona_Modules/character_avatar_helpers.py",
+      "name": "_visual_identity_graph_matches_snapshot",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Screens/personas_screen.py",
+      "destination": "tldw_chatbook/UI/Persona_Modules/character_avatar_helpers.py",
+      "name": "_visual_identity_resolution_identity",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Screens/personas_screen.py",
+      "destination": "tldw_chatbook/UI/Persona_Modules/character_avatar_helpers.py",
+      "name": "_visual_identity_direction",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Screens/personas_screen.py",
+      "destination": "tldw_chatbook/UI/Persona_Modules/character_avatar_helpers.py",
+      "name": "_canonical_visual_identity_assets",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Screens/personas_screen.py",
+      "destination": "tldw_chatbook/UI/Persona_Modules/character_avatar_helpers.py",
+      "name": "_actor_pack_portrait_name",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Screens/personas_screen.py",
+      "destination": "tldw_chatbook/UI/Persona_Modules/character_avatar_helpers.py",
+      "name": "_eligible_actor_pack_portraits",
+      "equal_except_original_staticmethod_descriptor": false
+    },
+    {
+      "source": "tldw_chatbook/Widgets/Persona_Widgets/personas_library_pane.py",
+      "destination": "tldw_chatbook/Widgets/Persona_Widgets/roleplay_item_list.py",
+      "name": "option_id_for",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/Widgets/Persona_Widgets/personas_library_pane.py",
+      "destination": "tldw_chatbook/Widgets/Persona_Widgets/roleplay_item_list.py",
+      "name": "LibraryRow",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/Widgets/Persona_Widgets/personas_library_pane.py",
+      "destination": "tldw_chatbook/Widgets/Persona_Widgets/roleplay_item_list.py",
+      "name": "_prompt_content",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/Widgets/Persona_Widgets/personas_library_pane.py",
+      "destination": "tldw_chatbook/Widgets/Persona_Widgets/roleplay_item_list.py",
+      "name": "RoleplayItemList",
+      "equal_except_original_staticmethod_descriptor": false
+    },
+    {
+      "source": "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py",
+      "destination": "tldw_chatbook/UI/Persona_Modules/roleplay_list_window_state.py",
+      "name": "ellipsize_cells",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py",
+      "destination": "tldw_chatbook/UI/Persona_Modules/roleplay_list_window_state.py",
+      "name": "_one_line",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py",
+      "destination": "tldw_chatbook/UI/Persona_Modules/roleplay_list_window_state.py",
+      "name": "plural",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py",
+      "destination": "tldw_chatbook/UI/Persona_Modules/roleplay_list_window_state.py",
+      "name": "relative_age",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py",
+      "destination": "tldw_chatbook/UI/Persona_Modules/roleplay_list_window_state.py",
+      "name": "middle_ellipsize_cells",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py",
+      "destination": "tldw_chatbook/UI/Persona_Modules/roleplay_list_window_state.py",
+      "name": "item_gutter",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py",
+      "destination": "tldw_chatbook/UI/Persona_Modules/roleplay_list_window_state.py",
+      "name": "gutter_mark_columns",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py",
+      "destination": "tldw_chatbook/UI/Persona_Modules/roleplay_list_window_state.py",
+      "name": "item_density",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py",
+      "destination": "tldw_chatbook/UI/Persona_Modules/roleplay_list_window_state.py",
+      "name": "ItemPrompt",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py",
+      "destination": "tldw_chatbook/UI/Persona_Modules/roleplay_list_window_state.py",
+      "name": "build_item_prompt",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py",
+      "destination": "tldw_chatbook/UI/Persona_Modules/roleplay_list_window_state.py",
+      "name": "character_scent",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py",
+      "destination": "tldw_chatbook/UI/Persona_Modules/roleplay_list_window_state.py",
+      "name": "persona_scent",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py",
+      "destination": "tldw_chatbook/UI/Persona_Modules/roleplay_list_window_state.py",
+      "name": "lore_scent",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py",
+      "destination": "tldw_chatbook/UI/Persona_Modules/roleplay_list_window_state.py",
+      "name": "dictionary_scent",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py",
+      "destination": "tldw_chatbook/UI/Persona_Modules/roleplay_list_window_state.py",
+      "name": "items_border_title",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py",
+      "destination": "tldw_chatbook/UI/Persona_Modules/roleplay_list_window_state.py",
+      "name": "loaded_position",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py",
+      "destination": "tldw_chatbook/UI/Persona_Modules/roleplay_list_window_state.py",
+      "name": "hidden_mark_count",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py",
+      "destination": "tldw_chatbook/UI/Persona_Modules/roleplay_list_window_state.py",
+      "name": "MarksBarView",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py",
+      "destination": "tldw_chatbook/UI/Persona_Modules/roleplay_list_window_state.py",
+      "name": "marks_bar_view",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py",
+      "destination": "tldw_chatbook/UI/Persona_Modules/roleplay_list_window_state.py",
+      "name": "DeleteModalCopy",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py",
+      "destination": "tldw_chatbook/UI/Persona_Modules/roleplay_list_window_state.py",
+      "name": "delete_modal_copy",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py",
+      "destination": "tldw_chatbook/UI/Persona_Modules/roleplay_list_window_state.py",
+      "name": "turned_off_toast",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py",
+      "destination": "tldw_chatbook/UI/Persona_Modules/roleplay_list_window_state.py",
+      "name": "NewChoice",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py",
+      "destination": "tldw_chatbook/UI/Persona_Modules/roleplay_list_window_state.py",
+      "name": "new_chooser_options",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py",
+      "destination": "tldw_chatbook/UI/Persona_Modules/roleplay_list_window_state.py",
+      "name": "import_landing",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py",
+      "destination": "tldw_chatbook/UI/Persona_Modules/roleplay_list_window_state.py",
+      "name": "import_landed_toast",
+      "equal_except_original_staticmethod_descriptor": true
+    },
+    {
+      "source": "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py",
+      "destination": "tldw_chatbook/UI/Persona_Modules/roleplay_list_window_state.py",
+      "name": "imported_toast",
+      "equal_except_original_staticmethod_descriptor": true
+    }
+  ],
+  "source_inventory": [
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/session.py",
+      "sha256": "534198dbb4b848e6313578e864c4c90f9ddad93c407789e239b1a1d46b737f81"
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/session_prompt_seed.py",
+      "sha256": "44ec5cae20299960e332655b4225719bbe110ced8f4a7c4ee8c14ba932cbc611"
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/workspace.py",
+      "sha256": "e8ccba9f1e8b1137541f0a5190c3eb5f625572c9d1f5a5a06a18fed18dd16246"
+    },
+    {
+      "path": "tldw_chatbook/UI/Persona_Modules/character_avatar_helpers.py",
+      "sha256": "1e4da9aa1ad5befe1d86c6200e1b5185aee17ceaa08134a757f078713a16feb0"
+    },
+    {
+      "path": "tldw_chatbook/UI/Persona_Modules/personas_preview_coordinator.py",
+      "sha256": "f206f98e555ecb942ccf5d93e2b00707ad047995860e3cecccda9bffe0bb0ef5"
+    },
+    {
+      "path": "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py",
+      "sha256": "26024978045faf76a55dbf05082821fd6365fc553e5239624bccbc11dbb8d36d"
+    },
+    {
+      "path": "tldw_chatbook/UI/Persona_Modules/roleplay_list_window_state.py",
+      "sha256": "f4b1c70b6305b09042bd7c34077495c3ada315c8968fbdd16a8fe6e22c073bbf"
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/personas_screen.py",
+      "sha256": "09a90044b333a69c1c1f42671fdfce28675a17fe381f04cb67ea433890e47527"
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Console/console_selection_geometry.py",
+      "sha256": "ca8e854fb5939652a2c6a7cf2d9ce7aed9a171eebdea88dd784f15c0e9b6a433"
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Console/console_transcript.py",
+      "sha256": "14040558c45f2aaeee8faf4374dc3bbbefed620573de548aedca7f7404caf268"
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Persona_Widgets/personas_character_tts_widget.py",
+      "sha256": "46db52be4759688e94735979deabbdb15d40241c3bf05162801c41014e98e0e3"
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Persona_Widgets/personas_library_pane.py",
+      "sha256": "39d1cdcd555a7cd87c115f5ed35d674fcaf73517c7ee9acbd3f0ae503ee41584"
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Persona_Widgets/personas_state.py",
+      "sha256": "f4bfa89791771de97b67402ed131af5ebdf0c61a782f27472b91f9e3d139a0a9"
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Persona_Widgets/roleplay_item_list.py",
+      "sha256": "cbdedcc4794c9478bd6a5fe684f342883dc64acd35754111506b96ddc3cf2432"
+    },
+    {
+      "path": "tldw_chatbook/Workspaces/display_state.py",
+      "sha256": "520a99b360d49d5a0bf404c680c69caa6df3bda07a16e64ff9f5cca5afac1bc5"
+    }
+  ]
+}

@@ -9,6 +9,7 @@ from a user-configured backend ``base_url`` (e.g. a local SwarmUI/sd.cpp
 server); URLs extracted from a remote API's response body (image links from
 OpenRouter/Novita/ModelStudio) must NOT be trusted and are fully enforced.
 """
+
 from __future__ import annotations
 import os
 from dataclasses import dataclass
@@ -40,7 +41,9 @@ DEFAULT_MAX_REDIRECTS = _int_env("HTTP_MAX_REDIRECTS", 5)
 _DEFAULT_TIMEOUT = 120.0
 
 
-def _validate_egress_or_raise(url: str, *, trusted_origins: frozenset = frozenset()) -> None:
+def _validate_egress_or_raise(
+    url: str, *, trusted_origins: frozenset = frozenset()
+) -> None:
     """Reject a URL the adapters must not fetch, per the app-wide egress policy.
 
     Delegates to ``Utils/egress.py``: non-http(s) schemes, private/link-local
@@ -59,7 +62,9 @@ def _validate_egress_or_raise(url: str, *, trusted_origins: frozenset = frozense
     try:
         egress.check_url_or_raise(url, trusted_origins=trusted_origins)
     except egress.EgressBlockedError as exc:
-        raise ImageGenerationError(f"Refusing blocked URL ({exc.reason}): {url!r}") from exc
+        raise ImageGenerationError(
+            f"Refusing blocked URL ({exc.reason}): {url!r}"
+        ) from exc
 
 
 def _resolve_redirect_url(base: str, location: str) -> str:
@@ -103,7 +108,9 @@ def evaluate_url_policy(
     return URLPolicyResult(False, f"host {host!r} not in allowlist")
 
 
-def create_client(timeout: float | None = None, *, follow_redirects: bool = False) -> httpx.Client:
+def create_client(
+    timeout: float | None = None, *, follow_redirects: bool = False
+) -> httpx.Client:
     """Build an ``httpx.Client`` for the image adapters.
 
     Redirects are NOT auto-followed by default: ``fetch_json`` and
@@ -193,7 +200,9 @@ def fetch_json(
             if resp.is_redirect:
                 location = resp.headers.get("location") or resp.headers.get("Location")
                 if not location:
-                    raise ImageGenerationError("request failed: redirect without location")
+                    raise ImageGenerationError(
+                        "request failed: redirect without location"
+                    )
                 current = _resolve_redirect_url(str(resp.url), str(location))
                 continue
             resp.raise_for_status()
@@ -346,9 +355,13 @@ def fetch_bytes_via_post(
                 json=json,
             ) as resp:
                 if resp.is_redirect:
-                    location = resp.headers.get("location") or resp.headers.get("Location")
+                    location = resp.headers.get("location") or resp.headers.get(
+                        "Location"
+                    )
                     if not location:
-                        raise ImageGenerationError("request failed: redirect without location")
+                        raise ImageGenerationError(
+                            "request failed: redirect without location"
+                        )
                     current = _resolve_redirect_url(str(resp.url), str(location))
                     continue
                 resp.raise_for_status()

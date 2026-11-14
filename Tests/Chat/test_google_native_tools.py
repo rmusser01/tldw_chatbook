@@ -268,8 +268,16 @@ def test_nested_context_follows_all_parallel_gemini_results_in_distinct_turn(moc
             "role": "assistant",
             "content": "",
             "tool_calls": [
-                {"id": "a", "type": "function", "function": {"name": "one", "arguments": "{}"}},
-                {"id": "b", "type": "function", "function": {"name": "two", "arguments": "{}"}},
+                {
+                    "id": "a",
+                    "type": "function",
+                    "function": {"name": "one", "arguments": "{}"},
+                },
+                {
+                    "id": "b",
+                    "type": "function",
+                    "function": {"name": "two", "arguments": "{}"},
+                },
             ],
         },
         {"role": "tool", "tool_call_id": "a", "content": "deferred-a"},
@@ -1206,7 +1214,11 @@ def test_stream_forwards_token_usage_from_usage_metadata(mock_post):
     read `candidates` only and dropped it, so streamed turns recorded no
     tokens. It must now reach the gateway as an OpenAI usage block."""
     events = [
-        {"candidates": [{"content": {"parts": [{"text": "Hi"}], "role": "model"}, "index": 0}]},
+        {
+            "candidates": [
+                {"content": {"parts": [{"text": "Hi"}], "role": "model"}, "index": 0}
+            ]
+        },
         {
             "candidates": [{"finishReason": "STOP", "index": 0}],
             "usageMetadata": {

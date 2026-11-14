@@ -1,0 +1,26 @@
+{
+  "command": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "ruff",
+    "check",
+    "--no-cache",
+    "--output-format=json",
+    "--stdin-filename",
+    "tldw_chatbook/Chat/console_chat_controller.py",
+    "-"
+  ],
+  "baseline_commit": "75b671c001e84bf2713c380e30de3e587bcc8ae0",
+  "baseline_sha256": "0652d3fe258d974c06680889f558a2a993de75ed8da7300cba970d471d932a7a",
+  "counts": {
+    "baseline": {
+      "exit": 1,
+      "diagnostics": 191
+    },
+    "current": {
+      "exit": 1,
+      "diagnostics": 191
+    }
+  },
+  "unchanged_signatures": true
+}

@@ -502,7 +502,9 @@ def _chacha_db(tmp_path) -> CharactersRAGDB:
     Mirrors `Tests/Subscriptions/test_briefing_keep.py`'s own `_chacha_db`
     helper.
     """
-    return CharactersRAGDB(tmp_path / "chacha.sqlite", client_id="briefing-handler-test")
+    return CharactersRAGDB(
+        tmp_path / "chacha.sqlite", client_id="briefing-handler-test"
+    )
 
 
 def _seed_complete_briefing(
@@ -706,7 +708,9 @@ async def test_a_keep_refused_race_is_treated_as_benign_not_an_error(tmp_path):
         debug_lines: list[str] = []
         warning_or_louder: list[str] = []
         debug_sink = logger.add(debug_lines.append, level="DEBUG", catch=False)
-        warning_sink = logger.add(warning_or_louder.append, level="WARNING", catch=False)
+        warning_sink = logger.add(
+            warning_or_louder.append, level="WARNING", catch=False
+        )
         try:
             with patch(
                 "tldw_chatbook.Scheduling.scheduler.handlers.briefing_handler.keep_briefing",
@@ -905,7 +909,7 @@ async def test_the_real_app_wiring_getter_reads_chachanotes_db_live_not_frozen_a
     proves the specific closure `app.py` builds does too.
 
     `Tests/UI/app_factory._build_test_app` stubs `self.notes_service` to
-    `None` and `get_chachanotes_db_lazy` to return `None` for every test
+    `None` and `_open_profile_chachanotes` to return `None` for every test
     app it builds (by design, for speed and hermeticity across the 90+
     modules that share it) -- so `app.chachanotes_db` really is `None`
     immediately after boot in this harness, honestly. Asserting it

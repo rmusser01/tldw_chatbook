@@ -126,19 +126,11 @@ class _SubscriptionReadinessCache:
 
     def status(self) -> SubscriptionStatus:
         with self._lock:
-            if (
-                self._path == DEFAULT_CREDENTIALS_PATH
-                and self._completed_at is not None
-                and time.monotonic() - self._completed_at < _KEYCHAIN_TTL_S
-            ):
-                if not self._present:
-                    return "missing"
-                return (
-                    "expired"
-                    if self._expires_at_ms > 0
-                    and time.time() * 1000 >= self._expires_at_ms
-                    else "ready"
-                )
+            observed = (
+                self._path == DEFAULT_CREDENTIALS_PATH and self._completed_at is not None
+            )
+            if observed and time.monotonic() - self._completed_at < _KEYCHAIN_TTL_S:
+                return self._observed_status()
             if not self._refreshing:
                 self._refreshing = True
                 self._worker = Thread(
@@ -148,7 +140,22 @@ class _SubscriptionReadinessCache:
                     daemon=True,
                 )
                 self._worker.start()
-            return "pending"
+            # TASK-38948: a lapsed TTL keeps the last observation while it is
+            # re-read. Answering "pending" flipped the Console's 4 Hz
+            # credential pre-gate missing -> pending -> missing every 5 s,
+            # two full readiness rebuilds on the UI loop for an unchanged
+            # credential; "pending" now means only "never read yet".
+            return self._observed_status() if observed else "pending"
+
+    def _observed_status(self) -> SubscriptionStatus:
+        """The completed observation's state; the caller holds ``_lock``."""
+        if not self._present:
+            return "missing"
+        return (
+            "expired"
+            if self._expires_at_ms > 0 and time.time() * 1000 >= self._expires_at_ms
+            else "ready"
+        )
 
     def _refresh(self, path: Path) -> None:
         present = False
@@ -195,7 +202,9 @@ def subscription_credential_status(*, background: bool = False) -> SubscriptionS
             send-time checks and never mistakes unfinished UI work for absence.
 
     Returns:
-        A bounded state; ``pending`` occurs only for a background lookup.
+        A bounded state; ``pending`` occurs only for a background lookup
+            that has not completed a first read (a stale snapshot keeps its
+            last state while it is re-read).
     """
     if background:
         return _SUBSCRIPTION_READINESS_CACHE.status()

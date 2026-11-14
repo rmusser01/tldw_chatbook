@@ -1,0 +1,55 @@
+{
+  "verdict": "CLEAR",
+  "critical": [],
+  "important": [],
+  "minor": [],
+  "source_freeze": {
+    "baseline": "f70eb635f5991d25b7cd5d32d789406d837be32b",
+    "files": [
+      {
+        "file": "tldw_chatbook/Widgets/Library/library_entry_canvases.py",
+        "sha256": "01dbbc0878d70bfb2ea6eac16c255c8a4f6176461ae2349a4758e6d015a66d35",
+        "bytes": 23556
+      },
+      {
+        "file": "Tests/UI/test_library_landing_recompose_publication.py",
+        "sha256": "1df458ff1671866b57e7a1530170850d81d13805fc5f93215a0d6efb75d166a1",
+        "bytes": 3325
+      }
+    ]
+  },
+  "root_inventory_count": 21,
+  "prior_root_entry_matches": 16,
+  "producer_inventory_files": 33,
+  "producer_inventory_bytes": 576712,
+  "previous_producer_evidence_matches": 21,
+  "checked_root_results": {
+    "static": "209 passed in31.33s",
+    "ci_contracts": "254 passed in48.46s",
+    "preflights": "4exit0",
+    "original_startup_guards": "5passed3warnings42.99s"
+  },
+  "source_snapshot_paths_before_after": 3453,
+  "all_snapshot_comparisons_equal": true,
+  "census": {
+    "prefix": 1336,
+    "prefix_exact": true,
+    "append_files": 1,
+    "final_floor": 1337
+  },
+  "census_ruff": {
+    "baseline": 2,
+    "current": 2,
+    "added": [],
+    "codes": [
+      "EXE001",
+      "PIE810"
+    ]
+  },
+  "remaining_qualifiers": [
+    "Eight inherited fullapp controls are bootstrap-profile-qualified",
+    "Original UI-ready census has zero module headroom; preimport has28LOC headroom",
+    "Protected fresh current-head hosted CI and merge remain coordinator work"
+  ],
+  "reviewer_actions": "Read-only tools and private review-artifact writes only; no source/index/Git mutation or app/test/native/performance execution."
+}

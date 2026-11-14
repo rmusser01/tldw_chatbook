@@ -3,6 +3,7 @@
 import hashlib
 import sys
 from pathlib import Path
+from typing import Literal
 
 from tldw_chatbook.Utils.timestamps import utc_now_iso
 
@@ -13,8 +14,9 @@ from .package_files import (
     PackageFileError,
     canonical_json,
     capture_package,
+    parse_document,
 )
-from .schemas import NAMESPACE, validate_manifest
+from .schemas import NAMESPACE, PLUGIN_SCHEMA, require, validate_manifest
 
 MAX_COMPONENTS = 512
 _MANIFEST_FIELDS = {
@@ -31,6 +33,44 @@ _MANIFEST_FIELDS = {
 }
 
 
+CATALOG_PREFIX = "catalog-v1:"
+
+
+def catalog_identity(overlay: dict) -> str:
+    """Bound public catalog data inside the existing authenticated text carrier."""
+    from tldw_chatbook.Agents.hooks_v2.validation import _json_tree
+
+    value = _json_tree(overlay, max_bytes=16384)
+    require(isinstance(value, dict), "catalog_overlay_invalid")
+
+    from .adapters.vendor import VENDOR_FIELDS
+
+    require(set(value) <= VENDOR_FIELDS, "catalog_field_unsupported")
+    # Public literals are not host credentials; declaration owners validate them.
+    encoded = CATALOG_PREFIX + canonical_json(value)
+    require(len(encoded.encode()) <= 16384, "catalog_overlay_limit")
+    return encoded
+
+
+def catalog_overlay_from(identities) -> dict | None:
+    """Replay exactly one canonical reviewed carrier, never a live catalog."""
+    require(
+        isinstance(identities, (list, tuple))
+        and all(isinstance(item, str) for item in identities),
+        "catalog_overlay_invalid",
+    )
+    carriers = [item for item in identities if item.startswith("catalog-")]
+    require(len(carriers) <= 1, "catalog_overlay_duplicate")
+    if not carriers:
+        return None
+    carrier = carriers[0]
+    require(carrier.startswith(CATALOG_PREFIX), "catalog_overlay_version")
+    require(len(carrier.encode()) <= 16384, "catalog_overlay_limit")
+    value = parse_document(carrier[len(CATALOG_PREFIX) :].encode())
+    require(catalog_identity(value) == carrier, "catalog_overlay_noncanonical")
+    return value
+
+
 def inspect_package(
     root: Path, *, dialect: str | None = None, catalog_overlay: dict | None = None
 ) -> PackageInspection:
@@ -39,8 +79,7 @@ def inspect_package(
     Args:
         root: Existing canonical absolute package directory.
         dialect: Explicit portable, openai, or cursor interpretation.
-        catalog_overlay: Executable vendor catalog fields; identical retained bytes
-            are required before activation.
+        catalog_overlay: Bounded public catalog data bound to this review.
 
     Returns:
         Immutable inventory and diagnostics. Rejected packages remain visible
@@ -64,7 +103,32 @@ def inspect_capture(
     dialect: str | None = None,
     catalog_overlay: dict | None = None,
 ) -> PackageInspection:
-    """Interpret exactly the captured bytes (also used by materialization)."""
+    """Inspect captured bytes with the current, explicitly versioned interpretation."""
+    return _inspect_capture(
+        capture, dialect=dialect, catalog_overlay=catalog_overlay, recipe="integrated_2"
+    )
+
+
+def _inspect_capture(
+    capture: PackageCapture,
+    *,
+    dialect: str | None = None,
+    catalog_overlay: dict | None = None,
+    recipe: Literal["dev_20261001", "branch_7b4d5c", "integrated_2"],
+) -> PackageInspection:
+    """Closed historical parsing; callers cannot request it through public inspection."""
+    require(
+        recipe in {"dev_20261001", "branch_7b4d5c", "integrated_2"},
+        "retained_adapter_unsupported",
+    )
+    historical_dev = recipe == "dev_20261001"
+    version = "2" if recipe == "integrated_2" else "1"
+    vendor_overlays = {}
+    carrier = (
+        catalog_identity(catalog_overlay)
+        if catalog_overlay is not None and not historical_dev
+        else None
+    )
     diagnostics = list(capture.diagnostics) + list(capture.errors)
     candidates = []
     manifest = None
@@ -85,7 +149,7 @@ def inspect_capture(
                 DialectCandidate(
                     dialect="portable",
                     format_version="1.0.0",
-                    adapter_version="chatbook-portable/1",
+                    adapter_version="chatbook-portable/" + version,
                     root_manifest="plugin.json",
                     overlays=overlays,
                 )
@@ -118,6 +182,9 @@ def inspect_capture(
                     not inline and not isinstance(raw.get("name"), str)
                 ):
                     raise PackageFileError("vendor_candidate_invalid")
+                if not historical_dev and not inline:
+                    validate_manifest({"$schema": PLUGIN_SCHEMA, "name": raw["name"]})
+                vendor_overlays[dialect_name] = raw
                 candidates.append(
                     DialectCandidate(
                         dialect=dialect_name,
@@ -129,10 +196,24 @@ def inspect_capture(
                         overlays=(
                             (overlay,) if manifest and dialect_name == "openai" else ()
                         ),
-                        format_version="portable/1.0.0"
-                        if manifest and dialect_name == "openai"
-                        else "docs/2026-10-01",
-                        adapter_version="chatbook-" + dialect_name + "/2026-10-01.1",
+                        format_version=(
+                            (
+                                "portable/1.0.0"
+                                if manifest and dialect_name == "openai"
+                                else "docs/2026-10-01"
+                            )
+                            if historical_dev
+                            else "documented-2026-09-16"
+                        ),
+                        adapter_version=(
+                            ("chatbook-" + dialect_name + "/2026-10-01.1")
+                            if historical_dev
+                            else "chatbook-"
+                            + ("codex" if dialect_name == "openai" else "cursor")
+                            + "/"
+                            + version
+                        ),
+                        qualified=not historical_dev,
                     )
                 )
             except PackageFileError as exc:
@@ -145,6 +226,18 @@ def inspect_capture(
         "link_targets": capture.link_targets,
         "diagnostics": tuple(diagnostics),
     }
+    if (
+        not historical_dev
+        and manifest is None
+        and (
+            "plugin.json" in capture.files
+            or "plugin.json" in capture.directories
+            or any(d.path == "plugin.json" for d in capture.errors)
+        )
+    ):
+        return PackageInspection(
+            **base, rejected=True, activation_blockers=("root_manifest_invalid",)
+        )
     if not candidates:
         return PackageInspection(
             **base, rejected=True, activation_blockers=("package_format_unsupported",)
@@ -177,9 +270,9 @@ def inspect_capture(
         format_version=selected.format_version,
         adapter_version=selected.adapter_version,
         root_manifest=selected.root_manifest,
-        overlay_identities=selected.overlays,
+        overlay_identities=selected.overlays + ((carrier,) if carrier else ()),
     )
-    if dialect != "portable":
+    if dialect != "portable" and historical_dev:
         from .adapters.codex import overlay_for_openai
         from .adapters.vendor import CATALOG_PATH, catalog_input, inventory_vendor
 
@@ -212,6 +305,7 @@ def inspect_capture(
                     dialect,
                     max_components=MAX_COMPONENTS,
                     portable_manifest=portable,
+                    _recipe=recipe,
                 )
             )
             if not retained:
@@ -265,12 +359,59 @@ def inspect_capture(
                 else "vendor_interpretation_invalid"
             )
             return PackageInspection(**base, rejected=True, activation_blockers=(code,))
+    native_manifest = manifest
     try:
-        inventory, edges, variables, extra, blockers, bodies = inventory_package(
-            capture, manifest, max_components=MAX_COMPONENTS
+        if dialect != "portable":
+            from .adapters.vendor import CATALOG_PATH, inventory_vendor
+
+            catalog = catalog_overlay or {}
+            if recipe == "integrated_2" and CATALOG_PATH in capture.files:
+                captured_catalog = capture.document(CATALOG_PATH)
+                require(isinstance(captured_catalog, dict), "catalog_overlay_invalid")
+                if catalog_overlay is None:
+                    catalog = captured_catalog
+                    if catalog:
+                        base["overlay_identities"] = (*selected.overlays, CATALOG_PATH)
+                else:
+                    require(
+                        captured_catalog == catalog_overlay, "catalog_overlay_conflict"
+                    )
+            overlay = {**catalog, **vendor_overlays[dialect]}
+            if recipe == "integrated_2":
+                validate_manifest(
+                    {
+                        "$schema": PLUGIN_SCHEMA,
+                        **{
+                            k: v
+                            for k, v in overlay.items()
+                            if k in _MANIFEST_FIELDS - {"$schema", "extensions"}
+                        },
+                        **({"name": manifest["name"]} if manifest else {}),
+                    }
+                )
+            inventory, edges, variables, extra, blockers, bodies, native_manifest = (
+                inventory_vendor(
+                    capture,
+                    overlay,
+                    dialect,
+                    max_components=MAX_COMPONENTS,
+                    portable_manifest=manifest if dialect == "openai" else None,
+                    _recipe=recipe,
+                )
+            )
+        else:
+            if not historical_dev:
+                require(catalog_overlay is None, "catalog_dialect_unsupported")
+            inventory, edges, variables, extra, blockers, bodies = inventory_package(
+                capture, manifest, max_components=MAX_COMPONENTS, _recipe=recipe
+            )
+    except (PackageFileError, ComponentLimitError, TypeError, ValueError) as exc:
+        code = (
+            str(exc)
+            if isinstance(exc, (PackageFileError, ComponentLimitError))
+            else "vendor_interpretation_invalid"
         )
-    except (PackageFileError, ComponentLimitError) as exc:
-        return PackageInspection(**base, rejected=True, activation_blockers=(str(exc),))
+        return PackageInspection(**base, rejected=True, activation_blockers=(code,))
     diagnostics.extend(extra)
     base["diagnostics"] = tuple(diagnostics)
     if len(inventory) > MAX_COMPONENTS:
@@ -280,12 +421,12 @@ def inspect_capture(
     subject = {
         "identity": {
             key: value
-            for key, value in manifest.items()
+            for key, value in native_manifest.items()
             if key in _MANIFEST_FIELDS - {"extensions"}
         },
         "dialect": dialect,
         "adapter": selected.adapter_version,
-        "overlays": selected.overlays,
+        "overlays": base["overlay_identities"],
         "components": {
             key: record.model_dump(exclude={"evidence"})
             for key, record in inventory.items()
@@ -295,8 +436,11 @@ def inspect_capture(
         "bodies": bodies,
         "blockers": blockers,
     }
+    if dialect != "portable":
+        subject["vendor_content_digest"] = capture.digest
     effective_digest = hashlib.sha256(canonical_json(subject).encode()).hexdigest()
     evidence = InspectionEvidence(
+        adapter=selected.adapter_version,
         revision=capture.digest,
         platform=sys.platform,
         observed_at=utc_now_iso(),

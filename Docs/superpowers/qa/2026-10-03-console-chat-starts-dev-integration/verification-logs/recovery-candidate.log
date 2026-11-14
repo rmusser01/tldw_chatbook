@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "/private/tmp/console-dev-recovery-candidate-01a0fa6c.py", line 15, in <module>
+    append='\n\n# ADR-211: exact constructor-captured v22 object deltas; all v18/v21 variants remain.\n_AGENT_RUNS_V22_REMOVED = '+repr(tuple(delta['agent']['removed']))+'\n_AGENT_RUNS_V22_ADDED = '+repr(tuple(delta['agent']['added']))+'\n'
+                                                                                                                                              ~~~~~^^^^^^^^^
+KeyError: 'agent'

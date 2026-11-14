@@ -13,9 +13,13 @@ class _CaptureStrategy:
         self.last = {"max_size": max_size, "overlap": overlap, "options": options}
         return ["ok"]
 
-    def chunk_with_metadata(self, text: str, max_size: int, overlap: int = 0, **options):
+    def chunk_with_metadata(
+        self, text: str, max_size: int, overlap: int = 0, **options
+    ):
         self.last = {"max_size": max_size, "overlap": overlap, "options": options}
-        md = ChunkMetadata(index=0, start_char=0, end_char=min(1, len(text)), word_count=1)
+        md = ChunkMetadata(
+            index=0, start_char=0, end_char=min(1, len(text)), word_count=1
+        )
         return [ChunkResult(text=text[:1], metadata=md)]
 
 

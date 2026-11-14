@@ -1,0 +1,899 @@
+[
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 80,
+      "row": 145
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from __future__ import annotations\n\nimport asyncio\nimport functools\nimport inspect\nimport os\nimport threading\nimport time\nfrom dataclasses import dataclass, field\nfrom datetime import datetime, timezone\nfrom pathlib import Path\nfrom threading import Lock, get_ident\nfrom typing import TYPE_CHECKING, Any, Callable, Mapping\nfrom uuid import uuid4\n\nfrom loguru import logger\n\nfrom tldw_chatbook.Chat.console_chat_models import (\n    ConsoleLifecycleRevisionChanged,\n    ConsoleRunStatus,\n    ConsoleSubmissionOrigin,\n)\nfrom tldw_chatbook.Chat.console_display_state import console_prompted_source_count\nfrom tldw_chatbook.Chat.console_library_policy import (\n    ConsoleAssistantLibraryAccess,\n    ConsoleAutoRetrieve,\n    ConsoleLibraryPolicyDefaults,\n)\nfrom tldw_chatbook.Chat.console_onboarding_state import (\n    coerce_console_first_send_completed,\n)\nfrom tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager\n\n",
+          "end_location": {
+            "column": 1,
+            "row": 146
+          },
+          "location": {
+            "column": 1,
+            "row": 114
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 1,
+      "row": 114
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 114,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "UP035",
+    "end_location": {
+      "column": 57,
+      "row": 126
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from typing import TYPE_CHECKING, Any\nfrom collections.abc import Callable, Mapping",
+          "end_location": {
+            "column": 57,
+            "row": 126
+          },
+          "location": {
+            "column": 1,
+            "row": 126
+          }
+        }
+      ],
+      "message": "Import from `collections.abc`"
+    },
+    "location": {
+      "column": 1,
+      "row": 126
+    },
+    "message": "Import from `collections.abc` instead: `Callable`, `Mapping`",
+    "name": "deprecated-import",
+    "noqa_row": 126,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/deprecated-import"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 6,
+      "row": 153
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "    from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity\n    from tldw_chatbook.Chat.console_voice_promotion import (\n        VoicePromotionOwner,\n        VoicePromotionQuitPermit,\n        VoicePromotionSessionCloseToken,\n    )\n    from tldw_chatbook.Chat.console_voice_supervisor import VoiceDispatchSupervisor\n",
+          "end_location": {
+            "column": 1,
+            "row": 154
+          },
+          "location": {
+            "column": 1,
+            "row": 147
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 5,
+      "row": 147
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 147,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "UP017",
+    "end_location": {
+      "column": 57,
+      "row": 337
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from datetime import datetime, timezone, UTC",
+          "end_location": {
+            "column": 40,
+            "row": 123
+          },
+          "location": {
+            "column": 1,
+            "row": 123
+          }
+        },
+        {
+          "content": "UTC",
+          "end_location": {
+            "column": 57,
+            "row": 337
+          },
+          "location": {
+            "column": 45,
+            "row": 337
+          }
+        }
+      ],
+      "message": "Convert to `datetime.UTC` alias"
+    },
+    "location": {
+      "column": 45,
+      "row": 337
+    },
+    "message": "Use `datetime.UTC` alias",
+    "name": "datetime-timezone-utc",
+    "noqa_row": 337,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/datetime-timezone-utc"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 21,
+      "row": 492
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py",
+    "fix": null,
+    "location": {
+      "column": 12,
+      "row": 492
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 492,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 54,
+      "row": 1113
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "ConsoleChatStore | None",
+          "end_location": {
+            "column": 54,
+            "row": 1113
+          },
+          "location": {
+            "column": 29,
+            "row": 1113
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 29,
+      "row": 1113
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 1113,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 64,
+      "row": 1129
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "ConsoleChatController | None",
+          "end_location": {
+            "column": 64,
+            "row": 1129
+          },
+          "location": {
+            "column": 34,
+            "row": 1129
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 34,
+      "row": 1129
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 1129,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 58,
+      "row": 1134
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "RunHooksEngine | None",
+          "end_location": {
+            "column": 58,
+            "row": 1134
+          },
+          "location": {
+            "column": 35,
+            "row": 1134
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 35,
+      "row": 1134
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 1134,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 92,
+      "row": 1170
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "            from tldw_chatbook.Chat.console_voice_supervisor import (\n                VoiceDispatchSupervisor,\n            )\n",
+          "end_location": {
+            "column": 1,
+            "row": 1171
+          },
+          "location": {
+            "column": 1,
+            "row": 1170
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 13,
+      "row": 1170
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 1170,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "TRY203",
+    "end_location": {
+      "column": 18,
+      "row": 1785
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 1784
+    },
+    "message": "Remove exception handler; error is immediately re-raised",
+    "name": "useless-try-except",
+    "noqa_row": 1784,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/useless-try-except"
+  },
+  {
+    "cell": null,
+    "code": "TRY004",
+    "end_location": {
+      "column": 76,
+      "row": 2001
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py",
+    "fix": null,
+    "location": {
+      "column": 17,
+      "row": 2001
+    },
+    "message": "Prefer `TypeError` exception for invalid type",
+    "name": "type-check-without-type-error",
+    "noqa_row": 2001,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/type-check-without-type-error"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 2570
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 2570
+    },
+    "message": "Do not catch blind exception: `BaseException`",
+    "name": "blind-except",
+    "noqa_row": 2570,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 28,
+      "row": 2877
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "ConsoleChatStore",
+          "end_location": {
+            "column": 28,
+            "row": 2877
+          },
+          "location": {
+            "column": 10,
+            "row": 2877
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 10,
+      "row": 2877
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 2877,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 2910
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 2910
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 2910,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "B023",
+    "end_location": {
+      "column": 83,
+      "row": 3184
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py",
+    "fix": null,
+    "location": {
+      "column": 61,
+      "row": 3184
+    },
+    "message": "Function definition does not bind loop variable `last_provider_activity`",
+    "name": "function-uses-loop-variable",
+    "noqa_row": 3184,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/function-uses-loop-variable"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 79,
+      "row": 3471
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "ConsoleChatController",
+          "end_location": {
+            "column": 79,
+            "row": 3471
+          },
+          "location": {
+            "column": 56,
+            "row": 3471
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 56,
+      "row": 3471
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 3471,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 58,
+      "row": 3563
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "RunHooksEngine | None",
+          "end_location": {
+            "column": 58,
+            "row": 3563
+          },
+          "location": {
+            "column": 35,
+            "row": 3563
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 35,
+      "row": 3563
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 3563,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 3641
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 3641
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 3641,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "B010",
+    "end_location": {
+      "column": 84,
+      "row": 3959
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "view._console_runtime_attachment_generation = generation",
+          "end_location": {
+            "column": 84,
+            "row": 3959
+          },
+          "location": {
+            "column": 17,
+            "row": 3959
+          }
+        }
+      ],
+      "message": "Replace `setattr` with assignment"
+    },
+    "location": {
+      "column": 17,
+      "row": 3959
+    },
+    "message": "Do not call `setattr` with a constant attribute value. It is not any safer than normal property access.",
+    "name": "set-attr-with-constant",
+    "noqa_row": 3959,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/set-attr-with-constant"
+  },
+  {
+    "cell": null,
+    "code": "S110",
+    "end_location": {
+      "column": 21,
+      "row": 3961
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 3960
+    },
+    "message": "`try`-`except`-`pass` detected, consider logging the exception",
+    "name": "try-except-pass",
+    "noqa_row": 3960,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/try-except-pass"
+  },
+  {
+    "cell": null,
+    "code": "SIM102",
+    "end_location": {
+      "column": 85,
+      "row": 4000
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 3999
+    },
+    "message": "Use a single `if` statement instead of nested `if` statements",
+    "name": "collapsible-if",
+    "noqa_row": 3999,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/collapsible-if"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 50,
+      "row": 4044
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py",
+    "fix": null,
+    "location": {
+      "column": 41,
+      "row": 4044
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 4044,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 33,
+      "row": 4246
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py",
+    "fix": null,
+    "location": {
+      "column": 24,
+      "row": 4246
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 4246,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "S110",
+    "end_location": {
+      "column": 33,
+      "row": 4259
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py",
+    "fix": null,
+    "location": {
+      "column": 25,
+      "row": 4258
+    },
+    "message": "`try`-`except`-`pass` detected, consider logging the exception",
+    "name": "try-except-pass",
+    "noqa_row": 4258,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/try-except-pass"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 41,
+      "row": 4258
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py",
+    "fix": null,
+    "location": {
+      "column": 32,
+      "row": 4258
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 4258,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "SIM117",
+    "end_location": {
+      "column": 43,
+      "row": 4283
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "        with self._execution_capacity_lock, self._canvas_native_lock:\n            self._disposed = True",
+          "end_location": {
+            "column": 38,
+            "row": 4284
+          },
+          "location": {
+            "column": 1,
+            "row": 4282
+          }
+        }
+      ],
+      "message": "Combine `with` statements"
+    },
+    "location": {
+      "column": 9,
+      "row": 4282
+    },
+    "message": "Use a single `with` statement with multiple contexts instead of nested `with` statements",
+    "name": "multiple-with-statements",
+    "noqa_row": 4282,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/multiple-with-statements"
+  },
+  {
+    "cell": null,
+    "code": "SIM117",
+    "end_location": {
+      "column": 43,
+      "row": 4338
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "        with self._execution_capacity_lock, self._canvas_native_lock:\n            self._disposed = True\n            self._canvas_native_view_binding = None",
+          "end_location": {
+            "column": 56,
+            "row": 4340
+          },
+          "location": {
+            "column": 1,
+            "row": 4337
+          }
+        }
+      ],
+      "message": "Combine `with` statements"
+    },
+    "location": {
+      "column": 9,
+      "row": 4337
+    },
+    "message": "Use a single `with` statement with multiple contexts instead of nested `with` statements",
+    "name": "multiple-with-statements",
+    "noqa_row": 4337,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/multiple-with-statements"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 33,
+      "row": 4440
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py",
+    "fix": null,
+    "location": {
+      "column": 24,
+      "row": 4440
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 4440,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 4449
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 4449
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 4449,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 33,
+      "row": 4464
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py",
+    "fix": null,
+    "location": {
+      "column": 24,
+      "row": 4464
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 4464,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 33,
+      "row": 4489
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py",
+    "fix": null,
+    "location": {
+      "column": 24,
+      "row": 4489
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 4489,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 33,
+      "row": 4494
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py",
+    "fix": null,
+    "location": {
+      "column": 24,
+      "row": 4494
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 4494,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "B010",
+    "end_location": {
+      "column": 80,
+      "row": 4710
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "view._console_runtime_attachment_generation = generation",
+          "end_location": {
+            "column": 80,
+            "row": 4710
+          },
+          "location": {
+            "column": 13,
+            "row": 4710
+          }
+        }
+      ],
+      "message": "Replace `setattr` with assignment"
+    },
+    "location": {
+      "column": 13,
+      "row": 4710
+    },
+    "message": "Do not call `setattr` with a constant attribute value. It is not any safer than normal property access.",
+    "name": "set-attr-with-constant",
+    "noqa_row": 4710,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/set-attr-with-constant"
+  },
+  {
+    "cell": null,
+    "code": "S110",
+    "end_location": {
+      "column": 17,
+      "row": 4712
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 4711
+    },
+    "message": "`try`-`except`-`pass` detected, consider logging the exception",
+    "name": "try-except-pass",
+    "noqa_row": 4711,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/try-except-pass"
+  }
+]

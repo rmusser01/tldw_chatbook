@@ -1,0 +1,13 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites>
+  <testsuite name="pytest" errors="0" failures="0" skipped="0" tests="8" time="142.708" timestamp="2026-10-25T10:50:37.461403-07:00" hostname="DESKTOP-BISU2HE">
+    <testcase classname="Tests.UI.test_schedules_reminder_edit_identity" name="test_pending_edits_preserve_captured_reminder_values[serial]" time="20.433" />
+    <testcase classname="Tests.UI.test_schedules_reminder_edit_identity" name="test_pending_edits_preserve_captured_reminder_values[different]" time="19.786" />
+    <testcase classname="Tests.UI.test_schedules_reminder_edit_identity" name="test_pending_edits_preserve_captured_reminder_values[same]" time="17.871" />
+    <testcase classname="Tests.UI.test_schedules_reminder_edit_identity" name="test_pending_feedback_cannot_replace_another_reminders_error[saved]" time="17.200" />
+    <testcase classname="Tests.UI.test_schedules_reminder_edit_identity" name="test_pending_feedback_cannot_replace_another_reminders_error[refused]" time="15.286" />
+    <testcase classname="Tests.UI.test_schedules_reminder_edit_identity" name="test_pending_feedback_cannot_replace_another_reminders_error[exception]" time="15.816" />
+    <testcase classname="Tests.UI.test_schedules_reminder_edit_identity" name="test_invalid_edit_keeps_its_row_retryable[local]" time="18.010" />
+    <testcase classname="Tests.UI.test_schedules_reminder_edit_identity" name="test_invalid_edit_keeps_its_row_retryable[server:1]" time="17.242" />
+  </testsuite>
+</testsuites>

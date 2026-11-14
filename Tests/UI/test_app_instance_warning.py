@@ -14,6 +14,7 @@ the warning method in its source, so the wiring can't silently regress (a
 future refactor moving/removing the call would otherwise pass every other
 test in this file while quietly disarming the warning at boot).
 """
+
 from __future__ import annotations
 
 import inspect
@@ -21,6 +22,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+from Tests.app_module_patches import set_app_global
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.config import ConfigLoadFailure
 from tldw_chatbook.Utils.instance_lock import InstanceLockStatus
@@ -110,6 +112,7 @@ def test_config_load_failure_warns_with_error_severity():
     assert kwargs.get("severity") == "error"
     assert kwargs.get("timeout") == 60
     assert kwargs.get("title") == "Config file failed to load"
+    assert kwargs.get("markup") is False
     message = _args[0] if _args else kwargs.get("message", "")
     assert str(failure.path) in message
     assert failure.message in message
@@ -139,3 +142,42 @@ def test_push_initial_screen_wires_the_config_load_failure_warning_call():
     """
     source = inspect.getsource(TldwCli._push_initial_screen)
     assert "_maybe_warn_config_load_failure" in source
+
+
+def test_subscriptions_starter_reads_no_config_on_the_ui_loop(monkeypatch, tmp_path):
+    """TASK-36511: the backfill starter checks activation against the wired DB.
+
+    Starters run on the UI loop. This one resolved ``get_subscriptions_db_path()``,
+    a checked config operation that waits out any worker's config read: it held
+    the compact gate's loop probe 219 ms. The app's wired ``SubscriptionsDB``
+    (the one the worker uses) already has the path, as the scheduler's check does.
+
+    Pinned here, unbound against a stub like this file's boot warnings, because
+    this file runs in the PR lane (Tests/App/test_boot_worker_stagger_policy.py,
+    the boot fleet's own suite, runs in none).
+    """
+    import tldw_chatbook.app as app_module
+    from tldw_chatbook.Backup_Recovery import activation
+
+    def config_read():
+        raise AssertionError("the starter read config on the UI loop")
+
+    checked, started = [], []
+    # TASK-38989: on every app module that binds it, so a starter that moves
+    # out of app.py still trips the trap.
+    set_app_global(monkeypatch, "get_subscriptions_db_path", config_read)
+    monkeypatch.setattr(
+        activation,
+        "execution_allowed",
+        lambda owners, path=None: checked.append((owners, path)) or True,
+    )
+    db = SimpleNamespace(db_path=tmp_path / "subscriptions.db")
+    app = SimpleNamespace(
+        subscriptions_db=db,
+        _backfill_subscription_items_fts=lambda: None,
+        run_worker=lambda *args, **kwargs: started.append(kwargs["name"]) or "worker",
+    )
+    starter = app_module.TldwCli.boot_worker_starters(app)["subscriptions_fts_backfill"]
+    assert starter() == "worker"
+    assert checked == [(("db.subscriptions",), db.db_path)]
+    assert started == ["_backfill_subscription_items_fts"]

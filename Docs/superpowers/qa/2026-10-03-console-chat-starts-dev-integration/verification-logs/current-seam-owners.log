@@ -1,0 +1,986 @@
+........................................................................ [ 33%]
+.......................................................FF.............F. [ 66%]
+F...F.......F....F....FF...F...........F................F.F.F....FF..... [100%]
+=================================== FAILURES ===================================
+_________ test_console_sync_maintenance_preserves_pending_pass[active] _________
+
+tmp_path = PosixPath('/private/tmp/console-dev-current-seam-owners-01a0fa6c/test_console_sync_maintenance_1')
+scenario = 'active'
+
+    @pytest.mark.parametrize(
+        "scenario", ["closed_entry", "active", "timeout", "error", "resume", "torn_down"]
+    )
+    def test_console_sync_maintenance_preserves_pending_pass(tmp_path, scenario):
+>       _run(tmp_path, scenario, "success", script=_SCRIPT)
+
+Tests/Backup_Recovery/test_console_sync_maintenance.py:96: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+tmp_path = PosixPath('/private/tmp/console-dev-current-seam-owners-01a0fa6c/test_console_sync_maintenance_1')
+route = 'active', outcome = 'success'
+
+    def _run(
+        tmp_path,
+        route,
+        outcome,
+        *,
+        script=_SCRIPT,
+        timeout=45,
+        installed_package=None,
+        expect_restart=False,
+    ):
+        root = tmp_path.resolve()
+        test_root = Path(__file__).resolve().parents[2]
+        for name in ("home", "config", "data"):
+            (root / name).mkdir(mode=0o700)
+        environment = os.environ.copy()
+        environment.update(
+            HOME=str(root / "home"),
+            USERPROFILE=str(root / "home"),
+            XDG_CONFIG_HOME=str(root / "config"),
+            XDG_DATA_HOME=str(root / "data"),
+            TLDW_CONFIG_PATH=str(root / "config" / "config.toml"),
+            TLDW_TEST_MODE="1",
+            TLDW_DISABLE_CONFIG_WATCH="1",
+        )
+        cwd = test_root
+        if installed_package is not None:
+            installed = Path(installed_package).resolve()
+            environment.update(
+                PYTHONNOUSERSITE="1",
+                PYTHONPATH=os.pathsep.join((str(installed), str(test_root))),
+                TLDW_TEST_INSTALLED_PACKAGE=str(installed),
+            )
+            cwd = root
+        log = root / "restart-output.log"
+        deadline = time.monotonic() + timeout
+        # A fresh Windows process inherits the old process's output handles. Files
+        # let the original process exit without waiting for EOF from its descendant.
+        if expect_restart:
+            from Tests.Backup_Recovery.restart_observation import wait_for_restart
+    
+            receipt = root / "home" / "restart-process.json"
+        try:
+            with log.open("w") if expect_restart else nullcontext() as output:
+                result = subprocess.run(
+                    [sys.executable, "-c", script, route, outcome],
+                    cwd=cwd,
+                    env=environment,
+                    stdout=output,
+                    stderr=subprocess.STDOUT if expect_restart else None,
+                    capture_output=not expect_restart,
+                    text=True,
+                    timeout=timeout,
+                    check=False,
+                )
+                if expect_restart:
+                    assert result.returncode == 0, log.read_text()[-7000:]
+                    fresh_code = wait_for_restart(receipt, deadline)
+                    assert fresh_code in (None, 0), log.read_text()[-7000:]
+        except BaseException as primary:
+            if expect_restart:
+                try:
+                    # A parent may fail after spawning and before its normal exit.
+                    # Never wait for a missing receipt or signal an unproved PID.
+                    if receipt.exists():
+                        wait_for_restart(receipt, time.monotonic())
+                except TimeoutError:
+                    pass  # The observer retires the verified child at this deadline.
+                except BaseException as cleanup:  # noqa: BLE001 - retain the original test failure.
+                    primary.add_note("restart_cleanup_error:" + type(cleanup).__name__)
+            raise
+        stdout = log.read_text() if expect_restart else result.stdout
+        stderr = "" if expect_restart else result.stderr
+>       assert result.returncode == 0, stderr[-6000:] + stdout[-1000:]
+E       AssertionError: 2026-10-03 09:13:23.168 | DEBUG    | tldw_chatbook.config:<module>:114 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+E         2026-10-03 09:13:23.199 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6847 - Attempting to load CLI config from: /private/tmp/console-dev-current-seam-owners-01a0fa6c/test_console_sync_maintenance_1/config/config.toml
+E         2026-10-03 09:13:23.199 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6876 - CLI Config file not found at /private/tmp/console-dev-current-seam-owners-01a0fa6c/test_console_sync_maintenance_1/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+E         2026-10-03 09:13:23.200 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6885 - Created default CLI config file at /private/tmp/console-dev-current-seam-owners-01a0fa6c/test_console_sync_maintenance_1/config/config.toml
+E         2026-10-03 09:13:23.200 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6952 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'console_ssh', 'hooks', 'skills', 'tamagotchi', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+E         2026-10-03 09:13:23.200 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6956 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'databricks', 'together', 'fireworks', 'cerebras', 'sambanova', 'nvidia', 'deepinfra', 'nebius', 'novita', 'minimax', 'mimo', 'tokenhub', 'byteplus', 'stepfun', 'vercel', 'zenmux', 'kilo', 'siliconflow', 'baseten', 'gmi', 'ollama_cloud', 'upstage', 'arcee', 'qianfan', 'nous', 'venice', 'meta', 'azure', 'wandb', 'cloudflare', 'opencode_zen', 'commandcode', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+E         2026-10-03 09:13:23.204 | INFO     | tldw_chatbook.config:_load_settings_uncached:2134 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E         2026-10-03 09:13:23.204 | INFO     | tldw_chatbook.config:_load_settings_uncached:2137 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E         2026-10-03 09:13:23.205 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2160 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E         2026-10-03 09:13:23.205 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2482 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E         2026-10-03 09:13:23.218 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3712 - Ensured chat dictionaries folder exists: /private/tmp/console-dev-current-seam-owners-01a0fa6c/test_console_sync_maintenance_1/home/.local/share/tldw_cli/default_user/chat_dicts
+E         2026-10-03 09:13:23.219 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3743 - load_settings: Configuration cached for future use
+E         2026-10-03 09:13:23.219 | INFO     | tldw_chatbook.config:<module>:10840 - Default API Endpoint (from config.py global scope): openai
+E         2026-10-03 09:13:23.219 | DEBUG    | tldw_chatbook.config:<module>:10863 - CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access
+E         2026-10-03 09:13:23.370 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1552 - Skipping auto-initialization in test environment
+E         Traceback (most recent call last):
+E           File "<string>", line 81, in <module>
+E           File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 195, in run
+E             return runner.run(main)
+E                    ^^^^^^^^^^^^^^^^
+E           File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 118, in run
+E             return self._loop.run_until_complete(task)
+E                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+E             return future.result()
+E                    ^^^^^^^^^^^^^^^
+E           File "<string>", line 63, in main
+E         AssertionError
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python', '-c', '\nimport asyncio, ...mplete\n    return future.result()\n           ^^^^^^^^^^^^^^^\n  File "<string>", line 63, in main\nAssertionError\n').returncode
+
+Tests/Backup_Recovery/test_home_citation_retirement.py:334: AssertionError
+________ test_console_sync_maintenance_preserves_pending_pass[timeout] _________
+
+tmp_path = PosixPath('/private/tmp/console-dev-current-seam-owners-01a0fa6c/test_console_sync_maintenance_2')
+scenario = 'timeout'
+
+    @pytest.mark.parametrize(
+        "scenario", ["closed_entry", "active", "timeout", "error", "resume", "torn_down"]
+    )
+    def test_console_sync_maintenance_preserves_pending_pass(tmp_path, scenario):
+>       _run(tmp_path, scenario, "success", script=_SCRIPT)
+
+Tests/Backup_Recovery/test_console_sync_maintenance.py:96: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+tmp_path = PosixPath('/private/tmp/console-dev-current-seam-owners-01a0fa6c/test_console_sync_maintenance_2')
+route = 'timeout', outcome = 'success'
+
+    def _run(
+        tmp_path,
+        route,
+        outcome,
+        *,
+        script=_SCRIPT,
+        timeout=45,
+        installed_package=None,
+        expect_restart=False,
+    ):
+        root = tmp_path.resolve()
+        test_root = Path(__file__).resolve().parents[2]
+        for name in ("home", "config", "data"):
+            (root / name).mkdir(mode=0o700)
+        environment = os.environ.copy()
+        environment.update(
+            HOME=str(root / "home"),
+            USERPROFILE=str(root / "home"),
+            XDG_CONFIG_HOME=str(root / "config"),
+            XDG_DATA_HOME=str(root / "data"),
+            TLDW_CONFIG_PATH=str(root / "config" / "config.toml"),
+            TLDW_TEST_MODE="1",
+            TLDW_DISABLE_CONFIG_WATCH="1",
+        )
+        cwd = test_root
+        if installed_package is not None:
+            installed = Path(installed_package).resolve()
+            environment.update(
+                PYTHONNOUSERSITE="1",
+                PYTHONPATH=os.pathsep.join((str(installed), str(test_root))),
+                TLDW_TEST_INSTALLED_PACKAGE=str(installed),
+            )
+            cwd = root
+        log = root / "restart-output.log"
+        deadline = time.monotonic() + timeout
+        # A fresh Windows process inherits the old process's output handles. Files
+        # let the original process exit without waiting for EOF from its descendant.
+        if expect_restart:
+            from Tests.Backup_Recovery.restart_observation import wait_for_restart
+    
+            receipt = root / "home" / "restart-process.json"
+        try:
+            with log.open("w") if expect_restart else nullcontext() as output:
+                result = subprocess.run(
+                    [sys.executable, "-c", script, route, outcome],
+                    cwd=cwd,
+                    env=environment,
+                    stdout=output,
+                    stderr=subprocess.STDOUT if expect_restart else None,
+                    capture_output=not expect_restart,
+                    text=True,
+                    timeout=timeout,
+                    check=False,
+                )
+                if expect_restart:
+                    assert result.returncode == 0, log.read_text()[-7000:]
+                    fresh_code = wait_for_restart(receipt, deadline)
+                    assert fresh_code in (None, 0), log.read_text()[-7000:]
+        except BaseException as primary:
+            if expect_restart:
+                try:
+                    # A parent may fail after spawning and before its normal exit.
+                    # Never wait for a missing receipt or signal an unproved PID.
+                    if receipt.exists():
+                        wait_for_restart(receipt, time.monotonic())
+                except TimeoutError:
+                    pass  # The observer retires the verified child at this deadline.
+                except BaseException as cleanup:  # noqa: BLE001 - retain the original test failure.
+                    primary.add_note("restart_cleanup_error:" + type(cleanup).__name__)
+            raise
+        stdout = log.read_text() if expect_restart else result.stdout
+        stderr = "" if expect_restart else result.stderr
+>       assert result.returncode == 0, stderr[-6000:] + stdout[-1000:]
+E       AssertionError: 2026-10-03 09:13:24.446 | DEBUG    | tldw_chatbook.config:<module>:114 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+E         2026-10-03 09:13:24.481 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6847 - Attempting to load CLI config from: /private/tmp/console-dev-current-seam-owners-01a0fa6c/test_console_sync_maintenance_2/config/config.toml
+E         2026-10-03 09:13:24.481 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6876 - CLI Config file not found at /private/tmp/console-dev-current-seam-owners-01a0fa6c/test_console_sync_maintenance_2/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+E         2026-10-03 09:13:24.482 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6885 - Created default CLI config file at /private/tmp/console-dev-current-seam-owners-01a0fa6c/test_console_sync_maintenance_2/config/config.toml
+E         2026-10-03 09:13:24.482 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6952 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'console_ssh', 'hooks', 'skills', 'tamagotchi', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+E         2026-10-03 09:13:24.482 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6956 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'databricks', 'together', 'fireworks', 'cerebras', 'sambanova', 'nvidia', 'deepinfra', 'nebius', 'novita', 'minimax', 'mimo', 'tokenhub', 'byteplus', 'stepfun', 'vercel', 'zenmux', 'kilo', 'siliconflow', 'baseten', 'gmi', 'ollama_cloud', 'upstage', 'arcee', 'qianfan', 'nous', 'venice', 'meta', 'azure', 'wandb', 'cloudflare', 'opencode_zen', 'commandcode', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+E         2026-10-03 09:13:24.487 | INFO     | tldw_chatbook.config:_load_settings_uncached:2134 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E         2026-10-03 09:13:24.487 | INFO     | tldw_chatbook.config:_load_settings_uncached:2137 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E         2026-10-03 09:13:24.487 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2160 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E         2026-10-03 09:13:24.487 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2482 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E         2026-10-03 09:13:24.503 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3712 - Ensured chat dictionaries folder exists: /private/tmp/console-dev-current-seam-owners-01a0fa6c/test_console_sync_maintenance_2/home/.local/share/tldw_cli/default_user/chat_dicts
+E         2026-10-03 09:13:24.503 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3743 - load_settings: Configuration cached for future use
+E         2026-10-03 09:13:24.503 | INFO     | tldw_chatbook.config:<module>:10840 - Default API Endpoint (from config.py global scope): openai
+E         2026-10-03 09:13:24.503 | DEBUG    | tldw_chatbook.config:<module>:10863 - CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access
+E         2026-10-03 09:13:24.672 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1552 - Skipping auto-initialization in test environment
+E         Traceback (most recent call last):
+E           File "<string>", line 81, in <module>
+E           File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 195, in run
+E             return runner.run(main)
+E                    ^^^^^^^^^^^^^^^^
+E           File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 118, in run
+E             return self._loop.run_until_complete(task)
+E                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+E             return future.result()
+E                    ^^^^^^^^^^^^^^^
+E           File "<string>", line 63, in main
+E         AssertionError
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python', '-c', '\nimport asyncio, ...mplete\n    return future.result()\n           ^^^^^^^^^^^^^^^\n  File "<string>", line 63, in main\nAssertionError\n').returncode
+
+Tests/Backup_Recovery/test_home_citation_retirement.py:334: AssertionError
+_ test_real_source_is_bound_to_installed_participant[NoteImportReceiptRepository] _
+
+tmp_path = PosixPath('/private/tmp/console-dev-current-seam-owners-01a0fa6c/test_real_source_is_bound_to_i3')
+owner_type = <class 'tldw_chatbook.Notes.note_import_receipts.NoteImportReceiptRepository'>
+
+    @pytest.mark.parametrize("owner_type", CACHED + FRESH)
+    def test_real_source_is_bound_to_installed_participant(tmp_path, owner_type):
+        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    
+        owner = make(owner_type, tmp_path / "store.sqlite")
+        try:
+>           participant = _repository_participant(owner)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:104: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+repository = NoteImportReceiptRepository(<private>)
+
+    def _repository_participant(repository):
+        """Bind exact installed repository types to their actual selected paths."""
+        from . import storage_admission as storage
+    
+        types = _repository_types()
+        if (
+            type(repository) not in types
+            or repository.is_memory_db
+            or repository.db_path is None
+        ):
+>           raise ValueError("repository_participant_not_installed")
+E           ValueError: repository_participant_not_installed
+
+tldw_chatbook/Backup_Recovery/participants.py:368: ValueError
+________ test_site_setup_source_refuses_paused_schema_before_allocation ________
+
+tmp_path = PosixPath('/private/tmp/console-dev-current-seam-owners-01a0fa6c/test_site_setup_source_refuses0')
+
+    def test_site_setup_source_refuses_paused_schema_before_allocation(tmp_path):
+        from tldw_chatbook.Subscriptions.site_config_manager import SiteConfigManager
+        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    
+>       owner = SiteConfigManager(str(tmp_path / "hybrid.sqlite"))
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:120: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tldw_chatbook/Subscriptions/site_config_manager.py:278: in __init__
+    console_library_migration_seed=load_console_library_migration_seed(),
+                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:10378: in load_console_library_migration_seed
+    load_cli_config_and_ensure_existence() if app_config is None else app_config
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:7026: in load_cli_config_and_ensure_existence
+    return _load_cli_config_bootstrap(force_reload=force_reload).config
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x109c91cd0>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+_ test_fixed_managed_scope_continues_but_new_raw_borrower_refuses[NoteImportReceiptRepository] _
+
+tmp_path = PosixPath('/private/tmp/console-dev-current-seam-owners-01a0fa6c/test_fixed_managed_scope_conti3')
+owner_type = <class 'tldw_chatbook.Notes.note_import_receipts.NoteImportReceiptRepository'>
+
+    @pytest.mark.parametrize("owner_type", CACHED + FRESH)
+    def test_fixed_managed_scope_continues_but_new_raw_borrower_refuses(
+        tmp_path, owner_type
+    ):
+        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    
+        owner = make(owner_type, tmp_path / "scope.sqlite")
+>       participant = _repository_participant(owner)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:152: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+repository = NoteImportReceiptRepository(<private>)
+
+    def _repository_participant(repository):
+        """Bind exact installed repository types to their actual selected paths."""
+        from . import storage_admission as storage
+    
+        types = _repository_types()
+        if (
+            type(repository) not in types
+            or repository.is_memory_db
+            or repository.db_path is None
+        ):
+>           raise ValueError("repository_participant_not_installed")
+E           ValueError: repository_participant_not_installed
+
+tldw_chatbook/Backup_Recovery/participants.py:368: ValueError
+_ test_fresh_transaction_closes_native_on_commit_and_rollback[NoteImportReceiptRepository] _
+
+tmp_path = PosixPath('/private/tmp/console-dev-current-seam-owners-01a0fa6c/test_fresh_transaction_closes_0')
+owner_type = <class 'tldw_chatbook.Notes.note_import_receipts.NoteImportReceiptRepository'>
+
+    @pytest.mark.parametrize("owner_type", FRESH)
+    def test_fresh_transaction_closes_native_on_commit_and_rollback(tmp_path, owner_type):
+        owner = make(owner_type, tmp_path / "fresh.sqlite")
+        with scope(owner) as conn:
+            conn.execute("CREATE TABLE phase6_result(value)")
+            conn.execute("INSERT INTO phase6_result VALUES (42)")
+>       with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE <class 'sqlite3.ProgrammingError'>
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:225: Failed
+_ test_native_allocation_and_setup_races_retire_only_new_native[allocated-NoteImportReceiptRepository] _
+
+tmp_path = PosixPath('/private/tmp/console-dev-current-seam-owners-01a0fa6c/test_native_allocation_and_set3')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x125e600b0>
+owner_type = <class 'tldw_chatbook.Notes.note_import_receipts.NoteImportReceiptRepository'>
+point = 'allocated'
+
+    @pytest.mark.parametrize("owner_type", CACHED + FRESH)
+    @pytest.mark.parametrize("point", ["allocated", "setup", "setup_failure"])
+    def test_native_allocation_and_setup_races_retire_only_new_native(
+        tmp_path, monkeypatch, owner_type, point
+    ):
+        import importlib
+        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+        from tldw_chatbook.DB.base_db import BaseDB
+    
+        owner = make(owner_type, tmp_path / "race.sqlite")
+        close(owner)
+>       participant = _repository_participant(owner)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:248: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+repository = NoteImportReceiptRepository(<private>)
+
+    def _repository_participant(repository):
+        """Bind exact installed repository types to their actual selected paths."""
+        from . import storage_admission as storage
+    
+        types = _repository_types()
+        if (
+            type(repository) not in types
+            or repository.is_memory_db
+            or repository.db_path is None
+        ):
+>           raise ValueError("repository_participant_not_installed")
+E           ValueError: repository_participant_not_installed
+
+tldw_chatbook/Backup_Recovery/participants.py:368: ValueError
+_ test_native_allocation_and_setup_races_retire_only_new_native[setup-NoteImportReceiptRepository] _
+
+tmp_path = PosixPath('/private/tmp/console-dev-current-seam-owners-01a0fa6c/test_native_allocation_and_set8')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x12786bc20>
+owner_type = <class 'tldw_chatbook.Notes.note_import_receipts.NoteImportReceiptRepository'>
+point = 'setup'
+
+    @pytest.mark.parametrize("owner_type", CACHED + FRESH)
+    @pytest.mark.parametrize("point", ["allocated", "setup", "setup_failure"])
+    def test_native_allocation_and_setup_races_retire_only_new_native(
+        tmp_path, monkeypatch, owner_type, point
+    ):
+        import importlib
+        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+        from tldw_chatbook.DB.base_db import BaseDB
+    
+        owner = make(owner_type, tmp_path / "race.sqlite")
+        close(owner)
+>       participant = _repository_participant(owner)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:248: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+repository = NoteImportReceiptRepository(<private>)
+
+    def _repository_participant(repository):
+        """Bind exact installed repository types to their actual selected paths."""
+        from . import storage_admission as storage
+    
+        types = _repository_types()
+        if (
+            type(repository) not in types
+            or repository.is_memory_db
+            or repository.db_path is None
+        ):
+>           raise ValueError("repository_participant_not_installed")
+E           ValueError: repository_participant_not_installed
+
+tldw_chatbook/Backup_Recovery/participants.py:368: ValueError
+_ test_native_allocation_and_setup_races_retire_only_new_native[setup-LocalKanbanService] _
+
+tmp_path = PosixPath('/private/tmp/console-dev-current-seam-owners-01a0fa6c/test_native_allocation_and_set9')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1280a5e80>
+owner_type = <class 'tldw_chatbook.Kanban_Interop.local_kanban_service.LocalKanbanService'>
+point = 'setup'
+
+    @pytest.mark.parametrize("owner_type", CACHED + FRESH)
+    @pytest.mark.parametrize("point", ["allocated", "setup", "setup_failure"])
+    def test_native_allocation_and_setup_races_retire_only_new_native(
+        tmp_path, monkeypatch, owner_type, point
+    ):
+        import importlib
+        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+        from tldw_chatbook.DB.base_db import BaseDB
+    
+        owner = make(owner_type, tmp_path / "race.sqlite")
+        close(owner)
+        participant = _repository_participant(owner)
+        if owner_type is SubscriptionsDB:
+            target, name = BaseDB, "_get_connection"
+        else:
+            module = (
+                "tldw_chatbook.Kanban_Interop.local_kanban_db"
+                if owner_type is LocalKanbanService
+                else owner_type.__module__
+            )
+            target, name = importlib.import_module(module), "connect_private_sqlite"
+        original = getattr(target, name)
+        allocated = []
+    
+        def allocating(*args, **kwargs):
+            conn = original(*args, **kwargs)
+            allocated.append(conn)
+            if point == "allocated":
+                participant.close_admission()
+            else:
+                execute = conn.execute
+    
+                def setup(sql, *args, **kwargs):
+                    if sql.startswith("PRAGMA"):
+                        if point == "setup_failure":
+                            raise sqlite3.OperationalError("injected setup")
+                        participant.close_admission()
+                    return execute(sql, *args, **kwargs)
+    
+                monkeypatch.setattr(conn, "execute", setup)
+            return conn
+    
+        monkeypatch.setattr(target, name, allocating)
+        try:
+            expected = (
+                sqlite3.OperationalError
+                if point == "setup_failure"
+                else bootstrap.RecoveryRequired
+            )
+            with pytest.raises(expected):
+                native_get(owner)
+>           assert len(allocated) == 1
+E           assert 2 == 1
+E            +  where 2 = len([<tldw_chatbook.DB.private_sqlite._with_storage_admission.<locals>.admitted.<locals>.AdmittedConnection object at 0x12...hatbook.DB.private_sqlite._with_storage_admission.<locals>.admitted.<locals>.AdmittedConnection object at 0x127d9e050>])
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:288: AssertionError
+_ test_native_allocation_and_setup_races_retire_only_new_native[setup_failure-NoteImportReceiptRepository] _
+
+tmp_path = PosixPath('/private/tmp/console-dev-current-seam-owners-01a0fa6c/test_native_allocation_and_set13')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x127c0e1b0>
+owner_type = <class 'tldw_chatbook.Notes.note_import_receipts.NoteImportReceiptRepository'>
+point = 'setup_failure'
+
+    @pytest.mark.parametrize("owner_type", CACHED + FRESH)
+    @pytest.mark.parametrize("point", ["allocated", "setup", "setup_failure"])
+    def test_native_allocation_and_setup_races_retire_only_new_native(
+        tmp_path, monkeypatch, owner_type, point
+    ):
+        import importlib
+        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+        from tldw_chatbook.DB.base_db import BaseDB
+    
+        owner = make(owner_type, tmp_path / "race.sqlite")
+        close(owner)
+>       participant = _repository_participant(owner)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:248: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+repository = NoteImportReceiptRepository(<private>)
+
+    def _repository_participant(repository):
+        """Bind exact installed repository types to their actual selected paths."""
+        from . import storage_admission as storage
+    
+        types = _repository_types()
+        if (
+            type(repository) not in types
+            or repository.is_memory_db
+            or repository.db_path is None
+        ):
+>           raise ValueError("repository_participant_not_installed")
+E           ValueError: repository_participant_not_installed
+
+tldw_chatbook/Backup_Recovery/participants.py:368: ValueError
+_ test_separate_same_path_sources_cannot_steal_native_association[NoteImportReceiptRepository] _
+
+tmp_path = PosixPath('/private/tmp/console-dev-current-seam-owners-01a0fa6c/test_separate_same_path_source3')
+owner_type = <class 'tldw_chatbook.Notes.note_import_receipts.NoteImportReceiptRepository'>
+
+    @pytest.mark.parametrize("owner_type", CACHED + FRESH)
+    def test_separate_same_path_sources_cannot_steal_native_association(
+        tmp_path, owner_type
+    ):
+        from tldw_chatbook.Backup_Recovery.participants import (
+            _register_core_connection,
+            _repository_participant,
+        )
+    
+        path = tmp_path / "shared.sqlite"
+        left, right = make(owner_type, path), make(owner_type, path)
+        conn = native_get(left)
+        try:
+>           with pytest.raises(bootstrap.RecoveryRequired, match="provenance"):
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: DID NOT RAISE <class 'tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired'>
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:470: Failed
+_ test_failed_fresh_native_close_keeps_real_maintenance_blocker[NoteImportReceiptRepository] _
+
+tmp_path = PosixPath('/private/tmp/console-dev-current-seam-owners-01a0fa6c/test_failed_fresh_native_close0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x127df53a0>
+owner_type = <class 'tldw_chatbook.Notes.note_import_receipts.NoteImportReceiptRepository'>
+local_root = PosixPath('/private/tmp/console-dev-current-seam-owners-01a0fa6c/test_failed_fresh_native_close0/bootstrap')
+launch = <function launch.<locals>.start at 0x1282b14e0>
+
+    @pytest.mark.parametrize("owner_type", FRESH)
+    def test_failed_fresh_native_close_keeps_real_maintenance_blocker(
+        tmp_path, monkeypatch, owner_type, local_root, launch
+    ):
+        owner = make(owner_type, tmp_path / "close.sqlite")
+        held = []
+>       with pytest.raises(sqlite3.OperationalError, match="injected close"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE <class 'sqlite3.OperationalError'>
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:554: Failed
+____________ test_site_setup_does_not_borrow_core_native_authority _____________
+
+tmp_path = PosixPath('/private/tmp/console-dev-current-seam-owners-01a0fa6c/test_site_setup_does_not_borro0')
+
+    def test_site_setup_does_not_borrow_core_native_authority(tmp_path):
+        from tldw_chatbook.Subscriptions.site_config_manager import SiteConfigManager
+        from tldw_chatbook.DB.Subscriptions_DB import ensure_site_configs_schema
+        from tldw_chatbook.Backup_Recovery.participants import (
+            _repository_participant,
+            _register_core_connection,
+        )
+    
+        path = tmp_path / "hybrid.sqlite"
+>       owner = SiteConfigManager(str(path))
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:588: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tldw_chatbook/Subscriptions/site_config_manager.py:278: in __init__
+    console_library_migration_seed=load_console_library_migration_seed(),
+                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:10378: in load_console_library_migration_seed
+    load_cli_config_and_ensure_existence() if app_config is None else app_config
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:7026: in load_cli_config_and_ensure_existence
+    return _load_cli_config_bootstrap(force_reload=force_reload).config
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x109c91cd0>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+________ test_new_source_dispatch_does_not_eagerly_import_their_modules ________
+
+tmp_path = PosixPath('/private/tmp/console-dev-current-seam-owners-01a0fa6c/test_new_source_dispatch_does_0')
+
+    def test_new_source_dispatch_does_not_eagerly_import_their_modules(tmp_path):
+        import subprocess
+        import sys
+    
+        script = r"""
+    import importlib, importlib.abc, sys
+    from pathlib import Path
+    from tldw_chatbook.Backup_Recovery import bootstrap
+    bootstrap.default_bootstrap_root = lambda: Path(sys.argv[1]) / "bootstrap"
+    from tldw_chatbook.Backup_Recovery.participants import _repository_types
+    names = {
+     "tldw_chatbook.DB.Evals_DB": "EvalsDB",
+     "tldw_chatbook.DB.Subscriptions_DB": "SubscriptionsDB",
+     "tldw_chatbook.Notes.file_notes_replica": "FileNotesReplica",
+     "tldw_chatbook.Notes.note_import_receipts": "NoteImportReceiptRepository",
+     "tldw_chatbook.Kanban_Interop.local_kanban_service": "LocalKanbanService",
+    }
+    class NoAddedSources(importlib.abc.MetaPathFinder):
+     def find_spec(self, fullname, path=None, target=None):
+      if fullname in names or fullname == "tldw_chatbook.Subscriptions.site_config_manager":
+       raise AssertionError("eager new source import: " + fullname)
+    blocker = NoAddedSources()
+    sys.meta_path.insert(0, blocker)
+    _repository_types()
+    sys.meta_path.remove(blocker)
+    for number, (module, name) in enumerate(names.items()):
+     cls = getattr(importlib.import_module(module), name)
+     assert cls in _repository_types()
+     path = Path(sys.argv[1]) / (str(number) + ".sqlite")
+     owner = cls(db_path=path) if name == "LocalKanbanService" else cls(path)
+     if name == "NoteImportReceiptRepository":
+      with owner.transaction() as conn: conn.execute("SELECT 1")
+     if hasattr(owner, "close"): owner.close()
+    assert "tldw_chatbook.Subscriptions.site_config_manager" not in sys.modules
+    assert "tldw_chatbook.app" not in sys.modules
+    print("exact-sources-retired")
+    """
+        result = subprocess.run(
+            [sys.executable, "-c", script, str(tmp_path)],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+>       assert result.returncode == 0, result.stderr
+E       AssertionError: 2026-10-03 09:14:07.580 | DEBUG    | tldw_chatbook.config:<module>:114 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+E         2026-10-03 09:14:07.616 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6847 - Attempting to load CLI config from: /private/tmp/console-dev-current-seam-owners-01a0fa6c/test_new_source_dispatch_does_0/test_data/config/config.toml
+E         2026-10-03 09:14:07.616 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6876 - CLI Config file not found at /private/tmp/console-dev-current-seam-owners-01a0fa6c/test_new_source_dispatch_does_0/test_data/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+E         2026-10-03 09:14:07.623 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6885 - Created default CLI config file at /private/tmp/console-dev-current-seam-owners-01a0fa6c/test_new_source_dispatch_does_0/test_data/config/config.toml
+E         2026-10-03 09:14:07.623 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6952 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'console_ssh', 'hooks', 'skills', 'tamagotchi', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+E         2026-10-03 09:14:07.623 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6956 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'databricks', 'together', 'fireworks', 'cerebras', 'sambanova', 'nvidia', 'deepinfra', 'nebius', 'novita', 'minimax', 'mimo', 'tokenhub', 'byteplus', 'stepfun', 'vercel', 'zenmux', 'kilo', 'siliconflow', 'baseten', 'gmi', 'ollama_cloud', 'upstage', 'arcee', 'qianfan', 'nous', 'venice', 'meta', 'azure', 'wandb', 'cloudflare', 'opencode_zen', 'commandcode', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+E         2026-10-03 09:14:07.628 | INFO     | tldw_chatbook.config:_load_settings_uncached:2134 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E         2026-10-03 09:14:07.628 | INFO     | tldw_chatbook.config:_load_settings_uncached:2137 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E         2026-10-03 09:14:07.629 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2160 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E         2026-10-03 09:14:07.629 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2482 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E         2026-10-03 09:14:07.659 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3712 - Ensured chat dictionaries folder exists: /private/tmp/console-dev-current-seam-owners-01a0fa6c/test_new_source_dispatch_does_0/test_data/home/.local/share/tldw_cli/default_user/chat_dicts
+E         2026-10-03 09:14:07.659 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3743 - load_settings: Configuration cached for future use
+E         2026-10-03 09:14:07.659 | INFO     | tldw_chatbook.config:<module>:10840 - Default API Endpoint (from config.py global scope): openai
+E         2026-10-03 09:14:07.659 | DEBUG    | tldw_chatbook.config:<module>:10863 - CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access
+E         2026-10-03 09:14:07.738 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E         2026-10-03 09:14:07.738 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/tmp/console-dev-current-seam-owners-01a0fa6c/test_new_source_dispatch_does_0/0.sqlite
+E         2026-10-03 09:14:07.800 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - SubscriptionsDB initialized with path: /private/tmp/console-dev-current-seam-owners-01a0fa6c/test_new_source_dispatch_does_0/1.sqlite [Client: default]
+E         Traceback (most recent call last):
+E           File "<string>", line 24, in <module>
+E         AssertionError
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python', '-c', '\nimport importlib...lite [Client: default]\nTraceback (most recent call last):\n  File "<string>", line 24, in <module>\nAssertionError\n').returncode
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:664: AssertionError
+___ test_file_notes_uncertain_directory_close_keeps_actual_native_exclusion ____
+
+tmp_path = PosixPath('/private/tmp/console-dev-current-seam-owners-01a0fa6c/test_file_notes_uncertain_dire0')
+launch = <function launch.<locals>.start at 0x1282bcea0>
+
+    def test_file_notes_uncertain_directory_close_keeps_actual_native_exclusion(
+        tmp_path, launch
+    ):
+        import subprocess
+        import sys
+    
+        root = tmp_path / "bootstrap"
+        script = r"""
+    import os, sys, time
+    from pathlib import Path
+    from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission as storage
+    from tldw_chatbook.Backup_Recovery import raw_participants as raw
+    from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica
+    root = Path(sys.argv[1])
+    bootstrap.default_bootstrap_root = lambda: root / "bootstrap"
+    original_mkdirs, original_close = raw._mkdirs, os.close
+    armed = False
+    def mkdirs(operation):
+     global armed
+     original_mkdirs(operation)
+     armed = True
+    def close(fd):
+     if armed and any(fd in state.descriptors for state in raw._states.values()):
+      raise OSError("injected before descriptor close")
+     return original_close(fd)
+    raw._mkdirs, os.close = mkdirs, close
+    try:
+     FileNotesReplica(root / "created" / "replica.sqlite")
+     raise AssertionError("uncertain constructor returned")
+    except bootstrap.RecoveryRequired:
+     pass
+    os.close = original_close
+    states = [state for state in raw._states.values() if state.uncertain]
+    assert states and all(state.descriptors for state in states)
+    for state in states:
+     for fd in state.descriptors: os.fstat(fd)
+    assert not (root / "created" / "replica.sqlite").exists()
+    pause = storage._begin_local_pause()
+    assert not pause.drain(time.monotonic() + .02)
+    print("uncertain-live", flush=True)
+    sys.stdin.readline()
+    """
+        owner_process = subprocess.Popen(
+            [sys.executable, "-c", script, str(tmp_path)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+>           assert line(owner_process) == "uncertain-live"
+                   ^^^^^^^^^^^^^^^^^^^
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:755: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+child = <Popen: returncode: -9 args: ['/Users/macbook-dev/Documents/GitHub/tldw_chat...>
+
+    def line(child):
+>       assert select.select([child.stdout], [], [], 10)[0], "child did not respond"
+E       AssertionError: child did not respond
+E       assert []
+
+Tests/Backup_Recovery/test_admission.py:64: AssertionError
+____ test_subscriptions_cold_config_default_resolves_before_database_scope _____
+
+tmp_path = PosixPath('/private/tmp/console-dev-current-seam-owners-01a0fa6c/test_subscriptions_cold_config0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x127c0e510>
+
+    def test_subscriptions_cold_config_default_resolves_before_database_scope(
+        tmp_path, monkeypatch
+    ):
+        import os
+        from pathlib import Path
+        from tldw_chatbook import config
+    
+        selected = Path(os.environ["TLDW_CONFIG_PATH"])
+        selected.parent.mkdir(parents=True, exist_ok=True)
+        selected.write_text("[subscriptions]\nauto_pause_after_failures = 37\n")
+        owner = SubscriptionsDB(tmp_path / "configured.sqlite")
+        monkeypatch.setattr(config, "_CONFIG_CACHE", None)
+        monkeypatch.setattr(config, "_CONFIG_CACHE_SOURCE", None)
+        try:
+>           source_id = owner.add_subscription(
+                "Configured", "rss", "https://example.invalid/feed"
+            )
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:784: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tldw_chatbook/DB/Subscriptions_DB.py:2264: in add_subscription
+    _default_auto_pause_threshold()
+tldw_chatbook/DB/Subscriptions_DB.py:335: in _default_auto_pause_threshold
+    configured = get_cli_setting(
+tldw_chatbook/config.py:9388: in get_cli_setting
+    config = load_cli_config_and_ensure_existence()  # Ensures config is loaded
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:7026: in load_cli_config_and_ensure_existence
+    return _load_cli_config_bootstrap(force_reload=force_reload).config
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x109c91cd0>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 09:14:21.016 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - SubscriptionsDB initialized with path: /private/tmp/console-dev-current-seam-owners-01a0fa6c/test_subscriptions_cold_config0/configured.sqlite [Client: default]
+=============================== warnings summary ===============================
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_kanban_source_pause_after_allocation_precedes_journal_mutation
+  /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/conftest.py:593: UserWarning: open file descriptors grew by 403 over the test session (start=14, end=417, limit=200) — possible fd leak; bisect with TLDW_TEST_GC_EVERY=1 and mark offending tests @pytest.mark.requires_cleanup
+    warnings.warn(message, UserWarning, stacklevel=0)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+89.47s teardown Tests/Chat/test_hooks_v2_teardown.py::test_real_mounted_console_stop_entry_emits_interrupt
+14.48s call     Tests/Chat/test_hooks_v2_teardown.py::test_mounted_stop_button_cancels_pending_stop_proposal[size0-False]
+14.45s call     Tests/Chat/test_hooks_v2_teardown.py::test_mounted_stop_button_cancels_pending_stop_proposal[size0-True]
+13.79s call     Tests/Chat/test_hooks_v2_teardown.py::test_mounted_stop_button_cancels_pending_stop_proposal[size1-True]
+13.26s call     Tests/Chat/test_hooks_v2_teardown.py::test_mounted_stop_button_cancels_pending_stop_proposal[size1-False]
+10.02s call     Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_file_notes_uncertain_directory_close_keeps_actual_native_exclusion
+6.66s call     Tests/Chat/test_hooks_v2_teardown.py::test_real_mounted_console_stop_entry_emits_interrupt
+5.69s call     Tests/Chat/test_hooks_v2_continuations.py::test_actual_agent_remaining_budget_controls_real_scheduler[3-1-True-False]
+5.34s call     Tests/Chat/test_hooks_v2_continuations.py::test_real_scheduler_failure_matrix_with_success_control[foreground]
+4.79s call     Tests/Chat/test_hooks_v2_continuations.py::test_consumption_before_foreground_or_uncertain_failure_is_not_reopened[False]
+4.53s call     Tests/Chat/test_hooks_v2_continuations.py::test_human_arrival_while_acceptance_worker_waits[human]
+4.48s call     Tests/Chat/test_hooks_v2_continuations.py::test_real_scheduler_failure_matrix_with_success_control[valid]
+4.31s call     Tests/Chat/test_hooks_v2_continuations.py::test_human_arrival_after_claim_discards_machine_and_drains_human
+3.91s call     Tests/Chat/test_hooks_v2_continuations.py::test_actual_stop_seals_a_still_running_stop_proposal
+3.47s call     Tests/Chat/test_hooks_v2_continuations.py::test_real_queue_stop_continuations_are_bounded[False-True-4]
+3.40s call     Tests/Chat/test_hooks_v2_continuations.py::test_machine_input_keeps_host_carrier_through_actual_preparation
+3.40s call     Tests/Chat/test_hooks_v2_continuations.py::test_actual_agent_remaining_budget_controls_real_scheduler[3-3-False-False]
+3.29s call     Tests/Chat/test_hooks_v2_continuations.py::test_machine_lineage_stays_out_of_human_hook_and_history
+3.25s call     Tests/Chat/test_hooks_v2_lifecycle.py::test_actual_console_teardown_mcp_uses_captured_runtime_and_normal_guards[cap_exhausted]
+3.23s call     Tests/Chat/test_hooks_v2_continuations.py::test_slot_reuse_requires_the_exact_current_machine_claim
+3.22s call     Tests/Chat/test_hooks_v2_continuations.py::test_simultaneous_callbacks_reserve_one_scheduler_identity
+3.02s call     Tests/Chat/test_hooks_v2_continuations.py::test_actual_agent_remaining_budget_controls_real_scheduler[3-3-False-True]
+2.96s call     Tests/Chat/test_hooks_v2_lifecycle.py::test_idle_config_replacement_creates_a_new_hook_session
+2.68s call     Tests/Chat/test_hooks_v2_continuations.py::test_reviewed_plugin_drain_blocks_actual_stop_scheduler[False]
+2.63s call     Tests/Chat/test_hooks_v2_continuations.py::test_real_queue_stop_continuations_are_bounded[True-True-4]
+=========================== short test summary info ============================
+FAILED Tests/Backup_Recovery/test_console_sync_maintenance.py::test_console_sync_maintenance_preserves_pending_pass[active]
+FAILED Tests/Backup_Recovery/test_console_sync_maintenance.py::test_console_sync_maintenance_preserves_pending_pass[timeout]
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_real_source_is_bound_to_installed_participant[NoteImportReceiptRepository]
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_site_setup_source_refuses_paused_schema_before_allocation
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_fixed_managed_scope_continues_but_new_raw_borrower_refuses[NoteImportReceiptRepository]
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_fresh_transaction_closes_native_on_commit_and_rollback[NoteImportReceiptRepository]
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_native_allocation_and_setup_races_retire_only_new_native[allocated-NoteImportReceiptRepository]
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_native_allocation_and_setup_races_retire_only_new_native[setup-NoteImportReceiptRepository]
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_native_allocation_and_setup_races_retire_only_new_native[setup-LocalKanbanService]
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_native_allocation_and_setup_races_retire_only_new_native[setup_failure-NoteImportReceiptRepository]
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_separate_same_path_sources_cannot_steal_native_association[NoteImportReceiptRepository]
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_failed_fresh_native_close_keeps_real_maintenance_blocker[NoteImportReceiptRepository]
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_site_setup_does_not_borrow_core_native_authority
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_new_source_dispatch_does_not_eagerly_import_their_modules
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_file_notes_uncertain_directory_close_keeps_actual_native_exclusion
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_subscriptions_cold_config_default_resolves_before_database_scope
+16 failed, 200 passed, 1 warning in 430.40s (0:07:10)

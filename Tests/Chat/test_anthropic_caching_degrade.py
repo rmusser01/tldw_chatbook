@@ -213,7 +213,7 @@ def test_cache_marker_falls_back_to_5m_on_unsupported_or_junk():
             assert _cache_control_marker("claude-opus-5") == {"type": "ephemeral"}
 
 
-@patch("tldw_chatbook.LLM_Calls.LLM_API_Calls.create_default_session")
+@patch("tldw_chatbook.LLM_Calls.LLM_API_Calls.create_pooled_default_session")
 def test_1h_ttl_flows_into_the_payload_and_adds_the_beta_header(mock_session):
     posted = {}
 
@@ -251,7 +251,7 @@ def test_1h_ttl_flows_into_the_payload_and_adds_the_beta_header(mock_session):
     assert "extended-cache-ttl" in beta, "1h markers require the beta opt-in header"
 
 
-@patch("tldw_chatbook.LLM_Calls.LLM_API_Calls.create_default_session")
+@patch("tldw_chatbook.LLM_Calls.LLM_API_Calls.create_pooled_default_session")
 def test_5m_default_adds_no_beta_header(mock_session):
     posted = {}
 
@@ -303,7 +303,7 @@ def test_openai_cache_key_is_a_stable_digest_of_the_prefix():
     assert len(key1) <= 64
 
 
-@patch("tldw_chatbook.LLM_Calls.LLM_API_Calls.create_default_session")
+@patch("tldw_chatbook.LLM_Calls.LLM_API_Calls.create_owned_default_session")
 def test_openai_cache_key_flows_into_payload_when_enabled(mock_session):
     posted = {}
 
@@ -337,7 +337,7 @@ def test_openai_cache_key_flows_into_payload_when_enabled(mock_session):
     assert "stable prefix" not in posted["json"]["prompt_cache_key"]
 
 
-@patch("tldw_chatbook.LLM_Calls.LLM_API_Calls.create_default_session")
+@patch("tldw_chatbook.LLM_Calls.LLM_API_Calls.create_owned_default_session")
 def test_openai_cache_key_absent_by_default(mock_session):
     posted = {}
 
@@ -366,7 +366,7 @@ def test_openai_cache_key_absent_by_default(mock_session):
     assert "prompt_cache_key" not in posted["json"], "AC#6: off by default"
 
 
-@patch("tldw_chatbook.LLM_Calls.LLM_API_Calls.create_default_session")
+@patch("tldw_chatbook.LLM_Calls.LLM_API_Calls.create_owned_default_session")
 def test_openai_cache_key_skipped_for_custom_base_url(mock_session):
     """Review finding 1: a strict OpenAI-compatible server (custom base_url)
     can 400 on an unknown body field and there is no degrade path, so the
@@ -399,3 +399,52 @@ def test_openai_cache_key_skipped_for_custom_base_url(mock_session):
     assert "prompt_cache_key" not in posted["json"], (
         "custom endpoints must not receive prompt_cache_key"
     )
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("ttl", ["5m", "1h"])
+def test_cache_degrade_preserves_mixin_instructions_at_real_adapter_boundary(ttl):
+    from Tests.Chat.test_console_prompt_mixin_caching import _kwargs, _prepare
+
+    request = _prepare("{style}")
+    bad = _bad_response('{"error":{"message":"cache_control TTL is unsupported"}}')
+    with (
+        patch("requests.Session.post", side_effect=[bad, _ok_response()]) as post,
+        patch(
+            "tldw_chatbook.LLM_Calls.LLM_API_Calls.get_cli_setting",
+            side_effect=lambda s, k, d=None: ttl if k == "cache_ttl" else d,
+        ),
+    ):
+        chat_api_call(**_kwargs(request))
+    assert post.call_count == 2
+    first, retry = [call.kwargs["json"] for call in post.call_args_list]
+    assert "cache_control" in first["messages"][1]["content"][0]
+    assert retry == _without_cache_control(first)
+    assert retry["messages"][-1]["content"][0]["text"] == "{style}\n\nnew"
+    assert retry["messages"][0]["content"][0]["text"] == "older"
+    if ttl == "1h":
+        assert first["messages"][1]["content"][0]["cache_control"]["ttl"] == "1h"
+        assert (
+            "extended-cache-ttl"
+            in post.call_args_list[0].kwargs["headers"]["anthropic-beta"]
+        )
+        assert "anthropic-beta" not in post.call_args_list[1].kwargs["headers"]
+
+
+def test_cache_degrade_does_not_change_mixin_instructions():
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "older",
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+        },
+        {"role": "user", "content": [{"type": "text", "text": "{style}\n\nnew"}]},
+    ]
+    stripped = _without_cache_control(messages)
+    assert stripped[-1]["content"][0]["text"] == "{style}\n\nnew"
+    assert stripped[0]["content"][0]["text"] == "older"

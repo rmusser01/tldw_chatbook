@@ -30,10 +30,14 @@ def _db(path: Path) -> CharactersRAGDB:
 
 
 def _seed_row(db: CharactersRAGDB, profile: str, dataset: str):
-    return db.get_connection().execute(
-        "SELECT * FROM agent_lessons_seed_state WHERE profile_id = ? AND dataset_id = ?",
-        (profile, dataset),
-    ).fetchone()
+    return (
+        db.get_connection()
+        .execute(
+            "SELECT * FROM agent_lessons_seed_state WHERE profile_id = ? AND dataset_id = ?",
+            (profile, dataset),
+        )
+        .fetchone()
+    )
 
 
 def _folder_envelope(object_id: str, *, name: str, revision: int, cursor: int):
@@ -76,16 +80,25 @@ def test_local_only_seed_is_atomic_idempotent_and_creates_no_marker(tmp_path: Pa
             dataset_id="local",
         )
 
-        folders = db.get_connection().execute(
-            "SELECT * FROM note_folders WHERE name = ? COLLATE BINARY AND deleted = 0",
-            (AGENT_LESSONS_FOLDER,),
-        ).fetchall()
+        folders = (
+            db.get_connection()
+            .execute(
+                "SELECT * FROM note_folders WHERE name = ? COLLATE BINARY AND deleted = 0",
+                (AGENT_LESSONS_FOLDER,),
+            )
+            .fetchall()
+        )
         assert first.status == "created"
         assert second.status == "already_seeded"
         assert len(folders) == 1
         assert _seed_row(db, "local", "local")["state"] == "seeded"
-        assert db.get_connection().execute("SELECT COUNT(*) FROM keywords").fetchone()[0] == 0
-        assert db.get_connection().execute("SELECT COUNT(*) FROM notes").fetchone()[0] == 0
+        assert (
+            db.get_connection().execute("SELECT COUNT(*) FROM keywords").fetchone()[0]
+            == 0
+        )
+        assert (
+            db.get_connection().execute("SELECT COUNT(*) FROM notes").fetchone()[0] == 0
+        )
     finally:
         db.close_connection()
 
@@ -101,19 +114,30 @@ def test_renamed_or_deleted_seed_is_never_recreated(tmp_path: Path):
         renamed = folders.rename_folder(
             seeded.folder_id, name="My lessons", expected_version=current.version
         )
-        assert initialize_agent_lessons_folder(
-            db, scope_mode="local_only", profile_id="local", dataset_id="local"
-        ).status == "already_seeded"
+        assert (
+            initialize_agent_lessons_folder(
+                db, scope_mode="local_only", profile_id="local", dataset_id="local"
+            ).status
+            == "already_seeded"
+        )
         folders.soft_delete_folder(
             seeded.folder_id, expected_version=renamed.folder.version
         )
-        assert initialize_agent_lessons_folder(
-            db, scope_mode="local_only", profile_id="local", dataset_id="local"
-        ).status == "already_seeded"
-        assert db.get_connection().execute(
-            "SELECT COUNT(*) FROM note_folders WHERE name = ? AND deleted = 0",
-            (AGENT_LESSONS_FOLDER,),
-        ).fetchone()[0] == 0
+        assert (
+            initialize_agent_lessons_folder(
+                db, scope_mode="local_only", profile_id="local", dataset_id="local"
+            ).status
+            == "already_seeded"
+        )
+        assert (
+            db.get_connection()
+            .execute(
+                "SELECT COUNT(*) FROM note_folders WHERE name = ? AND deleted = 0",
+                (AGENT_LESSONS_FOLDER,),
+            )
+            .fetchone()[0]
+            == 0
+        )
     finally:
         db.close_connection()
 
@@ -144,9 +168,13 @@ def test_exact_root_is_reused_but_case_variant_requires_review(tmp_path: Path):
             ),
         )
         assert review.status == "adoption_review"
-        row = variant_db.get_connection().execute(
-            "SELECT local_object_id, remote_object_id, state FROM notes_organization_adoption_reviews"
-        ).fetchone()
+        row = (
+            variant_db.get_connection()
+            .execute(
+                "SELECT local_object_id, remote_object_id, state FROM notes_organization_adoption_reviews"
+            )
+            .fetchone()
+        )
         assert dict(row) == {
             "local_object_id": variant.folder_id,
             "remote_object_id": None,
@@ -169,12 +197,18 @@ def test_synchronized_seed_records_creation_intent_and_state_together(tmp_path: 
             dataset_id=DATASET,
             organization_repository=repository,
         )
-        folder = db.get_connection().execute(
-            "SELECT * FROM note_folders WHERE id = ?", (result.folder_id,)
-        ).fetchone()
-        intent = db.get_connection().execute(
-            "SELECT * FROM notes_organization_sync_intents WHERE domain = 'notes.folder'"
-        ).fetchone()
+        folder = (
+            db.get_connection()
+            .execute("SELECT * FROM note_folders WHERE id = ?", (result.folder_id,))
+            .fetchone()
+        )
+        intent = (
+            db.get_connection()
+            .execute(
+                "SELECT * FROM notes_organization_sync_intents WHERE domain = 'notes.folder'"
+            )
+            .fetchone()
+        )
         state = _seed_row(db, PROFILE, DATASET)
         assert result.status == "created"
         assert intent["object_id"] == folder["sync_id"]
@@ -186,7 +220,9 @@ def test_synchronized_seed_records_creation_intent_and_state_together(tmp_path: 
         db.close_connection()
 
 
-def test_remote_exact_root_history_marks_seeded_before_duplicate_and_rename(tmp_path: Path):
+def test_remote_exact_root_history_marks_seeded_before_duplicate_and_rename(
+    tmp_path: Path,
+):
     db = _db(tmp_path / "remote.sqlite")
     remote_id = str(uuid.uuid4())
     applier = SyncEnvelopeApplier(
@@ -196,10 +232,14 @@ def test_remote_exact_root_history_marks_seeded_before_duplicate_and_rename(tmp_
         ),
     )
     try:
-        exact = _folder_envelope(remote_id, name=AGENT_LESSONS_FOLDER, revision=1, cursor=1)
+        exact = _folder_envelope(
+            remote_id, name=AGENT_LESSONS_FOLDER, revision=1, cursor=1
+        )
         assert applier.apply(exact)["status"] == "applied"
         assert applier.apply(exact)["reason"] == "duplicate"
-        renamed = _folder_envelope(remote_id, name="Renamed lessons", revision=2, cursor=2)
+        renamed = _folder_envelope(
+            remote_id, name="Renamed lessons", revision=2, cursor=2
+        )
         assert applier.apply(renamed)["status"] == "applied"
         state = _seed_row(db, PROFILE, DATASET)
         assert state["state"] == "seeded"
@@ -220,26 +260,44 @@ def test_untouched_unpublished_two_device_seed_adopts_remote_identity(tmp_path: 
             dataset_id=DATASET,
             organization_repository=repository,
         )
-        local_sync_id = db.get_connection().execute(
-            "SELECT sync_id FROM note_folders WHERE id = ?", (local.folder_id,)
-        ).fetchone()[0]
+        local_sync_id = (
+            db.get_connection()
+            .execute(
+                "SELECT sync_id FROM note_folders WHERE id = ?", (local.folder_id,)
+            )
+            .fetchone()[0]
+        )
         result = SyncEnvelopeApplier(
             local_store=None, notes_organization_repository=repository
-        ).apply(_folder_envelope(remote_id, name=AGENT_LESSONS_FOLDER, revision=1, cursor=1))
+        ).apply(
+            _folder_envelope(remote_id, name=AGENT_LESSONS_FOLDER, revision=1, cursor=1)
+        )
 
         assert result["status"] == "applied"
-        active = db.get_connection().execute(
-            "SELECT sync_id FROM note_folders WHERE name = ? AND deleted = 0",
-            (AGENT_LESSONS_FOLDER,),
-        ).fetchall()
+        active = (
+            db.get_connection()
+            .execute(
+                "SELECT sync_id FROM note_folders WHERE name = ? AND deleted = 0",
+                (AGENT_LESSONS_FOLDER,),
+            )
+            .fetchall()
+        )
         assert [row["sync_id"] for row in active] == [remote_id]
-        assert db.get_connection().execute(
-            "SELECT COUNT(*) FROM notes_organization_sync_intents WHERE object_id = ?",
-            (local_sync_id,),
-        ).fetchone()[0] == 0
-        assert db.get_connection().execute(
-            "SELECT COUNT(*) FROM notes_organization_adoption_reviews"
-        ).fetchone()[0] == 0
+        assert (
+            db.get_connection()
+            .execute(
+                "SELECT COUNT(*) FROM notes_organization_sync_intents WHERE object_id = ?",
+                (local_sync_id,),
+            )
+            .fetchone()[0]
+            == 0
+        )
+        assert (
+            db.get_connection()
+            .execute("SELECT COUNT(*) FROM notes_organization_adoption_reviews")
+            .fetchone()[0]
+            == 0
+        )
         state = _seed_row(db, PROFILE, DATASET)
         assert state["folder_sync_id"] == remote_id
         assert state["seed_fingerprint"] == agent_lessons_seed_fingerprint(
@@ -270,28 +328,44 @@ def test_stale_remote_history_records_evidence_without_retiring_local_seed(
         applier = SyncEnvelopeApplier(
             local_store=None, notes_organization_repository=repository
         )
-        assert applier.apply(
-            _folder_envelope(remote_id, name="Renamed lessons", revision=2, cursor=2)
-        )["status"] == "applied"
+        assert (
+            applier.apply(
+                _folder_envelope(
+                    remote_id, name="Renamed lessons", revision=2, cursor=2
+                )
+            )["status"]
+            == "applied"
+        )
 
         stale = applier.apply(
-            _folder_envelope(
-                remote_id, name=AGENT_LESSONS_FOLDER, revision=1, cursor=1
-            )
+            _folder_envelope(remote_id, name=AGENT_LESSONS_FOLDER, revision=1, cursor=1)
         )
 
         assert stale == {"status": "noop", "reason": "stale"}
-        local_folder = db.get_connection().execute(
-            "SELECT deleted FROM note_folders WHERE sync_id = ?", (local_sync_id,)
-        ).fetchone()
+        local_folder = (
+            db.get_connection()
+            .execute(
+                "SELECT deleted FROM note_folders WHERE sync_id = ?", (local_sync_id,)
+            )
+            .fetchone()
+        )
         assert local_folder["deleted"] == 0
-        assert db.get_connection().execute(
-            "SELECT COUNT(*) FROM notes_organization_sync_intents WHERE object_id = ?",
-            (local_sync_id,),
-        ).fetchone()[0] == 1
-        review = db.get_connection().execute(
-            "SELECT remote_object_id, state FROM notes_organization_adoption_reviews"
-        ).fetchone()
+        assert (
+            db.get_connection()
+            .execute(
+                "SELECT COUNT(*) FROM notes_organization_sync_intents WHERE object_id = ?",
+                (local_sync_id,),
+            )
+            .fetchone()[0]
+            == 1
+        )
+        review = (
+            db.get_connection()
+            .execute(
+                "SELECT remote_object_id, state FROM notes_organization_adoption_reviews"
+            )
+            .fetchone()
+        )
         assert tuple(review) == (remote_id, "open")
         state = _seed_row(db, PROFILE, DATASET)
         assert state["folder_sync_id"] == remote_id
@@ -323,11 +397,16 @@ def test_copied_seed_race_requires_review(tmp_path: Path):
             )
         result = SyncEnvelopeApplier(
             local_store=None, notes_organization_repository=repository
-        ).apply(_folder_envelope(remote_id, name=AGENT_LESSONS_FOLDER, revision=1, cursor=1))
+        ).apply(
+            _folder_envelope(remote_id, name=AGENT_LESSONS_FOLDER, revision=1, cursor=1)
+        )
         assert result["status"] == "conflict"
-        assert db.get_connection().execute(
-            "SELECT state FROM notes_organization_adoption_reviews"
-        ).fetchone()["state"] == "open"
+        assert (
+            db.get_connection()
+            .execute("SELECT state FROM notes_organization_adoption_reviews")
+            .fetchone()["state"]
+            == "open"
+        )
     finally:
         db.close_connection()
 
@@ -343,11 +422,15 @@ def test_local_case_variant_has_a_durable_review_instead_of_a_phantom_status(
         result = initialize_agent_lessons_folder(
             db, scope_mode="local_only", profile_id="local", dataset_id="local"
         )
-        review = db.get_connection().execute(
-            "SELECT local_object_id, remote_object_id, state FROM "
-            "notes_organization_adoption_reviews WHERE server_profile_id = 'local' "
-            "AND dataset_id = 'local'"
-        ).fetchone()
+        review = (
+            db.get_connection()
+            .execute(
+                "SELECT local_object_id, remote_object_id, state FROM "
+                "notes_organization_adoption_reviews WHERE server_profile_id = 'local' "
+                "AND dataset_id = 'local'"
+            )
+            .fetchone()
+        )
         assert result.status == "adoption_review"
         assert dict(review) == {
             "local_object_id": variant.folder_id,
@@ -417,14 +500,16 @@ def test_non_pristine_seed_is_never_auto_retired(
         SyncEnvelopeApplier(
             local_store=None, notes_organization_repository=repository
         ).apply(
-            _folder_envelope(
-                remote_id, name=AGENT_LESSONS_FOLDER, revision=1, cursor=1
-            )
+            _folder_envelope(remote_id, name=AGENT_LESSONS_FOLDER, revision=1, cursor=1)
         )
 
-        review = db.get_connection().execute(
-            "SELECT remote_object_id, state FROM notes_organization_adoption_reviews"
-        ).fetchone()
+        review = (
+            db.get_connection()
+            .execute(
+                "SELECT remote_object_id, state FROM notes_organization_adoption_reviews"
+            )
+            .fetchone()
+        )
         assert tuple(review) == (remote_id, "open")
     finally:
         db.close_connection()
@@ -449,8 +534,11 @@ def test_differently_spelled_remote_seed_requires_review(tmp_path: Path) -> None
             )
         )
         assert result["status"] == "conflict"
-        assert db.get_connection().execute(
-            "SELECT state FROM notes_organization_adoption_reviews"
-        ).fetchone()["state"] == "open"
+        assert (
+            db.get_connection()
+            .execute("SELECT state FROM notes_organization_adoption_reviews")
+            .fetchone()["state"]
+            == "open"
+        )
     finally:
         db.close_connection()

@@ -20,7 +20,8 @@ from tldw_chatbook import config
 from tldw_chatbook.Backup_Recovery.chat_source_participants import build_dictionary_service
 from tldw_chatbook.DB.recovery_core import core_adapters
 mode=sys.argv[1]
-db=config.get_chachanotes_db_lazy()
+from tldw_chatbook.app_services import open_chachanotes_db
+db=open_chachanotes_db(config.get_chachanotes_db_path(), client_id=config.CLI_APP_CLIENT_ID, seed_builtin_content=True)
 core=next(a for a in core_adapters() if a.owner_id=='db.chachanotes.primary')
 try:
  service=build_dictionary_service(db)

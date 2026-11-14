@@ -90,7 +90,9 @@ def check_display_pairs(screen):
             'api_settings.openai': {'api_key': ''}})
         return 'draft after credential removal'
     control = screen._build_console_control_state(None)
-    screen._console_composer_or_none = lambda: SimpleNamespace(draft_text=draft)
+    # TASK-33620.15.22: the Workbench reads Send's one readiness rule.
+    screen._console_composer_or_none = lambda: SimpleNamespace(
+        draft_text=draft, has_sendable_payload=lambda: bool(draft().strip()))
     derives.clear()
     actions.clear()
     try:

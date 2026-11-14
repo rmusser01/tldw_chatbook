@@ -71,7 +71,8 @@ async def test_the_export_canvas_says_what_the_bundle_will_contain():
     async with app.run_test(size=(235, 52)) as pilot:
         line = pilot.app.query_one("#library-export-consequence-line", Static)
         assert (
-            str(line.renderable) == "Bundle: 2 media items · text only · about 4 KB before compression"
+            str(line.renderable)
+            == "Bundle: 2 media items · text + keywords only · about 4 KB before compression"
         ), str(line.renderable)
         assert line.display is True
         contents = pilot.app.query_one("#library-export-contents", Static)
@@ -90,7 +91,7 @@ def test_an_unsizeable_scope_says_so_instead_of_guessing():
         item_count=None,
     )
     assert state.consequence_line == (
-        "Bundle: 29 items · text only · size known once it runs"
+        "Bundle: 29 items · text + keywords only · size known once it runs"
     )
     assert state.contents_lines == ()
 
@@ -256,7 +257,7 @@ def test_the_bundle_phrase_never_claims_a_fidelity_the_writer_does_not_apply():
         for quality in ("thumbnail", "compressed", "original")
     }
     assert len(phrases) == 1, phrases
-    assert "text only" in phrases.pop()
+    assert "text + keywords only" in phrases.pop()
     for absent in ("previews only", "compressed files", "full files"):
         assert absent not in _state(media_quality="thumbnail").consequence_line
 

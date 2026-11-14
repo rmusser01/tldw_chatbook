@@ -71,8 +71,7 @@ def skill_summary(
         "definition_digest": inspection.effective_digest,
         "trust_blocked": True,
         "trust_status": "plugin_managed",
-        "plugin_blockers": ([] if valid else ["plugin_skill_metadata_invalid"])
-        + (["plugin_skill_model_unsupported"] if "model" in metadata else []),
+        "plugin_blockers": [] if valid else ["plugin_skill_metadata_invalid"],
         "backend": "local",
     }
 
@@ -87,6 +86,9 @@ def render_skill(
     if capture.errors or capture.digest != snapshot.inspection.content_digest:
         raise PluginUnavailable("plugin_material_changed")
     component = snapshot.inspection.inventory[component_id]
+    from .host_references import mapped_model
+
+    provider, model = mapped_model(component, json.loads(snapshot.mappings_json))
     lines = capture.read(component.path).decode("utf-8").splitlines()
     end = next(index for index, line in enumerate(lines[1:], 1) if line == "---")
     body = "\n".join(lines[end + 1 :]).strip()
@@ -118,6 +120,7 @@ def render_skill(
         ),
         "allowed_tools": summary["allowed_tools"],
         "execution_mode": summary["context"],
-        "model_override": None,
+        "model_override": model or None,
+        "model_provider": provider,
         "fork_output": None,
     }

@@ -27,7 +27,8 @@ from tldw_chatbook.LLM_Calls.hosted_provider_engine import (
     resolve_hosted_request,
 )
 from tldw_chatbook.Chat.Chat_Deps import ChatConfigurationError
-from tldw_chatbook.provider_registry import DATABRICKS
+from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+from tldw_chatbook.provider_registry import DATABRICKS, TOGETHER
 
 _BARE_HOST = "https://dbc-1.cloud.databricks.com"
 _FULL_BASE_URL = "https://dbc-1.cloud.databricks.com/openai/v1"
@@ -117,10 +118,10 @@ def test_resolve_hosted_request_uses_canonical_precedence_and_record_defaults() 
         retry_delay=0.5,
         streaming=False,
     )
-    # Qodo finding 4: the engine follows the repo precedence rule
-    # (env -> config -> defaults), so a USABLE env key beats the stored
-    # settings key (the configured env name wins over the canonical one).
-    assert configured.api_key == "renamed-env-key"
+    # ADR-012 (TASK-36941.3): with no credential_source recorded the stored
+    # settings key outranks the environment variable it names (this line
+    # pinned env-first under Qodo finding 4 until then).
+    assert configured.api_key == "config-key"
 
     explicit = resolve_hosted_request(
         DATABRICKS,
@@ -419,3 +420,57 @@ def test_settings_boundary_nonstring_alias_value_skips_not_fails() -> None:
     assert (
         resolution.base_url == "https://fallback-alias.cloud.databricks.com/openai/v1"
     )
+
+
+# TASK-36941.3: fake keys only. Assertions compare these names, never keys.
+_STORED_KEY = "sk-test-stored"
+_ENV_KEY = "sk-test-env"
+_KEY_NAMES = {_STORED_KEY: "stored", _ENV_KEY: "environment"}
+_SOURCE_LABELS = {
+    "stored": "config:api_settings.together.api_key",
+    "environment": "env:TOGETHER_API_KEY",
+    None: None,
+}
+
+
+@pytest.mark.parametrize(
+    ("credential_source", "expected"),
+    [
+        pytest.param(None, "stored", id="no-source"),
+        pytest.param("stored", "stored", id="stored"),
+        pytest.param("environment", "environment", id="environment"),
+        pytest.param("none", None, id="none"),
+    ],
+)
+def test_engine_preset_spends_the_key_readiness_reports_with_both_present(
+    credential_source: str | None, expected: str | None
+) -> None:
+    """ADR-012 decides an engine preset's key as it decides readiness's.
+
+    With no recorded source the stored key outranks the exported variable
+    (2026-09-19 amendment); a recorded source decides (2026-10-17 amendment,
+    TASK-33641.11). A call with no caller key spends what readiness reports.
+    """
+    table: dict[str, object] = {
+        "api_key": _STORED_KEY,
+        "api_key_env_var": "TOGETHER_API_KEY",
+    }
+    if credential_source is not None:
+        table["credential_source"] = credential_source
+    config = _config({"together": table})
+    environ = {"TOGETHER_API_KEY": _ENV_KEY}
+
+    try:
+        resolution = resolve_hosted_request(TOGETHER, app_config=config, environ=environ)
+    except ChatConfigurationError as error:
+        spent, refusal = None, str(error)
+    else:
+        spent, refusal = _KEY_NAMES.get(resolution.api_key, "other"), None
+    readiness = get_provider_readiness("together", config, environ=environ)
+    reported = _KEY_NAMES.get(readiness.api_key)
+
+    assert spent == expected
+    assert refusal == (None if expected else "Together API key is required.")
+    assert reported == spent
+    assert readiness.api_key_source == _SOURCE_LABELS[expected]
+    assert readiness.ready is (expected is not None)

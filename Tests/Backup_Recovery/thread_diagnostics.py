@@ -731,7 +731,7 @@ def observe_runtime_settlement(path: Path) -> Callable[[], None]:
                 }
                 if repository is not None:
                     row.update(
-                        exact_type=participants._repository_types().get(type(repository)) == "db.chachanotes.primary",
+                        exact_type=participants.repository_types().get(type(repository)) == "db.chachanotes.primary",
                         path_matches=repository.db_path == participant.path,
                         participant_matches=repository._maintenance_participant is participant,
                         memory=bool(repository.is_memory_db),

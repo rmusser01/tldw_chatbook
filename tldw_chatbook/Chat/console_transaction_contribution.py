@@ -11,6 +11,10 @@ from typing import TYPE_CHECKING, Protocol, cast
 
 if TYPE_CHECKING:
     from tldw_chatbook.Canvas.repository import CanvasImportBatch
+    from tldw_chatbook.Chat.console_prompt_mixins import (
+        MixinAttemptWrite,
+        MixinForkState,
+    )
 
 _SIMPLE_IDENTIFIER = r"[A-Za-z_][A-Za-z0-9_]*"
 _INSERT_VALUES_PATTERN = re.compile(
@@ -38,6 +42,16 @@ class ConsoleTransactionWriter(Protocol):
         /,
     ) -> None:
         """Execute parameterized INSERT rows through the caller transaction."""
+
+    def append_mixin_attempt(
+        self, *, batch: MixinAttemptWrite, native_message_ids: Mapping[str, str]
+    ) -> None:
+        """Retain an operational attempt in this accepted conversation."""
+
+    def append_mixin_history(
+        self, *, state: MixinForkState, native_message_ids: Mapping[str, str]
+    ) -> None:
+        """Import immutable historical receipts under this conversation owner."""
 
     def append_canvas_batch(
         self,
@@ -164,6 +178,32 @@ class _CursorConsoleTransactionWriter:
                 "Console INSERT executemany requires non-empty rows of matching arity."
             )
         self.__cursor.executemany(statement, rows)
+
+    def append_mixin_attempt(
+        self, *, batch: MixinAttemptWrite, native_message_ids: Mapping[str, str]
+    ) -> None:
+        self.__require_active()
+        from tldw_chatbook.DB.console_prompt_mixins import write_attempt
+
+        write_attempt(
+            self.__cursor,
+            self.__conversation_id,
+            batch=batch,
+            native_message_ids=native_message_ids,
+        )
+
+    def append_mixin_history(
+        self, *, state: MixinForkState, native_message_ids: Mapping[str, str]
+    ) -> None:
+        self.__require_active()
+        from tldw_chatbook.DB.console_prompt_mixins import write_fork_state
+
+        write_fork_state(
+            self.__cursor,
+            self.__conversation_id,
+            state=state,
+            message_ids=native_message_ids,
+        )
 
     def append_canvas_batch(
         self,

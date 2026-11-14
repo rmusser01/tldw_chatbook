@@ -1,7 +1,7 @@
 ---
 id: TASK-32894
 title: "Work stream: trust boundaries and egress"
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-21 23:05'
 labels:
@@ -84,3 +84,15 @@ only -- a derived artifact, to be regenerated rather than hand-merged.
 Follow-up filed as TASK-32907: two `Tests/TTS/test_alltalk_backend.py` parametrisations issue real outbound
 requests to `.example` hosts and eat a DNS timeout. Confirmed pre-existing on clean dev.
 <!-- SECTION:NOTES:END -->
+
+## Closeout audit 2026-10-11
+
+Board audit (branch `chore/board-prune-prune-d`, dev at a3c47c6c72): this task's work is
+landed on `origin/dev` but the status field was never flipped. Verdict: **Done**.
+
+Implemented on `fix/tier2-security` (f25f707e6e) and merged via PR #2800 (2026-09-24):
+"fix(security): close six tier-2 trust-boundary and egress gaps (TASK-32894)". Implementation
+Notes record all six real, with the open P0-promotion question answered (base_url writers swept,
+rating stands P1).
+
+AC checkboxes are left as found; this section is the audit's evidence record.

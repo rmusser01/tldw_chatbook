@@ -399,7 +399,9 @@ def test_gnu_u0_diff_applies_byte_exact(tmp_path):
     (ws / "b/f.txt").write_text(new)
     proc = subprocess.run(
         [diff_bin, "-U0", "a/f.txt", "b/f.txt"],
-        cwd=ws, capture_output=True, text=True,
+        cwd=ws,
+        capture_output=True,
+        text=True,
     )
     assert proc.returncode == 1  # files differ; diff(1) exits 1
     assert "@@ -2,0 +3" in proc.stdout  # pure insertion hunk (`,1` optional)
@@ -417,7 +419,10 @@ def test_gnu_u0_diff_applies_byte_exact(tmp_path):
         # target file explicitly; the hunks (what we cross-check) are the same.
         subprocess.run(
             [patch_bin, "-s", "f.txt"],
-            cwd=ws / "ref", input=proc.stdout, text=True, check=True,
+            cwd=ws / "ref",
+            input=proc.stdout,
+            text=True,
+            check=True,
         )
         assert (ws / "ref/f.txt").read_bytes() == ours
 
@@ -427,7 +432,11 @@ def test_gnu_u0_diff_applies_byte_exact(tmp_path):
 
 def _git(repo, *args, **kwargs):
     return subprocess.run(
-        ["git", *args], cwd=repo, capture_output=True, text=True, **kwargs,
+        ["git", *args],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        **kwargs,
     )
 
 
@@ -440,8 +449,19 @@ def test_real_git_diff_multi_file_applies(tmp_path):
     (repo / "one.txt").write_text("alpha\nbeta\ngamma\n")
     (repo / "two.txt").write_text("red\ngreen\nblue\n")
     _git(repo, "add", "-A", check=True)
-    _git(repo, "-c", "user.email=t@t", "-c", "user.name=t",
-         "-c", "commit.gpgsign=false", "commit", "-qm", "init", check=True)
+    _git(
+        repo,
+        "-c",
+        "user.email=t@t",
+        "-c",
+        "user.name=t",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-qm",
+        "init",
+        check=True,
+    )
     (repo / "one.txt").write_text("alpha\nBETA\ngamma\n")
     (repo / "two.txt").write_text("red\ngreen\nblue\nviolet\n")
     (repo / "added.txt").write_text("brand\nnew\n")
@@ -496,3 +516,29 @@ def test_bom_prefixed_diff(tmp_path):
     (ws / "notes.txt").write_text("alpha\nbeta\ngamma\n")
     patch_files("\ufeff" + MODIFY_DIFF, workspace_root=ws)
     assert (ws / "notes.txt").read_text() == "alpha\nBETA\ngamma\n"
+
+
+@pytest.mark.bootstrap_profile
+def test_patch_direct_cas_failure_names_retained_effects(tmp_path, monkeypatch):
+    from tldw_chatbook.Tools import patch_tool_impls
+
+    ws = _ws(tmp_path)
+    (ws / "notes.txt").write_bytes(b"alpha\nbeta\ngamma\n")
+    (ws / "second.txt").write_bytes(b"alpha\nbeta\ngamma\n")
+    writer = patch_tool_impls._atomic_write_target
+
+    def peer_change(target, *args, **kwargs):
+        if target.name == "second.txt":
+            target.write_bytes(b"peer\n")
+        return writer(target, *args, **kwargs)
+
+    monkeypatch.setattr(patch_tool_impls, "_atomic_write_target", peer_change)
+    with pytest.raises(
+        LocalToolError, match="second.txt.*precondition failed.*patched notes.txt"
+    ):
+        patch_files(
+            MODIFY_DIFF + MODIFY_DIFF.replace("notes.txt", "second.txt"),
+            workspace_root=ws,
+        )
+    assert (ws / "notes.txt").read_bytes() == b"alpha\nBETA\ngamma\n"
+    assert (ws / "second.txt").read_bytes() == b"peer\n"

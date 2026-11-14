@@ -1,0 +1,36 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_____ test_native_correction_keeps_failed_check_and_fresh_passing_handoff ______
+Tests/Chat/test_workflow_native_journeys.py:340: in test_native_correction_keeps_failed_check_and_fresh_passing_handoff
+    _run(tmp_path, "correction", "native", script=_PRIVATE_JOURNEY, timeout=100)
+Tests/Backup_Recovery/test_home_citation_retirement.py:332: in _run
+    assert result.returncode == 0, stderr[-6000:] + stdout[-1000:]
+E   AssertionError: ok-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+E         return future.result()
+E                ^^^^^^^^^^^^^^^
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/Tests/Chat/test_workflow_native_journeys.py", line 336, in correction_journey
+E         await rig.close()
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/Tests/Chat/workflow_rig.py", line 185, in close
+E         await self.runtime.dispose()
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py", line 6428, in dispose
+E         workflow_cancellation = await coordinator.close(_runtime_disposal=self)
+E                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Chat/console_workflow_runs.py", line 3478, in close
+E         raise RuntimeError("workflow_original_shutdown_unresolved")
+E     RuntimeError: workflow_original_shutdown_unresolved
+E     
+E   assert 1 == 0
+E    +  where 1 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python', '-X', 'utf8', '-c', '\nim...   asyncio.run(correction_journey(Path(os.environ["XDG_DATA_HOME"]).parent))\n', 'correction', 'native'], returncode=1).returncode
+---------------------------- Captured stderr setup -----------------------------
+2026-11-04 19:12:12.649 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-11-04 19:12:12.680 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-11-04 19:12:12.687 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-11-04 19:12:12.688 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+- generated xml file: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-journey2/tests.xml -
+============================= slowest 25 durations =============================
+10.13s call     Tests/Chat/test_workflow_native_journeys.py::test_native_correction_keeps_failed_check_and_fresh_passing_handoff
+
+(2 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Chat/test_workflow_native_journeys.py::test_native_correction_keeps_failed_check_and_fresh_passing_handoff
+1 failed in 10.51s

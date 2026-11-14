@@ -1,0 +1,10 @@
+.....................                                                    [100%]
+============================= slowest 25 durations =============================
+33.51s call     Tests/UI/test_console_launch_wake.py::test_a_launch_into_console_delivers_without_stealing_the_active_tab
+31.86s call     Tests/UI/test_console_runtime_ownership.py::test_opening_console_during_a_headless_delivery_arms_the_poll
+3.65s call     Tests/UI/test_console_launch_wake.py::test_a_launch_with_no_marks_constructs_nothing_and_reads_once
+1.48s call     Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py::test_terminal_settlement_failure_at_each_write_boundary_rolls_back[sync_intent]
+1.26s call     Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py::test_terminal_settlement_is_atomic_and_returns_committed_proof
+
+(20 durations < 1s hidden.)
+21 passed in 95.94s (0:01:35)

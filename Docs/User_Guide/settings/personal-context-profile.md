@@ -112,7 +112,11 @@ Within an interview, **Skip** skips only the current question. **Cancel** opens
 exit and retain the encrypted draft, or **Discard draft** to exit and destroy
 its draft key. A memory-only interview cannot be kept, so it offers only
 continue or discard, and **Ctrl+Q** during one asks **Discard interview and
-quit?** first (**Continue interview** returns to it). An encrypted draft
+quit?** first (**Continue interview** returns to it). Once you have chosen
+**Discard draft**, or a draft cleanup is running, Ctrl+Q does not ask again: it
+says the interview is still being discarded (or cleaned up) and stays open;
+press it again once the interview has closed (pressed again before that, it asks
+**Quit while still working?**; **Wait** stays). An encrypted draft
 already holds your submitted answers, so quitting keeps it without asking;
 text typed but not yet submitted is not kept, the same as **Keep draft**. You may also
 finish early. The draft and transcript objects
@@ -343,6 +347,11 @@ Personal Context merge or resolution action in Settings.
 - Stored profile values, proposal bodies, drafts, conflict artifacts, and
   transport envelopes are encrypted at rest. Logs and diagnostics contain
   bounded status and IDs, not profile values or raw interview answers.
+- Backups: encrypted interview drafts stay on this device and are never
+  included in a backup; a backup preview lists them as excluded. The Personal
+  Context database itself cannot be backed up yet: a preview lists it as
+  unsupported, so a backup of a profile that has used Personal Context is
+  reported as incomplete.
 - Encryption does not hide all metadata, such as object counts and update
   timing. Under `server_trusted_v1`, the authorized home server can decrypt
   syncable content and re-encrypt it with its own keys. HTTPS protects that

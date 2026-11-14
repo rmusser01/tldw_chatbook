@@ -17,6 +17,7 @@ loguru only) and takes a plain ``Path`` rather than importing anything from
 tests hermetic against a ``tmp_path`` with no risk of touching a live user
 config.
 """
+
 from __future__ import annotations
 
 import os

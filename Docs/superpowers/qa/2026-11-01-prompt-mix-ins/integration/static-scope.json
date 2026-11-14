@@ -1,0 +1,10 @@
+{
+  "base": "2acbcd42f3e7b07fd122f5f6dc6b22e7385f10c5",
+  "candidate": "5dac2bb0207285eca67d571565a3ee88113e4a84",
+  "python_files_parsed": 117,
+  "new_duplicate_class_methods": {},
+  "unexpected_paths": [],
+  "commits_after_target": [
+    "5dac2bb0207285eca67d571565a3ee88113e4a84"
+  ]
+}

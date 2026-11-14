@@ -59,21 +59,21 @@ def parse_persona_policy_from_rules(
     cleaned: list[dict[str, object]] = []
     for entry in rules or ():
         if not isinstance(entry, Mapping):
-            logger.warning(
-                "Dropping non-mapping persona policy rule; entry_type={}",
-                type(entry).__name__,
-            )
+            # TASK-39127: a data type is not an error class, so nothing is
+            # bound (the forwarder would append it as one).
+            logger.warning("Dropping a non-mapping policy rule")
             continue
         try:
-            from tldw_chatbook.tldw_api.character_persona_schemas import PersonaPolicyRule
+            from tldw_chatbook.tldw_api.character_persona_schemas import (
+                PersonaPolicyRule,
+            )
 
             cleaned.append(
                 PersonaPolicyRule.model_validate(dict(entry)).model_dump(mode="json")
             )
         except Exception as exc:
-            logger.warning(
-                "Dropping malformed persona policy rule; error_type={}",
-                type(exc).__name__,
+            logger.bind(exception_type=type(exc).__name__).warning(
+                "Dropping malformed persona policy rule"
             )
     return PersonaToolPolicy(
         rules=tuple(cleaned), kinds=frozenset(str(r["rule_kind"]) for r in cleaned)

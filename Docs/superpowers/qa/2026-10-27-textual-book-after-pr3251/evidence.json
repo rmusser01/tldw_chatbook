@@ -1,0 +1,154 @@
+{
+  "source_pin": "416feb50ee667fdc95cb269bf50f8b1d5b3ff8ff",
+  "runtime": {
+    "python": "3.12.10",
+    "textual": "8.2.8"
+  },
+  "product_test_diff_empty": true,
+  "source_hashes": {
+    "tldw_chatbook/UI/Evals/bench_editor.py": "5bbfcdc25af8192c54c5c8b1866a0725300fb05d75c92e1adb4f274a37d18e04",
+    "tldw_chatbook/UI/Screens/evals_screen.py": "f876df41cc258f0331a042f1a2dfb1dba33fa733cf3aaa337330ec00ece88a80",
+    "tldw_chatbook/UI/Screens/stts_screen.py": "f7e94ff56673af5d0e4bba6dbc9833917f1e9a8f69820006012cd9ec88ca56ca",
+    "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py": "62dd91e1a1ca7ddf76845f07182d57a5fbef7c3ea18cadb7414bbecb4170efb0",
+    "tldw_chatbook/UI/Screens/scheduling/forms/reminder_form.py": "ffca1af4a79f7077677bcde4d63f60e30c4c12b069e38b29053b865fd90f8c37",
+    "tldw_chatbook/Scheduling/services/scheduling_service.py": "b8b9c3dff1aeb6c47cf5d9eccc8d042732cd4f91424573e59a4b8d08431a331c",
+    "tldw_chatbook/Scheduling/db/scheduled_tasks_db.py": "f2c3fa6ce547b525e3fcfdfbde4fcbade6d29ed3b7c23388f68221d3fdc2233e",
+    "tldw_chatbook/UI/Library_Modules/library_file_export.py": "496ea6a3a1371f7b18d28c70efd8c1f8b52eaad93b49dcd68ab9b2acb36853b8",
+    "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": "7b0e655b499ccfa5cbe62e0221abec11903050f17d7d211b5945f41bc15bb891",
+    "tldw_chatbook/UI/Screens/library_screen.py": "abc900fa3a5fe315ed1b571037745b4368cf747e9a3d90369ea72f0b42eb9a86",
+    "tldw_chatbook/UI/Navigation/screen_registry.py": "21ec6c1d30b952756abd90fe2727cdd7a73bf5556e4f1df7a05e280911e74c9e",
+    "tldw_chatbook/app.py": "bd16a79f5b8e612b9a19bffc3b60a733dc55d3ed24fc38ac52ce4e6171b2c83d"
+  },
+  "domains": [
+    {
+      "domain": "evals-media",
+      "parent": {
+        "path": ".test-tmp/textual-followup-fixes/book3251-evals-media-04/result.xml",
+        "cases": 3,
+        "failures": 2,
+        "errors": 0,
+        "skips": 0,
+        "raw_sha256": "4d98afaeb15c606567e692d0947e1074ddad5e1bc7724797313fd418336803d3"
+      },
+      "actual_children": [
+        {
+          "path": ".test-tmp/textual-followup-fixes/book3251-evals-media-04/pytest/test_evals_save_completion_pre0/private-profile-process/pytest.xml",
+          "cases": 1,
+          "failures": 0,
+          "errors": 0,
+          "skips": 0,
+          "snapshot": "children/evals-media-1.xml",
+          "raw_sha256": "798b17a88bf37bb1bdf8c9110f7bdc64bbb841fcbbc964ac05692eaf18a9d46b",
+          "failure_messages": []
+        },
+        {
+          "path": ".test-tmp/textual-followup-fixes/book3251-evals-media-04/pytest/test_evals_save_completion_pre1/private-profile-process/pytest.xml",
+          "cases": 1,
+          "failures": 1,
+          "errors": 0,
+          "skips": 0,
+          "snapshot": "children/evals-media-2.xml",
+          "raw_sha256": "5210b536eca0c905f94480471030e73fd08e13de56e4adef71c506ba16f1788d",
+          "failure_messages": [
+            {
+              "test": "test_evals_save_completion_preserves_later_child_input[queued-later-input]",
+              "message": "AssertionError: queued Save completion replaced newer accepted child input\nassert 'Saved' == 'Saved-new'\n  \n  - Saved-new\n  + Saved"
+            }
+          ]
+        },
+        {
+          "path": ".test-tmp/textual-followup-fixes/book3251-evals-media-04/pytest/test_speech_footer_tracks_moun0/private-profile-process/pytest.xml",
+          "cases": 1,
+          "failures": 1,
+          "errors": 0,
+          "skips": 0,
+          "snapshot": "children/evals-media-3.xml",
+          "raw_sha256": "fc5e2204bbd6d208e57a95c6e11b4bf453c45af482e49b261a1d6ddb71d84657",
+          "failure_messages": [
+            {
+              "test": "test_speech_footer_tracks_mounted_view",
+              "message": "AssertionError: Speech still advertises playground actions with no playground mounted\nassert not True\n +  where True = any(<generator object test_speech_footer_tracks_mounted_view.<locals>.<genexpr> at 0x00000178C09CD080>)"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "domain": "library-research",
+      "parent": {
+        "path": ".test-tmp/textual-after3251/audit-merged/library-research/book3251-library-qualified/result.xml",
+        "cases": 2,
+        "failures": 1,
+        "errors": 0,
+        "skips": 0,
+        "raw_sha256": "c9dc297d31702b562de4546930c35439c52277b42c735627b53714e2062932d3"
+      },
+      "actual_children": [
+        {
+          "path": ".test-tmp/textual-after3251/audit-merged/library-research/book3251-library-qualified/pytest/test_prompt_export_allows_ui_d0/private-profile-process/pytest.xml",
+          "cases": 1,
+          "failures": 0,
+          "errors": 0,
+          "skips": 0,
+          "snapshot": "children/library-research-1.xml",
+          "raw_sha256": "9823e6e5a1929000b29c2caf380faf3ee4dd2cfa7372379cbd7625cebeec71b2",
+          "failure_messages": []
+        },
+        {
+          "path": ".test-tmp/textual-after3251/audit-merged/library-research/book3251-library-qualified/pytest/test_prompt_export_allows_ui_d1/private-profile-process/pytest.xml",
+          "cases": 1,
+          "failures": 1,
+          "errors": 0,
+          "skips": 0,
+          "snapshot": "children/library-research-2.xml",
+          "raw_sha256": "a5b9ae855ed82085906ee8eefd974c75f1f9efe803e10356b8d8eafac394141d",
+          "failure_messages": [
+            {
+              "test": "test_prompt_export_allows_ui_dispatch_during_destination_write[held-writer]",
+              "message": "AssertionError: Library Prompt export blocked UI key dispatch until destination writer was released\nassert False"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "domain": "workflows-schedules",
+      "parent": {
+        "path": ".test-tmp/textual-after3251/audit-merged/workflows-schedules/book3251-workflows-fullforms-02/result.xml",
+        "cases": 2,
+        "failures": 1,
+        "errors": 0,
+        "skips": 0,
+        "raw_sha256": "a2d30b315ee9943cd299359c9afcdad706f6f4287421af6a27fbe1264918b3ee"
+      },
+      "actual_children": [
+        {
+          "path": ".test-tmp/textual-after3251/audit-merged/workflows-schedules/book3251-workflows-fullforms-02/pytest/test_full_forms_keep_both_acce0/private-profile-process/pytest.xml",
+          "cases": 1,
+          "failures": 0,
+          "errors": 0,
+          "skips": 0,
+          "snapshot": "children/workflows-schedules-1.xml",
+          "raw_sha256": "7dc7b05a3a00cbe952317dcc6bc8347d29ef2b8c5e2586b69a9fc962e97673cc",
+          "failure_messages": []
+        },
+        {
+          "path": ".test-tmp/textual-after3251/audit-merged/workflows-schedules/book3251-workflows-fullforms-02/pytest/test_full_forms_keep_both_acce1/private-profile-process/pytest.xml",
+          "cases": 1,
+          "failures": 1,
+          "errors": 0,
+          "skips": 0,
+          "snapshot": "children/workflows-schedules-2.xml",
+          "raw_sha256": "0890dd0eac5e45a677bc443f014bf3f478b883b79576eb6ccee059ac40a0ab19",
+          "failure_messages": [
+            {
+              "test": "test_full_forms_keep_both_accepted_saves[overlap]",
+              "message": "AssertionError: {'calls': [('server-a', {'body': '', 'cron': '0 9 * * *', 'enabled': True, 'run_at': None, ...}), ('server-b', {'body'..., ...}, 'server-b': {'body': '', 'cron': '0 9 * * *', 'enabled': True, 'run_at': None, ...}}, 'exception': 'None', ...}\nassert ['A', 'EditedB'] == ['EditedA', 'EditedB']\n  \n  At index 0 diff: 'A' != 'EditedA'\n  Use -v to get more diff"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "note": "Seven parent cases and seven actual private-child cases are the same seven cases, not fourteen independent tests. Three ordinary parents pass; four intended assertions fail. Speech Clear is an embedded ordinary control, not a separate passing testcase. No failures were fixed in this audit."
+}

@@ -1,0 +1,3 @@
+*.patch -text
+*.log -text
+*.diff -text

@@ -9,7 +9,6 @@ retrieval that stages evidence.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Sequence
 
@@ -20,9 +19,12 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Library.library_rag_state import (
+    CONSOLE_RAG_DEFAULT_SOURCE_TYPES,
+    CONSOLE_RAG_SOURCE_SUMMARY_PREFIX,
     LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES,
     LIBRARY_RAG_SOURCE_TYPES,
     library_rag_source_scope_summary,
+    normalize_console_rag_source_types,
 )
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_GLYPH_SELECTED,
@@ -31,54 +33,9 @@ from tldw_chatbook.Library.library_shell_state import (
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 
-#: The Console's Library RAG source-type default: exactly the three kinds
-#: retrieval has always run over from this screen (prompts OFF). It is the
-#: ONE default -- `chat_screen.CONSOLE_LIBRARY_RAG_SOURCE_SCOPE` is this
-#: same tuple -- so making the row editable (RAG-44) changes nothing until
-#: a user actually touches a toggle.
-CONSOLE_RAG_DEFAULT_SOURCE_TYPES: tuple[str, ...] = (
-    "notes",
-    "media",
-    "conversations",
-)
-#: The Console's leading noun for the source-scope line. NOT "Scope": the
-#: Console already spends that word on the retrieval ITEM scope ("Scope: 2
-#: items" in the rail and status strip), which is a different concept --
-#: this line says which KINDS of sources retrieval reads.
-CONSOLE_RAG_SOURCE_SUMMARY_PREFIX = "Sources"
 CONSOLE_RAG_SOURCE_TOGGLE_ID_PREFIX = "console-rag-settings-source-"
 CONSOLE_RAG_SOURCE_TOGGLE_CLASS = "console-rag-settings-source-toggle"
 _SOURCE_TYPE_LABELS = dict(LIBRARY_RAG_SOURCE_TYPES)
-
-def normalize_console_rag_source_types(value: Any) -> tuple[str, ...]:
-    """Return a usable Console RAG source-type selection from loose input.
-
-    Every boundary the selection crosses (modal construction, the screen's
-    stored attribute, restored screen state) runs through here, so a
-    legacy payload, an unknown identifier, or a non-sequence can never
-    reach a retrieval request. Unknown values are dropped and the result
-    is ordered canonically; an unusable or empty result falls back to
-    `CONSOLE_RAG_DEFAULT_SOURCE_TYPES` rather than retrieving over
-    nothing.
-
-    Args:
-        value: Any candidate selection (sequence of source-type ids).
-
-    Returns:
-        A canonical, non-empty tuple of known source-type identifiers.
-    """
-    if isinstance(value, str) or not isinstance(value, Iterable):
-        return CONSOLE_RAG_DEFAULT_SOURCE_TYPES
-    try:
-        candidates = {str(item).strip().lower() for item in value}
-    except TypeError:
-        return CONSOLE_RAG_DEFAULT_SOURCE_TYPES
-    normalized = tuple(
-        source_type
-        for source_type in LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES
-        if source_type in candidates
-    )
-    return normalized or CONSOLE_RAG_DEFAULT_SOURCE_TYPES
 
 
 def console_rag_source_toggle_label(source_type: str, selected: bool) -> str:
@@ -143,13 +100,15 @@ class ConsoleRagSettingsModal(
         max-width: 96%;
         height: 20;
         max-height: 96%;
-        border: tall gray;
-        background: black;
+        border: tall $tldw-boundary;
+        background: $panel;
+        color: $text;
         padding: 1 2;
     }
 
     .console-rag-settings-status {
         margin: 0 0 1 0;
+        color: $text;
     }
 
     #console-rag-settings-body {

@@ -17,12 +17,13 @@ from weakref import WeakValueDictionary
 
 from loguru import logger
 
+from tldw_chatbook.DB import declare_store
 from tldw_chatbook.Backup_Recovery.participants import (
-    _core_access,
-    _core_cached_connection,
-    _core_getter,
-    _core_transaction,
-    _register_core_connection,
+    core_access,
+    core_cached_connection,
+    core_getter,
+    core_transaction,
+    register_core_connection,
 )
 from tldw_chatbook.Utils.private_paths import lexical_path
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
@@ -574,6 +575,10 @@ class NotesDeviceStateError(RuntimeError):
     """A device-state operation failed without disclosing private values."""
 
 
+@declare_store(
+    "notes.sync_state",
+    thread_cache=lambda store: getattr(store._thread_local, "connection", None),
+)
 class NotesDeviceStateStore:
     """Own the sole private connection and transaction seam for notes.sync_state.
 
@@ -626,7 +631,7 @@ class NotesDeviceStateStore:
             self._operation_locks[operation_id] = lock
         return lock
 
-    @_core_getter
+    @core_getter
     def _connect(
         self,
         *,
@@ -634,7 +639,7 @@ class NotesDeviceStateStore:
         must_exist: bool = False,
         **connection_options: object,
     ) -> sqlite3.Connection:
-        _core_access(self)
+        core_access(self)
         connection = connect_private_sqlite(
             "notes.sync_state",
             self._database_path,
@@ -643,10 +648,10 @@ class NotesDeviceStateStore:
             **connection_options,
         )
         try:
-            _register_core_connection(self, connection)
-            _core_access(self)
+            register_core_connection(self, connection)
+            core_access(self)
             connection.execute("PRAGMA foreign_keys = ON")
-            _core_access(self)
+            core_access(self)
         except BaseException:
             connection.close()
             raise
@@ -680,11 +685,11 @@ class NotesDeviceStateStore:
             raise
         return connection
 
-    @_core_getter
+    @core_getter
     def _get_connection(self) -> sqlite3.Connection:
-        _core_access(self)
+        core_access(self)
         connection = getattr(self._thread_local, "connection", None)
-        if connection is not None and _core_cached_connection(self, connection) is None:
+        if connection is not None and core_cached_connection(self, connection) is None:
             self._thread_local.connection = None
             with self._connections_guard:
                 if connection in self._connections:
@@ -698,7 +703,7 @@ class NotesDeviceStateStore:
             self._connections.append(connection)
         return connection
 
-    @_core_transaction
+    @core_transaction
     @contextmanager
     def transaction(self, *, immediate: bool = False) -> Iterator[sqlite3.Connection]:
         """Yield this thread's schema-ready held connection in one transaction."""
@@ -716,8 +721,7 @@ class NotesDeviceStateStore:
                 # held connection under us); that secondary error must not
                 # mask the original one. Type name only: no private values.
                 logger.debug(
-                    "Notes device store rollback failed after a transaction "
-                    "error: {}",
+                    "Notes device store rollback failed after a transaction error: {}",
                     type(rollback_error).__name__,
                 )
             raise
@@ -750,9 +754,7 @@ class NotesDeviceStateStore:
                 # A repeated initialize() keeps its tamper-detection
                 # contract: re-run the census on the held connection.
                 with self.transaction(immediate=True) as connection:
-                    notes_device_state_schema.initialize_notes_device_schema(
-                        connection
-                    )
+                    notes_device_state_schema.initialize_notes_device_schema(connection)
         except notes_device_state_schema.NotesDeviceSchemaError as error:
             message = str(error)
             if message.startswith("Unsupported"):
@@ -1230,6 +1232,47 @@ class NotesDeviceStateStore:
         with self.transaction() as connection:
             rows = connection.execute(statement, parameters).fetchall()
         return tuple(str(row[0]) for row in rows)
+
+    def active_identity_claimed(self, stable_identity_digest: str) -> bool:
+        """Report whether an active binding records this file identity.
+
+        TASK-34789: ``idx_notes_sync_active_identity`` allows one active
+        binding per identity, and a binding keeps the identity of a file that
+        was replaced or deleted until its own commit. The filesystem adapter
+        asks this before it adopts a new file's inode number, so that a number
+        the filesystem recycled is not committed under a second binding. The
+        index stays the authority; this read is advisory.
+
+        Only a record written with ``NotesSyncExecutor.identity_digest`` can
+        match. A binding activated from the legacy migration
+        (:meth:`activate_migration_candidate` does not recompute it) keeps
+        the migration's own fingerprint until its first commit, so the
+        number of its file is not seen here until then.
+
+        Args:
+            stable_identity_digest: ``NotesSyncExecutor.identity_digest`` of
+                the candidate ``(device, inode)``.
+
+        Returns:
+            bool: True when an active binding, in any root, records it.
+
+        Raises:
+            ValueError: If the digest is not a lowercase SHA-256 digest.
+        """
+
+        validate_notes_sync_digest(
+            stable_identity_digest, field_name="stable_identity_digest"
+        )
+        with self.transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT 1 FROM notes_sync_bindings
+                WHERE stable_identity_digest = ? AND state = 'active'
+                LIMIT 1
+                """,
+                (stable_identity_digest,),
+            ).fetchone()
+        return row is not None
 
     def has_binding_for_note_or_path(
         self,
@@ -2642,6 +2685,110 @@ class NotesDeviceStateStore:
             if disconnected != 1 or completed != 1:
                 raise NotesDeviceStateError(
                     "The requested disconnect resolution is stale."
+                )
+        return self.get_operation(operation_id)
+
+    def settle_operation_attention(
+        self,
+        operation_id: str,
+        *,
+        expected: NotesSyncBindingRecord,
+        replacement: NotesSyncBindingRecord,
+    ) -> NotesSyncOperationRecord:
+        """Atomically close one attention entry at a proven binding baseline.
+
+        TASK-34000.2: an ``update_file``/``update_note`` fenced at attention
+        held its whole root -- every Check refused it and nothing could close
+        it, so the folder stopped syncing both ways for good. The caller (the
+        executor's ``settle_attention``) decides which baseline is PROVEN on
+        disk and in Notes; this commits that baseline and completes the
+        entry in one transaction, so the planner -- never this method --
+        decides what happens to whatever changed since. The binding row is
+        compare-and-set against ``expected`` exactly like
+        :meth:`commit_binding_stage`; a replacement equal to ``expected``
+        keeps the reviewed baseline.
+
+        Args:
+            operation_id: The attention entry to complete.
+            expected: The binding row as the caller read it.
+            replacement: The baseline to record (same ownership).
+
+        Returns:
+            The completed operation record.
+
+        Raises:
+            TypeError: If either binding is not a ``NotesSyncBindingRecord``.
+            NotesDeviceStateError: On an ownership change, a stale binding or
+                an entry that is no longer in attention.
+        """
+
+        validate_notes_sync_opaque_id(operation_id, field_name="operation_id")
+        if type(expected) is not NotesSyncBindingRecord:
+            raise TypeError("expected must be a NotesSyncBindingRecord.")
+        if type(replacement) is not NotesSyncBindingRecord:
+            raise TypeError("replacement must be a NotesSyncBindingRecord.")
+        if (
+            replacement.binding_id != expected.binding_id
+            or replacement.root_id != expected.root_id
+            or replacement.note_scope_id != expected.note_scope_id
+            or replacement.note_id != expected.note_id
+            or replacement.state is not expected.state
+        ):
+            raise NotesDeviceStateError("A binding baseline cannot change ownership.")
+        timestamp = _now()
+        with self.transaction(immediate=True) as connection:
+            changed = connection.execute(
+                """
+                UPDATE notes_sync_bindings
+                SET normalized_relative_path = ?, stable_identity_digest = ?,
+                    utf8_bom = ?, newline = ?, final_newline = ?,
+                    file_mode = ?, content_digest = ?, note_version = ?,
+                    updated_at = ?
+                WHERE binding_id = ? AND root_id = ? AND note_scope_id = ?
+                  AND note_id = ? AND normalized_relative_path = ?
+                  AND stable_identity_digest = ? AND state = ?
+                  AND utf8_bom = ? AND newline = ? AND final_newline = ?
+                  AND file_mode = ? AND content_digest = ? AND note_version = ?
+                """,
+                (
+                    replacement.normalized_relative_path,
+                    replacement.stable_identity_digest,
+                    int(replacement.serialization.utf8_bom),
+                    replacement.serialization.newline,
+                    int(replacement.serialization.final_newline),
+                    replacement.serialization.mode,
+                    replacement.content_digest,
+                    replacement.note_version,
+                    timestamp,
+                    expected.binding_id,
+                    expected.root_id,
+                    expected.note_scope_id,
+                    expected.note_id,
+                    expected.normalized_relative_path,
+                    expected.stable_identity_digest,
+                    expected.state.value,
+                    int(expected.serialization.utf8_bom),
+                    expected.serialization.newline,
+                    int(expected.serialization.final_newline),
+                    expected.serialization.mode,
+                    expected.content_digest,
+                    expected.note_version,
+                ),
+            ).rowcount
+            if changed != 1:
+                raise NotesDeviceStateError("The requested binding baseline is stale.")
+            completed = connection.execute(
+                """
+                UPDATE notes_sync_operations
+                SET state = 'completed', reason_code = NULL, updated_at = ?
+                WHERE operation_id = ? AND binding_id = ?
+                  AND state = 'needs_attention'
+                """,
+                (timestamp, operation_id, expected.binding_id),
+            ).rowcount
+            if completed != 1:
+                raise NotesDeviceStateError(
+                    "The requested attention settlement is stale."
                 )
         return self.get_operation(operation_id)
 

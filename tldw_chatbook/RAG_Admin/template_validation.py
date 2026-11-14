@@ -85,6 +85,7 @@ def _rx_warn(*args: Any, **kwargs: Any) -> Any:
 
     return warn_ambiguity(*args, **kwargs)
 
+
 __all__ = ["FALLBACK_METHODS", "TemplateValidator", "validate_template"]
 
 
@@ -106,17 +107,31 @@ _NONCRITICAL_EXCEPTIONS = (
 # byte-identical, staleness included. Public so tests can pin the frozen
 # behavior against the live-registry default.
 FALLBACK_METHODS = [
-    'words', 'sentences', 'paragraphs', 'tokens', 'semantic', 'json', 'xml',
-    'ebook_chapters', 'rolling_summarize', 'structure_aware', 'propositions',
+    "words",
+    "sentences",
+    "paragraphs",
+    "tokens",
+    "semantic",
+    "json",
+    "xml",
+    "ebook_chapters",
+    "rolling_summarize",
+    "structure_aware",
+    "propositions",
 ]
 
 # Schemas :64 - strict classifier key allowlist (pydantic pass only; the
 # chunking.config.classifier path is NOT strict-key checked - endpoint parity).
 _CLASSIFIER_ALLOWED_KEYS = {
-    'media_types', 'filename_regex', 'title_regex', 'url_regex', 'tags',
-    'min_score', 'priority',
+    "media_types",
+    "filename_regex",
+    "title_regex",
+    "url_regex",
+    "tags",
+    "min_score",
+    "priority",
 }
-_CLASSIFIER_REGEX_KEYS = ('filename_regex', 'title_regex', 'url_regex')
+_CLASSIFIER_REGEX_KEYS = ("filename_regex", "title_regex", "url_regex")
 
 _MAX_BOUNDARIES = 20
 _BOUNDARY_PATTERN_MAX_LEN = 256
@@ -176,9 +191,7 @@ class TemplateValidator:
         except _NONCRITICAL_EXCEPTIONS as exc:  # endpoint :984-992 catch-all
             return {
                 "valid": False,
-                "errors": [
-                    _issue("template_config", f"Validation error: {exc}")
-                ],
+                "errors": [_issue("template_config", f"Validation error: {exc}")],
                 "warnings": [],
             }
         return {
@@ -217,19 +230,21 @@ class TemplateValidator:
         if not isinstance(template, dict):
             # The endpoint's Body(dict) typing 422s before the handler; the
             # local seam answers with the same shape instead of raising.
-            return [_issue("template_config", "Input should be a valid dictionary")], None
+            return [
+                _issue("template_config", "Input should be a valid dictionary")
+            ], None
 
         errors: list[dict[str, str]] = []
 
         # chunking: required dict, must contain 'method' (schemas :43-46, :50-55)
-        chunking = template.get('chunking', _ABSENT)
+        chunking = template.get("chunking", _ABSENT)
         if chunking is _ABSENT:
             errors.append(_issue("chunking", "Field required"))
             chunking = None
         elif not isinstance(chunking, dict):
             errors.append(_issue("chunking", "Input should be a valid dictionary"))
             chunking = None
-        elif 'method' not in chunking:
+        elif "method" not in chunking:
             errors.append(
                 _issue(
                     "chunking",
@@ -240,11 +255,11 @@ class TemplateValidator:
         else:
             chunking = dict(chunking)
             # validate_chunking mutation (schemas :53-54): config defaults to {}
-            chunking.setdefault('config', {})
+            chunking.setdefault("config", {})
 
         # preprocessing / postprocessing: Optional[list[dict]] (schemas :39-42, :47-50)
         stages: dict[str, Any] = {}
-        for field in ('preprocessing', 'postprocessing'):
+        for field in ("preprocessing", "postprocessing"):
             value = template.get(field, _ABSENT)
             if value is _ABSENT:
                 value = []  # default_factory=list
@@ -252,7 +267,9 @@ class TemplateValidator:
                 for index, item in enumerate(value or []):
                     if not isinstance(item, dict):
                         errors.append(
-                            _issue(f"{field}.{index}", "Input should be a valid dictionary")
+                            _issue(
+                                f"{field}.{index}", "Input should be a valid dictionary"
+                            )
                         )
             else:
                 errors.append(_issue(field, "Input should be a valid list"))
@@ -260,7 +277,7 @@ class TemplateValidator:
             stages[field] = value
 
         # classifier: Optional[dict] + validate_classifier (schemas :56-59, :60-83)
-        classifier = template.get('classifier', _ABSENT)
+        classifier = template.get("classifier", _ABSENT)
         if classifier is _ABSENT or classifier is None:
             classifier = None
         elif not isinstance(classifier, dict):
@@ -278,10 +295,10 @@ class TemplateValidator:
         # model_dump_compat result: exactly the model's fields - unknown
         # top-level keys are DROPPED (§7.1 wart 3), defaults filled.
         normalized: dict[str, Any] = {
-            'preprocessing': stages['preprocessing'],
-            'chunking': chunking,
-            'postprocessing': stages['postprocessing'],
-            'classifier': classifier,
+            "preprocessing": stages["preprocessing"],
+            "chunking": chunking,
+            "postprocessing": stages["postprocessing"],
+            "classifier": classifier,
         }
         return [], normalized
 
@@ -295,22 +312,22 @@ class TemplateValidator:
 
         # Required-fields block (endpoint :817-840). Post-pass-1 both checks
         # are unreachable (pydantic guaranteed them); kept for structural parity.
-        if 'chunking' not in template_config:
-            errors.append(_issue('chunking', 'Chunking configuration is required'))
+        if "chunking" not in template_config:
+            errors.append(_issue("chunking", "Chunking configuration is required"))
         else:
-            chunking = template_config['chunking']
-            if 'method' not in chunking:
-                errors.append(_issue('chunking.method', 'Chunking method is required'))
+            chunking = template_config["chunking"]
+            if "method" not in chunking:
+                errors.append(_issue("chunking.method", "Chunking method is required"))
             else:
                 try:
                     available_methods = self._methods_source()
                 except _NONCRITICAL_EXCEPTIONS:
                     # Endpoint :830-832: stale hardcoded fallback (§11 item 13).
                     available_methods = list(FALLBACK_METHODS)
-                if chunking['method'] not in available_methods:
+                if chunking["method"] not in available_methods:
                     errors.append(
                         _issue(
-                            'chunking.method',
+                            "chunking.method",
                             f"Unknown chunking method '{chunking['method']}'. "
                             f"Valid methods: {', '.join(sorted(available_methods))}",
                         )
@@ -318,57 +335,59 @@ class TemplateValidator:
 
         # Hierarchical options (endpoint :844-854; comment there claims
         # "top-level or chunking.config" but only the config path is read).
-        hier_flag = _get_cfg_path(template_config, ['chunking', 'config', 'hierarchical'])
+        hier_flag = _get_cfg_path(
+            template_config, ["chunking", "config", "hierarchical"]
+        )
         if hier_flag is not None and not isinstance(hier_flag, bool):
             errors.append(
-                _issue('chunking.config.hierarchical', 'hierarchical must be a boolean')
+                _issue("chunking.config.hierarchical", "hierarchical must be a boolean")
             )
 
         # Boundaries (endpoint :855-901)
         hier_tpl = _get_cfg_path(
-            template_config, ['chunking', 'config', 'hierarchical_template']
+            template_config, ["chunking", "config", "hierarchical_template"]
         )
-        if isinstance(hier_tpl, dict) and 'boundaries' in hier_tpl:
-            boundaries = hier_tpl.get('boundaries')
+        if isinstance(hier_tpl, dict) and "boundaries" in hier_tpl:
+            boundaries = hier_tpl.get("boundaries")
             if not isinstance(boundaries, list):
                 errors.append(
                     _issue(
-                        'chunking.config.hierarchical_template.boundaries',
-                        'boundaries must be a list',
+                        "chunking.config.hierarchical_template.boundaries",
+                        "boundaries must be a list",
                     )
                 )
             else:
                 if len(boundaries) > _MAX_BOUNDARIES:
                     errors.append(
                         _issue(
-                            'chunking.config.hierarchical_template.boundaries',
-                            f'Too many boundary rules (max {_MAX_BOUNDARIES})',
+                            "chunking.config.hierarchical_template.boundaries",
+                            f"Too many boundary rules (max {_MAX_BOUNDARIES})",
                         )
                     )
                 for i, rule in enumerate(boundaries[:_MAX_BOUNDARIES]):
-                    if not isinstance(rule, dict) or 'pattern' not in rule:
+                    if not isinstance(rule, dict) or "pattern" not in rule:
                         errors.append(
                             _issue(
-                                f'chunking.config.hierarchical_template.boundaries[{i}]',
-                                'Each boundary must include a pattern',
+                                f"chunking.config.hierarchical_template.boundaries[{i}]",
+                                "Each boundary must include a pattern",
                             )
                         )
                         continue
-                    pat = str(rule.get('pattern') or '')
+                    pat = str(rule.get("pattern") or "")
                     err = _rx_check(pat, max_len=_BOUNDARY_PATTERN_MAX_LEN)
                     if err:
                         errors.append(
                             _issue(
-                                f'chunking.config.hierarchical_template.boundaries[{i}].pattern',
+                                f"chunking.config.hierarchical_template.boundaries[{i}].pattern",
                                 err,
                             )
                         )
-                    flags_str = str(rule.get('flags') or '').lower()
+                    flags_str = str(rule.get("flags") or "").lower()
                     _, ferr = _rx_flags(flags_str)
                     if ferr:
                         errors.append(
                             _issue(
-                                f'chunking.config.hierarchical_template.boundaries[{i}].flags',
+                                f"chunking.config.hierarchical_template.boundaries[{i}].flags",
                                 ferr,
                             )
                         )
@@ -377,7 +396,7 @@ class TemplateValidator:
                     if warn:
                         warnings.append(
                             _issue(
-                                f'chunking.config.hierarchical_template.boundaries[{i}].pattern',
+                                f"chunking.config.hierarchical_template.boundaries[{i}].pattern",
                                 warn,
                             )
                         )
@@ -385,45 +404,47 @@ class TemplateValidator:
         # Classifier (endpoint :903-935): top-level first (already fully
         # validated by pass 1 when truthy), else chunking.config.classifier
         # (NOT strict-key checked - only this hand-rolled path applies).
-        classifier = template_config.get('classifier') or _get_cfg_path(
-            template_config, ['chunking', 'config', 'classifier']
+        classifier = template_config.get("classifier") or _get_cfg_path(
+            template_config, ["chunking", "config", "classifier"]
         )
         if classifier is not None and not isinstance(classifier, dict):
-            errors.append(_issue('classifier', 'classifier must be an object'))
+            errors.append(_issue("classifier", "classifier must be an object"))
         elif isinstance(classifier, dict):
-            ms = classifier.get('min_score')
+            ms = classifier.get("min_score")
             if ms is not None:
                 try:
                     score = float(ms)  # numeric strings pass here (endpoint parity)
                     if score < 0 or score > 1:
                         raise ValueError
                 except (TypeError, ValueError):
-                    errors.append(_issue('classifier.min_score', 'min_score must be in [0,1]'))
-            pr = classifier.get('priority')
+                    errors.append(
+                        _issue("classifier.min_score", "min_score must be in [0,1]")
+                    )
+            pr = classifier.get("priority")
             if pr is not None and not isinstance(pr, int):
-                errors.append(_issue('classifier.priority', 'priority must be integer'))
+                errors.append(_issue("classifier.priority", "priority must be integer"))
             for key in _CLASSIFIER_REGEX_KEYS:
                 pat = classifier.get(key)
                 if pat is None:
                     continue
                 if not isinstance(pat, str):
-                    errors.append(_issue(f'classifier.{key}', 'must be a string'))
+                    errors.append(_issue(f"classifier.{key}", "must be a string"))
                     continue
                 if len(pat) > _CLASSIFIER_PATTERN_MAX_LEN:
                     errors.append(
                         _issue(
-                            f'classifier.{key}',
-                            f'Pattern too long (max {_CLASSIFIER_PATTERN_MAX_LEN})',
+                            f"classifier.{key}",
+                            f"Pattern too long (max {_CLASSIFIER_PATTERN_MAX_LEN})",
                         )
                     )
                     continue
                 perr = _rx_check(pat, max_len=_CLASSIFIER_PATTERN_MAX_LEN)
                 if perr:
-                    errors.append(_issue(f'classifier.{key}', perr))
+                    errors.append(_issue(f"classifier.{key}", perr))
 
         # Operation lists (endpoint :937-973). NOTE the §7.1 warts: only the
         # 'operation' KEY is required, names are never checked.
-        for field in ('preprocessing', 'postprocessing'):
+        for field in ("preprocessing", "postprocessing"):
             if field not in template_config:
                 continue
             value = template_config[field]
@@ -431,14 +452,14 @@ class TemplateValidator:
                 # Unreachable post-pass-1 (pydantic types the field), except
                 # for an explicit null (Optional), which the dump preserves.
                 errors.append(
-                    _issue(field, f'{field.capitalize()} must be a list of operations')
+                    _issue(field, f"{field.capitalize()} must be a list of operations")
                 )
                 continue
             for i, op in enumerate(value):
-                if not isinstance(op, dict) or 'operation' not in op:
+                if not isinstance(op, dict) or "operation" not in op:
                     errors.append(
                         _issue(
-                            f'{field}[{i}]',
+                            f"{field}[{i}]",
                             f'Each {field} operation must have an "operation" field',
                         )
                     )
@@ -449,7 +470,10 @@ class TemplateValidator:
             json.dumps(template_config)
         except (TypeError, ValueError) as exc:
             errors.append(
-                _issue('template_config', f'Template configuration is not JSON serializable: {exc}')
+                _issue(
+                    "template_config",
+                    f"Template configuration is not JSON serializable: {exc}",
+                )
             )
 
         return errors, warnings
@@ -471,18 +495,18 @@ def _classifier_pass_error(classifier: dict[str, Any]) -> Optional[str]:
     extra = set(classifier.keys()) - _CLASSIFIER_ALLOWED_KEYS
     if extra:
         return f"Value error, Unknown classifier fields: {', '.join(sorted(extra))}"
-    if 'min_score' in classifier:
-        ms = classifier['min_score']
+    if "min_score" in classifier:
+        ms = classifier["min_score"]
         if not isinstance(ms, (int, float)) or not (0.0 <= float(ms) <= 1.0):
-            return 'Value error, classifier.min_score must be in [0,1]'
-    if 'priority' in classifier and not isinstance(classifier['priority'], int):
-        return 'Value error, classifier.priority must be an integer'
-    if 'media_types' in classifier and not isinstance(classifier['media_types'], list):
-        return 'Value error, classifier.media_types must be a list of strings'
+            return "Value error, classifier.min_score must be in [0,1]"
+    if "priority" in classifier and not isinstance(classifier["priority"], int):
+        return "Value error, classifier.priority must be an integer"
+    if "media_types" in classifier and not isinstance(classifier["media_types"], list):
+        return "Value error, classifier.media_types must be a list of strings"
     for key in _CLASSIFIER_REGEX_KEYS:
         val = classifier.get(key)
         if val is not None and not isinstance(val, str):
-            return f'Value error, classifier.{key} must be a string'
+            return f"Value error, classifier.{key} must be a string"
     return None
 
 

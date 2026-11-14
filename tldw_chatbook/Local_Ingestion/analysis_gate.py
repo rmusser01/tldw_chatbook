@@ -23,9 +23,7 @@ from __future__ import annotations
 from typing import Optional
 
 
-def analysis_credentials_ok(
-    api_key: Optional[str], keyless_ok: bool = False
-) -> bool:
+def analysis_credentials_ok(api_key: Optional[str], keyless_ok: bool = False) -> bool:
     """Return whether an analysis LLM call may be made.
 
     Args:

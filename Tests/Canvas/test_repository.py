@@ -161,6 +161,123 @@ def _sha256(source: str) -> str:
     return hashlib.sha256(source.encode("utf-8")).hexdigest()
 
 
+@pytest.mark.parametrize("caller_owned", [False, True])
+@pytest.mark.parametrize("staged", [False, True])
+def test_import_tied_siblings_preserves_values_and_authored_sequence(
+    db, caller_owned, staged
+):
+    """Complete imports admit ties; authored settlement still rejects stale claims."""
+    conversation, message = _owner(db)
+    repository = CanvasRepository(db)
+    canvas = str(uuid4())
+    root, low, high = sorted(str(uuid4()) for _ in range(3))
+    batches = [
+        _turn_batch(
+            conversation,
+            message,
+            canvas_id=canvas,
+            revision_id=revision,
+            source=source,
+            sequence=sequence,
+            parent_revision_id=parent,
+        )
+        for revision, source, sequence, parent in (
+            (root, "<p>root é</p>", 1, None),
+            (low, "<p>low</p>", 2, root),
+            (high, "<p>high</p>", 2, root),
+        )
+    ]
+    batch = CanvasImportBatch(
+        conversation,
+        batches[0].documents,
+        tuple(item.revisions[0] for item in reversed(batches)),
+    )
+    if caller_owned:
+        with db.transaction(immediate=True) as cursor:
+            repository.import_batch_in_transaction(cursor, batch)
+    else:
+        repository.import_batch(batch)
+    metadata = repository.list_revision_metadata(conversation)
+    assert [(row.sequence, row.revision_id) for row in metadata] == [
+        (1, root),
+        (2, low),
+        (2, high),
+    ]
+    for original in batch.revisions:
+        saved = repository.read_revision(conversation, original.revision_id)
+        assert saved.source == original.source
+        assert saved.parent_revision_id == original.parent_revision_id
+        assert saved.content_sha256 == original.content_sha256
+    authored = _turn_batch(
+        conversation,
+        message,
+        canvas_id=canvas,
+        revision_id=str(uuid4()),
+        source="<p>next</p>",
+        sequence=3,
+        parent_revision_id=low,
+    )
+    if staged:
+        with db.transaction(immediate=True) as cursor:
+            repository.append_batch_in_transaction(
+                cursor, authored, anchor_message_id=message
+            )
+    else:
+        appended = repository.append_revision(
+            conversation,
+            canvas,
+            parent_revision_id=low,
+            title="Next",
+            source="<p>next</p>",
+            runtime_profile="canvas-v1",
+            actor_kind="assistant",
+            origin_message_id=message,
+            origin_turn_id="next",
+        )
+        assert appended.sequence == 3
+    stale = _turn_batch(
+        conversation,
+        message,
+        canvas_id=canvas,
+        revision_id=str(uuid4()),
+        source="<p>stale</p>",
+        sequence=3,
+        parent_revision_id=high,
+    )
+    with (
+        pytest.raises(CanvasValidationError, match="invalid_revision_sequence"),
+        db.transaction(immediate=True) as cursor,
+    ):
+        repository.append_batch_in_transaction(cursor, stale, anchor_message_id=message)
+
+
+def test_import_huge_sequence_refuses_without_unbounded_allocation(db):
+    from dataclasses import replace
+
+    owner, message = _owner(db)
+    canvas, revision = str(uuid4()), str(uuid4())
+    batch = _turn_batch(
+        owner,
+        message,
+        canvas_id=canvas,
+        revision_id=revision,
+        source="<p>bounded</p>",
+        sequence=1,
+        parent_revision_id=None,
+    )
+    child = replace(
+        batch.revisions[0],
+        revision_id=str(uuid4()),
+        parent_revision_id=revision,
+        sequence=10**100,
+    )
+    with pytest.raises(CanvasValidationError, match="invalid_revision_sequence"):
+        CanvasRepository(db).import_batch(
+            replace(batch, revisions=(*batch.revisions, child))
+        )
+    assert CanvasRepository(db).list_identities(owner) == ()
+
+
 _REPOSITORY_READ_METHODS = (
     "list_identities",
     "list_revision_metadata",
@@ -1528,6 +1645,7 @@ def test_valid_import_preserves_ids_branch_graph_source_and_reopen_hint(db) -> N
 
 @pytest.mark.asyncio
 @pytest.mark.loopback_network
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("delivery", ["native", "served"])
 async def test_import_retains_well_formed_unknown_runtime_profile_inertly(
     db, delivery

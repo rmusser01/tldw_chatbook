@@ -11,12 +11,12 @@ from tldw_chatbook.Chat.console_library_policy import (
     ConsoleAssistantLibraryAccess,
     ConsoleAutoRetrieve,
     ConsoleConversationLibraryPolicy,
-    ConsoleLibraryMigrationSeed,
     ConsoleLibraryPolicyDefaults,
     ConsoleLibraryPolicyHolder,
     ConsoleLibraryPolicySnapshot,
     normalize_policy_read,
 )
+from tldw_chatbook.DB.ChaChaNotes_DB import ConsoleLibraryMigrationSeed
 
 
 def test_new_session_defaults_are_never_and_blocked():

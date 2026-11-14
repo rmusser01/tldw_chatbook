@@ -73,9 +73,12 @@ class CitationRepairContract:
     marker_namespace: MarkerNamespace
     allowed_ordinals: tuple[int, ...]
     evidence_context: str
+    require_markers: bool = True
 
     def __post_init__(self) -> None:
         """Reject unsupported or non-canonical repair contracts."""
+        if not isinstance(self.require_markers, bool):
+            raise TypeError("require_markers must be a boolean")
         if type(self.schema_version) is not int:
             raise TypeError("schema_version must be an integer")
         if self.schema_version != 1:
@@ -187,7 +190,11 @@ def decide_citation_repair(
     if matches is None:
         return CitationRepairDecision.UNAVAILABLE
     if not matches:
-        return CitationRepairDecision.REPAIR_REQUIRED_MISSING
+        return (
+            CitationRepairDecision.REPAIR_REQUIRED_MISSING
+            if contract.require_markers
+            else CitationRepairDecision.VALID
+        )
 
     allowed = frozenset(str(value) for value in contract.allowed_ordinals)
     for _start, _end, token in matches:

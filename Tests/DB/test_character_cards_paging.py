@@ -134,8 +134,11 @@ def test_unknown_order_by_falls_back_to_name(db):
 
 def test_lib_wrapper_shapes_rows(db):
     from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
-        get_character_page_for_ui, count_character_page, list_character_tags,
+        get_character_page_for_ui,
+        count_character_page,
+        list_character_tags,
     )
+
     _add(db, "Zeta", ["x"])
     rows = get_character_page_for_ui(db, limit=10, offset=0)
     # `description` joined the projection so the character library row can show a
@@ -148,7 +151,9 @@ def test_lib_wrapper_shapes_rows(db):
         "created_at",
         "tags",
     }
-    assert count_character_page(db) == len(get_character_page_for_ui(db, limit=1000, offset=0))
+    assert count_character_page(db) == len(
+        get_character_page_for_ui(db, limit=1000, offset=0)
+    )
     assert "x" in list_character_tags(db)
 
 
@@ -177,9 +182,7 @@ def test_page_excludes_image_column_by_default_no_search(db):
 
 def test_page_excludes_image_column_by_default_when_searching(db):
     db.add_character_card({"name": "Dragon Imaged", "image": _SAMPLE_IMAGE})
-    rows = db.list_character_cards_page(
-        limit=100, offset=0, search_term='"Dragon"*'
-    )
+    rows = db.list_character_cards_page(limit=100, offset=0, search_term='"Dragon"*')
     assert rows
     for row in rows:
         assert "image" not in row
@@ -223,7 +226,9 @@ def test_page_image_free_projection_does_not_regress_other_fields(db):
         }
     )
     row = next(
-        r for r in db.list_character_cards_page(limit=100, offset=0) if r["id"] == char_id
+        r
+        for r in db.list_character_cards_page(limit=100, offset=0)
+        if r["id"] == char_id
     )
     assert row["description"] == "desc"
     assert row["personality"] == "kind"

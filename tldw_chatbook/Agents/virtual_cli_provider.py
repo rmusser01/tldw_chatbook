@@ -8,7 +8,15 @@ import threading
 from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Callable, ContextManager, Iterator, Mapping, Sequence
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    ContextManager,
+    Iterator,
+    Mapping,
+    Sequence,
+)
 
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
@@ -21,12 +29,17 @@ from tldw_chatbook.MCP.execution_log import (
 )
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
-from tldw_chatbook.Tools.remote_root_types import is_remote, local_root_path
+from tldw_chatbook.Tools.remote_root_types import (
+    RemoteRoot,
+    is_remote,
+    local_root_path,
+)
 from tldw_chatbook.Tools.virtual_cli_impls import (
     MAX_ARGV_ITEMS,
     VIRTUAL_CLI_COMMANDS,
-    VirtualCliCommand,
+    VIRTUAL_CLI_USAGE as _USAGE,
     VirtualCliArgumentError,
+    VirtualCliCommand,
     VirtualCliRegistry,
     parse_request,
 )
@@ -35,8 +48,8 @@ from tldw_chatbook.Tools.workspace_tool_executor import (
     WorkspaceToolExecutor,
 )
 
-from .approval_provenance import ApprovalStamp, approval_key_unanswered, approval_stamp
 from .agent_models import ToolCall, ToolCatalogEntry, ToolResult, ToolSchema
+from .approval_provenance import ApprovalStamp, approval_key_unanswered, approval_stamp
 from .local_tool_provider import (
     LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
     LOCAL_DENY_REFUSAL,
@@ -45,6 +58,7 @@ from .local_tool_provider import (
     LOCAL_ROOT_CHANGED_REFUSAL,
     LOCAL_TIMEOUT_REFUSAL,
     LOCAL_USER_DENY_REFUSAL,
+    LOCAL_WORKER_FAILED_REFUSAL,
     RunAdmittedWorkspaceRoot,
 )
 from .mcp_tool_provider import MCPPendingCall, approval_effects_for_tool
@@ -60,18 +74,6 @@ _MAX_RESULT_BYTES = 32 * 1024
 _MAX_ERROR_CHARS = 300
 _ANSI_ESCAPE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
 
-_USAGE = {
-    "ls": "ls [PATH]",
-    "cat": "cat PATH [--offset N] [--limit N]",
-    "grep": "grep PATTERN [--mode content|files|count]",
-    "find": "find GLOB",
-    "stat": "stat PATH",
-    "git_status": "git_status [PATH]",
-    "git_diff": "git_diff [--staged] [--range REF] [--path PATH] [--stat]",
-    "git_log": "git_log [--count N] [--path PATH]",
-    "git_blame": "git_blame PATH [--start N] [--end N]",
-    "git_branches": "git_branches",
-}
 
 _MODEL_SCHEMA = {
     "type": "object",
@@ -85,7 +87,11 @@ _MODEL_SCHEMA = {
             "type": "array",
             "items": {"type": "string", "maxLength": 4096},
             "maxItems": MAX_ARGV_ITEMS,
-            "description": "Arguments for the selected command; no shell syntax.",
+            "description": (
+                "Arguments for the selected command; no shell syntax. "
+                "Usage: " + "; ".join(_USAGE.values()) + ". "
+                "ls always includes hidden entries; -l adds type/permissions and byte size."
+            ),
         },
     },
     "required": ["command", "argv"],
@@ -121,6 +127,10 @@ def _sanitize_result(text: str) -> str:
     return raw[:_MAX_RESULT_BYTES].decode("utf-8", errors="ignore") + "\n… [truncated]"
 
 
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.approval_presentation import ApprovalAuthority
+
+
 class VirtualCliProvider:
     """Expose one schema while resolving command and admitted-root authority."""
 
@@ -143,7 +153,9 @@ class VirtualCliProvider:
         result_redaction_root: Path | None = None,
         workspace_executor: WorkspaceToolExecutor | None = None,
         admitted_roots: Sequence[RunAdmittedWorkspaceRoot] | None = None,
+        presentation_authority: ApprovalAuthority | None = None,
     ) -> None:
+        self._presentation_authority = presentation_authority
         selected_executor = (
             WorkspaceToolExecutor(workspace_root)
             if workspace_executor is None
@@ -233,6 +245,21 @@ class VirtualCliProvider:
         self._stamps: dict[tuple[str, str], ApprovalStamp] = {}
         self._stamps_lock = threading.Lock()
 
+    def path_root_aliases(self) -> tuple[str, ...] | None:
+        """Return the ``root_alias`` values ``virtual_cli`` accepts this run.
+
+        Mirrors ``LocalToolProvider.path_root_aliases`` (TASK-33940.1): the
+        workspace-context note offers exactly these aliases.
+
+        Returns:
+            The sorted aliases of the usable admitted roots (``()`` when none
+            survived construction), or ``None`` for a legacy provider rooted at
+            ``workspace_root`` with no alias routing.
+        """
+        if self._admitted_roots is None:
+            return None
+        return tuple(sorted(self._admitted_roots))
+
     def list_catalog(self) -> list[ToolCatalogEntry]:
         return [
             ToolCatalogEntry(
@@ -306,9 +333,11 @@ class VirtualCliProvider:
         try:
             validated = model.model_validate(dict(args))
         except PydanticValidationError as exc:
-            raise VirtualCliArgumentError(
-                "virtual_cli arguments do not match the tool schema"
-            ) from exc
+            message = "virtual_cli arguments do not match the tool schema"
+            command = args.get("command")
+            if isinstance(command, str) and command in _USAGE:
+                message += f"\nUsage: {_USAGE[command]}"
+            raise VirtualCliArgumentError(message) from exc
         alias = (
             validated.root_alias
             if isinstance(validated, _AdmittedVirtualCliInput)
@@ -388,7 +417,11 @@ class VirtualCliProvider:
             # `_arg_rule_allows_safe` short-circuit) -- non-matching
             # arguments for the same command still ask.
             return None
+        owner = self._presentation_authority
+        if owner is not None and authority is not None:
+            owner = replace(owner, location_label=authority.alias)
         return MCPPendingCall(
+            presentation_authority=owner,
             llm_name=VIRTUAL_CLI_TOOL_NAME,
             server_key=VIRTUAL_CLI_SERVER_KEY,
             tool_name=command,
@@ -402,6 +435,7 @@ class VirtualCliProvider:
                 else "ask"
             ),
             call_id=call.call_id or command,
+            legacy_observation_key=not bool(call.call_id),
             effects=approval_effects_for_tool(hub),
         )
 
@@ -411,6 +445,9 @@ class VirtualCliProvider:
         decisions: dict[str, str],
         pending: Sequence[MCPPendingCall] = (),
     ) -> None:
+        from .approval_observation import remember_approval_contexts
+
+        remember_approval_contexts(self, run_id, decisions)
         with self._stamps_lock:
             self._stamps = {
                 key: value for key, value in self._stamps.items() if key[0] != run_id
@@ -446,28 +483,38 @@ class VirtualCliProvider:
     @contextmanager
     def stamp_scope(self, run_id: str) -> Iterator[None]:
         """Hide and restore this run's pending verdicts around a child run."""
-        with self._stamps_lock:
-            saved = {
-                key: value for key, value in self._stamps.items() if key[0] == run_id
-            }
-            self._stamps = {
-                key: value for key, value in self._stamps.items() if key[0] != run_id
-            }
-        try:
-            yield
-        finally:
+        from .approval_observation import provider_observation_scope
+
+        with provider_observation_scope(self, run_id, clear=True):
             with self._stamps_lock:
-                self._stamps = {
+                saved = {
                     key: value
                     for key, value in self._stamps.items()
-                    if key[0] != run_id
+                    if key[0] == run_id
                 }
-                self._stamps.update(saved)
+                self._stamps = {
+                    key: value for key, value in self._stamps.items() if key[0] != run_id
+                }
+            try:
+                yield
+            finally:
+                with self._stamps_lock:
+                    self._stamps = {
+                        key: value
+                        for key, value in self._stamps.items()
+                        if key[0] != run_id
+                    }
+                    self._stamps.update(saved)
 
     def invoke(self, tool_id: str, args: dict) -> ToolResult:
         name = tool_id.split(":", 1)[-1]
         if name != VIRTUAL_CLI_TOOL_NAME:
             return ToolResult(ok=False, error=f"Unknown virtual CLI tool: {name}")
+        from .execution_capacity import current_ordinary_tree
+
+        ordinary = current_ordinary_tree()
+        if ordinary is not None:
+            ordinary.check_virtual_call(self, args)
         try:
             command, argv, authority = self._validated_args(args)
         except VirtualCliArgumentError as exc:
@@ -523,6 +570,15 @@ class VirtualCliProvider:
             return ToolResult.blocked(refusal, approval_decision=fact)
 
         def execute() -> ToolResult:
+            from .workflow_task_scope import check_task_provider
+
+            if ordinary is not None:
+                ordinary.check_virtual_call(self, args)
+
+            try:
+                check_task_provider(self, tool_id, dict(args))
+            except Exception:  # noqa: BLE001 - authority failures must refuse
+                return ToolResult.blocked("workflow task scope refused")
             if not self._authority_is_valid(authority):
                 return ToolResult.blocked(LOCAL_ROOT_CHANGED_REFUSAL)
             if not self._local_tools_are_enabled() or self._kill_switch_engaged():
@@ -533,6 +589,9 @@ class VirtualCliProvider:
                     if authority is None
                     else self._registries_by_alias[authority.alias]
                 )
+                from ..Tools.workspace_tool_executor import bind_model_ssh
+
+                bind_model_ssh(self, authority, registry)
                 content = registry.execute(command, argv)
                 # Phase 3c (Task 17), recording Task 15's conclusion: the
                 # virtual CLI is executor-routed for remote roots (the
@@ -558,7 +617,11 @@ class VirtualCliProvider:
                 if exc.code == "root_pin_failed":
                     return ToolResult.blocked(LOCAL_ROOT_CHANGED_REFUSAL)
                 if exc.code not in {"invalid_request", "tool_failure"}:
-                    return ToolResult.blocked(LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL)
+                    return ToolResult(
+                        ok=False,
+                        error=LOCAL_WORKER_FAILED_REFUSAL,
+                        dispatch_state="uncertain",
+                    )
                 error = redact_root_locator(
                     str(exc),
                     self._error_redaction_root(authority),
@@ -621,6 +684,9 @@ class VirtualCliProvider:
             decisions = self._approval_callback([pending]) or {}
         except Exception:
             return ApprovalStamp("timeout")
+        from .approval_observation import remember_approval_contexts
+
+        remember_approval_contexts(self, current_run_id(), decisions)
         decision = decisions.get(pending.call_id or pending.llm_name, "timeout")
         if decision in ("approve_session", "always_allow"):
             self._persist(hub, decision)
@@ -704,15 +770,24 @@ class VirtualCliProvider:
             return False
 
     def _persist(self, hub: HubTool, decision: str) -> None:
-        if self._persist_approval is None:
-            return
-        try:
-            self._persist_approval(hub, decision)
-        except Exception as exc:
-            logger.warning(
-                "Virtual CLI approval persistence failed (exception_type={})",
-                type(exc).__name__,
-            )
+        from .approval_observation import (
+            approval_contexts_scope,
+            provider_approval_contexts,
+            publish_grant_application,
+        )
+
+        with approval_contexts_scope(provider_approval_contexts(self, hub.name)):
+            if self._persist_approval is None:
+                publish_grant_application("not_applied", error_code="writer_unavailable")
+                return
+            try:
+                self._persist_approval(hub, decision)
+            except Exception as exc:
+                publish_grant_application("failed", error_code="writer_failed")
+                logger.warning(
+                    "Virtual CLI approval persistence failed (exception_type={})",
+                    type(exc).__name__,
+                )
 
     def _persist_arg_rule_call(self, hub: HubTool, args: Mapping[str, Any]) -> None:
         """Persist an exact-input allow rule for THIS call's exact
@@ -720,15 +795,24 @@ class VirtualCliProvider:
         command enum plus a bounded `argv` array, is stable enough to
         honor the option the approval card already offers; see
         `_ask_verdict()`'s `"allow_matching"` handling below)."""
-        if self._persist_arg_rule is None:
-            return
-        try:
-            self._persist_arg_rule(hub, args)
-        except Exception as exc:
-            logger.warning(
-                "Virtual CLI arg-rule persistence failed (exception_type={})",
-                type(exc).__name__,
-            )
+        from .approval_observation import (
+            approval_contexts_scope,
+            provider_approval_contexts,
+            publish_grant_application,
+        )
+
+        with approval_contexts_scope(provider_approval_contexts(self, hub.name)):
+            if self._persist_arg_rule is None:
+                publish_grant_application("not_applied", error_code="writer_unavailable")
+                return
+            try:
+                self._persist_arg_rule(hub, args)
+            except Exception as exc:
+                publish_grant_application("failed", error_code="writer_failed")
+                logger.warning(
+                    "Virtual CLI arg-rule persistence failed (exception_type={})",
+                    type(exc).__name__,
+                )
 
     def _record(self, hub: HubTool, decision: str) -> None:
         if self._record_decision is None:
@@ -740,3 +824,65 @@ class VirtualCliProvider:
                 "Virtual CLI decision audit failed (exception_type={})",
                 type(exc).__name__,
             )
+
+
+# Original provider/parser bindings, read without invoking replacement descriptors.
+NATIVE_VIRTUAL_CLASS = VirtualCliProvider
+_NATIVE_VIRTUAL_METHODS = tuple(
+    (name, value)
+    for name, value in vars(VirtualCliProvider).items()
+    if callable(value) or isinstance(value, (staticmethod, classmethod, property))
+)
+_NATIVE_VIRTUAL_IMPORTS = tuple(
+    (name, globals()[name])
+    for name in ("VirtualCliRegistry", "parse_request", "WorkspaceToolExecutor")
+)
+_NATIVE_VIRTUAL_FUNCTIONS = tuple(
+    (
+        fn,
+        fn.__code__,
+        fn.__defaults__,
+        fn.__kwdefaults__,
+        tuple((fn.__kwdefaults__ or {}).items()),
+        fn.__closure__,
+        tuple((cell, cell.cell_contents) for cell in fn.__closure__ or ()),
+    )
+    for fn in dict.fromkeys(
+        (
+            *(
+                value
+                for _name, value in _NATIVE_VIRTUAL_METHODS
+                if type(value).__name__ == "function"
+            ),
+            *(
+                value
+                for value in tuple(globals().values())
+                if type(value).__name__ == "function" and value.__module__ == __name__
+            ),
+        )
+    )
+)
+
+_NATIVE_VIRTUAL_CALLBACK_FIELDS = (
+    "_resolve_state",
+    "_local_tools_enabled",
+    "_kill_switch",
+    "_approval_callback",
+    "_is_session_approved",
+    "_persist_approval",
+    "_persist_arg_rule",
+    "_arg_rule_allows",
+    "_record_decision",
+    "_root_guard",
+    "_authority_scope",
+)
+
+
+def observe_virtual_callbacks(provider: VirtualCliProvider) -> tuple[tuple[str, object], ...]:
+    """Read the original callback slots without invoking their descriptors."""
+    from inspect import getattr_static
+
+    return tuple(
+        (name, getattr_static(provider, name, None))
+        for name in _NATIVE_VIRTUAL_CALLBACK_FIELDS
+    )

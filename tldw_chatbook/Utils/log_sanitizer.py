@@ -107,7 +107,9 @@ _STANDALONE_CREDENTIALS = (
     # TASK-26022: Claude subscription OAuth access/refresh tokens (borrowed
     # read-only from Claude Code's credential file) — same envelope as API
     # keys, different prefix family.
-    re.compile(r"(?<![A-Za-z0-9_-])sk-ant-o[ar]t\d{2}-[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])"),
+    re.compile(
+        r"(?<![A-Za-z0-9_-])sk-ant-o[ar]t\d{2}-[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])"
+    ),
     # TASK-19555 review: OpenRouter keys carry hyphens inside the body, so the
     # generic `sk-[A-Za-z0-9]{20,}` rule below never matched one.
     re.compile(r"(?<![A-Za-z0-9_-])sk-or-v1-[A-Za-z0-9]{20,}(?![A-Za-z0-9_-])"),
@@ -121,7 +123,9 @@ _STANDALONE_CREDENTIALS = (
     re.compile(r"(?<![A-Za-z0-9_-])hf_[A-Za-z0-9]{30,}(?![A-Za-z0-9_-])"),
     # AWS access key ids (the id alone identifies an account and is paired
     # with a secret often logged on the same line).
-    re.compile(r"(?<![A-Za-z0-9_-])(?:AKIA|ASIA|AGPA|AIDA|AROA)[0-9A-Z]{16}(?![A-Za-z0-9_-])"),
+    re.compile(
+        r"(?<![A-Za-z0-9_-])(?:AKIA|ASIA|AGPA|AIDA|AROA)[0-9A-Z]{16}(?![A-Za-z0-9_-])"
+    ),
     # Slack bot/user/app tokens.
     re.compile(r"(?<![A-Za-z0-9_-])xox[baprs]-[A-Za-z0-9-]{10,}(?![A-Za-z0-9_-])"),
     # JSON Web Tokens: three base64url segments, header first. Bearer-prefixed
@@ -389,6 +393,45 @@ def sanitize_trace_credentials_v1(text: str) -> str:
     return result
 
 
+#: `sk_`/`rk_` secret and restricted keys, live or test (TASK-39061), masked
+#: by diagnostics and by the credentials-v2 trace projection (TASK-39123).
+#: They are not in ``_STANDALONE_CREDENTIALS`` because
+#: ``sanitize_trace_credentials_v1`` reads that tuple, and its stored
+#: projection must not change. The 24-character floor and the body's lack of
+#: `_` keep identifiers such as ``sk_live_mode_enabled`` readable.
+_UNDERSCORE_KEY_CREDENTIALS = (
+    re.compile(r"(?<![A-Za-z0-9_-])[rs]k_(?:live|test)_[A-Za-z0-9]{24,}(?![A-Za-z0-9_-])"),
+)
+
+
+def trace_credentials_v2_spans(text: str) -> list[tuple[int, int]]:
+    """Code-point spans the v2 projection masks beyond v1 in ``text``.
+
+    A stored v1 policy's frozen PII spans are applied to its v1 projection;
+    a span that cuts one of these keys is widened over it first, so no key
+    fragment survives the v2 masks (TASK-39123).
+    """
+    return [m.span() for p in _UNDERSCORE_KEY_CREDENTIALS for m in p.finditer(text)]
+
+
+def sanitize_trace_credentials_v2(text: str) -> str:
+    """The credentials-v2 trace projection: v1 plus bare `sk_`/`rk_` keys.
+
+    New traces are stored under it, and every read, export and share of a
+    stored trace re-applies it whatever the trace's version (TASK-39123).
+
+    Args:
+        text: The string to sanitize.
+
+    Returns:
+        ``sanitize_trace_credentials_v1(text)`` with underscore keys masked.
+    """
+    result = sanitize_trace_credentials_v1(text)
+    for pattern in _UNDERSCORE_KEY_CREDENTIALS:
+        result = pattern.sub(REDACTION_MARKER, result)
+    return result
+
+
 _DIAGNOSTIC_PII_PATTERNS = (
     re.compile(r"(?i)(?<![\w.%+-])[a-z0-9._%+-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+"),
     re.compile(r"(?<!\d)\d{3}-\d{2}-\d{4}(?!\d)"),
@@ -437,7 +480,11 @@ def _sanitize_diagnostic_text(text: str) -> str:
     )
     result = _DIAGNOSTIC_URL_USERINFO.sub(r"\1" + REDACTION_MARKER + "@", result)
     result = _BEARER.sub(r"\1" + REDACTION_MARKER, result)
-    for pattern in (*_STANDALONE_CREDENTIALS, *_DIAGNOSTIC_PII_PATTERNS):
+    for pattern in (
+        *_STANDALONE_CREDENTIALS,
+        *_UNDERSCORE_KEY_CREDENTIALS,
+        *_DIAGNOSTIC_PII_PATTERNS,
+    ):
         result = pattern.sub(REDACTION_MARKER, result)
     return result
 

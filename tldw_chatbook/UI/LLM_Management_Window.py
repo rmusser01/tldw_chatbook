@@ -69,7 +69,11 @@ from ..Widgets.ModelArtifacts import InstallProgressed, InstallStatusChanged
 
 if TYPE_CHECKING:
     from ..app import TldwCli
+    from ..Event_Handlers.LLM_Management_Events.server_lifecycle import (
+        ServerLaunchClaim,
+    )
     from ..LLM_Management.llamacpp_launch_preview import LlamaCppLaunchOptions
+    from ..LLM_Management.llamacpp_profiles import LlamaCppTuning
 #
 #######################################################################################################################
 #
@@ -2128,8 +2132,6 @@ class LLMManagementWindow(Container):
         )
 
     def llamacpp_tuning(self) -> "LlamaCppTuning":
-        from ..LLM_Management.llamacpp_profiles import LlamaCppTuning
-
         return self.query_one("#llamacpp-setup-view").tuning()
 
     def llamacpp_launch_started(

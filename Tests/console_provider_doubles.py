@@ -21,13 +21,20 @@ this helper attaches it only when ``ready`` is true.
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
+import json
+from collections.abc import AsyncIterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, TypeVar
 
 from tldw_chatbook.Chat.console_library_destination import (
     resolve_console_destination,
+)
+from tldw_chatbook.Chat.console_provider_gateway import (
+    ProviderToolCalls,
+    ProviderTurnMetadata,
 )
 
 _R = TypeVar("_R")
@@ -120,6 +127,23 @@ def persisted_console_store(
     )
 
 
+async def until_provider_starts(started: asyncio.Event, task: asyncio.Task) -> None:
+    """Wait until a gateway double sets ``started``, or ``task`` ends first.
+
+    No wall-clock bound (TASK-39143, TASK-39138): the suite's ``--timeout``
+    is the backstop for a hang. A task that ends before the provider starts
+    re-raises its own error, or reports its result, instead of leaving the
+    wait to time out with nothing to read.
+    """
+    waiter = asyncio.ensure_future(started.wait())
+    try:
+        await asyncio.wait({waiter, task}, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        waiter.cancel()
+    if not started.is_set():
+        raise AssertionError(f"ended before the provider started: {task.result()!r}")
+
+
 def with_destination(resolution: _R) -> _R:
     """Attach the destination the production gateway attaches to a REAL one.
 
@@ -145,3 +169,102 @@ def with_destination(resolution: _R) -> _R:
         return dataclasses.replace(resolution, resolved_destination=destination)
     resolution.resolved_destination = destination
     return resolution
+
+
+class AgentModeGateway:
+    """Agent-capable gateway double: emits one native tool call when the
+    caller passes ``tools=``, then a final text answer once the tool result
+    returns. ``resolve_for_send`` reports an execution key and model id that
+    are native-tools-capable (NATIVE_TOOLS_PROVIDERS; capability-known id).
+
+    The conftest ``StreamingGateway`` (Tests/Chat/conftest.py) cannot drive
+    agent mode: its ``stream_chat`` yields only ("hel", "lo") text chunks, so
+    it can never emit a native tool call and only exercises plain chat. This
+    double implements the same two-method protocol but yields a
+    ``ProviderToolCalls`` item (OpenAI-shape dicts -- the Plan-B contract the
+    agent bridge consumes) when the caller passes ``tools=`` and no tool
+    result is present yet, and the final text answer on the follow-up call
+    carrying the tool result. Ported from the Binding-1 spike probe (spike
+    condition 5).
+
+    Args:
+        tool_name: Name of the single tool the gateway calls out to.
+        final_answer: Text the follow-up call (the one carrying the tool
+            result) yields as its answer.
+    """
+
+    def __init__(
+        self,
+        *,
+        tool_name: str = "fs_list",
+        final_answer: str = "MOBILE_AGENT_ROUND_TRIP_COMPLETE",
+    ) -> None:
+        self.tool_name = tool_name
+        self.final_answer = final_answer
+        self.stream_calls: list[dict[str, Any]] = []
+        self.tool_result_messages: list[dict[str, Any]] = []
+
+    async def resolve_for_send(self, selection: Any) -> SimpleNamespace:
+        # "openai" (an execution key in Agents/native_tools.py's
+        # NATIVE_TOOLS_PROVIDERS) + a capability-known model id
+        # ("gpt-4o-mini"): an unknown model id makes the first-request
+        # planner fall back to find_tools/load_tools discovery mode, and
+        # "llama_cpp" (the conftest double's provider) is gated on
+        # reasoning_replay.native_tools -- either way no tools are
+        # advertised and the round cannot happen.
+        return provider_resolution(
+            ready=True,
+            provider="openai",
+            model="gpt-4o-mini",
+            base_url="https://mobile.invalid/v1",
+            visible_copy="",
+        )
+
+    async def stream_chat(
+        self,
+        resolution: Any,
+        messages: list[dict[str, Any]],
+        **kwargs: Any,
+    ) -> AsyncIterator[str | ProviderToolCalls]:
+        tools = kwargs.get("tools")
+        saw_tool_result = any(
+            isinstance(m, dict) and m.get("role") == "tool" for m in messages
+        )
+        self.stream_calls.append(
+            {
+                "tools_passed": tools is not None,
+                "tool_advertised": any(
+                    isinstance(t, dict)
+                    and (
+                        t.get("function", {}).get("name") == self.tool_name
+                        or t.get("name") == self.tool_name
+                    )
+                    for t in (tools or ())
+                ),
+                "n_messages": len(messages),
+                "saw_tool_result": saw_tool_result,
+            }
+        )
+        if tools and not saw_tool_result:
+            yield "Checking the working folder first.\n"
+            yield ProviderToolCalls(
+                (
+                    {
+                        "id": "call-spike-1",
+                        "type": "function",
+                        "function": {
+                            "name": self.tool_name,
+                            "arguments": json.dumps({"path": "."}),
+                        },
+                    },
+                ),
+                metadata=ProviderTurnMetadata(finish_reason="tool_calls"),
+            )
+            return
+        if saw_tool_result:
+            self.tool_result_messages = [
+                dict(m)
+                for m in messages
+                if isinstance(m, dict) and m.get("role") == "tool"
+            ]
+        yield self.final_answer

@@ -4,7 +4,6 @@ import os
 import subprocess
 import sys
 import time
-from contextlib import nullcontext
 from pathlib import Path
 
 import pytest
@@ -24,7 +23,8 @@ from tldw_chatbook.UI.Screens.home_screen import HomeScreen
 
 route, outcome = sys.argv[1:]
 root = Path.home()
-template = config.get_chachanotes_db_lazy()
+from tldw_chatbook.app_services import open_chachanotes_db
+template = open_chachanotes_db(config.get_chachanotes_db_path(), client_id=config.CLI_APP_CLIENT_ID, seed_builtin_content=True)
 local = NotesInteropService(template.db_path.parent, "test", template)
 scope = NotesScopeService(local, None)
 db = local._get_db("test")
@@ -59,7 +59,7 @@ if route in ("active", "flashcards", "reconcile", "migration"):
         target, method = adapter.watchlist_service, "list_home_run_snapshot"
         app_call = adapter.refresh_active_work_cache_async
     elif route == "flashcards":
-        target, method = db, "count_due_flashcards"
+        target, method = db.learning, "count_due_flashcards"
         async def app_call():
             return await asyncio.to_thread(TldwCli._local_flashcards_due_count, app)
     else:
@@ -122,7 +122,8 @@ if route == "active":
                     raise AssertionError("native connection remains open")
     db.close = checked_close
 template.close_connection()
-home = SimpleNamespace(app_instance=SimpleNamespace(chachanotes_db=template))
+# An unmounted owner: the hidden-Home guard (8e8af97b91) reads is_mounted first (TASK-38973).
+home = SimpleNamespace(is_mounted=False, app_instance=SimpleNamespace(chachanotes_db=template))
 async def invoke():
     if app_call is not None:
         return await app_call()
@@ -131,6 +132,12 @@ async def run():
     task = asyncio.create_task(invoke())
     if outcome == "cancel":
         while not entered.is_set():
+            if task.done():
+                # A worker that dies before its query (a double missing an
+                # attribute) re-raises its own error now, instead of waiting
+                # out the subprocess timeout (TASK-38973).
+                await task
+                raise AssertionError("worker finished before entering its query")
             await asyncio.sleep(.01)
         task.cancel()
         try:
@@ -179,7 +186,8 @@ from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
 from tldw_chatbook.UI.Screens.home_screen import HomeScreen
 
-template = config.get_chachanotes_db_lazy()
+from tldw_chatbook.app_services import open_chachanotes_db
+template = open_chachanotes_db(config.get_chachanotes_db_path(), client_id=config.CLI_APP_CLIENT_ID, seed_builtin_content=True)
 local = NotesInteropService(template.db_path.parent, "test", template)
 acquired = []
 def forbidden_acquisition(user_id):
@@ -200,7 +208,7 @@ async def direct():
     else:
         raise AssertionError("original rejection was lost")
 asyncio.run(asyncio.to_thread(lambda: asyncio.run(direct())))
-home = SimpleNamespace(app_instance=SimpleNamespace(chachanotes_db=template))
+home = SimpleNamespace(is_mounted=False, app_instance=SimpleNamespace(chachanotes_db=template))
 assert asyncio.run(HomeScreen._home_content_seam_call(home, scope.list_notes, **kwargs)) is None
 assert not acquired, "rejected request acquired database"
 template.close_connection()
@@ -240,7 +248,7 @@ class CustomOwner:
     def close_connection(self):
         raise AssertionError("custom owner must not be closed")
 owner = CustomOwner()
-home = SimpleNamespace(app_instance=SimpleNamespace(chachanotes_db=owner))
+home = SimpleNamespace(is_mounted=False, app_instance=SimpleNamespace(chachanotes_db=owner))
 assert asyncio.run(HomeScreen._home_content_seam_call(home, lambda: [1])) == [1]
 print("retired and reopened")
 """
@@ -301,14 +309,13 @@ def _run(
 
         receipt = root / "home" / "restart-process.json"
     try:
-        with log.open("w") if expect_restart else nullcontext() as output:
+        with log.open("w", encoding="utf-8") as output:
             result = subprocess.run(
-                [sys.executable, "-c", script, route, outcome],
+                [sys.executable, "-X", "utf8", "-c", script, route, outcome],
                 cwd=cwd,
                 env=environment,
                 stdout=output,
-                stderr=subprocess.STDOUT if expect_restart else None,
-                capture_output=not expect_restart,
+                stderr=subprocess.STDOUT,
                 text=True,
                 timeout=timeout,
                 check=False,
@@ -329,7 +336,7 @@ def _run(
             except BaseException as cleanup:  # noqa: BLE001 - retain the original test failure.
                 primary.add_note("restart_cleanup_error:" + type(cleanup).__name__)
         raise
-    stdout = log.read_text() if expect_restart else result.stdout
-    stderr = "" if expect_restart else result.stderr
+    stdout = log.read_text(encoding="utf-8", errors="replace")
+    stderr = ""
     assert result.returncode == 0, stderr[-6000:] + stdout[-1000:]
     assert "retired and reopened" in stdout

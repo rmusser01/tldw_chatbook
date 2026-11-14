@@ -18,7 +18,9 @@ def test_sd_cpp_generate_reports_resolved_model_filename(monkeypatch, tmp_path):
     invokes the binary -- capture it on the result so the Console card can
     show a model instead of always blank."""
     from tldw_chatbook.Image_Generation import config as c
-    from tldw_chatbook.Image_Generation.adapters import stable_diffusion_cpp_adapter as m
+    from tldw_chatbook.Image_Generation.adapters import (
+        stable_diffusion_cpp_adapter as m,
+    )
     from tldw_chatbook.Image_Generation.adapters.base import ImageGenRequest
 
     binary_path = tmp_path / "sd"
@@ -48,9 +50,18 @@ def test_sd_cpp_generate_reports_resolved_model_filename(monkeypatch, tmp_path):
     monkeypatch.setattr(m.subprocess, "run", fake_run)
 
     req = ImageGenRequest(
-        backend="stable_diffusion_cpp", prompt="cat", negative_prompt=None,
-        width=64, height=64, steps=5, cfg_scale=7.0, seed=-1,
-        sampler=None, model=None, format="png", extra_params={},
+        backend="stable_diffusion_cpp",
+        prompt="cat",
+        negative_prompt=None,
+        width=64,
+        height=64,
+        steps=5,
+        cfg_scale=7.0,
+        seed=-1,
+        sampler=None,
+        model=None,
+        format="png",
+        extra_params={},
     )
     try:
         res = m.StableDiffusionCppAdapter().generate(req)
@@ -64,7 +75,9 @@ def test_sd_cpp_generate_reports_resolved_model_filename(monkeypatch, tmp_path):
 
 def test_sd_cpp_missing_binary_raises(monkeypatch):
     from tldw_chatbook.Image_Generation import config as c
-    from tldw_chatbook.Image_Generation.adapters import stable_diffusion_cpp_adapter as m
+    from tldw_chatbook.Image_Generation.adapters import (
+        stable_diffusion_cpp_adapter as m,
+    )
     from tldw_chatbook.Image_Generation.adapters.base import ImageGenRequest
     from tldw_chatbook.Image_Generation.exceptions import ImageBackendUnavailableError
 
@@ -74,9 +87,18 @@ def test_sd_cpp_missing_binary_raises(monkeypatch):
     c.reset_image_generation_config_cache()
 
     req = ImageGenRequest(
-        backend="stable_diffusion_cpp", prompt="cat", negative_prompt=None,
-        width=512, height=512, steps=10, cfg_scale=7.0, seed=-1,
-        sampler=None, model=None, format="png", extra_params={},
+        backend="stable_diffusion_cpp",
+        prompt="cat",
+        negative_prompt=None,
+        width=512,
+        height=512,
+        steps=10,
+        cfg_scale=7.0,
+        seed=-1,
+        sampler=None,
+        model=None,
+        format="png",
+        extra_params={},
     )
     with pytest.raises(ImageBackendUnavailableError):
         m.StableDiffusionCppAdapter().generate(req)

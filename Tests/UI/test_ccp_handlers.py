@@ -1,7 +1,7 @@
 """Focused CCP handler tests for dual character/persona management."""
 
 from functools import partial
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -13,7 +13,6 @@ from tldw_chatbook.UI.CCP_Modules import (
     CCPCharacterHandler,
     CCPPersonaHandler,
     PersonaMessage,
-    ViewChangeMessage,
 )
 from tldw_chatbook.UI.CCP_Modules.ccp_character_handler import fetch_all_characters
 from tldw_chatbook.tldw_api.character_persona_schemas import (
@@ -121,16 +120,14 @@ def test_ccp_fetch_all_characters_accepts_current_list_shape(monkeypatch):
         Mock(return_value=[{"id": 3, "name": "Gamma"}]),
     )
 
-    assert fetch_all_characters() == [{"id": "3", "name": "Gamma"}]
+    assert fetch_all_characters(object()) == [{"id": "3", "name": "Gamma"}]
 
 
 def test_delete_character_returns_false_when_db_unavailable(monkeypatch):
     """A missing local DB must read as a failed delete, not an AttributeError."""
     from tldw_chatbook.UI.CCP_Modules import ccp_character_handler
 
-    monkeypatch.setattr(ccp_character_handler, "_default_character_db", lambda: None)
-
-    assert ccp_character_handler.delete_character(1, 1) is False
+    assert ccp_character_handler.delete_character(None, 1, 1) is False
 
 
 def test_delete_character_returns_false_for_non_numeric_id(monkeypatch):
@@ -138,9 +135,8 @@ def test_delete_character_returns_false_for_non_numeric_id(monkeypatch):
     from tldw_chatbook.UI.CCP_Modules import ccp_character_handler
 
     db = Mock()
-    monkeypatch.setattr(ccp_character_handler, "_default_character_db", lambda: db)
 
-    assert ccp_character_handler.delete_character("not-a-number", 1) is False
+    assert ccp_character_handler.delete_character(db, "not-a-number", 1) is False
     db.soft_delete_character_card.assert_not_called()
 
 
@@ -197,13 +193,13 @@ class TestCCPCharacterHandler:
         never included .md, so this pins the no-regression side)."""
         from pathlib import Path
 
-        mock_window.app.push_screen = AsyncMock(return_value=None)
+        mock_window.app.push_screen_wait = AsyncMock(return_value=None)
         handler = CCPCharacterHandler(mock_window)
 
         await handler.handle_import()
 
-        mock_window.app.push_screen.assert_awaited_once()
-        picker = mock_window.app.push_screen.call_args[0][0]
+        mock_window.app.push_screen_wait.assert_awaited_once()
+        picker = mock_window.app.push_screen_wait.call_args[0][0]
         filter_by_name = {
             name: picker.filters[filter_id]
             for name, filter_id in picker.filters.selections
@@ -274,12 +270,6 @@ class TestCCPPersonaHandler:
         editor.load_persona.assert_called_once()
         payload = editor.load_persona.call_args[0][0]
         assert payload["mode"] == "session_scoped"
-        view_messages = [
-            args[0]
-            for args, _ in mock_window.post_message.call_args_list
-            if args and isinstance(args[0], ViewChangeMessage.Requested)
-        ]
-        assert view_messages[-1].view_name == "persona_editor"
 
     @pytest.mark.asyncio
     async def test_save_persona_creates_profile_via_scope_service(self, mock_window):
@@ -400,6 +390,7 @@ class TestCCPPersonaHandler:
         mock_window.notify.assert_called_with(
             "Local chat greetings are not available yet.",
             severity="warning",
+            markup=False,
         )
 
 

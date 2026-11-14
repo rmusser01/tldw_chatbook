@@ -1150,6 +1150,7 @@ async def test_control_plane_service_routes_local_governance_section_and_actions
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_control_plane_service_routes_local_inventory_runtime_actions(tmp_path):
     from tldw_chatbook.MCP.unified_control_plane_service import (
         UnifiedMCPControlPlaneService,
@@ -1824,3 +1825,67 @@ def test_clearing_one_profiles_session_approvals_keeps_the_same_set_object():
     assert service._session_approvals is identity
     assert service.list_session_approvals(profile_id="keep") == [("srv", "a")]
     assert service.list_session_approvals(profile_id="drop") == []
+
+
+
+def test_remember_exact_inputs_persistence_failure_keeps_current_call(
+    tmp_path, monkeypatch
+):
+    import asyncio
+    from dataclasses import replace
+    from types import SimpleNamespace
+    from tldw_chatbook.Agents.agent_models import ToolResult
+    from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider
+    from tldw_chatbook.MCP.local_store import LocalMCPStore
+    from tldw_chatbook.MCP.unified_control_plane_service import (
+        UnifiedMCPControlPlaneService,
+    )
+
+    local_store = LocalMCPStore(tmp_path / "store.json")
+    service = UnifiedMCPControlPlaneService(
+        local_service=SimpleNamespace(store=local_store),
+        server_service=None,
+        target_store=None,
+        context_store=None,
+    )
+    tool = replace(_projection_tool("inspect", "current"), server_key="local:remember")
+    previous = replace(tool, description="Previous definition")
+    args = {"query": "unchanged current-call inputs"}
+    service.add_tool_arg_rule(
+        previous.server_key, previous.name, args=args, tool=previous
+    )
+    store = service.permission_store
+    assert store is not None
+    before = store.path.read_bytes()
+    original_error = OSError("synthetic durable writer refusal")
+
+    def refuse_write(_payload):
+        raise original_error
+
+    monkeypatch.setattr(store, "_save_locked", refuse_write)
+    observations = []
+    monkeypatch.setattr(
+        control_plane_module,
+        "_publish_grant_application",
+        lambda outcome, **facts: observations.append((outcome, facts)),
+    )
+    loop = asyncio.new_event_loop()
+    provider = MCPToolProvider(service=service, main_loop=loop)
+    executions = []
+
+    def execute(actual_tool, actual_args, *, decision):
+        executions.append((actual_tool, actual_args, decision))
+        return ToolResult(ok=True, content="recorded execution boundary")
+
+    monkeypatch.setattr(provider, "_execute", execute)
+    try:
+        result = provider._apply_verdict("allow_matching", tool, args)
+    finally:
+        loop.close()
+    assert result.ok and result.approval_decision == "approved"
+    assert len(executions) == 1
+    assert executions[0][0] is tool and executions[0][1] is args
+    assert executions[0][2] == "approved"
+    assert store.path.read_bytes() == before
+    assert not service.arg_rule_allows_call(tool, args)
+    assert observations == [("failed", {"error_code": "writer_failed"})]

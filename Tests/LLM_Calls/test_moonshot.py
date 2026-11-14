@@ -627,11 +627,7 @@ def test_kimi_family_complete_tool_checkpoint_expands_private_rounds_off_k3() ->
                 {
                     "assistant_content": "",
                     "reasoning_blocks": ["tool reasoning"],
-                    "calls": [
-                        _call_payload(
-                            "call_1", state="completed", result="4"
-                        )
-                    ],
+                    "calls": [_call_payload("call_1", state="completed", result="4")],
                 },
                 {
                     "assistant_content": "Visible answer",
@@ -689,11 +685,7 @@ def test_kimi_family_old_style_complete_checkpoint_annotates_tool_rounds() -> No
                 {
                     "assistant_content": "",
                     "reasoning_blocks": ["tool reasoning"],
-                    "calls": [
-                        _call_payload(
-                            "call_1", state="completed", result="4"
-                        )
-                    ],
+                    "calls": [_call_payload("call_1", state="completed", result="4")],
                 }
             ],
         }
@@ -789,11 +781,7 @@ def _active_family_checkpoint(model: str):
                 {
                     "assistant_content": "",
                     "reasoning_blocks": ["tool reasoning"],
-                    "calls": [
-                        _call_payload(
-                            "call_1", state="completed", result="4"
-                        )
-                    ],
+                    "calls": [_call_payload("call_1", state="completed", result="4")],
                 }
             ],
         }

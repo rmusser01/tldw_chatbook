@@ -1,0 +1,23 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+___ TestNoDecorativeMigrationFiles.test_every_migration_file_is_load_bearing ___
+Tests/DB/test_migration_file_sources.py:101: in test_every_migration_file_is_load_bearing
+    assert not decorative, (
+E   AssertionError: Decorative migration files — no production module reads them and no test pins them, so they can silently diverge from what the app actually executes (task-19565): ['dreams_v1_to_v2.sql', 'dreams_v2_to_v3.sql', 'dreams_v3_to_v4.sql', 'dreams_v4_to_v5.sql', 'dreams_v5_to_v6.sql', 'guardian_v1_to_v2_crisis_provenance.sql', 'library_collections_v4_to_v5_url_provenance.sql', 'workspace_project_index_002.sql', 'workspace_project_index_003.sql']. Either make the owning step execute the file, pin it with a test, or delete it.
+E   assert not ['dreams_v1_to_v2.sql', 'dreams_v2_to_v3.sql', 'dreams_v3_to_v4.sql', 'dreams_v4_to_v5.sql', 'dreams_v5_to_v6.sql', 'guardian_v1_to_v2_crisis_provenance.sql', ...]
+_____________ test_impersonate_payload_obeys_the_provider_contract _____________
+Tests/UI/test_console_composer_menu.py:585: in test_impersonate_payload_obeys_the_provider_contract
+    result = await controller.impersonate_user_reply("s1")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_chat_controller.py:3288: in admitted
+    depth = self._maintenance_calls.get(task, 0)
+            ^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'ConsoleChatController' object has no attribute '_maintenance_calls'. Did you mean: 'maintenance_drain'?
+============================= slowest 25 durations =============================
+1.64s setup    Tests/UI/test_console_composer_menu.py::test_impersonate_payload_obeys_the_provider_contract
+
+(5 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/DB/test_migration_file_sources.py::TestNoDecorativeMigrationFiles::test_every_migration_file_is_load_bearing
+FAILED Tests/UI/test_console_composer_menu.py::test_impersonate_payload_obeys_the_provider_contract
+2 failed in 4.98s

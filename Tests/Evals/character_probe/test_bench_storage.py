@@ -115,7 +115,10 @@ def test_max_tokens_zero_round_trips(db):
     would silently replace a deliberate 0 with the default on every load.
     """
     config = CharacterProbeConfig(
-        name="n", probe_set_id="p", character_ids=(1,), target_ids=("t",),
+        name="n",
+        probe_set_id="p",
+        character_ids=(1,),
+        target_ids=("t",),
         max_tokens=0,
     )
     task_id = save_character_bench(db, config)
@@ -124,7 +127,10 @@ def test_max_tokens_zero_round_trips(db):
 
 def test_concurrency_round_trips_at_minimum_legal_value(db):
     config = CharacterProbeConfig(
-        name="n", probe_set_id="p", character_ids=(1,), target_ids=("t",),
+        name="n",
+        probe_set_id="p",
+        character_ids=(1,),
+        target_ids=("t",),
         concurrency=1,
     )
     task_id = save_character_bench(db, config)
@@ -133,7 +139,10 @@ def test_concurrency_round_trips_at_minimum_legal_value(db):
 
 def test_samples_per_cell_round_trips_at_minimum_legal_value(db):
     config = CharacterProbeConfig(
-        name="n", probe_set_id="p", character_ids=(1,), target_ids=("t",),
+        name="n",
+        probe_set_id="p",
+        character_ids=(1,),
+        target_ids=("t",),
         samples_per_cell=1,
     )
     task_id = save_character_bench(db, config)
@@ -333,3 +342,60 @@ def test_a_bench_row_with_corrupt_tags_raises_naming_the_bench(db, config):
 def test_a_bench_with_no_extra_tags_still_loads_as_empty(db, config):
     bench_id = save_character_bench(db, config)
     assert load_character_bench(db, bench_id).extra_tags == ()
+
+
+# ---------------------------------------------------------------------------
+# duplicate_character_bench (task-1912)
+# ---------------------------------------------------------------------------
+
+
+def test_duplicate_carries_probe_set_characters_targets_and_sampler(db, config):
+    """task-1912 AC2: the copy carries the probe set binding, the full
+    character selection, the targets, and the sampler of the original --
+    everything but the name and the (nonexistent) run history."""
+    from tldw_chatbook.Evals.character_probe.storage import duplicate_character_bench
+
+    source_id = save_character_bench(db, config)
+    new_id = duplicate_character_bench(db, source_id)
+    assert new_id != source_id
+
+    loaded = load_character_bench(db, new_id)
+    assert loaded.probe_set_id == config.probe_set_id
+    assert loaded.character_ids == config.character_ids
+    assert loaded.target_ids == config.target_ids
+    assert loaded.samples_per_cell == config.samples_per_cell
+    assert loaded.seed == config.seed
+    assert loaded.temperature == config.temperature
+    assert loaded.max_tokens == config.max_tokens
+    assert loaded.extra_tags == config.extra_tags
+    assert loaded.description == config.description
+
+
+def test_duplicate_takes_a_unique_name_and_leaves_the_original_alone(db, config):
+    """task-1912 AC3: the copy's name is unique (never the source's, never
+    a collision on the second duplicate) and the source is byte-for-byte
+    undisturbed."""
+    from tldw_chatbook.Evals.character_probe.storage import duplicate_character_bench
+
+    source_id = save_character_bench(db, config)
+    first_copy = duplicate_character_bench(db, source_id)
+    second_copy = duplicate_character_bench(db, source_id)
+
+    source_name = config.name
+    first_name = load_character_bench(db, first_copy).name
+    second_name = load_character_bench(db, second_copy).name
+    assert first_name != source_name
+    assert second_name != source_name
+    assert first_name != second_name
+    assert first_name.startswith(f"{source_name} copy")
+    # The original is untouched by either duplicate.
+    assert load_character_bench(db, source_id) == config
+
+
+def test_duplicate_of_a_missing_bench_raises_naming_the_id(db):
+    from tldw_chatbook.Evals.character_probe.storage import (
+        duplicate_character_bench,
+    )
+
+    with pytest.raises(ValueError, match="not found"):
+        duplicate_character_bench(db, "no-such-bench")

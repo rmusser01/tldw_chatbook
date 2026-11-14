@@ -4,6 +4,7 @@ import copy
 
 import pytest
 from textual.widgets import Collapsible, Input, Select, Static
+from textual.widgets._collapsible import CollapsibleTitle
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
@@ -80,6 +81,13 @@ async def test_generation_controls_paint_labels_values_and_visible_keyboard_focu
         await _open_settings_category(pilot, "#settings-category-providers-models")
         await _settle(host, pilot)
         disclosure = await _open_generation(host, pilot)
+        # TASK-33007.5, rewritten on purpose: Model defaults opens expanded,
+        # so the walk starts from its title rather than from the Enter that
+        # opened it, and the samplers sit in the nested Sampling disclosure,
+        # opened here; its title is one extra stop before Top P.
+        disclosure.query_one("#settings-model-sampling", Collapsible).collapsed = False
+        await _settle(host, pilot)
+        await _tab_to(host, pilot, f"{DISCLOSURE} > CollapsibleTitle")
         controls = list(disclosure.query("Input, Select"))
         supported = [widget for widget in controls if not widget.disabled]
         seen = []
@@ -87,6 +95,9 @@ async def test_generation_controls_paint_labels_values_and_visible_keyboard_focu
             # Walk sequentially: hidden/unsupported fields cannot be focus stops.
             await pilot.press("tab")
             await _settle(host, pilot)
+            if isinstance(host.screen.focused, CollapsibleTitle):
+                await pilot.press("tab")
+                await _settle(host, pilot)
             assert host.screen.focused is widget
             seen.append(widget.id)
             _assert_painted(host.screen, widget)

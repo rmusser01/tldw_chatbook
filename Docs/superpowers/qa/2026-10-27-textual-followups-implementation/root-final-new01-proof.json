@@ -1,0 +1,125 @@
+{
+  "parents": 22,
+  "actual_children": [
+    {
+      "path": "pytest/test_footer_and_rail_actions_f0/private-profile-process/pytest.xml",
+      "node": "Tests.UI.test_speech_footer_scope::test_footer_and_rail_actions_follow_playground_effects_return",
+      "sha256": "b883632d1b56051c0d5983b02d79c882471abf477e855f181c6c61ca0d9d04f7"
+    },
+    {
+      "path": "pytest/test_full_forms_keep_both_acce0/private-profile-process/pytest.xml",
+      "node": "Tests.UI.test_schedules_reminder_form_saves::test_full_forms_keep_both_accepted_saves[serial-edit]",
+      "sha256": "8838e771f436c11f1cd1f1a7b3352786ba89bbee9c2a502f328db34a48bfa86b"
+    },
+    {
+      "path": "pytest/test_full_forms_keep_both_acce1/private-profile-process/pytest.xml",
+      "node": "Tests.UI.test_schedules_reminder_form_saves::test_full_forms_keep_both_accepted_saves[serial-create]",
+      "sha256": "e34c22014307612caae3fc5f7c6627b8b6b3a80ca50d049f66483420044f6a67"
+    },
+    {
+      "path": "pytest/test_full_forms_keep_both_acce2/private-profile-process/pytest.xml",
+      "node": "Tests.UI.test_schedules_reminder_form_saves::test_full_forms_keep_both_accepted_saves[overlap-edit]",
+      "sha256": "09ae5a051580ca88d92152bb751b171cebaf92d6230fb9031ac28cf33c2fe4fa"
+    },
+    {
+      "path": "pytest/test_full_forms_keep_both_acce3/private-profile-process/pytest.xml",
+      "node": "Tests.UI.test_schedules_reminder_form_saves::test_full_forms_keep_both_accepted_saves[overlap-create]",
+      "sha256": "d8cd470dad1ec05689c16dfb369d78806bb630a8cfb7e2aa7ece8f77603d5924"
+    },
+    {
+      "path": "pytest/test_full_form_refusal_failure0/private-profile-process/pytest.xml",
+      "node": "Tests.UI.test_schedules_reminder_form_saves::test_full_form_refusal_failure_and_offline_outcomes[write_failure]",
+      "sha256": "b7fd8e45926abee5ae5fa198f3763dba685bd494cbd851f74215ba48ba2466a0"
+    },
+    {
+      "path": "pytest/test_full_form_refusal_failure1/private-profile-process/pytest.xml",
+      "node": "Tests.UI.test_schedules_reminder_form_saves::test_full_form_refusal_failure_and_offline_outcomes[transfer]",
+      "sha256": "aaa7d9430a7c2fac3503c20d59f07a816b09daaced55a9500ed3410d479db07a"
+    },
+    {
+      "path": "pytest/test_full_form_refusal_failure2/private-profile-process/pytest.xml",
+      "node": "Tests.UI.test_schedules_reminder_form_saves::test_full_form_refusal_failure_and_offline_outcomes[deleted]",
+      "sha256": "95425d765886a31615c029f81a3f0931c8ac7cba6a643d216fe3aed0d823b755"
+    },
+    {
+      "path": "pytest/test_full_form_refusal_failure3/private-profile-process/pytest.xml",
+      "node": "Tests.UI.test_schedules_reminder_form_saves::test_full_form_refusal_failure_and_offline_outcomes[offline_recurring]",
+      "sha256": "a510821a4e0ca516528e4e4b17f158b765f1377c20b198bbada508eba57532b7"
+    },
+    {
+      "path": "pytest/test_full_form_refusal_failure4/private-profile-process/pytest.xml",
+      "node": "Tests.UI.test_schedules_reminder_form_saves::test_full_form_refusal_failure_and_offline_outcomes[offline_one_time]",
+      "sha256": "e166fa0796873a36f69b5eaabf5cd8a236b1ca7956b2cf40bfac3a9cd4f9ef1e"
+    },
+    {
+      "path": "pytest/test_prompt_export_dispatches_0/private-profile-process/pytest.xml",
+      "node": "Tests.UI.test_library_prompt_export_responsiveness::test_prompt_export_dispatches_app_key_before_destination_release[new-ordinary]",
+      "sha256": "44dd9fe6d23ee3138de6c3d80ee7580f7b328e1c6cff84b5ae50cce3d7a79d38"
+    },
+    {
+      "path": "pytest/test_prompt_export_dispatches_1/private-profile-process/pytest.xml",
+      "node": "Tests.UI.test_library_prompt_export_responsiveness::test_prompt_export_dispatches_app_key_before_destination_release[new-held-writer]",
+      "sha256": "1b3539496dfd98cb9e7f166150284365a489a7da79298de8cd772febb9be6056"
+    },
+    {
+      "path": "pytest/test_prompt_export_dispatches_2/private-profile-process/pytest.xml",
+      "node": "Tests.UI.test_library_prompt_export_responsiveness::test_prompt_export_dispatches_app_key_before_destination_release[replace-ordinary]",
+      "sha256": "a352d8cc64364f6158f6b0ea04811b6649790112b1f6b5a57b8b7ecf8144a25f"
+    },
+    {
+      "path": "pytest/test_prompt_export_dispatches_3/private-profile-process/pytest.xml",
+      "node": "Tests.UI.test_library_prompt_export_responsiveness::test_prompt_export_dispatches_app_key_before_destination_release[replace-held-writer]",
+      "sha256": "f5ce476f296c5669a41df90cea8125e60ed5d3db765f7c9ac3a63ff8a87be838"
+    },
+    {
+      "path": "pytest/test_prompt_export_racing_file0/private-profile-process/pytest.xml",
+      "node": "Tests.UI.test_library_prompt_export_responsiveness::test_prompt_export_racing_file_requires_an_explicit_answer[cancel]",
+      "sha256": "84cc2572cf87f1da2754d1cd8227453141fea845ea448951226606bccd2acea4"
+    },
+    {
+      "path": "pytest/test_prompt_export_racing_file1/private-profile-process/pytest.xml",
+      "node": "Tests.UI.test_library_prompt_export_responsiveness::test_prompt_export_racing_file_requires_an_explicit_answer[replace]",
+      "sha256": "0404881cfe489db4e21c6ab8df2c540f8bcfab1507da204fac9523e5a30ce77f"
+    },
+    {
+      "path": "pytest/test_recompose_hides_cached_hi0/private-profile-process/pytest.xml",
+      "node": "Tests.UI.test_speech_footer_scope::test_recompose_hides_cached_hints_and_rejects_old_window",
+      "sha256": "8758b9fc577fcfa6356383cc8f873b7d285b1922873135905a7cd4a8825a9377"
+    },
+    {
+      "path": "pytest/test_save_publication_retains_0/private-profile-process/pytest.xml",
+      "node": "Tests.UI.test_evals_bench_save_publication::test_save_publication_retains_later_editing_context[ordinary]",
+      "sha256": "721d49c8bdb7574e7ef868c9384a7db958adeb04b1aef028193ac6cbfa48280b"
+    },
+    {
+      "path": "pytest/test_save_publication_retains_1/private-profile-process/pytest.xml",
+      "node": "Tests.UI.test_evals_bench_save_publication::test_save_publication_retains_later_editing_context[later-input]",
+      "sha256": "75536e02af950b0069aefc62df250cc52d7913d2073b5d70923596075d8bd7a1"
+    },
+    {
+      "path": "pytest/test_save_publication_retains_2/private-profile-process/pytest.xml",
+      "node": "Tests.UI.test_evals_bench_save_publication::test_save_publication_retains_later_editing_context[during-refresh]",
+      "sha256": "47969fe6d14bb0c6f3ced96c479e75afe9e5be42d7eb6882eec0e86df86cdb53"
+    },
+    {
+      "path": "pytest/test_save_publication_retains_3/private-profile-process/pytest.xml",
+      "node": "Tests.UI.test_evals_bench_save_publication::test_save_publication_retains_later_editing_context[departure]",
+      "sha256": "6374cc6c034da9d6ecf363a7efa3a8c88daa2df0a3b33f9194dd57d4efe1ec49"
+    },
+    {
+      "path": "pytest/test_save_publication_retains_4/private-profile-process/pytest.xml",
+      "node": "Tests.UI.test_evals_bench_save_publication::test_save_publication_retains_later_editing_context[departure-pending]",
+      "sha256": "50ec5b0cb3a0e63aca324d15a9c018ae0d14d403a6381744814166d1e5c8072e"
+    }
+  ],
+  "failures": 0,
+  "errors": 0,
+  "skips": 0,
+  "head": "81c3216c8ed2fbbe322f6a54a4cd46ac1fc9b1d7",
+  "by_module": {
+    "Tests.UI.test_evals_bench_save_publication": 5,
+    "Tests.UI.test_schedules_reminder_form_saves": 9,
+    "Tests.UI.test_library_prompt_export_responsiveness": 6,
+    "Tests.UI.test_speech_footer_scope": 2
+  }
+}

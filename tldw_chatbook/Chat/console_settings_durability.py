@@ -115,3 +115,19 @@ class ConsoleSettingsDurabilityOwner:
             if not pending:
                 return
             await asyncio.shield(asyncio.gather(*pending, return_exceptions=True))
+
+
+async def shutdown_console_settings_durability(self) -> None:
+    """Drain admitted settings writes without cancelling thread work.
+
+    The coordinator tasks can be awaiting ``asyncio.to_thread`` writes,
+    which cannot be recalled once admitted. Shielding preserves those
+    writes if application shutdown is cancelled; ``_shutdown`` retries
+    this lifecycle pass and does not dispose the Console runtime until the
+    registry is empty.
+    """
+
+    owner = getattr(self, "console_settings_durability_owner", None)
+    if not isinstance(owner, ConsoleSettingsDurabilityOwner):
+        return
+    await owner.close_and_drain()

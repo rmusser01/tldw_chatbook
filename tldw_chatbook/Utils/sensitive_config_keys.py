@@ -139,8 +139,6 @@ def is_sensitive_config_key(key: object) -> bool:
         return False
     if key_text in SENSITIVE_CONFIG_EXACT_KEYS:
         return True
-    if any(
-        pattern in key_text for pattern in SENSITIVE_CONFIG_KEY_CONTAINS_PATTERNS
-    ):
+    if any(pattern in key_text for pattern in SENSITIVE_CONFIG_KEY_CONTAINS_PATTERNS):
         return True
     return any(key_text.endswith(suffix) for suffix in SENSITIVE_CONFIG_KEY_SUFFIXES)

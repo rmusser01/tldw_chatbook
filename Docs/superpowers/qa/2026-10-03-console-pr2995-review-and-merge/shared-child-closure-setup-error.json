@@ -1,0 +1,14 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/Chat/test_console_chat_create_integration.py::test_primary_remembered_bridge_still_confirms_each_child_request",
+    "-q",
+    "--basetemp=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/shared-closure-profile-yy_p13zh/pytest"
+  ],
+  "head": "bc7c2dde9febfd93cbc3bc115c8cbc61c3ee752b",
+  "exit": 4,
+  "seconds": 0.81,
+  "log": "shared-child-closure-green.log"
+}

@@ -1,0 +1,27 @@
+# Modules (and third-party packages) loaded by a fresh `import tldw_chatbook.Agents.agent_runtime`.
+# Shrink-only ratchet (TASK-36942.2): remove a line when it stops loading; never add one.
+# Purity (no UI, DB, HTTP or config) reached in TASK-36944.10.
+tldw_chatbook
+tldw_chatbook.Agents
+tldw_chatbook.Agents.agent_models
+tldw_chatbook.Agents.agent_runtime
+tldw_chatbook.Agents.project_instruction_resolver
+tldw_chatbook.Agents.project_instruction_runtime
+tldw_chatbook.Agents.run_context
+tldw_chatbook.Metrics
+tldw_chatbook.Metrics.metrics_logger
+tldw_chatbook.Provider_Contract
+tldw_chatbook.Provider_Contract.provider_continuation
+tldw_chatbook.Provider_Contract.provider_endpoint_contract
+tldw_chatbook.Provider_Contract.sampling_params
+tldw_chatbook.Tools
+tldw_chatbook.Tools.remote_root_types
+tldw_chatbook.Tools.tool_executor
+tldw_chatbook.Utils
+tldw_chatbook.Utils.filesystem_identity
+tldw_chatbook.Utils.input_validation
+tldw_chatbook.Utils.path_validation
+tldw_chatbook.Utils.reasoning_config
+tldw_chatbook.Utils.tiktoken_runtime
+tldw_chatbook.model_capabilities
+tldw_chatbook.provider_registry

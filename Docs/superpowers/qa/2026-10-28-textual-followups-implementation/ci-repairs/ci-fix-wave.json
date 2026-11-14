@@ -1,0 +1,680 @@
+{
+  "archive": "ci-fix-wave.tar.gz",
+  "archive_sha256": "6f6765341d1cb1dbc7e664109d26bfd4679ffc34fe732e3c354707fe4a6a23ed",
+  "evidence_receipt_sha256": "0d985c83528e6437644c814a80b2dab56740a8d54138f7b3fd89f5f6a730c236",
+  "members": {
+    "backlog-hygiene/command.json": {
+      "bytes": 1014,
+      "sha256": "98e419c55764a523075ee17464a34ebf138f74a8d5e625106f21f7490c0426b3"
+    },
+    "backlog-hygiene/result.xml": {
+      "bytes": 615,
+      "sha256": "ad18a6e6c1905d1847daa6a042b97f5ed70be8c6af34d999b2c9c5f409687b5f"
+    },
+    "backlog-hygiene/verification.json": {
+      "bytes": 510,
+      "sha256": "76f1a840cb835e4f7850c28b47aa2c0601a818b4c65c67490ee760abdad18bd0"
+    },
+    "ci-fix-wave/after-library_note_links_support.py": {
+      "bytes": 12774,
+      "sha256": "d8ab593517307b98ced0a008a1f1e10bbc6a05aea05af3b434ca3a8f0db3e7ce"
+    },
+    "ci-fix-wave/after-preview-amendment-support.py": {
+      "bytes": 14737,
+      "sha256": "5f530bfa6324c6d45cf72ea916632b3a0760b1c692d385fee03bb85d5a77c9da"
+    },
+    "ci-fix-wave/after-test_library_media_reader_controls_in_list_view.py": {
+      "bytes": 11314,
+      "sha256": "6ae9d9d8da88cd1d755ec07dfd079ea8f67b953df8db75b7df09d8c35ebe37e7"
+    },
+    "ci-fix-wave/after-test_library_note_links_picker_and_preview.py": {
+      "bytes": 12874,
+      "sha256": "e65c84282dc92f64d4d676e0ebef5974809d00c790e5be623ad433911bfe9f08"
+    },
+    "ci-fix-wave/before-library_note_links_support.py": {
+      "bytes": 9048,
+      "sha256": "b153b5720194669f9f73a8829988baab83851b2821c2b8a794d357072e2d736f"
+    },
+    "ci-fix-wave/before-preview-amendment-support.py": {
+      "bytes": 12774,
+      "sha256": "d8ab593517307b98ced0a008a1f1e10bbc6a05aea05af3b434ca3a8f0db3e7ce"
+    },
+    "ci-fix-wave/before-test_library_media_reader_controls_in_list_view.py": {
+      "bytes": 12218,
+      "sha256": "aab43bcf485c6cdd37638cbfc0a0e70a994ffc6a9631e87871eb1b23446b8b6d"
+    },
+    "ci-fix-wave/before-test_library_note_links_picker_and_preview.py": {
+      "bytes": 12674,
+      "sha256": "43a0929294536bdde787dcd1cae8966838e5945cc9647ce3afe2b90c7dba9952"
+    },
+    "ci-fix-wave/evidence-receipt.json": {
+      "bytes": 62961,
+      "sha256": "0d985c83528e6437644c814a80b2dab56740a8d54138f7b3fd89f5f6a730c236"
+    },
+    "ci-fix-wave/extended-new-helper-ready-01/command.json": {
+      "bytes": 1246,
+      "sha256": "11a405ccb6d3cf85612b238fea211188c97e4ead842f665c04e38ac7794777c6"
+    },
+    "ci-fix-wave/extended-new-helper-ready-01/result.xml": {
+      "bytes": 1962,
+      "sha256": "f15d1b2856e71278837fadf2f5aa2c2188bedc32783b922f1e532c577b74baa0"
+    },
+    "ci-fix-wave/extended-new-helper-ready-01/verification.json": {
+      "bytes": 526,
+      "sha256": "21cde7b7c0ba2f5cde24cc665b31b6038e87c3915cc2670cfdef445155b7ce96"
+    },
+    "ci-fix-wave/extended-old-helper-01/command.json": {
+      "bytes": 1198,
+      "sha256": "896899705dca0088e261a43244a771a6a0eee4b6ef61b4b34dea2f12cc709e0c"
+    },
+    "ci-fix-wave/extended-old-helper-01/result.xml": {
+      "bytes": 3856,
+      "sha256": "6c806a6f7a8fec55fb731778dd4a84b7aff7513b56e0acbc532c1b56dc8baaea"
+    },
+    "ci-fix-wave/extended-old-helper-01/verification.json": {
+      "bytes": 520,
+      "sha256": "ea19db9c03d3d989fb2726d273a456aedf31e813c1f2ee4177648a7dfb246ced"
+    },
+    "ci-fix-wave/extended-old-helper-ready-01/command.json": {
+      "bytes": 1246,
+      "sha256": "ab48420015620900f6ef6f29f6c6b9f9c7154f5e0aa191e1d51e4bee535a768a"
+    },
+    "ci-fix-wave/extended-old-helper-ready-01/result.xml": {
+      "bytes": 1095,
+      "sha256": "55e62d015e60daf0f359f25b7a7ead5a9ff9167d7a4a62bde14f388cfb065a60"
+    },
+    "ci-fix-wave/extended-old-helper-ready-01/verification.json": {
+      "bytes": 526,
+      "sha256": "905ea1f42dbd9e290d0ba991b8a2164e1ab5042b3056fc7fc211b984f808e45c"
+    },
+    "ci-fix-wave/held-full-new-01-probe-recovered.py": {
+      "bytes": 7259,
+      "sha256": "dd08cee9b90d94bf4cd0ef3915672cca01ea4bf98fbc2342d5da4cfb333e8297"
+    },
+    "ci-fix-wave/held-full-new-01/command.json": {
+      "bytes": 1138,
+      "sha256": "0c0323d02b7116735b57a189c40107a2062b98d6f9badf00081c357e0be42ff0"
+    },
+    "ci-fix-wave/held-full-new-01/result.xml": {
+      "bytes": 1598,
+      "sha256": "b07942c95ec9c376d509cd3fb495bae876bc81d19f427334c5763ee9a47c12e4"
+    },
+    "ci-fix-wave/held-full-new-01/verification.json": {
+      "bytes": 514,
+      "sha256": "a17f94d7f31bb81ac13d1e9ea9cb26558ed3791eb3d12eb1ef77661206c770d8"
+    },
+    "ci-fix-wave/held-full-new-02/command.json": {
+      "bytes": 1172,
+      "sha256": "415368fd897258a8723fe0ae4ce27c43233adda0c3ab5748fa2cda84941f22c1"
+    },
+    "ci-fix-wave/held-full-new-02/result.xml": {
+      "bytes": 403,
+      "sha256": "4ad38ab8ff760bb391694957e743653f90d8f3cec28650d79f3418bbeb36f654"
+    },
+    "ci-fix-wave/held-full-new-02/verification.json": {
+      "bytes": 514,
+      "sha256": "3ce8e854fa56cd8c469131bf6bf3223173fbc4a8bd186a87213d33cbf7531f89"
+    },
+    "ci-fix-wave/held-full-new-qualified.trace.json": {
+      "bytes": 48004,
+      "sha256": "fc2908d9602c509179189c23192463d59fe712f7a8bbad77f5a049f6b9649ebb"
+    },
+    "ci-fix-wave/held-new-already-list-01/command.json": {
+      "bytes": 1165,
+      "sha256": "9aece41c3660140792056084a8468607b51452d30fd38c7a5e74bf8aeda80086"
+    },
+    "ci-fix-wave/held-new-already-list-01/result.xml": {
+      "bytes": 403,
+      "sha256": "3242c7dca9b18d973cf2d3c35098cf791ad88ef7cf4dc5d89ce0a15f8ab2d75d"
+    },
+    "ci-fix-wave/held-new-already-list-01/verification.json": {
+      "bytes": 522,
+      "sha256": "471392edfd332c622bbaa8c48b4f25d4ccd9bf341644b91899162b453e6b33eb"
+    },
+    "ci-fix-wave/held-new-already-list.trace.json": {
+      "bytes": 21894,
+      "sha256": "6a55674e00ceea2d71f12d753ca8194c3b3b242b001300ebe8f68f6ed13834d0"
+    },
+    "ci-fix-wave/held-old-01/command.json": {
+      "bytes": 1035,
+      "sha256": "050743b36a6f0dbc6e9bdad84f15a9372fed4d748e4ca1efadf92ce19de0a865"
+    },
+    "ci-fix-wave/held-old-02/command.json": {
+      "bytes": 1139,
+      "sha256": "01d47e7e8225e2775386d7ae32e4c9d24bb805acb0ac605322bbc996927cfdb7"
+    },
+    "ci-fix-wave/held-old-02/result.xml": {
+      "bytes": 3885,
+      "sha256": "283491b99e402b471cd8b22f75f50f898857c235c48e7fd3a8fd17f52de26756"
+    },
+    "ci-fix-wave/held-old-02/verification.json": {
+      "bytes": 509,
+      "sha256": "06779f6e8e9bc4a4fc33ca37271c8fbf69330c69b607a1ea88ca87c65cc0b3a7"
+    },
+    "ci-fix-wave/held-old-03/command.json": {
+      "bytes": 1139,
+      "sha256": "a7d3635885e8a897eed65e2275b499eceb4952db14531450d246c6aa0ab623dd"
+    },
+    "ci-fix-wave/held-old-03/result.xml": {
+      "bytes": 843,
+      "sha256": "b74651cf3ba7f0e47687edd4c064e1042f6c9f31fc82e078ff25bc65c3f3610f"
+    },
+    "ci-fix-wave/held-old-03/verification.json": {
+      "bytes": 509,
+      "sha256": "795976f7b58b3e02c24026e98c05810c3cc4ba90aa7008ce874a208257aca7c2"
+    },
+    "ci-fix-wave/held-old-qualified-probe.py": {
+      "bytes": 6168,
+      "sha256": "6bdf82b9ba0ff12a97f5c7b6e14767a03073c962a146dabc8fe4345fffd2f634"
+    },
+    "ci-fix-wave/held-old-qualified.trace.json": {
+      "bytes": 16756,
+      "sha256": "edc2eee54ade66914bc8624420706e3b11250f91ec46b6acfb24b81b78371d20"
+    },
+    "ci-fix-wave/held-old.trace.json": {
+      "bytes": 604,
+      "sha256": "e6da1592e575271b621bd1e82e56036bd1a79ba5ed7d64cd93c5aaf2bce2fd9c"
+    },
+    "ci-fix-wave/held-preview-new-01/command.json": {
+      "bytes": 1146,
+      "sha256": "72f6bb41b34714579ff8b3ba4a59be5e2fe18359421ead8afb67f4b333aee5ae"
+    },
+    "ci-fix-wave/held-preview-new-01/result.xml": {
+      "bytes": 403,
+      "sha256": "be56f712f4955d00648c1af9408dbc173120797de60ff649a366bfc1381ddf9c"
+    },
+    "ci-fix-wave/held-preview-new-01/verification.json": {
+      "bytes": 517,
+      "sha256": "f2a9d73d148b839b504dbbaa5e41602dc830520d570a933ca6cbb9ec023a6408"
+    },
+    "ci-fix-wave/held-preview-new-qualified.trace.json": {
+      "bytes": 4597,
+      "sha256": "f99c36fcb544dbde361f4ee26694a5d967ede347c4e2fb3c7c90b91cb2fbfad1"
+    },
+    "ci-fix-wave/held-preview-new.trace.json": {
+      "bytes": 4597,
+      "sha256": "f99c36fcb544dbde361f4ee26694a5d967ede347c4e2fb3c7c90b91cb2fbfad1"
+    },
+    "ci-fix-wave/held-preview-old-01/command.json": {
+      "bytes": 1146,
+      "sha256": "2e6121c3898d370cba63aa73d678f671d3c623e28161e5a400cd3a788f4f2f00"
+    },
+    "ci-fix-wave/held-preview-old-01/result.xml": {
+      "bytes": 1786,
+      "sha256": "d3db202cbd33fcce8d88f2121d024b9d693372b15a2c41505f8226467545331f"
+    },
+    "ci-fix-wave/held-preview-old-01/verification.json": {
+      "bytes": 517,
+      "sha256": "e9fdaf7eff09a32d66cd861fa615a647bbc1e9a252e598b91192e19dc6757f97"
+    },
+    "ci-fix-wave/held-preview-old-02/command.json": {
+      "bytes": 1146,
+      "sha256": "2c422b5b042c39ed4aba8366620e1ad8ee81ce31771e4abf266ab4c178c10572"
+    },
+    "ci-fix-wave/held-preview-old-02/result.xml": {
+      "bytes": 826,
+      "sha256": "df551338e49bee163c56e12170303f49f324f04760d572924986786395a51c33"
+    },
+    "ci-fix-wave/held-preview-old-02/verification.json": {
+      "bytes": 517,
+      "sha256": "958e0246fcf7ddfe8cd83cacec4c71c0c7e2185b22f36f632cb9a3fac8efb200"
+    },
+    "ci-fix-wave/held-preview-old-qualified.trace.json": {
+      "bytes": 4868,
+      "sha256": "ba73a94db066be460405e16a78a41ebd596e3e51431d1f8e8bb7c6fef8b58dbe"
+    },
+    "ci-fix-wave/held-preview-old.trace.json": {
+      "bytes": 4868,
+      "sha256": "ba73a94db066be460405e16a78a41ebd596e3e51431d1f8e8bb7c6fef8b58dbe"
+    },
+    "ci-fix-wave/held-preview-qualified-probe.py": {
+      "bytes": 6609,
+      "sha256": "70066deae3f24e4434345314436249681e62db5492f9350f03fc25f316dd5407"
+    },
+    "ci-fix-wave/held-publication.trace.json": {
+      "bytes": 21894,
+      "sha256": "6a55674e00ceea2d71f12d753ca8194c3b3b242b001300ebe8f68f6ed13834d0"
+    },
+    "ci-fix-wave/held-test_typing_two_brackets_opens_a_keyboard_picker_that_inserts_a_real_link.trace.json": {
+      "bytes": 48004,
+      "sha256": "fc2908d9602c509179189c23192463d59fe712f7a8bbad77f5a049f6b9649ebb"
+    },
+    "ci-fix-wave/held_preview.py": {
+      "bytes": 6609,
+      "sha256": "70066deae3f24e4434345314436249681e62db5492f9350f03fc25f316dd5407"
+    },
+    "ci-fix-wave/newextendedready-test_enter_on_the_focused_preview_follows_the_only_link_and_lists_several.trace.json": {
+      "bytes": 10967,
+      "sha256": "5fe8062cca68e6fadd6fa7a326cf0757fc037ea1087cf61f3a4715a2392755ff"
+    },
+    "ci-fix-wave/observe-test_a_dirty_form_filtered_off_the_page_saves_to_the_reader_item_after_trash_back.trace.json": {
+      "bytes": 1930,
+      "sha256": "eae92c083eccf02dd4341d8ccb350b85c6b127e32bea6fc823dbc3d7b9d584e2"
+    },
+    "ci-fix-wave/observe-test_clicking_a_note_link_in_preview_opens_that_note_and_never_reaches_open_url.trace.json": {
+      "bytes": 34424,
+      "sha256": "be2c1ae2fc17f97c1210934aff0249a858d5a198492bb417d73083f0b9832c22"
+    },
+    "ci-fix-wave/observe-test_edit_metadata_save_in_the_list_view_writes_the_reader_item_not_row_0.trace.json": {
+      "bytes": 1930,
+      "sha256": "16ff416c45d59da07415a2abd286d1aa7fc3c84f8fea461590c5f6be77b03b14"
+    },
+    "ci-fix-wave/observe-test_enter_on_the_focused_preview_follows_the_only_link_and_lists_several.trace.json": {
+      "bytes": 10959,
+      "sha256": "8fbb8714436376eb5a3bcda6338adf8074467789fc0315d0caffc6404c3536b7"
+    },
+    "ci-fix-wave/observe-test_move_to_trash_in_the_list_view_names_and_deletes_the_reader_item.trace.json": {
+      "bytes": 1930,
+      "sha256": "5e1ba45917c01160c8d735e7848a90df9520b9ef62fef5fdb163199cec9e8905"
+    },
+    "ci-fix-wave/observe-test_typing_two_brackets_opens_a_keyboard_picker_that_inserts_a_real_link.trace.json": {
+      "bytes": 31734,
+      "sha256": "c456decc4e6dd3776eb5efea6d2b7f4e0c4f4d7cceca9191beaa8767ecb9f3df"
+    },
+    "ci-fix-wave/old-helper-baseline-source.json": {
+      "bytes": 314,
+      "sha256": "c1228c5c9d08d515a8f6f6468bd7a295d1e2dc5ae2e6a5e4a6bcac98fd0aa490"
+    },
+    "ci-fix-wave/old-helper-ready-executed.py": {
+      "bytes": 2669,
+      "sha256": "93b8f9c816f3a48d2a0ad5c9840dcc6f9a9d21fd1de7fe371328e9290974f119"
+    },
+    "ci-fix-wave/old-helper-source-recovery.json": {
+      "bytes": 234,
+      "sha256": "01814170385f3a77e0c59a7cf564b5d23f135f46c42e8ed64132d477012bc586"
+    },
+    "ci-fix-wave/old_helper_baseline.py": {
+      "bytes": 2978,
+      "sha256": "abcc0b2b49c84f971af530d52e26a0dd55f6047e0e0f28de5e8b4c4990bb772e"
+    },
+    "ci-fix-wave/oldextended-test_enter_on_the_focused_preview_follows_the_only_link_and_lists_several.trace.json": {
+      "bytes": 1934,
+      "sha256": "d7e36a32f60db5956aeecae3020b02b3a0e174f1daf82861d2d32de1c88386f1"
+    },
+    "ci-fix-wave/oldextendedready-test_enter_on_the_focused_preview_follows_the_only_link_and_lists_several.trace.json": {
+      "bytes": 13779,
+      "sha256": "eac833c2d3d9479be117c67e68197eb8c489e954ee1a7a7abc0464bc6ee47c29"
+    },
+    "ci-fix-wave/owned-source-01-probe.py": {
+      "bytes": 7798,
+      "sha256": "486c817b47808f7ae9493451f0136dde16f8f05bc2c99ffffe0660a8d3f3da97"
+    },
+    "ci-fix-wave/owned-source-01/command.json": {
+      "bytes": 1341,
+      "sha256": "9f3c45ac092dd1766cc08b00c3b1fc5b55291868f4c49366784120f742a0ae87"
+    },
+    "ci-fix-wave/owned-source-01/result.xml": {
+      "bytes": 2604,
+      "sha256": "f84f46aa343fb6afde8de8c115b78cf5f165353f4345d3b25be4ac117354d668"
+    },
+    "ci-fix-wave/owned-source-01/verification.json": {
+      "bytes": 513,
+      "sha256": "f64a49d3dc2c492564f8742ed753a9597c5ee16e9d9f9e26b7952b11f21b3865"
+    },
+    "ci-fix-wave/preserve_initial_probe.py": {
+      "bytes": 1149,
+      "sha256": "193541a57e9edab951a99d4c6d42c3647738477ff9accec5a5821c777a2d7dff"
+    },
+    "ci-fix-wave/preview-amend-extended-green.trace.json": {
+      "bytes": 118515,
+      "sha256": "4cf0e756324a65a320dc4255c9c0b47bbb41faf26e19ef07c819bc6a2f546d0b"
+    },
+    "ci-fix-wave/preview-amend-owned-01-ready-executed.py": {
+      "bytes": 2844,
+      "sha256": "52b69af6d0819092f57ad2e6644c4c495c9d1c6a9175e4be539fa8ad13ddc092"
+    },
+    "ci-fix-wave/preview-amend-owned-01/command.json": {
+      "bytes": 1299,
+      "sha256": "8fc6ea784a07b6a09c5be30d8bb07f948e2fc0c7d4c4af034dc67f7f71cc25ea"
+    },
+    "ci-fix-wave/preview-amend-owned-01/result.xml": {
+      "bytes": 2144,
+      "sha256": "ee2ddbd6c163dd8490171be537c2fba0f69862c7a542d7b7ac4a163260a2f26f"
+    },
+    "ci-fix-wave/preview-amend-owned-01/verification.json": {
+      "bytes": 520,
+      "sha256": "3161176a38e90e4490f7dcc597850fdf3cf92aed6b03980539690f7a7a2fc4e1"
+    },
+    "ci-fix-wave/preview-amend-sibling-green.trace.json": {
+      "bytes": 80908,
+      "sha256": "c6f95ac11243670c6026dad7d361b12fd76ca95d9ddb75bb7aafdcc15dcc2849"
+    },
+    "ci-fix-wave/preview-amend-sibling-ready-01/command.json": {
+      "bytes": 1168,
+      "sha256": "85e568d4aee5f71812b86f115c6b7bbfa5154a59d0cd11696f0d681c27bd8815"
+    },
+    "ci-fix-wave/preview-amend-sibling-ready-01/result.xml": {
+      "bytes": 411,
+      "sha256": "6834bb68f68bc59660f920e50b33eb4f2a20c291b8a08db7e84bf5016a68a97e"
+    },
+    "ci-fix-wave/preview-amend-sibling-ready-01/verification.json": {
+      "bytes": 528,
+      "sha256": "2eca6f129a7be4c6065e512f7875f53273f2527ff09391d876c6a46b6b1ff16f"
+    },
+    "ci-fix-wave/preview-comparison-summary.json": {
+      "bytes": 48171,
+      "sha256": "dbe7ba0fd45d0d30588cc337a21a611e3bad99fca7a5d027e6e4c2a4311c5191"
+    },
+    "ci-fix-wave/preview-new-helper-ready.trace.json": {
+      "bytes": 31931,
+      "sha256": "09fbeb9623a0fb568b4a83bf839249470e0c711bf81fcd36efa9d40be350a9bf"
+    },
+    "ci-fix-wave/preview-old-helper-ready.trace.json": {
+      "bytes": 98082,
+      "sha256": "7dbb8c171d0a94a93c69cc2d2c6d46ae509f25e34c021583b20183b9ebec17cb"
+    },
+    "ci-fix-wave/preview-test_clicking_a_note_link_in_preview_opens_that_note_and_never_reaches_open_url.trace.json": {
+      "bytes": 80908,
+      "sha256": "c6f95ac11243670c6026dad7d361b12fd76ca95d9ddb75bb7aafdcc15dcc2849"
+    },
+    "ci-fix-wave/preview-test_enter_on_the_focused_preview_follows_the_only_link_and_lists_several.trace.json": {
+      "bytes": 118515,
+      "sha256": "4cf0e756324a65a320dc4255c9c0b47bbb41faf26e19ef07c819bc6a2f546d0b"
+    },
+    "ci-fix-wave/preview_observer.py": {
+      "bytes": 3470,
+      "sha256": "3700e1996035de041b7b4a213de84cc44a0fcb64188c402c268d53a94a6ffc53"
+    },
+    "ci-fix-wave/preview_summary.py": {
+      "bytes": 1042,
+      "sha256": "3664585a992f68669a23599550a36e49a9a2012f32772bc328757313c5b3e7b4"
+    },
+    "ci-fix-wave/previewamend-test_clicking_a_note_link_in_preview_opens_that_note_and_never_reaches_open_url.trace.json": {
+      "bytes": 2159,
+      "sha256": "83fb07c59d9062ad39ca50bf7f56b1c1fdb1db5b1bcd2fa924dc131175ad24a7"
+    },
+    "ci-fix-wave/previewamend-test_enter_on_the_focused_preview_follows_the_only_link_and_lists_several.trace.json": {
+      "bytes": 22698,
+      "sha256": "5be10f304cc75cb68c971c730bcf53d0ab90f0197b93bf18415adcd1d31a2e5c"
+    },
+    "ci-fix-wave/previewamendsibling-test_clicking_a_note_link_in_preview_opens_that_note_and_never_reaches_open_url.trace.json": {
+      "bytes": 34440,
+      "sha256": "6250bb8cde967fd63957d9211838fd62405fd6c8d301bab746e46e1b780f052b"
+    },
+    "ci-fix-wave/reader-wrong-target-01/command.json": {
+      "bytes": 1163,
+      "sha256": "5919a7b1d501219d137aafb6cc9d70d29614eaf1baba9c68a15e80e84edfa0e1"
+    },
+    "ci-fix-wave/reader-wrong-target-01/result.xml": {
+      "bytes": 1133,
+      "sha256": "83251bb88be295199ae3ea581b37ede7a69ea714b984a39ccd8696c4696159ef"
+    },
+    "ci-fix-wave/reader-wrong-target-01/verification.json": {
+      "bytes": 520,
+      "sha256": "69ac905f1301193d7b4ddec9f5a5232c5bb4bd914b1fcabb947fc48683e4c676"
+    },
+    "ci-fix-wave/receipt-summary.json": {
+      "bytes": 13090,
+      "sha256": "c749eedee67e373967659f9f45ef487ebd0f34a7a9c58622807aa4c8d1be6641"
+    },
+    "ci-fix-wave/receipts.py": {
+      "bytes": 2482,
+      "sha256": "ee89af8c93a828ed5cfad46594a271c31a5701420364069f030ea21a097ca7b6"
+    },
+    "ci-fix-wave/source-new-helper-ready.json": {
+      "bytes": 234,
+      "sha256": "01814170385f3a77e0c59a7cf564b5d23f135f46c42e8ed64132d477012bc586"
+    },
+    "ci-fix-wave/source-old-helper-ready.json": {
+      "bytes": 234,
+      "sha256": "01814170385f3a77e0c59a7cf564b5d23f135f46c42e8ed64132d477012bc586"
+    },
+    "ci-fix-wave/source-preview-amend-extended.json": {
+      "bytes": 234,
+      "sha256": "01814170385f3a77e0c59a7cf564b5d23f135f46c42e8ed64132d477012bc586"
+    },
+    "ci-fix-wave/source-preview-amend-sibling.json": {
+      "bytes": 234,
+      "sha256": "01814170385f3a77e0c59a7cf564b5d23f135f46c42e8ed64132d477012bc586"
+    },
+    "ci-fix-wave/static-after.json": {
+      "bytes": 14154,
+      "sha256": "6bd5536a8cb9b8779a5958b9e5efee783ff55b63dd8c8c307de3ecbb55485c3c"
+    },
+    "ci-fix-wave/static-baseline.json": {
+      "bytes": 13262,
+      "sha256": "4d0c1e34485a7023c1d8fb1f970bb8cbe7bcce2f3f5e3b749ce251637b6c1e88"
+    },
+    "ci-fix-wave/static_check.py": {
+      "bytes": 4708,
+      "sha256": "66212040dd803430b62e32a4fca26e17b830790471f60d5b2c5f8457e3cedc07"
+    },
+    "ci-fix-wave/test_held_publication.py": {
+      "bytes": 6657,
+      "sha256": "cf2dae373ddbf33c07602f5724eb9de9a65390ec64b0931a9d9d1d7eea962615"
+    },
+    "ci-fix-wave/title-test_typing_two_brackets_opens_a_keyboard_picker_that_inserts_a_real_link.trace.json": {
+      "bytes": 32764,
+      "sha256": "ec064382fb2d37a620e8747fcf07397d08168b9950770347c056a36015f2e925"
+    },
+    "ci-fix-wave/title_observer.py": {
+      "bytes": 2829,
+      "sha256": "93e194007ce9e2486c3977ebd1d86c670c2daa227b087e9151d472070bd7febe"
+    },
+    "ci-fix-wave/wave_probe.py": {
+      "bytes": 7798,
+      "sha256": "486c817b47808f7ae9493451f0136dde16f8f05bc2c99ffffe0660a8d3f3da97"
+    },
+    "ci-fix-wave/wrongreader-test_a_dirty_form_filtered_off_the_page_saves_to_the_reader_item_after_trash_back.trace.json": {
+      "bytes": 4752,
+      "sha256": "3f60c343d3f488dff6f5c1111190cf612750d88edbc1a08606c9c909590f98ee"
+    },
+    "executed-source/Tests/UI/library_note_links_support.py": {
+      "bytes": 14737,
+      "sha256": "5f530bfa6324c6d45cf72ea916632b3a0760b1c692d385fee03bb85d5a77c9da"
+    },
+    "executed-source/Tests/UI/library_quit_guard_support.py": {
+      "bytes": 9498,
+      "sha256": "31219688523c7dcd77b479298ffe48a8df76b5072ced4bafc51d0a8376443140"
+    },
+    "executed-source/Tests/UI/test_library_media_reader_controls_in_list_view.py": {
+      "bytes": 11314,
+      "sha256": "6ae9d9d8da88cd1d755ec07dfd079ea8f67b953df8db75b7df09d8c35ebe37e7"
+    },
+    "executed-source/Tests/UI/test_library_note_links_picker_and_preview.py": {
+      "bytes": 12874,
+      "sha256": "e65c84282dc92f64d4d676e0ebef5974809d00c790e5be623ad433911bfe9f08"
+    },
+    "executed-source/Tests/UI/test_library_note_links_picker_and_preview_extended.py": {
+      "bytes": 68422,
+      "sha256": "b71458d6d2cc42b141600b717a54c728bc0f9bfa0d05d59d8aaae70e89235ad8"
+    },
+    "executed-source/Tests/UI/test_library_note_links_preview_opens_in_app.py": {
+      "bytes": 4518,
+      "sha256": "4bb284e8ff0df3f9b11398c87986097b5077dc34f93c8b0692a1fa9c0550db5a"
+    },
+    "executed-source/Tests/UI/test_library_shell.py": {
+      "bytes": 1543662,
+      "sha256": "6f9555f36aa10ebd25165b18c6988b29330b306efe5a3d29552e67037987c40c"
+    },
+    "executed-source/tldw_chatbook/UI/Library_Modules/library_media_controller.py": {
+      "bytes": 251685,
+      "sha256": "8c969a66d373f3d24a6f8f4fb0a1cd60553edddee72d6665cf1dd92f81db19a2"
+    },
+    "executed-source/tldw_chatbook/UI/Library_Modules/library_notes_controller.py": {
+      "bytes": 348603,
+      "sha256": "6f6e8e3dce457364a822a25a7f2ad52a6d9b0cd4a6e8ba2a0317f502329a5dff"
+    },
+    "executed-source/tldw_chatbook/UI/Screens/library_screen.py": {
+      "bytes": 1782229,
+      "sha256": "abc900fa3a5fe315ed1b571037745b4368cf747e9a3d90369ea72f0b42eb9a86"
+    },
+    "executed-source/tldw_chatbook/Widgets/Library/library_notes_canvas.py": {
+      "bytes": 227526,
+      "sha256": "be363f3840e9568240e3f79571e8d0ec8cf7524342d8d2643d7a20a2a57b6b6b"
+    },
+    "reports/ci-fix-wave-brief.md": {
+      "bytes": 9191,
+      "sha256": "c42aca47791de9a4031e92375432d7b3fbb042d0f64ae153a7436da1a6ff6ce6"
+    },
+    "reports/ci-fix-wave-report.md": {
+      "bytes": 24231,
+      "sha256": "c213be23a059e180f1998890579c585d16fd941b10b89dd0100de55a5e68fa65"
+    },
+    "reports/ci-fix-wave-review.md": {
+      "bytes": 4885,
+      "sha256": "8f31103b82026a3c9575986b0e7a2e96578eb190faf30252338b2045c560b4eb"
+    },
+    "runtime/run-targeted.py": {
+      "bytes": 2165,
+      "sha256": "fed322c340015529db927e4639e57437144e5b722368659309cb2808c05c8773"
+    }
+  },
+  "excluded_invalid_private_capture": [
+    {
+      "path": "held-old-01/result.xml",
+      "sha256": "c148bb76e024c8c5da54dfa38257a6110911c123d79365c565c8a820042220d6"
+    },
+    {
+      "path": "held-old-01/verification.json",
+      "sha256": "04f1e2e273ac04149cf7a8382dfb76d5d236505183289d77fae2d05616ab9b52"
+    }
+  ],
+  "cases": [
+    {
+      "entry": "ci-fix-wave/extended-new-helper-ready-01/result.xml",
+      "name": "test_enter_on_the_focused_preview_follows_the_only_link_and_lists_several",
+      "seconds": 63.923,
+      "outcome": "failed"
+    },
+    {
+      "entry": "ci-fix-wave/extended-old-helper-01/result.xml",
+      "name": "test_enter_on_the_focused_preview_follows_the_only_link_and_lists_several",
+      "seconds": 62.26,
+      "outcome": "failed"
+    },
+    {
+      "entry": "ci-fix-wave/extended-old-helper-ready-01/result.xml",
+      "name": "test_enter_on_the_focused_preview_follows_the_only_link_and_lists_several",
+      "seconds": 57.028,
+      "outcome": "failed"
+    },
+    {
+      "entry": "ci-fix-wave/held-full-new-01/result.xml",
+      "name": "test_typing_two_brackets_opens_a_keyboard_picker_that_inserts_a_real_link",
+      "seconds": 79.489,
+      "outcome": "failed"
+    },
+    {
+      "entry": "ci-fix-wave/held-full-new-02/result.xml",
+      "name": "test_typing_two_brackets_opens_a_keyboard_picker_that_inserts_a_real_link",
+      "seconds": 59.926,
+      "outcome": "passed"
+    },
+    {
+      "entry": "ci-fix-wave/held-new-already-list-01/result.xml",
+      "name": "test_typing_two_brackets_opens_a_keyboard_picker_that_inserts_a_real_link",
+      "seconds": 48.708,
+      "outcome": "passed"
+    },
+    {
+      "entry": "ci-fix-wave/held-old-02/result.xml",
+      "name": "test_typing_two_brackets_opens_a_keyboard_picker_that_inserts_a_real_link",
+      "seconds": 57.522,
+      "outcome": "failed"
+    },
+    {
+      "entry": "ci-fix-wave/held-old-03/result.xml",
+      "name": "test_typing_two_brackets_opens_a_keyboard_picker_that_inserts_a_real_link",
+      "seconds": 56.119,
+      "outcome": "failed"
+    },
+    {
+      "entry": "ci-fix-wave/held-preview-new-01/result.xml",
+      "name": "test_typing_two_brackets_opens_a_keyboard_picker_that_inserts_a_real_link",
+      "seconds": 51.167,
+      "outcome": "passed"
+    },
+    {
+      "entry": "ci-fix-wave/held-preview-old-01/result.xml",
+      "name": "test_typing_two_brackets_opens_a_keyboard_picker_that_inserts_a_real_link",
+      "seconds": 65.029,
+      "outcome": "failed"
+    },
+    {
+      "entry": "ci-fix-wave/held-preview-old-02/result.xml",
+      "name": "test_typing_two_brackets_opens_a_keyboard_picker_that_inserts_a_real_link",
+      "seconds": 43.075,
+      "outcome": "failed"
+    },
+    {
+      "entry": "ci-fix-wave/owned-source-01/result.xml",
+      "name": "test_a_dirty_form_filtered_off_the_page_saves_to_the_reader_item_after_trash_back",
+      "seconds": 21.447,
+      "outcome": "passed"
+    },
+    {
+      "entry": "ci-fix-wave/owned-source-01/result.xml",
+      "name": "test_edit_metadata_save_in_the_list_view_writes_the_reader_item_not_row_0",
+      "seconds": 22.164,
+      "outcome": "passed"
+    },
+    {
+      "entry": "ci-fix-wave/owned-source-01/result.xml",
+      "name": "test_move_to_trash_in_the_list_view_names_and_deletes_the_reader_item",
+      "seconds": 20.466,
+      "outcome": "passed"
+    },
+    {
+      "entry": "ci-fix-wave/owned-source-01/result.xml",
+      "name": "test_typing_two_brackets_opens_a_keyboard_picker_that_inserts_a_real_link",
+      "seconds": 63.572,
+      "outcome": "passed"
+    },
+    {
+      "entry": "ci-fix-wave/owned-source-01/result.xml",
+      "name": "test_clicking_a_note_link_in_preview_opens_that_note_and_never_reaches_open_url",
+      "seconds": 41.606,
+      "outcome": "passed"
+    },
+    {
+      "entry": "ci-fix-wave/owned-source-01/result.xml",
+      "name": "test_enter_on_the_focused_preview_follows_the_only_link_and_lists_several",
+      "seconds": 60.712,
+      "outcome": "failed"
+    },
+    {
+      "entry": "ci-fix-wave/preview-amend-owned-01/result.xml",
+      "name": "test_enter_on_the_focused_preview_follows_the_only_link_and_lists_several",
+      "seconds": 44.529,
+      "outcome": "passed"
+    },
+    {
+      "entry": "ci-fix-wave/preview-amend-owned-01/result.xml",
+      "name": "test_clicking_a_note_link_in_preview_opens_that_note_and_never_reaches_open_url",
+      "seconds": 57.01,
+      "outcome": "failed"
+    },
+    {
+      "entry": "ci-fix-wave/preview-amend-sibling-ready-01/result.xml",
+      "name": "test_clicking_a_note_link_in_preview_opens_that_note_and_never_reaches_open_url",
+      "seconds": 51.469,
+      "outcome": "passed"
+    },
+    {
+      "entry": "ci-fix-wave/reader-wrong-target-01/result.xml",
+      "name": "test_a_dirty_form_filtered_off_the_page_saves_to_the_reader_item_after_trash_back",
+      "seconds": 25.065,
+      "outcome": "failed"
+    },
+    {
+      "entry": "backlog-hygiene/result.xml",
+      "name": "test_no_duplicate_task_ids_in_filenames",
+      "seconds": 1.481,
+      "outcome": "passed"
+    },
+    {
+      "entry": "backlog-hygiene/result.xml",
+      "name": "test_no_duplicate_task_ids_in_frontmatter",
+      "seconds": 1.037,
+      "outcome": "passed"
+    },
+    {
+      "entry": "backlog-hygiene/result.xml",
+      "name": "test_every_task_file_declares_a_frontmatter_id",
+      "seconds": 0.703,
+      "outcome": "passed"
+    }
+  ],
+  "qualification": "Six distinct native journeys have qualified latest passing outcomes across bounded runs, not one all-green batch. All other failures remain distinct. Actual source readiness for extended/Preview sibling is private preparation, not a production or permanent fixture change. Held old/new folder and Preview publication controls and original Reader write-ID negative qualify setup/oracles. Product Media typing and Notes gesture loss remain open; final hosted head still must pass. Invalid held-old-01 raw capture is intentionally private; command/error summary and XML hash remain. No raw .log files included."
+}

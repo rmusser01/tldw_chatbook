@@ -44,10 +44,10 @@ NO_ANALYSIS_PROVIDER_NEXT_STEP = "Set one in Settings ▸ Providers & Models"
 
 # ---------------------------------------------------------------------------
 # (task-3301 xhigh review round, F10) The full [analysis_defaults] call
-# shape. Defaults mirror the Media viewer's analysis panel
-# (`Widgets/Media/media_viewer_panel.py::populate_providers`), which seeds
-# its inputs from the same config section -- so an ingest analysis and a
-# viewer analysis run with identical settings under identical config.
+# shape. Defaults historically mirrored the Media viewer's analysis panel
+# (deleted with the Widgets/Media package, TASK-38605); they still seed
+# from the same config section, so ingest analyses keep the same call
+# shape under identical config.
 # ---------------------------------------------------------------------------
 ANALYSIS_DEFAULT_TEMPERATURE = 0.7
 ANALYSIS_DEFAULT_TOP_P = 0.95
@@ -211,9 +211,7 @@ def resolve_ingest_analysis_provider(
             ),
             top_p=_as_float(defaults.get("top_p"), ANALYSIS_DEFAULT_TOP_P),
             min_p=_as_float(defaults.get("min_p"), ANALYSIS_DEFAULT_MIN_P),
-            max_tokens=_as_int(
-                defaults.get("max_tokens"), ANALYSIS_DEFAULT_MAX_TOKENS
-            ),
+            max_tokens=_as_int(defaults.get("max_tokens"), ANALYSIS_DEFAULT_MAX_TOKENS),
             system_prompt=_optional_str(defaults.get("system_prompt"))
             or ANALYSIS_DEFAULT_SYSTEM_PROMPT,
         )

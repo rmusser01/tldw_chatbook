@@ -1,0 +1,30 @@
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+─────▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎─────
+     ▊                                                                                        ▎
+     ▊  Prompt Workbench                                                                      ▎
+   Te▊  Prompts / Mix-ins                                                                     ▎
+ ────▊  ────────────────────────────────────────────────────────────────────────────────────  ▎
+ Work▊                                                                                        ▎
+ ────▊  Mix-ins · 2 enabled                                                                   ▎
+ Conv▊  Before / your message / After. Changes apply to future sends.                         ▎
+     ▊   Browse Prompts / Recipes  Preview next send                                          ▎
+     ▊                                                                                        ▎
+     ▊  Before                                                                                ▎
+   Ch▊  ▐X▌ Brief                                                                             ▎
+     ▊   Inspect / Edit  Move up  Move down  Remove                                           ▎pect
+  ▊▔▔▊                                                                                        ▎
+  ▊  ▊  ▐X▌ Scene                                                                             ▎
+  ▊▁▁▊   Inspect / Edit  Move up  Move down  Remove                                        ▁  ▎
+     ▊                                                                                        ▎
+   Ne▊  After                                                                                 ▎
+  Cha▊                                                                                        ▎
+    T▊                                                                                        ▎
+   Ch▊  None selected                                                                         ▎
+     ▊                                                                                        ▎
+ ────▊  ────────────────────────────────────────────────────────────────────────────────────  ▎
+ ▼ Mo▊                                                                                        ▎
+     ▊                                                                        Back   Close    ▎
+─────▊                                                                                        ▎─────
+ Prov▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎◀ ▶
+█  Composer ▾  Menu  helloLibrarySwitch to Library▌                  Send | $       Dictate
+  Ctrl+P palette | Ctrl+Q quit

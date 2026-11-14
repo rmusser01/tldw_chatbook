@@ -27,12 +27,13 @@ import json
 import time
 from collections.abc import Mapping
 from copy import deepcopy
-from typing import List, Any, Optional, Tuple, Dict, Union
+from typing import TYPE_CHECKING, List, Any, Optional, Tuple, Dict, Union
 from urllib.parse import urlparse
 
 #
 # Import 3rd-Party Libraries
 import requests
+from contextlib import nullcontext
 from loguru import logger
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -40,12 +41,12 @@ from urllib3.util.retry import Retry
 #
 # Import Local libraries
 from tldw_chatbook.LLM_Calls import recovery_review as _provider_recovery
-from tldw_chatbook.LLM_Calls.groq import chat_with_groq
-from tldw_chatbook.LLM_Calls.deepseek import chat_with_deepseek
-from tldw_chatbook.LLM_Calls.mistral import chat_with_mistral
-from tldw_chatbook.LLM_Calls.openrouter import chat_with_openrouter
+from tldw_chatbook.LLM_Calls.groq import chat_with_groq  # noqa: F401 - re-export: Chat.Chat_Functions dispatches via this module
+from tldw_chatbook.LLM_Calls.deepseek import chat_with_deepseek  # noqa: F401 - re-export: Chat.Chat_Functions dispatches via this module
+from tldw_chatbook.LLM_Calls.mistral import chat_with_mistral  # noqa: F401 - re-export: Chat.Chat_Functions dispatches via this module
+from tldw_chatbook.LLM_Calls.openrouter import chat_with_openrouter  # noqa: F401 - re-export: Chat.Chat_Functions dispatches via this module
 
-from tldw_chatbook.Chat.Chat_Deps import (
+from tldw_chatbook.Provider_Contract import (
     ChatAPIError,
     ChatAuthenticationError,
     ChatRateLimitError,
@@ -54,7 +55,7 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatConfigurationError,
 )
 from tldw_chatbook.Chat.console_provider_endpoints import builtin_provider_endpoint
-from tldw_chatbook.Chat.provider_continuation import ProviderContinuationCheckpoint
+from tldw_chatbook.Provider_Contract.provider_continuation import ProviderContinuationCheckpoint
 from tldw_chatbook.config import (
     get_cli_setting,
     get_runtime_config_snapshot,
@@ -62,7 +63,11 @@ from tldw_chatbook.config import (
     resolve_provider_api_key,
 )
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
-from tldw_chatbook.Utils.egress import create_default_session
+from tldw_chatbook.Utils.egress import (
+    create_default_session,
+    create_owned_default_session,
+    create_pooled_default_session,
+)
 from tldw_chatbook.Utils.tls_trust import requests_verify
 from tldw_chatbook.LLM_Calls.moonshot import (
     chat_with_moonshot as _strict_chat_with_moonshot,
@@ -87,6 +92,10 @@ from tldw_chatbook.Utils.sensitive_llm_logging import (
     safe_llm_request_payload_summary,
     safe_llm_url_host,
 )
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_prepared_request import ConsoleCacheBoundary
+
 #
 #######################################################################################################################
 # Provider Parameter Support Documentation
@@ -244,30 +253,28 @@ def _normalize_openai_reasoning_effort(value: object) -> Optional[str]:
     return str(value).strip().lower()
 
 
+def _openai_has_chat_function_tools(tools: object) -> bool:
+    from tldw_chatbook.LLM_Calls.openai_protocol import _openai_has_chat_function_tools
+
+    return _openai_has_chat_function_tools(tools)
+
+
 def _openai_use_responses_api(
     normalized_reasoning_effort: Optional[str],
     reasoning_summary: object,
     verbosity: object,
-    is_gpt_5_6_model: bool,
+    supports_chat_none_effort: bool,
 ) -> bool:
     return (
         normalized_reasoning_effort is not None
-        and (normalized_reasoning_effort != "none" or not is_gpt_5_6_model)
+        and (normalized_reasoning_effort != "none" or not supports_chat_none_effort)
     ) or (_is_present_setting(reasoning_summary) or _is_present_setting(verbosity))
 
 
 def _extract_openai_responses_text(response_data: Dict[str, Any]) -> str:
-    output_text = response_data.get("output_text")
-    if isinstance(output_text, str) and output_text:
-        return output_text
-    text_parts: list[str] = []
-    for item in response_data.get("output", []) or []:
-        if not isinstance(item, dict) or item.get("type") != "message":
-            continue
-        for part in item.get("content", []) or []:
-            if isinstance(part, dict) and part.get("type") == "output_text":
-                text_parts.append(str(part.get("text") or ""))
-    return "\n".join(part for part in text_parts if part).strip()
+    from tldw_chatbook.LLM_Calls.openai_protocol import _extract_openai_responses_text
+
+    return _extract_openai_responses_text(response_data)
 
 
 def _normalize_openai_responses_payload(
@@ -275,85 +282,18 @@ def _normalize_openai_responses_payload(
     *,
     model: str,
 ) -> Dict[str, Any]:
-    """Normalize Responses API output to the chat-completions shape used by Console."""
-    return {
-        "id": response_data.get("id", f"resp-openai-{time.time_ns()}"),
-        "object": "chat.completion",
-        "created": int(response_data.get("created_at") or time.time()),
-        "model": response_data.get("model", model),
-        "choices": [
-            {
-                "index": 0,
-                "message": {
-                    "role": "assistant",
-                    "content": _extract_openai_responses_text(response_data),
-                },
-                "finish_reason": "stop"
-                if response_data.get("status") in {None, "completed"}
-                else response_data.get("status"),
-            }
-        ],
-        "usage": response_data.get("usage"),
-    }
+    from tldw_chatbook.LLM_Calls.openai_protocol import (
+        _normalize_openai_responses_payload,
+    )
+
+    return _normalize_openai_responses_payload(response_data, model=model)
 
 
 def _responses_stream_to_chat_sse(response, *, model: str):
-    completion_id = f"chatcmpl-openai-responses-{time.time_ns()}"
-    created_ts = int(time.time())
-    try:
-        for raw_line in response.iter_lines(decode_unicode=True):
-            line = (
-                raw_line.decode("utf-8")
-                if isinstance(raw_line, bytes)
-                else str(raw_line)
-            )
-            line = line.strip()
-            if not line or not line.startswith("data:"):
-                continue
-            payload_text = line.removeprefix("data:").strip()
-            try:
-                event = json.loads(payload_text)
-            except json.JSONDecodeError:
-                continue
-            event_type = event.get("type")
-            if event_type == "response.output_text.delta":
-                chunk = {
-                    "id": completion_id,
-                    "object": "chat.completion.chunk",
-                    "created": created_ts,
-                    "model": model,
-                    "choices": [
-                        {"index": 0, "delta": {"content": event.get("delta", "")}},
-                    ],
-                }
-                yield f"data: {json.dumps(chunk)}\n\n"
-            elif event_type == "response.completed":
-                chunk = {
-                    "id": completion_id,
-                    "object": "chat.completion.chunk",
-                    "created": created_ts,
-                    "model": model,
-                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-                }
-                completed_usage = (event.get("response") or {}).get("usage")
-                if isinstance(completed_usage, dict):
-                    chunk["usage"] = completed_usage
-                yield f"data: {json.dumps(chunk)}\n\n"
-            elif event_type == "error":
-                yield f"data: {payload_text}\n\n"
-    except requests.exceptions.RequestException as exc:
-        logger.opt(exception=True).error(
-            "OpenAI Responses: stream connection error: %s", exc
-        )
-        yield (
-            "data: "
-            + json.dumps({"error": {"message": f"Stream connection error: {exc}"}})
-            + "\n\n"
-        )
-    finally:
-        if response is not None:
-            response.close()
-    yield "data: [DONE]\n\n"
+    """Yield the legacy stream while forwarding close/throw to its adapter."""
+    from .openai_protocol import _responses_stream_to_chat_sse
+
+    yield from _responses_stream_to_chat_sse(response, model=model)
 
 
 def _anthropic_uses_adaptive_thinking(model: object) -> bool:
@@ -462,7 +402,8 @@ def get_openai_embeddings(input_data: str, model: str) -> List[float]:
         List[float]: The embeddings generated by the API.
     """
     loaded_config_data = load_settings()
-    api_key = loaded_config_data["openai_api"]["api_key"]
+    # TASK-34100.4: still-encrypted `enc:` ciphertext is never a credential.
+    api_key = resolve_provider_api_key(loaded_config_data["openai_api"]["api_key"])
 
     if not api_key:
         logger.error("OpenAI Embeddings: API key not found or is empty")
@@ -483,7 +424,21 @@ def get_openai_embeddings(input_data: str, model: str) -> List[float]:
     }
     try:
         logger.debug("OpenAI Embeddings: Posting request to embeddings API")
-        with create_default_session() as session:
+        from tldw_chatbook.LLM_Calls.provider_sessions import (
+            default_timeout_fragment,
+            get_session,
+            trust_setting_fragment,
+        )
+
+        # ADR-222 (TASK-34418): registry session per thread; the default
+        # timeout and TLS trust are key fragments because this call relies
+        # on both being baked into the session at factory time.
+        session = get_session(
+            "openai_embeddings:https://api.openai.com/v1/embeddings:"
+            f"{trust_setting_fragment()}:{default_timeout_fragment()}",
+            create_default_session,
+        )
+        with nullcontext(session) as session:
             response = session.post(
                 "https://api.openai.com/v1/embeddings",
                 headers=headers,
@@ -492,6 +447,16 @@ def get_openai_embeddings(input_data: str, model: str) -> List[float]:
         logger.debug(f"Full API response data: {response}")
         if response.status_code == 200:
             response_data = response.json()
+            # Session ledger embeddings bucket (issue #365 deferred idea):
+            # kept separate from the LLM total so ingestion-heavy sessions
+            # don't swamp the "how much did I chat" number. Deferred import
+            # (boot census, ADR-097); once per embeddings call.
+            try:
+                from tldw_chatbook.Chat.session_usage import session_usage
+
+                session_usage().record_embeddings(response_data.get("usage"))
+            except Exception:
+                pass
             if "data" in response_data and len(response_data["data"]) > 0:
                 embedding = response_data["data"][0]["embedding"]
                 logger.debug("OpenAI Embeddings: Embeddings retrieved successfully")
@@ -507,7 +472,14 @@ def get_openai_embeddings(input_data: str, model: str) -> List[float]:
             logger.error(
                 f"OpenAI Embeddings: request failed with status code {response.status_code}"
             )
-            logger.error(f"OpenAI Embeddings: Error response: {response.text}")
+            # TASK-38609: same safe-detail discipline as the chat handlers
+            # (safe_llm_error_detail at the openai chat error path) -- the
+            # raw provider error body never lands in logs at ERROR
+            # unredacted; sensitive runs get the stable redaction.
+            logger.error(
+                "OpenAI Embeddings: Error response: "
+                f"{safe_llm_error_detail(response.text)}"
+            )
             # Propagate HTTPError to be caught by chat_api_call's handler (if this were called from there)
             # Or raise specific error if called directly
             response.raise_for_status()  # This will raise HTTPError
@@ -527,9 +499,7 @@ def get_openai_embeddings(input_data: str, model: str) -> List[float]:
         raise ValueError(f"OpenAI Embeddings: Unexpected error occurred: {str(e)}")
 
 
-def _openai_prompt_cache_key(
-    system_message: object, tools: object
-) -> str:
+def _openai_prompt_cache_key(system_message: object, tools: object) -> str:
     """A content-addressed, rotation-stable OpenAI ``prompt_cache_key``.
 
     TASK-26015. Digests the STABLE prefix -- the system message and the
@@ -558,9 +528,7 @@ def _openai_cache_key_enabled() -> bool:
     try:
         return bool(get_cli_setting("caching", "openai_cache_key", False))
     except Exception as exc:  # noqa: BLE001 -- fail safe to OFF (today's behavior)
-        logger.warning(
-            f"caching openai_cache_key read failed; defaulting OFF: {exc!r}"
-        )
+        logger.warning(f"caching openai_cache_key read failed; defaulting OFF: {exc!r}")
         return False
 
 
@@ -651,7 +619,7 @@ def chat_with_openai(
         # stores only api_key_env_var or an empty local fallback.
         openai_config["api_key"] = legacy_openai_config.get("api_key")
 
-    final_api_key = api_key or openai_config.get("api_key")
+    final_api_key = api_key or resolve_provider_api_key(openai_config.get("api_key"))
     if not final_api_key:
         logger.error("OpenAI: API key is missing.")
         raise ChatConfigurationError(
@@ -702,11 +670,18 @@ def chat_with_openai(
 
     normalized_reasoning_effort = _normalize_openai_reasoning_effort(reasoning_effort)
     is_gpt_5_6_model = _is_openai_gpt_5_6_model(final_model)
+    # Luna supports Chat function calling only with explicit reasoning disabled.
+    luna_native_functions = (
+        isinstance(final_model, str)
+        and final_model.strip().lower() == "gpt-6-luna"
+        and normalized_reasoning_effort == "none"
+        and _openai_has_chat_function_tools(tools)
+    )
     use_responses_api = _openai_use_responses_api(
         normalized_reasoning_effort,
         reasoning_summary,
         verbosity,
-        is_gpt_5_6_model,
+        is_gpt_5_6_model or luna_native_functions,
     )
     payload = {
         "model": final_model,
@@ -792,7 +767,7 @@ def chat_with_openai(
             payload["reasoning"] = reasoning_options
         if _is_present_setting(verbosity):
             payload.setdefault("text", {})["verbosity"] = str(verbosity).strip().lower()
-    elif is_gpt_5_6_model:
+    elif is_gpt_5_6_model or luna_native_functions:
         payload["reasoning_effort"] = normalized_reasoning_effort or "none"
 
     # Then conditionally add tool_choice:
@@ -808,13 +783,9 @@ def chat_with_openai(
     # Anthropic cache_control path this one has no degrade-retry, so a
     # custom endpoint never receives it. Off by default reproduces today's
     # payload exactly (AC#6).
-    _canonical_openai_endpoint = not (
-        api_base_url or openai_config.get("api_base_url")
-    )
+    _canonical_openai_endpoint = not (api_base_url or openai_config.get("api_base_url"))
     if _canonical_openai_endpoint and _openai_cache_key_enabled():
-        payload["prompt_cache_key"] = _openai_prompt_cache_key(
-            system_message, tools
-        )
+        payload["prompt_cache_key"] = _openai_prompt_cache_key(system_message, tools)
 
     headers = {
         "Authorization": f"Bearer {final_api_key}",
@@ -853,13 +824,26 @@ def chat_with_openai(
             logger.debug("OpenAI: Posting request (streaming)")
 
             def stream_generator():
-                session_context = create_default_session()
+                # ADR-222 (TASK-34418): deliberately NOT registry-backed --
+                # openai_post() transfers session ownership to the guarded
+                # recovery _Operation, which closes it at operation end and
+                # (recovered mode) sets session.trust_env = False. A shared
+                # session would be closed per call anyway and would leak
+                # that mutation into later calls. See ADR-222 §5.
+                session_context = create_owned_default_session()
                 session = session_context.__enter__()
                 response = None
+                # TASK-38609: honor the same configured timeout the
+                # non-streaming path uses instead of a hardcoded 180s.
+                stream_timeout = float(openai_config.get("api_timeout", 90.0))
                 try:
                     response = _provider_recovery.openai_post(
                         session,
-                        api_url, headers=headers, json=payload, stream=True, timeout=180
+                        api_url,
+                        headers=headers,
+                        json=payload,
+                        stream=True,
+                        timeout=stream_timeout,
                     )
                     if (
                         response.status_code == 400
@@ -878,7 +862,7 @@ def chat_with_openai(
                             headers=headers,
                             json=retry_payload,
                             stream=True,
-                            timeout=180,
+                            timeout=stream_timeout,
                         )
                     response.raise_for_status()
                     if use_responses_api:
@@ -886,12 +870,42 @@ def chat_with_openai(
                             response, model=final_model
                         )
                         return
-                    for line in response.iter_lines(decode_unicode=True):
+                    # `stream_options.include_usage` is requested above, so
+                    # the final chunk carries usage; OpenAI-compatible
+                    # gateways sometimes emit CUMULATIVE usage per chunk, so
+                    # keep the last seen and record ONCE at normal loop end
+                    # (a consumer Stop records nothing -- cancelled streams
+                    # undercount by policy).
+                    openai_stream_final_usage = None
+                    # TASK-38589: iterate BYTES and decode UTF-8 explicitly.
+                    # ``decode_unicode=True`` makes ``requests`` decode with
+                    # the response header's charset -- ISO-8859-1 when a
+                    # llama.cpp/vLLM/LiteLLM endpoint declares
+                    # ``text/event-stream`` WITHOUT ``charset=utf-8`` --
+                    # silently mojibake-ing every non-ASCII character. UTF-8
+                    # is the SSE wire contract (the anthropic path and the
+                    # hosted SSERecordDecoder already decode this way).
+                    for raw_line in response.iter_lines():
+                        line = (
+                            raw_line.decode("utf-8")
+                            if isinstance(raw_line, bytes)
+                            else str(raw_line)
+                        )
                         if line and line.strip():
+                            if '"usage"' in line:
+                                usage_candidate = _openai_stream_line_usage(line)
+                                if usage_candidate is not None:
+                                    openai_stream_final_usage = usage_candidate
                             # Pass through OpenAI's SSE lines directly.
                             # Ensure they end with \n\n if not already.
                             # OpenAI's SSE usually includes double newlines.
                             yield line if line.endswith("\n") else line + "\n"
+                    if openai_stream_final_usage:
+                        _session_ledger().record_provider_payload(
+                            openai_stream_final_usage,
+                            provider="openai",
+                            model=final_model,
+                        )
                 except requests.exceptions.RequestException as e_request:
                     logger.opt(exception=True).error(
                         f"OpenAI: RequestException during stream: {e_request}"
@@ -936,21 +950,14 @@ def chat_with_openai(
 
         else:  # Non-streaming
             logger.debug("OpenAI: Posting request (non-streaming)")
-            retry_count = int(openai_config.get("api_retries", 3))
-            retry_delay = float(
-                openai_config.get("api_retry_delay", 1.0)
-            )  # Ensure float
 
-            retry_strategy = Retry(
-                total=llm_retry_count(retry_count),
-                backoff_factor=retry_delay,
-                status_forcelist=[429, 500, 502, 503, 504],
-                allowed_methods=["POST"],  # Changed from method_whitelist
-            )
-            adapter = HTTPAdapter(max_retries=retry_strategy)
-            with create_default_session() as session:
-                session.mount("https://", adapter)
-                session.mount("http://", adapter)  # Though OpenAI is https
+            # ADR-222 (TASK-34418): deliberately NOT registry-backed --
+            # openai_post() owns and closes the session via the guarded
+            # recovery _Operation; see ADR-222 §5.
+            # task-34387 review C1: recovery transfers ownership (closes the
+            # session, recovered mode sets trust_env=False) -- that must land
+            # on a private session, never the shared pool entry.
+            with create_owned_default_session() as session:
                 response = _provider_recovery.openai_post(
                     session,
                     api_url,
@@ -1003,6 +1010,16 @@ def chat_with_openai(
                     or 0,
                     labels={"model": final_model},
                 )
+
+            _session_ledger().record_provider_payload(
+                usage,
+                provider="openai",
+                model=final_model,
+                fallback_texts=(
+                    _estimate_prompt_text(input_data),
+                    _completion_text_from_response(response_data),
+                ),
+            )
 
             logger.debug("OpenAI: Non-streaming request successful.")
             if use_responses_api:
@@ -1177,9 +1194,7 @@ def _cache_control_marker(model: str) -> dict[str, str]:
     try:
         ttl = str(get_cli_setting("caching", "cache_ttl", "5m") or "5m").strip().lower()
     except Exception as exc:  # noqa: BLE001 -- fail safe to the 5m default
-        logger.warning(
-            f"caching cache_ttl read failed; defaulting to 5m: {exc!r}"
-        )
+        logger.warning(f"caching cache_ttl read failed; defaulting to 5m: {exc!r}")
         return marker
     if ttl == "1h" and _anthropic_supports_1h_ttl(model):
         return {"type": "ephemeral", "ttl": "1h"}
@@ -1233,6 +1248,86 @@ def _contains_extended_ttl(obj: Any) -> bool:
     if isinstance(obj, list):
         return any(_contains_extended_ttl(item) for item in obj)
     return False
+
+
+def _completion_text_from_response(response_data: Any) -> str:
+    """Best-effort completion text for token estimates. Never raises."""
+    try:
+        choices = response_data.get("choices")
+        if choices:
+            message = choices[0].get("message") or {}
+            content = message.get("content")
+            if isinstance(content, str):
+                return content
+            if isinstance(content, list):
+                return "".join(
+                    part.get("text", "") for part in content if isinstance(part, dict)
+                )
+        content_blocks = response_data.get("content")
+        if isinstance(content_blocks, list):
+            return "".join(
+                part.get("text", "")
+                for part in content_blocks
+                if isinstance(part, dict)
+            )
+    except Exception:
+        pass
+    return ""
+
+
+def _openai_stream_line_usage(line: str) -> dict | None:
+    """Read usage through the existing OpenAI protocol adapter."""
+    from .openai_protocol import _openai_stream_line_usage
+
+    return _openai_stream_line_usage(line)
+
+
+def _session_ledger():
+    """Deferred session-usage ledger accessor (issue #365).
+
+    Local import keeps ``Chat.session_usage`` off the boot path -- the
+    UI-ready module census ratchets down and never rises (ADR-097). The
+    taps run once per completed response, so the sys.modules hit is noise.
+    """
+    from tldw_chatbook.Chat.session_usage import session_usage
+
+    return session_usage()
+
+
+def _strip_image_parts(input_data: Any) -> Any:
+    """Replace image parts with a short placeholder (never mutates input).
+
+    Base64 image payloads would inflate a char-based estimate by orders
+    of magnitude; the placeholder keeps the estimate anchored to the
+    text that actually went over the wire.
+    """
+    if not isinstance(input_data, list):
+        return input_data
+    cleaned = []
+    for message in input_data:
+        if isinstance(message, dict) and isinstance(message.get("content"), list):
+            content = [
+                "[image omitted from token estimate]"
+                if isinstance(part, dict)
+                and ("image_url" in part or "image" in part or "input_image" in part)
+                else part
+                for part in message["content"]
+            ]
+            message = {**message, "content": content}
+        cleaned.append(message)
+    return cleaned
+
+
+def _estimate_prompt_text(input_data: Any) -> str:
+    """Best-effort prompt text for token estimates. Never raises.
+
+    Estimates only apply when the response carried no usage payload
+    (rare); image parts are replaced by placeholders first.
+    """
+    try:
+        return json.dumps(_strip_image_parts(input_data))
+    except Exception:
+        return ""
 
 
 #: The shortest credential form ``_credential_redacted_detail`` masks literally.
@@ -1382,6 +1477,8 @@ def chat_with_anthropic(
     # tool_choice is usually implicit with tools or controlled differently.
     custom_prompt_arg: Optional[str] = None,  # Legacy
     api_base_url: Optional[str] = None,
+    *,
+    console_cache_boundary: "ConsoleCacheBoundary | None" = None,
 ):
     """Call the Anthropic Messages API (streaming or non-streaming).
 
@@ -1410,6 +1507,8 @@ def chat_with_anthropic(
             supports it (translated to a thinking token budget).
         thinking_budget_tokens: Explicit extended-thinking token budget;
             takes precedence over ``thinking_effort`` when both are set.
+        console_cache_boundary: Private clean-history boundary from the prepared
+            Console request. Stale or lossy conversions omit this optional marker.
         prompt_caching: Opt-in for the PER-TURN message ``cache_control``
             breakpoint. Only multi-turn callers (the Console gateway) should
             pass True: the breakpoint bills the whole conversation prefix at
@@ -1454,7 +1553,7 @@ def chat_with_anthropic(
     # Assuming load_settings is defined elsewhere
     loaded_config_data = load_settings()
     anthropic_config = loaded_config_data.get("anthropic_api", {})
-    final_api_key = api_key or anthropic_config.get("api_key")
+    final_api_key = api_key or resolve_provider_api_key(anthropic_config.get("api_key"))
     # TASK-26022: explicit opt-in subscription auth. Read-only borrow of the
     # Claude Code credential; a missing/expired credential FAILS with a clear
     # message rather than silently falling back to (and billing) an API key.
@@ -1462,10 +1561,12 @@ def chat_with_anthropic(
     # Qodo #5 (PR #2313): auth_source lives in the MODERN [api_settings.anthropic]
     # table (where it is documented and where readiness reads it) -- the legacy
     # anthropic_api mapping never receives it. Read the modern table first.
-    _modern_anthropic = (
-        loaded_config_data.get("api_settings") or {}
-    ).get("anthropic") or {}
-    _auth_config = _modern_anthropic if "auth_source" in _modern_anthropic else anthropic_config
+    _modern_anthropic = (loaded_config_data.get("api_settings") or {}).get(
+        "anthropic"
+    ) or {}
+    _auth_config = (
+        _modern_anthropic if "auth_source" in _modern_anthropic else anthropic_config
+    )
     if anthropic_auth_source(_auth_config) == "claude_subscription":
         _sub_cred = read_claude_code_credential()
         if _sub_cred is None:
@@ -1518,9 +1619,27 @@ def chat_with_anthropic(
     anthropic_messages = []
     from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 
-    for msg in input_data:
+    history_end: tuple[int, int] | None = None
+    boundary_index = None
+    if console_cache_boundary is not None:
+        from tldw_chatbook.Chat.console_prepared_request import ConsoleCacheBoundary
+
+        if isinstance(
+            console_cache_boundary, ConsoleCacheBoundary
+        ) and console_cache_boundary.matches(input_data):
+            boundary_index = console_cache_boundary.clean_history_message_index
+
+    def record_history_end(source_index: int) -> None:
+        nonlocal history_end
+        if source_index == boundary_index and anthropic_messages:
+            blocks = anthropic_messages[-1]["content"]
+            if blocks and (blocks[-1].get("type") != "text" or blocks[-1].get("text")):
+                history_end = (len(anthropic_messages) - 1, len(blocks) - 1)
+
+    for source_index, msg in enumerate(input_data):
         role = msg.get("role")
         content = msg.get("content")
+        source_end_preserved = True
         if role == "tool":
             # OpenAI tool-result convention -> Anthropic tool_result block.
             # Consecutive tool results coalesce into ONE user turn: they all
@@ -1544,6 +1663,7 @@ def chat_with_anthropic(
                 last["content"].append(block)
             else:
                 anthropic_messages.append({"role": "user", "content": [block]})
+            record_history_end(source_index)
             continue
         if role == "user" and msg.get(EPHEMERAL_ORIGIN_KEY) == "project_instructions":
             text_block = {"type": "text", "text": str(content or "")}
@@ -1559,9 +1679,8 @@ def chat_with_anthropic(
             ):
                 last["content"].append(text_block)
             else:
-                anthropic_messages.append(
-                    {"role": "user", "content": [text_block]}
-                )
+                anthropic_messages.append({"role": "user", "content": [text_block]})
+            record_history_end(source_index)
             continue
         if role == "assistant" and msg.get("tool_calls"):
             # OpenAI assistant tool_calls echo -> Anthropic tool_use blocks
@@ -1618,9 +1737,12 @@ def chat_with_anthropic(
                             blocks.append({"type": "text", "text": part["text"]})
                 blocks.extend(tool_use_blocks)
                 anthropic_messages.append({"role": "assistant", "content": blocks})
+                if len(tool_use_blocks) == len(msg["tool_calls"]):
+                    record_history_end(source_index)
                 continue
             # else: no valid tool_use blocks survived the guards above —
             # fall through to the plain user/assistant content handling.
+            source_end_preserved = False
         if role not in ["user", "assistant"]:
             logger.warning(f"Anthropic: Skipping message with unsupported role: {role}")
             continue
@@ -1655,10 +1777,19 @@ def chat_with_anthropic(
             anthropic_messages.append(
                 {"role": role, "content": anthropic_content_parts}
             )
+            # Discarded source tails cannot authorize an earlier cache end.
+            if source_end_preserved and (
+                isinstance(content, str) or len(anthropic_content_parts) == len(content)
+            ):
+                record_history_end(source_index)
 
     if not any(m["role"] == "user" for m in anthropic_messages):
-        raise ChatBadRequestError(
-            provider="anthropic", message="No valid user messages found for Anthropic."
+        # TASK-32369: a local check -- nothing was sent, so no HTTP status.
+        raise ChatConfigurationError(
+            provider="anthropic",
+            message="Request not sent: Anthropic needs at least one user message.",
+            status_code=None,
+            field="messages",
         )
 
     headers = {
@@ -1760,7 +1891,8 @@ def chat_with_anthropic(
         # of the final message so the WHOLE conversation prefix becomes a
         # reusable cache entry next turn -- the task-323 system/tools
         # breakpoints alone never cache message history. Budget:
-        # system(1) + last-tool(1) + this(1) = 3 of the 4 allowed.
+        # system(1) + last-tool(1) + this(1) = 3 of the 4 allowed;
+        # a verified clean-history end may use the remaining slot.
         #
         # OPT-IN (`prompt_caching`), unlike the two breakpoints above: this
         # one bills the entire conversation prefix at the 1.25x write
@@ -1776,6 +1908,31 @@ def chat_with_anthropic(
             **last_content[-1],
             "cache_control": _cache_control_marker(current_model),
         }
+
+    if console_cache_boundary is not None and caching_active and prompt_caching:
+
+        def breakpoint_count(value: Any) -> int:
+            if isinstance(value, dict):
+                return int("cache_control" in value) + sum(
+                    breakpoint_count(v) for v in value.values()
+                )
+            if isinstance(value, list):
+                return sum(breakpoint_count(v) for v in value)
+            return 0
+
+        # Preserve existing system/tool/active markers; history uses only a free slot.
+        if history_end is not None and breakpoint_count(data) < 4:
+            message_index, block_index = history_end
+            blocks = anthropic_messages[message_index]["content"]
+            blocks[block_index] = {
+                **blocks[block_index],
+                "cache_control": _cache_control_marker(current_model),
+            }
+        else:
+            log_counter(
+                "anthropic_clean_history_cache_unavailable",
+                labels={"reason": "mapping_or_budget"},
+            )
 
     # TASK-26014: the 1h tier is a beta opt-in -- add the header iff a 1h
     # marker actually made it into the payload (never on the 5m default).
@@ -1817,9 +1974,29 @@ def chat_with_anthropic(
             status_forcelist=[429, 500, 502, 503, 504],
             allowed_methods=["POST"],
         )
-        adapter = HTTPAdapter(max_retries=retry_strategy)
-        with create_default_session() as session:
-            session.mount("https://", adapter)
+        def _anthropic_registry_session() -> requests.Session:
+            # ADR-222 (TASK-34418): factory for the per-thread registry;
+            # the mount must live here so a cached session keeps its
+            # adapter (and warm pool) across calls.
+            return create_pooled_default_session(
+                mount_retry=retry_strategy, mount_prefixes=("https://",)
+            )
+
+        # ADR-222: nullcontext so leaving the block does NOT close the
+        # registry-owned session (retries below stay on one session).
+        from tldw_chatbook.LLM_Calls.provider_sessions import (
+            get_session,
+            trust_setting_fragment,
+        )
+
+        with nullcontext(
+            get_session(
+                "anthropic:"
+                f"{api_url}:{retry_strategy.total}:{retry_strategy.backoff_factor}:"
+                f"{trust_setting_fragment()}",
+                _anthropic_registry_session,
+            )
+        ) as session:
             response = session.post(
                 api_url,
                 headers=headers,
@@ -2082,6 +2259,16 @@ def chat_with_anthropic(
                                 )
 
                     if output_captured:
+                        # Record BEFORE the yield and never from `finally`:
+                        # Console Stop closes this generator with
+                        # GeneratorExit, and work under that signal must not
+                        # yield or re-enter the parser.
+                        if usage_accumulator:
+                            _session_ledger().record_provider_payload(
+                                usage_accumulator,
+                                provider="anthropic",
+                                model=current_model,
+                            )
                         yield _usage_sse_chunk()
                 except (
                     requests.exceptions.ChunkedEncodingError
@@ -2211,6 +2398,16 @@ def chat_with_anthropic(
                     usage.get("cache_creation_input_tokens") or 0,
                     labels={"model": current_model},
                 )
+
+            _session_ledger().record_provider_payload(
+                usage,
+                provider="anthropic",
+                model=current_model,
+                fallback_texts=(
+                    _estimate_prompt_text(input_data),
+                    full_assistant_content,
+                ),
+            )
 
             return normalized_response
 
@@ -2595,7 +2792,7 @@ def chat_with_cohere(
         "cohere", {}
     )  # Get the [api_settings.cohere] sub-table
 
-    final_api_key = api_key or cohere_config.get("api_key")
+    final_api_key = api_key or resolve_provider_api_key(cohere_config.get("api_key"))
     if not final_api_key:
         raise ChatAuthenticationError(
             provider="cohere", message="Cohere API key is missing."
@@ -2747,9 +2944,15 @@ def chat_with_cohere(
             cohere_messages.append({"role": "user", "content": custom_prompt_arg})
 
     if not any(m["role"] in ("user", "assistant", "tool") for m in cohere_messages):
-        raise ChatBadRequestError(
+        # TASK-32369: a local check -- nothing was sent, so no HTTP status.
+        raise ChatConfigurationError(
             provider="cohere",
-            message="No user/assistant/tool messages found for Cohere chat after processing system message.",
+            message=(
+                "Request not sent: Cohere needs a user, assistant or tool "
+                "message besides the system prompt."
+            ),
+            status_code=None,
+            field="messages",
         )
 
     payload: Dict[str, Any] = {
@@ -2794,7 +2997,6 @@ def chat_with_cohere(
     logger.debug(f"Cohere request host: {safe_llm_url_host(COHERE_CHAT_URL)}")
 
     # --- Retry Mechanism ---
-    session = create_default_session()
     retry_count = int(cohere_config.get("api_retries", 3))
     retry_delay = float(
         cohere_config.get("api_retry_delay", 1.0)
@@ -2806,9 +3008,28 @@ def chat_with_cohere(
         status_forcelist=[429, 500, 502, 503, 504],  # Standard retry statuses
         allowed_methods=["POST"],  # Retry only for POST requests
     )
-    adapter = HTTPAdapter(max_retries=retry_strategy)
-    session.mount("https://", adapter)
-    session.mount("http://", adapter)
+    def _cohere_registry_session() -> requests.Session:
+        # ADR-222 (TASK-34418): factory for the per-thread registry; the
+        # mount lives here so a cached session keeps its adapter (and warm
+        # pool) across calls.
+        return create_pooled_default_session(
+            mount_retry=retry_strategy,
+            mount_prefixes=("https://", "http://"),
+        )
+
+    # ADR-222: one registry session per thread; the effective retry budget
+    # and TLS trust are key fragments (settings changes get a new session).
+    from tldw_chatbook.LLM_Calls.provider_sessions import (
+        get_session,
+        trust_setting_fragment,
+    )
+
+    session = get_session(
+        "cohere:"
+        f"{COHERE_CHAT_URL}:{retry_strategy.total}:{retry_strategy.backoff_factor}:"
+        f"{trust_setting_fragment()}",
+        _cohere_registry_session,
+    )
     # --- End Retry Mechanism ---
 
     try:
@@ -3173,6 +3394,13 @@ def chat_with_cohere(
                     labels={"model": final_model},
                 )
 
+            _session_ledger().record_provider_payload(
+                usage_data,
+                provider="cohere",
+                model=final_model,
+                fallback_texts=(_estimate_prompt_text(input_data), text),
+            )
+
             return openai_compatible_response
 
     except requests.exceptions.HTTPError as e:
@@ -3389,8 +3617,8 @@ def chat_with_google(
     # `google_api` table: the shipped default config writes `[api_settings.
     # google]`, `config.py`'s credential bridge (`_normalize_legacy_
     # provider_api_key`) writes `api_settings["google"]["api_key"]`, and
-    # the legacy dict is the top-level `google_generative_api` (not under
-    # `api_settings` at all). So this lookup always returned `{}` and every
+    # the legacy top-level `google_generative_api` dict was removed as
+    # dead code (nothing read it). So this lookup always returned `{}` and every
     # Google call fell back to the hardcoded defaults below -- meaning a
     # credential set the modern OR legacy way could not reach the spend
     # path even while readiness reported ready and the Library RAG gate
@@ -3627,16 +3855,38 @@ def chat_with_google(
 
     response = None  # Initialize response to None for the finally block
     try:
-        adapter = HTTPAdapter(
-            max_retries=Retry(
-                total=llm_retry_count(int(google_config.get("api_retries", 3))),
-                backoff_factor=float(google_config.get("api_retry_delay", 1)),
-                status_forcelist=[429, 500, 503],
-                allowed_methods=["POST"],
-            )
+        google_retry = Retry(
+            total=llm_retry_count(int(google_config.get("api_retries", 3))),
+            backoff_factor=float(google_config.get("api_retry_delay", 1)),
+            status_forcelist=[429, 500, 503],
+            allowed_methods=["POST"],
         )
-        with create_default_session() as session:
-            session.mount("https://", adapter)
+
+
+        def _google_registry_session() -> requests.Session:
+            # ADR-222 (TASK-34418): factory for the per-thread registry;
+            # the mount lives here so a cached session keeps its adapter
+            # (and warm pool) across calls.
+            return create_pooled_default_session(
+                mount_retry=google_retry, mount_prefixes=("https://",)
+            )
+
+        # ADR-222: nullcontext so leaving the block does NOT close the
+        # registry-owned session; retry budget + TLS trust are key
+        # fragments so settings changes get a new session.
+        from tldw_chatbook.LLM_Calls.provider_sessions import (
+            get_session,
+            trust_setting_fragment,
+        )
+
+        with nullcontext(
+            get_session(
+                "google:"
+                f"{api_url}:{google_retry.total}:{google_retry.backoff_factor}:"
+                f"{trust_setting_fragment()}",
+                _google_registry_session,
+            )
+        ) as session:
             response = session.post(
                 api_url,
                 headers=headers,
@@ -3697,8 +3947,20 @@ def chat_with_google(
                 # for synthesizing OpenAI tool_calls[].index (Gemini streams
                 # functionCall parts WHOLE, one complete fragment per call).
                 next_tool_position = 0
+                # Gemini usageMetadata is cumulative across chunks; keep the
+                # latest converted usage and record it once at stream end.
+                stream_final_usage = None
                 try:
-                    for line in response.iter_lines(decode_unicode=True):
+                    # TASK-38589: iterate BYTES and decode UTF-8 explicitly;
+                    # ``decode_unicode=True`` decodes with the header charset
+                    # (ISO-8859-1 when the endpoint omits charset=utf-8),
+                    # corrupting non-ASCII Gemini output.
+                    for raw_line in response.iter_lines():
+                        line = (
+                            raw_line.decode("utf-8")
+                            if isinstance(raw_line, bytes)
+                            else str(raw_line)
+                        )
                         if line and line.strip().startswith("data:"):
                             json_str = line.strip()[len("data:") :].strip()
                             try:
@@ -3707,6 +3969,8 @@ def chat_with_google(
                                 chunk_usage = _gemini_usage_to_openai(
                                     data_chunk_outer.get("usageMetadata")
                                 )
+                                if chunk_usage is not None:
+                                    stream_final_usage = chunk_usage
                                 candidates = data_chunk_outer.get("candidates", [])
                                 if candidates:
                                     candidate = candidates[0]
@@ -3805,6 +4069,12 @@ def chat_with_google(
                                 logger.warning(
                                     f"Google Gemini: Could not decode JSON line: {safe_llm_error_detail(json_str)}"
                                 )
+                    if stream_final_usage:
+                        _session_ledger().record_provider_payload(
+                            stream_final_usage,
+                            provider="google",
+                            model=current_model,
+                        )
                 except requests.exceptions.ChunkedEncodingError as e:
                     logger.opt(exception=True).error(
                         f"Google Gemini: ChunkedEncodingError during stream: {e}"
@@ -3924,11 +4194,21 @@ def chat_with_google(
                 k in usage_meta
                 for k in ["promptTokenCount", "candidatesTokenCount", "totalTokenCount"]
             ):
-                normalized_response["usage"] = {
+                normalized_usage = {
                     "prompt_tokens": usage_meta.get("promptTokenCount"),
                     "completion_tokens": usage_meta.get("candidatesTokenCount"),
                     "total_tokens": usage_meta.get("totalTokenCount"),
                 }
+                normalized_response["usage"] = normalized_usage
+                _session_ledger().record_provider_payload(
+                    normalized_usage,
+                    provider="google",
+                    model=current_model,
+                    fallback_texts=(
+                        _estimate_prompt_text(input_data),
+                        assistant_content,
+                    ),
+                )
 
             # Log non-streaming success metrics
             duration = time.time() - start_time
@@ -4143,7 +4423,7 @@ def chat_with_huggingface(
         "huggingface_api", loaded_config_data.get("API", {}).get("huggingface", {})
     )
 
-    final_api_key = api_key or hf_config.get("api_key")
+    final_api_key = api_key or resolve_provider_api_key(hf_config.get("api_key"))
     if final_api_key:
         logger.debug("HuggingFace: API key provided.")
     else:
@@ -4340,6 +4620,12 @@ def chat_with_huggingface(
     # Remove None values from payload before sending, common practice
     payload = {k: v for k, v in payload.items() if v is not None}
 
+    # TASK-2122: OpenAI-semantics endpoints only send streamed usage when
+    # asked. The degrade-retry below covers strict OpenAI-compatible servers
+    # that 400 on the unknown body field.
+    if final_streaming_payload_val:
+        payload["stream_options"] = {"include_usage": True}
+
     if is_sensitive_llm_request():
         logger.debug(
             "HuggingFace request metadata: "
@@ -4369,20 +4655,56 @@ def chat_with_huggingface(
     # Consider a tuple timeout (connect_timeout, read_timeout) for more control if needed.
 
     try:
+        from tldw_chatbook.LLM_Calls.provider_sessions import (
+            get_session,
+            trust_setting_fragment,
+        )
+
         if final_streaming_payload_val:  # Check the boolean intended for payload
             logger.debug(
                 "HuggingFace: Posting streaming request to "
                 f"host={safe_llm_url_host(api_url)}"
             )
-            # Session might not be strictly necessary for a single streaming POST, but good for potential keep-alive
-            response = requests.post(
-                api_url,
-                headers=headers,
-                json=payload,
-                stream=True,
-                timeout=timeout_seconds,
-                verify=requests_verify(),
-            )
+            # The default session carries the app's response hooks (TASK-28229:
+            # rate-limit capture). ADR-222 (TASK-34418): the session now
+            # comes from the per-thread registry and is not closed here; the
+            # open stream still keeps its checked-out connection either way.
+            # Per-request verify + explicit timeout mean no config fragment
+            # is needed in the key.
+            with nullcontext(
+                get_session(f"huggingface:{api_url}", create_default_session)
+            ) as session:
+                response = session.post(
+                    api_url,
+                    headers=headers,
+                    json=payload,
+                    stream=True,
+                    timeout=timeout_seconds,
+                    verify=requests_verify(),
+                )
+                if (
+                    response.status_code == 400
+                    and "stream_options" in payload
+                    and "stream_options" in (response.text or "")
+                ):
+                    # TASK-2122: mirror the OpenAI path's degrade retry -- a
+                    # strict OpenAI-compatible server may reject the field;
+                    # usage reporting is dropped, streaming proceeds.
+                    logger.warning(
+                        "HuggingFace: endpoint rejected stream_options; "
+                        "retrying without usage reporting."
+                    )
+                    retry_payload = {
+                        k: v for k, v in payload.items() if k != "stream_options"
+                    }
+                    response = session.post(
+                        api_url,
+                        headers=headers,
+                        json=retry_payload,
+                        stream=True,
+                        timeout=timeout_seconds,
+                        verify=requests_verify(),
+                    )
             response.raise_for_status()
 
             # Log streaming success metrics
@@ -4402,48 +4724,84 @@ def chat_with_huggingface(
             )
 
             def stream_generator_huggingface():
+                # TASK-2122: relay OpenAI-shaped SSE data lines (the HF
+                # router speaks chat.completions), NOT bare text strings --
+                # the Console gateway parses usage only out of ``data:``
+                # chunks, and the provider's trailing usage frame (requested
+                # via stream_options above) must reach it verbatim.
                 try:
                     for line_bytes in response.iter_lines():
                         if line_bytes:
-                            decoded_line = line_bytes.decode("utf-8").strip()
+                            decoded_line = (
+                                line_bytes.decode("utf-8")
+                                if isinstance(line_bytes, bytes)
+                                else str(line_bytes)
+                            ).strip()
                             if not decoded_line:
                                 continue  # Skip empty keep-alive lines
 
-                            # logger.debug(f"HF Stream raw line: {decoded_line}")
                             if decoded_line.startswith("data:"):
-                                data_content = decoded_line[len("data:") :].strip()
-                                if data_content == "[DONE]":
+                                if decoded_line[len("data:") :].strip() == "[DONE]":
                                     logger.debug(
                                         "HuggingFace stream received [DONE] marker."
                                     )
                                     break
-                                try:
-                                    chunk_json = json.loads(data_content)
-                                    delta_content = (
-                                        chunk_json.get("choices", [{}])[0]
-                                        .get("delta", {})
-                                        .get("content")
-                                    )
-                                    if delta_content:
-                                        yield delta_content
-                                    # Consider if other parts of the chunk are needed, e.g., finish_reason in delta
-                                    # For now, just yielding content as per OpenAI's typical text stream delta.
-                                except json.JSONDecodeError:
-                                    logger.warning(
-                                        f"HuggingFace stream: JSON decode error for data: '{safe_llm_error_detail(data_content)}'"
-                                    )
+                                # Pass the provider's chunk line through.
+                                yield (
+                                    decoded_line
+                                    if decoded_line.endswith("\n")
+                                    else decoded_line + "\n"
+                                )
+                            else:
+                                logger.debug(
+                                    "HuggingFace stream: non-data line ignored."
+                                )
                 except requests.exceptions.ChunkedEncodingError as e_chunked:
                     logger.error(
                         f"HuggingFace stream: ChunkedEncodingError during streaming: {e_chunked}"
+                    )
+                    yield (
+                        "data: "
+                        + json.dumps(
+                            {
+                                "error": {
+                                    "message": (
+                                        f"Stream connection error: {e_chunked}"
+                                    ),
+                                    "type": "huggingface_stream_error",
+                                }
+                            }
+                        )
+                        + "\n\n"
                     )
                 except Exception as e_stream:
                     logger.opt(exception=True).error(
                         f"HuggingFace stream: Unexpected error during streaming: {e_stream}"
                     )
+                    yield (
+                        "data: "
+                        + json.dumps(
+                            {
+                                "error": {
+                                    "message": f"Stream iteration error: {e_stream}",
+                                    "type": "huggingface_stream_error",
+                                }
+                            }
+                        )
+                        + "\n\n"
+                    )
                 finally:
                     if response:
                         response.close()  # Ensure response is closed
                     logger.debug("HuggingFace stream generator finished.")
+                # Exactly one trailing sentinel, emitted AFTER the finally --
+                # a consumer Stop closes this generator with GeneratorExit,
+                # and yielding inside ``finally`` would raise
+                # ``generator ignored GeneratorExit`` and skip the response
+                # close above (same ruling as the Cohere/OpenAI generators).
+                # The provider's own [DONE] was consumed as the terminator,
+                # so every completion ends with exactly one sentinel.
+                yield "data: [DONE]\n\n"
 
             return stream_generator_huggingface()
         else:  # Non-streaming
@@ -4462,9 +4820,23 @@ def chat_with_huggingface(
                     # or method_whitelist for older versions.
                 )
             )
-            session = create_default_session()
-            session.mount("https://", adapter)
-            session.mount("http://", adapter)
+
+            def _hf_registry_session() -> requests.Session:
+                # ADR-222 (TASK-34418): factory for the per-thread registry;
+                # the mount lives here so a cached session keeps its adapter
+                # (and warm pool) across calls.
+                return create_pooled_default_session(
+                    mount_retry=adapter.max_retries,
+                    mount_prefixes=("https://", "http://"),
+                )
+
+            hf_retry = adapter.max_retries
+            session = get_session(
+                "huggingface:"
+                f"{api_url}:{hf_retry.total}:{hf_retry.backoff_factor}:"
+                f"{trust_setting_fragment()}",
+                _hf_registry_session,
+            )
 
             response = session.post(
                 api_url, headers=headers, json=payload, timeout=timeout_seconds
@@ -4508,6 +4880,16 @@ def chat_with_huggingface(
                     usage.get("total_tokens", 0),
                     labels={"model": final_model_for_payload},
                 )
+
+            _session_ledger().record_provider_payload(
+                usage,
+                provider="huggingface",
+                model=final_model_for_payload,
+                fallback_texts=(
+                    _estimate_prompt_text(input_data),
+                    _completion_text_from_response(result),
+                ),
+            )
 
             return result
 
@@ -4701,6 +5083,18 @@ def chat_with_moonshot(
         time.time() - started_at,
         labels=labels,
     )
+    # Streaming results are stream objects, not mappings; usage there arrives
+    # on the wire during iteration, so only the non-streaming dict is tapped.
+    if isinstance(result, Mapping):
+        _session_ledger().record_provider_payload(
+            result.get("usage"),
+            provider="moonshot",
+            model=model or "",
+            fallback_texts=(
+                _estimate_prompt_text(input_data),
+                _completion_text_from_response(result),
+            ),
+        )
     return result
 
 
@@ -4775,6 +5169,18 @@ def chat_with_zai(
         time.time() - started_at,
         labels=labels,
     )
+    # Streaming results are stream objects, not mappings; usage there arrives
+    # on the wire during iteration, so only the non-streaming dict is tapped.
+    if isinstance(result, Mapping):
+        _session_ledger().record_provider_payload(
+            result.get("usage"),
+            provider="zai",
+            model=model or "",
+            fallback_texts=(
+                _estimate_prompt_text(input_data),
+                _completion_text_from_response(result),
+            ),
+        )
     return result
 
 

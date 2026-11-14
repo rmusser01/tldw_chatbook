@@ -250,18 +250,15 @@ def expand_source_selection(tokens: list[str]) -> list[str]:
     ids_by_category = sources_by_category()
     known_sources = {e.source_id for e in catalog_entries()}
     unknown = [
-        token for token in tokens
+        token
+        for token in tokens
         if token not in known_sources and token not in ids_by_category
     ]
     if unknown:
-        raise ValueError(
-            f"unknown research source or category: {', '.join(unknown)}"
-        )
+        raise ValueError(f"unknown research source or category: {', '.join(unknown)}")
     expanded: list[str] = []
     for token in tokens:
-        candidates = (
-            ids_by_category[token] if token in ids_by_category else (token,)
-        )
+        candidates = ids_by_category[token] if token in ids_by_category else (token,)
         for source_id in candidates:
             if source_id not in expanded:
                 expanded.append(source_id)

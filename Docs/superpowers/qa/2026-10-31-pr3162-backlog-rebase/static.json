@@ -1,0 +1,163 @@
+{
+  "base": "57e330e735fff25515778e839f31ed85602c34f2",
+  "source_head": "52269c3dd4b330a5cf6ccd938e7ea1f467a05cf0",
+  "parsed_changed_python": 87,
+  "parsed_changed_product_python": 49,
+  "parse_errors": [],
+  "ruff_prior_count": 305,
+  "ruff_current_count": 373,
+  "introduced_ruff": [
+    {
+      "path": "Tests/Agents/test_archive_recovery_tools.py",
+      "code": "E402",
+      "message": "Module level import not at top of file",
+      "count": 9
+    },
+    {
+      "path": "Tests/Agents/test_archive_recovery_tools.py",
+      "code": "F811",
+      "message": "Redefinition of unused `recovery_stores` from line 56",
+      "count": 5
+    },
+    {
+      "path": "Tests/Chat/test_archive_recovery_coordinator.py",
+      "code": "F811",
+      "message": "Redefinition of unused `recovery_stores` from line 9",
+      "count": 15
+    },
+    {
+      "path": "Tests/Chat/test_archive_recovery_review_hook.py",
+      "code": "F811",
+      "message": "Redefinition of unused `recovery_stores` from line 10",
+      "count": 1
+    },
+    {
+      "path": "Tests/Chat/test_archive_recovery_search.py",
+      "code": "E731",
+      "message": "Do not assign a `lambda` expression, use a `def`",
+      "count": 1
+    },
+    {
+      "path": "Tests/Chat/test_console_archive_recovery_dispatch.py",
+      "code": "F811",
+      "message": "Redefinition of unused `recovery_stores` from line 10",
+      "count": 10
+    },
+    {
+      "path": "Tests/Chat/test_console_archive_recovery_dispatch.py",
+      "code": "E402",
+      "message": "Module level import not at top of file",
+      "count": 20
+    },
+    {
+      "path": "Tests/Chat/test_console_archive_recovery_followup.py",
+      "code": "F811",
+      "message": "Redefinition of unused `recovery_stores` from line 15",
+      "count": 1
+    },
+    {
+      "path": "tldw_chatbook/Chat/archive_recovery/result_store.py",
+      "code": "E721",
+      "message": "Do not compare types, use `isinstance()`",
+      "count": 3
+    },
+    {
+      "path": "tldw_chatbook/Chat/archive_recovery/search_service.py",
+      "code": "E721",
+      "message": "Do not compare types, use `isinstance()`",
+      "count": 1
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_agent_bridge.py",
+      "code": "E721",
+      "message": "Do not compare types, use `isinstance()`",
+      "count": 1
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_prepared_request.py",
+      "code": "E721",
+      "message": "Do not compare types, use `isinstance()`",
+      "count": 8
+    },
+    {
+      "path": "tldw_chatbook/Workspaces/registry_service.py",
+      "code": "E721",
+      "message": "Do not compare types, use `isinstance()`",
+      "count": 1
+    }
+  ],
+  "original_remote_head": "366bd3dbfa620b466c6fecb38c363e3093130841",
+  "ruff_version": "ruff 0.4.5",
+  "ruff_original_pr_count": 368,
+  "ruff_final_count": 373,
+  "introduced_vs_original_pr": [
+    {
+      "path": "tldw_chatbook/Agents/agent_service.py",
+      "code": "F401",
+      "message": "`.agent_models.FIND_TOOLS_NAME` imported but unused",
+      "count": 1
+    },
+    {
+      "path": "tldw_chatbook/Agents/agent_service.py",
+      "code": "F401",
+      "message": "`.agent_models.LOAD_TOOLS_NAME` imported but unused",
+      "count": 1
+    },
+    {
+      "path": "tldw_chatbook/Agents/agent_service.py",
+      "code": "E721",
+      "message": "Do not compare types, use `isinstance()`",
+      "count": 2
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_agent_bridge.py",
+      "code": "E721",
+      "message": "Do not compare types, use `isinstance()`",
+      "count": 1
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_prepared_request.py",
+      "code": "E721",
+      "message": "Do not compare types, use `isinstance()`",
+      "count": 1
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_streaming_request.py",
+      "code": "E721",
+      "message": "Do not compare types, use `isinstance()`",
+      "count": 1
+    },
+    {
+      "path": "tldw_chatbook/DB/ChaChaNotes_DB.py",
+      "code": "E721",
+      "message": "Do not compare types, use `isinstance()`",
+      "count": 1
+    },
+    {
+      "path": "tldw_chatbook/DB/recovery_operations.py",
+      "code": "E402",
+      "message": "Module level import not at top of file",
+      "count": 1
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Console/console_transcript.py",
+      "code": "E721",
+      "message": "Do not compare types, use `isinstance()`",
+      "count": 1
+    }
+  ],
+  "duplicate_test_definitions": [],
+  "product_diagnostics_absent_from_both_parents": [],
+  "dual_parent_checked_files": [
+    "tldw_chatbook/Agents/agent_service.py",
+    "tldw_chatbook/Chat/archive_recovery/result_store.py",
+    "tldw_chatbook/Chat/archive_recovery/search_service.py",
+    "tldw_chatbook/Chat/console_agent_bridge.py",
+    "tldw_chatbook/Chat/console_prepared_request.py",
+    "tldw_chatbook/Chat/console_streaming_request.py",
+    "tldw_chatbook/DB/ChaChaNotes_DB.py",
+    "tldw_chatbook/DB/recovery_operations.py",
+    "tldw_chatbook/Widgets/Console/console_transcript.py",
+    "tldw_chatbook/Workspaces/registry_service.py"
+  ]
+}

@@ -1,0 +1,56 @@
+[
+  {
+    "cell": null,
+    "code": "EXE001",
+    "end_location": {
+      "column": 23,
+      "row": 1
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/scripts/check_ui_pr_gate_census.py",
+    "fix": null,
+    "location": {
+      "column": 1,
+      "row": 1
+    },
+    "message": "Shebang is present but file is not executable",
+    "name": "shebang-not-executable",
+    "noqa_row": 59,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/shebang-not-executable"
+  },
+  {
+    "cell": null,
+    "code": "PIE810",
+    "end_location": {
+      "column": 14,
+      "row": 1210
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/scripts/check_ui_pr_gate_census.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "inner.startswith((outer_path + \"::\", outer_path + \"[\"))",
+          "end_location": {
+            "column": 14,
+            "row": 1210
+          },
+          "location": {
+            "column": 16,
+            "row": 1208
+          }
+        }
+      ],
+      "message": "Merge into a single `startswith` call"
+    },
+    "location": {
+      "column": 16,
+      "row": 1208
+    },
+    "message": "Call `startswith` once with a `tuple`",
+    "name": "multiple-starts-ends-with",
+    "noqa_row": 1208,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/multiple-starts-ends-with"
+  }
+]

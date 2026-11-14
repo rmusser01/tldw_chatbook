@@ -1,7 +1,9 @@
 import hashlib
 import json
 import multiprocessing
+import os
 import threading
+import unicodedata
 from pathlib import Path
 
 import portalocker
@@ -11,6 +13,7 @@ from tldw_chatbook.Tools import local_tool_impls
 from tldw_chatbook.Tools.local_tool_impls import (
     MAX_READ_CHARS,
     LocalToolError,
+    create_directory,
     edit_file,
     glob_files,
     grep_files,
@@ -22,12 +25,16 @@ from tldw_chatbook.Tools.local_tool_impls import (
 from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
 
 
-def _write_while_locked(workspace: str, expected: str, outcomes) -> None:
+def _write_while_locked(workspace: str, expected: str, outcomes, ready, resume) -> None:
+    ready.set()
+    assert resume.wait(30), "parent did not start the lock-refusal probe"
     try:
-        write_file(
-            "AGENTS.md",
+        # Exercise the same admitted-root body as the real isolated worker;
+        # public-path policy resolution would bootstrap unrelated app state.
+        local_tool_impls._write_relative_file(
+            Path("AGENTS.md"),
             "replacement",
-            workspace_root=Path(workspace),
+            workspace=Path(workspace),
             expected_sha256=expected,
         )
     except LocalToolError:
@@ -43,10 +50,30 @@ def _write_while_locked(workspace: str, expected: str, outcomes) -> None:
         (".", SensitiveExclusion("subtree", "."), True, True),
         ("child.txt", SensitiveExclusion("direct_children", "."), False, True),
         ("nested/child.txt", SensitiveExclusion("direct_children", "."), False, False),
-        ("secret/child.txt", SensitiveExclusion("direct_children", "secret"), False, True),
-        ("secret/nested.txt", SensitiveExclusion("file", "secret/nested.txt"), False, True),
-        ("secret/nested/child.txt", SensitiveExclusion("file", "secret/nested.txt"), False, False),
-        ("secret/nested/child.txt", SensitiveExclusion("subtree", "secret"), False, True),
+        (
+            "secret/child.txt",
+            SensitiveExclusion("direct_children", "secret"),
+            False,
+            True,
+        ),
+        (
+            "secret/nested.txt",
+            SensitiveExclusion("file", "secret/nested.txt"),
+            False,
+            True,
+        ),
+        (
+            "secret/nested/child.txt",
+            SensitiveExclusion("file", "secret/nested.txt"),
+            False,
+            False,
+        ),
+        (
+            "secret/nested/child.txt",
+            SensitiveExclusion("subtree", "secret"),
+            False,
+            True,
+        ),
         ("nested/credentials", SensitiveExclusion("name", "credentials"), False, True),
         ("credentials", SensitiveExclusion("name", "credentials"), True, False),
     ),
@@ -63,6 +90,82 @@ def test_relative_sensitive_exclusion_matcher_covers_root_and_each_kind(
         )
         is expected
     )
+
+
+@pytest.mark.parametrize(("rule_form", "path_form"), (("NFC", "NFD"), ("NFD", "NFC")))
+@pytest.mark.parametrize(
+    ("kind", "rule", "relative"),
+    (
+        ("file", "Données/naïve.txt", "Données/naïve.txt"),
+        ("file", "Données/naïve.txt", "DONNÉES/NAÏVE.TXT"),
+        ("subtree", "Données", "Données/naïve.txt"),
+        ("direct_children", "Données", "Données/naïve.txt"),
+        ("name", "naïve.txt", "elsewhere/naïve.txt"),
+    ),
+)
+def test_relative_sensitive_exclusion_matcher_ignores_unicode_normalization(
+    kind: str, rule: str, relative: str, rule_form: str, path_form: str
+) -> None:
+    """TASK-37655: APFS opens an NFD spelling as the stored NFC file (and back)."""
+    rule = unicodedata.normalize(rule_form, rule)
+    relative = unicodedata.normalize(path_form, relative)
+    assert rule not in relative  # the two spellings really differ
+    assert local_tool_impls._is_relative_sensitive_path(
+        Path(relative), (SensitiveExclusion(kind, rule),), is_directory=False
+    )
+
+
+@pytest.mark.parametrize(
+    ("relative", "expected"),
+    (
+        ("SECRET/key.pem", True),
+        ("Secret/Key.PEM", True),
+        ("secretfoo/key.pem", False),
+        ("nested/CREDENTIALS", True),
+        ("nested/credentials.bak", False),
+    ),
+)
+def test_relative_sensitive_exclusion_matcher_ascii_case_folding_unchanged(
+    relative: str, expected: bool
+) -> None:
+    exclusions = (
+        SensitiveExclusion("subtree", "secret"),
+        SensitiveExclusion("name", "credentials"),
+    )
+    assert (
+        local_tool_impls._is_relative_sensitive_path(
+            Path(relative), exclusions, is_directory=False
+        )
+        is expected
+    )
+
+
+@pytest.mark.parametrize(("rule_form", "path_form"), (("NFC", "NFD"), ("NFD", "NFC")))
+def test_worker_fs_read_refuses_other_normalization_of_excluded_file(
+    tmp_path: Path, rule_form: str, path_form: str
+) -> None:
+    """The pinned worker's fs_read core (local and remote) applies the matcher."""
+    rule = unicodedata.normalize(rule_form, "naïve.txt")
+    selected = unicodedata.normalize(path_form, "naïve.txt")
+    (tmp_path / rule).write_text("PRIVATE")
+    if not (tmp_path / selected).exists():  # normalization-sensitive filesystem
+        (tmp_path / selected).write_text("PRIVATE")
+    with pytest.raises(LocalToolError, match="file not found"):
+        local_tool_impls._read_relative_file(
+            Path(selected),
+            workspace=tmp_path,
+            offset=1,
+            limit=None,
+            sensitive_exclusions=(SensitiveExclusion("file", rule),),
+        )
+
+
+def test_grep_core_annotations_resolve() -> None:
+    """``_grep_relative_files`` annotates ``re.Pattern``; ``re`` must be bound."""
+    import typing
+
+    hints = typing.get_type_hints(local_tool_impls._grep_relative_files)
+    assert "pattern" in hints
 
 
 def test_resolve_workspace_path_confines(tmp_path):
@@ -175,35 +278,42 @@ def test_list_directory_caps_the_scan(tmp_path, monkeypatch):
     scanned_names = lines[:-1]
     dir_positions = [i for i, n in enumerate(scanned_names) if n.endswith("/")]
     assert dir_positions == list(range(len(dir_positions)))
+
+
 def test_fs_read_line_numbered(tmp_path):
-    ws = tmp_path / "ws"; ws.mkdir()
+    ws = tmp_path / "ws"
+    ws.mkdir()
     (ws / "a.txt").write_text("one\ntwo\nthree\n")
     out = read_file("a.txt", workspace_root=ws)
     assert out.splitlines() == ["1\tone", "2\ttwo", "3\tthree"]
 
 
 def test_fs_read_offset_limit(tmp_path):
-    ws = tmp_path / "ws"; ws.mkdir()
+    ws = tmp_path / "ws"
+    ws.mkdir()
     (ws / "a.txt").write_text("".join(f"line{i}\n" for i in range(1, 11)))
     out = read_file("a.txt", workspace_root=ws, offset=3, limit=2)
     assert out.splitlines() == ["3\tline3", "4\tline4"]
 
 
 def test_fs_read_offset_past_eof_returns_notice(tmp_path):
-    ws = tmp_path / "ws"; ws.mkdir()
+    ws = tmp_path / "ws"
+    ws.mkdir()
     (ws / "a.txt").write_text("only\n")
     assert "past end of file" in read_file("a.txt", workspace_root=ws, offset=99)
 
 
 def test_fs_read_refuses_binary(tmp_path):
-    ws = tmp_path / "ws"; ws.mkdir()
+    ws = tmp_path / "ws"
+    ws.mkdir()
     (ws / "img.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 32)
     with pytest.raises(LocalToolError, match="binary"):
         read_file("img.png", workspace_root=ws)
 
 
 def test_fs_read_missing_file(tmp_path):
-    ws = tmp_path / "ws"; ws.mkdir()
+    ws = tmp_path / "ws"
+    ws.mkdir()
     with pytest.raises(LocalToolError, match="not found"):
         read_file("nope.txt", workspace_root=ws)
 
@@ -226,7 +336,8 @@ def test_fs_read_keeps_in_root_symlinks_and_refuses_escaping_symlinks(tmp_path):
 
 
 def test_fs_read_empty_file_returns_notice(tmp_path):
-    ws = tmp_path / "ws"; ws.mkdir()
+    ws = tmp_path / "ws"
+    ws.mkdir()
     (ws / "empty.txt").write_text("")
     assert read_file("empty.txt", workspace_root=ws) == "(empty file)"
     # offset-past-EOF on an empty file reports the same notice
@@ -234,13 +345,15 @@ def test_fs_read_empty_file_returns_notice(tmp_path):
 
 
 def test_fs_read_limit_zero_returns_no_lines(tmp_path):
-    ws = tmp_path / "ws"; ws.mkdir()
+    ws = tmp_path / "ws"
+    ws.mkdir()
     (ws / "a.txt").write_text("one\ntwo\n")
     assert read_file("a.txt", workspace_root=ws, limit=0) == ""
 
 
 def test_fs_read_offset_zero_and_negative_clamp_to_first_line(tmp_path):
-    ws = tmp_path / "ws"; ws.mkdir()
+    ws = tmp_path / "ws"
+    ws.mkdir()
     (ws / "a.txt").write_text("one\ntwo\n")
     first = read_file("a.txt", workspace_root=ws, offset=1)
     assert read_file("a.txt", workspace_root=ws, offset=0) == first
@@ -248,27 +361,88 @@ def test_fs_read_offset_zero_and_negative_clamp_to_first_line(tmp_path):
 
 
 def test_fs_read_truncates_at_max_chars(tmp_path):
-    ws = tmp_path / "ws"; ws.mkdir()
-    (ws / "big.txt").write_text("".join(f"line{i} " + "x" * 40 + "\n" for i in range(1000)))
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "big.txt").write_text(
+        "".join(f"line{i} " + "x" * 40 + "\n" for i in range(1000))
+    )
     out = read_file("big.txt", workspace_root=ws)
     assert out.endswith("… [truncated]")
     assert len(out) <= MAX_READ_CHARS + len("\n… [truncated]")
 
 
+# --- fs_mkdir (TASK-35081) --------------------------------------------------
+
+
+def test_fs_mkdir_creates_directory_with_missing_parents(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    out = create_directory("a/b/c", workspace_root=ws)
+    assert (ws / "a" / "b" / "c").is_dir()
+    assert "created directory" in out and "a/b/c" in out
+
+
+def test_fs_mkdir_existing_directory_is_success_no_op(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "present").mkdir()
+    out = create_directory("present", workspace_root=ws)
+    assert "already exists" in out
+    assert (ws / "present").is_dir()
+
+
+def test_fs_mkdir_refuses_non_directory_at_target(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "occupied").write_text("file")
+    with pytest.raises(LocalToolError, match="non-directory"):
+        create_directory("occupied", workspace_root=ws)
+
+
+def test_fs_mkdir_refuses_git_metadata_write(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    with pytest.raises(LocalToolError, match=".git"):
+        create_directory(".git/hooks", workspace_root=ws)
+    assert not (ws / ".git").exists()
+
+
+def test_fs_mkdir_stays_confined_to_the_root(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    with pytest.raises(LocalToolError, match="outside the workspace root"):
+        create_directory("../escape", workspace_root=ws)
+    assert not (tmp_path / "escape").exists()
+
+
+def test_fs_mkdir_then_fs_write_lands_in_new_folder(tmp_path):
+    # The pairing the incident was about: create the folder, then write
+    # into it on the next call without a parent-exists error.
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    create_directory("notes/archive", workspace_root=ws)
+    out = write_file("notes/archive/2026.md", "hello\n", workspace_root=ws)
+    assert "wrote" in out
+    assert (ws / "notes" / "archive" / "2026.md").read_text() == "hello\n"
+
+
 def test_fs_write_creates_file(tmp_path):
-    ws = tmp_path / "ws"; ws.mkdir()
+    ws = tmp_path / "ws"
+    ws.mkdir()
     out = write_file("new.txt", "hello\n", workspace_root=ws)
     assert (ws / "new.txt").read_text() == "hello\n"
     assert "wrote" in out and "new.txt" in out
 
 
 def test_fs_write_overwrites(tmp_path):
-    ws = tmp_path / "ws"; ws.mkdir()
+    ws = tmp_path / "ws"
+    ws.mkdir()
     (ws / "f.txt").write_text("old")
     write_file("f.txt", "new", workspace_root=ws)
     assert (ws / "f.txt").read_text() == "new"
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows uses ACLs, not POSIX mode bits")
 def test_fs_write_preserves_existing_file_mode(tmp_path):
     ws = tmp_path / "ws"
     ws.mkdir()
@@ -286,7 +460,7 @@ def test_fs_write_dry_run_returns_bounded_exact_state_without_mutation(tmp_path)
     ws = tmp_path / "ws"
     ws.mkdir()
     target = ws / "AGENTS.md"
-    target.write_text("old\n")
+    target.write_bytes(b"old\n")
 
     result = json.loads(
         write_file(
@@ -398,16 +572,20 @@ def test_expected_digest_write_respects_cross_process_target_lock(tmp_path):
     context = multiprocessing.get_context("spawn")
     outcomes = context.Queue()
 
+    ready, resume = context.Event(), context.Event()
+    process = context.Process(
+        target=_write_while_locked,
+        args=(str(ws), expected, outcomes, ready, resume),
+    )
+    process.start()
+    # Bound the actual write separately from Windows spawn/import startup.
+    assert ready.wait(30), "CAS writer did not finish starting"
     with target.open("r+b") as handle:
         portalocker.lock(
             handle,
             portalocker.LockFlags.EXCLUSIVE | portalocker.LockFlags.NON_BLOCKING,
         )
-        process = context.Process(
-            target=_write_while_locked,
-            args=(str(ws), expected, outcomes),
-        )
-        process.start()
+        resume.set()
         process.join(timeout=10)
         if process.is_alive():
             process.terminate()
@@ -420,19 +598,22 @@ def test_expected_digest_write_respects_cross_process_target_lock(tmp_path):
 
 
 def test_fs_write_requires_existing_parent(tmp_path):
-    ws = tmp_path / "ws"; ws.mkdir()
+    ws = tmp_path / "ws"
+    ws.mkdir()
     with pytest.raises(LocalToolError, match="parent directory"):
         write_file("no/such/dir/f.txt", "x", workspace_root=ws)
 
 
 def test_fs_write_confined(tmp_path):
-    ws = tmp_path / "ws"; ws.mkdir()
+    ws = tmp_path / "ws"
+    ws.mkdir()
     with pytest.raises(LocalToolError, match="outside the workspace root"):
         write_file("../evil.txt", "x", workspace_root=ws)
 
 
 def test_fs_edit_unique_match(tmp_path):
-    ws = tmp_path / "ws"; ws.mkdir()
+    ws = tmp_path / "ws"
+    ws.mkdir()
     (ws / "f.txt").write_text("alpha beta gamma")
     out = edit_file("f.txt", "beta", "BETA", workspace_root=ws)
     assert (ws / "f.txt").read_text() == "alpha BETA gamma"
@@ -440,21 +621,24 @@ def test_fs_edit_unique_match(tmp_path):
 
 
 def test_fs_edit_requires_match(tmp_path):
-    ws = tmp_path / "ws"; ws.mkdir()
+    ws = tmp_path / "ws"
+    ws.mkdir()
     (ws / "f.txt").write_text("alpha")
     with pytest.raises(LocalToolError, match="not found"):
         edit_file("f.txt", "zzz", "q", workspace_root=ws)
 
 
 def test_fs_edit_ambiguous_match_reports_count(tmp_path):
-    ws = tmp_path / "ws"; ws.mkdir()
+    ws = tmp_path / "ws"
+    ws.mkdir()
     (ws / "f.txt").write_text("dup dup dup")
     with pytest.raises(LocalToolError, match="3 times"):
         edit_file("f.txt", "dup", "x", workspace_root=ws)
 
 
 def test_fs_edit_replace_all(tmp_path):
-    ws = tmp_path / "ws"; ws.mkdir()
+    ws = tmp_path / "ws"
+    ws.mkdir()
     (ws / "f.txt").write_text("dup dup dup")
     out = edit_file("f.txt", "dup", "x", workspace_root=ws, replace_all=True)
     assert (ws / "f.txt").read_text() == "x x x"
@@ -462,7 +646,8 @@ def test_fs_edit_replace_all(tmp_path):
 
 
 def test_fs_edit_rejects_identical_strings(tmp_path):
-    ws = tmp_path / "ws"; ws.mkdir()
+    ws = tmp_path / "ws"
+    ws.mkdir()
     (ws / "f.txt").write_text("alpha")
     with pytest.raises(LocalToolError, match="identical"):
         edit_file("f.txt", "alpha", "alpha", workspace_root=ws)
@@ -470,7 +655,8 @@ def test_fs_edit_rejects_identical_strings(tmp_path):
 
 
 def test_fs_edit_refuses_non_utf8_file(tmp_path):
-    ws = tmp_path / "ws"; ws.mkdir()
+    ws = tmp_path / "ws"
+    ws.mkdir()
     (ws / "f.txt").write_bytes(b"\xff\xfe not utf-8")
     with pytest.raises(LocalToolError, match="not valid UTF-8"):
         edit_file("f.txt", "not", "x", workspace_root=ws)
@@ -479,7 +665,8 @@ def test_fs_edit_refuses_non_utf8_file(tmp_path):
 def test_fs_edit_unencodable_new_string_preserves_file(tmp_path):
     # A lone surrogate (reachable via tool-call JSON "ﺀ") must fail
     # BEFORE the file is truncated — the original content stays intact.
-    ws = tmp_path / "ws"; ws.mkdir()
+    ws = tmp_path / "ws"
+    ws.mkdir()
     (ws / "f.txt").write_text("alpha beta")
     with pytest.raises(LocalToolError, match="UTF-8"):
         edit_file("f.txt", "beta", "\ud800", workspace_root=ws)
@@ -487,14 +674,16 @@ def test_fs_edit_unencodable_new_string_preserves_file(tmp_path):
 
 
 def test_fs_edit_preserves_crlf_line_endings(tmp_path):
-    ws = tmp_path / "ws"; ws.mkdir()
+    ws = tmp_path / "ws"
+    ws.mkdir()
     (ws / "f.txt").write_bytes(b"a\r\nb")
     edit_file("f.txt", "b", "c", workspace_root=ws)
     assert (ws / "f.txt").read_bytes() == b"a\r\nc"
 
 
 def test_fs_write_unencodable_content_preserves_file(tmp_path):
-    ws = tmp_path / "ws"; ws.mkdir()
+    ws = tmp_path / "ws"
+    ws.mkdir()
     (ws / "f.txt").write_text("keep me")
     with pytest.raises(LocalToolError, match="UTF-8"):
         write_file("f.txt", "lone surrogate: \ud800", workspace_root=ws)
@@ -527,10 +716,14 @@ def test_relative_mutation_bodies_use_the_supplied_io_root_and_preserve_bytes(tm
 
 
 def test_fs_glob_matches_and_sorts_by_mtime(tmp_path):
-    ws = tmp_path / "ws"; ws.mkdir()
+    ws = tmp_path / "ws"
+    ws.mkdir()
     import os, time
-    old = ws / "old.py"; old.write_text("x")
-    new = ws / "new.py"; new.write_text("x")
+
+    old = ws / "old.py"
+    old.write_text("x")
+    new = ws / "new.py"
+    new.write_text("x")
     (ws / "skip.txt").write_text("x")
     past = time.time() - 100
     os.utime(old, (past, past))
@@ -539,36 +732,44 @@ def test_fs_glob_matches_and_sorts_by_mtime(tmp_path):
 
 
 def test_fs_glob_recursive_and_cap(tmp_path):
-    ws = tmp_path / "ws"; ws.mkdir()
+    ws = tmp_path / "ws"
+    ws.mkdir()
     (ws / "sub").mkdir()
     (ws / "sub" / "deep.py").write_text("x")
     assert "sub/deep.py" in glob_files("**/*.py", workspace_root=ws)
 
 
 def test_fs_grep_line_numbers(tmp_path):
-    ws = tmp_path / "ws"; ws.mkdir()
+    ws = tmp_path / "ws"
+    ws.mkdir()
     (ws / "a.py").write_text("def foo():\n    return 1\n")
     out = grep_files("def foo", workspace_root=ws)
     assert "a.py:1:def foo():" in out
 
 
 def test_fs_grep_files_with_matches_and_count(tmp_path):
-    ws = tmp_path / "ws"; ws.mkdir()
+    ws = tmp_path / "ws"
+    ws.mkdir()
     (ws / "a.py").write_text("hit\nhit\n")
     (ws / "b.py").write_text("hit\n")
-    assert set(grep_files("hit", workspace_root=ws, mode="files").splitlines()) == {"a.py", "b.py"}
+    assert set(grep_files("hit", workspace_root=ws, mode="files").splitlines()) == {
+        "a.py",
+        "b.py",
+    }
     assert "a.py:2" in grep_files("hit", workspace_root=ws, mode="count")
 
 
 def test_fs_grep_caps_output(tmp_path):
-    ws = tmp_path / "ws"; ws.mkdir()
+    ws = tmp_path / "ws"
+    ws.mkdir()
     (ws / "big.py").write_text("hit\n" * 500)
     out = grep_files("hit", workspace_root=ws, max_results=10)
     assert "more, truncated" in out
 
 
 def test_fs_glob_cannot_escape_workspace_via_dotdot(tmp_path):
-    ws = tmp_path / "ws"; ws.mkdir()
+    ws = tmp_path / "ws"
+    ws.mkdir()
     (tmp_path / "outside.py").write_text("x")
     (ws / "inner.py").write_text("x")
     out = glob_files("../*.py", workspace_root=ws)
@@ -578,20 +779,23 @@ def test_fs_glob_cannot_escape_workspace_via_dotdot(tmp_path):
 def test_fs_glob_dotdot_reentry_renders_workspace_relative(tmp_path):
     # "../ws/*.py" leaves and re-enters the root; the match is confined but
     # must still render workspace-relative, not as "../ws/a.py".
-    ws = tmp_path / "ws"; ws.mkdir()
+    ws = tmp_path / "ws"
+    ws.mkdir()
     (ws / "a.py").write_text("x")
     assert glob_files("../ws/*.py", workspace_root=ws) == "a.py"
 
 
 def test_fs_grep_skips_symlinks_escaping_workspace(tmp_path):
-    ws = tmp_path / "ws"; ws.mkdir()
+    ws = tmp_path / "ws"
+    ws.mkdir()
     import os
+
     outside = tmp_path / "outside.txt"
     outside.write_text("secret hit\n")
-    os.symlink(outside, ws / "link.txt")          # escapes the root -> skipped
+    os.symlink(outside, ws / "link.txt")  # escapes the root -> skipped
     inside = ws / "inside.txt"
     inside.write_text("real hit\n")
-    os.symlink(inside, ws / "inner_link.txt")     # stays inside root -> still read
+    os.symlink(inside, ws / "inner_link.txt")  # stays inside root -> still read
     out = grep_files("hit", workspace_root=ws)
     assert "secret" not in out
     assert not any(line.startswith("link.txt:") for line in out.splitlines())
@@ -601,8 +805,10 @@ def test_fs_grep_skips_symlinks_escaping_workspace(tmp_path):
 def test_fs_glob_lists_symlinked_files_by_name(tmp_path):
     # Listing a symlink's name is not a confinement violation (no content
     # read); pin current behavior so only grep changes.
-    ws = tmp_path / "ws"; ws.mkdir()
+    ws = tmp_path / "ws"
+    ws.mkdir()
     import os
+
     outside = tmp_path / "outside.txt"
     outside.write_text("x")
     os.symlink(outside, ws / "link.txt")
@@ -636,3 +842,93 @@ def test_grep_skips_racy_entries(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "stat", flaky_stat)
     out = grep_files("hit", workspace_root=ws)
     assert "good.py:1:hit" in out
+
+
+# --- TASK-38610: bounded per-target write-lock registry ----------------------
+#
+# The registry is module-global and process-lifetime, so it must not grow
+# without end, and its eviction must never break mutual exclusion for one
+# path. These tests manipulate the private map directly; each one restores
+# the module state it touched.
+
+
+def _lock_map():
+    return local_tool_impls._WRITE_LOCKS
+
+
+def test_write_lock_map_stays_bounded_under_distinct_paths():
+    saved = dict(_lock_map())
+    try:
+        cap = local_tool_impls._WRITE_LOCKS_MAX
+        for index in range(cap + 64):
+            with local_tool_impls._write_lock_for(f"/bounded/scratch-{index}.txt"):
+                pass
+        assert len(_lock_map()) <= cap
+    finally:
+        _lock_map().clear()
+        _lock_map().update(saved)
+
+
+def test_write_lock_map_never_evicts_a_held_entry():
+    saved = dict(_lock_map())
+    try:
+        cap = local_tool_impls._WRITE_LOCKS_MAX
+        key = "/bounded/held-target.txt"
+        with local_tool_impls._write_lock_for(key):
+            held = _lock_map()[key]
+        # A holder that keeps the lock object (as the validated critical
+        # section does) must survive cap-exceeding churn on other paths.
+        held.acquire()
+        try:
+            for index in range(cap + 64):
+                with local_tool_impls._write_lock_for(f"/bounded/other-{index}.txt"):
+                    pass
+            assert _lock_map().get(key) is held
+            assert len(_lock_map()) <= cap + 1
+        finally:
+            held.release()
+    finally:
+        _lock_map().clear()
+        _lock_map().update(saved)
+
+
+def test_write_lock_mutual_exclusion_survives_eviction_pressure():
+    saved = dict(_lock_map())
+    target = "/bounded/shared-target.txt"
+    stop = threading.Event()
+    counter_lock = threading.Lock()
+    concurrent = 0
+    peak = 0
+    try:
+        def writer():
+            nonlocal concurrent, peak
+            for _ in range(1500):
+                with local_tool_impls._write_lock_for(target):
+                    with counter_lock:
+                        concurrent += 1
+                        peak = max(peak, concurrent)
+                    with counter_lock:
+                        concurrent -= 1
+
+        def churner():
+            # Distinct keys past the cap force continuous eviction, so the
+            # writers' entry is repeatedly evicted and re-registered.
+            index = 0
+            while not stop.is_set():
+                with local_tool_impls._write_lock_for(f"/bounded/churn-{index}.txt"):
+                    index += 1
+                    if index > local_tool_impls._WRITE_LOCKS_MAX + 64:
+                        stop.set()
+
+        threads = [threading.Thread(target=writer) for _ in range(3)]
+        threads.append(threading.Thread(target=churner))
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(30)
+        assert not any(thread.is_alive() for thread in threads)
+        assert peak == 1
+    finally:
+        stop.set()
+        _lock_map().clear()
+        _lock_map().update(saved)

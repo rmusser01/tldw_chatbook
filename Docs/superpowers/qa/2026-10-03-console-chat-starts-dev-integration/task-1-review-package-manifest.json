@@ -1,0 +1,24 @@
+{
+  "base": "ec8eda1d39a5d8ae8ed043b4270da173b95f6652",
+  "head": "8fbec5a3a3943003b357e02e619291876e096b90",
+  "full_package": ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/review-ec8eda1d39..8fbec5a3a3.diff",
+  "full_sha256": "1c39917e5c1814b9f4991e34909762375f3b7c70519bfbd5feb980296f53ea55",
+  "full_bytes": 4218501,
+  "supplement": ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/task-1-production-test-supplement.diff",
+  "supplement_sha256": "803addcd93773ea543421a76d2e2732e22de9e370652094d66b736d01a097c2d",
+  "supplement_bytes": 674618,
+  "supplement_argv": [
+    "git",
+    "diff",
+    "-U10",
+    "ec8eda1d39a5d8ae8ed043b4270da173b95f6652",
+    "8fbec5a3a3943003b357e02e619291876e096b90",
+    "--",
+    "tldw_chatbook",
+    "Tests",
+    "scripts",
+    "Docs/User_Guide",
+    "backlog/decisions",
+    "Docs/superpowers/specs"
+  ]
+}

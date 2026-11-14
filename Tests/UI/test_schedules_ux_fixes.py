@@ -1,6 +1,6 @@
 """Regression tests for the Schedules UX critique fixes (UX-001..UX-019).
 
-Covers ADR-031 binding conventions, footer-hint truthfulness, plain-language
+Covers ADR-299 binding conventions, footer-hint truthfulness, plain-language
 conflict labels, sync-bar copy, and reminder-form validation helper behavior.
 """
 
@@ -16,12 +16,14 @@ from textual.app import ComposeResult
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Input, Static
 
+from tldw_chatbook.Scheduling.models import ReminderTask, ScheduleKind
 from tldw_chatbook.UI.Screens.scheduling.conflicts_tab import _conflict_type_label
 from tldw_chatbook.UI.Screens.scheduling.forms.reminder_form import ReminderForm
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import SchedulesWorkbench
 from tldw_chatbook.UI.Screens.scheduling.sync_status_widget import SyncStatusWidget
+from tldw_chatbook.UI.Screens.scheduling.task_detail import TaskDetail, TaskInspector
 
-# ADR-031: keys screens must never bind for app actions.
+# ADR-299: keys screens must never bind for app actions.
 _FORBIDDEN_KEYS = {
     "ctrl+c",
     "ctrl+v",
@@ -62,7 +64,9 @@ def test_every_binding_has_an_implemented_action() -> None:
 def test_footer_shortcuts_match_bindings_exactly() -> None:
     # Escape (clear marks) needs no advertising; everything else must be 1:1.
     binding_keys = {
-        binding.key for binding in SchedulesWorkbench.BINDINGS if binding.key != "escape"
+        binding.key
+        for binding in SchedulesWorkbench.BINDINGS
+        if binding.key != "escape"
     }
     hint_keys = {key for key, _label in SchedulesWorkbench.SCHEDULES_SHORTCUTS}
     assert hint_keys == binding_keys, (
@@ -152,3 +156,50 @@ async def test_future_one_time_run_passes_validation() -> None:
         await pilot.pause()
         # Valid form dismisses with form_data; an invalid one stays on screen.
         assert results and results[0]["title"] == "Test task"
+
+
+class _PanesBeforeFirstTaskHarness(ConsolidatedCSSApp):
+    def compose(self) -> ComposeResult:
+        yield TaskDetail()
+        yield TaskInspector()
+
+
+@pytest.mark.asyncio
+async def test_detail_and_inspector_open_in_their_empty_state_before_any_task() -> None:
+    """TASK-39170 (review r13c-rev1): before the queue's first ``set_task``,
+    both panes show the empty state ``set_task(None)`` paints, not a blank
+    form ("-" rows and a "No conflict" card) for a task nobody selected.
+    The first selection must then reveal both panes' content (r13c-rev2):
+    composing it hidden left ``set_task`` as its only way back on screen."""
+    app = _PanesBeforeFirstTaskHarness()
+    async with app.run_test(size=(160, 60)) as pilot:
+        await pilot.pause()
+        assert app.query_one("#scheduling-task-detail-empty-state").display
+        assert not app.query_one("#scheduling-task-detail-metadata").display
+        assert app.query_one("#scheduling-task-inspector-empty-state").display
+        assert not app.query_one("#scheduling-inspector-metadata").display
+        assert not app.query_one("#scheduling-conflict-card").display
+
+        task = ReminderTask(
+            id="task-1",
+            title="Nightly check",
+            schedule_kind=ScheduleKind.RECURRING,
+            cron="0 * * * *",
+            timezone="UTC",
+        )
+        app.query_one(TaskDetail).set_task(task)
+        app.query_one(TaskInspector).set_task(task)
+        await pilot.pause()
+        for empty_state in (
+            "#scheduling-task-detail-empty-state",
+            "#scheduling-task-inspector-empty-state",
+        ):
+            assert not app.query_one(empty_state).display, empty_state
+        for content in (
+            "#scheduling-task-detail-metadata",
+            "#scheduling-inspector-metadata",
+            "#scheduling-conflict-card",
+        ):
+            widget = app.query_one(content)
+            assert widget.display, content
+            assert widget.region.area > 0, content

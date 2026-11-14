@@ -1,0 +1,44 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ady · not tested
+   New tab     Se│  Chat settings · Chat 1                                                                                                                                                      │
+─────────────────│                                                                                                                                                                              │──────────────────
+                 │  Model and generation  ● Context and memory                                                                                                                                  │       │
+                 │ Applies to this chat only · defaults live in Settings ▸ Console Behavior (F4)                                                                                                │       │
+   Terminal      │                                                                                                                                                                              │       │
+ ────────────────│ Model capacity                                                                                                                                                               │       │
+ Workspaces      │ Model window        unknown, 32,000 assumed                                                                                                                                  │       │
+ ────────────────│ Max tokens          4,096 tokens                                                                                                                                             │       │
+ Conversations   │ Safety margin       640 tokens                                                                                                                                               │       │
+        Archive t│ Safe input ceiling  27,264 tokens                                                                                                                                            │       │
+          Archive│ Context window unknown; budgets use the assumed size. Enter the model's documented limit in Settings ▸ Providers & Models (F4).                                              │       │
+        Search al│                                                                                                                                                                              │       │
+   Chat 1        │ Conversation budget                                                                                                                                                          │       │
+                 │ Budget strategy         █ Automatic                   ▼                                                                                                                      │       │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔│ Conversation max tokens │ if Custom                                                                                                                                          │       │
+  ▊  Filter visib│ Effective           27,264 tokens                                                                                                                                            │       │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁│ Next request        0 tokens                                                                                                                                                 │       │
+                 │ Request overhead    unknown                                                                                                                                                  │       │◂ Inspect
+   New conversati│                                                                                                                                                                              │       │
+  Chats          │ Compaction                                                                                                                                                                   │       │
+   Chat 1        │ When limit nears        │ Ask                         ▼                                                                                                                      │       │
+                 │ Representation          │ Text summary                ▼                                                                                                                      │       │
+ ────────────────│ Visual pages stay on-device until this request is sent; recent turns stay text. Provider image token cost is model-specific and may be estimated.                            │       │
+ Character · No c│ Compact at (%)          │ 80                                                                                                                                                 │       │
+ ────────────────│ Reduce context to (%)   │ 55                                                                                                                                                 │       │
+ Model           │ Summary response max    │ 1024                                                                                                                                             ▆ │       │
+ ────────────────│ Summary response max applies only to Text summary and Hybrid.                                                                                                                │       │
+ Agent           │ If compaction fails     │ Stop and ask                ▼                                                                                                                      │       │
+ ────────────────│ Keep after compaction   │ Memory with recent turns    ▼                                                                                                                      │       │
+ Details         │ Inherited from Console Behavior defaults.                                                                                                                                    │       │
+                 │                                                                                                                                                                              │       │
+                 │ Thinking history replay                                                                                                                                                      │       │
+                 │ ▼ more — scroll for the rest                                                                                                                                                 │       │
+                 │                                                                                                                                                                              │       │
+─────────────────│                                                                                                                                  Esc close  Apply to this chat (Ctrl+Enter)  │──────────────────
+ Status ▾   Libra╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ 0% · Current $0.
+
+█  Composer ▾  Menu  ▌Ask, command, or paste task...                                                                                    Send disabled: type a message       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Alt+C context rail | Ctrl+P · Ctrl+Q

@@ -6,7 +6,7 @@ Integration note (2026-09-05): Renumbered from ADR-115 to ADR-121 to avoid the
 existing Personas decision's identifier. Historical execution reports may retain
 the original number; this is the same Canvas decision, with no policy change.
 Related Tasks: TASK-31226, TASK-31227, TASK-31228, TASK-31229, TASK-31230, TASK-31003
-Related: TASK-31003, ADR-069, ADR-032
+Related: TASK-31003, ADR-317, ADR-300
 
 ### Current-dev schema integration (2026-09-05, TASK-31742)
 
@@ -530,6 +530,23 @@ validated proxy/keyring posture. Independent review approved commits
 `69405e7c8d`, `e69141538f`, and `ff8a45fb65`. Quota measurements and complete
 rollout verification remain in TASK-31232's subsequent steps.
 
+### Disposable Personal Context budget preview (TASK-34800)
+
+Next Send inspection reserves the same Canvas schemas, runtime-profile guidance
+and direct/discovery policy as live first-request planning. It uses immutable
+profile and catalog metadata from the existing Canvas owner, never an executable provider, run
+registration, staging record or registration authority. The live registry's
+exact-provider authentication and mutation classification remain unchanged.
+
+Load schemas incrementally inside the shared guarded probe, after persona
+narrowing; unreadable or oversized catalogs use the same discovery fallback.
+Reuse interactive-owner capture/validation plus exact session identity through
+final snapshot publication and the Inspector's later async validation. Closure,
+disable, durable/temporary replacement, promotion or branch changes discard
+the result and buffered diagnostic sidecar. Schema-only planning cannot change Canvas selection or grant
+permission. This corrects the existing preview boundary under ADR-202; it does
+not activate memory capture or forgetting.
+
 ### Runtime quota qualification record
 
 Task 7.2 lowered V1 ceilings to 1,800 DOM nodes, 900 CSS rules, and 500
@@ -692,9 +709,33 @@ authoritative dashboards.
 - [Canvas V1 runtime compatibility and security boundary](../../Docs/Canvas/V1_RUNTIME_COMPATIBILITY.md)
 - [Served-mode authentication and operations](../../tldw_chatbook/Web_Server/README.md)
 - [TASK-31003: Define server synchronization contract for Canvas artifacts](../tasks/task-31003%20-%20Define-server-synchronization-contract-for-Canvas-artifacts.md)
-- [ADR-069: Console project-instruction local state and preflight](069-console-project-instruction-local-state-and-preflight.md)
-- [ADR-032: Local agent tool permission boundary](032-local-agent-tool-permission-boundary.md)
+- [ADR-317: Console project-instruction local state and preflight](317-console-project-instruction-local-state-and-preflight.md)
+- [ADR-300: Local agent tool permission boundary](300-local-agent-tool-permission-boundary.md)
 - [Claude Code artifacts](https://code.claude.com/docs/en/artifacts)
 - [Claude Code checkpointing](https://code.claude.com/docs/en/checkpointing)
 - [Claude Artifacts](https://support.claude.com/en/articles/9487310-what-are-artifacts-and-how-do-i-use-them)
 - [ChatGPT Visualizations](https://learn.chatgpt.com/docs/visualizations)
+
+
+### Native background policy-read cooperation (2026-11-07; before implementation)
+
+An enabled malformed-config diagnostic observed the Console core decline its first rebuild-lock attempt while a Canvas execution-policy worker was inside the canonical native configuration scope. A genuine disabled-at-startup control converged under the original Console assertions; this does not establish a complete timing cause.
+
+Select only cooperative admission for the native background watcher: its canonical poll may decline a busy REBUILD or FILE lock and retry on the unchanged0.25-second loop. Both locks, in the existing order, remain held through an accepted original live policy read. A declined poll is temporary unavailable, never an enabled verdict or a restart-disable observation. Actual effect/kill-switch checks, explicit disable, canonical policy/failure handling, source admission, restart latch, maintenance and physical cancellation retirement remain live and unchanged. Custom reader routes retain their original behavior. No policy verdict/failure cache, TTL or timer change is introduced. Persistent contention can delay background observation; this does not authorize skipping an effect-time check.
+
+Keep policy/error normalization in the existing lightweight Canvas policy owner, with the runtime's original signature delegating through an opaque owner so reader lookup stays inside the original try. No eager heavy controller import is selected. Implement only after real lock-contention RED, original callback/error/lock/lifetime parity checks and the enabled malformed-config regressions; a failed candidate is reassessed rather than combined with another scheduling guess. See Docs/superpowers/plans/2026-11-07-console-canvas-policy-poll-cooperation.md.
+
+
+### Staged Console handoff opportunity (2026-11-07; before successor implementation)
+
+The nonblocking-only poll candidate did not satisfy the enabled finite-reader oracle. Select a single staged scheduling handoff, not general fairness: record owed CORE early without poll suppression; activate only at the original qualified Console warm/read stage, retain the exact successful current warm/publication receipt across physical-read retirement into one original guarded callback attempt, then retire suppression. Identity participates only through its existing issued read; an installed unchanged publication qualifies without requiring a changed-publication worker. No new physical read, worker or timer is selected.
+
+Only canonical Canvas background polls decline atomically while that opaque logical handoff is active. The short registry/admission mutex is never held through the live callback. Both original native locks still span accepted live policy reads; effect checks, kill switch, restart latch, custom seams, admission, cancellation and physical-read ownership remain unchanged. A logical handoff never substitutes for physical read custody. Warm failure/cancellation, source/visit loss, suspend/unmount/maintenance and actual runtime view replacement/detach release it. A coalesced callback with no in-progress FULL and no whole replay also abandons it. Each lease ends after one guarded attempt, including an attempt abandoned for another reader; ordinary replay remains owed, without an unbounded reservation across unrelated FULL awaits.
+
+Preserve original CORE-before-draft/workspace order, tabs-before-warm responsiveness, original warm/backoff/TTL and0.2/0.25 cadences. Cold-only owed work is ineligible until the original successful warm receipt. This provides a bounded handoff opportunity against background polling, not a starvation guarantee against arbitrary readers. Source qualification and cleanup controls plus the original enabled malformed/finite-reader oracles decide acceptance; if this third candidate fails, stop for an architectural discussion. See the staged successor section in the existing cooperation plan. No physical performance or qualification is established by the unit controls.
+
+#### Accepted implementation boundary
+
+The installed handoff is generation-bound before queueing. FULL warm activates CORE only; identity eligibility follows its own actual checked-read installation, even when unchanged. One READY guarded attempt, including busy/cold refusal, consumes only that saved token and cannot close a successor; a still-reading token retains its original retirement path. An idle coalesced callback without FULL/whole replay abandons CORE without cancelling an independent identity retry. Existing physical-read ownership remains separate.
+
+The original enabled finite-reader and malformed-config integration oracles now pass at unchanged limits. Manual callback/helper controls are scheduling-opportunity evidence, not timer-delivery or physical-performance proof. Three legacy worker assertion conditions also reproduce on exact a0; no broader lifetime or causal claim follows. Final-source physical qualification remains open. Implementation evidence and source bindings are recorded in the [handoff followup](../../Docs/superpowers/qa/2026-11-06-console-approval-resync/canvas-staged-handoff-followup.md).

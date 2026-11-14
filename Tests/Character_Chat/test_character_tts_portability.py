@@ -124,7 +124,9 @@ def _detailed_import() -> Callable[..., object]:
 def test_valid_attachment_is_returned_but_stripped_before_character_persistence(
     db_instance: CharactersRAGDB,
 ) -> None:
-    outcome = _detailed_import()(db_instance, json.dumps(_card(attachment=_valid_attachment())).encode())
+    outcome = _detailed_import()(
+        db_instance, json.dumps(_card(attachment=_valid_attachment())).encode()
+    )
 
     assert outcome is not None
     assert outcome.created is True
@@ -186,7 +188,9 @@ def test_skipped_or_invalid_attachment_does_not_block_or_persist_character(
 ) -> None:
     outcome = _detailed_import()(
         db_instance,
-        json.dumps(_card(name=f"Character {warning_code}", attachment=attachment)).encode(),
+        json.dumps(
+            _card(name=f"Character {warning_code}", attachment=attachment)
+        ).encode(),
     )
 
     assert outcome is not None
@@ -238,16 +242,17 @@ def test_personas_local_wrapper_exposes_the_structured_import_outcome(
 ) -> None:
     expected = object()
     fake_db = object()
-    monkeypatch.setattr(character_handler, "_default_character_db", lambda: fake_db)
     monkeypatch.setattr(
         character_lib,
         "import_and_save_character_from_file_with_outcome",
-        lambda db, path: expected if (db, path) == (fake_db, "/chosen/card.json") else None,
+        lambda db, path: (
+            expected if (db, path) == (fake_db, "/chosen/card.json") else None
+        ),
     )
     importer = getattr(character_handler, "import_character_card_with_outcome", None)
 
     assert callable(importer), "the Personas structured import wrapper is missing"
-    assert importer("/chosen/card.json") is expected
+    assert importer(fake_db, "/chosen/card.json") is expected
 
 
 def test_read_only_attachment_inspection_returns_valid_profile_without_a_database() -> (
@@ -284,9 +289,7 @@ def test_read_only_attachment_inspection_reports_absence_and_bounded_warning() -
     inspector = getattr(character_lib, "inspect_character_card_tts_attachment", None)
     assert callable(inspector), "the read-only attachment inspection API is missing"
     without_attachment = _card(attachment=_valid_attachment())
-    without_attachment["data"]["extensions"].pop(
-        CHARACTER_CARD_TTS_EXTENSION_KEY
-    )
+    without_attachment["data"]["extensions"].pop(CHARACTER_CARD_TTS_EXTENSION_KEY)
 
     absent = inspector(json.dumps(without_attachment).encode())
     unsupported = inspector(
@@ -311,7 +314,9 @@ def test_read_only_attachment_inspection_never_logs_character_text() -> None:
         "extensions": {},
     }
     messages: list[str] = []
-    sink = loguru_logger.add(lambda message: messages.append(str(message)), level="DEBUG")
+    sink = loguru_logger.add(
+        lambda message: messages.append(str(message)), level="DEBUG"
+    )
     try:
         result = character_lib.inspect_character_card_tts_attachment(
             json.dumps(payload).encode()
@@ -332,7 +337,9 @@ def test_attachment_inspection_never_logs_spec_or_lorebook_values() -> None:
         "entries": [secret],
     }
     messages: list[str] = []
-    sink = loguru_logger.add(lambda message: messages.append(str(message)), level="DEBUG")
+    sink = loguru_logger.add(
+        lambda message: messages.append(str(message)), level="DEBUG"
+    )
     try:
         result = character_lib.inspect_character_card_tts_attachment(
             json.dumps(payload).encode()
@@ -356,7 +363,9 @@ def test_attachment_inspection_hides_lorebook_conversion_exception_detail(
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError(secret)),
     )
     messages: list[str] = []
-    sink = loguru_logger.add(lambda message: messages.append(str(message)), level="DEBUG")
+    sink = loguru_logger.add(
+        lambda message: messages.append(str(message)), level="DEBUG"
+    )
     try:
         result = character_lib.inspect_character_card_tts_attachment(
             json.dumps(payload).encode()
@@ -494,7 +503,9 @@ def test_png_export_path_failure_never_logs_sensitive_destination(
         extensions={},
     )
     messages: list[str] = []
-    sink = loguru_logger.add(lambda message: messages.append(str(message)), level="DEBUG")
+    sink = loguru_logger.add(
+        lambda message: messages.append(str(message)), level="DEBUG"
+    )
     try:
         exported = character_lib.export_character_card_to_png(
             db_instance,
@@ -536,7 +547,9 @@ def test_default_png_export_is_tts_free_and_preserves_unrelated_extensions(
     payload = json.loads(embedded)
     assert payload["data"]["extensions"] == extensions
     assert CHARACTER_CARD_TTS_EXTENSION_KEY not in payload["data"]["extensions"]
-    assert db_instance.get_character_card_by_id(character_id)["extensions"] == extensions
+    assert (
+        db_instance.get_character_card_by_id(character_id)["extensions"] == extensions
+    )
 
 
 def test_valid_png_attachment_is_returned_and_stripped_before_persistence(
@@ -579,7 +592,9 @@ def test_hostile_png_attachment_is_skipped_and_never_persisted(
 def test_malformed_png_metadata_never_logs_untrusted_content() -> None:
     secret = "credential-private-origin-message-text"
     messages: list[str] = []
-    sink = loguru_logger.add(lambda message: messages.append(str(message)), level="DEBUG")
+    sink = loguru_logger.add(
+        lambda message: messages.append(str(message)), level="DEBUG"
+    )
     try:
         result = character_lib.inspect_character_card_tts_attachment(
             _png_card_bytes({}, encoded=f"!!!!{secret}!!!!")

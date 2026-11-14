@@ -1,0 +1,84 @@
+# RED-first and negative controls, re-run 2026-10-04 (finding 3)
+
+All runs: serial pytest (-p no:xdist -p no:randomly) under env -i (scratch HOME/XDG/TLDW_CONFIG_PATH,
+null keyring), PYTHONPATH=<that tree>, no admission plugin; every test in
+Tests/UI/test_settings_model_defaults_rows.py is @private_profile_test.
+
+## RED-first: production code at the Task 5 base 337dd68692, the test file from 88e08f2f74
+(a detached worktree at 337dd68692 with only Tests/UI/test_settings_model_defaults_rows.py copied in)
+PASSED Tests/UI/test_settings_model_defaults_rows.py::test_saving_an_edit_and_a_blank_changes_exactly_those_config_keys
+FAILED Tests/UI/test_settings_model_defaults_rows.py::test_model_defaults_follow_default_model_open_and_name_the_pair
+FAILED Tests/UI/test_settings_model_defaults_rows.py::test_core_rows_come_first_each_one_row_with_source_and_help[anthropic-claude-sonnet-4-5-shown_core0]
+FAILED Tests/UI/test_settings_model_defaults_rows.py::test_core_rows_come_first_each_one_row_with_source_and_help[llama_cpp-qwen-shown_core1]
+FAILED Tests/UI/test_settings_model_defaults_rows.py::test_every_select_row_is_one_row_on_both_cards
+FAILED Tests/UI/test_settings_model_defaults_rows.py::test_a_blank_field_says_what_it_inherits_and_from_where
+FAILED Tests/UI/test_settings_model_defaults_rows.py::test_help_and_source_text_clear_aa_against_the_detail_pane[agentic_terminal]
+FAILED Tests/UI/test_settings_model_defaults_rows.py::test_help_and_source_text_clear_aa_against_the_detail_pane[textual-light]
+FAILED Tests/UI/test_settings_model_defaults_rows.py::test_sampling_is_one_closed_row_naming_what_anthropic_does_not_accept[211x44]
+FAILED Tests/UI/test_settings_model_defaults_rows.py::test_sampling_is_one_closed_row_naming_what_anthropic_does_not_accept[235x52]
+Each failure's first line, in the order above (after the PASSED line):
+E           --- child failure: AssertionError: assert True is False
+E           --- child failure: AssertionError: assert [None, 'setti...ens-row', ...] == ['settings-mo...t-tokens-row']
+E           --- child failure: AssertionError: assert [None, 'setti...eed-row', ...] == ['settings-mo...t-tokens-row']
+E           --- child failure: AssertionError: ('#settings-providers-models-card', 'settings-provider-auth-source', Region(x=65, y=18, width=93, height=3))
+E           --- child failure: textual.css.query.NoMatches: No nodes match '#settings-model-profile-temperature-source' on SettingsScreen(classes='shell-header-normal')
+E           --- child failure: textual.css.query.NoMatches: No nodes match '#settings-model-profile-temperature-source' on SettingsScreen(classes='shell-header-normal')
+E           --- child failure: textual.css.query.NoMatches: No nodes match '#settings-model-profile-temperature-source' on SettingsScreen(classes='shell-header-normal')
+E           --- child failure: textual.css.query.NoMatches: No nodes match '#settings-model-sampling' on SettingsScreen(classes='shell-header-normal')
+E           --- child failure: textual.css.query.NoMatches: No nodes match '#settings-model-sampling' on SettingsScreen(classes='shell-header-normal')
+9 failed, 1 passed in 114.87s (0:01:54)
+9 of 10 red on the unchanged code, each for a missing Task 5 behaviour. The one green case is AC#7's
+real save: blank-deletes-the-override already worked at the base, so that test is a regression guard
+(as the Task 5 report said).
+
+## Negative controls at 88e08f2f74
+Each mutation is one exact-string replacement asserted to match once, then the whole new test file
+runs, then 'git checkout -- tldw_chatbook' and 'git diff --quiet' plus an empty 'git status
+--porcelain' prove the tree is clean again.
+
+NC1 sampling-only hidden set: settings_field_rows.hidden_model_default_fields
+    'for name in SAMPLING_FIELDS + CORE_FIELDS\n        if not screen' -> 'for name in SAMPLING_FIELDS\n        if not screen'
+    (the first attempt matched the string twice -- compose_model_defaults has the same loop -- and was
+    refused by the match-once assert; the anchored string above matches only the hidden-set function)
+NC2 a blank keeps the override: settings_screen._updated_model_defaults_for_values
+    'next_profile.pop(profile_key, None)' -> 'pass'
+
+### nc1-sampling-only-hidden
+=== nc1-sampling-only-hidden at 88e08f2f74
+mutated <tree>/tldw_chatbook/UI/Settings_Modules/settings_field_rows.py
+ tldw_chatbook/UI/Settings_Modules/settings_field_rows.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+E           --- child failure: AssertionError: assert 'Sampling · T...to list them)' == 'Sampling · T...to list them)'
+E                       assert sampling.collapsed is True
+E                       assert sampling.region.height == 1
+E                       assert sampling.query_one(CollapsibleTitle).region.height == 1
+E                       assert sampling.collapsed is True
+E                       assert sampling.region.height == 1
+E                       assert sampling.query_one(CollapsibleTitle).region.height == 1
+E           1 failed in 7.55s
+E           --- child failure: AssertionError: assert 'Sampling · T... accept them)' == 'Sampling · T...to list them)'
+E                       assert sampling.collapsed is True
+E                       assert sampling.region.height == 1
+E                       assert sampling.query_one(CollapsibleTitle).region.height == 1
+E                       assert sampling.collapsed is True
+E                       assert sampling.region.height == 1
+E                       assert sampling.query_one(CollapsibleTitle).region.height == 1
+E           1 failed in 7.68s
+FAILED Tests/UI/test_settings_model_defaults_rows.py::test_sampling_is_one_closed_row_naming_what_anthropic_does_not_accept[211x44]
+FAILED Tests/UI/test_settings_model_defaults_rows.py::test_sampling_is_one_closed_row_naming_what_anthropic_does_not_accept[235x52]
+2 failed, 8 passed in 112.57s (0:01:52)
+rc=1
+restored: tree clean
+
+### nc2-blank-keeps-override
+=== nc2-blank-keeps-override at 88e08f2f74
+mutated <tree>/tldw_chatbook/UI/Screens/settings_screen.py
+ tldw_chatbook/UI/Screens/settings_screen.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+E           --- child failure: AssertionError: assert {'Prompts': {...', ...}}, ...} == {'Prompts': {...', ...}}, ...}
+E                       assert not screen._category_has_unsaved_changes(
+E           1 failed in 9.52s
+FAILED Tests/UI/test_settings_model_defaults_rows.py::test_saving_an_edit_and_a_blank_changes_exactly_those_config_keys
+1 failed, 9 passed in 115.69s (0:01:55)
+rc=1
+restored: tree clean

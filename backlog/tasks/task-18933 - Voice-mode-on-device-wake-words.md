@@ -40,3 +40,15 @@ Reason: introduces an always-on audio dependency and a new privacy boundary (on-
 3. Phrase config + stop-phrase handling
 4. No-egress test, gating tests, measured accuracy report, docs (Speech services guide)
 <!-- SECTION:PLAN:END -->
+
+## Deferral note (2026-10-11, dev `9f8533686c`)
+
+DEFERRED from the t2-hermes porting slice — untouched, deliberately. The
+task requires ADR-074 (engine choice, dependency footprint, arm/disarm
+lifecycle, the no-egress-while-armed privacy boundary) BEFORE code, an
+always-on audio dependency decision, and a measured false-positive/negative
+report on a recorded test set (AC#4) — none of which fit the slice's
+budget. Nothing was implemented. Note the environment constraint observed
+in this slice: the dev venv has no audio stack loaded (PyAudio/sounddevice
+absent per startup warnings), so the engine-dependency decision will also
+need an optional-dependency group and gating work.

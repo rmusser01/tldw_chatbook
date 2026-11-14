@@ -1,0 +1,1 @@
+Read-only executable reversal: exact original bytes and full AST restored; original assertion identity and every nonselected declaration preserved.

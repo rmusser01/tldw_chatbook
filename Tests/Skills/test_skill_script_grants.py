@@ -2,7 +2,10 @@
 
 import pytest
 
-from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY, get_capability_entry
+from tldw_chatbook.runtime_policy.registry import (
+    CAPABILITY_REGISTRY,
+    get_capability_entry,
+)
 from tldw_chatbook.runtime_policy.types import PolicyDeniedError
 
 

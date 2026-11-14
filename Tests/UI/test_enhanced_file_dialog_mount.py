@@ -290,7 +290,6 @@ async def test_selecting_file_does_not_populate_hidden_path_input(tmp_path):
         assert path_input.value == ""
 
 
-
 @pytest.mark.asyncio
 async def test_open_dialog_confirms_selected_file(tmp_path):
     """Pushing EnhancedFileOpen and clicking Select returns the chosen file."""
@@ -484,9 +483,8 @@ async def test_confirm_coalesces_recent_and_last_dir_into_one_write(tmp_path):
     saved_recent = on_disk["filepicker"]["recent_test_confirm_open_coalesced"]
     assert saved_recent, "recent-locations entry was not actually persisted"
     assert saved_recent[0]["path"] == str(test_file)
-    assert (
-        on_disk["filepicker"]["last_dir_test_confirm_open_coalesced"]
-        == str(tmp_path)
+    assert on_disk["filepicker"]["last_dir_test_confirm_open_coalesced"] == str(
+        tmp_path
     )
 
 
@@ -665,7 +663,9 @@ async def test_directory_change_updates_breadcrumbs_and_bookmark_button(tmp_path
             await pilot.pause()
 
         # Sanity check: initial breadcrumbs show the starting directory.
-        initial_breadcrumbs = [str(btn.label) for btn in dialog.query("#path-breadcrumbs Button")]
+        initial_breadcrumbs = [
+            str(btn.label) for btn in dialog.query("#path-breadcrumbs Button")
+        ]
         assert tmp_path.name in initial_breadcrumbs or "🏠" in initial_breadcrumbs
 
         # Navigate into the subdirectory.
@@ -674,8 +674,12 @@ async def test_directory_change_updates_breadcrumbs_and_bookmark_button(tmp_path
         await pilot.pause()
 
         # Breadcrumbs should now include the subdirectory name.
-        breadcrumbs = [str(btn.label) for btn in dialog.query("#path-breadcrumbs Button")]
-        assert "subdir" in breadcrumbs, f"Expected 'subdir' in breadcrumbs, got {breadcrumbs}"
+        breadcrumbs = [
+            str(btn.label) for btn in dialog.query("#path-breadcrumbs Button")
+        ]
+        assert "subdir" in breadcrumbs, (
+            f"Expected 'subdir' in breadcrumbs, got {breadcrumbs}"
+        )
 
         # The bookmark button tooltip should reflect the new path (even if not bookmarked).
         add_bookmark = dialog.query_one("#add-bookmark")
@@ -759,8 +763,12 @@ async def test_single_select_on_dir_does_not_navigate(tmp_path):
         dir_nav.action_select()
         await pilot.pause()
 
-        assert dir_nav.location == start_location, "select must not descend into the directory"
-        assert dir_nav.highlighted == subdir_index, "the directory should still be highlighted"
+        assert dir_nav.location == start_location, (
+            "select must not descend into the directory"
+        )
+        assert dir_nav.highlighted == subdir_index, (
+            "the directory should still be highlighted"
+        )
 
 
 @pytest.mark.asyncio
@@ -795,7 +803,9 @@ async def test_open_highlighted_descends_dir(tmp_path):
                 break
             await pilot.pause()
 
-        assert dir_nav.location == subdir.resolve(), "open must descend into the directory"
+        assert dir_nav.location == subdir.resolve(), (
+            "open must descend into the directory"
+        )
 
 
 @pytest.mark.asyncio
@@ -826,7 +836,16 @@ async def test_double_click_opens_highlighted_dir(tmp_path):
         dir_nav.highlighted = subdir_index
         dir_nav.on_click(
             events.Click(
-                dir_nav, 0, 0, 0, 0, button=1, shift=False, meta=False, ctrl=False, chain=1
+                dir_nav,
+                0,
+                0,
+                0,
+                0,
+                button=1,
+                shift=False,
+                meta=False,
+                ctrl=False,
+                chain=1,
             )
         )
         await pilot.pause()
@@ -860,7 +879,9 @@ async def test_double_click_opens_highlighted_dir(tmp_path):
                 break
             await pilot.pause()
 
-        assert dir_nav.location == subdir.resolve(), "double-click must descend into the directory"
+        assert dir_nav.location == subdir.resolve(), (
+            "double-click must descend into the directory"
+        )
 
 
 @pytest.mark.asyncio
@@ -1091,7 +1112,9 @@ async def test_go_button_descends_highlighted_dir_without_filename(tmp_path):
         await pilot.pause()
 
         filename_input = dialog.query_one("#filename-input", Input)
-        assert filename_input.value == "", "no filename should be typed for this scenario"
+        assert filename_input.value == "", (
+            "no filename should be typed for this scenario"
+        )
 
         dialog.query_one("#select").press()
 
@@ -1137,7 +1160,9 @@ async def test_go_button_opens_highlighted_file_without_filename(tmp_path):
         await pilot.pause()
 
         filename_input = dialog.query_one("#filename-input", Input)
-        assert filename_input.value == "", "no filename should be typed for this scenario"
+        assert filename_input.value == "", (
+            "no filename should be typed for this scenario"
+        )
 
         dialog.query_one("#select").press()
 
@@ -1341,9 +1366,7 @@ class _TrackedSafeFileOpen(EnhancedFileOpen):
         self.dismiss_results.append(result)
         super().dismiss(result)
 
-    def _persist_recent_and_last_directory(
-        self, last_directory: Path | None
-    ) -> None:
+    def _persist_recent_and_last_directory(self, last_directory: Path | None) -> None:
         self.persisted_last_directories.append(last_directory)
 
 
@@ -1362,9 +1385,7 @@ class _TrackedSafeFileSave(EnhancedFileSave):
         self.dismiss_results.append(result)
         super().dismiss(result)
 
-    def _persist_recent_and_last_directory(
-        self, last_directory: Path | None
-    ) -> None:
+    def _persist_recent_and_last_directory(self, last_directory: Path | None) -> None:
         self.persisted_last_directories.append(last_directory)
 
 

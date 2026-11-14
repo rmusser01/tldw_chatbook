@@ -1,0 +1,12 @@
+[
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-0\\test_history_keeps_live_retire0\\private-profile-process\\pytest.log",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\m1-red-child\\pytest.log",
+    "sha256": "0dfb35e2613c540fa3eb785ea708f060fa1641997fca8d1f290eeab826af3164"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-0\\test_history_keeps_live_retire0\\private-profile-process\\pytest.xml",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\m1-red-child\\pytest.xml",
+    "sha256": "e4bb7ec7bba75c5f40bb6ddf542a2aae013dff1cc6a0279d27ac3926fae8225d"
+  }
+]

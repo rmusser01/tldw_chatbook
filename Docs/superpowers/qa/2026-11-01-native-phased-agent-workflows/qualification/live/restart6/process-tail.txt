@@ -1,0 +1,159 @@
+GitHub/tldw_chatbook/tldw_chatbook
+2026-11-04 19:58:33.750 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2327 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-11-04 19:58:33.750 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2645 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-11-04 19:58:33.757 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3887 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task10-live-7_b_hr3m/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-11-04 19:58:33.757 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3918 - load_settings: Configuration cached for future use
+2026-11-04 19:58:33.757 | INFO     | tldw_chatbook.config:<module>:11835 - Default API Endpoint (from config.py global scope): openai
+2026-11-04 19:58:33.757 | DEBUG    | tldw_chatbook.config:<module>:11858 - CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access
+2026-11-04 19:58:34.013 | INFO     | tldw_chatbook.Utils.optional_deps:<module>:1554 - Lazy dependency checking enabled (default). Dependencies will be checked on first use.
+2026-11-04 19:58:34.044 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+2026-11-04 19:58:34.217 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+Traceback (most recent call last):
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py", line 111, in until
+    await pilot.pause(.05)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/pilot.py", line 546, in pause
+    await asyncio.sleep(delay)
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py", line 665, in sleep
+    return await future
+           ^^^^^^^^^^^^
+asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py", line 107, in until
+    async with asyncio.timeout(seconds):
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/timeouts.py", line 115, in __aexit__
+    raise TimeoutError from exc_val
+TimeoutError
+Traceback (most recent call last):
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py", line 111, in until
+    await pilot.pause(.05)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/pilot.py", line 546, in pause
+    await asyncio.sleep(delay)
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py", line 665, in sleep
+    return await future
+           ^^^^^^^^^^^^
+asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py", line 110, in until
+    await handle_pending()
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py", line 174, in handle_pending
+    await click('#console-workflow-line')
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py", line 141, in click
+    try: await until(hit,selector,12)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py", line 107, in until
+    async with asyncio.timeout(seconds):
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/timeouts.py", line 115, in __aexit__
+    raise TimeoutError from exc_val
+TimeoutError
+Traceback (most recent call last):
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py", line 111, in until
+    await pilot.pause(.05)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/pilot.py", line 546, in pause
+    await asyncio.sleep(delay)
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py", line 665, in sleep
+    return await future
+           ^^^^^^^^^^^^
+asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py", line 107, in until
+    async with asyncio.timeout(seconds):
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/timeouts.py", line 115, in __aexit__
+    raise TimeoutError from exc_val
+TimeoutError
+--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+Traceback (most recent call last):
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py", line 111, in until
+    await pilot.pause(.05)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/pilot.py", line 546, in pause
+    await asyncio.sleep(delay)
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py", line 665, in sleep
+    return await future
+           ^^^^^^^^^^^^
+asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/app.py", line 2210, in run_test
+    yield pilot
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py", line 253, in main
+    await until(lambda:app.screen.snapshot.status=='awaiting_result_review' and len(app.screen.snapshot.results)==2,'real corrected check',160,approve_tools=True)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py", line 110, in until
+    await handle_pending()
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py", line 174, in handle_pending
+    await click('#console-workflow-line')
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py", line 141, in click
+    try: await until(hit,selector,12)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py", line 107, in until
+    async with asyncio.timeout(seconds):
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/timeouts.py", line 115, in __aexit__
+    raise TimeoutError from exc_val
+TimeoutError
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py", line 104, in main
+    async with app.run_test(size=(160,55)) as pilot:
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py", line 231, in __aexit__
+    await self.gen.athrow(value)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/app.py", line 2214, in run_test
+    await app._shutdown()
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/app_lifecycle.py", line 833, in _shutdown
+    raise owner_error
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/app_lifecycle.py", line 1088, in on_unmount
+    await self._shutdown_app_owned_lifecycles()
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/app_lifecycle.py", line 744, in _shutdown_app_owned_lifecycles
+    await self._shutdown_console_runtime()
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/app_lifecycle.py", line 567, in _shutdown_console_runtime
+    await asyncio.shield(task)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/app_lifecycle.py", line 560, in settle_view_and_dispose
+    await dispose_console_runtime(self)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py", line 7091, in dispose_console_runtime
+    await runtime.dispose()
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py", line 6428, in dispose
+    workflow_cancellation = await coordinator.close(_runtime_disposal=self)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Chat/console_workflow_runs.py", line 3478, in close
+    raise RuntimeError("workflow_original_shutdown_unresolved")
+RuntimeError: workflow_original_shutdown_unresolved
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py", line 322, in <module>
+    asyncio.run(main())
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py", line 312, in main
+    await runtime.dispose()
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py", line 6428, in dispose
+    workflow_cancellation = await coordinator.close(_runtime_disposal=self)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Chat/console_workflow_runs.py", line 3478, in close
+    raise RuntimeError("workflow_original_shutdown_unresolved")
+RuntimeError: workflow_original_shutdown_unresolved

@@ -51,7 +51,11 @@ def _selected_treatment_for(css_text: str, kind: str) -> str:
     for selector, body in _rules(css_text):
         for token in selector.split(","):
             token = token.strip()
-            if kind_class in token and _SELECTED in token and "." + kind_class + "." in token + ".":
+            if (
+                kind_class in token
+                and _SELECTED in token
+                and "." + kind_class + "." in token + "."
+            ):
                 # both classes on one element (no descendant space between them)
                 compound = token.replace(" ", "")
                 if f".{kind_class}" in compound and f".{_SELECTED}" in compound:
@@ -80,7 +84,9 @@ def test_selected_tool_and_system_messages_share_the_selected_treatment():
             ),
             "",
         )
-        assert "bold underline" in selected, f"{css_path.name}: baseline selected rule missing"
+        assert "bold underline" in selected, (
+            f"{css_path.name}: baseline selected rule missing"
+        )
 
         for kind in ("tool", "system"):
             treatment = _selected_treatment_for(css, kind)
@@ -187,9 +193,7 @@ def test_zero_or_absent_activity_count_adds_no_row(counts: dict[str, int]) -> No
     transcript.set_messages(_transcript_messages())
     transcript.set_library_activity_counts(counts)
 
-    assert all(
-        row.kind != "library-activity" for row in transcript._transcript_rows()
-    )
+    assert all(row.kind != "library-activity" for row in transcript._transcript_rows())
 
 
 class _CitationTranscriptHarness(App):
@@ -211,13 +215,14 @@ async def test_citation_button_click_preserves_existing_message_selection() -> N
 
         assert transcript.selected_message_id == "user-native-id"
         assert (
-            "console-transcript-citation-sources"
-            in transcript.PROTECTED_CLICK_CLASSES
+            "console-transcript-citation-sources" in transcript.PROTECTED_CLICK_CLASSES
         )
 
 
 @pytest.mark.asyncio
-async def test_count_only_change_reconciles_footer_without_rebuilding_messages() -> None:
+async def test_count_only_change_reconciles_footer_without_rebuilding_messages() -> (
+    None
+):
     app = _CitationTranscriptHarness()
 
     async with app.run_test() as pilot:
@@ -234,8 +239,9 @@ async def test_count_only_change_reconciles_footer_without_rebuilding_messages()
         )
 
     assert button.label.plain == "Cited sources (3)"
-    assert after["assistant-turn:assistant-native-id"] == before[
-        "assistant-turn:assistant-native-id"
-    ]
+    assert (
+        after["assistant-turn:assistant-native-id"]
+        == before["assistant-turn:assistant-native-id"]
+    )
     for row_key, build_count in before.items():
         assert after[row_key] == build_count

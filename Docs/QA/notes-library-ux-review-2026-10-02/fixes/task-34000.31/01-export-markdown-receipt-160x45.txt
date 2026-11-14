@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌──────────────────────────────────────────────────────────────┐  N  Saved 07:25 · Export complete. · Next: Keep editing; changes save automatically.   │
+│   a  │ Library notes · Ready                                        │  o    ‹ Notes   Paper notes: Retrieval practice                                        │
+│   v  │ Notes (122)                                                  │  t                                                                                     │
+│      │ These notes live in the Library's own database — for notes   │  e                                                                                     │
+│      │ that live in a folder on disk, switch to Folder files. To    │  s   In the Library database only — no file on disk                                    │
+│      │ copy or keep a folder synced, choose Add from files.         │     Saved                                                                              │
+│      │                                                              │         Edit     Preview     Info                                                      │
+│      │ Filter                                                       │         Save     Use in Console                                                        │
+│      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │     ┌────────────────────────────────────────────────────────────────────────────────┐ │
+│      │ ▊ Filter notes… (Enter)                                    ▎ │     │Properties                                                                      │ │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     │Keywords                                                                        │ │
+│      │                                                              │     │▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎│ │
+│      │    New     Sort: Newest     ○ Select                         │     │▊ meeting, thesis                                                              ▎│ │
+│ ---> │    Add from files…     Export                                │     │▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎│ │
+│      │ Folders & placement                                          │     │                                                                                │ │
+│      │    New folder     ○ Add to folder     ○ Move note            │     │Created   2026-10-24 07:21 · 4m ago                                             │ │
+│      │    ○ Remove placement                                        │     │Modified  2026-10-24 07:25 · just now                                           │ │
+│      │ Note actions unavailable — select a note in the list         │     │Version   v3                                                                    │ │
+│      │                                                              │<--- │Words     60 words                                                              │ │
+│      │                                                              │     │Linked from (1)                                                                 │ │
+│      │   Loading folders…                                           │     │  Thesis outline — retrieval-augmented tutoring                                 │ │
+│      │  ▾ Unfiled                                                   │     │Reuse & Export                                                                  │ │
+│      │     Loading notes…                                           │     │  Copy                                                                          │ │
+│ ---> │                                                              │     │  Export Markdown                                                               │ │
+│      │                                                              │     │  Export text                                                                   │ │
+│      │                                                              │     │Export complete.                                                                │ │
+│      │                                                              │     │Danger                                                                          │ │
+│      │                                                              │     │    ┃ Delete ┃                                                                  │ │
+│      │                                                              │     │                                                                                │ │
+│      │                                                              │     │                                                                                │ │
+│      │                                                              │     │                                                                                │ │
+│      │                                                              │     │                     ╭──────────────────────────────────────────────────────────╮ │
+│      │                                                              │     │                     │                                                          │ │
+│      │                                                              │     │                     │ Note exported successfully to ~/paper.md                 │ │
+│      │                                                              │     │                     │                                                          │ │
+│      │                                                              │     └─────────────────────╰──────────────────────────────────────────────────────────╯ │
+│      └──────────────────────────────────────────────────────────────┘     Export complete.                                                                   │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  enter delete note | esc back to note | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

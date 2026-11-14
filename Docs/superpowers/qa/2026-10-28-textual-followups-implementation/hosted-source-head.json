@@ -1,0 +1,743 @@
+{
+  "pr": "https://github.com/rmusser01/tldw_chatbook/pull/3290",
+  "head": "7c2b8f5aab066035ed9d06f9719a93d184f8e5c3",
+  "runs": [
+    {
+      "id": 40810284730,
+      "name": "Perf Guard",
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40810284730",
+      "jobs": [
+        {
+          "id": 123238706641,
+          "name": "UI latency guardrails",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "id": 40810284866,
+      "name": "Derived Artifacts",
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40810284866",
+      "jobs": [
+        {
+          "id": 123238707429,
+          "name": "PR Fast Lane (admission-sensitive)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123238707620,
+          "name": "Console P0 regression gate",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123238707640,
+          "name": "UI Fast Lane (4)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123238707672,
+          "name": "UI Fast Lane (12)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123238707675,
+          "name": "UI Fast Lane (11)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123238707676,
+          "name": "UI Fast Lane (17)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123238707682,
+          "name": "UI Fast Lane (14)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123238707693,
+          "name": "UI Fast Lane (2)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123238707695,
+          "name": "PR Fast Lane (admission-sensitive 2)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123238707698,
+          "name": "UI Fast Lane (24)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123238707699,
+          "name": "Dreams and Guardian boundary contracts",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123238707700,
+          "name": "UI Fast Lane (10)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123238707710,
+          "name": "UI Fast Lane (5)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123238707713,
+          "name": "UI Fast Lane (13)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123238707721,
+          "name": "UI Fast Lane (27)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123238707723,
+          "name": "UI Fast Lane (20)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123238707725,
+          "name": "UI Fast Lane (7)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123238707726,
+          "name": "UI Fast Lane (9)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123238707730,
+          "name": "UI Fast Lane (25)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123238707733,
+          "name": "UI Fast Lane (6)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123238707750,
+          "name": "UI Fast Lane (19)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123238707760,
+          "name": "UI Fast Lane (8)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123238707761,
+          "name": "UI Fast Lane (3)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123238707762,
+          "name": "UI Fast Lane (16)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123238707766,
+          "name": "PR Fast Lane",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123238707767,
+          "name": "UI Fast Lane (26)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123238707771,
+          "name": "UI Fast Lane (1)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123238707800,
+          "name": "UI Fast Lane (23)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123238707826,
+          "name": "UI Fast Lane (18)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123238707833,
+          "name": "UI Fast Lane (15)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123238707834,
+          "name": "UI Fast Lane (22)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123238707837,
+          "name": "Dreams tracking tests",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123238707868,
+          "name": "UI Fast Lane (21)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123238709201,
+          "name": "UI Fast Lane (31)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123238709277,
+          "name": "UI Fast Lane (29)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123238709292,
+          "name": "UI Fast Lane (28)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123238709367,
+          "name": "UI Fast Lane (30)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123238709473,
+          "name": "UI Fast Lane (32)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123250743662,
+          "name": "Derived artifacts reproduce from their sources",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123252529803,
+          "name": "Merge queue tick",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    }
+  ],
+  "all_application_and_required_checks_pass": true,
+  "ui_shards": 32,
+  "ui_job_times": [
+    {
+      "name": "UI Fast Lane (4)",
+      "seconds": 667.0,
+      "start": "2026-10-29T03:11:38Z",
+      "end": "2026-10-29T03:22:45Z"
+    },
+    {
+      "name": "UI Fast Lane (12)",
+      "seconds": 655.0,
+      "start": "2026-10-29T03:16:09Z",
+      "end": "2026-10-29T03:27:04Z"
+    },
+    {
+      "name": "UI Fast Lane (11)",
+      "seconds": 635.0,
+      "start": "2026-10-29T03:10:46Z",
+      "end": "2026-10-29T03:21:21Z"
+    },
+    {
+      "name": "UI Fast Lane (17)",
+      "seconds": 486.0,
+      "start": "2026-10-29T03:08:14Z",
+      "end": "2026-10-29T03:16:20Z"
+    },
+    {
+      "name": "UI Fast Lane (14)",
+      "seconds": 492.0,
+      "start": "2026-10-29T03:12:07Z",
+      "end": "2026-10-29T03:20:19Z"
+    },
+    {
+      "name": "UI Fast Lane (2)",
+      "seconds": 645.0,
+      "start": "2026-10-29T03:16:49Z",
+      "end": "2026-10-29T03:27:34Z"
+    },
+    {
+      "name": "UI Fast Lane (24)",
+      "seconds": 471.0,
+      "start": "2026-10-29T03:24:00Z",
+      "end": "2026-10-29T03:31:51Z"
+    },
+    {
+      "name": "UI Fast Lane (10)",
+      "seconds": 654.0,
+      "start": "2026-10-29T03:12:14Z",
+      "end": "2026-10-29T03:23:08Z"
+    },
+    {
+      "name": "UI Fast Lane (5)",
+      "seconds": 679.0,
+      "start": "2026-10-29T03:15:10Z",
+      "end": "2026-10-29T03:26:29Z"
+    },
+    {
+      "name": "UI Fast Lane (13)",
+      "seconds": 567.0,
+      "start": "2026-10-29T03:14:08Z",
+      "end": "2026-10-29T03:23:35Z"
+    },
+    {
+      "name": "UI Fast Lane (27)",
+      "seconds": 593.0,
+      "start": "2026-10-29T03:27:21Z",
+      "end": "2026-10-29T03:37:14Z"
+    },
+    {
+      "name": "UI Fast Lane (20)",
+      "seconds": 457.0,
+      "start": "2026-10-29T03:21:47Z",
+      "end": "2026-10-29T03:29:24Z"
+    },
+    {
+      "name": "UI Fast Lane (7)",
+      "seconds": 561.0,
+      "start": "2026-10-29T03:19:48Z",
+      "end": "2026-10-29T03:29:09Z"
+    },
+    {
+      "name": "UI Fast Lane (9)",
+      "seconds": 653.0,
+      "start": "2026-10-29T03:16:44Z",
+      "end": "2026-10-29T03:27:37Z"
+    },
+    {
+      "name": "UI Fast Lane (25)",
+      "seconds": 569.0,
+      "start": "2026-10-29T03:26:34Z",
+      "end": "2026-10-29T03:36:03Z"
+    },
+    {
+      "name": "UI Fast Lane (6)",
+      "seconds": 554.0,
+      "start": "2026-10-29T03:18:30Z",
+      "end": "2026-10-29T03:27:44Z"
+    },
+    {
+      "name": "UI Fast Lane (19)",
+      "seconds": 594.0,
+      "start": "2026-10-29T03:21:41Z",
+      "end": "2026-10-29T03:31:35Z"
+    },
+    {
+      "name": "UI Fast Lane (8)",
+      "seconds": 638.0,
+      "start": "2026-10-29T03:17:01Z",
+      "end": "2026-10-29T03:27:39Z"
+    },
+    {
+      "name": "UI Fast Lane (3)",
+      "seconds": 536.0,
+      "start": "2026-10-29T03:17:10Z",
+      "end": "2026-10-29T03:26:06Z"
+    },
+    {
+      "name": "UI Fast Lane (16)",
+      "seconds": 427.0,
+      "start": "2026-10-29T03:16:49Z",
+      "end": "2026-10-29T03:23:56Z"
+    },
+    {
+      "name": "UI Fast Lane (26)",
+      "seconds": 678.0,
+      "start": "2026-10-29T03:27:09Z",
+      "end": "2026-10-29T03:38:27Z"
+    },
+    {
+      "name": "UI Fast Lane (1)",
+      "seconds": 586.0,
+      "start": "2026-10-29T03:18:21Z",
+      "end": "2026-10-29T03:28:07Z"
+    },
+    {
+      "name": "UI Fast Lane (23)",
+      "seconds": 389.0,
+      "start": "2026-10-29T03:23:38Z",
+      "end": "2026-10-29T03:30:07Z"
+    },
+    {
+      "name": "UI Fast Lane (18)",
+      "seconds": 678.0,
+      "start": "2026-10-29T03:20:59Z",
+      "end": "2026-10-29T03:32:17Z"
+    },
+    {
+      "name": "UI Fast Lane (15)",
+      "seconds": 476.0,
+      "start": "2026-10-29T03:19:19Z",
+      "end": "2026-10-29T03:27:15Z"
+    },
+    {
+      "name": "UI Fast Lane (22)",
+      "seconds": 386.0,
+      "start": "2026-10-29T03:23:13Z",
+      "end": "2026-10-29T03:29:39Z"
+    },
+    {
+      "name": "UI Fast Lane (21)",
+      "seconds": 470.0,
+      "start": "2026-10-29T03:22:51Z",
+      "end": "2026-10-29T03:30:41Z"
+    },
+    {
+      "name": "UI Fast Lane (31)",
+      "seconds": 542.0,
+      "start": "2026-10-29T03:27:50Z",
+      "end": "2026-10-29T03:36:52Z"
+    },
+    {
+      "name": "UI Fast Lane (29)",
+      "seconds": 468.0,
+      "start": "2026-10-29T03:27:42Z",
+      "end": "2026-10-29T03:35:30Z"
+    },
+    {
+      "name": "UI Fast Lane (28)",
+      "seconds": 552.0,
+      "start": "2026-10-29T03:27:39Z",
+      "end": "2026-10-29T03:36:51Z"
+    },
+    {
+      "name": "UI Fast Lane (30)",
+      "seconds": 639.0,
+      "start": "2026-10-29T03:27:44Z",
+      "end": "2026-10-29T03:38:23Z"
+    },
+    {
+      "name": "UI Fast Lane (32)",
+      "seconds": 597.0,
+      "start": "2026-10-29T03:28:00Z",
+      "end": "2026-10-29T03:37:57Z"
+    }
+  ],
+  "maximum_ui_job_seconds": 679.0,
+  "added_cases_observed": 44,
+  "added_case_owners": {
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_preserves_later_draft[temperature-0.70-before-publication]": {
+      "job": 123238707672,
+      "name": "UI Fast Lane (12)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_preserves_later_draft[samples-01-before-publication]": {
+      "job": 123238707675,
+      "name": "UI Fast Lane (11)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_retains_returned_text_and_context[focus-only-before-publication]": {
+      "job": 123238707675,
+      "name": "UI Fast Lane (11)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_preserves_later_draft[seed-07-before-publication]": {
+      "job": 123238707676,
+      "name": "UI Fast Lane (17)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_preserves_later_draft[max-tokens-0256-during-refresh]": {
+      "job": 123238707676,
+      "name": "UI Fast Lane (17)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_library_note_export_responsiveness.py::test_note_export_late_collision_keeps_precious_file_until_answer[cancel]": {
+      "job": 123238707676,
+      "name": "UI Fast Lane (17)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_preserves_later_draft[card-search-Vex-during-refresh]": {
+      "job": 123238707682,
+      "name": "UI Fast Lane (14)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_retains_returned_text_and_context[focus-only-during-refresh]": {
+      "job": 123238707693,
+      "name": "UI Fast Lane (2)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_research_run_refresh_publication.py::test_local_refresh_cannot_restore_a_departed_source[source-aba]": {
+      "job": 123238707700,
+      "name": "UI Fast Lane (10)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_reloads_canonical_values": {
+      "job": 123238707713,
+      "name": "UI Fast Lane (13)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_library_note_export_responsiveness.py::test_note_export_dispatches_app_key_before_destination_release[new-held-writer]": {
+      "job": 123238707713,
+      "name": "UI Fast Lane (13)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_library_note_export_responsiveness.py::test_note_export_failed_replace_keeps_file_and_allows_text_retry": {
+      "job": 123238707721,
+      "name": "UI Fast Lane (27)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_library_note_export_responsiveness.py::test_note_export_dispatches_app_key_before_destination_release[replace-held-writer]": {
+      "job": 123238707723,
+      "name": "UI Fast Lane (20)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_retains_returned_text_and_context[single-save-roundtrip-during-refresh]": {
+      "job": 123238707725,
+      "name": "UI Fast Lane (7)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_research_run_refresh_publication.py::test_source_switch_clears_previous_detail[empty]": {
+      "job": 123238707725,
+      "name": "UI Fast Lane (7)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_preserves_later_draft[name-Saved-new-during-refresh]": {
+      "job": 123238707726,
+      "name": "UI Fast Lane (9)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_research_run_refresh_publication.py::test_native_refresh_skips_terminal_and_server_selections": {
+      "job": 123238707726,
+      "name": "UI Fast Lane (9)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_preserves_later_draft[samples-01-during-refresh]": {
+      "job": 123238707730,
+      "name": "UI Fast Lane (25)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_library_note_export_responsiveness.py::test_note_export_dispatches_app_key_before_destination_release[new-ordinary]": {
+      "job": 123238707730,
+      "name": "UI Fast Lane (25)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_preserves_later_draft[description-Later-description-during-refresh]": {
+      "job": 123238707733,
+      "name": "UI Fast Lane (6)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_preserves_newer_selection[lock-pending]": {
+      "job": 123238707750,
+      "name": "UI Fast Lane (19)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_older_save_preserves_a_later_returned_draft": {
+      "job": 123238707750,
+      "name": "UI Fast Lane (19)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_research_run_refresh_publication.py::test_source_switch_clears_previous_detail[unavailable]": {
+      "job": 123238707750,
+      "name": "UI Fast Lane (19)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_retains_returned_text_and_context[single-save-roundtrip-before-publication]": {
+      "job": 123238707761,
+      "name": "UI Fast Lane (3)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_preserves_later_draft[cards-None-during-refresh]": {
+      "job": 123238707762,
+      "name": "UI Fast Lane (16)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_retains_returned_text_and_context[equal-valued-save-during-refresh]": {
+      "job": 123238707762,
+      "name": "UI Fast Lane (16)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_library_note_export_responsiveness.py::test_note_export_dispatches_app_key_before_destination_release[replace-ordinary]": {
+      "job": 123238707762,
+      "name": "UI Fast Lane (16)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_preserves_later_draft[card-search-Vex-before-publication]": {
+      "job": 123238707800,
+      "name": "UI Fast Lane (23)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_research_run_refresh_publication.py::test_local_refresh_cannot_restore_a_departed_source[server]": {
+      "job": 123238707800,
+      "name": "UI Fast Lane (23)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_library_note_export_responsiveness.py::test_note_export_late_collision_keeps_precious_file_until_answer[recheck-error]": {
+      "job": 123238707800,
+      "name": "UI Fast Lane (23)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_library_note_export_responsiveness.py::test_note_export_late_collision_keeps_precious_file_until_answer[replace]": {
+      "job": 123238707833,
+      "name": "UI Fast Lane (15)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_preserves_later_draft[temperature-0.70-during-refresh]": {
+      "job": 123238707834,
+      "name": "UI Fast Lane (22)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_library_note_export_responsiveness.py::test_note_export_accepted_write_preserves_changed_result_owner[retired-screen]": {
+      "job": 123238707834,
+      "name": "UI Fast Lane (22)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet": {
+      "job": 123238707834,
+      "name": "UI Fast Lane (22)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_retains_returned_text_and_context[equal-valued-save-before-publication]": {
+      "job": 123238707868,
+      "name": "UI Fast Lane (21)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_research_run_refresh_publication.py::test_native_refresh_updates_progress_and_retains_current_payload": {
+      "job": 123238707868,
+      "name": "UI Fast Lane (21)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_preserves_later_draft[name-Saved-new-before-publication]": {
+      "job": 123238709201,
+      "name": "UI Fast Lane (31)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_preserves_later_draft[description-Later-description-before-publication]": {
+      "job": 123238709277,
+      "name": "UI Fast Lane (29)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_preserves_later_draft[cards-None-before-publication]": {
+      "job": 123238709277,
+      "name": "UI Fast Lane (29)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_preserves_newer_selection[completed]": {
+      "job": 123238709277,
+      "name": "UI Fast Lane (29)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_preserves_later_draft[max-tokens-0256-before-publication]": {
+      "job": 123238709292,
+      "name": "UI Fast Lane (28)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_preserves_later_draft[seed-07-during-refresh]": {
+      "job": 123238709473,
+      "name": "UI Fast Lane (32)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_research_run_refresh_publication.py::test_refresh_preserves_newer_run_selection": {
+      "job": 123238709473,
+      "name": "UI Fast Lane (32)",
+      "conclusion": "success"
+    },
+    "Tests/UI/test_library_note_export_responsiveness.py::test_note_export_accepted_write_preserves_changed_result_owner[context-region]": {
+      "job": 123238709473,
+      "name": "UI Fast Lane (32)",
+      "conclusion": "success"
+    }
+  },
+  "old_notes_escape_pass": true,
+  "canonical_class_guard_pass": true,
+  "final_review_approved": true,
+  "final_review_sha256": "98bbda9a4de37eeb4f0767b52a1cfd856f87efb909fa0fac84c678b6dfe7bfc6",
+  "unresolved_threads": 0,
+  "log_hashes": {
+    "UI latency guardrails": "854cc7b620e74605c6040978aa9170e2bf50a0f2512e42658cd2205c1ce3bb24",
+    "PR Fast Lane (admission-sensitive)": "683bcc839e25cb6ea183a5e529b4ef6bacde8bfa7918daee973054d6570b33f7",
+    "Console P0 regression gate": "66d0ce3f6c745d906a3b9538cb44518d52ba04b591cc418049052403d0d618c6",
+    "UI Fast Lane (4)": "4ebac272cc47519b4b9923fa11f794f236579f7f8f9b0114d1b3625d5c1f3ab2",
+    "UI Fast Lane (12)": "83f528664a70a94d40420676d42695734b8af40acb4e28fa3410c900133a636b",
+    "UI Fast Lane (11)": "4c1b7a6404b7e65decccb0d8e932f07bb95d5f6a6dec184d7154043a282da6dd",
+    "UI Fast Lane (17)": "7a981a3e8d4f56068b4a388223f4f08e56dc96c0679aaa22006a98966b365675",
+    "UI Fast Lane (14)": "fa668fe0898cabd3bafb2ede8b914e2fb4276aa2d743a217dd052191b7004457",
+    "UI Fast Lane (2)": "e6ace86cf7e4369578d8971da4f796ae5d6462634027dbfb3c87089d2062a0ae",
+    "PR Fast Lane (admission-sensitive 2)": "701c565ad41179d134a53eacd489a8e1c326b1ad0024bd588d397ae705ad0bfb",
+    "UI Fast Lane (24)": "6689efa54c89fe46d16573ae7b18e0cb3a65b00dae6dab151202adb51e4245d7",
+    "Dreams and Guardian boundary contracts": "1bcec6187549dc23f25a9ecefd9469881b2ad4441de1bfde9240df0d32ae3a4a",
+    "UI Fast Lane (10)": "6916c59f07184b2093d5268405df3ff7e468ca7f3a1b1b2a4bac4aeecc042746",
+    "UI Fast Lane (5)": "8bc9257d68496454b8d9777721845034aed433c40bdc11674281a43c33a2af8c",
+    "UI Fast Lane (13)": "f83d2233f27c8d48c5a2297809cc3142fdcaa1db1ff5c601c0a8bdd9fae2c188",
+    "UI Fast Lane (27)": "4fdbbca082b0afd61a0fca1091173ece0400cd71cb840870c42b2c47e9feef4e",
+    "UI Fast Lane (20)": "d712aa33dbf662797938f5461ae4fe02d5ea67f9caff452d5c6514da2467d267",
+    "UI Fast Lane (7)": "764eb108294131002b262a755aee6eaddea47e11e83e6fbf70ac6a08306c8ddc",
+    "UI Fast Lane (9)": "914dbe7b069d37806401e9caef066f7157b025e1265c347fca0bb9524a0fc07c",
+    "UI Fast Lane (25)": "900e6a1f4e2cac44268660cb82597e9126f99043787c37fe1cfc8aff6e9088fa",
+    "UI Fast Lane (6)": "5b23dfdf53289582c3f07765c643afc4fca0d5815d2807c74725daf8f2fb241a",
+    "UI Fast Lane (19)": "c656c5f2a939a741de3793f9309e9f9ce6fae76d2389979ef5a4ee0cd31a3eb7",
+    "UI Fast Lane (8)": "e18c1a5c89e0cc7a26e9d8cc7a27475b70fb203e3fae0fb308bc42dc8de31a31",
+    "UI Fast Lane (3)": "8d330ea10a01a327d39cbfb42d2e79816e80e55d81121bb0b8dd9cfe67107e71",
+    "UI Fast Lane (16)": "d7b95cbac4155e3490db0df3f83dcca7f4f6caf37fc72e08a48f99478659f235",
+    "PR Fast Lane": "11e8b493224b9fb0f9be0bd9444adf24fddd855f80c46bd7d8dcee378f567d6f",
+    "UI Fast Lane (26)": "e2e3f51076cd50388081bf8a96337c2e222d6a93307305e18aef298562ecbdc3",
+    "UI Fast Lane (1)": "0ae7eadc919d532a2df329a63c20a5456f7ef0823a69b6503780d8b51bbaac9d",
+    "UI Fast Lane (23)": "65bbf79991951e3a03489cc90c9b96a25779036cf82a16a7b62563164fd0b76a",
+    "UI Fast Lane (18)": "01dca502af949bb98b4056f65b08f50f7e7825143c1951d3ed1266c6ec9103c6",
+    "UI Fast Lane (15)": "21cd98f597ae6343744ddb6a1882494ba20ebd16d2b63fe9857fd5c54b647b38",
+    "UI Fast Lane (22)": "6fe241308fe30f8d593cf1cb9559e2f64ef079ec0309a290f692bd3927635470",
+    "Dreams tracking tests": "ca4c6e21049da84fe47fec0a6edd55cb83cca4fe75dc5cb79a074f4eb60d1dd5",
+    "UI Fast Lane (21)": "cb99c97ccd7f8b8f85ece335673b14545e4efdf19a243e815ee7aeef29e63a62",
+    "UI Fast Lane (31)": "bc22a3d8eaa4168c3990e5e4912e1a16a10852878ab8fbd78bc73c727baf9c34",
+    "UI Fast Lane (29)": "30902881279a0b60fbdcd79019e4ae1c61f474a24044152dcad7f8373d33e111",
+    "UI Fast Lane (28)": "2462708284770505a47afb484e41186a57bed31afa8db27b26115c7c3b40bb75",
+    "UI Fast Lane (30)": "7723389e8bee4f52692a9f71f990d0889eafc3e5cc2a54f894e34e78069e1753",
+    "UI Fast Lane (32)": "f53e0572ace223661bfaab0903315d7ffc59a94a4fa6708d35bf51b1b658efc8",
+    "Derived artifacts reproduce from their sources": "0f176fd85b755cc82b590843e9dac6d017128e4ed15ceaf6620ca5c5f2374d02",
+    "Merge queue tick": "c85de4cc47026b3158250020dd0a30af0b3a96fc7f1fd3c8b85af78f23096197"
+  },
+  "qualification": "Actual completed exact-head jobs, test duration rows and immutable raw log hashes; all44 added parent cases/guard observed. Passing parent wrappers plus unchanged fail-closed steps qualify hosted outcomes, not independently extracted hosted child XML. Local actual child receipts are archived separately. UI execution times use first/last actual step timestamps, excluding runner queue time. Open PR; no merge."
+}

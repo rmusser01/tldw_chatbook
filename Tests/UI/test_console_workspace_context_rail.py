@@ -2445,3 +2445,99 @@ async def test_combined_menu_change_appearance_opens_picker_with_saved_identity(
                 "color": "#a78bfa",
             }
         ]
+
+
+# ---------------------------------------------------------------------------
+# TASK-18924: Chats date dividers
+# ---------------------------------------------------------------------------
+
+from datetime import datetime, timedelta, timezone as _timezone_utc
+
+from tldw_chatbook.Widgets.Console.console_workspace_context import (
+    _CONVERSATION_BROWSER_HEADER_HEIGHT,
+)
+
+
+def _divider_browser_state():
+    """Two rows: one touched minutes ago, one 30 days old."""
+    now = datetime.now(_timezone_utc.utc)
+    return _base_grouped_workspace_state(
+        rows=(
+            _browser_row(
+                "conv-today",
+                "Fresh chat",
+                scope_type="global",
+                workspace_id=None,
+                workspace_label="Chats",
+                updated_sort=now.isoformat(),
+            ),
+            _browser_row(
+                "conv-old",
+                "Ancient chat",
+                scope_type="global",
+                workspace_id=None,
+                workspace_label="Chats",
+                updated_sort=(now - timedelta(days=30)).isoformat(),
+            ),
+        )
+    )
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_conversation_browser_renders_date_dividers(request) -> None:
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 50)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(_divider_browser_state())
+        await pilot.pause()
+
+        assert _static_plain(
+            console, "#console-conversation-browser-divider-chats-0"
+        ) == "Today"
+        assert _static_plain(
+            console, "#console-conversation-browser-divider-chats-1"
+        ) == "Older"
+
+        # The divider carries the dim-copy styling plus its marker class.
+        today_divider = console.query_one(
+            "#console-conversation-browser-divider-chats-0", Static
+        )
+        assert "console-conversation-browser-date-divider" in today_divider.classes
+        assert "console-workspace-empty-copy" in today_divider.classes
+
+        # Both conversation rows still render (dividers add, never replace).
+        row_keys = {
+            button.id for button in console.query(".console-workspace-conversation-row")
+        }
+        assert row_keys == {
+            "console-workspace-conversation-0",
+            "console-workspace-conversation-1",
+        }
+
+
+def test_conversation_browser_list_height_accounts_for_dividers() -> None:
+    browser = _divider_browser_state().conversation_browser
+    section = browser.sections[0]
+    assert [index for index, _ in section.date_dividers] == [0, 1]
+    rows_height = ConsoleWorkspaceContextTray._conversation_browser_rows_height(
+        section.rows, 40
+    )
+    total = ConsoleWorkspaceContextTray._conversation_browser_list_height(
+        browser, 40, 60
+    )
+    # header + rows + one line per divider.
+    assert total == (
+        _CONVERSATION_BROWSER_HEADER_HEIGHT + rows_height + len(section.date_dividers)
+    )
+
+
+def test_conversation_browser_date_divider_styles_are_declared() -> None:
+    css = Path("tldw_chatbook/css/features/_console.tcss").read_text(encoding="utf-8")
+    assert ".console-conversation-browser-date-divider {" in css

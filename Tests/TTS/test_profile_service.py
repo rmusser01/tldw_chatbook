@@ -2451,7 +2451,7 @@ async def test_availability_mixed_page_probes_only_audio_cpp_models() -> None:
         "available",
         "unverified",
     )
-    # ADR-031: a legacy provider has no catalog to preflight, so its
+    # ADR-299: a legacy provider has no catalog to preflight, so its
     # "unverified" is permanent and Refresh must not be offered as a
     # recovery it can never perform. audio.cpp keeps "refresh".
     assert tuple(item.recovery_action for item in observed.profiles) == (

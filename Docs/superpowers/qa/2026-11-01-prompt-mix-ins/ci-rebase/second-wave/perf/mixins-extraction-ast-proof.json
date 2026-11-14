@@ -1,0 +1,35 @@
+[
+  {
+    "function": "_voice_chip_width_cap",
+    "body_arguments_return_docstring_ast_equivalent_after_owner_qualification": true,
+    "comments_preserved": true
+  },
+  {
+    "function": "set_voice_status",
+    "body_arguments_return_docstring_ast_equivalent_after_owner_qualification": true,
+    "comments_preserved": true
+  },
+  {
+    "function": "_sync_full_width_voice_presentation",
+    "body_arguments_return_docstring_ast_equivalent_after_owner_qualification": true,
+    "comments_preserved": true
+  },
+  {
+    "function": "_responses_stream_to_chat_sse",
+    "body_arguments_return_docstring_ast_equivalent_after_owner_qualification": true,
+    "comments_preserved": true
+  },
+  {
+    "function": "_openai_stream_line_usage",
+    "body_arguments_return_docstring_ast_equivalent_after_owner_qualification": true,
+    "comments_preserved": true
+  },
+  {
+    "owner": "tldw_chatbook/Widgets/Console/console_composer_bar.py",
+    "all_other_declarations_and_bodies_ast_identical": true
+  },
+  {
+    "owner": "tldw_chatbook/LLM_Calls/LLM_API_Calls.py",
+    "all_other_declarations_and_bodies_ast_identical": true
+  }
+]

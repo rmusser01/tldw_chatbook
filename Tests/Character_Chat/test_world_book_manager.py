@@ -726,3 +726,64 @@ def test_get_world_books_for_character_dedups_hostile_duplicate_names(wb_manager
     )
     rows = wb_manager.get_world_books_for_character(char_id)
     assert [r["name"] for r in rows] == ["Dupe"]  # deduped, no crash
+
+
+def test_count_entries_for_books_one_query_equivalent_to_per_book_reads(wb_manager):
+    """Task 19c (perf): batched lore entry counts.
+
+    ``count_entries_for_books`` must answer, in ONE grouped query, exactly
+    what ``len(get_world_book_entries(book_id))`` answered per book -- the
+    personas lore render's N+1 -- including books with zero entries and
+    disabled entries (which ``get_world_book_entries`` counts by default).
+    """
+    empty_book = wb_manager.create_world_book(name="Empty Book")
+    single_book = wb_manager.create_world_book(name="Single Entry")
+    many_book = wb_manager.create_world_book(name="Many Entries")
+    disabled_book = wb_manager.create_world_book(name="Disabled Entries")
+
+    wb_manager.create_world_book_entry(
+        world_book_id=single_book, keys=["k"], content="only"
+    )
+    for index in range(7):
+        wb_manager.create_world_book_entry(
+            world_book_id=many_book, keys=[f"k{index}"], content=f"entry {index}"
+        )
+    wb_manager.create_world_book_entry(
+        world_book_id=disabled_book, keys=["k"], content="off", enabled=False
+    )
+    wb_manager.create_world_book_entry(
+        world_book_id=disabled_book, keys=["k2"], content="on", enabled=True
+    )
+
+    book_ids = [empty_book, single_book, many_book, disabled_book]
+
+    # Equivalence pin: identical values to the per-book loop it replaces.
+    expected = {
+        str(book_id): len(wb_manager.get_world_book_entries(book_id))
+        for book_id in book_ids
+    }
+    assert expected == {
+        str(empty_book): 0,
+        str(single_book): 1,
+        str(many_book): 7,
+        str(disabled_book): 2,
+    }
+
+    statements: list[str] = []
+    connection = wb_manager.db.get_connection()
+    connection.set_trace_callback(statements.append)
+    try:
+        counts = wb_manager.count_entries_for_books(book_ids)
+    finally:
+        connection.set_trace_callback(None)
+
+    assert counts == expected
+    # Unknown ids (no entries at all) still answer zero rather than missing.
+    assert wb_manager.count_entries_for_books([999_999]) == {"999999": 0}
+    assert wb_manager.count_entries_for_books([]) == {}
+
+    entry_queries = [s for s in statements if "world_book_entries" in s]
+    assert len(entry_queries) == 1, (
+        f"expected exactly one world_book_entries query, got: {entry_queries}"
+    )
+    assert "GROUP BY" in entry_queries[0]

@@ -1,0 +1,11 @@
+# coverage-17 probe (scratch HOME; no real profile touched)
+# Template CONFIG_TOML_CONTENT parsed with tomllib; chat_defaults set to what the wizard writes
+# for an Anthropic setup (provider="anthropic", model="claude-sonnet-4-5"); environ={"ANTHROPIC_API_KEY": <dummy>}.
+# Then Library/ingest_analysis.resolve_ingest_analysis_provider(cfg, environ=env):
+ready: False
+short: OpenAI is not ready (Missing API key)
+hint: Analyze after import is on, but OpenAI is not ready: Missing API key. Set OPENAI_API_KEY or add api_key under [api_settings.openai]. Imports will run without analysis.
+# Note: the not-ready hint does NOT point at Settings > Providers & Models (that string is only on the
+# no-provider branch, NO_ANALYSIS_PROVIDER_NEXT_STEP); it tells the user to supply an OpenAI key.
+# provider_setup_persistence.py:855-861 writes only {provider_section, chat_defaults}; grep analysis_defaults
+# under tldw_chatbook/UI -> no hits (only Widgets/Media/media_viewer_panel.py seeds a per-analysis provider Select).

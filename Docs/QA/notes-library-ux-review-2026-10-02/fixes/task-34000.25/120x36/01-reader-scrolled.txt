@@ -1,0 +1,36 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌──────────────────────────────────────────────────────┐  I       ‹ Back                                        │
+│   a  │ Media (1)      Sets                                  │  t  A field guide to Markdown tables                   │
+│   v  │ Media · 1 of 23 · filter “field g…      Clear        │  e  Seed                                               │
+│      │  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ Clear filter   │  m   Find  Note  Read later  Use in Console  More      │
+│      │  ▊  field guide                     ▎                │  s   Read (selected)  Analysis  Highlights  Info       │
+│      │  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                │      Rendered (selected) |      Raw                    │
+│      │    type: All types    sort: Newest                   │     ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓ │
+│      │                                                      │     ┃   in study 5; the effect held across three  ▃▃ ┃ │
+│      │    Export…     Trash     Select                      │     ┃   cohorts and did not depend on the length  ▃▃ ┃ │
+│      │    Review these                                      │     ┃   of the initial exposure.                     ┃ │
+│ ---> │ 1 result · Enter opens                               │     ┃                                                ┃ │
+│      │  ▸ A field guide to Markdown tables                  │     ┃   Paragraph 6. Retrieval practice improved     ┃ │
+│      │      article · updated just now · loaded             │     ┃   7-day retention by 21 percentage points      ┃ │
+│      │                                                      │     ┃   in study 6; the effect held across three     ┃ │
+│      │                                                      │<--- ┃   cohorts and did not depend on the length     ┃ │
+│      │                                                      │     ┃   of the initial exposure.                     ┃ │
+│      │                                                      │     ┃                                                ┃ │
+│      │                                                      │     ┃   Paragraph 7. Retrieval practice improved     ┃ │
+│ ---> │                                                      │     ┃   7-day retention by 21 percentage points      ┃ │
+│      │                                                      │     ┃   in study 7; the effect held across three     ┃ │
+│      │                                                      │     ┃   cohorts and did not depend on the length     ┃ │
+│      │                                                      │     ┃   of the initial exposure.                     ┃ │
+│      │                                                      │     ┃                                                ┃ │
+│      │                                                      │     ┃   Paragraph 8. Retrieval practice improved     ┃ │
+│      │                                                      │     ┃   7-day retention by 21 percentage points      ┃ │
+│      │                                                      │     ┃   in study 8; the effect held across three     ┃ │
+│      │                                                      │     ┃   cohorts and did not depend on the length     ┃ │
+│      │                       1-1 of 1                       │     ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ │
+│      └──────────────────────────────────────────────────────┘                                                        │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus search | F6 next pane | ctrl+f find | n note | l read later | c use in Console | F1 · Ctrl+P · Ctrl+Q

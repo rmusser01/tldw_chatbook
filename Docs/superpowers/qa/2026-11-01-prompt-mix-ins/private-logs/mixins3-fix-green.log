@@ -1,0 +1,15 @@
+........................................................................ [ 21%]
+........................................................................ [ 42%]
+........................................................................ [ 64%]
+........................................................................ [ 85%]
+................................................                         [100%]
+=============================== warnings summary ===============================
+Tests/Chat/test_console_chat_fork.py::test_pure_fork_helpers_borrow_source_and_alias_maps_without_mutation
+  /Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/conftest.py:706: UserWarning: open file descriptors grew by 330 over the test session (start=14, end=344, limit=200) — possible fd leak; bisect with TLDW_TEST_GC_EVERY=1 and mark offending tests @pytest.mark.requires_cleanup
+    warnings.warn(message, UserWarning, stacklevel=0)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+
+(25 durations < 1s hidden.)
+336 passed, 1 warning in 64.37s (0:01:04)

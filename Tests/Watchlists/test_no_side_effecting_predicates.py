@@ -25,7 +25,11 @@ pytestmark = pytest.mark.unit
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _WATCHLISTS_DIRS = [
     _REPO_ROOT / "tldw_chatbook" / "UI" / "Watchlists_Modules",
-    _REPO_ROOT / "tldw_chatbook" / "UI" / "Screens" / "watchlists_collections_screen.py",
+    _REPO_ROOT
+    / "tldw_chatbook"
+    / "UI"
+    / "Screens"
+    / "watchlists_collections_screen.py",
 ]
 
 # Names that read as a pure boolean query.
@@ -87,6 +91,5 @@ def test_no_predicate_named_function_in_watchlists_has_a_side_effect():
                 )
     assert not offenders, (
         "predicate-named functions must be pure; rename to an action (verb) or "
-        "move the side effect to the caller (TASK-1349):\n  "
-        + "\n  ".join(offenders)
+        "move the side effect to the caller (TASK-1349):\n  " + "\n  ".join(offenders)
     )

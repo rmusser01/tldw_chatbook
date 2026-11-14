@@ -1,0 +1,7 @@
+......                                                                   [100%]
+============================= slowest 25 durations =============================
+1.22s call     Tests/UI/test_console_prompt_mixins.py::test_accepted_toggle_preserves_editor_dirtied_during_apply
+1.06s call     Tests/UI/test_console_prompt_mixins.py::test_dirty_toggle_restores_truth_without_losing_editor[save]
+
+(16 durations < 1s hidden.)
+6 passed in 7.94s

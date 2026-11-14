@@ -1,0 +1,32 @@
+{
+  "scope": "QA terminal observation only; original whole source restored by inverse exact statements, and whole AST outside exact header/ROI loop changes preserved",
+  "rows": [
+    {
+      "packet": "native-single-v21",
+      "runtime_file": "native_product_child.py",
+      "before_raw_sha256": "fee627ae2c1dd9288aabe4b171c7221a5ec517e068f0dd52903ef587a1909fc8",
+      "after_raw_sha256": "6723d106cbebb633a4e15926ae52edd6c1aece9efae51008b380d8c737c838a6",
+      "all_other_module_AST_exact": true,
+      "original_signatures_and_capture_authority_timing_logic_preserved": true,
+      "Ruff_before_count": 0,
+      "Ruff_after_count": 0,
+      "Ruff_no_new_fingerprints": true,
+      "new_control_Ruff_exit": 0
+    },
+    {
+      "packet": "browser-single-v1",
+      "runtime_file": "web_product_child.py",
+      "before_raw_sha256": "eec9c01cea3d0c7b190e6d3a988356de826cf4ea485b496da154cc56d4d4c19f",
+      "after_raw_sha256": "36a0c821fb7f9ec20e820777942daff21e43a35fc9c8dd2821290c8ddfa3f633",
+      "all_other_module_AST_exact": true,
+      "original_signatures_and_capture_authority_timing_logic_preserved": true,
+      "Ruff_before_count": 15,
+      "Ruff_after_count": 15,
+      "Ruff_no_new_fingerprints": true,
+      "new_control_Ruff_exit": 0
+    }
+  ],
+  "native_browser_settlement_AST_equal_after_existing_owner_name_normalization": true,
+  "no_product_App_import_or_live_run": true,
+  "qualifying_samples": 0
+}

@@ -24,6 +24,26 @@ from tldw_chatbook.Library.collections_capture_models import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _egress_policy_seams(monkeypatch):
+    """Serve the egress policy's two outside reads without leaving the box.
+
+    ``ingest_story_url`` asks the app-wide egress policy whether the story
+    URL is a public destination (review of #2921, round 3, T24): defaults
+    are served directly and every hostname resolves to one public address;
+    the tests about private destinations override the resolver.
+    """
+    from tldw_chatbook.Utils import egress
+
+    monkeypatch.setattr(
+        egress, "get_cli_setting", lambda section, key, default=None: default)
+
+    async def _public(_host):
+        return ["93.184.216.34"]
+
+    monkeypatch.setattr(egress, "_resolve_async", _public)
+
+
 class FakeCaptureBackend:
     """Test seam: the Protocol's real ``save_capture(request)`` member.
 
@@ -119,4 +139,57 @@ async def test_ingest_fails_closed_without_a_backend_authority():
         await ingest_story_url(
             backend, url="https://example.com/4", title="t", source_note="n"
         )
+    assert backend.requests == []
+
+
+# --- Review of #2921, round 3, T24: a story URL never vouches for itself --------
+#
+# The capture backend fetches every capture as a URL the user typed
+# (``_extract_collections_article``: ``UrlProvenance.USER_ENTERED``), which
+# makes the URL's own origin trusted. A story's URL came from a search result
+# or the model, so it is checked here, at the door, with NO trusted origin.
+
+
+@pytest.mark.parametrize(
+    "resolves_to, reason",
+    [(["192.168.1.1"], "private"), (["127.0.0.1"], "private"),
+     (["169.254.169.254"], "metadata")],
+)
+async def test_ingest_refuses_a_story_url_that_is_not_a_public_destination(
+        monkeypatch, resolves_to, reason):
+    from tldw_chatbook.Dreams.ingest_action import StoryUrlNotPublic
+    from tldw_chatbook.Utils import egress
+
+    async def resolve(_host):
+        return list(resolves_to)
+
+    monkeypatch.setattr(egress, "_resolve_async", resolve)
+    backend = FakeCaptureBackend()
+
+    with pytest.raises(StoryUrlNotPublic) as excinfo:
+        await ingest_story_url(
+            backend, url="https://intranet.example/admin", title="t",
+            source_note="n")
+
+    assert backend.requests == [], "nothing was handed to the capture backend"
+    assert reason in str(excinfo.value)
+    assert "intranet.example" not in str(excinfo.value), "never the URL"
+
+
+async def test_ingest_refuses_a_story_url_whose_host_does_not_resolve(
+        monkeypatch):
+    from tldw_chatbook.Dreams.ingest_action import StoryUrlNotPublic
+    from tldw_chatbook.Utils import egress
+
+    async def resolve(_host):
+        raise OSError("name resolution failed")
+
+    monkeypatch.setattr(egress, "_resolve_async", resolve)
+    backend = FakeCaptureBackend()
+
+    with pytest.raises(StoryUrlNotPublic):
+        await ingest_story_url(
+            backend, url="https://gone.example/page", title="t",
+            source_note="n")
+
     assert backend.requests == []

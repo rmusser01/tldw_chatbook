@@ -1,0 +1,1069 @@
+[
+  {
+    "phase": "factory",
+    "route": "<ConsoleRequestRoute.AGENT_FIRST: 'agent_first'>",
+    "admitted": [
+      {
+        "role": "user",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      }
+    ],
+    "admitted_descriptors": [
+      "SavedRevisionTraceProvenance(revision_id='7cc473b1-b22b-47b3-87a7-bf3acd798270')"
+    ],
+    "admitted_groups": {
+      "compactable": [],
+      "active": []
+    },
+    "incoming": [
+      {
+        "role": "system",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "user",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      }
+    ],
+    "result": [
+      {
+        "role": "system",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "user",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      }
+    ],
+    "result_descriptors": [
+      "ProviderArtifactTraceProvenance(source=<TraceProvenanceSource.RENDERED_SYSTEM: 'rendered_system'>)",
+      "SavedRevisionTraceProvenance(revision_id='7cc473b1-b22b-47b3-87a7-bf3acd798270')"
+    ],
+    "result_groups": {
+      "compactable": [],
+      "active": []
+    }
+  },
+  {
+    "phase": "gateway",
+    "route": "<ConsoleRequestRoute.AGENT_FIRST: 'agent_first'>",
+    "incoming": [
+      {
+        "role": "system",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "user",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      }
+    ],
+    "incoming_groups": {
+      "compactable": [],
+      "active": []
+    },
+    "sidecars": [],
+    "owner_key": "_tldw_call_thinking_owner",
+    "semantic": [
+      {
+        "role": "system",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "user",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      }
+    ],
+    "semantic_groups": {
+      "compactable": [],
+      "active": []
+    },
+    "provider_groups": [],
+    "provider_rows": [
+      {
+        "role": "system",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "user",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      }
+    ],
+    "provider_descriptors": [
+      "ProviderArtifactTraceProvenance(source=<TraceProvenanceSource.RENDERED_SYSTEM: 'rendered_system'>)",
+      "SavedRevisionTraceProvenance(revision_id='7cc473b1-b22b-47b3-87a7-bf3acd798270')"
+    ]
+  },
+  {
+    "phase": "factory",
+    "route": "<ConsoleRequestRoute.TOOL_LOOP: 'tool_loop'>",
+    "admitted": [
+      {
+        "role": "user",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      }
+    ],
+    "admitted_descriptors": [
+      "SavedRevisionTraceProvenance(revision_id='7cc473b1-b22b-47b3-87a7-bf3acd798270')"
+    ],
+    "admitted_groups": {
+      "compactable": [],
+      "active": []
+    },
+    "incoming": [
+      {
+        "role": "system",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "user",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "assistant",
+        "keys": [
+          "_tldw_call_thinking_owner",
+          "content",
+          "role",
+          "tool_calls"
+        ],
+        "owners": {
+          "_tldw_call_thinking_owner": "thinking-83f8b0169e112ae05c52-64fbeed8605f47cfa5f13d3325b11b5b-0-0"
+        }
+      },
+      {
+        "role": "tool",
+        "keys": [
+          "content",
+          "role",
+          "tool_call_id"
+        ],
+        "owners": {}
+      }
+    ],
+    "result": [
+      {
+        "role": "system",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "user",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "assistant",
+        "keys": [
+          "_tldw_call_thinking_owner",
+          "content",
+          "role",
+          "tool_calls"
+        ],
+        "owners": {
+          "_tldw_call_thinking_owner": "thinking-83f8b0169e112ae05c52-64fbeed8605f47cfa5f13d3325b11b5b-0-0"
+        }
+      },
+      {
+        "role": "tool",
+        "keys": [
+          "content",
+          "role",
+          "tool_call_id"
+        ],
+        "owners": {}
+      }
+    ],
+    "result_descriptors": [
+      "ProviderArtifactTraceProvenance(source=<TraceProvenanceSource.RENDERED_SYSTEM: 'rendered_system'>)",
+      "SavedRevisionTraceProvenance(revision_id='7cc473b1-b22b-47b3-87a7-bf3acd798270')",
+      "ProviderArtifactTraceProvenance(source=<TraceProvenanceSource.TOOL_CALL: 'tool_call'>)",
+      "ProviderArtifactTraceProvenance(source=<TraceProvenanceSource.TOOL_RESULT: 'tool_result'>)"
+    ],
+    "result_groups": {
+      "compactable": [],
+      "active": []
+    }
+  },
+  {
+    "phase": "gateway",
+    "route": "<ConsoleRequestRoute.TOOL_LOOP: 'tool_loop'>",
+    "incoming": [
+      {
+        "role": "system",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "user",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "assistant",
+        "keys": [
+          "_tldw_call_thinking_owner",
+          "content",
+          "role",
+          "tool_calls"
+        ],
+        "owners": {
+          "_tldw_call_thinking_owner": "thinking-83f8b0169e112ae05c52-64fbeed8605f47cfa5f13d3325b11b5b-0-0"
+        }
+      },
+      {
+        "role": "tool",
+        "keys": [
+          "content",
+          "role",
+          "tool_call_id"
+        ],
+        "owners": {}
+      }
+    ],
+    "incoming_groups": {
+      "compactable": [],
+      "active": []
+    },
+    "sidecars": [
+      {
+        "owner": "thinking-83f8b0169e112ae05c52-64fbeed8605f47cfa5f13d3325b11b5b-0-0",
+        "blocks": [
+          [
+            "start_anchored_think",
+            "complete"
+          ]
+        ]
+      }
+    ],
+    "owner_key": "_tldw_call_thinking_owner",
+    "semantic": [
+      {
+        "role": "system",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "user",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "assistant",
+        "keys": [
+          "_tldw_thinking_owner",
+          "content",
+          "role",
+          "tool_calls"
+        ],
+        "owners": {
+          "_tldw_thinking_owner": "thinking-83f8b0169e112ae05c52-64fbeed8605f47cfa5f13d3325b11b5b-0-0"
+        }
+      },
+      {
+        "role": "tool",
+        "keys": [
+          "content",
+          "role",
+          "tool_call_id"
+        ],
+        "owners": {}
+      }
+    ],
+    "semantic_groups": {
+      "compactable": [],
+      "active": [
+        {
+          "owner": "thinking-83f8b0169e112ae05c52-64fbeed8605f47cfa5f13d3325b11b5b-0-0",
+          "blocks": 1
+        }
+      ]
+    },
+    "provider_groups": [
+      {
+        "owner": "thinking-83f8b0169e112ae05c52-64fbeed8605f47cfa5f13d3325b11b5b-0-0",
+        "blocks": 1
+      }
+    ],
+    "provider_rows": [
+      {
+        "role": "system",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "user",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "assistant",
+        "keys": [
+          "content",
+          "role",
+          "tool_calls"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "tool",
+        "keys": [
+          "content",
+          "role",
+          "tool_call_id"
+        ],
+        "owners": {}
+      }
+    ],
+    "provider_descriptors": [
+      "ProviderArtifactTraceProvenance(source=<TraceProvenanceSource.RENDERED_SYSTEM: 'rendered_system'>)",
+      "SavedRevisionTraceProvenance(revision_id='7cc473b1-b22b-47b3-87a7-bf3acd798270')",
+      "DerivedTraceProvenance(transform=<TraceTransformKind.MESSAGE_REWRITE: 'message_rewrite'>)",
+      "ProviderArtifactTraceProvenance(source=<TraceProvenanceSource.TOOL_RESULT: 'tool_result'>)"
+    ]
+  },
+  {
+    "phase": "factory",
+    "route": "<ConsoleRequestRoute.TOOL_LOOP: 'tool_loop'>",
+    "admitted": [
+      {
+        "role": "user",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      }
+    ],
+    "admitted_descriptors": [
+      "SavedRevisionTraceProvenance(revision_id='7cc473b1-b22b-47b3-87a7-bf3acd798270')"
+    ],
+    "admitted_groups": {
+      "compactable": [],
+      "active": []
+    },
+    "incoming": [
+      {
+        "role": "system",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "user",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "assistant",
+        "keys": [
+          "_tldw_call_thinking_owner",
+          "content",
+          "role",
+          "tool_calls"
+        ],
+        "owners": {
+          "_tldw_call_thinking_owner": "thinking-83f8b0169e112ae05c52-64fbeed8605f47cfa5f13d3325b11b5b-0-0"
+        }
+      },
+      {
+        "role": "tool",
+        "keys": [
+          "content",
+          "role",
+          "tool_call_id"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "assistant",
+        "keys": [
+          "_tldw_call_thinking_owner",
+          "content",
+          "role",
+          "tool_calls"
+        ],
+        "owners": {
+          "_tldw_call_thinking_owner": "thinking-b417441e74c9612a3587-9e87aeda15674cc69a029831c787cd64-0-0"
+        }
+      },
+      {
+        "role": "tool",
+        "keys": [
+          "content",
+          "role",
+          "tool_call_id"
+        ],
+        "owners": {}
+      }
+    ],
+    "result": [
+      {
+        "role": "system",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "user",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "assistant",
+        "keys": [
+          "_tldw_call_thinking_owner",
+          "content",
+          "role",
+          "tool_calls"
+        ],
+        "owners": {
+          "_tldw_call_thinking_owner": "thinking-83f8b0169e112ae05c52-64fbeed8605f47cfa5f13d3325b11b5b-0-0"
+        }
+      },
+      {
+        "role": "tool",
+        "keys": [
+          "content",
+          "role",
+          "tool_call_id"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "assistant",
+        "keys": [
+          "_tldw_call_thinking_owner",
+          "content",
+          "role",
+          "tool_calls"
+        ],
+        "owners": {
+          "_tldw_call_thinking_owner": "thinking-b417441e74c9612a3587-9e87aeda15674cc69a029831c787cd64-0-0"
+        }
+      },
+      {
+        "role": "tool",
+        "keys": [
+          "content",
+          "role",
+          "tool_call_id"
+        ],
+        "owners": {}
+      }
+    ],
+    "result_descriptors": [
+      "ProviderArtifactTraceProvenance(source=<TraceProvenanceSource.RENDERED_SYSTEM: 'rendered_system'>)",
+      "SavedRevisionTraceProvenance(revision_id='7cc473b1-b22b-47b3-87a7-bf3acd798270')",
+      "ProviderArtifactTraceProvenance(source=<TraceProvenanceSource.TOOL_CALL: 'tool_call'>)",
+      "ProviderArtifactTraceProvenance(source=<TraceProvenanceSource.TOOL_RESULT: 'tool_result'>)",
+      "ProviderArtifactTraceProvenance(source=<TraceProvenanceSource.TOOL_CALL: 'tool_call'>)",
+      "ProviderArtifactTraceProvenance(source=<TraceProvenanceSource.TOOL_RESULT: 'tool_result'>)"
+    ],
+    "result_groups": {
+      "compactable": [],
+      "active": []
+    }
+  },
+  {
+    "phase": "gateway",
+    "route": "<ConsoleRequestRoute.TOOL_LOOP: 'tool_loop'>",
+    "incoming": [
+      {
+        "role": "system",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "user",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "assistant",
+        "keys": [
+          "_tldw_call_thinking_owner",
+          "content",
+          "role",
+          "tool_calls"
+        ],
+        "owners": {
+          "_tldw_call_thinking_owner": "thinking-83f8b0169e112ae05c52-64fbeed8605f47cfa5f13d3325b11b5b-0-0"
+        }
+      },
+      {
+        "role": "tool",
+        "keys": [
+          "content",
+          "role",
+          "tool_call_id"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "assistant",
+        "keys": [
+          "_tldw_call_thinking_owner",
+          "content",
+          "role",
+          "tool_calls"
+        ],
+        "owners": {
+          "_tldw_call_thinking_owner": "thinking-b417441e74c9612a3587-9e87aeda15674cc69a029831c787cd64-0-0"
+        }
+      },
+      {
+        "role": "tool",
+        "keys": [
+          "content",
+          "role",
+          "tool_call_id"
+        ],
+        "owners": {}
+      }
+    ],
+    "incoming_groups": {
+      "compactable": [],
+      "active": []
+    },
+    "sidecars": [
+      {
+        "owner": "thinking-83f8b0169e112ae05c52-64fbeed8605f47cfa5f13d3325b11b5b-0-0",
+        "blocks": [
+          [
+            "start_anchored_think",
+            "complete"
+          ]
+        ]
+      },
+      {
+        "owner": "thinking-b417441e74c9612a3587-9e87aeda15674cc69a029831c787cd64-0-0",
+        "blocks": [
+          [
+            "start_anchored_think",
+            "complete"
+          ]
+        ]
+      }
+    ],
+    "owner_key": "_tldw_call_thinking_owner",
+    "semantic": [
+      {
+        "role": "system",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "user",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "assistant",
+        "keys": [
+          "_tldw_thinking_owner",
+          "content",
+          "role",
+          "tool_calls"
+        ],
+        "owners": {
+          "_tldw_thinking_owner": "thinking-83f8b0169e112ae05c52-64fbeed8605f47cfa5f13d3325b11b5b-0-0"
+        }
+      },
+      {
+        "role": "tool",
+        "keys": [
+          "content",
+          "role",
+          "tool_call_id"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "assistant",
+        "keys": [
+          "_tldw_thinking_owner",
+          "content",
+          "role",
+          "tool_calls"
+        ],
+        "owners": {
+          "_tldw_thinking_owner": "thinking-b417441e74c9612a3587-9e87aeda15674cc69a029831c787cd64-0-0"
+        }
+      },
+      {
+        "role": "tool",
+        "keys": [
+          "content",
+          "role",
+          "tool_call_id"
+        ],
+        "owners": {}
+      }
+    ],
+    "semantic_groups": {
+      "compactable": [],
+      "active": [
+        {
+          "owner": "thinking-83f8b0169e112ae05c52-64fbeed8605f47cfa5f13d3325b11b5b-0-0",
+          "blocks": 1
+        },
+        {
+          "owner": "thinking-b417441e74c9612a3587-9e87aeda15674cc69a029831c787cd64-0-0",
+          "blocks": 1
+        }
+      ]
+    },
+    "provider_groups": [
+      {
+        "owner": "thinking-83f8b0169e112ae05c52-64fbeed8605f47cfa5f13d3325b11b5b-0-0",
+        "blocks": 1
+      },
+      {
+        "owner": "thinking-b417441e74c9612a3587-9e87aeda15674cc69a029831c787cd64-0-0",
+        "blocks": 1
+      }
+    ],
+    "provider_rows": [
+      {
+        "role": "system",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "user",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "assistant",
+        "keys": [
+          "content",
+          "role",
+          "tool_calls"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "tool",
+        "keys": [
+          "content",
+          "role",
+          "tool_call_id"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "assistant",
+        "keys": [
+          "content",
+          "role",
+          "tool_calls"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "tool",
+        "keys": [
+          "content",
+          "role",
+          "tool_call_id"
+        ],
+        "owners": {}
+      }
+    ],
+    "provider_descriptors": [
+      "ProviderArtifactTraceProvenance(source=<TraceProvenanceSource.RENDERED_SYSTEM: 'rendered_system'>)",
+      "SavedRevisionTraceProvenance(revision_id='7cc473b1-b22b-47b3-87a7-bf3acd798270')",
+      "DerivedTraceProvenance(transform=<TraceTransformKind.MESSAGE_REWRITE: 'message_rewrite'>)",
+      "ProviderArtifactTraceProvenance(source=<TraceProvenanceSource.TOOL_RESULT: 'tool_result'>)",
+      "DerivedTraceProvenance(transform=<TraceTransformKind.MESSAGE_REWRITE: 'message_rewrite'>)",
+      "ProviderArtifactTraceProvenance(source=<TraceProvenanceSource.TOOL_RESULT: 'tool_result'>)"
+    ]
+  },
+  {
+    "phase": "factory",
+    "route": "<ConsoleRequestRoute.AGENT_FIRST: 'agent_first'>",
+    "admitted": [
+      {
+        "role": "user",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "assistant",
+        "keys": [
+          "_tldw_thinking_owner",
+          "content",
+          "role"
+        ],
+        "owners": {
+          "_tldw_thinking_owner": "8cd37f58-68cc-4da8-a55d-f8c56c2730fd"
+        }
+      },
+      {
+        "role": "user",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      }
+    ],
+    "admitted_descriptors": [
+      "SavedRevisionTraceProvenance(revision_id='7cc473b1-b22b-47b3-87a7-bf3acd798270')",
+      "SavedRevisionTraceProvenance(revision_id='1ffcde06-dc54-465d-83ab-779bb410fb4a')",
+      "DerivedTraceProvenance(transform=<TraceTransformKind.CURRENT_TURN_TEXT: 'current_turn_text'>)"
+    ],
+    "admitted_groups": {
+      "compactable": [
+        {
+          "owner": "8cd37f58-68cc-4da8-a55d-f8c56c2730fd",
+          "blocks": 1
+        }
+      ],
+      "active": []
+    },
+    "incoming": [
+      {
+        "role": "system",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "user",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "assistant",
+        "keys": [
+          "_tldw_call_thinking_owner",
+          "content",
+          "role"
+        ],
+        "owners": {
+          "_tldw_call_thinking_owner": "8cd37f58-68cc-4da8-a55d-f8c56c2730fd"
+        }
+      },
+      {
+        "role": "user",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      }
+    ],
+    "result": [
+      {
+        "role": "system",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "user",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "assistant",
+        "keys": [
+          "_tldw_call_thinking_owner",
+          "content",
+          "role"
+        ],
+        "owners": {
+          "_tldw_call_thinking_owner": "8cd37f58-68cc-4da8-a55d-f8c56c2730fd"
+        }
+      },
+      {
+        "role": "user",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      }
+    ],
+    "result_descriptors": [
+      "ProviderArtifactTraceProvenance(source=<TraceProvenanceSource.RENDERED_SYSTEM: 'rendered_system'>)",
+      "SavedRevisionTraceProvenance(revision_id='7cc473b1-b22b-47b3-87a7-bf3acd798270')",
+      "ProviderArtifactTraceProvenance(source=<TraceProvenanceSource.ACTIVE_REQUEST: 'active_request'>)",
+      "DerivedTraceProvenance(transform=<TraceTransformKind.CURRENT_TURN_TEXT: 'current_turn_text'>)"
+    ],
+    "result_groups": {
+      "compactable": [],
+      "active": []
+    }
+  },
+  {
+    "phase": "gateway",
+    "route": "<ConsoleRequestRoute.AGENT_FIRST: 'agent_first'>",
+    "incoming": [
+      {
+        "role": "system",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "user",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "assistant",
+        "keys": [
+          "_tldw_call_thinking_owner",
+          "content",
+          "role"
+        ],
+        "owners": {
+          "_tldw_call_thinking_owner": "8cd37f58-68cc-4da8-a55d-f8c56c2730fd"
+        }
+      },
+      {
+        "role": "user",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      }
+    ],
+    "incoming_groups": {
+      "compactable": [],
+      "active": []
+    },
+    "sidecars": [
+      {
+        "owner": "8cd37f58-68cc-4da8-a55d-f8c56c2730fd",
+        "blocks": [
+          [
+            "start_anchored_think:tool_call",
+            "complete"
+          ],
+          [
+            "start_anchored_think:tool_call",
+            "complete"
+          ],
+          [
+            "start_anchored_think",
+            "complete"
+          ]
+        ]
+      }
+    ],
+    "owner_key": "_tldw_call_thinking_owner",
+    "semantic": [
+      {
+        "role": "system",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "user",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "assistant",
+        "keys": [
+          "_tldw_thinking_owner",
+          "content",
+          "role"
+        ],
+        "owners": {
+          "_tldw_thinking_owner": "8cd37f58-68cc-4da8-a55d-f8c56c2730fd"
+        }
+      },
+      {
+        "role": "user",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      }
+    ],
+    "semantic_groups": {
+      "compactable": [],
+      "active": []
+    },
+    "provider_groups": [],
+    "provider_rows": [
+      {
+        "role": "system",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "user",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "assistant",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      },
+      {
+        "role": "user",
+        "keys": [
+          "content",
+          "role"
+        ],
+        "owners": {}
+      }
+    ],
+    "provider_descriptors": [
+      "ProviderArtifactTraceProvenance(source=<TraceProvenanceSource.RENDERED_SYSTEM: 'rendered_system'>)",
+      "SavedRevisionTraceProvenance(revision_id='7cc473b1-b22b-47b3-87a7-bf3acd798270')",
+      "ProviderArtifactTraceProvenance(source=<TraceProvenanceSource.ACTIVE_REQUEST: 'active_request'>)",
+      "DerivedTraceProvenance(transform=<TraceTransformKind.CURRENT_TURN_TEXT: 'current_turn_text'>)"
+    ]
+  }
+]

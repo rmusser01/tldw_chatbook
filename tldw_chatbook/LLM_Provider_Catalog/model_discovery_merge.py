@@ -43,19 +43,72 @@ def _capabilities_from_resolver(
     return None
 
 
+_IMAGE_MODALITIES = frozenset({"image", "images", "vision", "visual"})
+
+
+def _lists_image(modalities: object) -> bool:
+    """Return whether a listing's modality list names images."""
+    if isinstance(modalities, str) or not isinstance(modalities, Sequence):
+        return False
+    return bool(
+        {str(modality).strip().lower() for modality in modalities} & _IMAGE_MODALITIES
+    )
+
+
+def _capabilities_block_has_vision(capabilities: object) -> bool:
+    """Return whether a listing's ``capabilities`` block says "takes images".
+
+    Two spellings: a ``vision`` flag (Mistral's API reference) and
+    ``image_input: {"supported": true}`` (Anthropic's Models API). Neither is
+    captured in this repo; both are read from the providers' documentation.
+    """
+    if not isinstance(capabilities, Mapping):
+        return False
+    if capabilities.get("vision") is True:
+        return True
+    image_input = capabilities.get("image_input")
+    return isinstance(image_input, Mapping) and image_input.get("supported") is True
+
+
 def _metadata_has_positive_capability(metadata: Mapping[str, Any]) -> bool:
-    """Return whether safe discovery metadata suggests positive capabilities."""
-    if metadata.get("vision") is True:
+    """Return whether safe discovery metadata suggests positive capabilities.
+
+    Listings say "takes images" in several spellings, and any one of them is
+    enough (TASK-34402):
+
+    - a ``vision`` or ``supports_image_input`` flag (the latter is
+      Fireworks');
+    - a ``capabilities`` block (see :func:`_capabilities_block_has_vision`);
+    - an ``input_modalities`` list, top-level or nested under
+      ``architecture`` (OpenRouter);
+    - ``modalities``, as Vercel's ``{"input": [...], "output": [...]}``
+      mapping, of which only the input side counts, or as a flat list.
+
+    A flat ``modalities`` list does not say input or output, so an entry in
+    it is read as input, as it always was. Wherever a listing does tell the
+    two apart, a model that outputs images but takes text is not
+    vision-capable. Flags count only when they are exactly ``True``.
+
+    The top-level fields read here are the contracts module's
+    ``CAPABILITY_HINT_KEYS``; a test keeps the two in step.
+    """
+    if metadata.get("vision") is True or metadata.get("supports_image_input") is True:
+        return True
+    if _capabilities_block_has_vision(metadata.get("capabilities")):
         return True
     modalities = metadata.get("modalities")
-    if isinstance(modalities, Sequence) and not isinstance(modalities, str):
-        normalized = {str(modality).strip().lower() for modality in modalities}
-        return bool(normalized & {"image", "images", "vision", "visual"})
-    input_modalities = metadata.get("input_modalities")
-    if isinstance(input_modalities, Sequence) and not isinstance(input_modalities, str):
-        normalized = {str(modality).strip().lower() for modality in input_modalities}
-        return bool(normalized & {"image", "images", "vision", "visual"})
-    return False
+    if isinstance(modalities, Mapping):
+        modalities = modalities.get("input")
+    architecture = metadata.get("architecture")
+    nested = (
+        architecture.get("input_modalities")
+        if isinstance(architecture, Mapping)
+        else None
+    )
+    return any(
+        _lists_image(hint)
+        for hint in (modalities, metadata.get("input_modalities"), nested)
+    )
 
 
 def resolve_discovered_model_capability_status(

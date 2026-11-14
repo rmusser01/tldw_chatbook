@@ -5,7 +5,7 @@
 - Design task: [TASK-32050](../tasks/task-32050%20-%20Specify-direct-delegation-of-queued-Console-prompts.md)
 - Spec: [Queued agent delegation](../../Docs/superpowers/specs/2026-09-08-task-32050-queued-agent-delegation-design.md)
 - Proposed amendments: [ADR-046](046-visible-bounded-console-prompt-queue.md) for mixed-target admission/reservations, [ADR-134](134-fleet-admission-and-automatic-work-budgets.md) for direct user-child provenance, and [ADR-135](135-fleet-completion-delivery-and-crash-recovery.md) for parentless completion eligibility and explicit queue yield.
-- Preserves: [ADR-069](069-console-project-instruction-local-state-and-preflight.md) authority/context boundary and [ADR-131](131-durable-agent-budget-accounting.md) accounting separation.
+- Preserves: [ADR-317](317-console-project-instruction-local-state-and-preflight.md) authority/context boundary and [ADR-131](131-durable-agent-budget-accounting.md) accounting separation.
 
 ## Context
 

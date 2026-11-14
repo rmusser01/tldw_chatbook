@@ -54,6 +54,7 @@ and the printing belong to the gated run; this module is imported by
 always-on pure tests and must stay importable with no env var set and no
 `sentence-transformers` in the environment.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -261,7 +262,9 @@ def metric_moves(
             baseline value, which is the loudest possible wrong answer.
     """
     return tuple(
-        MetricMove(metric=metric, before=float(before[metric]), after=float(after[metric]))
+        MetricMove(
+            metric=metric, before=float(before[metric]), after=float(after[metric])
+        )
         for metric in metrics
     )
 

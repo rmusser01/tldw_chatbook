@@ -1,0 +1,133 @@
+"""Ignored diagnostic: original journey, held native canvas mount after save."""
+from __future__ import annotations
+
+import asyncio
+import inspect
+import json
+from pathlib import Path
+import time
+
+import pytest
+from textual.widget import Widget
+
+import Tests.UI.test_library_media_actions_target_opened_item as journey
+
+pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
+OUTPUT = Path(__file__).with_name("observation.json")
+
+
+class Probe:
+    def __init__(self):
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+        self.host = None
+        self.service = None
+        self.frames = []
+        self.rows = []
+        self.witness = {}
+
+    def bind(self, host, service):
+        self.host, self.service = host, service
+        original = host._display
+
+        def display(screen, renderable):
+            if renderable is not None and host._batch_count == 0:
+                self.frames.append({
+                    "time": time.monotonic(),
+                    "text": "\n".join(strip.text for strip in screen._compositor.render_strips()),
+                })
+            return original(screen, renderable)
+
+        host._display = display
+
+    async def observe(self, screen, pilot, canonical):
+        await asyncio.wait_for(self.entered.wait(), 15)
+        try:
+            browse = screen._library_media_browse_controller
+            rows = journey._rows(screen)
+            self.witness.update({
+                "observed": True,
+                "row_ids_during_native_mount_hold": [str(row.media_id) for row in rows],
+                "highlighted_during_native_mount_hold": [str(row.media_id) for row in journey._highlighted_rows(screen)],
+                "selected_id": screen._media_state.selected_media_id,
+                "loaded_id": screen._media_state.reader_session.loaded_id,
+                "reader_target_id": screen._library_media_reader_target_id(),
+                "reader_title": journey._reader_title(screen),
+                "editing": screen._media_state.editing,
+                "browse_loading": browse.loading,
+                "applied_equals_requested": browse.applied_scope == browse.requested_scope,
+                "state_highlighted_ids": [row.media_id for row in screen._build_library_media_state().rows if row.selected],
+                "canvas_highlighted_ids": [row.media_id for row in screen.query_one("#library-media-canvas").canvas.rows if row.selected],
+                "app_batch_count": self.host._batch_count,
+                "render_eligible_frames_before_hold": len(self.frames),
+                "frame_before_hold": self.frames[-1] if self.frames else None,
+                "read_later_calls": self.service.read_it_later_calls,
+                "update_calls": self.service.update_calls,
+                "original_final_assertion_would_pass": [str(row.media_id) for row in journey._highlighted_rows(screen)] == [canonical],
+            })
+            # Give the native UI loop another turn while mount remains held:
+            # the frame count is the observation; no arbitrary settle claim.
+            await asyncio.sleep(0)
+            self.witness["render_eligible_frames_during_hold"] = len(self.frames)
+            OUTPUT.write_text(json.dumps(self.witness, indent=2), encoding="utf-8")
+            assert self.witness["selected_id"] == canonical
+            assert self.witness["loaded_id"] == canonical
+            assert self.witness["reader_target_id"] == canonical
+            assert self.witness["state_highlighted_ids"] == [canonical]
+            assert self.witness["app_batch_count"] > 0
+            assert self.witness["highlighted_during_native_mount_hold"] == []
+        finally:
+            self.release.set()
+
+        await journey._wait_for_condition(
+            pilot,
+            lambda: not browse.loading
+            and browse.applied_scope == browse.requested_scope
+            and len(journey._rows(screen)) == 5
+            and [str(row.media_id) for row in journey._highlighted_rows(screen)] == [canonical],
+            message="opened row cue did not return after native mount release",
+        )
+        await pilot.pause()
+        self.witness.update({
+            "highlighted_after_release": [str(row.media_id) for row in journey._highlighted_rows(screen)],
+            "selected_id_after_release": screen._media_state.selected_media_id,
+            "loaded_id_after_release": screen._media_state.reader_session.loaded_id,
+            "render_eligible_frames_after_release": len(self.frames),
+            "frame_after_release": self.frames[-1] if self.frames else None,
+        })
+        OUTPUT.write_text(json.dumps(self.witness, indent=2), encoding="utf-8")
+
+
+async def test_native_recompose_observation_gap(monkeypatch):
+    probe = Probe()
+    original_mount = Widget.mount_all
+
+    def mount_all(widget, *args, **kwargs):
+        if (
+            widget.id == "library-media-canvas"
+            and probe.service is not None
+            and probe.service.update_calls
+            and not probe.entered.is_set()
+        ):
+            async def held_mount():
+                probe.witness["held_native_mount"] = True
+                probe.witness["mount_batch_count"] = widget.app._batch_count
+                probe.entered.set()
+                await asyncio.wait_for(probe.release.wait(), 30)
+                return await original_mount(widget, *args, **kwargs)
+
+            return held_mount()
+        return original_mount(widget, *args, **kwargs)
+
+    monkeypatch.setattr(Widget, "mount_all", mount_all)
+    source = inspect.getsource(journey.test_read_later_and_edit_save_target_the_opened_item_not_row_1)
+    source = source.replace("async def test_read_later_and_edit_save_target_the_opened_item_not_row_1():", "async def _drive_original_journey():")
+    source = source.replace("host, _app, service = _host()", "host, _app, service = _host()\n    _probe.bind(host, service)")
+    source = source.replace("assert [str(row.media_id) for row in _highlighted_rows(screen)] == [canonical]", "await _probe.observe(screen, pilot, canonical)")
+    namespace = dict(journey.__dict__, _probe=probe)
+    exec(compile(source, str(Path(__file__).with_name("original_journey_diagnostic.py")), "exec"), namespace)
+    try:
+        await namespace["_drive_original_journey"]()
+    finally:
+        probe.release.set()
+        OUTPUT.write_text(json.dumps(probe.witness, indent=2), encoding="utf-8")

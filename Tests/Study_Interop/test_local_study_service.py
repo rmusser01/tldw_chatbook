@@ -3,6 +3,10 @@ from tldw_chatbook.Study_Interop.local_study_service import LocalStudyService
 
 
 class FakeDB:
+    @property
+    def learning(self):
+        return self
+
     def __init__(self):
         self.calls = []
         self.flashcards = {

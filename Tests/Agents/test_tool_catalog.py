@@ -78,6 +78,36 @@ def test_invoke_captures_tool_exception_as_error_result():
     assert result.error  # message captured, no exception escaped
 
 
+def test_invoke_by_name_never_raises_on_non_finite_float_args():
+    # TASK-38610: json.loads ACCEPTS NaN/Infinity literals, so such values
+    # survive provider parsing; the reviewed-args canonicalization
+    # (allow_nan=False) used to raise ValueError straight out of
+    # invoke_by_name, breaking the never-raise dispatch contract. An
+    # uncanonicalizable reviewed call must fail closed as a ToolResult.
+    reg = registry()
+    definition = reg.snapshot_for_hook("calculator")
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        result = reg.invoke_by_name(
+            "calculator",
+            {"expression": "1+1", "scale": bad},
+            expected_definition=definition,
+        )
+        assert isinstance(result, ToolResult)
+        assert result.ok is False
+        assert "canonicalizable" in result.error
+
+
+def test_invoke_by_name_without_review_never_raises_on_non_finite_float_args():
+    # The unreviewed path canonicalizes nothing, so non-finite floats reach
+    # the provider; the builtin calculator rejects the unknown kwarg as a
+    # normal error ToolResult (TASK-38596 behavior), never an exception.
+    result = registry().invoke_by_name(
+        "calculator", {"expression": "1+1", "scale": float("nan")}
+    )
+    assert isinstance(result, ToolResult)
+    assert result.ok is False
+
+
 def test_pseudo_tool_schemas():
     assert SPAWN_TOOL_SCHEMA.name == SPAWN_TOOL_NAME
     assert "task" in SPAWN_TOOL_SCHEMA.parameters["properties"]
@@ -85,7 +115,7 @@ def test_pseudo_tool_schemas():
     assert LOAD_TOOLS_SCHEMA.name == LOAD_TOOLS_NAME
 
 
-# --- ADR-147 (TASK-32477 Task 7): spawn schema gating + master visibility ---
+# --- ADR-344 (TASK-32477 Task 7): spawn schema gating + master visibility ---
 #
 # The spawn tool advertises `provider`/`model` override args ONLY when the
 # operator opted in via [agents] spawn_override_enabled, enumerates the
@@ -109,7 +139,8 @@ def test_spawn_schema_omits_override_args_when_disabled():
 
 def test_spawn_schema_offers_override_args_when_enabled():
     schema = build_spawn_schema(
-        [PRESET], override_enabled=True,
+        [PRESET],
+        override_enabled=True,
         override_targets=(("custom-ep:qwen-local", ("qwen3.8-27b",)),),
     )
     props = schema.parameters["properties"]
@@ -514,7 +545,10 @@ def test_registration_read_coerces_quoted_false_to_not_registered(monkeypatch):
     calls the arc's fifth `bool("false")` site.
     """
     import tldw_chatbook.config as config_module
-    from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS, BuiltinToolProvider
+    from tldw_chatbook.Agents.tool_catalog import (
+        _GATEABLE_BUILTINS,
+        BuiltinToolProvider,
+    )
 
     target = _GATEABLE_BUILTINS[0]
 
@@ -531,7 +565,10 @@ def test_registration_read_coerces_quoted_false_to_not_registered(monkeypatch):
 def test_registration_read_coerces_quoted_true_to_registered(monkeypatch):
     """The mirror case: a quoted `"true"` MUST register the tool."""
     import tldw_chatbook.config as config_module
-    from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS, BuiltinToolProvider
+    from tldw_chatbook.Agents.tool_catalog import (
+        _GATEABLE_BUILTINS,
+        BuiltinToolProvider,
+    )
 
     target = _GATEABLE_BUILTINS[0]
 
@@ -654,12 +691,24 @@ def test_deferred_disclosure_plan_lists_available_tools():
 
     assert plan.offer_find_load, "300 padded tools must defer disclosure"
     find_schema = next(
-        schema
-        for schema in plan.runtime_schemas
-        if schema.name == "find_tools"
+        schema for schema in plan.runtime_schemas if schema.name == "find_tools"
     )
     # 301 tools exceed the name-listing bound, so the surface degrades to
     # groups (AC#3) -- and the fs group is still named, so the capability
     # is visibly present (AC#2).
     assert "fs_*" in find_schema.description
     assert "pad_* (300)" in find_schema.description
+
+
+def test_operation_is_exact_optional_owner_identity(monkeypatch):
+    reg = registry()
+    assert reg.snapshot_for_hook("calculator").operation is None
+    owner = reg.resolve_owner_for_name("calculator")[1]
+    monkeypatch.setattr(owner, "hook_operation", lambda _: "file.read", raising=False)
+    first = reg.snapshot_for_hook("calculator")
+    assert first.operation == "file.read"
+    monkeypatch.setattr(owner, "hook_operation", lambda _: "file.write")
+    assert reg.snapshot_for_hook("calculator") != first
+    monkeypatch.setattr(owner, "hook_operation", lambda _: "shell.execute")
+    with pytest.raises(ValueError, match="operation"):
+        reg.snapshot_for_hook("calculator")

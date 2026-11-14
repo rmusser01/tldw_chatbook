@@ -1,0 +1,29 @@
+{
+  "results": [
+    {
+      "label": "task1-red-correct-import",
+      "tests": 8,
+      "failures": 4,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "label": "task1-green",
+      "tests": 8,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "label": "task1-existing-inline",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  ],
+  "source_sha256": {
+    "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py": "62dd91e1a1ca7ddf76845f07182d57a5fbef7c3ea18cadb7414bbecb4170efb0",
+    "Tests/UI/test_schedules_reminder_edit_identity.py": "58af2ab2240cf561e12b4b90f2d482075e3480c4e910d70260a38908e8a07edb"
+  }
+}

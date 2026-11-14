@@ -38,8 +38,8 @@ app = SimpleNamespace(app_config={}, prompts_client_id="startup-test",
     _notify_rag_indexing_guidance=lambda *a: None)
 
 if kind == "notes":
-    lazy = application.get_chachanotes_db_lazy
-    application.get_chachanotes_db_lazy = lambda: retain(lazy())
+    opener = application._open_profile_chachanotes
+    application._open_profile_chachanotes = lambda app_config: retain(opener(app_config))
     constructor = application.NotesInteropService
     def notes(*args, **kwargs):
         result = constructor(*args, **kwargs)
@@ -58,7 +58,8 @@ elif kind == "prompts":
     application.prompts_interop.initialize_interop = prompts
     initialize = lambda: application.TldwCli._init_prompts_service(app)
 elif kind == "media":
-    constructor = application.MediaDatabase
+    import tldw_chatbook.DB.Client_Media_DB_v2 as media_module
+    constructor = media_module.MediaDatabase
     def media(*args, **kwargs):
         db = retain(constructor(*args, **kwargs))
         if failure:
@@ -66,7 +67,7 @@ elif kind == "media":
                 raise RuntimeError("injected media prefetch failure")
             db.get_distinct_media_types = prefetch
         return db
-    application.MediaDatabase = media
+    media_module.MediaDatabase = media
     initialize = lambda: application.TldwCli._init_media_db(app)
 else:
     assert kind == "notes_seed"
@@ -113,7 +114,6 @@ elif kind == "media":
         assert app._media_types_for_ui == ["Error: Exception fetching media types"]
 else:
     assert app.notes_service is None
-    assert config.chachanotes_db is None
 
 # The same reusable owner can allocate a fresh connection on a later thread;
 # committed initialization data survives both success and later init failures.
@@ -142,7 +142,7 @@ def test_startup_worker_retires_native_handle_and_owner_reopens(
     _run(tmp_path, kind, failure)
 
 
-def test_failed_notes_seed_retires_constructed_owner_before_reset(tmp_path):
+def test_failed_notes_seed_retires_its_startup_connection(tmp_path):
     _run(tmp_path, "notes_seed", True)
 
 

@@ -201,7 +201,7 @@ def publish_persona_visual(
     directories = (profile_path, profile_path / "persona_visual", profile_path / "persona_visual/packs",
                    versions_path.parent, versions_path, *(p for c in candidates for p in (c, c / "assets")))
     source_files = tuple(source_path / name for name, _ in assets)
-    if any(visual_lifetime._identity(candidate) is not None for candidate in candidates) or any(
+    if any(visual_lifetime.path_identity(candidate) is not None for candidate in candidates) or any(
         asset == candidate or candidate in asset.parents
         for asset in source_files for candidate in candidates
     ):
@@ -1266,9 +1266,7 @@ def _storage_reference_exists(
 def _require_idle_repository(repository: PersonaVisualRepository) -> None:
     try:
         connection = repository.db.get_connection()
-        if connection.in_transaction or getattr(
-            repository.db._local, "transaction_depth", 0
-        ):
+        if connection.in_transaction or repository.db.managed_transaction_depth():
             raise PersonaVisualPublicationError("persona_visual_transaction_active")
     except PersonaVisualPublicationError:
         raise

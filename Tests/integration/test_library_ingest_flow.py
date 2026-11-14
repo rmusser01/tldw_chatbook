@@ -24,6 +24,12 @@ from Tests.UI.test_library_shell import (
 )
 from Tests.UI.app_factory import _build_test_app
 
+# TASK-39141: the `library_screen` fixture's `_build_test_app()` and the
+# ingest backend's `get_cli_setting` read config, which the per-test
+# TLDW_CONFIG_PATH redirect refuses (RecoveryRequired
+# raw_source_selection_changed). Keep the collection-time sandbox profile.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 def _preflight_result(**overrides):
     """Build a PreflightResult with sensible defaults."""
@@ -53,6 +59,16 @@ def _force_missing_required_features(monkeypatch, *groups: str) -> None:
         "_is_installed",
         lambda feature: feature not in missing,
     )
+
+
+def _d_open_local_start_gate(app) -> None:
+    """Open the media-DB gate the harness leaves shut, without parse workers.
+
+    Since 5ef598f764 (2026-10-21) a submit obeys ``start_enabled``, which
+    needs ``app.media_db``; the harness leaves it unset (TASK-39152).
+    """
+    app.media_db = SimpleNamespace()
+    app._top_up_ingest_parse_pool = lambda: None
 
 
 @pytest_asyncio.fixture
@@ -118,6 +134,7 @@ async def test_inline_consent_gates_start_when_pdf_deps_missing(
     press arms the inline confirm (no modal on any Start path), the SECOND
     press submits and the job lands in the real registry."""
     screen, pilot = library_screen
+    _d_open_local_start_gate(screen.app_instance)
     pdf = tmp_path / "doc.pdf"
     pdf.write_text("%PDF-1.4 dummy")
 
@@ -130,6 +147,7 @@ async def test_inline_consent_gates_start_when_pdf_deps_missing(
 
     form = screen._ingest_state.form
     form.path = str(pdf)
+    form.preflight_path = str(pdf)  # (TASK-34000.20) a staged verdict names the path it describes
     form.preflight = _preflight_result(
         type_groups={"pdf": [str(pdf)]},
         warnings=[warning],
@@ -176,6 +194,7 @@ async def test_real_screen_to_app_folder_member_change_rearms_without_queueing(
     active = app.library_ingest_jobs.submit(source_path=str(matching))
     form = screen._ingest_state.form
     form.path = str(folder)
+    form.preflight_path = str(folder)
     form.preflight = _preflight_result(
         type_groups={"generic": [str(first), str(matching)]},
         total_files=2,
@@ -257,6 +276,7 @@ def test_options_persist_to_config(monkeypatch):
         author="",
         keywords="",
         path="doc.pdf",
+        preflight_path="doc.pdf",
         preflight=_preflight_result(type_groups={"pdf": ["doc.pdf"]}),
         preflight_checking=False,
     )
@@ -271,7 +291,9 @@ def test_options_persist_to_config(monkeypatch):
     # the real method posts a message this unmounted shortcut cannot.
     screen.call_after_refresh = lambda *_args, **_kwargs: None
 
-    library_screen_module.LibraryScreen._do_submit_ingest(screen, "doc.pdf")
+    library_screen_module.LibraryScreen._do_submit_ingest(
+        screen, "doc.pdf", _readiness_checked=True
+    )
 
     assert len(submitted_jobs) == 1
 
@@ -337,9 +359,7 @@ def test_snapshot_coerces_display_string_chunk_numbers(monkeypatch):
         submit_library_ingest_job=lambda **kwargs: submitted_jobs.append(kwargs)
     )
     screen._ingest_state.form = SimpleNamespace(
-        type_options={
-            "generic": {"chunk_size": "1000", "chunk_overlap": "150"}
-        },
+        type_options={"generic": {"chunk_size": "1000", "chunk_overlap": "150"}},
         analyze=False,
         chunk=True,
         chunk_size="1000",
@@ -347,6 +367,7 @@ def test_snapshot_coerces_display_string_chunk_numbers(monkeypatch):
         author="",
         keywords="",
         path="notes.txt",
+        preflight_path="notes.txt",
         preflight=_preflight_result(type_groups={"generic": ["notes.txt"]}),
         preflight_checking=False,
     )
@@ -358,7 +379,9 @@ def test_snapshot_coerces_display_string_chunk_numbers(monkeypatch):
     # the real method posts a message this unmounted shortcut cannot.
     screen.call_after_refresh = lambda *_args, **_kwargs: None
 
-    library_screen_module.LibraryScreen._do_submit_ingest(screen, "notes.txt")
+    library_screen_module.LibraryScreen._do_submit_ingest(
+        screen, "notes.txt", _readiness_checked=True
+    )
 
     assert len(submitted_jobs) == 1
     generic = submitted_jobs[0]["ingest_options"]["generic"]
@@ -372,12 +395,14 @@ def test_snapshot_coerces_display_string_chunk_numbers(monkeypatch):
 async def test_job_persists_to_db(library_screen, tmp_path):
     """Start ingest, verify row in Library_Ingest_Jobs_DB has ingest_options."""
     screen, pilot = library_screen
+    _d_open_local_start_gate(screen.app_instance)
     pdf = tmp_path / "doc.pdf"
     pdf.write_text("%PDF-1.4 dummy")
 
     form = screen._ingest_state.form
     form.path = str(pdf)
     form.type_options = {"pdf": {"pdf_engine": "pymupdf"}}
+    form.preflight_path = str(pdf)
     form.preflight = _preflight_result(type_groups={"pdf": [str(pdf)]})
 
     screen._submit_library_ingest_form()
@@ -396,11 +421,13 @@ async def test_job_persists_to_db(library_screen, tmp_path):
 async def test_unsupported_file_not_retryable(library_screen, tmp_path):
     """Ingest unsupported file, verify no Retry button."""
     screen, pilot = library_screen
+    _d_open_local_start_gate(screen.app_instance)
     unsupported = tmp_path / "file.xyz"
     unsupported.write_text("dummy")
 
     form = screen._ingest_state.form
     form.path = str(unsupported)
+    form.preflight_path = str(unsupported)
     form.preflight = _preflight_result(type_groups={"generic": [str(unsupported)]})
 
     screen._submit_library_ingest_form()
@@ -414,7 +441,10 @@ async def test_unsupported_file_not_retryable(library_screen, tmp_path):
         job.job_id,
         error="Unsupported file type",
         permanent=False,
-        error_detail={"category": "unsupported_file_type", "message": "Unsupported file type"},
+        error_detail={
+            "category": "unsupported_file_type",
+            "message": "Unsupported file type",
+        },
     )
     job = registry.get_job(job.job_id)
 
@@ -517,19 +547,13 @@ async def test_forecast_counts_equal_the_real_receipt_for_a_mixed_folder(
                 for job in app.library_ingest_jobs.jobs()
             }
             actual_done = sum(
-                1
-                for job in outcomes.values()
-                if job.state is IngestJobState.DONE
+                1 for job in outcomes.values() if job.state is IngestJobState.DONE
             )
             actual_skipped = sum(
-                1
-                for job in outcomes.values()
-                if job.state is IngestJobState.SKIPPED
+                1 for job in outcomes.values() if job.state is IngestJobState.SKIPPED
             )
             actual_failed = sum(
-                1
-                for job in outcomes.values()
-                if job.state is IngestJobState.FAILED
+                1 for job in outcomes.values() if job.state is IngestJobState.FAILED
             )
 
             assert (
@@ -668,7 +692,9 @@ class _RecordingIngestTransport:
                 MediaIngestJobItem(
                     id=remote_id,
                     source=str(source),
-                    source_kind="url" if source in (request_data.urls or []) else "file",
+                    source_kind="url"
+                    if source in (request_data.urls or [])
+                    else "file",
                     status="queued",
                 )
             )
@@ -776,9 +802,7 @@ async def test_forecast_counts_equal_the_real_receipt_for_a_server_submission(
     app = _IngestRunnerHarness(db)
     # The two preconditions ``_resolve_ingest_backend`` reads: the opt-in
     # (patched above) and a server-mode runtime.
-    app.runtime_policy = SimpleNamespace(
-        state=SimpleNamespace(active_source="server")
-    )
+    app.runtime_policy = SimpleNamespace(state=SimpleNamespace(active_source="server"))
     app.server_media_reading_service = ServerMediaReadingService(transport)
     app.REMOTE_INGEST_POLL_SECONDS = 0.01
     try:
@@ -812,14 +836,10 @@ async def test_forecast_counts_equal_the_real_receipt_for_a_server_submission(
                 1 for job in outcomes.values() if job.state is IngestJobState.DONE
             )
             actual_skipped = sum(
-                1
-                for job in outcomes.values()
-                if job.state is IngestJobState.SKIPPED
+                1 for job in outcomes.values() if job.state is IngestJobState.SKIPPED
             )
             actual_failed = sum(
-                1
-                for job in outcomes.values()
-                if job.state is IngestJobState.FAILED
+                1 for job in outcomes.values() if job.state is IngestJobState.FAILED
             )
 
             assert (

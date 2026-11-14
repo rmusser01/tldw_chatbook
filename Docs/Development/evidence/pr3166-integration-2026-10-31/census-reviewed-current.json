@@ -1,0 +1,22 @@
+{
+  "head": "fd922602dfa9711476da79e171ce0ead93eeab97",
+  "source_diff_sha256": "dbd74a4926ecb1f8c22537245ed1ae6f2274ef288c8bd1a9b172ee2b20b5d4aa",
+  "command": [
+    "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-X",
+    "utf8",
+    "-m",
+    "Tests.windows_private_fixture_runner",
+    "Tests/Architecture/test_timer_path_static_update_inventory.py::test_no_timer_path_update_defaults_to_layout_true",
+    "Tests/Architecture/test_timer_path_static_update_inventory.py::test_classified_sites_are_not_stale",
+    "Tests/Architecture/test_timer_path_static_update_inventory.py::test_every_classification_states_a_kind",
+    "-v",
+    "--tb=short",
+    "--show-capture=no",
+    "-p",
+    "no:cacheprovider"
+  ],
+  "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-integration-14a3229492a9",
+  "exit_code": 1,
+  "seconds": 194.25
+}

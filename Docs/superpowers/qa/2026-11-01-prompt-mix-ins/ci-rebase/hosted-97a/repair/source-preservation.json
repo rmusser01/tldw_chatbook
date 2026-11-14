@@ -1,0 +1,5 @@
+{
+  "flow_only_two_presence_prefixes": true,
+  "existing_card_tests_byte_identical": true,
+  "scope_and_typed_decision_handlers_byte_identical": true
+}

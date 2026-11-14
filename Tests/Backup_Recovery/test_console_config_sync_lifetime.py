@@ -5,7 +5,9 @@ import pytest
 from Tests.Backup_Recovery.test_bound_config_companions import _SCRIPT
 from Tests.Backup_Recovery.test_home_citation_retirement import _run
 
-_SYNC = _SCRIPT.split("assert config.get_cli_setting")[0] + r'''
+_SYNC = (
+    _SCRIPT.split("assert config.get_cli_setting")[0]
+    + r"""
 import sys,time
 from types import SimpleNamespace,MethodType
 from textual.css.query import NoMatches
@@ -20,7 +22,7 @@ def fail_native_config_write():
  original_write=private_paths.os.write
  before=selected.read_bytes()
  def failed_write(fd,payload):
-  if raw._runtime_operation() is not None:raise OSError('synthetic native write failure')
+  if raw.runtime_operation() is not None:raise OSError('synthetic native write failure')
   return original_write(fd,payload)
  private_paths.os.write=failed_write
  try:assert not config.save_setting_to_cli_config('general','users_name','unsaved')
@@ -43,8 +45,16 @@ if case=='cleanup_error':
   finally:depth-=1
  config_participants.operation=cleanup_failure
 class Surface(SimpleNamespace):
- def __getattr__(self,name):return MethodType(getattr(ChatScreen,name),self)
+ def __getattr__(self,name):
+  attr=getattr(ChatScreen,name)  # A classmethod is already bound (TASK-36511).
+  if isinstance(attr,MethodType):return attr
+  # A class default or property cannot be bound: name it (TASK-38973).
+  if not callable(attr):raise TypeError(f'Surface has no instance answer for ChatScreen.{name}')
+  return MethodType(attr,self)
 screen=Surface()
+# Instance state ChatScreen.__init__ sets, which the coalesced callback reads
+# since dev 0aa96f8d1b moved it to config_sync (TASK-38973's rule: name it).
+screen._console_sync_in_progress=False
 scheduled=[]
 screen.set_timer=lambda delay,callback:scheduled.append((delay,callback))
 screen.call_after_refresh=lambda callback:scheduled.append((0,callback))
@@ -147,11 +157,24 @@ assert getattr(raw._local,'operation',None) is None
 assert all(operation not in raw._states for operation in operations)
 assert not list(parent.glob('*.tmp'))
 print('retired and reopened')
-'''
+"""
+)
 
 
 @pytest.mark.parametrize(
-    "case", ["current", "unbound", "error", "config_error", "preexisting_error", "cleanup_error", "pause_before", "pause_inside", "selector_inside", "database"]
+    "case",
+    [
+        "current",
+        "unbound",
+        "error",
+        "config_error",
+        "preexisting_error",
+        "cleanup_error",
+        "pause_before",
+        "pause_inside",
+        "selector_inside",
+        "database",
+    ],
 )
 def test_console_control_refresh_keeps_native_config_lifetime(tmp_path, case):
     script = _SYNC
@@ -162,7 +185,104 @@ def test_console_control_refresh_keeps_native_config_lifetime(tmp_path, case):
     _run(tmp_path, case, "config-sync", script=script, timeout=40)
 
 
-_NATIVE_RETRY = _SYNC.split("if case=='pause_before':")[0] + r'''
+_BUSY_RETRY = (
+    _SYNC.split("if case=='pause_before':")[0]
+    + r"""
+import threading
+rebuild=config._settings_rebuild_lock();file_lock=config._config_file_lock()
+held=threading.Event();release=threading.Event();expired=threading.Event();errors=[]
+blocked=rebuild if '-rebuild' in case else file_lock
+def holder():
+ try:
+  with blocked:
+   held.set()
+   assert release.wait(5),'test holder was not released'
+ except BaseException as error:errors.append(error)
+owner=threading.Thread(target=holder)
+def watchdog():
+ expired.set();release.set()
+timer=threading.Timer(2,watchdog)
+screen._sync_console_settings_summary=lambda:None
+refresh=screen._sync_console_rail_and_controls if case.startswith('rail') else lambda:screen._sync_console_control_bar('stale rail')
+before=config._CONFIG_PERSISTENCE_ERROR
+try:
+ owner.start();assert held.wait(3)
+ timer.start()
+ started=time.monotonic()
+ result=refresh()
+ print('busy refresh returned',result,'after',time.monotonic()-started,'seconds',flush=True)
+ assert result is False and not expired.is_set(),'Console blocked on a busy native config lock'
+ assert not release.is_set() and owner.is_alive()
+ for _ in range(5):assert refresh() is False
+ assert not rendered and not operations
+ assert len(scheduled)==1 and scheduled[0][0]>0
+ assert not rebuild._is_owned() and not file_lock._is_owned()
+ assert not storage._pending_acquisitions and not storage._raw_operations
+ assert raw.runtime_operation() is None and config._CONFIG_PERSISTENCE_ERROR==before
+ if blocked is file_lock:
+  available=[]
+  def probe_partial_release():
+   acquired=rebuild.acquire(timeout=.5)
+   available.append(acquired)
+   if acquired:rebuild.release()
+  probe=threading.Thread(target=probe_partial_release)
+  probe.start();probe.join(1)
+  assert not probe.is_alive() and available==[True],'partial REBUILD acquisition leaked'
+finally:
+ timer.cancel();release.set();owner.join(3)
+ if timer.ident is not None:timer.join(3)
+ assert not owner.is_alive() and not errors
+assert config.save_setting_to_cli_config('general','users_name','fresh after contention')
+fresh=[]
+original_render=screen._sync_console_control_bar_under_config
+def render_fresh(rail_state=None):
+ fresh.append(rail_state)
+ return original_render(rail_state)
+screen._sync_console_control_bar_under_config=render_fresh
+if case.endswith('-drift'):
+ os.environ['TLDW_CONFIG_PATH']=str(home/'other.toml')
+ try:
+  delay,callback=scheduled.pop()
+  try:callback()
+  except bootstrap.RecoveryRequired:pass
+  else:raise AssertionError('deferred refresh bypassed changed source')
+  assert not rendered and not operations and not fresh
+ finally:os.environ['TLDW_CONFIG_PATH']=str(selected)
+ assert screen._sync_console_control_bar()
+else:
+ delay,callback=scheduled.pop();callback()
+assert rendered==[('fresh after contention','fresh after contention')] and fresh==[None]
+assert not scheduled and not screen._console_control_bar_sync_scheduled
+assert operations[0] is not None and all(value is operations[0] for value in operations)
+assert not rebuild._is_owned() and not file_lock._is_owned()
+assert not storage._pending_acquisitions and not storage._raw_operations
+assert raw.runtime_operation() is None and all(value not in raw._states for value in operations)
+assert config._CONFIG_PERSISTENCE_ERROR==before
+storage._shutdown()
+print('retired and reopened')
+"""
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "control-rebuild",
+        "control-file",
+        "rail-rebuild",
+        "rail-file",
+        "control-file-drift",
+        "rail-file-drift",
+    ],
+)
+def test_console_busy_config_locks_defer_both_refresh_callers(tmp_path, case):
+    """Real held locks defer publication; the installed retry rechecks its source."""
+    _run(tmp_path, case, "config-sync", script=_BUSY_RETRY, timeout=40)
+
+
+_NATIVE_RETRY = (
+    _SYNC.split("if case=='pause_before':")[0]
+    + r"""
 import threading
 from tldw_chatbook.Backup_Recovery.admission import Admission,AdmissionCancelled
 storage.admit_startup()
@@ -232,10 +352,13 @@ finally:
  storage._shutdown()
 assert not errors
 print('retired and reopened')
-'''
+"""
+)
 
 
-@pytest.mark.parametrize("case", ["native-canceled", "native-duplicates", "native-local-pause"])
+@pytest.mark.parametrize(
+    "case", ["native-canceled", "native-duplicates", "native-local-pause"]
+)
 def test_console_refresh_retries_after_native_pause_without_stale_state(tmp_path, case):
     _run(tmp_path, case, "config-sync", script=_NATIVE_RETRY, timeout=40)
 
@@ -244,11 +367,16 @@ def test_console_body_pause_error_is_not_mistaken_for_entry_deferral(tmp_path):
     script = _SYNC.replace(
         "fail=ValueError('synthetic refresh failure')",
         "fail=bootstrap.RecoveryRequired('storage_locally_paused')",
-    ).replace("assert not storage._raw_operations\n", "assert not scheduled\nassert not storage._raw_operations\n")
+    ).replace(
+        "assert not storage._raw_operations\n",
+        "assert not scheduled\nassert not storage._raw_operations\n",
+    )
     _run(tmp_path, "error", "config-sync", script=script, timeout=40)
 
 
-_SCREEN_RETRY = _NATIVE_RETRY.split("try:\n screen._sync_console_control_bar('stale")[0] + r'''
+_SCREEN_RETRY = (
+    _NATIVE_RETRY.split("try:\n screen._sync_console_control_bar('stale")[0]
+    + r"""
 import asyncio
 from textual.app import App
 from textual.screen import Screen
@@ -298,7 +426,8 @@ finally:
  storage._shutdown()
 assert not errors and not storage._raw_operations
 print('retired and reopened')
-'''
+"""
+)
 
 
 @pytest.mark.parametrize("case", ["timer-retry", "timer-teardown"])
@@ -306,15 +435,37 @@ def test_console_native_retry_uses_one_screen_owned_timer(tmp_path, case):
     _run(tmp_path, case, "config-sync", script=_SCREEN_RETRY, timeout=40)
 
 
-_WORKER_RETRY = _NATIVE_RETRY.split("try:\n screen._sync_console_control_bar('stale")[0] + r'''
+_WORKER_RETRY = (
+    _NATIVE_RETRY.split("try:\n screen._sync_console_control_bar('stale")[0]
+    + r"""
 import asyncio
 from contextlib import nullcontext
+from tldw_chatbook.UI.Console_Modules.attach_visit import ConsoleAttachVisit
 async def no_async():pass
 def no_sync(*args,**kwargs):pass
+# This fixture drives an already-attached FULL refresh, without booting services.
+visit_runtime=SimpleNamespace(view=screen,_attached_generation=1)
+screen._current_console_attach_visit=lambda:ConsoleAttachVisit(visit_runtime,screen,1,1,True)
+screen._console_attach_sync_complete=True
+screen._console_attach_reconciled=True
 screen._console_sync_in_progress=False;screen._console_sync_requested=False
 screen._console_chat_store=None
+# The real screen's property answers None with no chat controller; the
+# sync's cadence reads it (TASK-33620.15.1).
+screen._console_chat_controller=None
 screen._message=SimpleNamespace(reconcile_console_speech_context=no_sync)
-screen._session=SimpleNamespace(_sync_console_session_draft=no_sync)
+screen._session=SimpleNamespace(_sync_console_session_draft=no_sync,schedule_manual_read_acknowledgement=no_sync,_project_project_instruction_binding=no_sync,_project_project_instruction_dispatch=no_sync,_dismiss_project_instruction_decision_projection=no_sync)
+screen._fleet=SimpleNamespace(_console_wake_user_priority=no_sync,_console_wake_conversation_in_view=no_sync,_on_console_wake_delivery_started=no_sync)
+# TASK-33620.15.1.2: since PR #3023 every full sync reads this screen's
+# attach visit. Model the mounted, visible Console these cases interrupt:
+# its visit's attach completed, and the runtime already claimed, as
+# restore_state does before mount (the claim reads console_view_hooks,
+# hence the two owners above).
+screen._console_attach_visit_generation=0
+screen._console_attach_sync_complete=screen._console_attach_reconciled=True
+screen._console_attach_reconcile_running=False
+screen._is_active_console_screen=lambda:True
+screen._console_runtime()
 screen._retrieval=SimpleNamespace(
  _warm_console_effective_scope_cache_if_stale=no_async,
  _refresh_active_dictionaries_summary_if_scope_changed=no_async,
@@ -322,20 +473,33 @@ screen._retrieval=SimpleNamespace(
 screen._character=SimpleNamespace(_refresh_active_character_avatar_if_scope_changed=no_async)
 screen._character_context=SimpleNamespace(refresh_if_scope_changed=no_async)
 screen._workspace=SimpleNamespace(tick_workspace_build_scope=nullcontext)
+# Since ab43a0303b a full sync reads its app's UI readiness and then syncs the
+# archive recovery view (TASK-38973); model a started app with no recovery.
+# Its readiness reads the app's config through ``screen.app`` once an app exists.
+screen.app=screen.app_instance=SimpleNamespace(_ui_ready=True,app_config={})
+screen._console_archive_recovery_view=SimpleNamespace(sync=no_async)
+screen._console_terminal_return_reading=None  # The class default.
 for name in ('_record_ui_worker_started','_record_ui_worker_finished','_sync_console_chat_core_state','_sync_console_settings_summary','_sync_console_settings_recovery_surfaces','_sync_console_live_work_readiness_rows','_dispatch_active_console_roleplay_refresh','_sync_console_workspace_context','_dispatch_console_rail_preference_prune'):
  setattr(screen,name,no_sync)
 screen._sync_console_native_session_tabs=no_async
 screen._sync_native_console_transcript=no_async
 screen._console_mode_summary=lambda state:'fixture'
 screen._native_run_status_copy=lambda:None
+# A Static answers its content: the sync compares it before an update (TASK-33620.15.7).
+mode=SimpleNamespace(content='')
+mode.update=lambda content,**kwargs:setattr(mode,'content',content)
 def mode_bar(selector,*args):
- if selector=='#console-mode-bar':return SimpleNamespace(update=no_sync)
+ if selector=='#console-mode-bar':return mode
  return missing(selector,*args)
 screen.query_one=mode_bar
 import tldw_chatbook.UI.Screens.chat_screen as module
 module.project_instruction_ui.sync_project_instruction_status_for_screen=no_sync
 workers=[]
-screen.run_worker=lambda coro,**kwargs:workers.append(coro)
+def schedule_worker(worker, *, exclusive, group):
+ # Textual receives a callable so unstarted work owns no coroutine.
+ assert callable(worker) and exclusive and group=='console-sync'
+ workers.append(worker)
+screen.run_worker=schedule_worker
 async def main():
  screen._console_sync_requested=True
  await screen._sync_native_console_chat_ui()
@@ -371,24 +535,39 @@ async def main():
   return
  delay,callback=scheduled.pop();callback()
  assert len(workers)==1
- await workers.pop()
+ worker=workers.pop()
+ await worker()
  expected='new external request' if case=='native-worker-external' else 'fixture'
  assert rendered==[(expected,expected)]
+ # The refresh recorded the inputs it projected from, chat controller
+ # included (TASK-33620.15.1.2): the tick swallows an unreadable input as
+ # "changed", so without a record every later poll tick would project.
+ from tldw_chatbook.UI.Console_Modules import config_sync
+ assert config_sync._cadence(screen).values is not None
  assert not scheduled and not workers and not screen._console_sync_requested
 try:asyncio.run(main())
 finally:
  Admission.pause_requested=original_probe
  cancel.set()
  if thread.ident is not None:thread.join(5)
- for worker in workers:worker.close()
  storage._shutdown()
 assert not errors and not storage._raw_operations
 print('retired and reopened')
-'''
+"""
+)
 
 
 @pytest.mark.parametrize(
-    "case", ["native-worker", "native-worker-real-pause", "native-worker-inprogress", "native-worker-teardown", "native-worker-external"]
+    "case",
+    [
+        "native-worker",
+        "native-worker-real-pause",
+        "native-worker-inprogress",
+        "native-worker-teardown",
+        "native-worker-external",
+    ],
 )
-def test_console_native_worker_defers_later_native_reads_with_its_refresh(tmp_path, case):
+def test_console_native_worker_defers_later_native_reads_with_its_refresh(
+    tmp_path, case
+):
     _run(tmp_path, case, "config-sync", script=_WORKER_RETRY, timeout=40)

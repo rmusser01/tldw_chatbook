@@ -1,0 +1,55 @@
+# Non-interactive / scripted setup surface
+## CLI flags (app_entry.py:349-372): no --config, --no-setup, --setup, --profile
+def _build_arg_parser() -> argparse.ArgumentParser:
+    """Build the tldw-cli argument parser (extracted from main_cli_runner() for testability)."""
+    parser = argparse.ArgumentParser(
+        description="tldw chatbook - A Textual TUI for chatting with LLMs",
+        prog="tldw-cli",
+    )
+    parser.add_argument(
+        "--serve", action="store_true", help="Run the application as a web server"
+    )
+    parser.add_argument(
+        "--host", type=str, help="Host address for web server (default: localhost)"
+    )
+    parser.add_argument("--port", type=int, help="Port for web server (default: 8000)")
+    parser.add_argument("--web-title", type=str, help="Title for the web page")
+    parser.add_argument(
+        "--debug", action="store_true", help="Enable debug mode for web server"
+    )
+    parser.add_argument(
+        "--focus",
+        action="store_true",
+        help="Start chrome-free in the Console (hides nav bar and workbench header)",
+    )
+    return parser
+
+
+## Env vars that affect first run:
+TLDW_CONFIG_PATH (Backup_Recovery/profile_paths.py:25-29)
+def effective_config_path(default: Path | None = None) -> Path:
+    """Select TLDW_CONFIG_PATH ahead of the supplied canonical default."""
+    return lexical_path(
+        os.environ.get("TLDW_CONFIG_PATH") or default or default_config_path()
+    )
+<PROVIDER>_API_KEY via api_settings.<p>.api_key_env_var -> suppresses the wizard (should_offer_wizard)
+
+## The only implicit 'skip the wizard' contracts (first_run_setup_state.py): [first_run] setup_completed=true, or any real provider key
+30:WIZARD_STATE_SECTION = "first_run"
+31:SETUP_STARTED_KEY = "setup_started"
+32:SETUP_COMPLETED_KEY = "setup_completed"
+
+## Welcome step import affordance: 'Restore a backup' (whole-profile archive) only (FirstRunSetupWizard.py:7402-7410)
+                )
+            yield Button("Restore a backup", id="setup-backup-restore")
+            yield Static("", classes="setup-step-error")
+
+    @on(Button.Pressed, "#setup-backup-restore")
+    def open_backup_restore(self, event: Button.Pressed) -> None:
+        """Keep setup choices intact while the app owns the recovery view."""
+        event.stop()
+        self.app.action_backup_restore()
+
+## Docs mention of scripted setup in First_Run_Setup.md:
+68:| Speech (full track) | Voice-input transcription language and precision | `[transcription]` in config.toml — no Settings category owns it yet |
+143:before running unless you approve a longer scope." descriptions, and the

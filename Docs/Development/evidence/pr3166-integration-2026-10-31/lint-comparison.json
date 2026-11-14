@@ -1,0 +1,470 @@
+[
+  {
+    "path": "Tests/App/test_notes_sync_boot_gate.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/App/test_notes_sync_lazy_start.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/Architecture/test_library_modules_size_ratchet.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/Architecture/test_module_size_ratchet.py",
+    "before": 1,
+    "after": 1,
+    "added": []
+  },
+  {
+    "path": "Tests/Architecture/test_screen_size_ratchet.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/Architecture/test_timer_path_static_update_inventory.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/Backup_Recovery/test_bound_config_companions.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/Backup_Recovery/test_console_config_sync_lifetime.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/Backup_Recovery/test_console_provider_derivation.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/Backup_Recovery/test_storage_ancestry_walk.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/Backup_Recovery/test_storage_initialization_wait.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/Chat/test_console_tokenizer_display.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/Internal_Prompts/conftest.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/Performance/test_console_attention_owned.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/Performance/test_console_direct_branch_recorder.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/Performance/test_console_display_contention.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/Performance/test_console_skill_context_owned.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/Performance/test_console_tokenizer_owned.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/Performance/test_css_candidate_reuse.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/Performance/test_css_static_requirements.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/Performance/test_css_subject_pseudo.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/Performance/test_home_hidden_completion.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/Performance/test_textual_css_fastpath.py",
+    "before": 1,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/UI/test_console_attach_completion.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/UI/test_console_checked_display_scope.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/UI/test_console_config_sync_cadence.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/UI/test_console_full_config_preparation.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/UI/test_console_hooks_review.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/UI/test_console_manual_unread.py",
+    "before": 5,
+    "after": 5,
+    "added": []
+  },
+  {
+    "path": "Tests/UI/test_console_measured_cost_without_tokenizer.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/UI/test_console_native_transcript.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/UI/test_console_pending_facts_direct_control_cold_readiness.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/UI/test_console_presentation_deduplication.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/UI/test_console_readiness_config_projection.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/UI/test_console_return_acknowledgement.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/UI/test_console_return_responsiveness.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/UI/test_console_right_rail.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/UI/test_console_run_tick_workspace_reads.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/UI/test_console_runtime_ownership.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/UI/test_console_send_disabled_state.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/UI/test_console_skill_context_worker.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/UI/test_console_tokenizer_preparation.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/UI/test_console_transcript_context_projection.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/UI/test_console_turn_attention.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/UI/test_console_view_worker_groups.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/UI/test_console_workspace_reconciliation_preparation.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/UI/test_home_content_demand.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/UI/test_library_sync_preparation.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/UI/test_master_shell_navigation.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/UI/test_nav_console_attention.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "Tests/UI/test_settings_prompt_summary_worker.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/Backup_Recovery/control_records.py",
+    "before": 1,
+    "after": 1,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/Backup_Recovery/native_files.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_attention_preparation.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_runtime.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Console_Modules/config_sync.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Console_Modules/console_spend_projection.py",
+    "before": 1,
+    "after": 1,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Console_Modules/context_spend.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Console_Modules/image.py",
+    "before": 4,
+    "after": 4,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Console_Modules/session.py",
+    "before": 10,
+    "after": 10,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Console_Modules/skill.py",
+    "before": 4,
+    "after": 4,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Console_Modules/tokenizer_display.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Console_Modules/video.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Console_Modules/view_workers.py",
+    "before": 1,
+    "after": 1,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Console_Modules/workspace.py",
+    "before": 3,
+    "after": 3,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Library_Modules/library_notes_sync_attention.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py",
+    "before": 2,
+    "after": 2,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Navigation/main_navigation.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Navigation/nav_overflow_menu.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/chat_screen.py",
+    "before": 17,
+    "after": 17,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/home_screen.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/library_screen.py",
+    "before": 62,
+    "after": 62,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/settings_screen.py",
+    "before": 13,
+    "after": 13,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/Utils/textual_css_fastpath.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/Widgets/Console/console_composer_bar.py",
+    "before": 18,
+    "after": 18,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/Widgets/Library/library_notes_add_from_files_canvas.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/Widgets/Library/library_notes_canvas.py",
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  {
+    "path": "tldw_chatbook/app_service_wiring.py",
+    "before": 4,
+    "after": 4,
+    "added": []
+  }
+]

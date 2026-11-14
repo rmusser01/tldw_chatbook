@@ -5,7 +5,7 @@ Date: 2026-08-26
 Related Tasks: [TASK-18926 - Raw CLI executor and Console user command](../tasks/task-18926%20-%20Raw-CLI-executor-and-Console-user-command.md), TASK-22509, TASK-22510, TASK-22512
 Design: [Raw and virtual CLI design](../../Docs/superpowers/specs/2026-08-26-raw-and-virtual-cli-design.md)
 Persistent terminal phase: [ADR-099](099-persistent-terminal-session-runtime-boundary.md)
-Partially supersedes: [ADR-033](033-local-agent-process-execution-boundary.md), only its rejection of raw shell execution
+Partially supersedes: [ADR-302](302-local-agent-process-execution-boundary.md), only its rejection of raw shell execution
 
 ## Decision
 
@@ -64,7 +64,7 @@ part of this decision's first implementation phase.
 
 ## Context
 
-ADR-033 chose a virtual CLI and rejected raw shell execution because a claim of
+ADR-302 chose a virtual CLI and rejected raw shell execution because a claim of
 workspace confinement based only on `cwd` would be false, and a portable OS
 sandbox is a separate project. That reasoning remains correct. The product
 decision has changed: Chatbook should offer an advanced, unmistakably dangerous
@@ -75,7 +75,7 @@ The repository already owns most of the required seams:
 
 - `Agents/tool_catalog.py` and `Agents/local_tool_provider.py` provide model-tool
   registration and invocation;
-- ADR-032's permission store and approval cards provide fail-closed consent;
+- ADR-300's permission store and approval cards provide fail-closed consent;
 - `STT/executor_process_tree.py` provides proven POSIX process-group and Windows
   Job Object admission patterns;
 - Console TOOL markers and AgentRunsDB provide durable local operational traces;
@@ -89,7 +89,7 @@ subsystem or a second permission store.
 
 | Option | Why rejected |
 | --- | --- |
-| Preserve ADR-033's virtual-only decision | Does not meet the approved advanced-user requirement for a real host shell. |
+| Preserve ADR-302's virtual-only decision | Does not meet the approved advanced-user requirement for a real host shell. |
 | Claim raw commands are confined because they start in the workspace | False: a shell can use absolute paths, change directory, access the network, and launch arbitrary processes. |
 | Require an OS sandbox for raw CLI v1 | Produces a different capability from the intentionally requested host-authority escape hatch and creates a large cross-platform sandbox project. |
 | Separate `bash_exec`, `powershell_exec`, and `cmd_exec` tools | Duplicates schemas, permissions, lifecycle code, and UI while one fixed shell selector is sufficient. |
@@ -132,3 +132,13 @@ subsystem or a second permission store.
   and mutating-command acceptance tests.
 - The persistent terminal phase requires its own ADR check because PTY ownership
   and retained session state are new runtime boundaries.
+
+### Direct-user native RawCLI custody (Task 8D2)
+
+Trusted Console submission captures original app/runtime/store/session/invocation before scratch allocation or worker enqueue. It admits one manual non-child OPAQUE owner and one tool operation, then binds only the actual local_command run. Temporary/nonpersistable refusal and exact draft/attachment restoration remain. Original source loss refuses, never reselecting another runtime, profile, DB or scratch root.
+
+Local-command row and terminal step writes are required. Successful native writes or exact original row/status/canonical-step readback establish settlement; False, a prior terminal status or finalized latch alone does not. Partial create/initial-step failure observes the same preselected run identity and required error outcome. No new retry/replay producer exists. RunLogWriter stays best effort. Unobservable required outcomes retain original storage, worker and activity custody.
+
+Qualified direct/model/Task7 execution joins actual containment and existing admission/queue-relay helper returns using the same already-reserved operation and captured storage sources. Model handoff comes from exact catalog/concrete provider/original runtime and actual worker operation, never names or IDs alone. Standalone/unqualified execution remains bounded and reports cleanup-unproven when helper return is absent. Returned cleanup proof and required-output sealing follow helper proof. Original synchronous host acceptance or source-validated discard and operation.finish return precede root/claim retirement.
+
+Disposal seals admission before capacity close and scratch tombstone, retaining original storage/scratch leases until real drain despite repeated cancellation. Costs are coarse OPAQUE contention, source/DB readback checks, a small private RawCLI handoff, and potentially indefinite native worker/storage/disposal retention when process/helper/required-write proof is unavailable. No second executor, queue, journal, permission grant, model/child owner or public workflow entry is introduced.

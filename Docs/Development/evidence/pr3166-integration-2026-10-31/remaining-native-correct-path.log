@@ -1,0 +1,126 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+============================= test session starts =============================
+platform win32 -- Python 3.12.10, pytest-8.3.5, pluggy-1.6.0 -- C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Scripts\python.exe
+hypothesis profile 'tldw' -> deadline=None, max_examples=25, stateful_step_count=20, suppress_health_check=(HealthCheck.too_slow,)
+rootdir: C:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui
+configfile: pyproject.toml
+plugins: anyio-4.9.0, hypothesis-6.131.27, asyncio-1.0.0, cov-7.1.0, mock-3.15.1, timeout-2.4.0, xdist-3.8.0
+asyncio: mode=Mode.AUTO, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+timeout: 300.0s
+timeout method: thread
+timeout func_only: False
+collecting ... collected 27 items
+
+Tests/Performance/test_console_tokenizer_owned.py::test_original_tokenizer_admission_is_off_loop_and_owned PASSED [  3%]
+Tests/Performance/test_console_display_contention.py::test_checked_display_defers_contended_coordinator[entry] PASSED [  7%]
+Tests/Performance/test_console_display_contention.py::test_checked_display_defers_contended_coordinator[exit] PASSED [ 11%]
+Tests/Performance/test_console_display_contention.py::test_checked_display_defers_contended_coordinator[pricing] PASSED [ 14%]
+Tests/Performance/test_console_display_contention.py::test_checked_display_defers_contended_coordinator[capacity] PASSED [ 18%]
+Tests/Performance/test_console_display_contention.py::test_unqualified_native_display_retires_before_contention_retry[pricing] PASSED [ 22%]
+Tests/Performance/test_console_display_contention.py::test_unqualified_native_display_retires_before_contention_retry[capacity] PASSED [ 25%]
+Tests/UI/test_console_return_responsiveness.py::test_pending_attach_does_not_schedule_an_early_hook_repaint PASSED [ 29%]
+Tests/UI/test_console_return_responsiveness.py::test_keyboard_during_held_attachment_keeps_runtime_unanswerable PASSED [ 33%]
+Tests/UI/test_console_return_responsiveness.py::test_action_class_changes_refresh_each_button_once PASSED [ 37%]
+Tests/Architecture/test_timer_path_static_update_inventory.py::test_census_actually_finds_the_known_clock_roots PASSED [ 40%]
+Tests/Architecture/test_timer_path_static_update_inventory.py::test_no_timer_path_update_defaults_to_layout_true FAILED [ 44%]
+Tests/Architecture/test_timer_path_static_update_inventory.py::test_classified_sites_are_not_stale PASSED [ 48%]
+Tests/Architecture/test_timer_path_static_update_inventory.py::test_every_classification_states_a_kind PASSED [ 51%]
+Tests/Architecture/test_timer_path_static_update_inventory.py::test_clock_roots_all_resolve_loudly PASSED [ 55%]
+Tests/Architecture/test_timer_path_static_update_inventory.py::test_clock_root_set_is_pinned FAILED [ 59%]
+Tests/Architecture/test_timer_path_static_update_inventory.py::test_wrapper_spelled_interval_is_censused PASSED [ 62%]
+Tests/Architecture/test_timer_path_static_update_inventory.py::test_worker_backed_retry_remains_a_clock_root PASSED [ 66%]
+Tests/Architecture/test_timer_path_static_update_inventory.py::test_deferral_shim_callback_resolves_through PASSED [ 70%]
+Tests/Architecture/test_timer_path_static_update_inventory.py::test_unresolvable_root_fails_loudly PASSED [ 74%]
+Tests/Architecture/test_timer_path_static_update_inventory.py::test_unregistered_passthrough_wrapper_fails_loudly PASSED [ 77%]
+Tests/Architecture/test_timer_path_static_update_inventory.py::test_clock_family_passthrough_wrappers_are_excused PASSED [ 81%]
+Tests/Architecture/test_timer_path_static_update_inventory.py::test_provable_dict_receiver_is_auto_classified PASSED [ 85%]
+Tests/Architecture/test_timer_path_static_update_inventory.py::test_self_attr_set_receiver_is_auto_classified PASSED [ 88%]
+Tests/Architecture/test_timer_path_static_update_inventory.py::test_query_one_receiver_is_never_auto_classified PASSED [ 92%]
+Tests/Architecture/test_timer_path_static_update_inventory.py::test_mixed_binding_receiver_is_never_auto_classified PASSED [ 96%]
+Tests/Architecture/test_timer_path_static_update_inventory.py::test_rebound_self_attr_is_never_auto_classified PASSED [100%]
+
+================================== FAILURES ===================================
+______________ test_no_timer_path_update_defaults_to_layout_true ______________
+Tests\Architecture\test_timer_path_static_update_inventory.py:2425: in test_no_timer_path_update_defaults_to_layout_true
+    assert not unclassified, (
+E   AssertionError: These `.update(` calls are reachable from a repeating clock and do not pass `layout=`. Static.update defaults to layout=True, so each of these arms a whole screen reflow per tick.
+E     
+E     Fix by either passing `layout=False` (only where the rendered size genuinely cannot change -- prove it with a geometry-equivalence A/B, see Tests/UI/test_timer_path_layout_cost.py), or by adding an entry to CLASSIFIED_SITES saying why it does not need to.
+E     
+E       tldw_chatbook/UI/Screens/settings_screen.py:[26398] in SettingsScreen._refresh_internal_prompts_customized_widgets recv='row'
+E           via ['[set_interval] settings_screen:SettingsScreen._poll_subscription_readiness']
+E       tldw_chatbook/UI/Screens/settings_screen.py:[10938] in SettingsScreen._update_category_state_banner recv='banner'
+E           via ['[set_interval] settings_screen:SettingsScreen._poll_subscription_readiness']
+E       tldw_chatbook/UI/Screens/settings_screen.py:[10238] in SettingsScreen._update_draft_status_widgets recv='note'
+E           via ['[set_interval] settings_screen:SettingsScreen._poll_subscription_readiness']
+E       tldw_chatbook/UI/Screens/settings_screen.py:[10221] in SettingsScreen._update_draft_status_widgets recv="self.query_one('#settings-selected-category-draft-status', Static)"
+E           via ['[set_interval] settings_screen:SettingsScreen._poll_subscription_readiness']
+E       tldw_chatbook/UI/Screens/settings_screen.py:[13777] in SettingsScreen._update_provider_return_widgets recv='existing'
+E           via ['[set_interval] settings_screen:SettingsScreen._poll_subscription_readiness']
+E       tldw_chatbook/UI/Screens/settings_screen.py:[13781] in SettingsScreen._update_provider_return_widgets recv="self.query_one('#settings-provider-navigation-conflict-summary', Static)"
+E           via ['[set_interval] settings_screen:SettingsScreen._poll_subscription_readiness']
+E       tldw_chatbook/UI/Screens/settings_screen.py:[13789] in SettingsScreen._update_provider_return_widgets recv="self.query_one('#settings-provider-return-continuation-status', Static)"
+E           via ['[set_interval] settings_screen:SettingsScreen._poll_subscription_readiness']
+E       tldw_chatbook/Widgets/Settings_Widgets/project_index_binding_card.py:[194] in ProjectIndexBindingCard._feedback recv="self.query_one('.project-index-feedback', Static)"
+E           via ['[set_interval] project_index_binding_card:ProjectIndexBindingCard._poll']
+E       tldw_chatbook/Widgets/Settings_Widgets/project_index_binding_card.py:[356, 365] in ProjectIndexBindingCard._launch recv="self.query_one('.project-index-status', Static)"
+E           via ['[set_interval] project_index_binding_card:ProjectIndexBindingCard._poll']
+E       tldw_chatbook/Widgets/Settings_Widgets/project_index_binding_card.py:[167] in ProjectIndexBindingCard._paint recv="self.query_one('.project-index-status', Static)"
+E           via ['[set_interval] project_index_binding_card:ProjectIndexBindingCard._poll']
+E       tldw_chatbook/Widgets/Settings_Widgets/project_index_binding_card.py:[356, 365] in ProjectIndexBindingCard.run recv="self.query_one('.project-index-status', Static)"
+E           via ['[set_interval] project_index_binding_card:ProjectIndexBindingCard._poll']
+E   assert not [('tldw_chatbook/UI/Screens/settings_screen.py', 'SettingsScreen._refresh_internal_prompts_customized_widgets', 'row', [26398], ['[set_interval] settings_screen:SettingsScreen._poll_subscription_readiness']), ('tldw_chatbook/UI/Screens/settings_screen.py', 'SettingsScreen._update_category_state_banner', 'banner', [10938], ['[set_interval] settings_screen:SettingsScreen._poll_subscription_readiness']), ('tldw_chatbook/UI/Screens/settings_screen.py', 'SettingsScreen._update_draft_status_widgets', 'note', [10238], ['[set_interval] settings_screen:SettingsScreen._poll_subscription_readiness']), ('tldw_chatbook/UI/Screens/settings_screen.py', 'SettingsScreen._update_draft_status_widgets', "self.query_one('#settings-selected-category-draft-status', Static)", [10221], ['[set_interval] settings_screen:SettingsScreen._poll_subscription_readiness']), ('tldw_chatbook/UI/Screens/settings_screen.py', 'SettingsScreen._update_provider_return_widgets', 'existing', [13777], ['[set_interval] settings_screen:SettingsScreen._poll_subscription_readiness']), ('tldw_chatbook/UI/Screens/settings_screen.py', 'SettingsScreen._update_provider_return_widgets', "self.query_one('#settings-provider-navigation-conflict-summary', Static)", [13781], ['[set_interval] settings_screen:SettingsScreen._poll_subscription_readiness']), ...]
+________________________ test_clock_root_set_is_pinned ________________________
+Tests\Architecture\test_timer_path_static_update_inventory.py:2558: in test_clock_root_set_is_pinned
+    assert actual == EXPECTED_CLOCK_ROOTS, "\n\n".join(message)
+E   AssertionError: NEW repeating-clock roots. Before adding each to EXPECTED_CLOCK_ROOTS, check what its callback repaints: every `.update(` it reaches must pass layout= or carry a CLASSIFIED_SITES row.
+E       + ('set_interval', 'tldw_chatbook/Widgets/Settings_Widgets/project_index_binding_card.py', 'ProjectIndexBindingCard', '_poll')
+E   assert frozenset({('...mpose'), ...}) == frozenset({('...mpose'), ...})
+E     
+E     Extra items in the left set:
+E     ('set_interval', 'tldw_chatbook/Widgets/Settings_Widgets/project_index_binding_card.py', 'ProjectIndexBindingCard', '_poll')
+E     
+E     Full diff:
+E       frozenset({
+E           (...
+E     
+E     ...Full output truncated (444 lines hidden), use '-vv' to show
+============================== warnings summary ===============================
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pydub\utils.py:14
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydub\utils.py:14: DeprecationWarning: 'audioop' is deprecated and slated for removal in Python 3.13
+    import audioop
+
+Tests/Architecture/test_timer_path_static_update_inventory.py::test_census_actually_finds_the_known_clock_roots
+  C:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\tldw_chatbook\Utils\Splash_Screens\environmental\train_journey.py:31: SyntaxWarning: invalid escape sequence '\ '
+    "  /|___|\  ",
+
+Tests/Architecture/test_timer_path_static_update_inventory.py::test_census_actually_finds_the_known_clock_roots
+  C:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\tldw_chatbook\Utils\Splash_Screens\environmental\train_journey.py:32: SyntaxWarning: invalid escape sequence '\ '
+    " /_|_O_|_\ ",
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 25 durations =============================
+116.29s call     Tests/Architecture/test_timer_path_static_update_inventory.py::test_census_actually_finds_the_known_clock_roots
+49.63s call     Tests/Performance/test_console_tokenizer_owned.py::test_original_tokenizer_admission_is_off_loop_and_owned
+15.61s call     Tests/Architecture/test_timer_path_static_update_inventory.py::test_classified_sites_are_not_stale
+13.08s call     Tests/Performance/test_console_display_contention.py::test_checked_display_defers_contended_coordinator[pricing]
+11.71s call     Tests/Performance/test_console_display_contention.py::test_checked_display_defers_contended_coordinator[exit]
+11.61s call     Tests/Performance/test_console_display_contention.py::test_unqualified_native_display_retires_before_contention_retry[capacity]
+11.28s call     Tests/UI/test_console_return_responsiveness.py::test_keyboard_during_held_attachment_keeps_runtime_unanswerable
+10.83s call     Tests/Performance/test_console_display_contention.py::test_checked_display_defers_contended_coordinator[capacity]
+9.46s call     Tests/Performance/test_console_display_contention.py::test_unqualified_native_display_retires_before_contention_retry[pricing]
+6.83s call     Tests/Performance/test_console_display_contention.py::test_checked_display_defers_contended_coordinator[entry]
+5.49s teardown Tests/Architecture/test_timer_path_static_update_inventory.py::test_query_one_receiver_is_never_auto_classified
+
+(14 durations < 1s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ===========================
+FAILED Tests/Architecture/test_timer_path_static_update_inventory.py::test_no_timer_path_update_defaults_to_layout_true
+FAILED Tests/Architecture/test_timer_path_static_update_inventory.py::test_clock_root_set_is_pinned
+============ 2 failed, 25 passed, 4 warnings in 273.26s (0:04:33) =============

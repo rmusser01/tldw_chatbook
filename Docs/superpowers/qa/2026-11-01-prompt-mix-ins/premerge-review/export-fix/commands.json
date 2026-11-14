@@ -1,0 +1,50 @@
+[
+  {
+    "purpose": "Initial RED before product edit",
+    "command": "PYTHONDONTWRITEBYTECODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B -m pytest Tests/Prompts_DB/test_prompt_export_mixins.py -q -p no:cacheprovider --basetemp=/private/tmp/mixins-pr3346-export-fix/red-tmp > /private/tmp/mixins-pr3346-export-fix/red.log 2>&1",
+    "exit_code": 1,
+    "result": "8 failed, 3 passed in 1.12s"
+  },
+  {
+    "purpose": "Initial GREEN before shorter refusal text and final option expansion",
+    "command": "PYTHONDONTWRITEBYTECODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B -m pytest Tests/Prompts_DB/test_prompt_export_mixins.py Tests/Prompts_DB/test_prompts_db_legacy.py -k export -q -p no:cacheprovider --basetemp=/private/tmp/mixins-pr3346-export-fix/green-tmp > /private/tmp/mixins-pr3346-export-fix/green.log 2>&1",
+    "exit_code": 0,
+    "result": "19 passed, 62 deselected in 2.90s"
+  },
+  {
+    "purpose": "Final frozen exports",
+    "command": "PYTHONDONTWRITEBYTECODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B -m pytest Tests/Prompts_DB/test_prompt_export_mixins.py Tests/Prompts_DB/test_prompts_db_legacy.py -k export -q -p no:cacheprovider --basetemp=/private/tmp/mixins-pr3346-export-fix/final-tmp > /private/tmp/mixins-pr3346-export-fix/final-exports.log 2>&1",
+    "exit_code": 0,
+    "result": "27 passed, 62 deselected in 7.04s"
+  },
+  {
+    "purpose": "Typed exports and exact size nodes",
+    "command": "PYTHONDONTWRITEBYTECODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B -m pytest 'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/DB/prompt_export.py]' 'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/DB/prompt_export.py]' Tests/Library/test_prompt_export_roundtrip.py Tests/Prompt_Management/test_prompt_chatbook_record.py -q -p no:cacheprovider --basetemp=/private/tmp/mixins-pr3346-export-fix/contracts-tmp > /private/tmp/mixins-pr3346-export-fix/contracts.log 2>&1",
+    "exit_code": 0,
+    "result": "116 passed in 8.24s"
+  },
+  {
+    "purpose": "Final tests against exact baseline helper injected only in memory",
+    "command": "PYTHONDONTWRITEBYTECODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B /private/tmp/mixins-pr3346-export-fix/baseline-probe.py > /private/tmp/mixins-pr3346-export-fix/baseline-final.log 2>&1",
+    "exit_code": 1,
+    "result": "16 failed, 3 passed in 1.52s"
+  },
+  {
+    "purpose": "Current scoped Ruff",
+    "command": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B -m ruff check Tests/Prompts_DB/test_prompt_export_mixins.py tldw_chatbook/DB/prompt_export.py --output-format=json > /private/tmp/mixins-pr3346-export-fix/lint-current.json",
+    "exit_code": 1,
+    "result": "3 inherited production diagnostics, no test diagnostics"
+  },
+  {
+    "purpose": "Baseline Ruff",
+    "command": "git show b1108874cab28d23f660aa22c11c863466a84a8e:tldw_chatbook/DB/prompt_export.py | /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B -m ruff check --stdin-filename tldw_chatbook/DB/prompt_export.py --output-format=json - > /private/tmp/mixins-pr3346-export-fix/lint-base.json",
+    "exit_code": 1,
+    "result": "same 3 production diagnostics"
+  },
+  {
+    "purpose": "Format check",
+    "command": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B -m ruff format --check Tests/Prompts_DB/test_prompt_export_mixins.py tldw_chatbook/DB/prompt_export.py > /private/tmp/mixins-pr3346-export-fix/format.log 2>&1",
+    "exit_code": 0,
+    "result": "2 files already formatted"
+  }
+]

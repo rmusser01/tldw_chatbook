@@ -1,0 +1,22 @@
+FFF                                                                      [100%]
+=================================== FAILURES ===================================
+__ test_enable_refuses_same_authority_replacement_before_consumption[backend] __
+Tests/UI/test_library_prompt_mixins.py:657: in test_enable_refuses_same_authority_replacement_before_consumption
+    await case.service.enable_reference(case.a.id, source=B,
+E   TypeError: ConsolePromptMixinService.enable_reference() got an unexpected keyword argument 'expected_source_fences'
+_ test_enable_refuses_same_authority_replacement_before_consumption[database] __
+Tests/UI/test_library_prompt_mixins.py:657: in test_enable_refuses_same_authority_replacement_before_consumption
+    await case.service.enable_reference(case.a.id, source=B,
+E   TypeError: ConsolePromptMixinService.enable_reference() got an unexpected keyword argument 'expected_source_fences'
+_ test_enable_refuses_same_authority_replacement_before_consumption[scope_wrapper] _
+Tests/UI/test_library_prompt_mixins.py:657: in test_enable_refuses_same_authority_replacement_before_consumption
+    await case.service.enable_reference(case.a.id, source=B,
+E   TypeError: ConsolePromptMixinService.enable_reference() got an unexpected keyword argument 'expected_source_fences'
+============================= slowest 25 durations =============================
+
+(9 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_library_prompt_mixins.py::test_enable_refuses_same_authority_replacement_before_consumption[backend]
+FAILED Tests/UI/test_library_prompt_mixins.py::test_enable_refuses_same_authority_replacement_before_consumption[database]
+FAILED Tests/UI/test_library_prompt_mixins.py::test_enable_refuses_same_authority_replacement_before_consumption[scope_wrapper]
+3 failed, 17 deselected in 1.83s

@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐  N  ┌──────────────────────────────────────────────────────┐  I  meeting-notes (edited)                                   │
+│ │ Navigation                     │  a  │ Media (5)      Sets                                  │  t  file:///Users/macbook-dev/Documents/GitHub/tldw_chatbook │
+│ │     Import…                    │  v  │ Media · 5 of 5 · all types · sort: Newest            │  e  /.worktrees/.nlrev-harness/fixtures/import-docs/meeting- │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  │     │  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ Clear filter   │  m  notes.txt                                                │
+│ │ ▊ Search Library…        ▎▊x▎  │     │  ▊  Title/keyword…                  ▎                │  s    ○ Find  Note  Read later  Use in Console  More ▴       │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  │     │  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                │     This tab has no text to search · switch to Read or       │
+│ │                                │     │    type: All types    sort: Newest                   │     Analysis.                                                │
+│ │ ─────────────────────────────  │     │                                                      │                                                              │
+│ │ Browse                    ▾    │     │    Export…     Trash     Select                      │       Edit metadata    Open original    Open manager         │
+│ │  ▸ Media (5) — your files      │     │    Review these                                      │         Move to trash                                        │
+│ │    Conversations (0)           │     │ █▸ meeting-notes (edited)                            │       Read  Analysis  Highlights  Info (selected)            │
+│ │    Notes (0)                   │     │ █    plaintext · updated just now · loaded           │     Type: plaintext                                          │
+│ │    Prompts (0) — reuse         │     │    paper-retrieval-practice                          │     URL:                                                     │
+│ │    Skills (1) — AI add-ons     │<--- │      plaintext · updated 4m                          │     file:///Users/macbook-dev/Documents/GitHub/tldw_chatbook │
+│ │    Collections (0)             │     │    reading-list                                      │     /.worktrees/.nlrev-harness/fixtures/import-docs/meeting- │
+│ │    Search / RAG — find all     │     │      plaintext · updated 4m                          │     notes.txt                                                │
+│ │ ─────────────────────────────  │     │    glossary                                          │     Updated: now                                             │
+│ │ Artifacts                 ▾    │     │      plaintext · updated 4m                          │                                                              │
+│ │    All artifacts               │     │    team-handbook                                     │<--- No Markdown formatting to render — showing the stored    │
+│ │    Chatbooks                   │     │      plaintext · updated 4m                          │     text                                                     │
+│ │    Reports                     │     │                                                      │     Backend: local                                           │
+│ │    Dreams                      │     │                                                      │     Canonical ID: local:media:4                              │
+│ │ ─────────────────────────────  │     │                                                      │     Original source:                                         │
+│ │ Create                    ▾    │     │                                                      │     file:///Users/macbook-dev/Documents/GitHub/tldw_chatbook │
+│ │    New note                    │<--- │                                                      │     /.worktrees/.nlrev-harness/fixtures/import-docs/meeting- │
+│ │    New prompt                  │     │                                                      │     notes.txt                                                │
+│ │    New skill                   │     │                                                      │     Stored representation: Complete stored text              │
+│ │ ─────────────────────────────  │     │                                                      │     Use in Console sends: Complete stored text excerpt       │
+│ │ Study                     ▾    │     │                                                      │                                                              │
+│ │    Study decks (0)             │     │                                                      │                                                              │
+│ │    Flashcards due: 0           │     │                                                      │                                                              │
+│ │    Quizzes (0)                 │     │                                                      │                                                              │
+│ │ ─────────────────────────────  │     │                                                      │                                                              │
+│ │ Import / Export           ▾    │     │                                                      │                                                              │
+│ │    Import…                     │     │                                                      │                                                              │
+│ │    Export                      │     │                                                      │                                                              │
+│ │ ─────────────────────────────▇ │     │                       1-5 of 5                       │                                                              │
+│ └────────────────────────────────┘     └──────────────────────────────────────────────────────┘                                                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus search | F6 next pane | ] next item | n note | l read later | c use in Console | t trash | s select | esc close | F1 · Ctrl+P · Ctrl+Q

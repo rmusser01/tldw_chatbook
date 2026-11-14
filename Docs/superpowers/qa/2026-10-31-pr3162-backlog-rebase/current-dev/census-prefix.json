@@ -1,0 +1,7 @@
+{
+  "base": "0d05d27fa1d569f1edebbc2346d43f8c03da9911",
+  "prefix_sha256": "e726da635363b94edf66f389709fb6d6d7e4591482f27f224034e0ec1796df0f",
+  "prefix_bytes": 154124,
+  "prefix_entries": 1174,
+  "appended_text": "# PR #3162, 2026-10-31: mounted archive controls; 14 cases passed.\nTests/UI/test_console_archive_recovery_cards.py\n"
+}

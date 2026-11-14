@@ -12,8 +12,10 @@ import pytest
 # Skipped: auto_boundary_assistant is NOT VENDORED — descope ruling (2026-08-23 spec §4.1): server-stack shims (AuthNZ llm_provider_overrides + providerCredentialRuntime, Chat bounded_daemon + chat_helpers, LLM_Calls adapter_registry, api.v1.schemas at function level) with no chatbook consumer; the capability is covered by #3's auto-selection and #4's agent surface; revisit only if a consumer appears. Terminal disposition (2026-08-23 program close):
 # pinned by Tests/Chunking/test_descope_ledger.py; a re-sync regenerates
 # this block verbatim.
-pytest.importorskip("tldw_chatbook.NoSuchDeferredModule",
-                    reason="skipped: auto_boundary_assistant is NOT VENDORED — descope ruling (2026-08-23 spec §4.1): server-stack shims (AuthNZ llm_provider_overrides + providerCredentialRuntime, Chat bounded_daemon + chat_helpers, LLM_Calls adapter_registry, api.v1.schemas at function level) with no chatbook consumer; the capability is covered by #3's auto-selection and #4's agent surface; revisit only if a consumer appears")
+pytest.importorskip(
+    "tldw_chatbook.NoSuchDeferredModule",
+    reason="skipped: auto_boundary_assistant is NOT VENDORED — descope ruling (2026-08-23 spec §4.1): server-stack shims (AuthNZ llm_provider_overrides + providerCredentialRuntime, Chat bounded_daemon + chat_helpers, LLM_Calls adapter_registry, api.v1.schemas at function level) with no chatbook consumer; the capability is covered by #3's auto-selection and #4's agent surface; revisit only if a consumer appears",
+)
 
 from tldw_chatbook.Chunking._shims.AuthNZ.provider_credential_runtime import (
     PROVIDER_CALL_CREDENTIALS_CONTEXT_KEY,
@@ -169,11 +171,16 @@ def test_parse_boundary_assistant_response_accepts_strict_bounded_json():
         ('{"method":"shell","max_size":840,"overlap":84}', "method"),
         ('{"method":"semantic","max_size":10,"overlap":1}', "max_size"),
         ('{"method":"semantic","max_size":840,"overlap":840}', "overlap"),
-        ('{"method":"semantic","max_size":840,"overlap":84,"derived_views":["bad view"]}', "derived_views"),
+        (
+            '{"method":"semantic","max_size":840,"overlap":84,"derived_views":["bad view"]}',
+            "derived_views",
+        ),
         ('{"method":"ebook_chapters","max_size":840,"overlap":84}', "ebook_chapters"),
     ],
 )
-def test_parse_boundary_assistant_response_rejects_invalid_suggestions(response_text, reason_fragment):
+def test_parse_boundary_assistant_response_rejects_invalid_suggestions(
+    response_text, reason_fragment
+):
     result = parse_boundary_assistant_response(
         response_text,
         request=_request(),
@@ -793,8 +800,7 @@ async def test_chat_assistant_pool_saturation_fails_closed_before_dispatch(
                     {
                         "message": {
                             "content": (
-                                '{"method":"semantic","max_size":10,'
-                                '"overlap":1}'
+                                '{"method":"semantic","max_size":10,"overlap":1}'
                             )
                         }
                     }
@@ -865,9 +871,7 @@ async def test_chat_assistant_late_invalid_result_never_marks_credentials(
     )
     timeout_sec = 0.001 if completion == "timeout" else 0.5
     task = asyncio.create_task(
-        assistant.refine(
-            _request(provider=None, model=None, timeout_sec=timeout_sec)
-        )
+        assistant.refine(_request(provider=None, model=None, timeout_sec=timeout_sec))
     )
     try:
         assert await _wait_for_thread_event(entered)
@@ -918,9 +922,13 @@ async def test_chat_assistant_uses_adapter_canonical_provider_for_alias_availabi
     assistant = ChatAutoChunkBoundaryAssistant(
         chat_call=chat_call,
         config_loader=lambda: {"local_llm": {"model": "local-model"}},
-        registry_getter=lambda: SimpleNamespace(get_adapter=lambda _provider: SimpleNamespace(name="local-llm")),
+        registry_getter=lambda: SimpleNamespace(
+            get_adapter=lambda _provider: SimpleNamespace(name="local-llm")
+        ),
         credential_runtime_factory=_runtime_factory(api_key=None),
-        provider_requires_key=lambda provider: seen_requires_key.append(provider) or False,
+        provider_requires_key=lambda provider: (
+            seen_requires_key.append(provider) or False
+        ),
     )
 
     result = await assistant.refine(_request(provider="local_llm", model=None))
@@ -967,7 +975,9 @@ async def test_chat_assistant_timeout_falls_back_without_raising():
         default_provider="openai",
     )
 
-    result = await assistant.refine(_request(provider=None, model=None, timeout_sec=0.001))
+    result = await assistant.refine(
+        _request(provider=None, model=None, timeout_sec=0.001)
+    )
 
     assert result.used_llm is False
     assert result.fallback_reason == "ai_assist_timeout"
@@ -1055,7 +1065,10 @@ async def test_chat_assistant_uses_runtime_snapshot_at_adapter_boundary():
     assert result.used_llm is True
     assert calls[0]["api_key"] == "runtime-key"
     assert calls[0]["model"] == "runtime-model"
-    assert calls[0]["app_config"]["openai_api"]["api_base_url"] == "https://runtime.example/v1"
+    assert (
+        calls[0]["app_config"]["openai_api"]["api_base_url"]
+        == "https://runtime.example/v1"
+    )
     assert calls[0]["credentials_resolved"] is True
     assert calls[0][PROVIDER_CALL_CREDENTIALS_CONTEXT_KEY] is handles[0]
     assert marked == handles

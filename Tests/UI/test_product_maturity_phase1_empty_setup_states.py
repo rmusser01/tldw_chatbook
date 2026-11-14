@@ -155,7 +155,7 @@ async def test_clean_run_setup_and_runtime_blockers_expose_recovery_copy(
             )
 
             home_text = _screen_text(app)
-            assert "Model: Blocked" in home_text
+            assert "Model: Not set up" in home_text
             assert "Set up Console model" in home_text
             assert "Console needs a working model before live AI tasks." in home_text
 
@@ -290,7 +290,7 @@ async def test_personas_default_state_disables_false_console_handoff(
     (stubbed deterministically; the harness otherwise reads the ambient
     character DB).
     """
-    monkeypatch.setattr(character_handler_module, "fetch_all_characters", lambda: [])
+    monkeypatch.setattr(character_handler_module, "fetch_all_characters", lambda _db: [])
     patch_character_paging(monkeypatch, records=[])
     app = _build_test_app()
     host = DestinationHarness(app, "personas")

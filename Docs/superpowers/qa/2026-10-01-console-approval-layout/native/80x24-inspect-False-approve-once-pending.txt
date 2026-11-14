@@ -1,0 +1,24 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console ! │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 S  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs… Speak replies   ▌   Hands-free   ▌     Ready
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────
+ Conversation | Approval review fixture
+         Chat 1         ✕ ◌ Approval review fi… ✕    New tab     Temporary
+ Each tab runs its own agent — up to 3 in parallel (change in Settings >     ✕
+ █▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀█
+ █  Approval required                                                         █
+ █  Local workspace, web, and Watchlists · fs_read                            █
+ █  {"path":"f.txt"}                                                          █
+ █  Effects: may read private local data                                      █
+ █  Once                                                                  ▼   █
+ █   Approve once                            Deny                             █
+ █  This call only.                                                           █
+ █   ▶ Reason if denied (optional)                                            █
+ █          Deny all              Approve all                Submit           █
+ █▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄█
+────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocked     Provider: llama.cpp     Mode
+│  Composer ▾  Menu  Ask, command, or paste        Send         Dictate
+  Ctrl+Shift+F focus | Alt+I inspect | F1 · F6 · Ctrl+P · Ctrl+Q

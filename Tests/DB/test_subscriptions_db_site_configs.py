@@ -164,7 +164,5 @@ def test_ensure_site_configs_schema_is_idempotent_and_keeps_rows(tmp_path):
     ensure_site_configs_schema(path)
 
     with closing(sqlite3.connect(str(path))) as conn:
-        rows = conn.execute(
-            "SELECT domain, config_data FROM site_configs"
-        ).fetchall()
+        rows = conn.execute("SELECT domain, config_data FROM site_configs").fetchall()
     assert rows == [("example.com", '{"kept": true}')]

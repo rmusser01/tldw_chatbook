@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="109.066" timestamp="2026-10-31T12:57:20.430214-07:00" hostname="DESKTOP-BISU2HE"><testcase classname="Tests.UI.test_console_archive_recovery_flow" name="test_production_recovery_keeps_exact_history_and_active_draft[agent-size1]" time="99.196"><failure message="AssertionError: (ConsoleRunState(status=&lt;ConsoleRunStatus.STREAMING: 'streaming'&gt;, visible_copy='Agent running.'), [], [])&#10;assert False&#10; +  where False = &lt;function mounted_recovery.&lt;locals&gt;.&lt;lambda&gt; at 0x000001AF6BD5C220&gt;()">Tests\UI\test_console_archive_recovery_flow.py:341: in test_production_recovery_keeps_exact_history_and_active_draft
+    async with mounted_recovery(
+C:\Python312\Lib\contextlib.py:210: in __aenter__
+    return await anext(self.gen)
+Tests\UI\test_console_archive_recovery_flow.py:250: in mounted_recovery
+    await wait_until(
+Tests\UI\test_console_archive_recovery_flow.py:55: in wait_until
+    assert predicate(), debug() if debug else "condition not reached"
+E   AssertionError: (ConsoleRunState(status=&lt;ConsoleRunStatus.STREAMING: 'streaming'&gt;, visible_copy='Agent running.'), [], [])
+E   assert False
+E    +  where False = &lt;function mounted_recovery.&lt;locals&gt;.&lt;lambda&gt; at 0x000001AF6BD5C220&gt;()</failure></testcase></testsuite></testsuites>

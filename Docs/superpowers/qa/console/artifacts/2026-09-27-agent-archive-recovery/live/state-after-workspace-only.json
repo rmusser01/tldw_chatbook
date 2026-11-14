@@ -1,0 +1,59 @@
+{
+  "observed_at": "2026-09-27T23:25:09.306413+00:00",
+  "cases": [
+    {
+      "id": "5508f026-1efc-4cb2-8679-9995d9e1f2ca",
+      "archived": 0,
+      "version": 3,
+      "workspace_id": null,
+      "active_leaf_message_id": "e10dc185-2181-4db7-9d99-ac21c4571c77",
+      "key": "chat_only",
+      "original_message_ids_unchanged": true,
+      "original_leaf_unchanged": true
+    },
+    {
+      "id": "3b098c43-5837-40fa-956d-fcbd15d18584",
+      "archived": 0,
+      "version": 1,
+      "workspace_id": "atlas",
+      "active_leaf_message_id": "56fdd5bb-76c6-494e-a207-f2974c1553f1",
+      "key": "workspace_only",
+      "original_message_ids_unchanged": true,
+      "original_leaf_unchanged": true
+    },
+    {
+      "id": "d1be8b67-5e72-4429-a3c0-465e76605271",
+      "archived": 1,
+      "version": 2,
+      "workspace_id": "vault",
+      "active_leaf_message_id": "51815f15-942d-4f77-9e15-0ff957dfaf40",
+      "key": "both",
+      "original_message_ids_unchanged": true,
+      "original_leaf_unchanged": true
+    }
+  ],
+  "workspaces": [
+    {
+      "workspace_id": "atlas",
+      "name": "Atlas Research",
+      "active": 0,
+      "archived": 0,
+      "archive_revision": 2
+    },
+    {
+      "workspace_id": "vault",
+      "name": "Vault Trips",
+      "active": 0,
+      "archived": 1,
+      "archive_revision": 1
+    },
+    {
+      "workspace_id": "workspace-default",
+      "name": "Default",
+      "active": 1,
+      "archived": 0,
+      "archive_revision": 0
+    }
+  ],
+  "provider_request_starts": 43
+}

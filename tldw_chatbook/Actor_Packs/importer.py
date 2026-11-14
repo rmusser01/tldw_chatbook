@@ -17,11 +17,6 @@ from pathlib import Path
 from typing import Any, BinaryIO
 from uuid import uuid4
 
-from tldw_chatbook.Character_Chat.artwork_attribution import (
-    ARTWORK_MEMBER,
-    decode_artwork_attribution,
-)
-
 from tldw_chatbook.Character_Chat.local_character_persona_service import (
     LocalCharacterPersonaService,
 )
@@ -315,6 +310,9 @@ class ActorPackImportService:
             ActorPackImportError: The archive is invalid, unsupported, cancelled,
                 unavailable, or cannot be staged safely.
         """
+        from tldw_chatbook.Character_Chat.artwork_attribution import (
+            ARTWORK_MEMBER,
+        )
 
         candidate: Path | None = None
         try:
@@ -538,6 +536,24 @@ class ActorPackImportService:
     ) -> None:
         """Require the complete staged and UUID authority represented by review."""
 
+        try:
+            _preflight_space(self._profile_root, review._required_free_bytes)
+        except ActorPackImportError:
+            raise
+        except Exception:  # noqa: BLE001 - preserve fail-closed review error mapping
+            raise ActorPackImportError("actor_pack_import_review_stale") from None
+        self._revalidate_review_authority(
+            review, alternate_actor_authorities=alternate_actor_authorities
+        )
+
+    def _revalidate_review_authority(
+        self,
+        review: ActorPackImportReview,
+        *,
+        alternate_actor_authorities: tuple[tuple[int, str], ...] = (),
+    ) -> None:
+        """Recheck staged and store authority inside the caller's transaction."""
+
         candidate = self._review_candidate(review)
         try:
             if not _source_is_current(
@@ -579,7 +595,6 @@ class ActorPackImportService:
                 or persona_visual_authority != review._persona_visual_authority
             ):
                 raise ValueError
-            _preflight_space(self._profile_root, review._required_free_bytes)
         except ActorPackImportError:
             raise
         except Exception:
@@ -588,6 +603,10 @@ class ActorPackImportService:
     def _activation_material(
         self, review: ActorPackImportReview
     ) -> _ActorPackImportMaterial:
+        from tldw_chatbook.Character_Chat.artwork_attribution import (
+            ARTWORK_MEMBER,
+        )
+
         self.revalidate_review(review)
         candidate = self._review_candidate(review)
         records = {record.member: record for record in review._files}
@@ -618,7 +637,9 @@ class ActorPackImportService:
                     if kind == "shared-visual-identity" and ARTWORK_MEMBER in records
                     else None
                 )
-                sections.append(_ActorPackSectionMaterial(kind, manifest, assets, artwork))
+                sections.append(
+                    _ActorPackSectionMaterial(kind, manifest, assets, artwork)
+                )
         except Exception:
             raise ActorPackImportError("actor_pack_import_review_stale") from None
         return _ActorPackImportMaterial(dict(fields), portrait, tuple(sections))
@@ -1191,6 +1212,10 @@ def _validate_sections(
     required_features: list[str],
 ) -> tuple[tuple[str, tuple[_ActorPackSectionAsset, ...]], ...]:
     # Deferred: see the TASK-21200 note at the top of this module.
+    from tldw_chatbook.Character_Chat.artwork_attribution import (
+        ARTWORK_MEMBER,
+        decode_artwork_attribution,
+    )
     from tldw_chatbook.Character_Chat.visual_identity import (
         validate_visual_identity_manifest,
     )

@@ -56,7 +56,9 @@ def _normalize_text(value: object, *, max_chars: int | None = None) -> str:
     """Return printable, single-line text suitable for an IPC event."""
     text = "" if value is None else str(value)
     normalized = "".join(
-        character for character in text if character.isprintable() or character.isspace()
+        character
+        for character in text
+        if character.isprintable() or character.isspace()
     ).strip()
     normalized = " ".join(normalized.split())
     if max_chars is not None:
@@ -119,7 +121,9 @@ def make_parse_progress_event(
         generation=generation,
         job_id=normalized_job_id,
         phase=normalized_phase,
-        message=_normalize_text(message, max_chars=INGEST_PARSE_PROGRESS_MESSAGE_MAX_CHARS),
+        message=_normalize_text(
+            message, max_chars=INGEST_PARSE_PROGRESS_MESSAGE_MAX_CHARS
+        ),
         percent=_normalize_percent(percent),
     )
 

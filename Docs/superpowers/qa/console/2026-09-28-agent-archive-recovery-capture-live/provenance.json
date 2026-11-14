@@ -1,0 +1,12 @@
+{
+  "head": "75456b7a2d3f8ea4f711f41c061d212abdd03add",
+  "dirty": "",
+  "root": "/private/tmp/archive-capture-native-_yuzjq8a",
+  "request_ceiling": 10,
+  "serial_modes": [
+    "rag",
+    "direct"
+  ],
+  "capture": true,
+  "endpoint": "http://127.0.0.1:9099"
+}

@@ -125,6 +125,12 @@ class PersonaBuddyOverlay:
             if not desired:
                 await self._retire()
                 self._sync_affordances(screen)
+                # Under the lock, so no concurrent reconcile can re-arm the
+                # scope timer after this stop: with no presentation, nothing
+                # consumes the reconcile ticks.
+                coordinator = getattr(self.app, "_buddy_management", None)
+                if coordinator is not None:
+                    coordinator.stop_scope_tracking()
                 return True
             if not isinstance(screen, BaseAppScreen) or not screen.is_active:
                 # A modal covers the retained primary view. Its is_current fence
@@ -210,4 +216,8 @@ class PersonaBuddyOverlay:
         self.closed = True
         self._pending = False
         async with self._lock:
+            # Inside the lock a concurrent reconcile cannot re-arm after this.
+            coordinator = getattr(self.app, "_buddy_management", None)
+            if coordinator is not None:
+                coordinator.stop_scope_tracking()
             await self.flush_geometry()

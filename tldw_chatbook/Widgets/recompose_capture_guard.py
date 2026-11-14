@@ -298,22 +298,49 @@ class RecomposeCaptureGuard:
             return None
         if focused is None or focused is self or self not in focused.ancestors:
             return None
+        if self._is_kept_by_recompose(focused, self._recompose_kept_child()):
+            # The rebuild never removes it, so focus never moves: no restore.
+            return None
         anchor = capture_focus_anchor(focused, scope=self)  # type: ignore[arg-type]
         if anchor is None:
             return None
         return anchor, self._predicted_reset_target(focused)
 
+    def _recompose_kept_child(self) -> Optional[Widget]:
+        """The child this widget's own rebuild keeps mounted, else ``None``.
+
+        A rebuild that keeps one child (the Console tray keeps its filter row,
+        TASK-33622.6) leaves it and its descendants in the focus chain, so
+        Textual's reset can land on them. Cooperative: a mixin after this one
+        in the MRO that keeps a child answers through ``super()``; no other
+        guarded widget keeps anything.
+        """
+        hook = getattr(super(), "_recompose_kept_child", None)
+        return hook() if callable(hook) else None
+
+    @staticmethod
+    def _is_kept_by_recompose(widget: Widget, kept: Optional[Widget]) -> bool:
+        """True if ``widget`` is the kept child or lives inside it."""
+        return kept is not None and (widget is kept or kept in widget.ancestors)
+
     def _predicted_reset_target(self, focused: Widget) -> Optional[Widget]:
-        """Mirror ``Screen._reset_focus`` for a teardown of all of ``self``'s children.
+        """Mirror ``Screen._reset_focus`` for this widget's own rebuild.
 
         Textual walks the focus chain backwards from the removed widget,
         wrapping around, and takes the first control not being removed; a
         focused widget outside the chain falls back to a focusable sibling.
-        ``Tests/Widgets/test_recompose_capture_guard.py`` pins the wrap-around.
+        Every child is removed except the one :meth:`_recompose_kept_child`
+        names -- when the prediction counted that one as removed too, it
+        missed a reset that landed on it and never restored focus
+        (TASK-33622.6 review). ``Tests/Widgets/test_recompose_capture_guard.py``
+        pins the wrap-around and the kept child.
         """
+        kept = self._recompose_kept_child()
 
         def removed(widget: Widget) -> bool:
-            return self in widget.ancestors
+            return self in widget.ancestors and not self._is_kept_by_recompose(
+                widget, kept
+            )
 
         try:
             chain = self.screen.focus_chain

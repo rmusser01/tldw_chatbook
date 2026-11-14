@@ -3,10 +3,19 @@
 Status: Accepted (2026-09-15) — written specification reviewed; implementation pending.
 Date: 2026-09-15
 Related Task: [TASK-32645](../tasks/task-32645%20-%20Design-managed-plugins-and-expanded-hook-runtime.md)
-Supersedes: N/A; explicitly extends ADR-148's v1 scope while preserving legacy behavior.
+Supersedes: N/A; explicitly extends ADR-345's v1 scope while preserving legacy behavior.
 Companion: [ADR-162](162-managed-agent-plugins.md)
 
 ## Decision
+
+Task 8D2B2a qualification: app-bound plugin hook preparation has its own original
+finite native custody before engine creation. Existing PluginService callbacks
+perform real admission, so they and their exact NativeHooks host handoff must
+return before release even after cancellation or shutdown. The captured selected
+maximum is metadata; it neither grants permission nor substitutes for those
+callbacks. PluginRuntimeOwner keeps its separate persistent infrastructure
+ownership. This preparation-only stage does not qualify planned v2 handler,
+nested MCP, host-effect or SessionEnd custody; those remain Task 8D2B2b.
 
 Extend the shared Console hook runtime with versioned events and structured
 effects, including input proposals, narrowing child constraints, MCP-backed
@@ -15,7 +24,7 @@ authority, legacy hook behavior and explicit lifecycle ownership.
 
 ## Context
 
-[ADR-148](148-console-run-hooks.md) provides six user-configured argv-command
+[ADR-345](345-console-run-hooks.md) provides six user-configured argv-command
 events with deny-only permission effects and bounded execution. Plugin
 interoperability benefits from additional session, subagent, compaction,
 failure and interruption events. The user approved extending these hooks
@@ -123,7 +132,7 @@ Package discovery and shared execution need separate module boundaries.
   editor-only events and permission-bypass semantics remain unsupported.
 - Tests need real runtime entries, positive controls, causal-cycle cases and
   process-death evidence on each supported platform.
-- ADR-148 remains the authoritative legacy contract. This ADR
+- ADR-345 remains the authoritative legacy contract. This ADR
   extends its previously deferred scope; it does not rewrite its historical
   behavior or automatically enable new hooks.
 
@@ -178,8 +187,15 @@ record and counters for explicit reconciliation. Darwin local process groups
 are qualified by controlled children; deliberately escaped descendants and
 Windows tree-terminal proof remain outside this qualification. R47 refuses
 Windows v2 commands with `unsupported_platform` before launch, root reservation
-or environment access; no execution/lifetime ticket leaks. Linux POSIX behavior
-remains unqualified until its own real controls run. Legacy hooks are unchanged.
+or environment access; no execution/lifetime ticket leaks. Linux POSIX qualification was initially deferred. Legacy hooks are unchanged.
+
+**Linux qualification, 2026-10-28 (TASK-37204):** Ubuntu 24.04 / Python 3.12.15
+ran the complete command-execution and tool-pipeline controls together with
+native/fenced schema recovery, working-set replacement and skill gates: 142
+passed, zero failures/errors/skips (59.68s). The [run and retained JUnit artifact](https://github.com/rmusser01/tldw_chatbook/actions/runs/40742429112)
+identify implementation head `5157f909ac`. This qualifies those controlled Linux
+paths, preserving the process-group/escaped-descendant limits above; it does not
+establish the reporting user's exact Fedora configuration or live-model behavior.
 
 Authority callback exceptions become fixed `authority_check_failed` outcomes at
 admission and final acceptance. Dependency metadata failures become
@@ -328,7 +344,7 @@ Stop event, chain start/count and inherited configuration. Only successful
 accepted root settlement can issue it; retired operation/run scopes are never
 rebound. Required post gates settle before transfer to the live session owner.
 
-ChaChaNotes schema 74 adds `console_hook_continuation_receipts`, keyed uniquely
+ChaChaNotes schema 75 adds `console_hook_continuation_receipts`, keyed uniquely
 by `(parent_turn_id, stop_event_id)`. The existing acceptance transaction inserts
 the receipt, user-role attributed untrusted input, assistant owner and active
 dispatch checkpoint together. A duplicate rolls the competing acceptance back.
@@ -510,6 +526,42 @@ Only an actual host-issued Interrupt/SessionEnd delivery can carry this scope ac
 Retire this scope/view at the bounded notification boundary without confusing that retirement with actual request/process cleanup. Unresolved resource custody stays with its existing owners. Repeated close must neither issue new authority nor extend deadlines. Qualify actual Console close after a completed turn, preserved ordinary post-seal refusal, a denying nested guard, stale/dependency/context refusal, and real notification/cleanup timing. Best-effort omission remains correct whenever ordinary current authority or the exact original deadline no longer permits dispatch.
 
 
+#### TASK-33648: saved standalone SessionEnd during host disposal
+
+Host disposal closes ordinary Console and HookPermissions admission immediately.
+An already-live lifecycle may retain its one host-issued, effect-free SessionEnd
+notification through that closure. The exception belongs to its exact existing
+engine-issued execution state, event identity, session and original notification
+deadline; event labels, public teardown booleans, copied events and ordinary calls
+cannot acquire it. Repeated sealing or disposal cannot issue another notification
+or extend the window. Managed-plugin authority and ordinary MCP dispatch retain
+their existing boundaries.
+Trusted per-handler projection retains the exact original host event and issued
+execution through a private delivery-local witness. The callback must be the
+exact projected object of that still-active delivery; a public replay creates
+its own witness and cannot borrow ambient delivery state. Parallel handlers
+keep separate projection witnesses, and retirement or cancellation fences them.
+
+The standalone command still needs its original exact saved definition and grant.
+At actual process creation, the existing permission owner reads canonical config
+and local consent under their existing launch locks, compares the original
+config/profile path and section identity, definition fingerprint and grant epoch,
+and rechecks the authentic bounded delivery. Changed, revoked, reapproved,
+disabled, locally sealed, refresh-pending, missing or unavailable state refuses.
+This private teardown validation does not republish ordinary targets, reopen the
+closed owner, create a grant, accept effects, prompt, reconnect or start a model
+turn. Existing command launch, ticket, process and physical reaping custody remain
+responsible through cancelled disposal callers and the unchanged cleanup allowance.
+
+This is a narrow implementation of H2/R73 and
+[ADR-197's standalone v2 consent](197-console-hook-configuration-review.md#current-dev-integration-standalone-v2-consent-task-32679),
+recorded prospectively for
+[TASK-33648](../tasks/task-33648%20-%20Preserve-authorized-SessionEnd-notification-during-Console-host-disposal.md).
+No new permission owner, persistence schema, dependency or general post-disposal
+authority is introduced. Qualification requires real saved/granted exact-close
+and disposal controls, changed/revoked/forged negative controls and cancellation
+with actual process, ticket and physical cleanup evidence.
+
 ### H6 integration and operational handoff
 
 `MCPHookExecutor` consumes the ordinary `ToolCatalogRegistry`/`MCPToolProvider` path and the existing `ToolHookRun` preparation, guard and post-checkpoint owners. Original typed result capture is request-local and qualifies only the exact final returned `ToolResult`; display output grants no native effects. Current profile/persona/kill/schema/automatic-work and exact owned MCP authority remain in their existing owners, including checks after waits. Already-connected-only policy reaches both actual standalone and owned connection boundaries.
@@ -537,6 +589,23 @@ affected operation while unrelated tools remain eligible. Manual preparation ret
 an unchanged native configuration; changing workspace requires fresh configuration.
 
 
+### Native command event custody (Task 8D2B2b1)
+
+ADR-285 adds finite native custody to complete command-only events at their actual
+planned/individual/notification producers. Coverage is frozen by the original host
+from the complete potential handler set before effects; any reachable MCP target
+keeps the whole event on its existing path until D2B2b2. Covered events cannot
+downgrade on source loss or grow their target maximum later. Original permissions,
+matching, dependency and required/best-effort decisions remain authoritative.
+
+Existing command process/group evidence and plugin process settlement join the
+actual lifecycle publish, tool checkpoint/transform and compaction ledger/prepare
+consumer. Closing an execution scope is separate from host acceptance. Shutdown
+retains authorized terminal holds before native capacity closes and joins actual
+workers, host consumers and operation-release callbacks under cancellation.
+No hook journal, new process owner, executor, queue or permission store is added.
+MCP nested preselection and full ordinary borrowing remain mandatory next gates.
+
 ### I2 foreign hook qualification boundary
 
 Pinned Codex/Cursor event correspondences are proposals, not HookHandlers. Native
@@ -562,3 +631,283 @@ fences run before the shared compact-once operation, which retains the same hook
 owner. Required pre-hook failures record their content-free reason with no
 summary call and do not claim a billed attempt. No consent, admission or cleanup
 policy changes. Evidence: the PR #2946 integration report.
+
+
+### Native component ownership and canonical restrictions (R74–R75)
+
+Ruling: R74 — native command hooks select their exact existing process-owner adapter from the qualified handler at dispatch and retain that adapter on the original CommandJob through reserve, publish and terminal settlement; the shared HookEvent stays unchanged — concurrent handlers can belong to different installations, so one event-wide owner cannot identify their root/revision custody — cost if wrong: revise the narrow per-job selection seam; owner lookup failure must refuse before launch, and cancellation, late cleanup or replacement must never settle another handler’s custody.
+
+Ruling: R75 — explicit canonical builtin/local tool IDs in native declarations are immutable narrowing constraints resolved against the actual eligible parent registry at use, while noncanonical tokens require reviewed exact owner mappings — a declaration can restrict existing rights without creating a durable generic tool grant or another permission owner — cost if wrong: narrow supported declarations or revise the resolver; missing or changed identities refuse, explicit empty stays empty, recovery creates no grants, and display-name fallback never authorizes a tool.
+
+
+### I2 vendor command-hook codecs (R78)
+
+Qualified vendor command hooks use an optional closed version/source-event marker on the existing immutable handler. Native declaration validation binds that marker to the supported command/event/effects combination. Pure bounded stdin/result codecs run inside the existing command executor, retaining the original handler, CommandJob, per-handler process owner, authority checks, deadlines, output caps, cancellation and terminal-custody rules. Success-only source post events and MCP-only source events retain their actual host filters. Source exit status 2 is interpreted only under the qualified event/result mapping and ordinary acceptance checks. Unknown markers and unsupported required semantics refuse; no dynamic codecs or vendor runtime are introduced. Package-root cwd and stricter Chatbook guard-failure behavior are reported as adaptations where they differ from the source host. Foreign allow/ask responses never grant permission.
+
+
+## PR3148 current-owner hook reconciliation (2026-10-17, TASK32695)
+
+Keep current dev's single `NativeHooks` facade and hook engine. Its existing
+consent `launch_guard`, `effect_authority_check`, `event_projector`, authenticated
+current-delivery and exactly-once SessionEnd/teardown paths remain authoritative.
+Thread the actual optional keyword-only `scratch_manager`/`scratch_snapshot` pair
+through `PluginService.hook_configuration` into that facade. Add the already
+approved `process_owner_for` and `command_launch` engine callbacks alongside,
+not instead of, those current gates. Engine copies/child/compaction replacements
+carry both sets. The job captures one private adapter to the existing process/root
+owner; native and fallback paths cannot both reserve the same job, and unavailable
+native requirements cannot escape through fallback.
+
+`CommandLaunchValues` remains frozen and repr-free; resolved protected values
+stay launch locals. Bare host selection is absolute before child cwd/environment
+overlays; explicit contained package executables remain separate. Preserve strict
+standalone cwd validation, original matcher/event scope for unavailable required
+constraints, current counters/deadlines, scratch incarnation and positive terminal
+proof before resource release. Signature metadata contains no resolved secrets.
+
+Current received-intent/configuration/native commit, saved consent, response-rule
+settlement and machine-followup admission remain in their current owners under
+ADR197/230/232. Do not restore removed facades, move work back to views, introduce
+new schedulers or treat history as renewed authority. This is direct integration
+of the accepted hook/ownership contracts; behavioral and native lifetime checks
+must run on the rebased source before qualification.
+
+### Explicit managed-plugin tests (R102)
+
+ADR162 Task24/R101–R103 specifies the lazy Console-owned test review/reservation
+adapter. An existing real session supplies captured authority, host event context,
+permissions, budgets and process/MCP lifetime ownership. UI cannot fabricate these
+inputs. Explicit Run may initialize disclosed SessionStart hooks; test effects are
+displayed, not injected into conversation context; no model request is made.
+Cancellation retains actual cleanup and remote uncertainty through existing owners.
+
+### I6 current Console test admission (2026-10-17 integration)
+
+Explicit managed-plugin tests use current asynchronous configuration capture and the actual originating Console session, runtime and received-turn/reservation owners. A shared private nonawaiting publication helper preserves the ordinary submission's existing admission checks. The explicit test path first refuses pending received turns/claims and busy or full capacity, then reserves without an intervening await; it never claims or consumes a received turn. Recapture/currentness, consent, persona/profile/parent ceilings, scope cancellation and original process/root terminal custody remain mandatory. Synthetic initialization and test effects stay outside later conversation context; test-only cleanup cannot retire another turn's or live session's resources.
+
+The existing private MCP composer may retain its actual empty owned-provider group only on the explicit discovery path. That flag does not bypass its kill switch, source/currentness, permissions or captured maximums; normal callers still receive no empty catalog. Discovery uses the exact selected owned component and existing ConnectionOwnership, grants no tools, and detaches only leases acquired by the test's original owner. Review makes no connection/model request. The actual lazy app mixin owns management operations. Existing R4/R12 closed reference forms and complete-set configuration remain authoritative; do not import a later prefill helper into this increment. Current route-owned Plugins CSS and boot-loaded standalone modal rules stay under R15, with unchanged caps.
+
+This directly integrates existing ADR162/163 contracts through current private seams. Original validation counts are historical; TASK32695 AC15 qualifies the latest dev source with real Console capture/reservation, empty discovery and normal-run controls, cancellation/cleanup, complete configuration and both modal visit orders.
+
+## Final integration operation and launch contract (R163 / CLI44, 2026-10-17)
+
+This implements the accepted canonical-operation, declared-value and root
+contracts using existing hook/permission/process owners. ADR-162's R163 amendment
+owns typed protected reference/configuration and scratch lifetime details.
+
+`ToolDefinitionSnapshot` adds optional trailing `operation: str | None = None`;
+`from_schema` accepts keyword `operation=None`. The exact resolved provider may
+implement optional `hook_operation(tool_id)`; no required third-party protocol
+method is added. Initial qualified host operations are `file.read`, `file.write`,
+`file.edit`, `directory.list`, `file.search` and `mcp.call`. Local descriptors and
+actual built-in registrations own file classifications. Exact composed MCP
+entries own `mcp.call`, including managed entries and accepted-name wrappers.
+Unclassified providers remain unavailable; never infer file/shell behavior from
+remote annotations or display names. Canonical operation participates in exact
+snapshot/current-definition revalidation and PreToolUse/PostToolUse/
+PostToolUseFailure events. Cursor beforeMCPExecution matches qualified `mcp.call`;
+normal permission review still applies, and non-MCP tools remain nonmatches.
+
+Native env values accept strings or exactly `{"variable":"DECLARED_NAME"}`,
+with the runtime's declared-name, reserved-name and NUL validation. Reserve
+`CHATBOOK_WORKSPACE_DATA` alongside PLUGIN_ROOT/PLUGIN_DATA in native declarations,
+env, scanning and host-environment publication; scrub ambient host-root values.
+Unknown vendor fields do not gain interpolation by analogy.
+
+Keep reviewed handlers unresolved for host user values. An optional
+`command_launch(handler,event,host_environment)` callback in the existing
+HookEngine/CommandExecutor returns ephemeral repr-private
+`CommandLaunchValues(argv,cwd,environment)`. This is a launch value, not a
+persisted record or new owner. Capture the host baseline before package overlays.
+Resolve consumed defaults/references once through existing offloop/worker
+execution after reservation, before final currentness and launch checks;
+preserve cancellation, deadlines and custody. Integer rendering is decimal and
+boolean rendering is `true|false`; no recursive substitution. Keep raw resolved
+values out of Handler/CommandJob/event/result metadata. Explicitly authored
+secret argv remains ordinary privileged command execution; the host does not
+promise to conceal argv from process inspection. Native cwd containment and
+reviewed vendor scratch/selected-binding adaptation remain enforced.
+
+All engine construction/copy/fork/child/compaction/Stop owners that carry native
+handlers retain this callback and exact capability. Unowned/user/legacy handlers
+keep their existing default path. One native-root projection uses immutable
+PLUGIN_ROOT, exact shared PLUGIN_DATA, and exact scoped or live-scratch
+CHATBOOK_WORKSPACE_DATA. The original process owner retains scratch leases and
+persistent root custody until successful confirmed terminal settlement, with
+currentness before use and acceptance.
+
+Platform qualification gates actual success requirements at fixtures/individual
+cases/parameters. Preserve applicable non-command/pure cases and native
+unsupported/refusal controls, split positive tails from refusal tests, and keep
+marker/collection audits distinct from native platform evidence. R47 Windows v2
+command refusal and non-Darwin managed-owner refusal remain in force. No blanket
+platform skip, permission broadening, cap increase or new runtime is authorized.
+
+### Unavailable hook requirements remain occurrence-scoped (R166 / CLI47)
+
+`RunPluginSnapshot` adds host-only defaulted `unavailable_hooks: tuple[str,...]`.
+These selected valid unready explicit-required/controlling hook IDs are retained
+requirements, outside executable selection. The authenticated inspection retains
+their original event, matcher, effects and vendor protocol; no user value enters
+the metadata. A requirement-only snapshot can construct the existing engine.
+
+Internal `PluginAdmission.check_requirement` recaptures exact requirement
+membership/currentness, including unavailable_hooks in snapshot identity.
+Ordinary execution check still rejects these IDs. Internal metadata projection
+may carry host-derived `plugin_constraint_only=True` and
+`availability="needs_configuration"`; caller flags never grant authority, and
+ordinary render/execute/schema/catalog validation does not accept these as
+callable components. Preserve original requirements under retained/child ceilings;
+refuse unsafe loss rather than erase a constraint or widen execution authority.
+
+NativeHooks registers original valid declarations without resolving values.
+The existing matcher skips nonmatches and classifies matching required/control
+failure normally; currentness is false for unavailable IDs and process-owner
+creation hard-refuses instead of falling back to the default owner. No process
+or root custody is minted. Dependency-only readiness remains narrow. This avoids
+both silent constraint loss and blanket capture refusal for unrelated reads.
+There is no new persisted schema, runtime, invalid-admission variant or owner.
+
+### Requirement custody through actors and resumes (R168 / CLI49)
+
+The existing service's private native-projection gate validates requirement-only
+rows at actor bind/check time without treating them as executable components.
+Binding skips only the existing actor-exists precondition; producer identity,
+retirement, fences and exact requirement recapture still apply. An existing
+Console actor/whole-run lease does not grant an unavailable hook process/root
+custody. Ordinary execution/render/schema gates remain execution-only.
+
+A service-private resume wrapper preserves unavailable requirement metadata after
+the existing continuation filter, using only the verified original signed
+installation/revision/workspace/generation/mapping/root identities and pinned
+executable subset. Input host snapshot custody must verify through the existing
+pin/constraint contracts, including cross-session normalization. A fresh producer
+can qualify under that same original identity; an old in-memory actor alone is
+not authority. Restore no ready component or unrelated current installation.
+If necessary original custody cannot be verified, refuse that scoped admission.
+Zero and ordinary ready-only continuations keep existing behavior. No pin field,
+schema/component meaning, continuation module, public signature or owner changes.
+Actual child/checkpoint/archive controls preserve original matcher semantics.
+
+### Current dev integration: required occurrences and capture failures (R18)
+
+Native hook requirement parsing uses authenticated in-memory declarations and the unchanged public parser. Its private non-executable occurrence projection withholds package-relative cwd solely to preserve the declared event, matcher and effects when execution is unavailable. The complete original declaration, including cwd, remains bound to the revision. Execution rejoins and validates the contained existing absolute package cwd, current bytes, mappings and authority before launch. Unavailable occurrence metadata cannot supply a callable snapshot or fallback process owner.
+
+The existing plugin service publishes constraint-verification failures atomically with its catalog. Exact affected installation/workspace scopes refuse; an attempted refresh that cannot authenticate the constraint set refuses as unknown. Verified inactive, unselected, untrusted or revoked scopes retain ordinary empty eligibility, including explicit workspace disable over global inheritance. Successful authoritative refresh clears the failure; failed reads never revive old executable snapshots or imply removal of a requirement. The private failure member stores only scope keys, with no new registry, body, secret or grant.
+
+At the actual Console configuration capture boundary, only `PluginUnavailable("plugin_constraint_verification_failed")` becomes the existing `RecoveryRequired` with that fixed code. The synchronous optional-catalog wrapper propagates this recovery failure; the two existing preparation wrappers already do so. Ordinary optional failures keep their current behavior. Existing admission and final publication recheck the captured installation/workspace so a previously captured requirement cannot survive loss of its proof as an executable grant. Existing ADR162/163 govern this integration; no new storage or permission authority is introduced.
+
+
+### Rebase qualification: captured refusal ceiling and actual submission custody (R31)
+
+The plugin service retains one private immutable service/session/workspace/capture-bound requirement ceiling beside removable availability rows. It references exact existing snapshot identities and is never serialized or projected to model/UI text. Missing, foreign, stale or replaced proof refuses; an initialized genuinely empty capture carries explicit empty proof. Only original unavailable-hook occurrence metadata may be retained through the existing constraint-only path. Removing executable rows never restores a skill, command, rule, agent, MCP definition, executable hook or absent archive producer. Existing currentness, dependency, permission and sealed-resume owners remain authoritative.
+
+Direct provider custody follows actual checked typed component origins as well as real skill bindings. Automatic submission checks the dependencies of that material after UserPromptSubmit and before acceptance. Each resumed attempt receives a fresh pending lifetime while retaining the same frozen maximum and refusal ceiling; it never recaptures broader selections. Consumed shared hook data requires its authenticated shared root. Bare executable lookup refuses an absent or wholly empty host PATH, preserving explicit empty segments in a nonempty PATH, absolute executables and explicit package-relative commands. These repairs implement existing ADR162/163 contracts with no new durable authority, schema or public API.
+
+
+Legacy schema-v1 resume retains zero plugin authority. Only its existing service owner may validate a present captured requirement record, or establish absence of native rows, intersect to zero, and issue a private empty record. Ordinary missing proof still refuses. A verified zero record cannot reactivate substituted native rows: the existing zero intersection discards them. No current catalog supplies absent archive producers or requirements. (Rebase qualification R33.)
+
+
+### Rebase qualification: MCP effect lane, scratch publication and attempt cleanup (R36)
+
+MCP delivery currentness uses the existing nonblocking effect-authority callback only on the exact owning HookEngine loop. Other threads/loops retain full worker authority. Full admission/use/acceptance, context/dependency, cancellation/deadline/inherited-policy, definition, permissions, audit, provenance and terminal resource checks remain. The ordinary provider keeps its sanitized failure boundary. A disconnected definition refuses before approval; a test cannot reconnect or acquire authority by expecting an approval.
+
+Native hook worker authority validates actual scratch physical identity with the existing is_live owner, including result acceptance. Effects consult only a new private published-current query under the existing scratch manager lock: exact issued snapshot/record, alive and not tombstoned/disposed, with no filesystem IO or resource acquisition. This memory check detects logical close/disposal; external filesystem replacement still requires the existing worker physical checks. Process/root custody remains until terminal and reap. Resumed attempts preserve the original frozen ceiling in an attempt-local context with a fresh pending ID. Input-hook failure abandons only the exact preaccept preparation through the existing store owner, which protects accepted commit custody. No new authority owner, persistent state, schema or public API is introduced.
+
+### Native MCP event and nested teardown custody (Task 8D2B2b2)
+
+Extend the original complete event owner to its metadata-selected reachable MCP
+workers and conditional nested PreToolUse/PostToolUse/PostToolUseFailure workers.
+Retain exact original context, registry/provider, schema, permission and causal
+selection before queue publication; arguments/results cannot widen this maximum.
+Each distinct reachable worker reserves its existing native operation while
+capacity remains open; the same worker and sequential validator share one. The
+existing causal/dependency limits and native capacity bound whole admission,
+including conditional candidates. Disabled, impossible and selected DENY targets
+create no holds; ASK remains subject to normal approval. Nested consumers borrow
+only the exact original live branch, never a fresh opaque claim or returned hold.
+
+Original MCP worker return, actual dispatch bridge finally, original plugin request
+terminal/reaper and required settlement return join the existing host handoffs and
+native operation.finish return. Persistent plugin infrastructure retains its own
+owner; one request cannot prove it drained. Never-issued descendants settle only
+after original refusal/discard or producer return. Unknown cleanup and failed
+required writes retain stopping capacity/source/activity protection. No journal,
+executor, queue, poller, permission store or budget ledger is introduced.
+
+SessionEnd retains the full authorized prospective tree before capacity close.
+Later nested execution uses those holds without post-close reservation. Existing
+configured runtime disposal still revokes MCP currentness; custody supplies no new
+terminal permission. Positive live-lifecycle execution after capacity close is
+qualified separately from actual disposed-runtime refusal and physical drain.
+Conservative conditional reservations may refuse events that previously ran
+without native coordination. Standalone/unqualified behavior and shared platform
+qualification remain unchanged; no Windows physical proof is claimed. Outer
+ordinary-tree borrowing and public workflow capture/coordinator stay incomplete.
+
+
+Accepted-result lifetime qualification (Task 8D2B2b2): exact original live context
+registration remains mandatory for capture, admission, worker start/currentness
+and nested borrowing. After actual host return, operation release and positive
+native owner drain have conclusively retired the original custody, passive
+accepted-context revalidation may use its retained original selection without
+requiring the normally spent per-input registration. A retired custody flag alone
+is insufficient: the existing owner drain observation must be positive. Provider,
+schema/catalog maximum, plugin/permission/runtime/store and activation checks stay
+in force. Closed scopes and returned operations cannot dispatch or be borrowed;
+no caller flag or replacement context grants authority. This preserves legitimate
+later Send reuse of accepted runtime context without reviving launch permission.
+
+
+I1 permission qualification (Task 8D2B2b2 fix1): passive context retains the actual
+MCP provider's original tool, arguments, grant decision, profile and exact service/
+permission-store sources. Refresh only that original permission policy before
+passive input preparation, outside bookkeeping locks; never reactivate spent
+work, dispatch, prompt or consume a grant. The existing resolved-path permission
+store fence publishes one shared quiescent token across same-path instances;
+policy mutation invalidates it before effects, and uncertain writes remain
+unavailable. Fresh successful reads may preserve unrelated permission edits;
+deny, kill switch, profile/argument/session-grant narrowing or read/source
+uncertainty refuses. Final context publication rechecks only original identities
+and the positively observed token. No new permission store/ledger or passive-mode
+flag. Cost is bounded original-policy reads per passive preparation and
+conservative refusal during concurrent mutation. ADR required: no new ADR;
+existing ADR-285/163 source-revocation qualification governs this correction.
+
+Task8D2 source-composition qualification: before original SessionStart effects,
+the actual Console submit captures the complete prospective agent storage tuple,
+including its original DB/permission sources and run-log confinement root. The
+real bridge and child workers reacquire that same selection. A recognized stock
+writer's later bind validates its exact original descendant without introducing
+a new source; replaced writers/roots and unrepresented late sources refuse.
+Live dispatch and settled passive-context checks retain exact tuple equality,
+original registration rules and fresh permission provenance. No guard reset,
+subset fallback or spent owner activation is introduced. The required positive
+is accepted MCP context in the actual child model input, not child-row creation.
+Broader ordinary physical ownership remains a separate mandatory integration.
+
+
+Task8D2 A effective project-authority qualification: for the original stock
+capture, hook context identity is workspace, enabled state, the full selected
+binding snapshot and complete options. Keep every binding/root/locator identity,
+write flag and exclusion. Persisted choice/fingerprint and consent-notice
+bookkeeping are redundant with that authority and do not invalidate unchanged
+accepted context when normal first-folder adoption and independently validated
+project consent record them. Custom/unknown readers retain their complete values.
+Changed selection, disable and retarget still revoke; activation storage tuple
+matching remains strict. This is not a new consent grant or ordinary physical
+admission.
+
+
+### Ordinary turn borrowing and late delivery (Task8D2)
+
+The complete ordinary tree supplies original source/owner/claim to actual legacy,
+v2, nested MCP and plugin-preparation workers before enqueue. Borrowers retire
+only their actual operations after physical, required-write and original host
+return; they never finish or settle the parent. Genuine Stop/SubagentStop and
+post-tool/lifecycle obligations retain their original producer and finite holds
+before capacity closes. Required admission bundles are atomic; existing optional
+notification omissions, dependency and event-control policy remain unchanged.
+Exact source/permission equality and positively retired passive MCP context stay
+strict. This consumes existing ADR285 ownership, adding no hook journal, replay
+permission, executor or capacity exception.

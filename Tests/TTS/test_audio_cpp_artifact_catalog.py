@@ -248,7 +248,7 @@ def test_audio_cpp_curated_entries_are_exact_recipe_joins() -> None:
                 architecture,
                 "cpu",
                 "expected",
-                "backlog/decisions/050-audio-cpp-generated-model-setup-ownership.md"
+                "backlog/decisions/308-audio-cpp-generated-model-setup-ownership.md"
                 "#decision",
             )
             for system, architecture in (

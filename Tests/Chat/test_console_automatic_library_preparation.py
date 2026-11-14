@@ -4,17 +4,21 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import logging
 import threading
 import warnings
 import weakref
+from contextvars import copy_context
 from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
 
 from Tests.Chat.console_close_helpers import close_controller_session
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.Agents.agent_models import RUN_DONE, RunOutcome
 from tldw_chatbook.Chat import console_chat_controller as controller_module
+from tldw_chatbook.Chat import console_configuration_capture
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Chat.console_chat_controller import (
     ConsoleChatController,
@@ -69,6 +73,10 @@ from tldw_chatbook.UI.Console_Modules.retrieval import ConsoleRetrievalControlle
 from tldw_chatbook.UI.Views.RAGSearch.search_handoff import (
     build_library_rag_evidence_bundle,
 )
+
+# These controllers read canonical hook authority before sending. Keep the
+# selected private config profile, as the existing marked recovery cases do.
+pytestmark = pytest.mark.bootstrap_profile
 
 
 class ConsoleChatStore(_ConsoleChatStore):
@@ -356,10 +364,83 @@ class _HeldRagService(_RagService):
         return self.result
 
 
-def _row(content: str = "sealed evidence") -> LibraryRagResultRow:
+class _ExistingNotesDouble:
+    """``app.chachanotes_db`` existence seam for prompt-time authorization.
+
+    TASK-33620.8: Automatic evidence is now re-authorized against current
+    sources before it reaches the prompt, exactly like staged evidence. The
+    module path starts with ``Tests.``, so ``_sensitive_fetchall`` accepts
+    ``execute_query`` from it.
+    """
+
+    is_memory_db = True
+
+    def __init__(self, *note_ids: str) -> None:
+        self.note_ids = set(note_ids)
+
+    def execute_query(self, _query, params):
+        import json
+
+        requested = set(json.loads(params[0]))
+        rows = [("notes", note_id) for note_id in sorted(requested & self.note_ids)]
+        return SimpleNamespace(fetchall=lambda: rows)
+
+
+def _capture_app(service, *note_ids: str) -> SimpleNamespace:
+    """App seams the canonical Automatic capture reads (TASK-33620.8).
+
+    The capture authorizes against the turn's own session, whose workspace
+    scope comes from the registry, and checks each source still exists.
+    """
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.Workspaces.registry_service import (
+        LocalWorkspaceRegistryService,
+    )
+
+    registry = LocalWorkspaceRegistryService(
+        WorkspaceDB(":memory:", client_id="automatic-capture")
+    )
+    registry.ensure_default_workspace()  # the app does this at boot
+    from Tests.app_services_doubles import with_alias_services
+
+    return with_alias_services(
+        SimpleNamespace(
+            library_rag_search_service=service,
+            chachanotes_db=_ExistingNotesDouble(*note_ids),
+            workspace_registry_service=registry,
+        )
+    )
+
+
+def _capturing_controller(store, gateway, app) -> ConsoleChatController:
+    """A controller wired with the runtime's Automatic capture seam.
+
+    ``ConsoleRuntime`` passes ``automatic_evidence_capture`` (TASK-33620.8);
+    this binds the same capture function to the app double.
+    """
+    from functools import partial
+
+    from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
+        capture_console_prepared_evidence_for_chat,
+    )
+
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        automatic_evidence_capture=partial(
+            capture_console_prepared_evidence_for_chat, app
+        ),
+    )
+    controller.app = app
+    return controller
+
+
+def _row(
+    content: str = "sealed evidence", source_id: str = "note-1"
+) -> LibraryRagResultRow:
     return LibraryRagResultRow.from_result(
         {
-            "source_id": "note-1",
+            "source_id": source_id,
             "chunk_id": "chunk-1",
             "title": "Exact note",
             "content": content,
@@ -512,6 +593,101 @@ def _real_retrieval_controller_for_launch(state: dict[str, object]):
     return controller
 
 
+def _retrieval_evidence_owner(retrieval, *, staged_evidence_provider=None):
+    """Controller kwargs making ``retrieval`` the staged-evidence owner.
+
+    TASK-34352: the chat controller used to find these hooks by private name
+    on ``rag_capture_provider.__self__``; they are explicit dependencies now.
+
+    Args:
+        retrieval: A real ``ConsoleRetrievalController``.
+        staged_evidence_provider: Overrides the owner's own staged check.
+
+    Returns:
+        Keyword arguments for ``ConsoleChatController``.
+    """
+    return {
+        "rag_capture_provider": retrieval._capture_console_staged_rag,
+        "staged_evidence_provider": (
+            staged_evidence_provider
+            if staged_evidence_provider is not None
+            else lambda _session_id: retrieval._has_staged_evidence()
+        ),
+        "staged_evidence_snapshot": lambda: (
+            retrieval._snapshot_console_staged_evidence(),
+            retrieval._release_frozen_console_staged_rag,
+        ),
+        "frozen_rag_capture": retrieval._capture_frozen_console_staged_rag,
+    }
+
+
+def _wire_retrieval_evidence_owner(controller, retrieval) -> None:
+    """Rebind an existing controller's staged-evidence owner to ``retrieval``.
+
+    Args:
+        controller: The ``ConsoleChatController`` under test.
+        retrieval: A real ``ConsoleRetrievalController``.
+    """
+    owner = _retrieval_evidence_owner(retrieval)
+    controller._rag_capture_provider = owner["rag_capture_provider"]
+    controller._staged_evidence_provider = owner["staged_evidence_provider"]
+    controller._staged_evidence_snapshot = owner["staged_evidence_snapshot"]
+    controller._frozen_rag_capture = owner["frozen_rag_capture"]
+
+
+def _vision_capable(monkeypatch) -> None:
+    """Make the selected model vision-capable for the turn's vision gate.
+
+    TASK-39045: 3e618d7119 moved the turn's capability capture into
+    ``console_configuration_capture``, so the gate reads that module's
+    ``is_vision_capable``; patching only the controller's copy left an image
+    turn blocked before Library preparation ever ran.
+    """
+    monkeypatch.setattr(controller_module, "is_vision_capable", lambda *_args: True)
+    monkeypatch.setattr(
+        console_configuration_capture, "is_vision_capable", lambda *_args: True
+    )
+
+
+async def _until_entered(
+    entered: asyncio.Event,
+    *turns: asyncio.Future,
+    what: str,
+    timeout: float = 30,
+) -> None:
+    """Wait for a boundary's ``entered`` event, or fail naming a turn's result.
+
+    TASK-38947 / TASK-39045 / TASK-39163: a bare ``await entered.wait()``
+    hangs to the 300 s pytest timeout when the turn ends before the boundary
+    (a refusal or a raise never sets ``entered``). With several turns, the
+    first one to end fails the wait.
+    """
+    waiter = asyncio.ensure_future(entered.wait())
+    await asyncio.wait(
+        (waiter, *turns), timeout=timeout, return_when=asyncio.FIRST_COMPLETED
+    )
+    if entered.is_set():
+        return
+    waiter.cancel()
+    ended = next((turn for turn in turns if turn.done()), None)
+    if ended is None:
+        for turn in turns:
+            turn.cancel()
+        pytest.fail(f"the turn never reached {what} within {timeout:g} s")
+    if ended.cancelled():
+        outcome = "cancelled"
+    else:
+        outcome = ended.exception() or ended.result()
+    pytest.fail(f"the turn ended before {what}: {outcome!r}")
+
+
+async def _until_provider_starts(
+    started: asyncio.Event, turn: asyncio.Future, *, timeout: float = 30
+) -> None:
+    """Wait for the provider fence, or fail at once naming the turn's result."""
+    await _until_entered(started, turn, what="the provider", timeout=timeout)
+
+
 async def _paused_queued_send(*, persistence=None, gateway=None):
     store = ConsoleChatStore(persistence=persistence)
     policy = _PolicyCoordinator(ConsoleAutoRetrieve.NEVER)
@@ -528,7 +704,9 @@ async def _paused_queued_send(*, persistence=None, gateway=None):
     chain = asyncio.create_task(
         controller.run_prompt_chain("owner", session_id=session.id)
     )
-    await gateway.started.wait()
+    # TASK-38947: a turn refused before the provider (a persistence that
+    # cannot save its mix-in attempt) never sets ``started``.
+    await _until_provider_starts(gateway.started, chain)
     snapshot = controller.prompt_queue_registry.snapshot(session.id)
     first = await controller.queue_prompt(
         session.id, text="frozen queued", expected_revision=snapshot.revision
@@ -639,7 +817,13 @@ async def test_evidence_success_uses_exact_draft_fixed_categories_and_exact_bund
         outcome.evidence_bundle
         is controller.preparation_outcome(preparation.preparation_id).evidence_bundle
     )
-    assert outcome.contribution is None
+    # TASK-33621.51: a grounded send records how many references it carried.
+    assert isinstance(outcome.contribution, LibraryPreparationContribution)
+    assert outcome.contribution.event.outcome == "evidence_sent"
+    assert outcome.contribution.event.result_count == len(
+        outcome.evidence_bundle.references
+    )
+    assert outcome.contribution.event.result_count == 1
     assert service.calls == [
         {
             "query": "immutable executed draft",
@@ -821,7 +1005,7 @@ def test_controller_cancel_removes_exact_owner_and_sidecars_without_touching_sta
     controller = ConsoleChatController(
         store=store,
         provider_gateway=_StreamingFence(),
-        rag_capture_provider=retrieval._capture_console_staged_rag,
+        **_retrieval_evidence_owner(retrieval),
     )
     controller._preparation_outcomes[preparation.preparation_id] = (
         ConsolePreparationOutcome(
@@ -878,8 +1062,7 @@ async def test_success_injects_the_sealed_bundle_into_the_same_dispatched_reques
     service = _RagService(
         {"runtime_backend": "local", "results": [_row("needle body")]}
     )
-    controller = ConsoleChatController(store=store, provider_gateway=gateway)
-    controller.app = SimpleNamespace(library_rag_search_service=service)
+    controller = _capturing_controller(store, gateway, _capture_app(service, "note-1"))
 
     result = await controller.submit_draft("exact user text")
 
@@ -889,8 +1072,49 @@ async def test_success_injects_the_sealed_bundle_into_the_same_dispatched_reques
         row for row in reversed(gateway.messages) if row["role"] == "user"
     )
     assert "needle body" in final_user["content"]
+    # TASK-33620.8 (AC#4): this app has no citation repository, so no record
+    # can cover the reply and the evidence carries no [S#] labels.
+    assert "[S1]" not in final_user["content"].replace("such as [S1]", "")
+    assert "not saved as citations for this reply" in final_user["content"]
     assert store.preparation_for_session(result.session_id) is None
     assert controller._preparation_outcomes == {}
+
+
+@pytest.mark.asyncio
+async def test_a_failed_automatic_capture_sends_no_evidence():
+    """TASK-33620.8 review: a capture that raises fails closed, as staged does.
+
+    The staged path sends no evidence when its capture raises. The Automatic
+    path used to send the bundle anyway, unlabelled and never re-authorized
+    against current sources. Now the turn goes out with the user's text only.
+    """
+
+    async def failing_capture(*_args, **_kwargs):
+        raise RuntimeError("capture failed")
+
+    store = ConsoleChatStore()
+    store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.AUTOMATIC)
+    gateway = _StreamingFence()
+    service = _RagService(
+        {"runtime_backend": "local", "results": [_row("needle body")]}
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        automatic_evidence_capture=failing_capture,
+    )
+    controller.app = _capture_app(service, "note-1")
+
+    result = await controller.submit_draft("exact user text")
+
+    assert result.accepted
+    assert len(service.calls) == 1
+    assert gateway.provider_calls == 1
+    final_user = next(
+        row for row in reversed(gateway.messages) if row["role"] == "user"
+    )
+    assert "exact user text" in final_user["content"]
+    assert "needle body" not in final_user["content"]
 
 
 @pytest.mark.asyncio
@@ -901,7 +1125,7 @@ async def test_live_state_reaches_dispatch_started_only_at_provider_attempt():
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
 
     task = asyncio.create_task(controller.submit_draft("exact user text"))
-    await gateway.started.wait()
+    await _until_provider_starts(gateway.started, task)
 
     preparation = store.preparation_for_session(store.active_session_id)
     assert preparation is not None
@@ -922,7 +1146,7 @@ async def test_close_during_provider_attempt_settles_live_preparation_without_le
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
 
     task = asyncio.create_task(controller.submit_draft("exact user text"))
-    await gateway.started.wait()
+    await _until_provider_starts(gateway.started, task)
     session_id = store.active_session_id
     preparation = store.preparation_for_session(session_id)
     assert preparation is not None
@@ -1029,7 +1253,7 @@ async def test_close_wins_race_with_inflight_retrieval_without_dispatch():
     running = asyncio.create_task(
         controller.prepare_library_for_turn(preparation.preparation_id)
     )
-    await service.entered.wait()
+    await _until_entered(service.entered, running, what="the held Library retrieval")
     store.close_session(preparation.session_id)
     service.release.set()
     outcome = await running
@@ -1093,7 +1317,7 @@ async def test_queued_failure_returns_exact_claim_without_foreground_copy():
     chain = asyncio.create_task(
         controller.run_prompt_chain("accepted owner", session_id=session.id)
     )
-    await gateway.started.wait()
+    await _until_provider_starts(gateway.started, chain)
     snapshot = controller.prompt_queue_registry.snapshot(session.id)
     admitted = await controller.queue_prompt(
         session.id,
@@ -1132,8 +1356,7 @@ async def test_manual_recovery_continues_same_frozen_send_without_second_submit(
         ("http://127.0.0.1:9099", "http://127.0.0.1:9099")
     )
     service = _RagService(error=RuntimeError("first search failed"))
-    controller = ConsoleChatController(store=store, provider_gateway=gateway)
-    controller.app = SimpleNamespace(library_rag_search_service=service)
+    controller = _capturing_controller(store, gateway, _capture_app(service, "note-1"))
 
     first = await controller.submit_draft(
         "frozen admitted draft", session_id=session.id
@@ -1180,7 +1403,7 @@ async def test_manual_recovery_continues_same_frozen_send_without_second_submit(
 async def test_text_with_attachment_is_automatic_eligible_and_preserved_until_ready(
     monkeypatch,
 ):
-    monkeypatch.setattr(controller_module, "is_vision_capable", lambda *_args: True)
+    _vision_capable(monkeypatch)
     store = ConsoleChatStore()
     store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.AUTOMATIC)
     session = store.create_session(session_id="session-1")
@@ -1276,7 +1499,10 @@ async def test_skill_refusal_cleans_preparation_and_allows_next_send(monkeypatch
     gateway = _StreamingFence()
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
 
-    async def refuse(_messages, _turn_context):
+    # 0327cb5cf9 added the call's invocation_source/reference_offsets keywords.
+    async def refuse(
+        _messages, _turn_context=None, *, invocation_source=None, reference_offsets=()
+    ):
         return _messages, "skill refused", (), (), None
 
     monkeypatch.setattr(controller, "_apply_skill_substitution", refuse)
@@ -1364,6 +1590,8 @@ async def test_provider_preflight_refusal_never_claims_dispatch_started_or_wedge
     async def refuse_preflight(
         *, session_id, provider_messages, assistant_message_id, **_kwargs
     ):
+        if _kwargs.get("assessment_sink") is not None:
+            return provider_messages, None
         preparation = store.preparation_for_session(session_id)
         assert preparation is not None
         observed_states.append(preparation.state)
@@ -1405,7 +1633,7 @@ async def test_queued_recovery_reclaims_same_entry_then_advances_without_spin(ac
     chain = asyncio.create_task(
         controller.run_prompt_chain("owner", session_id=session.id)
     )
-    await gateway.started.wait()
+    await _until_provider_starts(gateway.started, chain)
     snapshot = controller.prompt_queue_registry.snapshot(session.id)
     first = await controller.queue_prompt(
         session.id, text="frozen queued", expected_revision=snapshot.revision
@@ -1528,7 +1756,7 @@ def _assert_reclaimed_queue_released(controller, session_id: str) -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("action", ["retry", "bypass"])
 async def test_durable_queued_recovery_reclaims_same_entry_then_drains_later_work(
-    tmp_path, action
+    tmp_path, action, owned_console_databases
 ):
     """TASK-33621.19 review: the real-SQLite twin of the reclaim/advance contract.
 
@@ -1552,6 +1780,7 @@ async def test_durable_queued_recovery_reclaims_same_entry_then_drains_later_wor
         first,
         second,
     ) = await _paused_queued_send(persistence=ChatPersistenceService(db))
+    owned_console_databases(db, controller)
     session_id = paused.session_id
     assert (
         next(row for row in store.sessions() if row.id == session_id).ephemeral is False
@@ -1599,7 +1828,9 @@ async def test_durable_queued_recovery_reclaims_same_entry_then_drains_later_wor
 
 @pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_durable_single_entry_reclaim_releases_its_chain(tmp_path):
+async def test_durable_single_entry_reclaim_releases_its_chain(
+    tmp_path, owned_console_databases
+):
     """With nothing waiting, the reclaimed durable turn still ends its chain."""
 
     from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
@@ -1614,11 +1845,12 @@ async def test_durable_single_entry_reclaim_releases_its_chain(tmp_path):
     gateway = _BlockingFirstFence()
     service = _RagService(error=RuntimeError("queued retrieval failed"))
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    owned_console_databases(db, controller)
     controller.app = SimpleNamespace(library_rag_search_service=service)
     chain = asyncio.create_task(
         controller.run_prompt_chain("owner", session_id=session.id)
     )
-    await gateway.started.wait()
+    await _until_provider_starts(gateway.started, chain)
     snapshot = controller.prompt_queue_registry.snapshot(session.id)
     only = await controller.queue_prompt(
         session.id, text="only queued", expected_revision=snapshot.revision
@@ -1810,10 +2042,11 @@ async def test_queued_recovery_postaccept_exception_settles_exact_claim_once(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("action", ["retry", "bypass"])
+@private_profile_test
 async def test_recovery_uses_frozen_staged_inputs_and_leaves_new_state_staged(
-    monkeypatch, action
+    monkeypatch, action, request
 ):
-    monkeypatch.setattr(controller_module, "is_vision_capable", lambda *_args: True)
+    _vision_capable(monkeypatch)
     captured_contexts = []
 
     async def capture_evidence(_app, launch, *, user_message):
@@ -1842,12 +2075,15 @@ async def test_recovery_uses_frozen_staged_inputs_and_leaves_new_state_staged(
     controller = ConsoleChatController(
         store=store,
         provider_gateway=gateway,
-        rag_capture_provider=retrieval._capture_console_staged_rag,
-        staged_evidence_provider=lambda _session_id: (
-            evidence_state["launch"] is not None
+        **_retrieval_evidence_owner(
+            retrieval,
+            staged_evidence_provider=lambda _session_id: (
+                evidence_state["launch"] is not None
+            ),
         ),
         model="vision-model",
     )
+    assert await controller.hook_admission_reason() is None
     controller.app = SimpleNamespace(library_rag_search_service=service)
 
     first = await controller.submit_draft("frozen draft", session_id=session.id)
@@ -2113,7 +2349,7 @@ async def test_close_drops_accepted_owner_before_cancelled_task_finally_settles(
     gateway = _BlockingFirstFence()
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
     task = asyncio.create_task(controller.submit_draft("frozen draft"))
-    await gateway.started.wait()
+    await _until_provider_starts(gateway.started, task)
     session_id = store.active_session_id
     preparation = store.preparation_for_session(session_id)
     assert preparation is not None
@@ -2170,7 +2406,7 @@ async def test_same_text_one_shot_rearm_survives_inflight_send_completion():
     store.set_session_one_shot_prefill(session.id, "same prefill")
 
     task = asyncio.create_task(controller.submit_draft("frozen draft"))
-    await gateway.started.wait()
+    await _until_provider_starts(gateway.started, task)
     store.set_session_one_shot_prefill(session.id, "same prefill")
     gateway.release.set()
     result = await task
@@ -2203,6 +2439,8 @@ async def test_shutdown_tracks_accepted_submit_and_rechecks_before_external_call
     if path == "direct":
 
         async def hold_preflight(*, provider_messages, **_kwargs):
+            if _kwargs.get("assessment_sink") is not None:
+                return provider_messages, None
             await held.wait()
             return provider_messages, None
 
@@ -2220,7 +2458,7 @@ async def test_shutdown_tracks_accepted_submit_and_rechecks_before_external_call
         )
 
     submit = asyncio.create_task(controller.submit_draft("frozen draft"))
-    await held.entered.wait()
+    await _until_entered(held.entered, submit, what="the held preparation seam")
     shutdown = asyncio.create_task(controller.shutdown())
     for _ in range(10):
         await asyncio.sleep(0)
@@ -2262,7 +2500,7 @@ async def test_shutdown_tracks_committing_submit_before_stream_registration(
 
     monkeypatch.setattr(controller, "_record_prompt_history", hold_history)
     submit = asyncio.create_task(controller.submit_draft("frozen draft"))
-    await held.entered.wait()
+    await _until_entered(held.entered, submit, what="the held prompt-history write")
     preparation = store.preparation_for_session(store.active_session_id)
     outcome = controller.preparation_outcome(preparation.preparation_id)
     assert outcome is not None and outcome.contribution is not None
@@ -2315,6 +2553,8 @@ async def test_close_drops_submit_owner_before_cancelled_task_finalizer(
     else:
 
         async def hold_preflight(*, provider_messages, **_kwargs):
+            if _kwargs.get("assessment_sink") is not None:
+                return provider_messages, None
             await held.wait()
             return provider_messages, None
 
@@ -2323,7 +2563,7 @@ async def test_close_drops_submit_owner_before_cancelled_task_finalizer(
         )
 
     submit = asyncio.create_task(controller.submit_draft("frozen draft"))
-    await held.entered.wait()
+    await _until_entered(held.entered, submit, what="the held preparation seam")
     session_id = store.active_session_id
     preparation = store.preparation_for_session(session_id)
     assert preparation is not None and preparation.state is expected_state
@@ -2378,7 +2618,8 @@ async def _capture_staged_evidence(_app, launch, *, user_message):
 
 
 @pytest.mark.asyncio
-async def test_explicit_evidence_lease_survives_preaccept_failure(monkeypatch):
+@private_profile_test
+async def test_explicit_evidence_lease_survives_preaccept_failure(monkeypatch, request):
     state: dict[str, object] = {
         "launch": _staged_evidence_launch("original"),
         "released": [],
@@ -2390,8 +2631,9 @@ async def test_explicit_evidence_lease_survives_preaccept_failure(monkeypatch):
     controller = ConsoleChatController(
         store=store,
         provider_gateway=_StreamingFence(),
-        rag_capture_provider=retrieval._capture_console_staged_rag,
+        **_retrieval_evidence_owner(retrieval),
     )
+    assert await controller.hook_admission_reason() is None
     monkeypatch.setattr(
         retrieval_module,
         "capture_console_staged_evidence_for_chat",
@@ -2410,8 +2652,10 @@ async def test_explicit_evidence_lease_survives_preaccept_failure(monkeypatch):
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_explicit_evidence_lease_releases_exact_launch_only_after_acceptance(
     monkeypatch,
+    request,
 ):
     state: dict[str, object] = {
         "launch": _staged_evidence_launch("original"),
@@ -2425,8 +2669,9 @@ async def test_explicit_evidence_lease_releases_exact_launch_only_after_acceptan
     controller = ConsoleChatController(
         store=store,
         provider_gateway=gateway,
-        rag_capture_provider=retrieval._capture_console_staged_rag,
+        **_retrieval_evidence_owner(retrieval),
     )
+    assert await controller.hook_admission_reason() is None
     monkeypatch.setattr(
         retrieval_module,
         "capture_console_staged_evidence_for_chat",
@@ -2434,7 +2679,7 @@ async def test_explicit_evidence_lease_releases_exact_launch_only_after_acceptan
     )
 
     submit = asyncio.create_task(controller.submit_draft("frozen draft"))
-    await gateway.started.wait()
+    await _until_provider_starts(gateway.started, submit)
     launch_released = state["launch"] is None
     released = list(state["released"])
     gateway.release.set()
@@ -2445,7 +2690,10 @@ async def test_explicit_evidence_lease_releases_exact_launch_only_after_acceptan
 
 
 @pytest.mark.asyncio
-async def test_explicit_evidence_lease_never_releases_newer_launch(monkeypatch):
+@private_profile_test
+async def test_explicit_evidence_lease_never_releases_newer_launch(
+    monkeypatch, request
+):
     state: dict[str, object] = {
         "launch": _staged_evidence_launch("original"),
         "released": [],
@@ -2458,8 +2706,9 @@ async def test_explicit_evidence_lease_never_releases_newer_launch(monkeypatch):
     controller = ConsoleChatController(
         store=store,
         provider_gateway=_StreamingFence(),
-        rag_capture_provider=retrieval._capture_console_staged_rag,
+        **_retrieval_evidence_owner(retrieval),
     )
+    assert await controller.hook_admission_reason() is None
     held = _CancellationResistantBoundary()
 
     async def capture_evidence(_app, launch, *, user_message):
@@ -2476,7 +2725,7 @@ async def test_explicit_evidence_lease_never_releases_newer_launch(monkeypatch):
         retrieval_module, "capture_console_staged_evidence_for_chat", capture_evidence
     )
     submit = asyncio.create_task(controller.submit_draft("frozen draft"))
-    await held.entered.wait()
+    await _until_entered(held.entered, submit, what="the held evidence capture")
     state["launch"] = newer
     held.release.set()
     assert (await submit).accepted
@@ -2486,7 +2735,10 @@ async def test_explicit_evidence_lease_never_releases_newer_launch(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_explicit_evidence_lease_cancel_keeps_original_staged(monkeypatch):
+@private_profile_test
+async def test_explicit_evidence_lease_cancel_keeps_original_staged(
+    monkeypatch, request
+):
     state: dict[str, object] = {
         "launch": _staged_evidence_launch("original"),
         "released": [],
@@ -2498,8 +2750,9 @@ async def test_explicit_evidence_lease_cancel_keeps_original_staged(monkeypatch)
     controller = ConsoleChatController(
         store=store,
         provider_gateway=_StreamingFence(),
-        rag_capture_provider=retrieval._capture_console_staged_rag,
+        **_retrieval_evidence_owner(retrieval),
     )
+    assert await controller.hook_admission_reason() is None
     held = _CancellationResistantBoundary()
 
     async def capture_evidence(_app, launch, *, user_message):
@@ -2515,7 +2768,7 @@ async def test_explicit_evidence_lease_cancel_keeps_original_staged(monkeypatch)
         retrieval_module, "capture_console_staged_evidence_for_chat", capture_evidence
     )
     submit = asyncio.create_task(controller.submit_draft("frozen draft"))
-    await held.entered.wait()
+    await _until_entered(held.entered, submit, what="the held evidence capture")
     preparation = store.preparation_for_session(store.active_session_id)
     cancelled = controller.cancel_library_preparation(preparation.preparation_id)
     assert not cancelled.accepted
@@ -2538,7 +2791,7 @@ async def test_same_session_refusal_cannot_overwrite_first_submit_owner():
     first = asyncio.create_task(
         controller.submit_draft("first draft", session_id=session.id)
     )
-    await boundary.entered.wait()
+    await _until_entered(boundary.entered, first, what="the held provider resolution")
     refused = await controller.submit_draft("second draft", session_id=session.id)
 
     registry_preserved_first = controller._active_submit_tasks == {first: session.id}
@@ -2581,7 +2834,9 @@ async def test_submit_registry_tracks_multiple_sessions_and_cleans_exact_done_ta
     second = asyncio.create_task(
         controller.submit_draft("second draft", session_id=second_session.id)
     )
-    await gateway.both_entered.wait()
+    await _until_entered(
+        gateway.both_entered, first, second, what="both held provider resolutions"
+    )
 
     registry_owned_both = controller._active_submit_tasks == {
         first: first_session.id,
@@ -2619,6 +2874,8 @@ async def test_postaccept_cancellation_returns_exact_accepted_result(monkeypatch
     if path == "direct":
 
         async def hold_preflight(*, provider_messages, **_kwargs):
+            if _kwargs.get("assessment_sink") is not None:
+                return provider_messages, None
             await held.wait()
             return provider_messages, None
 
@@ -2638,7 +2895,7 @@ async def test_postaccept_cancellation_returns_exact_accepted_result(monkeypatch
     submit = asyncio.create_task(
         controller.submit_draft("frozen draft", session_id=session.id)
     )
-    await held.entered.wait()
+    await _until_entered(held.entered, submit, what="the held preparation seam")
     preparation = store.preparation_for_session(session.id)
     assert preparation is not None
     assert preparation.state is ConsoleTurnPreparationState.ACCEPTED
@@ -2700,6 +2957,8 @@ async def test_off_thread_begin_shutdown_schedules_owner_loop_cancellation(
         if path == "direct":
 
             async def hold_preflight(*, provider_messages, **_kwargs):
+                if _kwargs.get("assessment_sink") is not None:
+                    return provider_messages, None
                 await held.wait()
                 return provider_messages, None
 
@@ -2719,7 +2978,7 @@ async def test_off_thread_begin_shutdown_schedules_owner_loop_cancellation(
         submit = _OwnerThreadTask(
             controller.submit_draft("frozen draft", session_id=session.id), loop=loop
         )
-        await held.entered.wait()
+        await _until_entered(held.entered, submit, what="the held preparation seam")
         shutdown_error = None
         try:
             await asyncio.to_thread(controller.begin_shutdown)
@@ -2768,7 +3027,7 @@ def test_live_loop_shutdown_cancels_and_awaits_submit_without_asyncio_diagnostic
             active_controller.submit_draft("live draft", session_id=session.id)
         )
         submit_ref = weakref.ref(submit)
-        await held.wait()
+        await _until_entered(held, submit, what="the held prompt-history write")
         preparation = store.preparation_for_session(session.id)
         assert preparation is not None
         assert preparation.state is ConsoleTurnPreparationState.COMMITTING
@@ -2801,6 +3060,8 @@ def test_live_loop_shutdown_cancels_and_awaits_submit_without_asyncio_diagnostic
                 owner_loop.close()
             del exercise_supported_shutdown
             del controller
+            # The paired store owns the handoff callback until its own release.
+            store = None
             gc.collect()
 
     diagnostic_text = loop_errors + [str(item.message) for item in captured_warnings]
@@ -2813,7 +3074,12 @@ def test_live_loop_shutdown_cancels_and_awaits_submit_without_asyncio_diagnostic
     )
 
 
-def test_closed_loop_pending_submit_is_emergency_detachment(monkeypatch):
+@pytest.mark.filterwarnings("error::pytest.PytestUnraisableExceptionWarning")
+def test_closed_loop_pending_submit_is_emergency_detachment(monkeypatch, caplog):
+    from tldw_chatbook.Agents.automatic_work_runtime import current_automatic_work
+    from tldw_chatbook.Chat.console_send_diagnostics import _CURRENT as diagnostic_scope
+
+    caplog.set_level(logging.ERROR, logger="asyncio")
     store = ConsoleChatStore()
     store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.AUTOMATIC)
     session = store.create_session(session_id="closed-session")
@@ -2828,22 +3094,28 @@ def test_closed_loop_pending_submit_is_emergency_detachment(monkeypatch):
 
     monkeypatch.setattr(controller, "_record_prompt_history", hold_history)
     closed_loop = asyncio.new_event_loop()
-    loop_errors: list[str] = []
     closed_loop.set_debug(True)
-    closed_loop.set_exception_handler(
-        lambda _loop, context: loop_errors.append(str(context.get("message", "")))
-    )
+    submit_context = copy_context()
+    previous_diagnostic = submit_context.run(diagnostic_scope.get)
+    previous_work = submit_context.run(current_automatic_work)
     submit = closed_loop.create_task(
-        controller.submit_draft("unreachable draft", session_id=session.id)
+        controller.submit_draft("unreachable draft", session_id=session.id),
+        context=submit_context,
     )
+    history_ready = closed_loop.create_task(held.wait())
     submit_ref = weakref.ref(submit)
     with warnings.catch_warnings(record=True) as captured_warnings:
         warnings.simplefilter("always")
         try:
-            for _ in range(20):
-                closed_loop.run_until_complete(asyncio.sleep(0))
-                if held.is_set():
-                    break
+            done, _pending = closed_loop.run_until_complete(
+                asyncio.wait(
+                    (submit, history_ready),
+                    timeout=5,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+            )
+            assert history_ready in done
+            del done, _pending
             preparation = store.preparation_for_session(session.id)
             assert held.is_set()
             assert preparation is not None
@@ -2857,23 +3129,44 @@ def test_closed_loop_pending_submit_is_emergency_detachment(monkeypatch):
             controller.begin_shutdown()
 
             assert controller._active_submit_tasks == {}
+            assert controller._maintenance_calls == {}
             assert store.preparation_for_session(session.id) is None
             assert controller._preparation_outcomes == {}
             assert controller._prepared_send_continuations == {}
             assert controller._shutdown_requested.is_set()
             assert gateway.provider_calls == 0
-            assert loop_errors == []
+            assert not submit.done()  # A closed loop cannot finish the pending task.
+            assert not any(record.name == "asyncio" for record in caplog.records)
         finally:
             if not closed_loop.is_closed():
+                submit.cancel()
+                history_ready.cancel()
+                closed_loop.run_until_complete(
+                    asyncio.gather(submit, history_ready, return_exceptions=True)
+                )
+                closed_loop.run_until_complete(closed_loop.shutdown_asyncgens())
+                closed_loop.run_until_complete(closed_loop.shutdown_default_executor())
                 closed_loop.close()
+            if not submit.done():
+                # Fixture cleanup only: the retained Context now contains task
+                # attribution, so it roots submit until its scopes unwind. This
+                # is not production shutdown or implicit garbage-collection cleanup.
+                # The Task stays pending and must emit its genuine diagnostic.
+                submit_context.run(submit.get_coro().close)
+                assert not submit.done()
             del submit
-            gc.collect()
+            # A custom handler would re-enter this Context on Python 3.12.
+            submit_context.run(gc.collect)
 
     assert submit_ref() is None
-    assert loop_errors == ["Task was destroyed but it is pending!"]
-    assert not any(
-        "was never awaited" in str(item.message) for item in captured_warnings
-    )
+    assert submit_context.run(diagnostic_scope.get) is previous_diagnostic
+    assert submit_context.run(current_automatic_work) is previous_work
+    assert [
+        record.getMessage().splitlines()[0]
+        for record in caplog.records
+        if record.name == "asyncio"
+    ] == ["Task was destroyed but it is pending!"]
+    assert captured_warnings == []
 
 
 @pytest.mark.asyncio
@@ -2888,6 +3181,8 @@ async def test_closed_loop_peer_never_blocks_same_session_live_submit_shutdown(
     held = _CancellationBoundary()
 
     async def hold_preflight(*, provider_messages, **_kwargs):
+        if _kwargs.get("assessment_sink") is not None:
+            return provider_messages, None
         await held.wait()
         return provider_messages, None
 
@@ -2897,7 +3192,7 @@ async def test_closed_loop_peer_never_blocks_same_session_live_submit_shutdown(
     live_submit = asyncio.create_task(
         controller.submit_draft("live draft", session_id=session.id)
     )
-    await held.entered.wait()
+    await _until_entered(held.entered, live_submit, what="the held memory preflight")
     preparation = store.preparation_for_session(session.id)
     assert preparation is not None
     assert preparation.state is ConsoleTurnPreparationState.ACCEPTED
@@ -2919,6 +3214,7 @@ async def test_closed_loop_peer_never_blocks_same_session_live_submit_shutdown(
     closed_submit_ref = weakref.ref(closed_submit)
     controller._register_submit_task(closed_submit, session.id)
     controller._bind_submit_preparation(closed_submit, preparation.preparation_id)
+    controller._maintenance_calls[closed_submit] = 1
     closed_loop.close()
     with warnings.catch_warnings(record=True) as captured_warnings:
         warnings.simplefilter("always")
@@ -2927,6 +3223,8 @@ async def test_closed_loop_peer_never_blocks_same_session_live_submit_shutdown(
 
             assert closed_submit not in controller._active_submit_tasks
             assert live_submit in controller._active_submit_tasks
+            assert closed_submit not in controller._maintenance_calls
+            assert live_submit in controller._maintenance_calls
             live_preparation = store.preparation_for_session(session.id)
             assert live_preparation is not None
             assert live_preparation.preparation_id == preparation.preparation_id
@@ -2973,6 +3271,8 @@ async def test_shutdown_callback_failure_rethrows_after_all_task_cleanup(
     held = _CancellationBoundary()
 
     async def hold_preflight(*, provider_messages, **_kwargs):
+        if _kwargs.get("assessment_sink") is not None:
+            return provider_messages, None
         await held.wait()
         return provider_messages, None
 
@@ -2982,7 +3282,7 @@ async def test_shutdown_callback_failure_rethrows_after_all_task_cleanup(
     live_submit = asyncio.create_task(
         controller.run_prompt_chain("live draft", session_id=session.id)
     )
-    await held.entered.wait()
+    await _until_entered(held.entered, live_submit, what="the held memory preflight")
     preparation = store.preparation_for_session(session.id)
     assert preparation is not None
     assert preparation.state is ConsoleTurnPreparationState.ACCEPTED
@@ -2994,7 +3294,7 @@ async def test_shutdown_callback_failure_rethrows_after_all_task_cleanup(
         await asyncio.Event().wait()
 
     stream_task = asyncio.create_task(hold_stream())
-    await stream_started.wait()
+    await _until_provider_starts(stream_started, stream_task)
     controller._active_stream_tasks[closed_session.id] = stream_task
 
     closed_loop = asyncio.new_event_loop()
@@ -3090,8 +3390,10 @@ async def test_shutdown_callback_failure_rethrows_after_all_task_cleanup(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_ready_close_removes_echo_idempotently_and_preserves_evidence_launch(
     monkeypatch,
+    request,
 ):
     state: dict[str, object] = {
         "launch": _staged_evidence_launch("original"),
@@ -3104,8 +3406,9 @@ async def test_ready_close_removes_echo_idempotently_and_preserves_evidence_laun
     controller = ConsoleChatController(
         store=store,
         provider_gateway=_StreamingFence(),
-        rag_capture_provider=retrieval._capture_console_staged_rag,
+        **_retrieval_evidence_owner(retrieval),
     )
+    assert await controller.hook_admission_reason() is None
     held = _CancellationBoundary()
 
     async def hold_capture(_app, launch, *, user_message):
@@ -3125,7 +3428,7 @@ async def test_ready_close_removes_echo_idempotently_and_preserves_evidence_laun
     submit = asyncio.create_task(
         controller.submit_draft("frozen draft", session_id=session.id)
     )
-    await held.entered.wait()
+    await _until_entered(held.entered, submit, what="the held evidence capture")
     preparation = store.preparation_for_session(session.id)
     assert preparation is not None
     assert preparation.state is ConsoleTurnPreparationState.READY
@@ -3185,6 +3488,8 @@ async def test_recovered_queue_acknowledges_postaccept_cancellation_once(
     if path == "direct":
 
         async def hold_preflight(*, provider_messages, **_kwargs):
+            if _kwargs.get("assessment_sink") is not None:
+                return provider_messages, None
             await held.wait()
             return provider_messages, None
 
@@ -3210,7 +3515,7 @@ async def test_recovered_queue_acknowledges_postaccept_cancellation_once(
     recovery = asyncio.create_task(
         controller.retry_library_preparation(paused.preparation_id)
     )
-    await held.entered.wait()
+    await _until_entered(held.entered, recovery, what="the held preparation seam")
     accepted_rows = store.messages_for_session(paused.session_id)
     recovery.cancel()
     result = await recovery

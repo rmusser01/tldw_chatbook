@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/resolve_conflicts.py", line 54, in <module>
+    result=pattern.sub(resolve,s); assert n==len(choices[name]),(name,n,len(choices[name]));p.write_text(result)
+                                          ^^^^^^^^^^^^^^^^^^^^^
+AssertionError: ('backlog/docs/lessons-testing-evidence.md', 1, 2)

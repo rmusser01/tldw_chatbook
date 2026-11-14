@@ -286,6 +286,16 @@ class CalculatorTool(Tool):
                 func_name = node.func.id if isinstance(node.func, ast.Name) else None
                 if func_name not in allowed_functions:
                     raise ValueError(f"Function {func_name} not allowed")
+                # TASK-38596: keywords used to be silently dropped, so
+                # ``round(3.14159, ndigits=2)`` returned 3 -- a numerically
+                # wrong answer from an always-on auto-approved tool. Reject
+                # them loudly instead of answering the wrong question.
+                if node.keywords:
+                    raise ValueError(
+                        "keyword arguments are not supported in calculator "
+                        "expressions; pass all arguments positionally "
+                        f"(got {[kw.arg or '**kwargs' for kw in node.keywords]})"
+                    )
                 args = [safe_eval(arg) for arg in node.args]
                 return allowed_functions[func_name](*args)
             else:

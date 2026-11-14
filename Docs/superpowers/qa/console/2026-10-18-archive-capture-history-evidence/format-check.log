@@ -1,0 +1,1102 @@
+unformatted: File would be reformatted
+     --> tldw_chatbook/Chat/console_chat_controller.py:43:67
+      |
+42    |
+      - from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import TOOL_DESCRIPTION_CAPTURE_CAP
+43    + from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
+44    +     TOOL_DESCRIPTION_CAPTURE_CAP,
+45    + )
+46    | from tldw_chatbook.Character_Chat.emote_directives import (
+--------------------------------------------------------------------------------
+143   | )
+144   +
+145   | # ADR-097 boot ratchet: deferred off the boot path (loads on first use). (console_auxiliary_routing imports at its one call site.)
+--------------------------------------------------------------------------------
+257   | )
+258   +
+259   | # `Chat.console_visual_transcript` (PIL-backed visual compaction) is imported
+--------------------------------------------------------------------------------
+364   | from tldw_chatbook.Chat.prompt_history import PromptHistory
+365   +
+366   | if TYPE_CHECKING:
+--------------------------------------------------------------------------------
+375   | )
+376   +
+377   | #: task-31385: environment override for ``[console] interrupt_bell``
+--------------------------------------------------------------------------------
+400   |
+401   +
+402   | # task-31384: `Chat.console_interrupt_rounds` is imported lazily (constructor
+--------------------------------------------------------------------------------
+1155  |
+      - def capture_prompt_transform_inputs(app: Any, session: ConsoleChatSession) -> dict[str, Any]:
+1156  + def capture_prompt_transform_inputs(
+1157  +     app: Any, session: ConsoleChatSession
+1158  + ) -> dict[str, Any]:
+1159  |     """Capture bounded dictionary/world inputs without retaining a screen."""
+--------------------------------------------------------------------------------
+1684  |
+      - def approval_was_unanswered(row: "MCPPendingCall", decisions: Mapping[str, str]) -> bool:
+1685  + def approval_was_unanswered(
+1686  +     row: "MCPPendingCall", decisions: Mapping[str, str]
+1687  + ) -> bool:
+1688  |     """True when ``row``'s deny came from a Stop/revoke, not from the user.
+--------------------------------------------------------------------------------
+1719  |
+1720  +
+1721  | def _build_speculative_voice_capture_request(
+--------------------------------------------------------------------------------
+1778  |
+1779  +
+1780  | _WATCHLISTS_RECEIPT_ID_RE = re.compile(
+--------------------------------------------------------------------------------
+2321  |         if callable(preflight_lesson):
+      -             batch_call_ids = [
+      -                 str(getattr(call, "call_id", "") or "")
+      -                 for call in calls
+      -             ]
+2322  +             batch_call_ids = [str(getattr(call, "call_id", "") or "") for call in calls]
+2323  |             duplicate_batch_call_ids = {
+--------------------------------------------------------------------------------
+2465  |                 parse_persona_policy_from_rules(recovery_persona_rules),
+      -                 rule_kind="mcp_tool", tool_name=SEARCH_ARCHIVED_CONVERSATIONS,
+2466  +                 rule_kind="mcp_tool",
+2467  +                 tool_name=SEARCH_ARCHIVED_CONVERSATIONS,
+2468  |             )
+--------------------------------------------------------------------------------
+2473  |                 if not verdict.advertised:
+      -                     recovery_refusals[call_id or call.name] = f"Tool not permitted: {call.name}"
+2474  +                     recovery_refusals[call_id or call.name] = (
+2475  +                         f"Tool not permitted: {call.name}"
+2476  +                     )
+2477  |                     continue
+2478  |                 if not verdict.requires_confirmation:
+2479  |                     continue
+      -                 if (type(recovery_provider) is not ArchiveRecoveryToolProvider
+      -                         or not recovery_provider.can_request_review(run_id)
+      -                         or actor is None or actor.kind != "primary" or not call_id):
+      -                     recovery_refusals[call_id or call.name] = "Recovery search approval unavailable."
+2480  +                 if (
+2481  +                     type(recovery_provider) is not ArchiveRecoveryToolProvider
+2482  +                     or not recovery_provider.can_request_review(run_id)
+2483  +                     or actor is None
+2484  +                     or actor.kind != "primary"
+2485  +                     or not call_id
+2486  +                 ):
+2487  +                     recovery_refusals[call_id or call.name] = (
+2488  +                         "Recovery search approval unavailable."
+2489  +                     )
+2490  |                     continue
+      -                 recovery_pending.append(MCPPendingCall(
+      -                     llm_name=call.name, server_key="agent:archive_recovery",
+      -                     tool_name=call.name, server_label="Archive recovery",
+      -                     arguments=dict(call.args), call_id=call_id, reason="ask",
+      -                     options=("approve_once", "deny"),
+      -                 ))
+2491  +                 recovery_pending.append(
+2492  +                     MCPPendingCall(
+2493  +                         llm_name=call.name,
+2494  +                         server_key="agent:archive_recovery",
+2495  +                         tool_name=call.name,
+2496  +                         server_label="Archive recovery",
+2497  +                         arguments=dict(call.args),
+2498  +                         call_id=call_id,
+2499  +                         reason="ask",
+2500  +                         options=("approve_once", "deny"),
+2501  +                     )
+2502  +                 )
+2503  |         all_pending = mcp_pending + builtin_pending + lesson_pending + recovery_pending
+--------------------------------------------------------------------------------
+2627  |             verdicts[row.call_id] = (
+      -                 "proceed" if decisions.get(row.call_id) == "approve_once"
+2628  +                 "proceed"
+2629  +                 if decisions.get(row.call_id) == "approve_once"
+2630  |                 else "Recovery search was not approved."
+--------------------------------------------------------------------------------
+3384  |     return wrapped
+3385  +
+3386  +
+3387  | _PERSONAL_CONTEXT_SERVICE_UNSET = object()
+--------------------------------------------------------------------------------
+3500  |
+      -
+3501  | def _stamp_approval_round_closed(state: dict[str, Any]) -> None:
+--------------------------------------------------------------------------------
+3529  |
+3530  +
+3531  | class ConsoleChatController:
+--------------------------------------------------------------------------------
+3548  |
+      -     async def _auxiliary_compaction_resolution(
+      -         self, main_selection, main_resolution):
+3549  +     async def _auxiliary_compaction_resolution(self, main_selection, main_resolution):
+3550  |         """Resolve a cheaper auxiliary model for compaction, or fall back.
+--------------------------------------------------------------------------------
+3560  |         try:
+      -             aux_provider = get_cli_setting(
+      -                 "chat_defaults", "auxiliary_provider", None
+      -             )
+3561  +             aux_provider = get_cli_setting("chat_defaults", "auxiliary_provider", None)
+3562  |             aux_model = get_cli_setting("chat_defaults", "auxiliary_model", None)
+--------------------------------------------------------------------------------
+3888  |         # promotion, revocation, activation, attach) fires the summary.
+      -         self._interrupt_host.after_remount["approval"] = self._maybe_fire_permission_summary
+3889  +         self._interrupt_host.after_remount["approval"] = (
+3890  +             self._maybe_fire_permission_summary
+3891  +         )
+3892  |         self._approval_state_lock = self._interrupt_host.lock
+--------------------------------------------------------------------------------
+4337  |         #: concurrent.
+      -         self._pending_skill_install_rounds = self._interrupt_host.registries["skill_install"]
+4338  +         self._pending_skill_install_rounds = self._interrupt_host.registries[
+4339  +             "skill_install"
+4340  +         ]
+4341  |         self._pending_skill_install_lock = self._interrupt_host.lock
+4342  |         #: PR0: retained payload per ROUND (was per session), keyed by
+4343  |         #: `request_id`. The mounted card is the session's FIFO head, so a
+4344  |         #: second same-session confirm no longer evicts an older sibling.
+      -         self._parked_skill_install_payloads = self._interrupt_host.payloads["skill_install"]
+4345  +         self._parked_skill_install_payloads = self._interrupt_host.payloads[
+4346  +             "skill_install"
+4347  +         ]
+4348  |         #: UI-thread callback that pushes/clears the pending skill-SCRIPT
+--------------------------------------------------------------------------------
+4355  |         #: ``(session_id, tasks)``. Bound by `attach_view`; None = no view.
+      -         self.set_task_panel: Callable[[str | None, list[dict[str, object]]], None] | None = None
+4356  +         self.set_task_panel: (
+4357  +             Callable[[str | None, list[dict[str, object]]], None] | None
+4358  +         ) = None
+4359  |         #: Optional test override for the confirm timeout, mirroring
+--------------------------------------------------------------------------------
+4371  |         #: both worker threads then blocked to their full deadline.
+      -         self._pending_skill_script_rounds = self._interrupt_host.registries["skill_script"]
+4372  +         self._pending_skill_script_rounds = self._interrupt_host.registries[
+4373  +             "skill_script"
+4374  +         ]
+4375  |         self._pending_skill_script_lock = self._interrupt_host.lock
+4376  |         #: PR0: retained payload per ROUND (was per session), keyed by
+4377  |         #: `request_id`. The mounted card is the session's FIFO head, so a
+4378  |         #: second same-session confirm no longer evicts an older sibling.
+      -         self._parked_skill_script_payloads = self._interrupt_host.payloads["skill_script"]
+4379  +         self._parked_skill_script_payloads = self._interrupt_host.payloads[
+4380  +             "skill_script"
+4381  +         ]
+4382  |         #: TASK-28238 phase 2 Task 6: UI-thread callback that pushes/clears
+--------------------------------------------------------------------------------
+4393  |         #: `_pending_skill_install_rounds`.
+      -         self._pending_worktree_merge_rounds = self._interrupt_host.registries["worktree_merge"]
+4394  +         self._pending_worktree_merge_rounds = self._interrupt_host.registries[
+4395  +             "worktree_merge"
+4396  +         ]
+4397  |         self._pending_worktree_merge_lock = self._interrupt_host.lock
+4398  |         #: Retained payload per ROUND, keyed by `request_id` -- same FIFO-
+4399  |         #: head-remount contract as `_parked_skill_install_payloads`.
+      -         self._parked_worktree_merge_payloads = self._interrupt_host.payloads["worktree_merge"]
+4400  +         self._parked_worktree_merge_payloads = self._interrupt_host.payloads[
+4401  +             "worktree_merge"
+4402  +         ]
+4403  |         #: PRD Feature A: the ask_user question round -- same shape as the
+--------------------------------------------------------------------------------
+5200  |             pii_ruleset_revision_id = custom_pii_ruleset.revision_id
+      -         if pii_ruleset_revision_id is not None and type(pii_ruleset_revision_id) is not str:
+5201  +         if (
+5202  +             pii_ruleset_revision_id is not None
+5203  +             and type(pii_ruleset_revision_id) is not str
+5204  +         ):
+5205  |             raise TypeError("pii_ruleset_revision_id")
+5206  |         signals = ConsoleProviderStreamSignals(
+5207  |             exchange_capture_enabled=(
+5208  |                 resolution.enabled
+      -                 and bool(
+      -                     getattr(runtime, "legacy_writes_enabled", runtime.enabled)
+      -                 )
+5209  +                 and bool(getattr(runtime, "legacy_writes_enabled", runtime.enabled))
+5210  |             ),
+--------------------------------------------------------------------------------
+5423  |                 for session in sessions:
+      -                     conversation_id = (
+      -                         session.persisted_conversation_id or session.id
+5424  +                     conversation_id = session.persisted_conversation_id or session.id
+5425  +                     self._lifecycle_session_by_conversation[str(conversation_id)] = (
+5426  +                         session.id
+5427  |                     )
+      -                     self._lifecycle_session_by_conversation[
+      -                         str(conversation_id)
+      -                     ] = session.id
+5428  |             if session_id is not None:
+--------------------------------------------------------------------------------
+6662  |         value = context.rag_defaults.get("top_k", 5)
+      -         return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 5
+6663  +         return (
+6664  +             value
+6665  +             if isinstance(value, int) and not isinstance(value, bool) and value > 0
+6666  +             else 5
+6667  +         )
+6668  |
+--------------------------------------------------------------------------------
+6737  |             query=preparation.executed_draft,
+      -             source_types=self._frozen_rag_source_types(
+      -                 preparation.execution_context
+      -             ),
+6738  +             source_types=self._frozen_rag_source_types(preparation.execution_context),
+6739  |             mode="rag",
+--------------------------------------------------------------------------------
+7211  |                 current.pause_kind is ConsolePreparationPauseKind.TRACE_CALL
+      -                 and trace_call_admission.capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON
+7212  +                 and trace_call_admission.capture_mode
+7213  +                 is ConsoleTraceCaptureMode.CAPTURE_ON
+7214  |                 and preparation_id not in self._trace_call_boundaries_by_preparation
+--------------------------------------------------------------------------------
+7375  |             preparation.state is ConsoleTurnPreparationState.PAUSED
+      -             and preparation.pause_kind
+      -             is ConsolePreparationPauseKind.TEMPORARY_CAPTURE
+7376  +             and preparation.pause_kind is ConsolePreparationPauseKind.TEMPORARY_CAPTURE
+7377  |         ):
+--------------------------------------------------------------------------------
+7977  |         return accept_turn(request)
+      -
+7978  |
+--------------------------------------------------------------------------------
+8451  |                 captured_one_shot_prefill=captured_one_shot_prefill,
+      -                 captured_one_shot_prefill_revision=(
+      -                     captured_one_shot_prefill_revision
+      -                 ),
+8452  +                 captured_one_shot_prefill_revision=(captured_one_shot_prefill_revision),
+8453  |                 staged_evidence_launch=staged_evidence_launch,
+--------------------------------------------------------------------------------
+8471  |                 captured_one_shot_prefill=captured_one_shot_prefill,
+      -                 captured_one_shot_prefill_revision=(
+      -                     captured_one_shot_prefill_revision
+      -                 ),
+8472  +                 captured_one_shot_prefill_revision=(captured_one_shot_prefill_revision),
+8473  |                 staged_evidence_launch=staged_evidence_launch,
+--------------------------------------------------------------------------------
+8531  |         from tldw_chatbook.Agents.automatic_work_runtime import manual_work_scope
+8532  +
+8533  |         scope = (
+--------------------------------------------------------------------------------
+8682  |             return ConsoleSubmitResult(False, False, "Choose an explicit conversation.")
+      -         if preserve_composer and str(draft).lstrip().startswith((COMMAND_PREFIX, MENTION_SIGIL)):
+8683  +         if preserve_composer and str(draft).lstrip().startswith(
+8684  +             (COMMAND_PREFIX, MENTION_SIGIL)
+8685  +         ):
+8686  |             return ConsoleSubmitResult(
+      -                 False, False, "Use Console for slash commands and @ references.",
+8687  +                 False,
+8688  +                 False,
+8689  +                 "Use Console for slash commands and @ references.",
+8690  |                 session_id=session_id,
+--------------------------------------------------------------------------------
+8804  |             return ConsoleSubmitResult(
+      -                 False, False,
+8805  +                 False,
+8806  +                 False,
+8807  |                 "This conversation has staged Console attachments, evidence or prefill. "
+--------------------------------------------------------------------------------
+8830  |             else self.store.pending_attachments(session.id)
+      -             if origin is not ConsoleSubmissionOrigin.AGENT_WAKE and not preserve_composer
+8831  +             if origin is not ConsoleSubmissionOrigin.AGENT_WAKE
+8832  +             and not preserve_composer
+8833  |             else []
+--------------------------------------------------------------------------------
+8879  |                 if find_reference_candidates(clean_draft):
+8880  +
+8881  |                     def _expand() -> object:
+--------------------------------------------------------------------------------
+9277  |         if (
+      -             ordinary_library_text
+      -             or capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON
+9278  +             ordinary_library_text or capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON
+9279  |         ) and resumed_preparation is None:
+--------------------------------------------------------------------------------
+9289  |                 initial_state = (
+      -                     initial_preparation_state(
+      -                         library_authority.policy.auto_retrieve
+      -                     )
+9290  +                     initial_preparation_state(library_authority.policy.auto_retrieve)
+9291  |                     if automatic_eligible
+--------------------------------------------------------------------------------
+9315  |                 )
+      -             one_shot_prefill = (
+      -                 frozen_prefill if frozen_prefill_from_one_shot else None
+      -             )
+9316  +             one_shot_prefill = frozen_prefill if frozen_prefill_from_one_shot else None
+9317  |             if custodied_inputs:
+9318  |                 staged_evidence_frozen = staged_evidence_launch is not None
+9319  |                 staged_evidence = staged_evidence_launch
+9320  |             elif preserve_composer:
+      -                 staged_evidence_frozen, staged_evidence, staged_evidence_release = True, None, None
+9321  +                 staged_evidence_frozen, staged_evidence, staged_evidence_release = (
+9322  +                     True,
+9323  +                     None,
+9324  +                     None,
+9325  +                 )
+9326  |             else:
+--------------------------------------------------------------------------------
+9567  |                             provider_messages[:_i]
+      -                             + [{**provider_messages[_i], "content": executed_draft_text}]
+9568  +                             + [
+9569  +                                 {
+9570  +                                     **provider_messages[_i],
+9571  +                                     "content": executed_draft_text,
+9572  +                                 }
+9573  +                             ]
+9574  |                             + provider_messages[_i + 1 :]
+--------------------------------------------------------------------------------
+9716  |                     )
+      -                     if hooks_engine is not None else None
+9717  +                     if hooks_engine is not None
+9718  +                     else None
+9719  |                 )
+--------------------------------------------------------------------------------
+9725  |                 self._set_run_state(
+      -                     ConsoleRunState(ConsoleRunStatus.STOPPED, "Send cancelled before acceptance."),
+9726  +                     ConsoleRunState(
+9727  +                         ConsoleRunStatus.STOPPED, "Send cancelled before acceptance."
+9728  +                     ),
+9729  |                     session_id=session.id,
+--------------------------------------------------------------------------------
+9748  |                 return ConsoleSubmitResult(
+      -                     False, False, f"Blocked by hook: {outcome.reason}",
+      -                     session_id=session.id, origin=origin, queue_entry_id=queue_entry_id,
+9749  +                     False,
+9750  +                     False,
+9751  +                     f"Blocked by hook: {outcome.reason}",
+9752  +                     session_id=session.id,
+9753  +                     origin=origin,
+9754  +                     queue_entry_id=queue_entry_id,
+9755  |                 )
+--------------------------------------------------------------------------------
+10291 |         if self._durable_db_call_offloadable():
+      -             return await asyncio.to_thread(self._run_owned_chat_db_operation, call, *args)
+10292 +             return await asyncio.to_thread(
+10293 +                 self._run_owned_chat_db_operation, call, *args
+10294 +             )
+10295 |         return call(*args)
+--------------------------------------------------------------------------------
+10526 |                                 policy_id=policy.policy_id,
+      -                                 omission_reason_code=(
+      -                                     CREDENTIAL_SANITIZER_UNAVAILABLE
+      -                                 ),
+10527 +                                 omission_reason_code=(CREDENTIAL_SANITIZER_UNAVAILABLE),
+10528 |                             )
+--------------------------------------------------------------------------------
+10917 |                 attachments_reconstructable=True,
+      -                 evidence_reconstructable=not hook_context and not bool(
+10918 +                 evidence_reconstructable=not hook_context
+10919 +                 and not bool(
+10920 |                     prepared_continuation is not None
+--------------------------------------------------------------------------------
+11014 |                 frozen_pii_redaction_enabled=preparation.pii_redaction_enabled,
+      -                 frozen_pii_ruleset_revision_id=(
+      -                     preparation.pii_ruleset_revision_id
+      -                 ),
+11015 +                 frozen_pii_ruleset_revision_id=(preparation.pii_ruleset_revision_id),
+11016 |                 frozen_next_trace_privacy_revision=(
+--------------------------------------------------------------------------------
+11160 |                 verify_recovery = getattr(
+      -                     self.provider_gateway, "_verify_trace_preparation_recovery", None,
+11161 +                     self.provider_gateway,
+11162 +                     "_verify_trace_preparation_recovery",
+11163 +                     None,
+11164 |                 )
+11165 |                 if (
+      -                     continuation.trace_capture_mode is not ConsoleTraceCaptureMode.CAPTURE_ON
+11166 +                     continuation.trace_capture_mode
+11167 +                     is not ConsoleTraceCaptureMode.CAPTURE_ON
+11168 |                     or not callable(verify_recovery)
+--------------------------------------------------------------------------------
+11231 |                     self.store.append_message(
+      -                         session_id, role=ConsoleMessageRole.SYSTEM,
+11232 +                         session_id,
+11233 +                         role=ConsoleMessageRole.SYSTEM,
+11234 |                         content=continuation.hook_context,
+--------------------------------------------------------------------------------
+11254 |                 live_session is not None
+      -                 and not (continuation.prepared and continuation.prepared.preserve_composer)
+11255 +                 and not (
+11256 +                     continuation.prepared and continuation.prepared.preserve_composer
+11257 +                 )
+11258 |                 and live_session.draft == continuation.clean_draft
+--------------------------------------------------------------------------------
+11299 |                 continuation.origin is ConsoleSubmissionOrigin.MANUAL
+      -                 and not (continuation.prepared and continuation.prepared.preserve_composer)
+11300 +                 and not (
+11301 +                     continuation.prepared and continuation.prepared.preserve_composer
+11302 +                 )
+11303 |                 and self.store.active_session_id == session_id
+--------------------------------------------------------------------------------
+11508 |                 )
+      -             bind_trace_owner = getattr(self.provider_gateway, "_bind_trace_preparation", None)
+11509 +             bind_trace_owner = getattr(
+11510 +                 self.provider_gateway, "_bind_trace_preparation", None
+11511 +             )
+11512 |             if callable(bind_trace_owner):
+11513 |                 bind_trace_owner(
+      -                     continuation.stream_signals, continuation,
+      -                     boundary=(self._trace_call_boundaries_by_preparation.get(preparation_id)
+      -                               if effective_capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON else None),
+11514 +                     continuation.stream_signals,
+11515 +                     continuation,
+11516 +                     boundary=(
+11517 +                         self._trace_call_boundaries_by_preparation.get(preparation_id)
+11518 +                         if effective_capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON
+11519 +                         else None
+11520 +                     ),
+11521 |                 )
+--------------------------------------------------------------------------------
+11600 |                 else:
+      -                     failed = self.store.mark_message_failed(
+      -                         commit.assistant_message_id
+      -                     )
+11601 +                     failed = self.store.mark_message_failed(commit.assistant_message_id)
+11602 |                     self._set_run_state(
+--------------------------------------------------------------------------------
+11634 |                         failed_call_started = True
+      -                         if getattr(exc.boundary, "_accepted_preparation", None) is continuation:
+      -                             self._trace_call_boundaries_by_preparation[preparation_id] = exc.boundary
+11635 +                         if (
+11636 +                             getattr(exc.boundary, "_accepted_preparation", None)
+11637 +                             is continuation
+11638 +                         ):
+11639 +                             self._trace_call_boundaries_by_preparation[
+11640 +                                 preparation_id
+11641 +                             ] = exc.boundary
+11642 |                             if not any_provider_started:
+--------------------------------------------------------------------------------
+11648 |                                 except Exception:  # noqa: BLE001 - retain unknown ownership if its checkpoint also fails
+      -                                     logger.warning("Uncertain trace dispatch checkpoint could not be saved.")
+11649 +                                     logger.warning(
+11650 +                                         "Uncertain trace dispatch checkpoint could not be saved."
+11651 +                                     )
+11652 |                                 else:
+--------------------------------------------------------------------------------
+12676 |         for source_field in source_fields:
+      -             if not source_field.dirty or source_field.name not in exposed_supported_fields:
+12677 +             if (
+12678 +                 not source_field.dirty
+12679 +                 or source_field.name not in exposed_supported_fields
+12680 +             ):
+12681 |                 continue
+--------------------------------------------------------------------------------
+12905 |         owns_active_stream = self._active_stream_belongs_to_session(session_id)
+      -         active_assistant_message_id = self._active_assistant_message_ids.get(
+      -             session_id
+      -         )
+12906 +         active_assistant_message_id = self._active_assistant_message_ids.get(session_id)
+12907 |         if owns_active_stream and active_assistant_message_id is not None:
+--------------------------------------------------------------------------------
+13156 |
+      -     def session_shutdown_tasks(
+      -         self, session_id: str
+      -     ) -> tuple[asyncio.Task[Any], ...]:
+13157 +     def session_shutdown_tasks(self, session_id: str) -> tuple[asyncio.Task[Any], ...]:
+13158 |         """Snapshot controller-owned tasks that must settle before deletion."""
+--------------------------------------------------------------------------------
+13959 |             messages: list = list(
+      -                 self._provider_messages_for_session(session_id)
+      -                 if session_id
+      -                 else []
+13960 +                 self._provider_messages_for_session(session_id) if session_id else []
+13961 |             )
+--------------------------------------------------------------------------------
+14073 |             for payload in store.values()
+      -             if payload.get("session_id") == session_id
+      -             and payload.get("_decision_id")
+14074 +             if payload.get("session_id") == session_id and payload.get("_decision_id")
+14075 |         ]
+--------------------------------------------------------------------------------
+14244 |             mounted = self.set_pending_decision(projection) is True
+      -             if mounted and projection is not None and projection.decision_type == "approval":
+14245 +             if (
+14246 +                 mounted
+14247 +                 and projection is not None
+14248 +                 and projection.decision_type == "approval"
+14249 +             ):
+14250 |                 self._maybe_fire_permission_summary(dict(projection.payload))
+--------------------------------------------------------------------------------
+14458 |         return park_round_payload(self._approval_state_lock, store, round_id, payload)
+14459 +
+14460 |     def _head_round_payload(
+--------------------------------------------------------------------------------
+14507 |         if self.set_pending_decision is not None:
+      -             self.app.call_from_thread(
+      -                 self.project_pending_decision_for_active_session
+      -             )
+14508 +             self.app.call_from_thread(self.project_pending_decision_for_active_session)
+14509 |             return
+--------------------------------------------------------------------------------
+14540 |             ("worktree_merge", "question")
+      -             if self.set_pending_decision is not None else SESSION_REMOUNT_KINDS
+14541 +             if self.set_pending_decision is not None
+14542 +             else SESSION_REMOUNT_KINDS
+14543 |         )
+--------------------------------------------------------------------------------
+14655 |         def _apply() -> None:
+      -             from tldw_chatbook.UI.Navigation.main_navigation import set_console_attention
+14656 +             from tldw_chatbook.UI.Navigation.main_navigation import (
+14657 +                 set_console_attention,
+14658 +             )
+14659 |
+--------------------------------------------------------------------------------
+14797 |         # arguments, and payload bodies.
+      -         message = (
+      -             f"A Console session {label}. "
+      -             "Return to Console to respond."
+      -         )
+14798 +         message = f"A Console session {label}. Return to Console to respond."
+14799 |
+--------------------------------------------------------------------------------
+15265 |         )
+      -         profile_kwargs = (
+      -             {} if profile_id == "default" else {"profile_id": profile_id}
+      -         )
+15266 +         profile_kwargs = {} if profile_id == "default" else {"profile_id": profile_id}
+15267 |
+--------------------------------------------------------------------------------
+15285 |             if decision == "approve_session":
+      -                 service.approve_for_session(
+      -                     hub.server_key, hub.name, **profile_kwargs
+      -                 )
+15286 +                 service.approve_for_session(hub.server_key, hub.name, **profile_kwargs)
+15287 |             elif decision == "always_allow":
+--------------------------------------------------------------------------------
+15472 |         )
+      -         profile_kwargs = (
+      -             {} if profile_id == "default" else {"profile_id": profile_id}
+      -         )
+15473 +         profile_kwargs = {} if profile_id == "default" else {"profile_id": profile_id}
+15474 |
+--------------------------------------------------------------------------------
+15504 |             if decision == "approve_session":
+      -                 service.approve_for_session(
+      -                     hub.server_key, hub.name, **profile_kwargs
+      -                 )
+15505 +                 service.approve_for_session(hub.server_key, hub.name, **profile_kwargs)
+15506 |             elif decision == "always_allow":
+--------------------------------------------------------------------------------
+15690 |         """
+      -         if session_id is None or self.app is None or (
+      -             self.set_pending_question is None
+      -             and not self._interrupt_host.has_retained_decision_target(session_id)
+15691 +         if (
+15692 +             session_id is None
+15693 +             or self.app is None
+15694 +             or (
+15695 +                 self.set_pending_question is None
+15696 +                 and not self._interrupt_host.has_retained_decision_target(session_id)
+15697 +             )
+15698 |         ):
+--------------------------------------------------------------------------------
+16125 |
+      -
+16126 |     @staticmethod
+--------------------------------------------------------------------------------
+16195 |     # -- Skill-install confirm bridge (task-5, parked TASK-910) --------------
+      -
+16196 |
+--------------------------------------------------------------------------------
+16619 |
+      -
+16620 |     def _enrich_chat_create_confirm_payload(
+--------------------------------------------------------------------------------
+16640 |         from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+16641 +
+16642 |         enriched = dict(payload)
+--------------------------------------------------------------------------------
+16659 |                 )
+      -                 if (
+      -                     session is not None
+      -                     and not session.ephemeral
+      -                     and conversation_id
+      -                 ):
+16660 +                 if session is not None and not session.ephemeral and conversation_id:
+16661 |                     # The tree-read leg carries its OWN guard so a failure
+--------------------------------------------------------------------------------
+16669 |                         )
+      -                         tree = ChatConversationService(
+      -                             database
+      -                         ).get_conversation_tree(
+16670 +                         tree = ChatConversationService(database).get_conversation_tree(
+16671 |                             str(conversation_id),
+16672 |                             root_limit=10_000,
+16673 |                             depth_cap=10_000,
+16674 |                         )
+      -                         conversation_row = dict(
+      -                             tree.get("conversation") or {}
+      -                         )
+      -                         source_title = str(
+      -                             conversation_row.get("title") or ""
+      -                         )
+16675 +                         conversation_row = dict(tree.get("conversation") or {})
+16676 +                         source_title = str(conversation_row.get("title") or "")
+16677 |                         # Count definition -- ACTIVE-PATH LENGTH, not total
+--------------------------------------------------------------------------------
+16691 |                         leaf = (
+      -                             database.get_conversation_active_leaf(
+      -                                 str(conversation_id)
+      -                             )
+16692 +                             database.get_conversation_active_leaf(str(conversation_id))
+16693 |                             if database is not None
+--------------------------------------------------------------------------------
+16702 |                                     nodes,
+      -                                     key=lambda i: str(
+      -                                         nodes[i].get("timestamp") or ""
+      -                                     ),
+16703 +                                     key=lambda i: str(nodes[i].get("timestamp") or ""),
+16704 |                                 )
+--------------------------------------------------------------------------------
+16718 |                             # title that would actually be created.
+      -                             title = (
+      -                                 f"Fork of {source_title or 'chat'}"[:120]
+      -                             )
+16719 +                             title = f"Fork of {source_title or 'chat'}"[:120]
+16720 |                     except Exception:  # noqa: BLE001 — omit the fork line only
+--------------------------------------------------------------------------------
+16788 |         from tldw_chatbook.Agents.human_input_wait import use_human_input_wait
+16789 +
+16790 |         if self.app is None or self.set_pending_chat_create is None:
+16791 |             return {"allow": False, "remember": False}
+16792 |
+      -         owning_session_id = session_id if session_id is not None else (
+      -             self.store.active_session_id or ""
+16793 +         owning_session_id = (
+16794 +             session_id
+16795 +             if session_id is not None
+16796 +             else (self.store.active_session_id or "")
+16797 |         )
+--------------------------------------------------------------------------------
+16846 |         # for a decision or the owning run's cancellation.
+      -         deadline = (
+      -             time.monotonic() + timeout_seconds if timeout_seconds > 0 else None
+      -         )
+16847 +         deadline = time.monotonic() + timeout_seconds if timeout_seconds > 0 else None
+16848 |         card_payload = dict(enriched_payload)
+--------------------------------------------------------------------------------
+16876 |             # (see the sibling bridges' identical wrap for the why).
+      -             with use_human_input_wait(
+      -                 str(chat_create_round_state.get("run_id") or "")
+      -             ):
+16877 +             with use_human_input_wait(str(chat_create_round_state.get("run_id") or "")):
+16878 |                 while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
+--------------------------------------------------------------------------------
+16909 |             # its own key, so no still-armed sibling guard is needed.
+      -             self._unpark_round_payload(
+      -                 self._parked_chat_create_payloads, request_id
+      -             )
+16910 +             self._unpark_round_payload(self._parked_chat_create_payloads, request_id)
+16911 |             if session_id is not None:
+--------------------------------------------------------------------------------
+17063 |         session_id = str(payload.get("session_id") or "")
+      -         session = next(
+      -             (s for s in self.store.sessions() if s.id == session_id), None
+      -         )
+17064 +         session = next((s for s in self.store.sessions() if s.id == session_id), None)
+17065 |         if session is None:
+      -             return {"ok": False, "kind": "session_gone",
+      -                     "error": "source session not found"}
+17066 +             return {
+17067 +                 "ok": False,
+17068 +                 "kind": "session_gone",
+17069 +                 "error": "source session not found",
+17070 +             }
+17071 |         title = str(payload.get("title") or "").strip()
+--------------------------------------------------------------------------------
+17077 |         # caller other than the closures.
+      -         if len(opening_prompt) > CHAT_CREATE_PAYLOAD_MAX or len(
+      -             instructions
+      -         ) > CHAT_CREATE_PAYLOAD_MAX:
+17078 +         if (
+17079 +             len(opening_prompt) > CHAT_CREATE_PAYLOAD_MAX
+17080 +             or len(instructions) > CHAT_CREATE_PAYLOAD_MAX
+17081 +         ):
+17082 |             return {
+--------------------------------------------------------------------------------
+17089 |         if persistence is None or db is None:
+      -             return {"ok": False, "kind": "execution_failed",
+      -                     "error": "persistence unavailable"}
+17090 +             return {
+17091 +                 "ok": False,
+17092 +                 "kind": "execution_failed",
+17093 +                 "error": "persistence unavailable",
+17094 +             }
+17095 |
+--------------------------------------------------------------------------------
+17102 |             if session.ephemeral or not source_conv:
+      -                 return {"ok": False, "kind": "source_not_persisted",
+      -                         "error": "the current chat is temporary; nothing to fork"}
+17103 +                 return {
+17104 +                     "ok": False,
+17105 +                     "kind": "source_not_persisted",
+17106 +                     "error": "the current chat is temporary; nothing to fork",
+17107 +                 }
+17108 |         elif not title:
+--------------------------------------------------------------------------------
+17140 |                 if instructions and source_row.get("character_id"):
+      -                     return {"ok": False, "kind": "character_conflict",
+      -                             "error": "character chats keep their persona; "
+      -                                      "fork without instructions"}
+17141 +                     return {
+17142 +                         "ok": False,
+17143 +                         "kind": "character_conflict",
+17144 +                         "error": "character chats keep their persona; "
+17145 +                         "fork without instructions",
+17146 +                     }
+17147 |                 conversation_service = ChatConversationService(db)
+--------------------------------------------------------------------------------
+17155 |                 if source_leaf is None:
+      -                     return {"ok": False, "kind": "empty_history",
+      -                             "error": "nothing to fork yet; use new_chat"}
+17156 +                     return {
+17157 +                         "ok": False,
+17158 +                         "kind": "empty_history",
+17159 +                         "error": "nothing to fork yet; use new_chat",
+17160 +                     }
+17161 |                 new_conv = persistence.create_conversation(
+--------------------------------------------------------------------------------
+17195 |             if "empty_history" in str(exc):
+      -                 return {"ok": False, "kind": "empty_history",
+      -                         "error": "nothing to fork yet; use new_chat"}
+17196 +                 return {
+17197 +                     "ok": False,
+17198 +                     "kind": "empty_history",
+17199 +                     "error": "nothing to fork yet; use new_chat",
+17200 +                 }
+17201 |             return {"ok": False, "kind": "execution_failed", "error": str(exc)}
+--------------------------------------------------------------------------------
+17364 |         owning_session_id = (
+      -             session_id if session_id is not None else (self.store.active_session_id or "")
+17365 +             session_id
+17366 +             if session_id is not None
+17367 +             else (self.store.active_session_id or "")
+17368 |         )
+--------------------------------------------------------------------------------
+17407 |         actor = current_run_actor()
+      -         asked_by = "sub-agent" if actor is not None and actor.kind == "subagent" else "agent"
+17408 +         asked_by = (
+17409 +             "sub-agent" if actor is not None and actor.kind == "subagent" else "agent"
+17410 +         )
+17411 |         # task-31382: name WHICH sub-agent is asking when the run carries a label.
+      -         asker_label = actor.label if asked_by == "sub-agent" and actor is not None else None
+17412 +         asker_label = (
+17413 +             actor.label if asked_by == "sub-agent" and actor is not None else None
+17414 +         )
+17415 |         card_payload: dict[str, Any] = {
+--------------------------------------------------------------------------------
+17750 |         session_id = self.store.active_session_id
+      -         redirect = (
+      -             self._active_redirect_hooks.get(session_id) if session_id else None
+      -         )
+17751 +         redirect = self._active_redirect_hooks.get(session_id) if session_id else None
+17752 |         if redirect is None:
+--------------------------------------------------------------------------------
+17774 |             if session.id == session_id:
+      -                 conversation_id = str(getattr(session, "persisted_conversation_id", "") or "")
+17775 +                 conversation_id = str(
+17776 +                     getattr(session, "persisted_conversation_id", "") or ""
+17777 +                 )
+17778 |                 break
+--------------------------------------------------------------------------------
+18622 |         """Create a generated memory for complete units strictly before a prompt."""
+      -         return await self._summarize_manual(
+      -             message_id, from_here=False, focus=focus
+      -         )
+18623 +         return await self._summarize_manual(message_id, from_here=False, focus=focus)
+18624 |
+--------------------------------------------------------------------------------
+18628 |         """Create a generated memory for the complete inclusive range to the leaf."""
+      -         return await self._summarize_manual(
+      -             message_id, from_here=True, focus=focus
+      -         )
+18629 +         return await self._summarize_manual(message_id, from_here=True, focus=focus)
+18630 |
+--------------------------------------------------------------------------------
+18813 |         """
+      -         planning = await self._manual_summary_planning(
+      -             message_id, from_here=from_here
+      -         )
+18814 +         planning = await self._manual_summary_planning(message_id, from_here=from_here)
+18815 |         if isinstance(planning, ConsoleSubmitResult):
+18816 |             return planning
+      -         return manual_summary_preview(
+      -             planning.plan_result.plan, from_here=from_here
+      -         )
+18817 +         return manual_summary_preview(planning.plan_result.plan, from_here=from_here)
+18818 |
+--------------------------------------------------------------------------------
+19036 |         for message in self.store.messages_for_session(session_id):
+      -             if message.role not in (ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT):
+19037 +             if message.role not in (
+19038 +                 ConsoleMessageRole.USER,
+19039 +                 ConsoleMessageRole.ASSISTANT,
+19040 +             ):
+19041 |                 continue
+--------------------------------------------------------------------------------
+19067 |
+      -     def build_transcript_note(self, message_id: str) -> ConsoleNoteDraft | ConsoleSubmitResult:
+19068 +     def build_transcript_note(
+19069 +         self, message_id: str
+19070 +     ) -> ConsoleNoteDraft | ConsoleSubmitResult:
+19071 |         """Format the transcript up to and including message_id as a note.
+--------------------------------------------------------------------------------
+19207 |         content = (
+      -             self._note_provenance_header(session_id, message_id)
+      -             + "\n\n"
+      -             + summary
+19208 +             self._note_provenance_header(session_id, message_id) + "\n\n" + summary
+19209 |         )
+--------------------------------------------------------------------------------
+20123 |                 current_user_message=None,
+      -                 kill_switch=(self._console_tool_kill_switch_reader() or (lambda: False)),
+20124 +                 kill_switch=(
+20125 +                     self._console_tool_kill_switch_reader() or (lambda: False)
+20126 +                 ),
+20127 |                 reserve_direct_update_schema=True,
+--------------------------------------------------------------------------------
+20389 |                 current_user_message=None,
+      -                 kill_switch=(self._console_tool_kill_switch_reader() or (lambda: False)),
+20390 +                 kill_switch=(
+20391 +                     self._console_tool_kill_switch_reader() or (lambda: False)
+20392 +                 ),
+20393 |                 reserve_direct_update_schema=True,
+--------------------------------------------------------------------------------
+20908 |         model = selection.explicit_model or selection.configured_model
+      -         session = next(
+      -             item for item in self.store.sessions() if item.id == session_id
+      -         )
+20909 +         session = next(item for item in self.store.sessions() if item.id == session_id)
+20910 |         held_scope = session.rag_scope_holder.scope
+--------------------------------------------------------------------------------
+21463 |                 )
+21464 +
+21465 |         context = (
+--------------------------------------------------------------------------------
+22361 |                     "name": row.get("llm_name") or row.get("tool_name") or "",
+      -                     "args_summary": summarize_hook_arguments(row.get("arguments") or {}),
+22362 +                     "args_summary": summarize_hook_arguments(
+22363 +                         row.get("arguments") or {}
+22364 +                     ),
+22365 |                 }
+--------------------------------------------------------------------------------
+22377 |             )
+      -             calls = [{
+      -                 "name": "install_skill" if kind == "skill_install" else "run_skill_script",
+      -                 "args_summary": summarize_hook_arguments(arguments),
+      -             }]
+22378 +             calls = [
+22379 +                 {
+22380 +                     "name": "install_skill"
+22381 +                     if kind == "skill_install"
+22382 +                     else "run_skill_script",
+22383 +                     "args_summary": summarize_hook_arguments(arguments),
+22384 +                 }
+22385 +             ]
+22386 |         engine.notify(
+      -             "ApprovalRequested", session_id=session_id,
+22387 +             "ApprovalRequested",
+22388 +             session_id=session_id,
+22389 |             run_id=payload.get("run_id") or state.get("run_id"),
+--------------------------------------------------------------------------------
+23656 |         )
+      -
+23657 |
+--------------------------------------------------------------------------------
+23745 |         # breakdown surface reads the latest copy, no re-estimation.
+      -         self._context_accounting_by_session[session_id] = (
+      -             prepared_before.accounting
+      -         )
+23746 +         self._context_accounting_by_session[session_id] = prepared_before.accounting
+23747 |         mandatory_tokens = (
+--------------------------------------------------------------------------------
+24346 |             try:
+      -                 character_emote_snapshot = (
+      -                     await self._character_emote_snapshot_for_run(
+      -                         owner_id,
+      -                         turn_context,
+      -                     )
+24347 +                 character_emote_snapshot = await self._character_emote_snapshot_for_run(
+24348 +                     owner_id,
+24349 +                     turn_context,
+24350 |                 )
+--------------------------------------------------------------------------------
+24576 |                     ),
+      -                     trusted_profile_user_message_id=(
+      -                         trusted_profile_user_message_id
+      -                     ),
+24577 +                     trusted_profile_user_message_id=(trusted_profile_user_message_id),
+24578 |                 )
+--------------------------------------------------------------------------------
+24829 |         if callable(register):
+      -             register(ConsoleFleetWakeCoordinator.NAME, self._fleet_wake.on_child_settled)
+24830 +             register(
+24831 +                 ConsoleFleetWakeCoordinator.NAME, self._fleet_wake.on_child_settled
+24832 +             )
+24833 |         else:
+24834 |             register = getattr(bridge, "on_fleet_drained", None)
+24835 |             if callable(register):
+      -                 register(ConsoleFleetWakeCoordinator.NAME, self._fleet_wake.on_fleet_drained)
+24836 +                 register(
+24837 +                     ConsoleFleetWakeCoordinator.NAME, self._fleet_wake.on_fleet_drained
+24838 +                 )
+24839 |
+--------------------------------------------------------------------------------
+26097 |                 project_instructions_enabled=project_snapshot.enabled,
+      -                 working_folder_binding_id=(
+      -                     project_snapshot.working_folder_binding_id
+      -                 ),
+26098 +                 working_folder_binding_id=(project_snapshot.working_folder_binding_id),
+26099 |                 working_folder_locator_fingerprint=(
+--------------------------------------------------------------------------------
+26115 |         project_activation_callback = None
+      -         if (
+      -             session is not None
+      -             and project_state.project_instructions_enabled
+      -         ):
+26116 +         if session is not None and project_state.project_instructions_enabled:
+26117 |             try:
+--------------------------------------------------------------------------------
+26391 |                     project_root=(
+      -                         project_selection.root if project_selection is not None else None
+26392 +                         project_selection.root
+26393 +                         if project_selection is not None
+26394 +                         else None
+26395 |                     ),
+--------------------------------------------------------------------------------
+26404 |             )
+      -             raw_shell_provider, raw_shell_review_hook = self._compose_raw_shell_provider(
+      -                 session_id=session_id,
+      -                 turn_context=turn_context,
+      -                 project_root=(
+      -                     project_selection.root if project_selection is not None else None
+      -                 ),
+26405 +             raw_shell_provider, raw_shell_review_hook = (
+26406 +                 self._compose_raw_shell_provider(
+26407 +                     session_id=session_id,
+26408 +                     turn_context=turn_context,
+26409 +                     project_root=(
+26410 +                         project_selection.root
+26411 +                         if project_selection is not None
+26412 +                         else None
+26413 +                     ),
+26414 +                 )
+26415 |             )
+--------------------------------------------------------------------------------
+26493 |             if local_review_hook is not None:
+      -                 review_hook = build_combined_review_hook([review_hook, local_review_hook])
+26494 +                 review_hook = build_combined_review_hook(
+26495 +                     [review_hook, local_review_hook]
+26496 +                 )
+26497 |             if virtual_cli_review_hook is not None:
+--------------------------------------------------------------------------------
+26513 |                     managed_skill_promotion_gate,
+      -                     functools.partial(self.request_mcp_approvals, session_id=session_id),
+26514 +                     functools.partial(
+26515 +                         self.request_mcp_approvals, session_id=session_id
+26516 +                     ),
+26517 |                 )
+--------------------------------------------------------------------------------
+26573 |             if generation_token is None:
+      -                 generation_token = self.store.begin_generation_attempt(assistant_message_id)
+26574 +                 generation_token = self.store.begin_generation_attempt(
+26575 +                     assistant_message_id
+26576 +                 )
+26577 |             _generation_handoff.issue(generation_token)
+--------------------------------------------------------------------------------
+26597 |                         candidate.role is ConsoleMessageRole.USER
+      -                         and self.store.session_id_for_message(candidate.id) == session_id
+26598 +                         and self.store.session_id_for_message(candidate.id)
+26599 +                         == session_id
+26600 |                     ):
+--------------------------------------------------------------------------------
+26613 |                     current_user_message=trusted_profile_user_message,
+      -                     kill_switch=(self._console_tool_kill_switch_reader() or (lambda: False)),
+26614 +                     kill_switch=(
+26615 +                         self._console_tool_kill_switch_reader() or (lambda: False)
+26616 +                     ),
+26617 |                 )
+--------------------------------------------------------------------------------
+26654 |             recovery_runtime.admit(turn_context, session)
+      -             if recovery_runtime is not None and session is not None
+      -             and work_origin is WorkOrigin.MANUAL and not resume_provider_continuation
+26655 +             if recovery_runtime is not None
+26656 +             and session is not None
+26657 +             and work_origin is WorkOrigin.MANUAL
+26658 +             and not resume_provider_continuation
+26659 |             else None
+--------------------------------------------------------------------------------
+27017 |                 with self._lifecycle_revision_lock:
+      -                     self._lifecycle_session_by_conversation[
+      -                         str(conversation_id)
+      -                     ] = session_id
+27018 +                     self._lifecycle_session_by_conversation[str(conversation_id)] = (
+27019 +                         session_id
+27020 +                     )
+27021 |                 return conversation_id
+--------------------------------------------------------------------------------
+27286 |                 visible_copy, wrapup_summary, runtime_written.content
+      -             )
+      -             self.store.append_stream_chunk(
+      -                 runtime_written.id, f"\n\n{appended_copy}"
+27287 |             )
+27288 +             self.store.append_stream_chunk(runtime_written.id, f"\n\n{appended_copy}")
+27289 |             failed = self.store.mark_message_failed(runtime_written.id)
+--------------------------------------------------------------------------------
+27530 |             return (
+      -                 f"Agent run stuck: "
+      -                 f"{reason or 'budget or loop limit reached'}.{suffix}"
+27531 +                 f"Agent run stuck: {reason or 'budget or loop limit reached'}.{suffix}"
+27532 |             )
+--------------------------------------------------------------------------------
+27623 |         session = next(
+      -             (candidate for candidate in self.store.sessions() if candidate.id == session_id),
+27624 +             (
+27625 +                 candidate
+27626 +                 for candidate in self.store.sessions()
+27627 +                 if candidate.id == session_id
+27628 +             ),
+27629 |             None,
+--------------------------------------------------------------------------------
+28476 |         # queue's coalesced notification policy. Pop before invoking callbacks.
+      -         if (
+      -             target in self._run_hooks_stop_pending
+      -             and run_state.status in {
+      -                 ConsoleRunStatus.COMPLETED, ConsoleRunStatus.FAILED,
+      -                 ConsoleRunStatus.STOPPED,
+      -             }
+      -         ):
+28477 +         if target in self._run_hooks_stop_pending and run_state.status in {
+28478 +             ConsoleRunStatus.COMPLETED,
+28479 +             ConsoleRunStatus.FAILED,
+28480 +             ConsoleRunStatus.STOPPED,
+28481 +         }:
+28482 |             self._run_hooks_stop_pending.discard(target)
+--------------------------------------------------------------------------------
+28486 |                     engine.notify(
+      -                         "Stop", session_id=target,
+      -                         data={"status": {
+      -                             ConsoleRunStatus.COMPLETED: "completed",
+      -                             ConsoleRunStatus.FAILED: "error",
+      -                             ConsoleRunStatus.STOPPED: "cancelled",
+      -                         }[run_state.status]},
+28487 +                         "Stop",
+28488 +                         session_id=target,
+28489 +                         data={
+28490 +                             "status": {
+28491 +                                 ConsoleRunStatus.COMPLETED: "completed",
+28492 +                                 ConsoleRunStatus.FAILED: "error",
+28493 +                                 ConsoleRunStatus.STOPPED: "cancelled",
+28494 +                             }[run_state.status]
+28495 +                         },
+28496 |                     )
+--------------------------------------------------------------------------------
+28578 |         session = next(
+      -             (candidate for candidate in self.store.sessions() if candidate.id == session_id),
+28579 +             (
+28580 +                 candidate
+28581 +                 for candidate in self.store.sessions()
+28582 +                 if candidate.id == session_id
+28583 +             ),
+28584 |             None,
+      |
+
+1 file would be reformatted, 1 file already formatted

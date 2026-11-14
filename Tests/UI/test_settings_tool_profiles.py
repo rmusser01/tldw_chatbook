@@ -20,6 +20,7 @@ from Tests.UI.test_settings_configuration_hub import (
     _build_test_app,
     _open_settings_category,
 )
+from tldw_chatbook.UI.Screens.settings_tools_hub import tool_pack_failure_copy
 from tldw_chatbook.Tool_Packs.activation import (
     InstalledToolProfile,
     ToolPackActivationResult,
@@ -720,8 +721,9 @@ async def test_edit_policy_deep_link_captures_exact_profile_authority(request) -
         await pilot.click("#tool-profile-edit-0")
         await pilot.pause()
 
-    assert host.seen_routes[-1] == "mcp"
+    assert host.seen_routes[-1] == "settings"
     assert host.seen_contexts[-1] == {
+        "category": "tools",
         "mode": "permissions",
         "tool_policy_profile_id": "research",
         "profile_revision": 3,
@@ -1227,7 +1229,7 @@ async def test_bind_request_without_explicit_workspace_shows_recovery_guidance(
 def test_publication_unsupported_has_a_distinct_truthful_outcome(
     request,
 ) -> None:
-    copy = SettingsScreen._tool_pack_failure_copy(
+    copy = tool_pack_failure_copy(
         "export", ToolPackError("export", "publication_unsupported")
     )
     assert "publication_unsupported" in copy

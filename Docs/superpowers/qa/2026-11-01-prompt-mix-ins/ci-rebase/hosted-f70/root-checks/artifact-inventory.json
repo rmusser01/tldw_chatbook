@@ -1,0 +1,110 @@
+{
+  "files": [
+    {
+      "path": "/private/tmp/mixins-f70-final/baseline-census.py",
+      "bytes": 74249,
+      "sha256": "8c086e0280b84572d724b304a9da8ac8bad9d1c897dfc86752f1b3998a24756e"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-final/census-lint-delta.json",
+      "bytes": 369,
+      "sha256": "fe00e720b70baa724ca99f8520cd38f935ccc5b98b4496140ce21e7da93ee909"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-final/census-proof.json",
+      "bytes": 285,
+      "sha256": "d267ceaa98fb43128285f96b9b84a9b108011bada78dc8522c32f4f301d982e8"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-final/census-ruff-baseline.json",
+      "bytes": 1358,
+      "sha256": "4bd3067ae55d7271c1bd005befde034ff612873cfabd3996d6afcf61fe6fa72b"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-final/census-ruff-current.json",
+      "bytes": 1460,
+      "sha256": "1abd3bfa16edbf3b6120c17fb82154325fe82aac19fb8ac0cbbf06cc760f0248"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-final/ci-contracts-0.log",
+      "bytes": 1813,
+      "sha256": "fedfa8b8edf9cc36718f4dd72d4c26026f30dc8cc27a6401dc3d6282637544f2"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-final/ci-contracts-commands-results.json",
+      "bytes": 588,
+      "sha256": "fc00b8b117fb964959199086ed7a25bf8c3fa74be66f2f47a30ac34f6ba07b4a"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-final/final-five-proof.json",
+      "bytes": 552,
+      "sha256": "f1fd3e3d2727cb1f041949f1b1b56fe7403d606cdc4ceff23605b057f12a5680"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-final/final-five.log",
+      "bytes": 2063,
+      "sha256": "7dca1fcd9bed2cf2261fd8e30136308c27978b978df1d1337747fd288cf8fe0b"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-final/perf-source-after.json",
+      "bytes": 562772,
+      "sha256": "40dda1f311f6af575d0d19ec1653d77552624d607a8a49d3fecee78ddbf12d93"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-final/perf-source-before.json",
+      "bytes": 562773,
+      "sha256": "fb3cb14a54a421bdc001cbd82ef561976f67823cf3ccb4f0639046103737c59b"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-final/planned-commands.json",
+      "bytes": 1338,
+      "sha256": "3bce86fcc4f2fb523ea7058d0d96afbd25483a7b062c13b2746ae2e5dd232ead"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-final/preflights-0.log",
+      "bytes": 266,
+      "sha256": "a3f2b226537b637a657ff22c94fd8c4ed23d0a2ad078cb6d85c7d616f4bd3992"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-final/preflights-1.log",
+      "bytes": 142,
+      "sha256": "682b34d7ae7d0c91dbe30d0f9f446387a6be3bde6a7f65c8b62d23e79b5b7a7d"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-final/preflights-2.log",
+      "bytes": 120,
+      "sha256": "075805a59995a1687818af841a309653083fe8d4e126953943810d7c76dcb261"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-final/preflights-3.log",
+      "bytes": 81,
+      "sha256": "3437d62ea973a8936f94841d5cc603994ceeb6c29a812a972b7dd0cb54360791"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-final/preflights-commands-results.json",
+      "bytes": 1347,
+      "sha256": "743a606d9196892336bae35cb5e055c97d3f27145986023611ee920cc634ee45"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-final/run-checks.py",
+      "bytes": 702,
+      "sha256": "d30cb916d1f9f9599fe2488fde2653da45155f070a73343297760696ade588db"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-final/run-final-five.py",
+      "bytes": 2225,
+      "sha256": "dc3f1697c95ccf2297014e1336f9599412543cbd11c4dfb69b22be679c7b76ab"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-final/static-0.log",
+      "bytes": 1202,
+      "sha256": "7c00a997c5c3d78a4d0e40445e69611204b64015ad1806c7a0a1e860ee9edc40"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-final/static-commands-results.json",
+      "bytes": 534,
+      "sha256": "53402013f03eb9edf12db764ca885f90b54a18f2aa730bf25aa2303bf3b5e77f"
+    }
+  ],
+  "qualification": "Explicit direct root-owned check artifacts; inventory excludes itself."
+}

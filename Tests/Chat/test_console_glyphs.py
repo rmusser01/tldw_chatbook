@@ -60,6 +60,7 @@ from tldw_chatbook.Widgets.Console.console_session_surface import (  # noqa: E40
 )
 from tldw_chatbook.Widgets.glyph_fallback import (  # noqa: E402
     ASCII_GLYPH_FALLBACKS,
+    FRAME_GLYPH_FALLBACKS,
     ascii_glyph_mode,
     resolve_glyph,
     resolve_glyph_text,
@@ -136,6 +137,40 @@ def test_resolve_glyph_text_maps_embedded_markers(ascii_mode):
     assert resolve_glyph_text("📎 2 files") == "[+] 2 files"
     # Plain ASCII text is identity even with the mode on.
     assert resolve_glyph_text("Send") == "Send"
+
+
+#: Roleplay frame B1 (spec section 4.12, G20): the frame's own vocabulary.
+_ROLEPLAY_FRAME_GLYPHS = {
+    "›": ">",
+    "‹": "<",
+    "…": "...",
+    "·": "-",
+    "—": "-",
+    "⇥": ">|",
+    "→": "->",
+    "←": "<-",
+    "↑": "^",
+    "↓": "v",
+    "×": "x",
+}
+
+
+def test_roleplay_frame_glyphs_have_their_ascii_substitutes(ascii_mode):
+    for glyph, substitute in _ROLEPLAY_FRAME_GLYPHS.items():
+        assert FRAME_GLYPH_FALLBACKS[glyph] == substitute
+        assert resolve_glyph(glyph) == substitute
+    # "×" (multiplication) and "✕" (close) are different characters.
+    assert ASCII_GLYPH_FALLBACKS["✕"] == "x"
+
+
+def test_frame_glyphs_never_rewrite_console_user_text(ascii_mode):
+    """Owner decision 2026-10-09: the frame table is glyph-by-glyph only."""
+    text = "a→b ← ↑↓ ⇥ ‹x› — 2×3 · end…"
+    assert set(_ROLEPLAY_FRAME_GLYPHS) <= set(text)
+    assert resolve_glyph_text(text) == text
+    assert resolve_glyph("…") == "..."
+    assert resolve_glyph("›") == ">"
+    assert not set(FRAME_GLYPH_FALLBACKS) & set(ASCII_GLYPH_FALLBACKS)
 
 
 def test_tab_label_uses_ascii_markers_in_ascii_mode(ascii_mode):

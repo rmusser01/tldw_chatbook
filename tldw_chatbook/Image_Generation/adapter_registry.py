@@ -6,7 +6,6 @@ from contextlib import contextmanager
 from collections.abc import Iterator
 from typing import Any
 
-from tldw_chatbook.Image_Generation.adapters.base import ImageGenerationAdapter
 from tldw_chatbook.Image_Generation.config import (
     _IMAGE_GENERATION_RUNTIME_LOCK,
     _use_image_generation_config_snapshot,

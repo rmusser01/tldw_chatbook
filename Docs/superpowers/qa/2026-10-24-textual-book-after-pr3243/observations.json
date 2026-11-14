@@ -1,0 +1,179 @@
+{
+  "study": {
+    "shell.json": {
+      "entry": "shell",
+      "pending_section": "quizzes",
+      "after_release_section": "dashboard",
+      "client_calls": 1,
+      "child_draft_during_hold": "later draft",
+      "app_message_handled_during_hold": 1,
+      "held_at_real_server_api_await": true,
+      "screen_type": "StudyScreen",
+      "window_type": "StudyWindow"
+    },
+    "inner.json": {
+      "entry": "inner",
+      "pending_section": "dashboard",
+      "after_release_section": "dashboard",
+      "client_calls": 1,
+      "child_draft_during_hold": "later draft",
+      "app_message_handled_during_hold": 1,
+      "held_at_real_server_api_await": true,
+      "screen_type": "StudyScreen",
+      "window_type": "StudyWindow"
+    }
+  },
+  "schedules": {
+    "reminder-inline-serial.json": {
+      "scenario": "serial",
+      "ids": [
+        "7ed7fd55-23c0-492e-8c29-d5a0543b8fc3",
+        "5dae372f-4144-4aa1-becf-97627f1071c4"
+      ],
+      "source": "<audit-checkout>\\.test-tmp\\pr3243-merge-audit-20261024\\merged-formatted-13933392\\schedules\\test_schedules.py",
+      "production_modules": {
+        "SchedulesWorkbench": "<audit-checkout>\\tldw_chatbook\\UI\\Screens\\scheduling\\schedules_workbench.py",
+        "TaskDetail": "<audit-checkout>\\tldw_chatbook\\UI\\Screens\\scheduling\\task_detail.py",
+        "SchedulingService": "<audit-checkout>\\tldw_chatbook\\Scheduling\\services\\scheduling_service.py"
+      },
+      "mounted_screen": true,
+      "rows": 2,
+      "first_worker_live_before_second_edit": true,
+      "row_widget_reused": true,
+      "first_cancelled_after_second_edit": false,
+      "calls": [
+        [
+          "server-a",
+          {
+            "timezone": "America/New_York"
+          }
+        ],
+        [
+          "server-b",
+          {
+            "timezone": "Europe/London"
+          }
+        ]
+      ],
+      "stored_timezones": [
+        "America/New_York",
+        "Europe/London"
+      ],
+      "selected_id": "5dae372f-4144-4aa1-becf-97627f1071c4",
+      "notifications": [],
+      "first_cancelled_final": false
+    },
+    "reminder-inline-overlap.json": {
+      "scenario": "overlap",
+      "ids": [
+        "528511ee-5a3b-4a8f-8f93-4c0488940ff1",
+        "faf85b1b-3451-4412-ad61-3ecf0dd9cf63"
+      ],
+      "source": "<audit-checkout>\\.test-tmp\\pr3243-merge-audit-20261024\\merged-formatted-13933392\\schedules\\test_schedules.py",
+      "production_modules": {
+        "SchedulesWorkbench": "<audit-checkout>\\tldw_chatbook\\UI\\Screens\\scheduling\\schedules_workbench.py",
+        "TaskDetail": "<audit-checkout>\\tldw_chatbook\\UI\\Screens\\scheduling\\task_detail.py",
+        "SchedulingService": "<audit-checkout>\\tldw_chatbook\\Scheduling\\services\\scheduling_service.py"
+      },
+      "mounted_screen": true,
+      "rows": 2,
+      "first_worker_live_before_second_edit": true,
+      "row_widget_reused": true,
+      "first_cancelled_after_second_edit": true,
+      "calls": [
+        [
+          "server-a",
+          {
+            "timezone": "America/New_York"
+          }
+        ],
+        [
+          "server-b",
+          {
+            "timezone": "Europe/London"
+          }
+        ]
+      ],
+      "stored_timezones": [
+        "UTC",
+        "Europe/London"
+      ],
+      "selected_id": "faf85b1b-3451-4412-ad61-3ecf0dd9cf63",
+      "notifications": [],
+      "first_cancelled_final": true
+    },
+    "reminder-inline-same_entity_latest.json": {
+      "scenario": "same_entity_latest",
+      "ids": [
+        "1c66ac06-20db-4d8a-8b28-4941e0bc7398",
+        "47b1c619-8755-4ced-9bd7-9b23e516281c"
+      ],
+      "source": "<audit-checkout>\\.test-tmp\\pr3243-merge-audit-20261024\\merged-formatted-13933392\\schedules\\test_schedules.py",
+      "production_modules": {
+        "SchedulesWorkbench": "<audit-checkout>\\tldw_chatbook\\UI\\Screens\\scheduling\\schedules_workbench.py",
+        "TaskDetail": "<audit-checkout>\\tldw_chatbook\\UI\\Screens\\scheduling\\task_detail.py",
+        "SchedulingService": "<audit-checkout>\\tldw_chatbook\\Scheduling\\services\\scheduling_service.py"
+      },
+      "mounted_screen": true,
+      "rows": 2,
+      "first_worker_live_before_second_edit": true,
+      "row_widget_reused": true,
+      "first_cancelled_after_second_edit": true,
+      "calls": [
+        [
+          "server-a",
+          {
+            "timezone": "America/New_York"
+          }
+        ],
+        [
+          "server-a",
+          {
+            "timezone": "Europe/London"
+          }
+        ]
+      ],
+      "stored_timezones": [
+        "Europe/London",
+        "UTC"
+      ],
+      "selected_id": "1c66ac06-20db-4d8a-8b28-4941e0bc7398",
+      "notifications": [],
+      "first_cancelled_final": true
+    }
+  },
+  "markup": {
+    "ordinary.json": {
+      "source_label": "Ordinary plan",
+      "manifest_name": "Ordinary plan",
+      "rendered": {
+        "title": "📚 Ordinary plan",
+        "description": "Ordinary plan",
+        "author": "Ordinary plan"
+      },
+      "expected_literal": {
+        "title": "📚 Ordinary plan",
+        "description": "Ordinary plan",
+        "author": "Ordinary plan"
+      },
+      "validation_passed": true,
+      "errors": "None"
+    },
+    "brackets.json": {
+      "source_label": "[TODO] plan",
+      "manifest_name": "[TODO] plan",
+      "rendered": {
+        "title": "📚  plan",
+        "description": " plan",
+        "author": " plan"
+      },
+      "expected_literal": {
+        "title": "📚 [TODO] plan",
+        "description": "[TODO] plan",
+        "author": "[TODO] plan"
+      },
+      "validation_passed": true,
+      "errors": "None"
+    }
+  }
+}

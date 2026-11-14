@@ -1,0 +1,24 @@
+{
+  "HEAD": "81484b688a03c0f924a0ea6a6474b5e2d4b355e8",
+  "all_execution_source_pins_match_final_committed_source": true,
+  "all_owned_processes_closed": true,
+  "branch": "codex/console-chat-starts-dev",
+  "current_source_phase_union": {
+    "distinct_selected_cases": 58,
+    "final_typed_adapter_passes": 1,
+    "marker_phase_Persona_passes": 1,
+    "original749e_passes": 56
+  },
+  "no_external_PR_push_arm_merge_or_gc_cleanup": true,
+  "no_prior57pass_replay": true,
+  "only_changed_paths": [
+    "Tests/UI/test_console_ask_user_typed_answers.py",
+    "Tests/UI/test_personas_workbench.py"
+  ],
+  "overlay": "two selected decorators and five selected namespace keywords;11additive text lines",
+  "owned_live_app_pytest_workers": 0,
+  "parent_metadata_BASE": "f817cbefabdb57896b40371bcdc9346f5bb0659b",
+  "root_next_gate": "First independent scoped Task16 integration review; then root publication and current-head external gates.",
+  "source_commit": "81484b688a03c0f924a0ea6a6474b5e2d4b355e8",
+  "source_index_clean": true
+}

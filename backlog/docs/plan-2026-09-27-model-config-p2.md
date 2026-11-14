@@ -16,13 +16,13 @@ What it closes:
 - C7(d): chips print raw provider keys (UI/Screens/chat_screen.py:9826-9831, Chat/console_display_state.py:776), and several shipped keys have no display name (config.py:4120-4151).
 - Label drift across four editors, for example 'Think budget' (settings_screen.py:17378, :18695) against 'Budget' (Widgets/Console/console_settings_modal.py:2125).
 
-It keeps ADR-033's State badge and adds the unsaved count. Absorbs TASK-486 (custom-named credential query parameters in Test evidence). TASK-194 (popover display names) stays open: per the spec it closes when the popover rows are rebuilt.
+It keeps ADR-303's State badge and adds the unsaved count. Absorbs TASK-486 (custom-named credential query parameters in Test evidence). TASK-194 (popover display names) stays open: per the spec it closes when the popover rows are rebuilt.
 
 Constraints:
 - console_settings_modal.py has zero headroom (module-size ratchet 7,807).
 - chat_screen.py must stay within its 25,363-line budget.
 - ADR-097 ratchets never rise.
-- ADR-066 legacy aliases stay selectable.
+- ADR-311 legacy aliases stay selectable.
 - Test copy for cloud providers stays a local readiness check (TASK-30011 AC#2). Changing what Test checks is out of scope.
 
 Carried from phase 1 (TASK-33001 final review, riders with no code in phase 1):
@@ -52,7 +52,7 @@ Carried from phase 1 (TASK-33001 final review, riders with no code in phase 1):
 - ADR-126 storage gate: RecoveryRequired in a clean worktree is environmental. Prefer gate-free unit tests plus real-implementation tests at the seam, and compare failure-name sets against origin/dev.
 - Size ratchets never rise (ADR-097). console_settings_modal.py has ZERO headroom: net lines must be <= 0. Check Tests/Architecture/test_module_size_ratchet.py and test_screen_size_ratchet.py before and after.
 - Geometry (heights, widths, spacing) only through tokens in tldw_chatbook/css/core/_variables.tcss (ADR-150/161; raw dimension literals are banned in .tcss sheets). Rebuild the CSS bundle with the repo script; never hand-edit the bundle.
-- ADR-031: never bind Ctrl+C/V/X/S/D/Z/A/R/W. Footer hints must match working bindings.
+- ADR-299: never bind Ctrl+C/V/X/S/D/Z/A/R/W. Footer hints must match working bindings.
 - TDD: write the failing test first. For config and provider surfaces, add at least one real-implementation integration test (no kwargs fakes).
 - Where a fix changes behaviour an existing test pins, rewrite that test on purpose and name it in the report.
 - Commit per task: `fix(model-config): <summary> (TASK-33002.N)` or `feat(...)`, ending with `Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>`. Never push. NEVER merge origin/dev into the branch (the owner requires rebases).
@@ -180,7 +180,7 @@ Depends on: —
 
 When a category has unsaved edits, the State line drops its save-model badge and reads 'State: Unsaved changes | Save (s) or Revert (r) — switching categories keeps this draft.' (UI/Screens/settings_screen.py:9391-9400). The badge ('Draft — save with s', from _persistence_badge at :9408-9446) appears only when the category is clean.
 
-The badge is ADR-033's honest label for the category's commit model (task-1717, DESIGN.md:272-278). It must stay visible and truthful. Users also cannot see how much is unsaved.
+The badge is ADR-303's honest label for the category's commit model (task-1717, DESIGN.md:272-278). It must stay visible and truthful. Users also cannot see how much is unsaved.
 
 The judge's and the spec's rule: keep the badge and add a count, for example 'Draft — save with s · 2 unsaved', rather than replacing it with a dirty flag.
 
@@ -201,7 +201,7 @@ Tests that pin today's copy: test_state_banner_dirty_branch_keeps_priority (Test
 - tldw_chatbook/UI/Screens/settings_screen.py
 - Tests/UI/test_settings_configuration_hub.py
 - DESIGN.md
-- backlog/decisions/033-settings-commit-models-three-honestly-labeled.md
+- backlog/decisions/303-settings-commit-models-three-honestly-labeled.md
 - backlog/tasks/task-1717 - Settings-persistence-badge-names-the-save-model-on-every-category.md
 
 ## Task 5: Console names providers by display name from one catalog (TASK-33002.5)
@@ -221,7 +221,7 @@ Chat/console_provider_support.py:79-108 keeps a second display-name map with a t
 
 The provider value returned by _active_console_provider_model_display is also used as an identity, for example for Settings recovery navigation (chat_screen.py:20543-20553). So only rendered labels may change.
 
-The 25-character model-chip cap is user-requested (TASK-1671, css/features/_console.tcss:253) and stays. Legacy aliases stay selectable (ADR-066, task-180). TASK-194 (the popover's own rows) is not closed here.
+The 25-character model-chip cap is user-requested (TASK-1671, css/features/_console.tcss:253) and stays. Legacy aliases stay selectable (ADR-311, task-180). TASK-194 (the popover's own rows) is not closed here.
 
 ### Acceptance criteria
 
@@ -246,7 +246,7 @@ The 25-character model-chip cap is user-requested (TASK-1671, css/features/_cons
 - Tests/UI/test_console_session_settings.py
 - Tests/UI/test_console_provider_persistence_regressions.py
 - backlog/tasks/task-194 - console_model_popover-uses-the-shared-provider-display-name-catalog.md
-- backlog/decisions/066-local-provider-thinking-controls.md
+- backlog/decisions/311-local-provider-thinking-controls.md
 
 ## Task 6: Settings copy names the real category and the real control (TASK-33002.6)
 

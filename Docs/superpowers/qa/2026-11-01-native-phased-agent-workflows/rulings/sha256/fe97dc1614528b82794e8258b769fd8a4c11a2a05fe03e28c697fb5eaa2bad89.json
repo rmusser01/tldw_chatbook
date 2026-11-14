@@ -1,0 +1,65 @@
+{
+  "base": "1b5db03c8eee8903cf4fb0e109bade41f49c0b4f",
+  "protected_count": 279,
+  "protected_changed": [],
+  "cached_sha256": "c5fcb00eab4ea09c49d1797567cbd4cc9f0eb9bb8d99cc2355f764638aaa7248",
+  "files": {
+    "tldw_chatbook/DB/automatic_work.py": {
+      "sha256": "a575864b3c5d5e7b56af68ea760d85f7c68cbb1afc2eef5e96700dc05bbe8b14",
+      "base_sha256": "aa26abe51f1492b3dea269615f841816b4bac9ab0f320fe1abf967a54a3fd4eb",
+      "index_equals_base": true
+    },
+    "tldw_chatbook/DB/workflow_runs.py": {
+      "sha256": "60810c1eb40c3361eee981364019053fc31944159e890dd17feba9e1ac5e1c7f",
+      "base_sha256": "1b77b29a2b2107538aa286b8a84c51ed4c4405a303847a238773fcb28f990355",
+      "index_equals_base": true
+    },
+    "tldw_chatbook/Agents/workflow_models.py": {
+      "sha256": "7638e58cdad015ddc7081b39c8cad217350e6d4486276ad8fb607c1355e67837",
+      "base_sha256": "34b6895b4cd6c814435fd7834b09cd6ea26ada75b3648865448dc8b655149d6b",
+      "index_equals_base": true
+    },
+    "tldw_chatbook/UI/Console_Modules/workflows.py": {
+      "sha256": "99b1141697e8279c07978c6878be3704775ce53f7a71c49729c75b5e54f2c0aa",
+      "base_sha256": "7a9700078c2437e3e738446864c91ea44697ed3439c5dda49820f9523c8be3f1",
+      "index_equals_base": true
+    },
+    "tldw_chatbook/Widgets/Console/console_workflow_setup.py": {
+      "sha256": "011dce06a8f21c973601fa54ef543cb700564db429cb608021a9d615e7ad104c",
+      "base_sha256": "84a979c6fc537483053a9b27387fb92f764c15608470097ede607768841942e3",
+      "index_equals_base": true
+    },
+    "Tests/DB/test_workflow_admission_boundaries.py": {
+      "sha256": "0077e065f25f5bb3ba3e811b39a328efccd2dc068c7e1350aa3c1c51d4266552",
+      "base_sha256": null,
+      "index_equals_base": true
+    },
+    "Tests/DB/test_workflow_runs.py": {
+      "sha256": "c4b028fdcba5453b79764d78c75b3f5ff30b66b12d99423405bc8efa88e383d4",
+      "base_sha256": "9013e0d64fddff902ab6638a680a6a8551dce5e9cf6321a9265e31b4e3a1d811",
+      "index_equals_base": true
+    },
+    "Tests/DB/test_workflow_attempts.py": {
+      "sha256": "9ddaa97f27698f64ea51bd30b133a56675172ec81731be057f72ab37e5d376c2",
+      "base_sha256": "a308c9d813b52d3460476aaf098fabac4b710d2223366d98c5ddc94733873303",
+      "index_equals_base": true
+    },
+    "Tests/DB/test_workflow_active_time.py": {
+      "sha256": "a85fc536d40bd5952408900f42e2f32eec93d9e4e20cdba2cdc9db5cf4c8a26d",
+      "base_sha256": "1fc969aa682281c1bafad8df13bcd0d8b27eb0402afc05e788b51e04b88d23d5",
+      "index_equals_base": true
+    },
+    "Tests/UI/test_workflow_existing_admission.py": {
+      "sha256": "dfb70cd937c9e8825325b26d7d392ecae67afc8e91dcacb6f2716c4d5d467027",
+      "base_sha256": null,
+      "index_equals_base": true
+    },
+    "Docs/Architecture/agent-runtime.md": {
+      "sha256": "0993c62ade7299c88f84d6ffd06578f183b12a9a324a962125450a31112b1375",
+      "base_sha256": "cbf9ffc3444a683f57ee41ec63f767483bf0a2c45739fec9d8a8b0dee5bc335c",
+      "index_equals_base": true
+    }
+  },
+  "covering_source_map_count": 8326,
+  "covering_source_changed": []
+}

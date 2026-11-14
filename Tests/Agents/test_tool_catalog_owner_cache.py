@@ -126,11 +126,7 @@ class _NamedCountingProvider:
         lambda: type(
             "StringPolicyProvider",
             (_CountingProvider,),
-            {
-                "execution_policy_for": lambda self, _tool_id: (
-                    "definitive_after_start"
-                )
-            },
+            {"execution_policy_for": lambda self, _tool_id: "definitive_after_start"},
         )(),
         lambda: type(
             "InvalidPolicyProvider",
@@ -145,8 +141,7 @@ def test_execution_policy_fails_closed_without_exact_enum(provider_factory):
     registry.register_provider(provider_factory())
 
     assert (
-        registry.execution_policy_for("foo")
-        is ToolExecutionPolicy.BOUNDED_ABANDONABLE
+        registry.execution_policy_for("foo") is ToolExecutionPolicy.BOUNDED_ABANDONABLE
     )
 
 
@@ -240,12 +235,8 @@ def test_atomic_owner_resolution_and_dispatch_share_exact_first_registrant(order
     assert (tool_id, owner) == (f"{order[0]}:dup", providers[0])
     assert targets == (ToolPathTarget(path=None, kind="outside"),)
     assert result.content == order[0]
-    assert providers[0].preflights == [
-        (f"{order[0]}:dup", {"path": "shadow-test"})
-    ]
-    assert providers[0].invocations == [
-        (f"{order[0]}:dup", {"path": "shadow-test"})
-    ]
+    assert providers[0].preflights == [(f"{order[0]}:dup", {"path": "shadow-test"})]
+    assert providers[0].invocations == [(f"{order[0]}:dup", {"path": "shadow-test"})]
     assert all(provider.preflights == [] for provider in providers[1:])
     assert all(provider.invocations == [] for provider in providers[1:])
 
@@ -273,9 +264,7 @@ def test_invoke_by_name_uses_atomic_owner_record(monkeypatch):
 
 def test_registration_cannot_be_overwritten_by_an_inflight_cache_build(monkeypatch):
     registry = ToolCatalogRegistry()
-    registry.register_provider(
-        _NamedCountingProvider(tool_id="first:x", name="first")
-    )
+    registry.register_provider(_NamedCountingProvider(tool_id="first:x", name="first"))
     second = _NamedCountingProvider(tool_id="second:y", name="second")
     real_build = registry._build_owner_cache
     injected = False
@@ -368,9 +357,7 @@ def test_duplicate_tool_id_suppresses_the_later_entry_everywhere():
     # TASK-26007: the fuzzy tier may now surface the SURVIVING entry for
     # this query (token overlap on "name"); the pin's intent is that the
     # suppressed entry itself never appears.
-    assert all(
-        entry.name != "leaked_name" for entry in registry.find("leaked_name")
-    )
+    assert all(entry.name != "leaked_name" for entry in registry.find("leaked_name"))
     assert registry.invoke_by_name("leaked_name", {}).ok is False
     assert conflicting.invocations == []
 
@@ -468,6 +455,7 @@ def test_ephemeral_registry_fails_closed_for_unauthenticated_library_claims(case
         )
         assert registry.register_builtin_library_provider(provider, copied) is False
     else:
+
         class ThirdPartyLibraryProvider(_NamedCountingProvider):
             def __init__(self):
                 super().__init__(

@@ -1,4 +1,4 @@
-"""EvalsDB persistence for skill evals. Generic tables only (ADR-172)."""
+"""EvalsDB persistence for skill evals. Generic tables only (ADR-349)."""
 
 from __future__ import annotations
 

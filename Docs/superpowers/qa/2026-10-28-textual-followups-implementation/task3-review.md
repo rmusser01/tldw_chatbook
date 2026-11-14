@@ -1,0 +1,49 @@
+### Spec Compliance
+
+- ✅ Spec compliant for the reviewed TASK-37268 implementation: `tldw_chatbook/UI/Library_Modules/library_file_export.py:344` captures the rendered string, resolved validated target and original operation in the closure; the synchronous callbacks admit a native, grouped, non-exclusive screen worker, and only `write_export_text` crosses `asyncio.to_thread`. The late `FileExistsError` metadata check and confirmation remain inside the outer recoverable boundary. Completion, failure, cancellation and remembered-directory publication remain on the UI loop.
+- ✅ All five authorized deliverables have corresponding hunks. `Tests/UI/test_library_note_export_responsiveness.py:1` supplies native picker/confirmation/writer regressions; `Docs/Architecture/library-shell.md:35` describes ownership, scheduling and limits; `Tests/UI/test_library_shell.py:22913` adds completion observation while retaining the original assertions; `Tests/Library/test_library_file_export.py:603` adapts only the approved hard-link refusal test to native worker completion while retaining its assertions. No product fallback, screen/controller owner change, dependency, stylesheet, timeout or privacy change appears in the diff.
+- ✅ AC1/AC4: the new ordinary/held × new/Replace controls exercise real FileSave and Replace actions. Actual child timelines show writer/main thread IDs `136352/171712` and `171020/168112`, App acknowledgments before release, and acknowledgment before write completion; neither held GREEN uses watchdog release. The held test's literal output, single publication/success receipt and source-preservation assertions cover AC2 independently of product content helpers (`Tests/UI/test_library_note_export_responsiveness.py:1`).
+- ✅ AC3 task-scoped coverage: native late-collision Cancel/Replace/recheck-error, failed atomic Replace followed by text retry, changed Notes region and retired-screen controls pass. The tests release holds and drain native workers inside the App lifetime, and explicitly drain the underlying already-started writer after screen retirement (`Tests/UI/test_library_note_export_responsiveness.py:1`). Source preservation is evidence about the seeded Notes service stand-in, not real Notes SQLite.
+- ⚠️ Cannot verify final diagnostic-inventory gate from this diff: the logger remains category-only with identical message, note ID, severity, multiplicity and no exception capture (`tldw_chatbook/UI/Library_Modules/library_file_export.py:344`; `.test-tmp/task3-diagnostics.json:1`), but its nested owner changes from `_write` to `_fail`. Root must refresh `Docs/security/production-diagnostic-inventory.json`, prove all other owners/sinks conserved, and capture a successful raw check after final source/rebase. The empty stdout-only file and separate transcription are not passing receipts.
+- ⚠️ Cannot verify the old Escape/Replace outcome locally: `Tests/UI/test_library_export_replace_confirm.py:241` fails in `_open_note_editor` before export in both the 19-control run and exact retry. Actual XML shows source deadline/row-mount failure, not an exporter failure. Keep this control locally UNQUALIFIED; root must verify this exact case passes in actual current-head hosted CI. This review does not classify it as green or baseline-proven.
+- ⚠️ Final complete UI census, 20-minute job capacity, required aggregation, hosted CI, reviewed open PR and Backlog closure belong to root and are outside this task diff. The 1066.489-second local parent batch establishes execution cost on this host, not CI capacity, dispatch latency or an SLA.
+
+### Strengths
+
+- `tldw_chatbook/UI/Library_Modules/library_file_export.py:344` preserves the existing shared atomic writer and no-clobber/Replace contract with a small native-worker adaptation. Immutable rendered content is captured once before admission; no new service owner or scheduling framework is introduced.
+- `tldw_chatbook/UI/Library_Modules/library_file_export.py:344` distinguishes a genuine failed overwrite from a new-file collision, and the nested recoverable boundary includes the late metadata recheck. The new collision/error/retry cases exercise these branches through native controls (`Tests/UI/test_library_note_export_responsiveness.py:1`).
+- `Tests/UI/test_library_note_export_responsiveness.py:1` checks the actual App event handler, different writer thread, independent literal bytes, source deep copy, operation token, focus, notification count, precious-file preservation and temporary-file cleanup. Its source-readiness Retry delivers an actual Button event rather than replacing source getters or extending deadlines.
+- `Tests/UI/test_library_shell.py:22913` and `Tests/Library/test_library_file_export.py:603` retain their prior assertions. `.test-tmp/task3-static-comparison.json:1` records equality for every other top-level AST owner; `.test-tmp/textual-37266-37268/task3-root-static-proof.json:1` records clean lint/format for the three scoped modules, exact inherited shell debt, and final source pins. Independently hashing the current five deliverables matched all five final pins.
+- `Docs/Architecture/library-shell.md:35` accurately limits retirement to UI publication and an already-running atomic write, identifies seeded source stand-ins, and preserves existing format/newline policy.
+
+### Issues
+
+#### Critical (Must Fix)
+
+- None found in the task-scoped diff.
+
+#### Important (Should Fix)
+
+- None found in the task-scoped implementation. The diagnostic inventory and exact hosted Escape/Replace result remain explicit closure gates above; approval here does not discharge them.
+
+#### Minor (Nice to Have)
+
+- Inherited output is not pristine: `.test-tmp/textual-37266-37268/task3-green-notes/run.log:1` records the unset pytest-asyncio fixture-loop-scope warning plus Pydantic `exclude_if` and `audioop` deprecations. The compatibility output carries the same warnings; the report also discloses optional audio/backend and harness service noise. Retain these qualifications and address their owning configuration/dependencies separately; do not suppress warnings or expand this task to clear them.
+- `Tests/UI/test_library_shell.py:531`, `:944`, and `:3755` retain exactly the three baseline E721 diagnostics. The isolated changed function is formatted and the rest of the large file is conserved. This is existing debt, not a clean whole-file lint claim or a requested TASK-37268 fix.
+
+### Checks and focused context
+
+- Read the supplied diff once for `41e530c9f6a8936f85f5c09107907e22d27cd55d..6a122e0e946cdff5bdb0e1974e009969d7ffb159`, the complete task brief and implementer report. No cut-off hunk required rereading changed implementation code; no Git commands, test reruns, source edits or subagents were used.
+- Named risk — callback/no-clobber contract: inspected only unchanged `request_export_write` at `tldw_chatbook/UI/Library_Modules/library_file_export.py:261`. Its synchronous `on_replace(overwrite=False/True)` contract accepts the new admission callback; late asynchronous collision handling is now explicitly owned by the worker.
+- Named risk — operation admission and stale-region results after a write await: inspected only `tldw_chatbook/UI/Library_Modules/library_notes_controller.py:1649` through its completion method at `:1689`, plus the bounded validated caller `tldw_chatbook/UI/Screens/library_screen.py:21889`. Existing admission refuses a second running operation; completion checks token/kind and clears the claim without publishing into a changed region. The caller still validates before passing captured inputs and the original operation to the seam.
+- Named risk — the compatibility test might fake native worker execution: inspected unchanged `_prompt_worker_screen` at `Tests/Library/test_library_file_export.py:59`. It uses `App.run_test`, real `host.run_worker`, and native worker draining inside App lifetime; the fake object records only the existing confirmation/notification seam.
+- Independently parsed archived XML and hashes under `.test-tmp/textual-37266-37268/task3-green-notes`: parent 10 cases and ten actual children, all 0 failures/0 errors/0 skips; parent SHA-256 `011551b4250ab2198444721bf161f95e3bc09582c47e6f98f2d519f9c4231ff8`. Read actual held timelines, not only the derived thread summary.
+- Independently parsed intended RED parent and actual child XML under `task3-red-notes-dispatch`: each 1 failure/0 errors/0 skips. The child fails specifically at `[False] != [True]` after same-thread write/watchdog release; source readiness has already completed. Earlier invalid harness attempts are not counted as RED.
+- Independently parsed compatibility XML: `task3-existing-controls` has 18 passes/1 pre-export source failure, and `task3-existing-escape-retry` has the same one pre-export failure. Read recorded commands/private AppData roots and unchanged `--timeout=180`; these legacy controls are direct bootstrap-profile replay, not ten-style parent/child isolation. No all-default-fixture pass is claimed.
+- Inspected persisted focused guard evidence at `.test-tmp/task3-focused-worker-dom-style.json:1`: zero synchronous worker targets, post-await DOM violations, unresolved wait handoffs, ungrouped exclusive workers or inline style writes in the changed exporter module. This does not imply package-wide governance passed.
+
+### Assessment
+
+**Task quality:** Approved.
+
+**Reasoning:** The bounded implementation moves destination writes off the App loop while retaining existing validation, atomicity and Notes operation ownership, and the actual native RED/GREEN evidence supports the responsiveness claim. No task-scoped fix is required; final task closure still requires root's inventory, exact Escape/Replace CI, census/capacity and branch-level gates, with the recorded local failures and inherited warnings preserved.

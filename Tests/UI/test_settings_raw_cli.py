@@ -23,12 +23,16 @@ from tldw_chatbook.UI.Navigation.pending_handoff_store import (
     HandoffChannel,
 )
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
-from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
     SpeechTTSSettingsPanel,
 )
+
+
+# Mounted Settings readers retain the profile admitted at collection time.
+pytestmark = pytest.mark.bootstrap_profile
 
 
 RAW_CLI_DISCLOSURE = (
@@ -43,6 +47,14 @@ RAW_CLI_DISCLOSURE = (
     "detached descendants may survive.",
     "Command text and bounded output may persist in local run logs.",
     "This is not a sandbox and is not limited to your workspace.",
+)
+#: TASK-33622.9: every arm confirmation also names the model-facing shell tool
+#: arming registers (ADR-093); the Settings card keeps the seven lines above.
+RAW_CLI_ARM_DISCLOSURE = RAW_CLI_DISCLOSURE + (
+    "Arming also gives models the host-shell tool shell_exec while local tools "
+    "are on. A model must ask before it runs a command: you can run it once, "
+    "allow shell commands for that Console session, or deny. There is no "
+    "permanent Allow.",
 )
 #: Ceiling for a mounted-destination predicate, not a fixed delay or a
 #: performance assertion. The helper returns as soon as Settings arrives.
@@ -74,7 +86,14 @@ async def _open_privacy(pilot):
 
 
 async def _wait_for_save(pilot) -> None:
-    await pilot.app.workers.wait_for_complete()
+    await pilot.pause()
+    workers = [
+        worker
+        for worker in pilot.app.workers
+        if worker.group == "settings-save-raw-cli"
+    ]
+    if workers:
+        await pilot.app.workers.wait_for_complete(workers)
     await pilot.pause()
 
 
@@ -180,7 +199,9 @@ async def test_raw_cli_unlock_and_arm_are_separate_confirmed_gates():
             assert disclosure in text
         assert "sandboxed" not in text.lower()
         assert "confined" not in text.lower()
-        assert "Draft — save with s" in _visible_text(screen)
+        # Capture finding 3 (TASK-33007), rewritten on purpose: the clean
+        # banner of a draft category reads "No changes · edits save with s".
+        assert "edits save with s" in _visible_text(screen)
         assert "Applies immediately." in text
         assert screen.query_one("#settings-privacy-security-card")
         assert screen.query_one("#settings-check-privacy")
@@ -250,8 +271,14 @@ async def test_raw_cli_unlock_and_arm_are_separate_confirmed_gates():
         size_before = arm_button.region.size
         arm_button.focus()
         await _wait_until(pilot, lambda: host.focused is arm_button)
+        arm_button.scroll_visible(animate=False)
+        await pilot.pause()
         assert arm_button.region.size == size_before
-        assert await pilot.hover(arm_button)
+        assert await pilot.hover(arm_button), (
+            arm_button.region,
+            arm_button.visible_region,
+            host.screen.region,
+        )
         await pilot.pause()
         assert arm_button.region.size == size_before
 
@@ -259,7 +286,7 @@ async def test_raw_cli_unlock_and_arm_are_separate_confirmed_gates():
         await _wait_until(pilot, lambda: isinstance(host.screen, ConfirmationDialog))
         arm_dialog = host.screen
         assert arm_dialog.title == "Arm raw CLI for this launch"
-        assert arm_dialog.message == "\n\n".join(RAW_CLI_DISCLOSURE)
+        assert arm_dialog.message == "\n\n".join(RAW_CLI_ARM_DISCLOSURE)
         await _wait_until(
             pilot,
             lambda: getattr(host.focused, "id", None) == "cancel-button",
@@ -700,7 +727,9 @@ async def test_pending_raw_cli_save_vetoes_real_navigation_until_arrival(monkeyp
     def blocked_save(value: bool) -> tuple[bool, RuntimeConfigSnapshot | None]:
         save_calls.append(value)
         save_started.set()
-        assert release_save.wait(timeout=3)
+        # The test owns this hold; its finally releases it even on failure.
+        # A wall-clock expiry would change the save state under navigation.
+        release_save.wait()
         return True, _published_snapshot(loaded_config)
 
     monkeypatch.setattr(
@@ -737,10 +766,9 @@ async def test_pending_raw_cli_save_vetoes_real_navigation_until_arrival(monkeyp
             return outcome
 
         monkeypatch.setattr(screen, "flush_pending_work", tracked_flush)
-        assert screen._start_raw_cli_save(True) is True
-        await _wait_until(pilot, save_started.is_set)
-
         try:
+            assert screen._start_raw_cli_save(True) is True
+            await _wait_until(pilot, save_started.is_set)
             staged = screen.stage_audio_cpp_model_library_request(snapshot)
             request_pending = app.pending_handoffs.has_pending(
                 HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST
@@ -776,11 +804,9 @@ async def test_pending_raw_cli_save_vetoes_real_navigation_until_arrival(monkeyp
             assert save_calls == [True]
         finally:
             release_save.set()
-            await _wait_until(
-                pilot,
-                lambda: not screen._raw_cli_save_pending,
-                timeout=3,
-            )
+            await _wait_for_save(pilot)
+
+        assert screen._raw_cli_save_pending is False
 
         panel.confirm_leave = AsyncMock(return_value=False)
 

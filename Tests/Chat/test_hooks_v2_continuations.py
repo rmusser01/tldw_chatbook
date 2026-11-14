@@ -82,11 +82,11 @@ async def test_real_queue_stop_continuations_are_bounded(
         assert db._connection_quiescence.connection_count() == 1
         import threading
 
-        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+        from tldw_chatbook.Backup_Recovery.participants import repository_participant
 
         assert all(
             lease.resource_thread is threading.current_thread()
-            for lease in _repository_participant(runs_db).connections.values()
+            for lease in repository_participant(runs_db).connections.values()
         )
         if propose:
             assert "untrusted" in str(gateway.payloads[1]).lower()

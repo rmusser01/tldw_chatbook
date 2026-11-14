@@ -41,7 +41,7 @@ from tldw_chatbook.TTS.studio_preferences import (
 from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
     SettingsEndpointProbeOutcome,
 )
-from tldw_chatbook.UI.Screens.settings_speech_tts import (
+from tldw_chatbook.UI.Speech.settings_speech_tts import (
     build_provider_test_fingerprint,
     load_global_speech_tts_state,
     process_provider_test_evidence_store,
@@ -1478,8 +1478,7 @@ async def test_openai_catalog_worker_uses_explicit_tts_probe_and_records_outcome
         assert captured["purpose"] == "tts_catalog"
         assert captured["provider"] == "openai"
         assert (
-            evidence.catalog_state(fingerprint)
-            is SpeechTTSConnectionState.UNSUPPORTED
+            evidence.catalog_state(fingerprint) is SpeechTTSConnectionState.UNSUPPORTED
         )
 
 
@@ -1699,9 +1698,7 @@ async def test_openai_probe_result_is_not_attributed_after_fingerprint_changes(
         await worker
 
         evidence = process_provider_test_evidence_store(app)
-        assert (
-            evidence.catalog_state(initial) is SpeechTTSConnectionState.NOT_TESTED
-        )
+        assert evidence.catalog_state(initial) is SpeechTTSConnectionState.NOT_TESTED
         assert evidence.catalog_state(changed) is SpeechTTSConnectionState.NOT_TESTED
 
 
@@ -2190,9 +2187,7 @@ async def test_profile_test_preset_marks_exact_axes_as_profile_sourced(
         ):
             label = app.query_one(f"#{axis_chip_id(axis)}", Static)
             assert "Profile test selection" in str(label.tooltip)
-        banner = str(
-            app.query_one("#tts-profile-preview-status", Static).render()
-        )
+        banner = str(app.query_one("#tts-profile-preview-status", Static).render())
         assert "Testing voice profile" in banner
         assert "Needs test" in banner
 

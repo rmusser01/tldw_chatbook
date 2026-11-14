@@ -1,0 +1,154 @@
+from __future__ import annotations
+import asyncio
+import hashlib
+import inspect
+import json
+from pathlib import Path
+import pytest
+from Tests.private_profile import private_profile_test
+
+ROOT = Path.cwd().resolve()
+OUT = ROOT / '.test-tmp/textual-after3251/audit-merged/evals-media'
+
+def identity(label, objects):
+    rows = []
+    for obj in objects:
+        path = Path(inspect.getsourcefile(obj)).resolve()
+        assert path.is_relative_to(ROOT), str(path)
+        rows.append({'object': str(obj), 'path': str(path), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()})
+    (OUT / f'{label}-identity.json').write_text(json.dumps(rows, indent=2), encoding='utf8')
+
+async def until(predicate, seconds=8):
+    async with asyncio.timeout(seconds):
+        while not predicate():
+            await asyncio.sleep(.01)
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('later_edit', [False, True], ids=['ordinary', 'queued-later-input'])
+@private_profile_test
+async def test_evals_save_completion_preserves_later_child_input(request, later_edit):
+    from textual import on
+    from textual.message import Message
+    from textual.widgets import Input, Button
+    from Tests.UI.test_evals_screen import EvalsHarness, _FakeAppInstance
+    from tldw_chatbook.DB.Evals_DB import EvalsDB
+    from tldw_chatbook.Evals.word_bench.models import BenchConfig
+    from tldw_chatbook.Evals.word_bench.storage import save_bench, load_bench
+    from tldw_chatbook.UI.Evals.bench_editor import BenchEditor
+    from tldw_chatbook.UI.Screens.evals_screen import EvalsScreen
+    identity('evals-' + str(later_edit), [EvalsScreen, BenchEditor, EvalsDB, load_bench])
+    class Hold(Message):
+        pass
+    class GatedScreen(EvalsScreen):
+        @on(Hold)
+        async def hold(self, event):
+            event.stop()
+            self.entered.set()
+            await self.release.wait()
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp
+    class Host(ConsolidatedCSSApp):
+        CSS_PATH = EvalsHarness.CSS_PATH
+        def __init__(self, instance):
+            super().__init__()
+            self.app_instance = instance
+        async def on_mount(self):
+            screen = GatedScreen(self.app_instance)
+            screen.entered = asyncio.Event()
+            screen.release = asyncio.Event()
+            await self.push_screen(screen)
+    db = EvalsDB(db_path=':memory:', client_id='book3251-evals')
+    try:
+        dataset_id = db.create_dataset(name='snippets', format='custom', source_path='inline:snippets', metadata={'sample_count': 1})
+        target_id = db.create_model(name='target', provider='llama_cpp', model_id='test')
+        bench_id = save_bench(db, BenchConfig(name='Original', dataset_id=dataset_id, target_ids=(target_id,), prompt_mode='raw', top_k=10, probes=(' x',)))
+        app = Host(_FakeAppInstance(db))
+        async with app.run_test(size=(160, 45)) as pilot:
+            screen = app.screen
+            screen.select(kind='bench', id=bench_id)
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            editor = screen.query_one(BenchEditor)
+            field = editor.query_one('#evals-bench-name', Input)
+            field.focus()
+            await pilot.press('home', 'shift+end', 'backspace', *'Saved')
+            assert field.value == 'Saved'
+            if later_edit:
+                screen.post_message(Hold())
+                await until(screen.entered.is_set)
+            before = None
+            try:
+                # Actual Button.Pressed dispatch on the owning editor; parent Saved queues.
+                editor.query_one('#evals-bench-save', Button).press()
+                await until(lambda: load_bench(db, bench_id).name == 'Saved')
+                if later_edit:
+                    field.focus()
+                    # Send through the live focused child, without waiting for the held parent to idle.
+                    from textual.events import Key
+                    for char in '-new':
+                        field.post_message(Key(char, char))
+                    await until(lambda: field.value == 'Saved-new')
+                    before = {'text': field.value, 'focus': field.has_focus, 'cursor': field.cursor_position, 'dirty': editor.is_dirty()}
+                    assert before['focus'] and before['dirty']
+            finally:
+                screen.release.set()
+                await until(lambda: bool(screen.query("#evals-bench-name")) and screen.query_one("#evals-bench-name", Input) is not field)
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+            current = screen.query_one('#evals-bench-name', Input)
+            observation = {'later_edit': later_edit, 'before': before, 'after': {'text': current.value, 'same_input': current is field, 'focus': current.has_focus, 'cursor': current.cursor_position}, 'stored': load_bench(db, bench_id).name}
+            (OUT / f'evals-{later_edit}-observation.json').write_text(json.dumps(observation, indent=2), encoding='utf8')
+            assert load_bench(db, bench_id).name == 'Saved'
+            assert current.value == ('Saved-new' if later_edit else 'Saved'), 'queued Save completion replaced newer accepted child input'
+    finally:
+        db.close()
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_speech_footer_tracks_mounted_view(request):
+    from textual.widgets import Button, TextArea
+    from Tests.UI.test_speech_rail_navigation import _RailHost
+    from tldw_chatbook.UI.Screens.stts_screen import STTSScreen
+    from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
+    identity('speech', [STTSScreen, SpeechPlaygroundPane])
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp, APP_STYLESHEETS
+    class SpeechHost(ConsolidatedCSSApp):
+        CSS_PATH = [str(path) for path in APP_STYLESHEETS]
+        async def on_mount(self):
+            self.screen_under_test = STTSScreen(self)
+            await self.push_screen(self.screen_under_test)
+    app = SpeechHost()
+    async with app.run_test(size=(200, 60)) as pilot:
+        screen = app.screen_under_test
+        await until(lambda: bool(screen.query(SpeechPlaygroundPane)))
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        field = screen.query_one('#tts-text-input', TextArea)
+        field.text = 'ordinary control'
+        rail = screen.query_one('#lab-speech-row-playground', Button)
+        rail.focus()
+        await pilot.pause()
+        await pilot.press('x')
+        assert field.text == ''
+        normal = screen._footer_shortcut_registration
+        effects = screen.query_one('#lab-speech-row-effects', Button)
+        effects.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await until(lambda: screen.stts_window.current_view == 'effects' and not screen.query(SpeechPlaygroundPane))
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        effects.focus()
+        await pilot.pause()
+        footer = screen.query_one("#screen-footer-status")
+        before = footer.shortcut_text
+        painted = str(footer.query_one("#footer-key-quit").content)
+        registration = screen._footer_shortcut_registration
+        await pilot.press('r', 'x', 'p', 's', 'g')
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        observation = {'ordinary_registration': normal, 'effects_registration': registration, 'active_view': screen.stts_window.current_view, 'playground_present': bool(screen.query(SpeechPlaygroundPane)), 'footer_render': before, 'painted_footer_child': painted, 'active_bindings': {key: binding.binding.action for key, binding in screen.active_bindings.items() if key in ['g','r','x','p','s']}}
+        (OUT / 'speech-observation.json').write_text(json.dumps(observation, indent=2), encoding='utf8')
+        assert not any(key in {'g','r','x','p','s'} for key, *_ in registration[1]), 'Speech still advertises playground actions with no playground mounted'
+
+
+

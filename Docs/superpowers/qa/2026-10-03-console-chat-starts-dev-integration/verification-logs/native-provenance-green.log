@@ -1,0 +1,29 @@
+........................................................................ [ 55%]
+.........................................................                [100%]
+============================= slowest 25 durations =============================
+4.68s call     Tests/Chat/test_console_chat_start.py::test_saved_launch_status_projects_to_native_and_persisted_rows
+4.29s call     Tests/Chat/test_console_chat_start.py::test_native_start_child_and_wake_share_original_allowance[generation]
+3.83s call     Tests/Chat/test_console_chat_start.py::test_native_start_child_and_wake_share_original_allowance[deadline]
+3.46s call     Tests/Chat/test_console_chat_start.py::test_native_start_uses_both_receipts_and_literal_machine_request[hello]
+2.51s call     Tests/Chat/test_console_chat_start.py::test_stop_keeps_native_claim_until_generic_provider_adapter_exits
+2.46s call     Tests/Chat/test_console_chat_start.py::test_destination_availability_is_rechecked_before_native_acceptance[readiness-removed]
+1.99s call     Tests/Chat/test_console_chat_start.py::test_manual_recovery_clears_handoff_attention_but_retains_launch_history[review_required-Review required-settlement_unconfirmed-1]
+1.97s call     Tests/Chat/test_console_chat_start.py::test_stop_keeps_native_claim_until_actual_bridge_worker_exits
+1.92s call     Tests/Chat/test_console_chat_start.py::test_destination_availability_is_rechecked_before_native_acceptance[readiness-unchanged]
+1.90s call     Tests/Chat/test_console_chat_start.py::test_live_machine_retry_starts_manual_work_without_reassigning_old_allowance
+1.88s call     Tests/Chat/test_console_chat_start.py::test_created_start_keeps_approved_destination_during_library_capture[False]
+1.83s call     Tests/Chat/test_console_chat_start.py::test_destination_availability_is_rechecked_before_native_acceptance[before_start-unchanged]
+1.76s call     Tests/Chat/test_console_chat_start.py::test_runtime_update_during_readiness_rechecks_native_acceptance[True]
+1.75s call     Tests/Chat/test_console_chat_start.py::test_manual_send_withdraws_prepared_start_before_busy_gate
+1.73s call     Tests/Chat/test_console_chat_start.py::test_manual_recovery_clears_handoff_attention_but_retains_launch_history[not_started-Not started-runtime_disabled-0]
+1.64s call     Tests/Chat/test_console_chat_start.py::test_stop_during_started_status_write_does_not_dispatch_provider
+1.60s call     Tests/Chat/test_console_chat_start.py::test_native_start_never_enrolls_queue_stop_parent
+1.54s call     Tests/Chat/test_console_chat_start.py::test_native_start_uses_both_receipts_and_literal_machine_request[/help]
+1.50s call     Tests/Chat/test_console_chat_start.py::test_ledger_cutoff_retains_charge_and_requires_conversation_receipt[source_stop]
+1.48s call     Tests/Chat/test_console_chat_start.py::test_native_start_uses_both_receipts_and_literal_machine_request[@file]
+1.32s call     Tests/Chat/test_console_chat_start.py::test_native_project_decision_refuses_before_both_fences[1]
+1.27s call     Tests/Chat/test_console_chat_start.py::test_refused_start_preserves_draft_without_dispatch_or_timer[unready]
+1.27s call     Tests/Chat/test_console_chat_start.py::test_prepared_native_start_keeps_exact_runtime_and_destination[bridge]
+1.26s call     Tests/Chat/test_console_chat_start.py::test_destination_availability_is_rechecked_before_native_acceptance[readiness-archived]
+1.25s call     Tests/Chat/test_console_chat_start.py::test_prepared_native_start_keeps_exact_runtime_and_destination[owner]
+129 passed in 124.69s (0:02:04)

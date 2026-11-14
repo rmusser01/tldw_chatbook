@@ -1,4 +1,5 @@
 """Schema v6 (spec §8): chunk_engine_version column, NULL backfill."""
+
 import pytest
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 
@@ -16,15 +17,21 @@ def test_schema_version_is_current(fresh_db):
     # (v7+) must not break this file. What this test adds beyond
     # test_media_db_schema_v7.py is that a fresh DB reaches the code's
     # version at all.
-    version = fresh_db.get_connection().execute(
-        "SELECT version FROM schema_version LIMIT 1"
-    ).fetchone()
+    version = (
+        fresh_db.get_connection()
+        .execute("SELECT version FROM schema_version LIMIT 1")
+        .fetchone()
+    )
     assert version["version"] == MediaDatabase._CURRENT_SCHEMA_VERSION
 
 
 def test_column_exists(fresh_db):
-    cols = [r["name"] for r in fresh_db.get_connection().execute(
-        "PRAGMA table_info(UnvectorizedMediaChunks)").fetchall()]
+    cols = [
+        r["name"]
+        for r in fresh_db.get_connection()
+        .execute("PRAGMA table_info(UnvectorizedMediaChunks)")
+        .fetchall()
+    ]
     assert "chunk_engine_version" in cols
 
 
@@ -35,9 +42,15 @@ def test_v5_upgrade_leaves_rows_null(tmp_path):
     # keeps it readable and NULL (migration must not backfill).
     db = MediaDatabase(str(tmp_path / "m.db"), client_id="test")
     db.add_media_with_keywords(
-        title="t", media_type="document", content="text", keywords=None,
-        url=None, analysis_content=None, author=None,
-        chunks=[{"text": "old chunk", "metadata": {}}], chunk_options={},
+        title="t",
+        media_type="document",
+        content="text",
+        keywords=None,
+        url=None,
+        analysis_content=None,
+        author=None,
+        chunks=[{"text": "old chunk", "metadata": {}}],
+        chunk_options={},
     )
     db.get_connection().execute(
         # ``version = version + 1`` is required by the
@@ -46,12 +59,16 @@ def test_v5_upgrade_leaves_rows_null(tmp_path):
         # bare UPDATE would ABORT on that trigger before ever reaching the
         # column under test.
         "UPDATE UnvectorizedMediaChunks SET chunk_engine_version = NULL, "
-        "version = version + 1")
+        "version = version + 1"
+    )
     db.get_connection().commit()
     # simulate upgrade: re-open the DB (runs migrations)
     db2 = MediaDatabase(str(tmp_path / "m.db"), client_id="test")
-    rows = db2.get_connection().execute(
-        "SELECT chunk_engine_version FROM UnvectorizedMediaChunks").fetchall()
+    rows = (
+        db2.get_connection()
+        .execute("SELECT chunk_engine_version FROM UnvectorizedMediaChunks")
+        .fetchall()
+    )
     assert rows and rows[0]["chunk_engine_version"] is None
 
 
@@ -84,12 +101,22 @@ def test_genuine_v5_db_upgrades_to_v6_without_backfill(tmp_path):
         conn.commit()
 
     db2 = MediaDatabase(path, client_id="test")
-    version = db2.get_connection().execute(
-        "SELECT version FROM schema_version LIMIT 1").fetchone()["version"]
+    version = (
+        db2.get_connection()
+        .execute("SELECT version FROM schema_version LIMIT 1")
+        .fetchone()["version"]
+    )
     assert version == MediaDatabase._CURRENT_SCHEMA_VERSION
-    cols = [r["name"] for r in db2.get_connection().execute(
-        "PRAGMA table_info(UnvectorizedMediaChunks)").fetchall()]
+    cols = [
+        r["name"]
+        for r in db2.get_connection()
+        .execute("PRAGMA table_info(UnvectorizedMediaChunks)")
+        .fetchall()
+    ]
     assert "chunk_engine_version" in cols
-    rows = db2.get_connection().execute(
-        "SELECT chunk_engine_version FROM UnvectorizedMediaChunks").fetchall()
+    rows = (
+        db2.get_connection()
+        .execute("SELECT chunk_engine_version FROM UnvectorizedMediaChunks")
+        .fetchall()
+    )
     assert rows and rows[0]["chunk_engine_version"] is None

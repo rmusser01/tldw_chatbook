@@ -14,6 +14,35 @@ from typing import Any
 _resident_runtime_loads = 0
 
 
+def parakeet_diagnostic_executor_worker(
+    connection: Connection,
+    admission_event: Any,
+    cancellation_event: Any,
+    generation: int,
+    scratch_path: str,
+) -> None:
+    """Use the production worker/runtime while replacing only the native API."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.STT import parakeet_onnx
+    from tldw_chatbook.STT.executor_worker import _run_executor_worker
+
+    class NativeModel:
+        def recognize(self, *_args: Any, **_kwargs: Any) -> str:
+            raise RuntimeError(
+                "private-transcript C:/private/model.onnx https://private.invalid/key"
+            )
+
+    parakeet_onnx._onnx_asr_api = lambda: (
+        SimpleNamespace(load_model=lambda *_args, **_kwargs: NativeModel()),
+        lambda *_args, **_kwargs: None,
+        lambda _chunks: None,
+    )
+    _run_executor_worker(
+        connection, admission_event, cancellation_event, generation, scratch_path
+    )
+
+
 class _FakeResidentRuntime:
     """Small provider runtime used only inside spawned executor tests."""
 

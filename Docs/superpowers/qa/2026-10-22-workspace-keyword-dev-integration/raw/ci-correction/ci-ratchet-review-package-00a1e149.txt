@@ -1,0 +1,1303 @@
+00a1e14952 Extract Settings and Console orchestration to satisfy CI size ratchets
+
+ Docs/security/production-diagnostic-inventory.json |  11 +-
+ Tests/Architecture/test_module_size_ratchet.py     |   6 +-
+ ...word-indexes-in-Settings-and-qualify-release.md |   8 +-
+ tldw_chatbook/Chat/answer_citations.py             |  61 ++++++++
+ tldw_chatbook/Chat/console_chat_controller.py      | 102 +-----------
+ tldw_chatbook/Chat/console_interrupt_rounds.py     | 162 +------------------
+ tldw_chatbook/Chat/console_local_review_hook.py    | 172 +++++++++++++++++++++
+ .../Chat/console_project_index_preparation.py      |  72 +++++++++
+ tldw_chatbook/Chat/console_settings_durability.py  |  16 ++
+ tldw_chatbook/UI/Screens/settings_screen.py        | 105 +------------
+ .../Settings_Modules/workspace_folder_bindings.py  | 127 +++++++++++++++
+ tldw_chatbook/app_lifecycle.py                     |  18 +--
+ 12 files changed, 484 insertions(+), 376 deletions(-)
+
+diff --git a/Docs/security/production-diagnostic-inventory.json b/Docs/security/production-diagnostic-inventory.json
+index 46092f065a..372dc5c6d2 100644
+--- a/Docs/security/production-diagnostic-inventory.json
++++ b/Docs/security/production-diagnostic-inventory.json
+@@ -400,22 +400,22 @@
+       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+     },
+     {
+       "call_count": 1,
+       "diagnostic_digest": "11d08c1c87ded662897f",
+       "owner": "TASK-492",
+       "path": "tldw_chatbook/Chat/console_canvas_controller.py",
+       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+     },
+     {
+-      "call_count": 71,
+-      "diagnostic_digest": "8d81d4d3e73c41d9fde8",
++      "call_count": 69,
++      "diagnostic_digest": "3583c9aa681f2416bfbe",
+       "owner": "TASK-492",
+       "path": "tldw_chatbook/Chat/console_chat_controller.py",
+       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+     },
+     {
+       "call_count": 11,
+       "diagnostic_digest": "568a6855dc033a46aebc",
+       "owner": "TASK-492",
+       "path": "tldw_chatbook/Chat/console_chat_start.py",
+       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+@@ -574,20 +574,27 @@
+       "path": "tldw_chatbook/Chat/console_paste_attach.py",
+       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+     },
+     {
+       "call_count": 1,
+       "diagnostic_digest": "8b4219c840702fec795a",
+       "owner": "TASK-492",
+       "path": "tldw_chatbook/Chat/console_personal_context.py",
+       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+     },
++    {
++      "call_count": 2,
++      "diagnostic_digest": "60cd5a7c138f59575754",
++      "owner": "TASK-492",
++      "path": "tldw_chatbook/Chat/console_project_index_preparation.py",
++      "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
++    },
+     {
+       "call_count": 21,
+       "diagnostic_digest": "328623f2672016810a78",
+       "owner": "TASK-492",
+       "path": "tldw_chatbook/Chat/console_provider_gateway.py",
+       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+     },
+     {
+       "call_count": 5,
+       "diagnostic_digest": "5447441dfef930775392",
+diff --git a/Tests/Architecture/test_module_size_ratchet.py b/Tests/Architecture/test_module_size_ratchet.py
+index 0766528867..ebb1467c9c 100644
+--- a/Tests/Architecture/test_module_size_ratchet.py
++++ b/Tests/Architecture/test_module_size_ratchet.py
+@@ -99,23 +99,23 @@ _BUDGETS: dict[str, int] = {
+     # TASK-33011: the command-palette providers moved verbatim out of app.py;
+     # governed there, so governed here.
+     "tldw_chatbook/app_command_providers.py": 1123,
+     # TASK-33011: TldwCli's per-feature glue moved verbatim out of app.py
+     # (FeatureGlueMixin); governed there, so governed here.
+     "tldw_chatbook/app_feature_glue.py": 742,
+     # TASK-35190: the rebaser's endpoint choice moved to
+     # console_settings_apply.rebased_endpoint: 29,182 -> 29,150.
+     # Rebased onto dev 0fef489ece, whose TASK-35444 Console refresh deferral is +1: 29,151.
+     # TASK-35992: frozen Library preparation delegates to console_library_preparation.
+-    "tldw_chatbook/Chat/console_chat_controller.py": 29050,
++    "tldw_chatbook/Chat/console_chat_controller.py": 29043,
+     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
+-    "tldw_chatbook/Chat/console_interrupt_rounds.py": 6453,
++    "tldw_chatbook/Chat/console_interrupt_rounds.py": 6307,
+     "tldw_chatbook/Chat/console_context_compaction.py": 4185,
+     "tldw_chatbook/Chat/console_chat_store.py": 22338,
+     # TASK-33622.14: the aggregate Roleplay draft guard moved to
+     # UI/Persona_Modules/roleplay_draft_guard.py (dev had grown to 16,533,
+     # over this row; the move brings it to 16,397).
+     # 2026-10-03 (PR #2993, owner decision): +128 is formatter reflow only
+     # (TASK-26000 series, Ruff 0.15.22; the file is AST-identical to the
+     # 16,397-line version), so the row is re-measured, not grown.
+     # 2026-10-04 (TASK-34400, owner decision): +3 for the crash fix that stops
+     # names shaped like markup from exiting the app (the escape_markup import,
+@@ -255,21 +255,21 @@ _BUDGETS: dict[str, int] = {
+     # TASK-35010: the saved lists are re-read from the file, not appended to in
+     # memory, so the 20-line in-memory append goes (-4 net): 35,766.
+     # Its review: Config reload's file re-read moves to the worker (-1): 35,765.
+     # TASK-35011: Save selected's receipts, retry steps and empty-Model fill
+     # move to Settings_Modules/saved_model_list.py with the new pick-joins-
+     # on-s logic, and the duplicate capability line goes (-19): 35,746.
+     # Rebased onto dev 1bbc145ffc, where #3169 merged at 35,771 (+1 over
+     # S1's base of 35,770): 35,747.
+     # TASK-35677/35678: bounded paste ownership and action support (-13).
+     # TASK-35680: parallel-run origin handling removes one more line.
+-    "tldw_chatbook/UI/Screens/settings_screen.py": 35732,
++    "tldw_chatbook/UI/Screens/settings_screen.py": 35671,
+     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
+     # at birth so the split cannot regrow a god module there. New code for
+     # either goes in a sibling module under UI/Settings_Modules/.
+     # providers_models_card.py: the final review's ruff format (+2 reflow)
+     # and fixes re-pin it at the PR head's measured 1,963; the full-screen
+     # capture fixes (2026-10-09: the restored-connection row, the Applies-to
+     # line, Sign in with's row copy) at 2,194; the Endpoint guide that says
+     # required as its row does (2026-10-09) at 2,238; items 11-12 (one-row
+     # Context window, -1; its assumed size, +1) leave it at 2,238 measured.
+     # dev's markup-interpolation gate (TASK-1513) found two sites here, and
+diff --git a/backlog/tasks/task-36006 - Manage-optional-keyword-indexes-in-Settings-and-qualify-release.md b/backlog/tasks/task-36006 - Manage-optional-keyword-indexes-in-Settings-and-qualify-release.md
+index 73eef70449..67c2861815 100644
+--- a/backlog/tasks/task-36006 - Manage-optional-keyword-indexes-in-Settings-and-qualify-release.md	
++++ b/backlog/tasks/task-36006 - Manage-optional-keyword-indexes-in-Settings-and-qualify-release.md	
+@@ -1,18 +1,18 @@
+ ---
+ id: TASK-36006
+ title: Manage optional keyword indexes in Settings and qualify release
+ status: In Progress
+ assignee:
+   - '@codex'
+ created_date: '2026-10-21 14:32'
+-updated_date: '2026-10-22 06:16'
++updated_date: '2026-10-22 07:15'
+ labels: []
+ dependencies:
+   - TASK-36005
+ documentation:
+   - Docs/superpowers/plans/2026-10-20-workspace-project-keyword-index.md
+   - backlog/decisions/241-workspace-project-context-and-folder-bound-index.md
+ ---
+ 
+ ## Description
+ 
+@@ -29,20 +29,22 @@ Let users explicitly manage folder-bound keyword indexing and understand coverag
+ - [x] #5 Multi-directory keyword units preserve aggregate256-entry/256-directory-attempt/256-raw-inspection bounds and existing source/frame/read budgets, fresh unit admission plus atomic final publication, idempotent completion/pruning and explicit recovery; durable indexed frontier state replaces tree-sized visited memory, with compatible cache migration and measured small-phase improvement before literal scale qualification.
+ - [x] #6 Keyword search can discover a unique eligible filename or path term absent from its body, including empty/whitespace-only eligible text files, while excluded/changed/deleted files cannot leak names or cached text; existing v2 content is migrated atomically within capacity and final path+text latency is qualified.
+ - [x] #7 Processing controls default to all otherwise eligible UTF8 text, preserve saved empty/partly empty policy choices as all, support explicit narrowing, and management remains able to Clear a validated legacy cache under migration capacity pressure without silently upgrading or blocking the UI during close.
+ - [x] #8 Index close drains already-issued management/query/preparation operations through actual outer native registry/cache retirement, rejects later admission and remains responsive under repeated waiter cancellation; unproven closure is retained and reported.
+ - [x] #9 Detach immediately revokes index access/publication and leaves a supported durable cleanup-only retry after restart, without reattaching source authority or touching a replacement binding at the same path; failed cleanup remains truthful.
+ - [x] #10 Included-folder comparisons agree between actual scanning and public keyword search for case/Unicode variants and preserve exact peer-prefix, containment and exclusion boundaries.
+ - [x] #11 Committed compatible Building coverage is discoverable through Console preparation and public search with truthful partial results, preserving scope/manifest/live-source/revocation gates.
+ - [x] #12 Proven-native-retired run/error history stays bounded without evicting unresolved native owners or a still-running supervisor; shutdown retains and joins an interrupted supervisor through physical exit, including repeated observer cancellation. Scanner annotations and dirty-input preservation remain covered. The prior deferred M1 qualification is resolved rather than carried into the PR.
+ - [x] #13 The rebased guidance/keyword composition preserves current dev dispatch/retry, Settings ownership and application shutdown behavior under selected integration checks; all saved Library policy/scope combinations and embedding-independent keyword operation remain intact.
+ - [x] #14 A failed index start preserves its original error and closes an unrecorded retained storage pin exactly once under concurrent run-history mutation; ownership lookup is synchronized, native close remains outside the service lock, and a recorded writer pin remains owned until physical retirement.
++- [ ] #15 Canonical Settings stays within its nonincreasing module-size budget after latest-dev integration, with cohesive project/folder composition extracted to a Settings helper and all existing controls, state ownership, safety fences and saved Library behavior preserved.
++- [ ] #16 The PR introduces no module-size ratchet overrun in Console controller or interrupt handling, and lifecycle size does not exceed fetched-dev baseline; cohesive orchestration extractions preserve initial/retry evidence, Library choices, cancellation and physical index shutdown behavior without raising budgets or altering storage/query authority.
+ <!-- AC:END -->
+ 
+ ## Implementation Plan
+ 
+ <!-- SECTION:PLAN:BEGIN -->
+ 1. Read approved K5 brief, source-verified UI seams, design language/component patterns and Impeccable product context. Write mounted regressions before UI/service changes.
+ 2. Add exact selected-binding management card and narrow admitted immutable service policy projection; no constructor/compose/event-loop I/O. Preserve scope/job CAS and mounted binding/epoch callbacks, explicit build/resume, truthful busy/partial/errors, existing tokens and navigation. Console projects status and routes to Workspaces Settings after safe modal dismissal.
+ 3. Run targeted UI/policy GREEN and covering files. Qualify isolated app build/query/pause/resume/restart/refresh/detach/Clear, all saved Library choices, real production query storage pin through actual native retirement and isolated encrypted restore/rollback invalidation.
+ 4. Qualify final service/store/tool path on at least20,000 text files across20,000 nested/sibling folders plus a separate20,000-file single directory. Retain stable private corpora, real marker response, machine/corpus/throughput/baseline+peak-extraRSS/whole-binding disk and sidecars/cancellation retirement/candidate p50p95/live-validation separately; missing embeddings and blocked sockets must not affect keyword operation. No nominal scanner-only substitution.
+ 5. Update architecture/user docs and retained QA evidence, run targeted new project-index files and relevant UI governance/CSS checks, scoped lint/format/diff and self-review, then independent spec/quality gate.
+@@ -75,20 +77,24 @@ Reason: direct implementation of accepted folder-bound storage/tool/management/r
+ 
+ 19. Final whole-delivery review found I1-I4 and M1-M3; address complete list in ONE consolidated wave. First establish failing held complete-operation close, detached retry, mixed-case real scan/public query, Building partial query and dirty-status cases. Implement finite index operation retirement through outer registry proof, casefold-consistent policy, committed Building eligibility, bounded proven-run history, scanner types and dirty draft preservation. Capture source-backed exact detached cleanup ownership/format/permission/quota/retry proposal and root ADR240 amendment before I2 code; reuse existing native lifetimes/catalog cleanup, no new source authority/global collector. Run only focused amended cases and directly affected covering, scope lint/format/diff and source-timed benchmark applicability; keep prior raw/limits. Commit one consolidated wave and run exactly one scoped rereview. ADR required yes, existing ADR240 amended before cross-boundary changes; semantic and Library mutation excluded.
+ 
+ 20. I2 concrete contract: <=4096byte immutable cleanup-owner-v1.lock in exact existing binding group, closed JSONv1 ownership IDs/revision only; actual no-follow/single-link native capability receipt I/O, private parent, quota charge and live-only enrollment/repair before cached contents. No registry fence over native acquisition/flush/bulkcleanup. Detached retry holds current+observed native lifetimes/data pin, validates all catalogs and later tombstone/archived exactowner, serializes same-ID replacement/Enable and refuses unknown legacy ownership. Async detach/archive hints plus Settings Workspaces Retry removed-folder cache cleanup cold-restart entrypoint; complete I1 operation drain. Reuse existing clear_owned_namespace/reclaim/headroom; legacy Clear never requires enrollment allocation/migration. ADR240 existing amended before I2 code; no schema/source authority/global collector.
+ 
+ 21. Final scoped review approves with one nonblocking M1 supervisor-tail residual. Explicitly qualify AC12 and retain its source-backed future correction, close the feature with that accepted debt and the measured admitted-latency deviation, retain all reports/raw/visual/ruling evidence and preserve the local branch/worktree. Existing ADR240 applies; no second fix wave, full sweep or integration.
+ 
+ 22. Newly user-authorized dev integration: preserve latest-dev2a5afa03b31f60e00bdcd10a161e3e351fad023b dispatch/retry/Settings/lifecycle behavior while replaying guidance and keyword indexing. Rebase completed99857a64e7 with only two documentation unions and all production/test patches retained; structural checks alone are not runtime proof. Resolve the sole introduced ADR240 collision by renumbering the unmerged project ADR to241 after all-ref/open-PR verification (landed MCP240 keeps ownership). Update active governance/real Markdown link targets, preserve historical raw receipts/hashes/rulings and source-qualified old labels. Before M1 code, establish actual interrupted-supervisor RED after native retirement with20later completions and cancellation/close barrier; apply the smallest eviction liveness predicate, run regression plus normal bounded history and affected native shutdown controls. Run selected latest-dev controller/bridge/Settings/lifecycle and Library-preservation checks, source-derived short CI guards, scoped lint/format/diff and fresh exact-dev-range independent requesting-code-review. Address all new review findings, then satisfy current-head Qodo/threads/required CI and merge via enabled queue. ADR required:yes, existing accepted project decision renumbered to backlog/decisions/241-workspace-project-context-and-folder-bound-index.md; no new storage/permission architecture for this correction.
+ 
+ 23. Before the fresh-review correction, add AC14 for failed-start retained-pin ownership. Reproduce the concrete unlocked ownership-lookup interleaving with a coordinated real concurrent start/history mutation and actual storage lifetime; prove original exception, exactly-once unrecorded pin release, operation retirement and maintenance availability, retaining the recorded-writer control. Compute exact-pin ownership under the existing service lock, release the lock before capability close, with no native close inside it. Run only the affected regression and ownership/failed-dispatch controls after the current22-case e161 covering run physically retires. Preserve earlier-source covering results, retain RED/adverse receipts, commit the narrow fix, then final-source same-cache query-only qualification and one scoped correction/evidence rereview in the existing report. ADR required:yes, existing backlog/decisions/241-workspace-project-context-and-folder-bound-index.md; direct correction of accepted ownership contract, no new architecture.
++
++24. Hosted required Fast Lane on007521567a9e961d2cd854432b357b545d8605d4 supplies meaningful source-guard RED: settings_screen35764lines exceeds35732budget by32;2828othercasespass. Disable auto-merge and pull--rebase tracking branch before changes (completed:remote/local007,clean). Extract one cohesive existing Workspaces folder/project rendering unit into canonical UI/Settings_Modules using established delegation patterns, preserving its behavior and lowering the Settings budget to the actual reduced count; never increase limits, squeeze blank lines or remove controls. Read design-language/component patterns first. Run the exact size ratchet, affected mounted project-index Settings/ownership controls, narrow source guards/lint/format/AST body equivalence/diff. Preserve earlier runtime/performance evidence as unchanged query-source proof; no whole22case or scale/query repeat without concrete runtime change. Commit one narrow CI correction, scope independent review to it, retain raw hosted failure and affected outputs, then push with force-with-lease after confirming autoMergeoff and rearm only after current thread/local gates. ADR required:no newADR; existing backlog/decisions/241-workspace-project-context-and-folder-bound-index.md governs feature behavior, and this is a mechanical modularization preserving boundaries.
++
++25. Extend the same CI correction wave before further source edits: full local ratchet10fail61pass reveals controller dev29050budget29050 ->PR29135(+85) and interrupt dev6453budget6453 ->PR6463(+10), genuine feature overruns; lifecycle dev2347budget2134 ->PR2350 adds3toinherited213overrun. Extract cohesive existing orchestration/helper units with preserved executable bodies/caller ownership; request exact proposals for Chat and lifecycle paths first. Do not increase budgets, compress whitespace, change provider/tool/Library policies or fix unrelated baseline modules. Keep index service/store/query/scanner/authority bytes frozen. Lower controller/interrupt budgets to actual reduced counts where shrunk; lifecycle must be no larger than2347baseline, with inherited budget failure retained honestly. Run exact affected size parameters/metadata checks, focused initial+retry workspace grounding and savedLibrary combinations, interrupt evidence/cancellation and actual app shutdown-withoutConsole controls appropriate to extracted units. Preserve already completed Settings5pass/size2pass rather than repeat them unless their code changes. Prove moved AST bodies/callargument equivalence, scoped static parity, retain complete10path dev/PR matrix and alladverseoutputs. One consolidated exact-path commit/scopedreview after actual evidence; no fullsweep/nativehistory/scale/query repeat. ADR required:no newADR; existing ADR241 and Console ownership ADRs apply, mechanical modularization preserves boundaries.
+ <!-- SECTION:PLAN:END -->
+ 
+ ## Implementation Notes
+ 
+ <!-- SECTION:NOTES:BEGIN -->
+ Implemented optional folder-bound keyword indexing, Off by default, with explicit Enable/Refresh/Pause/Resume/Clear, truthful coverage, Settings/Console controls and durable detached-cache cleanup retry. Saved Library choices/scopes remain intact; no Library copies, semantic indexing, provider or new dependency. Final source3b616994e6ff3d3237a08f2802f25c5b5633e693; service/runtime/store/native lifetime, registry/controller/Console/Settings integration, focused tests and architecture/user docs.
+ 
+ One consolidated final wave and one scoped rereview completed: APPROVE WITH ONE NONBLOCKING MINOR,0Critical0Important1Minor. I1-I4/M2/M3 addressed. M1 history is bounded and native ownership is retained, but a natively retired supervisor may be pruned before its final Python bookkeeping tail exits. This real residual is explicitly deferred under the wave cap; AC12 records the qualification. No native leak/disclosure/corruption or important shutdown defect established; do not claim every physical supervisor exited or all seven findings fully fixed.
+ 
+ Final covering4failed75passed1684.90s preserved; four fixture expectations superseded by12affected/control passes374.84s, including failed-supervisor lock RED/GREEN, normal build retirement and both mounted themes. All four saved Library combinations and native detached/cold/race/receipt proofs passed in covering source. Final same-cache probe1passed233.46s: six canonical lexical p95 targets151-312ms; broader admitted common667/535ms still exceeds500ms, independently accepted explicit deviation. All42Capture/native proofs retired,40public registry returns retired, service0searches/0operations. Original mixed/adverse/setup outputs remain, not an all-green aggregate.
+diff --git a/tldw_chatbook/Chat/answer_citations.py b/tldw_chatbook/Chat/answer_citations.py
+index aa185160c0..c4832f528d 100644
+--- a/tldw_chatbook/Chat/answer_citations.py
++++ b/tldw_chatbook/Chat/answer_citations.py
+@@ -1,15 +1,16 @@
+ """Answer-level citation prompt and validation helpers."""
+ 
+ from __future__ import annotations
+ 
+ from dataclasses import dataclass
++from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+ from typing import Any, Mapping
+ 
+ from tldw_chatbook.Chat.citation_evidence_models import (
+     CitationRef,
+     EvidenceBundle,
+     EvidenceReference,
+ )
+ from tldw_chatbook.Chat.citation_trace_models import (
+     EvidenceLabelMarkerSpan,
+     eligible_evidence_label_marker_spans,
+@@ -405,10 +406,70 @@ def _quote_for_marker(answer_text: str, marker_span: EvidenceLabelMarkerSpan) ->
+             for boundary in QUOTE_BOUNDARY_CHARS
+         )
+         if index >= 0
+     ]
+     end = (
+         min(sentence_end_candidates) + 1
+         if sentence_end_candidates
+         else len(answer_text)
+     )
+     return answer_text[start:end].strip()
++
++
++def prepend_console_evidence_context(
++    provider_messages: list[dict[str, Any]],
++    context: str,
++    *,
++    instructions: tuple[str, ...] = (),
++) -> list[dict[str, Any]]:
++    """Prefix optional guidance and exact evidence to the provider-only message."""
++    from .console_chat_controller import ConsoleChatController
++
++    final_index = next(
++        (
++            index
++            for index in range(len(provider_messages) - 1, -1, -1)
++            if provider_messages[index].get("role") == ConsoleMessageRole.USER.value
++        ),
++        None,
++    )
++    if final_index is None:
++        return provider_messages
++    guidance = (
++        "[Citation instructions]\n" + "\n".join(instructions) + "\n\n"
++        if instructions
++        else ""
++    )
++    prefix = f"{guidance}Evidence: {context}\n\n---\n\n"
++    message = provider_messages[final_index]
++    content = message.get("content")
++    if isinstance(content, str):
++        new_content: Any = ConsoleChatController._preserve_plugin_text_transform(
++            content, prefix + content
++        )
++    elif isinstance(content, list):
++        new_content = list(content)
++        text_index = next(
++            (
++                index
++                for index, part in enumerate(new_content)
++                if isinstance(part, dict)
++                and part.get("type") == "text"
++                and isinstance(part.get("text"), str)
++            ),
++            None,
++        )
++        if text_index is None:
++            new_content.insert(0, {"type": "text", "text": prefix})
++        else:
++            text_part = new_content[text_index]
++            new_content[text_index] = {
++                **text_part,
++                "text": ConsoleChatController._preserve_plugin_text_transform(
++                    text_part["text"], prefix + text_part["text"]
++                ),
++            }
++    else:
++        return provider_messages
++    updated = list(provider_messages)
++    updated[final_index] = {**message, "content": new_content}
++    return updated
+diff --git a/tldw_chatbook/Chat/console_chat_controller.py b/tldw_chatbook/Chat/console_chat_controller.py
+index 0246825240..880bbf089f 100644
+--- a/tldw_chatbook/Chat/console_chat_controller.py
++++ b/tldw_chatbook/Chat/console_chat_controller.py
+@@ -15510,70 +15510,23 @@ class ConsoleChatController:
+             ),
+             project_root_guard=project_authority_guard,
+             admitted_roots=admitted_roots,
+             local_kill_switch=local_kill_switch,
+             **index_kwargs,
+         )
+         return mcp_provider, builtin_gate, local_provider, local_review_hook
+ 
+     def _prepare_project_index_scopes(self, admitted_roots):
+         """Retire registry handles opened by scope preparation, including guards."""
+-        from tldw_chatbook.Workspaces.project_index.runtime import get_project_index_service
++        from .console_project_index_preparation import prepare_project_index_scopes
+ 
+-        try:
+-            service = get_project_index_service(self.app)
+-            with service.registry_connection_scope():
+-                return self._prepare_project_index_scopes_owned(admitted_roots)
+-        except Exception:
+-            logger.debug("Project index preparation unavailable")
+-            return None, {}
+-
+-    def _prepare_project_index_scopes_owned(self, admitted_roots):
+-        """Read compatible immutable scopes off-loop after exact run capture."""
+-        from types import MappingProxyType
+-        from tldw_chatbook.Tools.remote_root_types import is_remote, local_root_path
+-        from tldw_chatbook.Workspaces.project_index.runtime import (
+-            get_project_index_service,
+-            project_index_key,
+-        )
+-
+-        scopes = {}
+-        service = None
+-        for authority in admitted_roots:
+-            if is_remote(authority.root):
+-                continue
+-            try:
+-                if not authority.guard(False):
+-                    continue
+-                root = local_root_path(
+-                    authority.root, site="project index scope preparation"
+-                )
+-                key = project_index_key(
+-                    self.app, authority.workspace_id, authority.binding_id, root
+-                )
+-                service = get_project_index_service(self.app)
+-                status = service.status(key)
+-                compatible = status.state in {"Ready", "Partial"}
+-                if status.state == "Building" and status.indexed > 0:
+-                    from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
+-
+-                    paths = authority.exclusions_provider() if authority.exclusions_provider else ()
+-                    floor = tuple(
+-                        SensitiveExclusion("subtree", Path(path).relative_to(root).as_posix())
+-                        for path in paths
+-                    )
+-                    compatible = service.building_coverage(status.scope, floor)
+-                if compatible and authority.guard(False):
+-                    scopes[authority.alias] = status.scope
+-            except Exception:  # unavailable optional capability grants no authority
+-                logger.debug("Project index unavailable for this run binding")
+-        return service, MappingProxyType(scopes)
++        return prepare_project_index_scopes(self, admitted_roots)
+ 
+     def _compose_local_provider(
+         self,
+         session_id: str | None = None,
+         turn_context: ConsoleTurnExecutionContext | None = None,
+         *,
+         project_root: Path | None = None,
+         allow_write: bool = True,
+         project_root_identity: tuple[tuple[str, int, int, int], ...] | None = None,
+         project_root_guard: Callable[[], bool] | None = None,
+@@ -22548,70 +22501,25 @@ class ConsoleChatController:
+         return finalize
+ 
+     @staticmethod
+     def _prepend_evidence_context(
+         provider_messages: list[dict[str, Any]],
+         context: str,
+         *,
+         instructions: tuple[str, ...] = (),
+     ) -> list[dict[str, Any]]:
+         """Prefix optional guidance and exact evidence to the provider-only message."""
++        from .answer_citations import prepend_console_evidence_context
+ 
+-        final_index = next(
+-            (
+-                index
+-                for index in range(len(provider_messages) - 1, -1, -1)
+-                if provider_messages[index].get("role") == ConsoleMessageRole.USER.value
+-            ),
+-            None,
++        return prepend_console_evidence_context(
++            provider_messages, context, instructions=instructions
+         )
+-        if final_index is None:
+-            return provider_messages
+-        guidance = (
+-            "[Citation instructions]\n" + "\n".join(instructions) + "\n\n"
+-            if instructions
+-            else ""
+-        )
+-        prefix = f"{guidance}Evidence: {context}\n\n---\n\n"
+-        message = provider_messages[final_index]
+-        content = message.get("content")
+-        if isinstance(content, str):
+-            new_content: Any = ConsoleChatController._preserve_plugin_text_transform(
+-                content, prefix + content
+-            )
+-        elif isinstance(content, list):
+-            new_content = list(content)
+-            text_index = next(
+-                (
+-                    index
+-                    for index, part in enumerate(new_content)
+-                    if isinstance(part, dict)
+-                    and part.get("type") == "text"
+-                    and isinstance(part.get("text"), str)
+-                ),
+-                None,
+-            )
+-            if text_index is None:
+-                new_content.insert(0, {"type": "text", "text": prefix})
+-            else:
+-                text_part = new_content[text_index]
+-                new_content[text_index] = {
+-                    **text_part,
+-                    "text": ConsoleChatController._preserve_plugin_text_transform(
+-                        text_part["text"], prefix + text_part["text"]
+-                    ),
+-                }
+-        else:
+-            return provider_messages
+-        updated = list(provider_messages)
+-        updated[final_index] = {**message, "content": new_content}
+-        return updated
+ 
+     def _notify_submission_accepted(
+         self,
+         *,
+         session_id: str,
+         preserve_composer: bool = False,
+         origin: ConsoleSubmissionOrigin,
+         entry_id: str | None,
+         context_epoch: int,
+         preparation_id: str | None = None,
+diff --git a/tldw_chatbook/Chat/console_interrupt_rounds.py b/tldw_chatbook/Chat/console_interrupt_rounds.py
+index 16a21e5970..e84e1ec849 100644
+--- a/tldw_chatbook/Chat/console_interrupt_rounds.py
++++ b/tldw_chatbook/Chat/console_interrupt_rounds.py
+@@ -32,34 +32,36 @@ from contextlib import nullcontext
+ from dataclasses import dataclass
+ from typing import TYPE_CHECKING, Any, Literal
+ 
+ if TYPE_CHECKING:
+     from tldw_chatbook.Agents.hook_permissions import HookPermissions
+     from tldw_chatbook.Chat.console_chat_controller import (
+         ApprovalDecision,
+         ApprovalDecisions,
+         BuiltinToolGate,
+         BuiltinToolProvider,
+-        LocalToolProvider,
+         MCPPendingCall,
+         MCPToolProvider,
+         ManagedSkillProposalGate,
+         RawShellToolProvider,
+         ToolCall,
+         ToolReviewDecision,
+         ToolReviewValue,
+         VirtualCliProvider,
+     )
+ 
+ from loguru import logger
+ 
+ from tldw_chatbook.Agents.human_input_wait import use_human_input_wait
++from .console_local_review_hook import (
++    build_local_review_hook as build_local_review_hook,
++)
+ from tldw_chatbook.Chat.console_chat_models import (
+     CONSOLE_PENDING_APPROVAL_KIND,
+     CONSOLE_PENDING_HOOK_REVIEW_KIND,
+     CONSOLE_PENDING_QUESTION_KIND,
+     CONSOLE_PENDING_SKILL_INSTALL_KIND,
+     CONSOLE_PENDING_SKILL_SCRIPT_KIND,
+     CONSOLE_PENDING_WORKTREE_MERGE_KIND,
+ )
+ from tldw_chatbook.Chat.console_hook_review_host import InitialHookReviewMixin
+ 
+@@ -5404,178 +5406,20 @@ def build_combined_review_hook(
+                 )
+                 if first_exc is None:
+                     first_exc = exc
+         if first_exc is not None:
+             raise first_exc
+         return verdicts
+ 
+     return review_tool_calls
+ 
+ 
+-def build_local_review_hook(
+-    provider: "LocalToolProvider",
+-    request_approvals: Callable[[list["MCPPendingCall"]], dict[str, str]],
+-    *,
+-    read_global_ToolReviewValue: Callable[[], Any],
+-    read_global_USER_DENIED_REFUSAL: Callable[[], Any],
+-    read_global__APPROVAL_SCOPE_RANK: Callable[[], Any],
+-    read_global__APPROVING_DECISIONS: Callable[[], Any],
+-    read_global__review_decision: Callable[[], Any],
+-    read_global__sibling_approval_refusals: Callable[[], Any],
+-    read_global__stamp_answer_provenance: Callable[[], Any],
+-    read_global_approval_was_unanswered: Callable[[], Any],
+-) -> Callable[[list["ToolCall"], str], dict[str, ToolReviewValue]]:
+-    """Build this run's review_tool_calls hook for the local provider.
+-
+-    Identical discipline to build_mcp_review_hook (see its docstring for
+-    the full rationale -- every binding point applies unchanged here):
+-    clear-first stamps at entry (I3: a raising approval round trip must
+-    never leave a stale prior-turn stamp live for the fail-open runtime
+-    to hand to `invoke()`), and exactly ONE approval round trip per batch.
+-    Name-keyed stamps keep the widest approved scope because the provider
+-    gate is tool-scoped; per-call refusal verdicts stop only the denied
+-    sibling before dispatch. Calls the provider doesn't own resolve
+-    `None` from `pending_gate_for` and never enter the batch.
+-
+-    Args:
+-        provider: This run's already-composed `LocalToolProvider` (built
+-            by `_compose_local_provider` on the main loop before the
+-            run's worker thread starts).
+-        request_approvals: The bound `ConsoleChatController.
+-            request_mcp_approvals` method for THIS run -- the same
+-            approval-card bridge the MCP hook uses; it consumes
+-            `MCPPendingCall` payloads regardless of origin.
+-
+-    Returns:
+-        A `review_tool_calls`-shaped callable suitable for `LoopDeps`/
+-        `AgentService(review_tool_calls=...)`.
+-    """
+-
+-    def review_tool_calls(
+-        calls: list["ToolCall"], run_id: str
+-    ) -> dict[str, read_global_ToolReviewValue()]:
+-        # I3: clear THIS turn's stamps FIRST -- see build_mcp_review_hook.
+-        # PR2a Task 5: scoped to `run_id`, so the clear cannot reach a
+-        # concurrent sibling run's live verdicts.
+-        provider.apply_batch_decisions(run_id, {})
+-        pending: list["MCPPendingCall"] = []
+-        for call in calls:
+-            gate = provider.pending_gate_for(
+-                call.name,
+-                call.args,
+-                str(getattr(call, "call_id", "") or ""),
+-                # Qodo review #10: the local owner must receive the call's
+-                # advisory rationale like the MCP and builtin owners do, or
+-                # every local approval row renders without model context.
+-                rationale=str(getattr(call, "rationale", "") or ""),
+-                run_id=run_id,
+-            )
+-            if gate is not None:
+-                pending.append(gate)
+-        if not pending:
+-            return {}
+-        decisions = request_approvals(pending)
+-
+-        def _decision_for(row: "MCPPendingCall") -> str | None:
+-            key = str(getattr(row, "call_id", "") or "")
+-            if key and key in decisions:
+-                return decisions[key]
+-            return decisions.get(row.llm_name)
+-
+-        ordinary_pending = [
+-            row
+-            for row in pending
+-            if not (
+-                row.llm_name == "fs_search_index"
+-                and row.options == ("approve_once", "deny")
+-            )
+-        ]
+-        approvals: dict[str, str] = {}
+-        denied: set[str] = set()
+-        for row in ordinary_pending:
+-            decision = _decision_for(row)
+-            if decision is None:
+-                continue
+-            if decision == "deny":
+-                denied.add(row.llm_name)
+-                continue
+-            current = approvals.get(row.llm_name)
+-            if current is None or read_global__APPROVAL_SCOPE_RANK().get(
+-                decision, 0
+-            ) > read_global__APPROVAL_SCOPE_RANK().get(current, 0):
+-                approvals[row.llm_name] = decision
+-        stamps = dict(approvals)
+-        for name in denied:
+-            stamps.setdefault(name, "deny")
+-        provider.apply_batch_decisions(
+-            run_id,
+-            read_global__stamp_answer_provenance()(stamps, ordinary_pending, decisions),
+-        )
+-        provider.apply_index_read_decisions(run_id, pending, decisions)
+-        reviewed_call_ids = {row.call_id for row in pending if row.call_id}
+-        provider.apply_promotion_decisions(
+-            run_id,
+-            [call for call in calls if call.call_id in reviewed_call_ids],
+-            decisions,
+-        )
+-
+-        # task-32280 fix round (Critical): mirrors the MCP hook's own
+-        # record_user_denial call a few hundred lines up. `run_agent_loop`
+-        # turns any non-"proceed" verdict straight into the call's result
+-        # and skips dispatch entirely, so `LocalToolProvider.invoke_detailed`
+-        # -- the only thing that otherwise records a local refusal -- never
+-        # runs for a hook-level denied call. Record at the point the denial
+-        # becomes final, through the provider's own audit seam.
+-        verdicts: dict[str, read_global_ToolReviewValue()] = {
+-            row.llm_name: "proceed" for row in pending
+-        }
+-        for row in pending:
+-            if _decision_for(row) != "deny":
+-                continue
+-            # R23: as in the MCP hook -- a deny the user never chose (Stop
+-            # mid-card) is already logged as `denied-unresolved`; only the
+-            # REFUSAL below applies to it, not a second audit row.
+-            if not read_global_approval_was_unanswered()(row, decisions):
+-                provider.record_user_denial(row.llm_name)
+-            key = str(getattr(row, "call_id", "") or "") or row.llm_name
+-            verdicts[key] = read_global__review_decision()(
+-                row,
+-                decisions,
+-                read_global_USER_DENIED_REFUSAL().format(name=row.llm_name),
+-            )
+-        verdicts.update(
+-            read_global__sibling_approval_refusals()(
+-                pending,
+-                _decision_for,
+-                decisions,
+-                lambda _row: read_global__APPROVING_DECISIONS(),
+-                lambda row, timed_out: provider.record_hook_refusal(
+-                    row.llm_name, timed_out=timed_out
+-                ),
+-            )
+-        )
+-        # Preserve settled name-wide refusal fallback before adding facts.
+-        verdicts.update(
+-            {
+-                row.call_id or row.llm_name: read_global__review_decision()(
+-                    row, decisions, "proceed"
+-                )
+-                for row in pending
+-                if verdicts.get(row.call_id or row.llm_name, verdicts[row.llm_name])
+-                == "proceed"
+-            }
+-        )
+-        return verdicts
+-
+-    return review_tool_calls
+-
+-
+ def build_managed_skill_promotion_review_hook(
+     gate: "ManagedSkillProposalGate",
+     request_approvals: Callable[[list["MCPPendingCall"]], dict[str, str]],
+     *,
+     read_global_ToolReviewValue: Callable[[], Any],
+     read_global_USER_DENIED_REFUSAL: Callable[[], Any],
+     read_global__review_decision: Callable[[], Any],
+ ) -> Callable[[list["ToolCall"], str], dict[str, ToolReviewValue]]:
+     """Build the primary-only approval hook for read-only skill proposals."""
+ 
+diff --git a/tldw_chatbook/Chat/console_local_review_hook.py b/tldw_chatbook/Chat/console_local_review_hook.py
+new file mode 100644
+index 0000000000..499ecd9ec2
+--- /dev/null
++++ b/tldw_chatbook/Chat/console_local_review_hook.py
+@@ -0,0 +1,172 @@
++"""One-run approval review hook for local tools."""
++
++from __future__ import annotations
++
++from typing import Any, Callable
++from typing import TYPE_CHECKING
++
++if TYPE_CHECKING:
++    from .console_chat_controller import (
++        LocalToolProvider,
++        MCPPendingCall,
++        ToolCall,
++        ToolReviewValue,
++    )
++
++
++def build_local_review_hook(
++    provider: "LocalToolProvider",
++    request_approvals: Callable[[list["MCPPendingCall"]], dict[str, str]],
++    *,
++    read_global_ToolReviewValue: Callable[[], Any],
++    read_global_USER_DENIED_REFUSAL: Callable[[], Any],
++    read_global__APPROVAL_SCOPE_RANK: Callable[[], Any],
++    read_global__APPROVING_DECISIONS: Callable[[], Any],
++    read_global__review_decision: Callable[[], Any],
++    read_global__sibling_approval_refusals: Callable[[], Any],
++    read_global__stamp_answer_provenance: Callable[[], Any],
++    read_global_approval_was_unanswered: Callable[[], Any],
++) -> Callable[[list["ToolCall"], str], dict[str, ToolReviewValue]]:
++    """Build this run's review_tool_calls hook for the local provider.
++
++    Identical discipline to build_mcp_review_hook (see its docstring for
++    the full rationale -- every binding point applies unchanged here):
++    clear-first stamps at entry (I3: a raising approval round trip must
++    never leave a stale prior-turn stamp live for the fail-open runtime
++    to hand to `invoke()`), and exactly ONE approval round trip per batch.
++    Name-keyed stamps keep the widest approved scope because the provider
++    gate is tool-scoped; per-call refusal verdicts stop only the denied
++    sibling before dispatch. Calls the provider doesn't own resolve
++    `None` from `pending_gate_for` and never enter the batch.
++
++    Args:
++        provider: This run's already-composed `LocalToolProvider` (built
++            by `_compose_local_provider` on the main loop before the
++            run's worker thread starts).
++        request_approvals: The bound `ConsoleChatController.
++            request_mcp_approvals` method for THIS run -- the same
++            approval-card bridge the MCP hook uses; it consumes
++            `MCPPendingCall` payloads regardless of origin.
++
++    Returns:
++        A `review_tool_calls`-shaped callable suitable for `LoopDeps`/
++        `AgentService(review_tool_calls=...)`.
++    """
++
++    def review_tool_calls(
++        calls: list["ToolCall"], run_id: str
++    ) -> dict[str, read_global_ToolReviewValue()]:
++        # I3: clear THIS turn's stamps FIRST -- see build_mcp_review_hook.
++        # PR2a Task 5: scoped to `run_id`, so the clear cannot reach a
++        # concurrent sibling run's live verdicts.
++        provider.apply_batch_decisions(run_id, {})
++        pending: list["MCPPendingCall"] = []
++        for call in calls:
++            gate = provider.pending_gate_for(
++                call.name,
++                call.args,
++                str(getattr(call, "call_id", "") or ""),
++                # Qodo review #10: the local owner must receive the call's
++                # advisory rationale like the MCP and builtin owners do, or
++                # every local approval row renders without model context.
++                rationale=str(getattr(call, "rationale", "") or ""),
++                run_id=run_id,
++            )
++            if gate is not None:
++                pending.append(gate)
++        if not pending:
++            return {}
++        decisions = request_approvals(pending)
++
++        def _decision_for(row: "MCPPendingCall") -> str | None:
++            key = str(getattr(row, "call_id", "") or "")
++            if key and key in decisions:
++                return decisions[key]
++            return decisions.get(row.llm_name)
++
++        ordinary_pending = [
++            row
++            for row in pending
++            if not (
++                row.llm_name == "fs_search_index"
++                and row.options == ("approve_once", "deny")
++            )
++        ]
++        approvals: dict[str, str] = {}
++        denied: set[str] = set()
++        for row in ordinary_pending:
++            decision = _decision_for(row)
++            if decision is None:
++                continue
++            if decision == "deny":
++                denied.add(row.llm_name)
++                continue
++            current = approvals.get(row.llm_name)
++            if current is None or read_global__APPROVAL_SCOPE_RANK().get(
++                decision, 0
++            ) > read_global__APPROVAL_SCOPE_RANK().get(current, 0):
++                approvals[row.llm_name] = decision
++        stamps = dict(approvals)
++        for name in denied:
++            stamps.setdefault(name, "deny")
++        provider.apply_batch_decisions(
++            run_id,
++            read_global__stamp_answer_provenance()(stamps, ordinary_pending, decisions),
++        )
++        provider.apply_index_read_decisions(run_id, pending, decisions)
++        reviewed_call_ids = {row.call_id for row in pending if row.call_id}
++        provider.apply_promotion_decisions(
++            run_id,
++            [call for call in calls if call.call_id in reviewed_call_ids],
++            decisions,
++        )
++
++        # task-32280 fix round (Critical): mirrors the MCP hook's own
++        # record_user_denial call a few hundred lines up. `run_agent_loop`
++        # turns any non-"proceed" verdict straight into the call's result
++        # and skips dispatch entirely, so `LocalToolProvider.invoke_detailed`
++        # -- the only thing that otherwise records a local refusal -- never
++        # runs for a hook-level denied call. Record at the point the denial
++        # becomes final, through the provider's own audit seam.
++        verdicts: dict[str, read_global_ToolReviewValue()] = {
++            row.llm_name: "proceed" for row in pending
++        }
++        for row in pending:
++            if _decision_for(row) != "deny":
++                continue
++            # R23: as in the MCP hook -- a deny the user never chose (Stop
++            # mid-card) is already logged as `denied-unresolved`; only the
++            # REFUSAL below applies to it, not a second audit row.
++            if not read_global_approval_was_unanswered()(row, decisions):
++                provider.record_user_denial(row.llm_name)
++            key = str(getattr(row, "call_id", "") or "") or row.llm_name
++            verdicts[key] = read_global__review_decision()(
++                row,
++                decisions,
++                read_global_USER_DENIED_REFUSAL().format(name=row.llm_name),
++            )
++        verdicts.update(
++            read_global__sibling_approval_refusals()(
++                pending,
++                _decision_for,
++                decisions,
++                lambda _row: read_global__APPROVING_DECISIONS(),
++                lambda row, timed_out: provider.record_hook_refusal(
++                    row.llm_name, timed_out=timed_out
++                ),
++            )
++        )
++        # Preserve settled name-wide refusal fallback before adding facts.
++        verdicts.update(
++            {
++                row.call_id or row.llm_name: read_global__review_decision()(
++                    row, decisions, "proceed"
++                )
++                for row in pending
++                if verdicts.get(row.call_id or row.llm_name, verdicts[row.llm_name])
++                == "proceed"
++            }
++        )
++        return verdicts
++
++    return review_tool_calls
+diff --git a/tldw_chatbook/Chat/console_project_index_preparation.py b/tldw_chatbook/Chat/console_project_index_preparation.py
+new file mode 100644
+index 0000000000..8895ee4943
+--- /dev/null
++++ b/tldw_chatbook/Chat/console_project_index_preparation.py
+@@ -0,0 +1,72 @@
++"""Exact run-captured project-index scope preparation for Console."""
++
++from __future__ import annotations
++
++from pathlib import Path
++from typing import TYPE_CHECKING
++
++from loguru import logger
++
++if TYPE_CHECKING:
++    from .console_chat_controller import ConsoleChatController
++
++
++def prepare_project_index_scopes(self: ConsoleChatController, admitted_roots):
++    """Retire registry handles opened by scope preparation, including guards."""
++    from tldw_chatbook.Workspaces.project_index.runtime import get_project_index_service
++
++    try:
++        service = get_project_index_service(self.app)
++        with service.registry_connection_scope():
++            return _prepare_project_index_scopes_owned(self, admitted_roots)
++    except Exception:
++        logger.debug("Project index preparation unavailable")
++        return None, {}
++
++
++def _prepare_project_index_scopes_owned(self: ConsoleChatController, admitted_roots):
++    """Read compatible immutable scopes off-loop after exact run capture."""
++    from types import MappingProxyType
++    from tldw_chatbook.Tools.remote_root_types import is_remote, local_root_path
++    from tldw_chatbook.Workspaces.project_index.runtime import (
++        get_project_index_service,
++        project_index_key,
++    )
++
++    scopes = {}
++    service = None
++    for authority in admitted_roots:
++        if is_remote(authority.root):
++            continue
++        try:
++            if not authority.guard(False):
++                continue
++            root = local_root_path(
++                authority.root, site="project index scope preparation"
++            )
++            key = project_index_key(
++                self.app, authority.workspace_id, authority.binding_id, root
++            )
++            service = get_project_index_service(self.app)
++            status = service.status(key)
++            compatible = status.state in {"Ready", "Partial"}
++            if status.state == "Building" and status.indexed > 0:
++                from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
++
++                paths = (
++                    authority.exclusions_provider()
++                    if authority.exclusions_provider
++                    else ()
++                )
++                floor = tuple(
++                    SensitiveExclusion(
++                        "subtree", Path(path).relative_to(root).as_posix()
++                    )
++                    for path in paths
++                )
++                compatible = service.building_coverage(status.scope, floor)
++            if compatible and authority.guard(False):
++                scopes[authority.alias] = status.scope
++        except Exception:  # unavailable optional capability grants no authority
++            logger.debug("Project index unavailable for this run binding")
++    return service, MappingProxyType(scopes)
+diff --git a/tldw_chatbook/Chat/console_settings_durability.py b/tldw_chatbook/Chat/console_settings_durability.py
+index ca7561f5a9..366e538767 100644
+--- a/tldw_chatbook/Chat/console_settings_durability.py
++++ b/tldw_chatbook/Chat/console_settings_durability.py
+@@ -108,10 +108,26 @@ class ConsoleSettingsDurabilityOwner:
+         self._closed = True
+         while self._leases:
+             self._leases_changed.clear()
+             await self._leases_changed.wait()
+         while True:
+             pending = {task for task in self._tasks if not task.done()}
+             self._tasks.intersection_update(pending)
+             if not pending:
+                 return
+             await asyncio.shield(asyncio.gather(*pending, return_exceptions=True))
++
++
++async def shutdown_console_settings_durability(self) -> None:
++    """Drain admitted settings writes without cancelling thread work.
++
++    The coordinator tasks can be awaiting ``asyncio.to_thread`` writes,
++    which cannot be recalled once admitted. Shielding preserves those
++    writes if application shutdown is cancelled; ``_shutdown`` retries
++    this lifecycle pass and does not dispose the Console runtime until the
++    registry is empty.
++    """
++
++    owner = getattr(self, "console_settings_durability_owner", None)
++    if not isinstance(owner, ConsoleSettingsDurabilityOwner):
++        return
++    await owner.close_and_drain()
+diff --git a/tldw_chatbook/UI/Screens/settings_screen.py b/tldw_chatbook/UI/Screens/settings_screen.py
+index 0869f96e60..19ec4dae14 100644
+--- a/tldw_chatbook/UI/Screens/settings_screen.py
++++ b/tldw_chatbook/UI/Screens/settings_screen.py
+@@ -170,26 +170,25 @@ from ...Sync_Interop.sync_readiness import (
+     DEFAULT_SYNC_ELIGIBILITY_REGISTRY,
+     build_sync_readiness_report,
+ )
+ from ...Sync_Interop.manual_sync_control import ManualSyncPreview, ManualSyncRunResult
+ from ...Terminal.contracts import TERMINAL_DISCLOSURE_LINES
+ 
+ # NOTE (boot budget, ADR-097): `Workspaces.assistant_defaults` is imported
+ # lazily at its render/use sites (settings interaction only) so it stays out
+ # of the UI-ready module census.
+ from ...Workspaces.display_state import LIBRARY_WORKSPACE_VISIBILITY_COPY
+-from ...Workspaces.models import RuntimeBindingStatus, WorkspaceAssistantDefaults
++from ...Workspaces.models import WorkspaceAssistantDefaults
+ from ...Workspaces.registry_service import (
+     DEFAULT_WORKSPACE_ID,
+     LocalWorkspaceRegistryService,
+     WorkspaceRegistryServiceError,
+-    binding_exclusion_entries,
+ )
+ from ...Widgets.confirmation_dialog import (
+     QUIT_CANCELLED_NOTICE,
+     ConfirmationDialog,
+     await_quit_prompt,
+ )
+ from ...Widgets.Console.console_endpoint_template_modal import (
+     ConsoleEndpointTemplateModal,
+ )
+ from ...Widgets.destination_workbench import DestinationModeStrip
+@@ -22133,118 +22132,26 @@ class SettingsScreen(BaseAppScreen):
+             record = service.get_persona_profile(persona_id)
+         except Exception:  # noqa: BLE001 -- defaults degrade, never block
+             return None
+         return record if isinstance(record, dict) else None
+ 
+     def _render_workspace_folder_bindings(
+         self,
+         registry: LocalWorkspaceRegistryService,
+         workspace_id: str,
+     ) -> ComposeResult:
+-        """Render the folder-bindings editor for the selected workspace (task 10).
+-
+-        One row per bound folder with its access level and freshness
+-        (recomputed from disk by `list_folder_bindings`), a per-row
+-        ro/rw toggle and remove button, then an add row. Below each
+-        binding sit its exclusion rows (paths the agent cannot see) with
+-        an Unexclude button each, plus a per-binding "Exclude" input row.
+-        Toggle/remove buttons stash `binding_id` as a plain attribute at
+-        compose time (mirrors the conversation browser's `conversation_id`
+-        stash) so the handler never has to parse a uuid out of the button
+-        id; exclusion buttons stash `exclusion_*` attributes instead (the
+-        Unexclude button shares the folder-remove CSS class, and the
+-        class-selected folder handler must stay a no-op on it).
+-        """
+-        from tldw_chatbook.Widgets.Settings_Widgets.project_index_binding_card import ProjectIndexBindingCard
++        """Compose folder controls through the workspace folder helper."""
++        from ..Settings_Modules.workspace_folder_bindings import (
++            render_workspace_folder_bindings,
++        )
+ 
+-        yield Static("Folders (agent file-tool access)", classes="destination-section")
+-        for binding in registry.list_folder_bindings(workspace_id):
+-            access = binding.metadata.get("access", "ro")
+-            freshness = (
+-                "ready" if binding.status == RuntimeBindingStatus.READY else "missing"
+-            )
+-            yield Static(
+-                f"{binding.locator} [{access}] {freshness}",
+-                id=f"settings-workspace-folder-{binding.binding_id}",
+-                classes="settings-detail-row",
+-                markup=False,
+-            )
+-            with Horizontal(classes="settings-input-row"):
+-                toggle_button = Button(
+-                    "Allow write" if access != "rw" else "Read-only",
+-                    id=f"settings-workspace-folder-toggle-{binding.binding_id}",
+-                    classes="settings-workspace-folder-toggle",
+-                    compact=True,
+-                )
+-                toggle_button.binding_id = binding.binding_id
+-                yield toggle_button
+-                remove_button = Button(
+-                    "Remove",
+-                    id=f"settings-workspace-folder-remove-{binding.binding_id}",
+-                    classes="settings-workspace-folder-remove",
+-                    compact=True,
+-                )
+-                remove_button.binding_id = binding.binding_id
+-                yield remove_button
+-            yield self._workspace_folder_result_widget(workspace_id, binding.binding_id)
+-            yield ProjectIndexBindingCard(
+-                binding.binding_id, workspace_id=workspace_id, root=binding.locator,
+-                available=binding.status == RuntimeBindingStatus.READY,
+-            )
+-            # Defensive reader (never the raw metadata list): malformed
+-            # persisted exclusions must render as "Excluded (0)" rather than
+-            # crash pane composition.
+-            exclusions = binding_exclusion_entries(binding)
+-            yield Static(
+-                f"  Excluded ({len(exclusions)}): agent cannot see these",
+-                classes="settings-detail-row",
+-            )
+-            for index, entry in enumerate(exclusions):
+-                with Horizontal(classes="settings-input-row"):
+-                    yield Static(
+-                        f"  {entry.path} ({entry.kind})",
+-                        id=f"settings-workspace-excl-label-{binding.binding_id}-{index}",
+-                        classes="settings-detail-row",
+-                    )
+-                    unexclude_button = Button(
+-                        "Unexclude",
+-                        id=f"settings-workspace-excl-remove-{binding.binding_id}-{index}",
+-                        classes="settings-workspace-folder-remove",
+-                        compact=True,
+-                    )
+-                    # ``exclusion_*`` rather than ``binding_id``: the legacy
+-                    # folder-remove class handler also matches this class and
+-                    # reads ``binding_id`` -- these attrs keep it a no-op here.
+-                    unexclude_button.exclusion_binding_id = binding.binding_id
+-                    unexclude_button.exclusion_path = str(entry.path)
+-                    yield unexclude_button
+-            with Horizontal(classes="settings-input-row"):
+-                yield Input(
+-                    placeholder="path/to/exclude (relative to folder)",
+-                    id=f"settings-workspace-excl-path-{binding.binding_id}",
+-                    classes="settings-compact-input",
+-                )
+-                add_exclusion_button = Button(
+-                    "Exclude",
+-                    id=f"settings-workspace-excl-add-{binding.binding_id}",
+-                    compact=True,
+-                )
+-                add_exclusion_button.exclusion_binding_id = binding.binding_id
+-                yield add_exclusion_button
+-        with Horizontal(classes="settings-input-row"):
+-            yield Input(
+-                placeholder="~/path/to/folder",
+-                id="settings-workspace-folder-path",
+-                classes="settings-compact-input",
+-            )
+-            yield Button("Add folder", id="settings-workspace-folder-add", compact=True)
+-        yield self._workspace_folder_result_widget(workspace_id)
++        yield from render_workspace_folder_bindings(self, registry, workspace_id)
+ 
+     def _workspace_folder_result_widget(
+         self, workspace_id: str, binding_id: str | None = None
+     ) -> Static:
+         """Keep the latest folder outcome next to the action that produced it."""
+         result = self._settings_workspace_folder_result
+         text = result[2] if result and result[:2] == (workspace_id, binding_id) else ""
+         suffix = f"-{binding_id}" if binding_id else ""
+         return Static(
+             text,
+diff --git a/tldw_chatbook/UI/Settings_Modules/workspace_folder_bindings.py b/tldw_chatbook/UI/Settings_Modules/workspace_folder_bindings.py
+new file mode 100644
+index 0000000000..a0ebe6494a
+--- /dev/null
++++ b/tldw_chatbook/UI/Settings_Modules/workspace_folder_bindings.py
+@@ -0,0 +1,127 @@
++"""Folder binding and project-index composition for the Settings workspace card."""
++
++from __future__ import annotations
++
++from typing import TYPE_CHECKING
++
++from textual.app import ComposeResult
++from textual.containers import Horizontal
++from textual.widgets import Button, Input, Static
++
++from ...Workspaces.models import RuntimeBindingStatus
++from ...Workspaces.registry_service import (
++    LocalWorkspaceRegistryService,
++    binding_exclusion_entries,
++)
++
++if TYPE_CHECKING:
++    from ..Screens.settings_screen import SettingsScreen
++
++
++def render_workspace_folder_bindings(
++    self: SettingsScreen,
++    registry: LocalWorkspaceRegistryService,
++    workspace_id: str,
++) -> ComposeResult:
++    """Render the folder-bindings editor for the selected workspace (task 10).
++
++    One row per bound folder with its access level and freshness
++    (recomputed from disk by `list_folder_bindings`), a per-row
++    ro/rw toggle and remove button, then an add row. Below each
++    binding sit its exclusion rows (paths the agent cannot see) with
++    an Unexclude button each, plus a per-binding "Exclude" input row.
++    Toggle/remove buttons stash `binding_id` as a plain attribute at
++    compose time (mirrors the conversation browser's `conversation_id`
++    stash) so the handler never has to parse a uuid out of the button
++    id; exclusion buttons stash `exclusion_*` attributes instead (the
++    Unexclude button shares the folder-remove CSS class, and the
++    class-selected folder handler must stay a no-op on it).
++    """
++    from tldw_chatbook.Widgets.Settings_Widgets.project_index_binding_card import (
++        ProjectIndexBindingCard,
++    )
++
++    yield Static("Folders (agent file-tool access)", classes="destination-section")
++    for binding in registry.list_folder_bindings(workspace_id):
++        access = binding.metadata.get("access", "ro")
++        freshness = (
++            "ready" if binding.status == RuntimeBindingStatus.READY else "missing"
++        )
++        yield Static(
++            f"{binding.locator} [{access}] {freshness}",
++            id=f"settings-workspace-folder-{binding.binding_id}",
++            classes="settings-detail-row",
++            markup=False,
++        )
++        with Horizontal(classes="settings-input-row"):
++            toggle_button = Button(
++                "Allow write" if access != "rw" else "Read-only",
++                id=f"settings-workspace-folder-toggle-{binding.binding_id}",
++                classes="settings-workspace-folder-toggle",
++                compact=True,
++            )
++            toggle_button.binding_id = binding.binding_id
++            yield toggle_button
++            remove_button = Button(
++                "Remove",
++                id=f"settings-workspace-folder-remove-{binding.binding_id}",
++                classes="settings-workspace-folder-remove",
++                compact=True,
++            )
++            remove_button.binding_id = binding.binding_id
++            yield remove_button
++        yield self._workspace_folder_result_widget(workspace_id, binding.binding_id)
++        yield ProjectIndexBindingCard(
++            binding.binding_id,
++            workspace_id=workspace_id,
++            root=binding.locator,
++            available=binding.status == RuntimeBindingStatus.READY,
++        )
++        # Defensive reader (never the raw metadata list): malformed
++        # persisted exclusions must render as "Excluded (0)" rather than
++        # crash pane composition.
++        exclusions = binding_exclusion_entries(binding)
++        yield Static(
++            f"  Excluded ({len(exclusions)}): agent cannot see these",
++            classes="settings-detail-row",
++        )
++        for index, entry in enumerate(exclusions):
++            with Horizontal(classes="settings-input-row"):
++                yield Static(
++                    f"  {entry.path} ({entry.kind})",
++                    id=f"settings-workspace-excl-label-{binding.binding_id}-{index}",
++                    classes="settings-detail-row",
++                )
++                unexclude_button = Button(
++                    "Unexclude",
++                    id=f"settings-workspace-excl-remove-{binding.binding_id}-{index}",
++                    classes="settings-workspace-folder-remove",
++                    compact=True,
++                )
++                # ``exclusion_*`` rather than ``binding_id``: the legacy
++                # folder-remove class handler also matches this class and
++                # reads ``binding_id`` -- these attrs keep it a no-op here.
++                unexclude_button.exclusion_binding_id = binding.binding_id
++                unexclude_button.exclusion_path = str(entry.path)
++                yield unexclude_button
++        with Horizontal(classes="settings-input-row"):
++            yield Input(
++                placeholder="path/to/exclude (relative to folder)",
++                id=f"settings-workspace-excl-path-{binding.binding_id}",
++                classes="settings-compact-input",
++            )
++            add_exclusion_button = Button(
++                "Exclude",
++                id=f"settings-workspace-excl-add-{binding.binding_id}",
++                compact=True,
++            )
++            add_exclusion_button.exclusion_binding_id = binding.binding_id
++            yield add_exclusion_button
++    with Horizontal(classes="settings-input-row"):
++        yield Input(
++            placeholder="~/path/to/folder",
++            id="settings-workspace-folder-path",
++            classes="settings-compact-input",
++        )
++        yield Button("Add folder", id="settings-workspace-folder-add", compact=True)
++    yield self._workspace_folder_result_widget(workspace_id)
+diff --git a/tldw_chatbook/app_lifecycle.py b/tldw_chatbook/app_lifecycle.py
+index cb8ba76a02..3edd6d7b4e 100644
+--- a/tldw_chatbook/app_lifecycle.py
++++ b/tldw_chatbook/app_lifecycle.py
+@@ -32,23 +32,20 @@ from typing import TYPE_CHECKING, Any
+ 
+ from loguru import logger
+ from loguru import logger as loguru_logger
+ from textual import work
+ from textual.message_pump import active_message_pump
+ from textual.worker import Worker, WorkerCancelled, WorkerState
+ 
+ from tldw_chatbook.app_keep_alive import keep_alive_notice, retire_dead_pump
+ from tldw_chatbook.app_service_wiring import TldwCli  # class proxy (see its docstring)
+ from tldw_chatbook.Chat.console_runtime import dispose_console_runtime
+-from tldw_chatbook.Chat.console_settings_durability import (
+-    ConsoleSettingsDurabilityOwner,
+-)
+ from tldw_chatbook.config import (
+     get_cli_config_path,
+     get_cli_setting,
+     persist_cli_config_for_shutdown,
+ )
+ from tldw_chatbook.Constants import TAB_ARTIFACTS
+ from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+ from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+ from tldw_chatbook.UI.Navigation.shell_destinations import get_shell_destination
+ from tldw_chatbook.Utils.app_shutdown import arm_exit_watchdog, unregister_running_app
+@@ -596,33 +593,24 @@ class LifecycleMixin:
+         task = getattr(self, "_terminal_session_manager_shutdown_task", None)
+         if task is None:
+             task = asyncio.create_task(
+                 self._run_terminal_session_manager_shutdown(),
+                 name="shutdown_terminal_session_manager",
+             )
+             self._terminal_session_manager_shutdown_task = task
+         await asyncio.shield(task)
+ 
+     async def _shutdown_console_settings_durability(self) -> None:
+-        """Drain admitted settings writes without cancelling thread work.
+-
+-        The coordinator tasks can be awaiting ``asyncio.to_thread`` writes,
+-        which cannot be recalled once admitted. Shielding preserves those
+-        writes if application shutdown is cancelled; ``_shutdown`` retries
+-        this lifecycle pass and does not dispose the Console runtime until the
+-        registry is empty.
+-        """
++        """Drain admitted settings writes without cancelling thread work."""
++        from .Chat.console_settings_durability import shutdown_console_settings_durability
+ 
+-        owner = getattr(self, "console_settings_durability_owner", None)
+-        if not isinstance(owner, ConsoleSettingsDurabilityOwner):
+-            return
+-        await owner.close_and_drain()
++        await shutdown_console_settings_durability(self)
+ 
+     @property
+     def meeting_session_owner(self):
+         """App-owned meeting session owner, built on first use.
+ 
+         Deferred so ``Audio.meeting_owner`` and the session/tap/wav modules it
+         pulls in are not resident at ``_ui_ready``: the UI-ready module census
+         (``Tests/Performance/test_ui_ready_module_census.py``) ratchets that
+         count, and these four modules only matter once someone opens Meetings
+         or presses a Console voice control.

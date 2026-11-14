@@ -50,7 +50,7 @@ goes.)
 
 ## Layout tour
 
-![File Notes workspace](../images/library/file-notes.svg)
+![Folder files with a demo folder linked and welcome.md open](../images/library/file-notes.svg)
 
 - **Source strip** (above the workspace) — **Library notes** | **Folder
   files**, with **Folder files** marked as the selected source. At wide sizes
@@ -74,8 +74,13 @@ goes.)
   folder is already configured, a **Use \<folder\>** button offers that
   folder directly. Once linked, the status becomes "Linked · Local folder:
   \<folder\>" (or "Checking · Local folder: …" / "Offline · Local folder: …"
-  when the folder can't be verified) and the button relabels to
-  **Change…**. **Details** opens the read-only "File Notes folder details"
+  when the folder can't be verified, or "Warning · Local folder: …" when its
+  recovery copy needs attention) and the button relabels to
+  **Change…**. On a narrow terminal, down to 40 columns, the state word
+  stays whole: "Local folder:" is dropped first, then the middle of the
+  folder name (`Linked · Res...tes`), then the name itself; where only one
+  state word fits, "Offline" stays and "· Warning" goes. **Details** opens
+  the read-only "File Notes folder details"
   dialog. A folder-change reason that is currently owning the row (see
   "While a folder change runs" below) replaces this summary until you try
   again; the linked-folder detail stays available in the row's tooltip and
@@ -86,7 +91,10 @@ goes.)
   repository (a `git rev-parse` check runs once per linked folder, and a
   trusted Session Git repository counts too), and "· N session change(s)"
   otherwise — a plain folder never says "Git" (task-32543). A running or
-  failed Git operation, or a folder problem, takes this slot instead.
+  failed Git operation, or a folder problem, takes this slot instead. So does
+  a background refresh of the folder that fails ("· Refresh failed"), even
+  while a narrow navigator hides the work area; it clears on the next refresh
+  that succeeds.
 - **Folder navigator** (left) — a **New** action, a "File contents…" search
   input, the **Files** tree of everything under the linked folder, and a
   **Search results** tree that appears only while a query is active. Directly
@@ -113,6 +121,26 @@ goes.)
   file open there is no save state and no body box: the status line reads
   "No file open." rather than claiming a save, and the editor appears when
   there is a file to put in it.
+- **Narrow terminals (under 80 columns)** — Folder files switches between
+  the navigator and the file work area. Opening a file switches to the work
+  area, which takes the whole width, and its **‹ Files** returns to the
+  navigator with focus in the **Files** tree. A click or key press right after
+  a resize keeps the control you chose; the resize's focus restore never takes
+  it back. From 60 columns the navigator keeps a narrow work area beside
+  the **Files** pane. Below 60 the **Files** pane takes the whole width and
+  the work area stays hidden until you open or select a file, so **Tab**
+  never lands on a control you cannot see. Reopening Folder files with its
+  grip from the work area gives the navigator the whole width too. **New**,
+  any open or save that fails or is refused, and a conflict with the file
+  on disk also bring the work area forward, with its message and recovery
+  (for example "Save failed" and "Next: Save Copy."). Cancelling **New**
+  returns to the navigator with **New** focused. While a save failure or a
+  conflict stands, a resize below 60 columns keeps the work area in view.
+  **‹ Files** still returns to the navigator; opening another file is then
+  refused and brings the failure back. While the work area is hidden, the
+  navigator's header shows its own **Manage** beside **New**, in the Tab
+  order: it opens the work area in Manage, where **Review
+  session changes (N)** opens Session Git, with or without a file open.
 - **Session Git panel** — **Manage** → **Review session changes (N)** opens
   the staging, commit, and guarded-push panel described below;
   from the row list, **Esc** or **‹ Files** returns to the files.
@@ -156,6 +184,7 @@ button does that job instead.
 |---|---|
 | **Choose folder…** / **Change…** | Opens the "Choose File Notes Folder" picker; the choice is saved to `[file_notes] root` in config.toml. It opens on the linked folder when there is one, and otherwise on the folder you last picked through it (`[file_notes] browse`) — or your home directory the first time. The **Folder path** field holds focus from the moment the picker opens, with the folder it opened on selected, so the first thing you type replaces that path rather than going into the file listing (task-32606). Press **Enter** to browse into what you typed, or **Select folder** to use it right away without needing Enter first; an invalid path shows an inline reason and leaves the picker open. The listing opens with folders first in name order (**Sort** still offers discovery order and the rest), each folder saying how many notes sit directly inside it and marking an Obsidian vault as `· vault`; **Ctrl+R** offers the folders you last chose through this door and **Enter** on one uses it without browsing (task-32611, task-32643) |
 | **Details** | Opens "File Notes folder details" — a read-only status report; **Close** or **Esc** dismisses it |
+| **Review…** | Appears only while a restored backup's pairing for this folder awaits your review — the folder line then reads "Warning · …", and the button's tooltip reads "Review the recovered folder pairing". Opens the pairing review, which compares the folder on disk with its retained recovery copy before you approve it. **Close**, **Esc** or a click outside the review closes it without approving, and focus returns to **Review…** |
 | **Cancel** (folder change) | Appears once a folder change has been running about three seconds — the same moment the line stops being a bare "Changing folder…". Press it to stop waiting: the status reads "Folder change cancelled · previous folder kept" and the folder you already had stays linked |
 | **Keep waiting** (folder change) | Appears beside **Cancel** once a folder change has been running about three seconds. Grants the change one more full 30-second budget; it can be used once per change, then the control goes away |
 | **Choose another** (folder change) | Appears with **Keep waiting**. Abandons the change, keeps the folder you already had, and reopens the folder picker in one step |
@@ -179,6 +208,12 @@ finished saving when you cancelled, in which case the folder line says
 "Folder change finished before it could be stopped · now linked to the new
 folder." and the new folder is the one in use.
 
+A folder change never drops a draft that is not saved yet. While a save has
+failed or conflicts, the change is refused and the folder line reads "Folder
+not changed · your draft is not saved yet." until the draft saves, you start
+another folder change, or you open a file. Save the draft first (**Retry
+save** or **Save Copy**, below), then change the folder.
+
 Abandoning a folder change — by **Cancel**, by **Choose another**, or by
 letting it time out — also stops the folder scan itself. Picking a different
 folder afterwards works normally; you do not have to restart the app.
@@ -192,8 +227,8 @@ notification instead: "Folder change cancelled · previous folder kept".
 
 **Edit** is the ordinary writing view. It keeps the file body prominent and
 shows only safe actions that become relevant to the current state, such as
-Restore, Compare, Resolve conflict, Reload from disk, or Save Copy. Saving is
-automatic; there is no ordinary Save button.
+Restore, Compare, Resolve conflict, Retry save, Reload from disk, or Save Copy.
+Saving is automatic; there is no ordinary Save button.
 
 **Manage** keeps less-frequent controls in clearly named sections:
 
@@ -219,13 +254,21 @@ contextual and restores the recently deleted path without asking for a target.
 | **Restore** | Brings back the most recently deleted file |
 | **Protect** / **Unprotect** | Toggles protection on the open file ("Protected." / "Unprotected."); every save to a protected file first stores a checkpoint of its previous contents in the local recovery database |
 | **Reload** / **Reload from disk** / **Discard draft and reload** | Re-reads the open file from disk. **Reload from disk** becomes immediately visible in Conflict; in Error, the destructive label is shown. The first activation opens a confirmation with **Cancel** focused; only **Discard draft and load disk** replaces the editor contents |
+| **Retry save** | Appears only after a save fails (Error). Runs the save again with the editor text unchanged and returns focus to the file body; no typing needed. A Conflict does not offer it: there the choices are **Compare**, **Resolve conflict**, **Reload from disk** and **Save Copy** |
 | **Compare** | Appears only for a Conflict and opens a read-only Base / Draft / Disk comparison without resolving the conflict or changing the editor |
 | **Resolve conflict** | Appears only for a Conflict and discloses the three bounded choices described below; none overwrites the changed disk file |
 | **Save copy** | Opens a **Save copy as** task; **Save Copy** writes the complete editor draft to that absent path. It is available as an ordinary Manage action and as a safe recovery action when relevant |
 | **Export exact copy** | Replaces **Save copy** for a large read-only file and opens a named path task that streams the complete current disk bytes, not the visible excerpt, to an absent path |
 | **Refresh** | Re-scans the folder and rebuilds the **Files** tree |
 
-Saving is automatic: edit and the status walks Dirty → Saving → Saved. If the
+Saving is automatic: edit and the status walks Dirty → Saving → Saved. If a
+save fails, the status reads "Save failed — your draft remains in the editor.
+Next: Save Copy." and **Retry save** tries again. If the linked folder cannot
+be reached while a draft is not saved (a failed save or a conflict), the status
+ends "Next: Reconnect the folder.": a folder change would drop the draft, and
+Save Copy writes into the same folder, so neither works until the folder is
+back. Once it is, the next step returns to Save Copy, and **Retry save** writes
+the draft. If the
 file changes on disk underneath you, the status shows Conflict and keeps the
 draft in the editor. **Compare** identifies Base (the body loaded into the
 editor or last saved), Draft (the current editor body), and Disk (the latest
@@ -320,6 +363,12 @@ where it stands:
 | NO ACTION · matches HEAD | The file equals the last commit |
 | BLOCKED · already staged outside Chatbook; manage this path in Git, then Refresh | Hands off — you staged it yourself |
 | BLOCKED · ignored by Git / Git conflict / Git unavailable | Fix the condition outside Chatbook, then **Refresh** |
+
+On a narrow pane the status line switches to a shorter recovery step and
+shortens the reason. When too little room is left for the reason, it is
+dropped: an ignored row reads "BLOCKED · fix ignore, then Refresh", a conflict
+row "BLOCKED · Conflict: use Git; Refresh", and a Git unavailable row
+"BLOCKED · Restore Git first; Refresh".
 
 With no session edits the panel says "No current-session Git changes."
 
@@ -467,7 +516,10 @@ not available.
 | Esc (folder change running) | Leaves Folder files for Library notes, exactly as it does when nothing is running — the folder change is abandoned and the previously linked folder is kept. The same applies to the "‹ Library / Notes" cue, the **Library notes** button, switching rail rows, the command palette and Ctrl+Q: a running folder change never blocks the way out |
 
 Folder files does not register **Ctrl+S** and does not replace it with another
-save shortcut. File edits save automatically.
+save shortcut. File edits save automatically, and **Ctrl+Q** writes a pending
+edit to the file before Chatbook exits. If that write cannot finish (the file
+changed on disk, or the write fails), Chatbook asks 'Quit and discard unsaved
+changes to "<file>"?' with **Keep editing** selected instead of exiting.
 
 ## Related settings & docs
 

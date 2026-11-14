@@ -7,7 +7,7 @@ Export.
 """
 
 import asyncio
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 
 import pytest
@@ -32,8 +32,10 @@ def _seed_report(app, *, status: str = "complete") -> int:
     watchlist_id = int(WatchlistBundleService(db).create("Daily Brief")["id"])
     briefing_id = db.insert_briefing(watchlist_id)
     db.update_briefing(
-        briefing_id, status=status,
-        body_markdown=_SEED_BODY, item_count=1,
+        briefing_id,
+        status=status,
+        body_markdown=_SEED_BODY,
+        item_count=1,
     )
     return briefing_id
 
@@ -127,7 +129,9 @@ async def test_audio_row_shows_play_button():
     briefing_id = _seed_report(app)
     db: SubscriptionsDB = app.subscriptions_db
     script_id = db.insert_briefing_script(
-        briefing_id, preset_id=None, preset_name="Daily Brief",
+        briefing_id,
+        preset_id=None,
+        preset_name="Daily Brief",
         roster_snapshot_json="[]",
     )
     db.update_briefing_script(script_id, status="complete", turns_json="[]")
@@ -135,10 +139,15 @@ async def test_audio_row_shows_play_button():
     # A lexically-safe path: under the real briefing_audio_dir the guard passes
     # without touching disk (the play handler itself checks existence).
     from tldw_chatbook.Subscriptions.briefing_audio import briefing_audio_dir
+
     db.update_briefing_audio(
-        audio_id, status="complete",
-        file_path=str(briefing_audio_dir() / f"script-{script_id}-audio-{audio_id}.wav"),
-        duration_seconds=1.0, turn_count=1,
+        audio_id,
+        status="complete",
+        file_path=str(
+            briefing_audio_dir() / f"script-{script_id}-audio-{audio_id}.wav"
+        ),
+        duration_seconds=1.0,
+        turn_count=1,
     )
     async with _open_artifacts(app) as (screen, pilot):
         screen._start_daily_reports_refresh()
@@ -162,6 +171,7 @@ async def test_demo_cta_starts_the_detached_demo_task():
 
         def run_demo_detached(self):
             self.started += 1
+
             # Match the real contract: run_demo_detached returns an
             # asyncio.Task (or None), which the screen attaches a completion
             # callback to (Qodo #5). A bare object() would not have one.
@@ -179,6 +189,27 @@ async def test_demo_cta_starts_the_detached_demo_task():
             if stub.started:
                 break
         assert stub.started == 1
+
+
+@pytest.mark.asyncio
+async def test_demo_cta_tooltip_is_the_shared_consequence_copy():
+    """TASK-34000.23 (AC#4): the Artifacts CTA's tooltip is the same
+    consequence copy the Library confirm shows, from one shared source --
+    every seeded feed, the hourly checks and the 24 h cadence, in one line."""
+    from tldw_chatbook.Subscriptions.daily_report_demo import (
+        DEMO_SOURCES,
+        daily_report_demo_tooltip,
+    )
+
+    app = _build_test_app(configured_default="artifacts")
+    async with _open_artifacts(app) as (screen, pilot):
+        cta = screen.query_one("#artifacts-daily-report-demo", Button)
+        tooltip = str(cta.tooltip)
+        assert tooltip == daily_report_demo_tooltip()
+        for source in DEMO_SOURCES:
+            assert source["name"] in tooltip
+        assert "hourly" in tooltip and "every 24 h" in tooltip
+        assert "\n" not in tooltip
 
 
 # --- TASK-31801: a failed brief must keep a demo retry affordance -----------
@@ -249,8 +280,10 @@ async def test_successful_retry_refreshes_rows_and_drops_cta():
         def run_demo_detached(self):
             async def _run():
                 db.update_briefing(
-                    fail_id, status="complete",
-                    body_markdown=_SEED_BODY, item_count=1,
+                    fail_id,
+                    status="complete",
+                    body_markdown=_SEED_BODY,
+                    item_count=1,
                 )
                 return {"status": "ok"}
 
@@ -303,8 +336,12 @@ async def test_report_preview_header_uses_formatted_timestamp():
     async with _open_artifacts(app) as (screen, pilot):
         raw = "2026-09-05T23:10:20.123456+00:00"
         screen._previewed_report = {
-            "id": 1, "watchlist_name": "Daily Brief", "watchlist_id": 1,
-            "status": "complete", "created_at": raw, "item_count": 1,
+            "id": 1,
+            "watchlist_name": "Daily Brief",
+            "watchlist_id": 1,
+            "status": "complete",
+            "created_at": raw,
+            "item_count": 1,
             "body_markdown": "## Brief\n\nbody",
         }
         console = Console(width=200)
@@ -472,30 +509,37 @@ async def test_write_report_export_file_writes_markdown_document(tmp_path):
 # --- Qodo fix wave -----------------------------------------------------------
 
 
-def _seed_audio_report(app, *, file_exists: bool) -> tuple[int, Path]:
+def _seed_audio_report(
+    app, *, file_exists: bool, stored_name: str | None = None
+) -> tuple[int, Path]:
     """Seed one complete report with a complete audio row.
 
     The stored path always sits under `briefing_audio_dir()` (so the view
     layer's lexical guard passes and `has_audio` is True); `file_exists`
-    decides whether the file is actually on disk.
+    decides whether the file is actually on disk. `stored_name` stores that
+    bare relative name in the row instead of the absolute path (TASK-39040
+    fix round 1: the listing resolves it against the audio folder).
     """
     from tldw_chatbook.Subscriptions.briefing_audio import briefing_audio_dir
 
     briefing_id = _seed_report(app)
     db: SubscriptionsDB = app.subscriptions_db
     script_id = db.insert_briefing_script(
-        briefing_id, preset_id=None, preset_name="Daily Brief",
+        briefing_id,
+        preset_id=None,
+        preset_name="Daily Brief",
         roster_snapshot_json="[]",
     )
     db.update_briefing_script(script_id, status="complete", turns_json="[]")
     audio_id = db.create_briefing_audio(script_id, voice_snapshot_json="[]")
-    audio_path = (
-        briefing_audio_dir() / f"script-{script_id}-audio-{audio_id}.wav"
-    )
+    name = stored_name or f"script-{script_id}-audio-{audio_id}.wav"
+    audio_path = briefing_audio_dir() / name
     db.update_briefing_audio(
-        audio_id, status="complete",
-        file_path=str(audio_path),
-        duration_seconds=1.0, turn_count=1,
+        audio_id,
+        status="complete",
+        file_path=stored_name or str(audio_path),
+        duration_seconds=1.0,
+        turn_count=1,
     )
     if file_exists:
         audio_path.parent.mkdir(parents=True, exist_ok=True)
@@ -554,6 +598,239 @@ async def test_play_button_missing_file_warns_through_the_validator(monkeypatch)
     assert "no longer exists" in warning
 
 
+# TASK-39040: on dev the Play handler trusted the row the Reports refresh
+# cached, checked only by `validate_path_simple`. The Library and Watchlists
+# players confine the same kind of row to `briefing_audio_dir()` at the press;
+# this PR makes the Artifacts handler do the same, so a row or file that
+# changed after the listing cannot hand an outside file to the player.
+
+_OUTSIDE_REFUSAL = (
+    "This report's audio is not in the app's audio folder, so it was not played."
+)
+
+
+async def _press_play_and_read_refusal(app, screen, pilot, briefing_id, played):
+    screen.query_one(f"#artifacts-report-play-{briefing_id}", Button).press()
+    await _wait_until(
+        pilot, lambda: bool(played) or app.notify.call_count == 1, what="the press"
+    )
+    assert played == [], "an outside path must never reach the player"
+    call = app.notify.call_args
+    return str(call.args[0]), call.kwargs
+
+
+@pytest.mark.asyncio
+async def test_play_button_refuses_a_row_outside_the_audio_dir(tmp_path, monkeypatch):
+    """A cached row whose path now points outside `briefing_audio_dir()` is
+    refused with a literal toast that never carries the path."""
+    from unittest.mock import Mock
+
+    from tldw_chatbook.UI.Screens import artifacts_screen
+
+    app = _build_test_app(configured_default="artifacts")
+    app.notify = Mock()
+    briefing_id, _audio_path = _seed_audio_report(app, file_exists=True)
+    outside = tmp_path / "outside&calc.wav"
+    outside.write_bytes(b"RIFF....WAVEfmt ")
+    played: list[Path] = []
+    monkeypatch.setattr(artifacts_screen, "play_audio_file", played.append)
+
+    async with _open_artifacts(app) as (screen, pilot):
+        await _wait_for_rows(screen, pilot)
+        row = next(r for r in screen._daily_reports if r["id"] == briefing_id)
+        row["audio_file_path"] = str(outside)
+        with _captured_logs() as logged:
+            message, kwargs = await _press_play_and_read_refusal(
+                app, screen, pilot, briefing_id, played
+            )
+
+    assert message == _OUTSIDE_REFUSAL
+    assert kwargs.get("markup") is False
+    assert outside.name not in message and str(tmp_path) not in message
+    leaked = [line for line in logged if outside.name in line]
+    assert leaked == [], "the refusal must not log the row's path"
+
+
+@contextmanager
+def _captured_logs():
+    """Every loguru line emitted inside the block, as text."""
+    from loguru import logger
+
+    lines: list[str] = []
+    sink_id = logger.add(lambda message: lines.append(str(message)), level="DEBUG")
+    try:
+        yield lines
+    finally:
+        logger.remove(sink_id)
+
+
+# Fix round 1 (TASK-39040 review, Important 1). The first commit checked the
+# row with `audio_file_path_is_safe`, which resolves a RELATIVE row against
+# `briefing_audio_dir()`, then played `validate_path_simple`'s unresolved
+# `Path(raw)`, which the player opens against the working directory. Dev has
+# the same play-the-unresolved-path step. The press now plays the resolved,
+# confined result of `validate_path(raw, briefing_audio_dir())`.
+
+
+@pytest.mark.asyncio
+async def test_play_button_plays_a_relative_row_from_inside_the_audio_dir(
+    tmp_path, monkeypatch
+):
+    """A bare relative name in the row means the file in the audio folder,
+    and the player receives that file's absolute path."""
+    from unittest.mock import Mock
+
+    from tldw_chatbook.Subscriptions.briefing_audio import briefing_audio_dir
+    from tldw_chatbook.UI.Screens import artifacts_screen
+
+    monkeypatch.chdir(tmp_path)
+    app = _build_test_app(configured_default="artifacts")
+    app.notify = Mock()
+    briefing_id, audio_path = _seed_audio_report(
+        app, file_exists=True, stored_name="relative-clip.wav"
+    )
+    played: list[Path] = []
+    monkeypatch.setattr(artifacts_screen, "play_audio_file", played.append)
+
+    async with _open_artifacts(app) as (screen, pilot):
+        await _wait_for_rows(screen, pilot)
+        screen.query_one(f"#artifacts-report-play-{briefing_id}", Button).press()
+        await _wait_until(
+            pilot, lambda: bool(played) or app.notify.call_count, what="the press"
+        )
+
+    assert played == [audio_path.resolve()]
+    assert played[0].is_absolute()
+    assert played[0].parent == briefing_audio_dir().resolve()
+    app.notify.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_play_button_never_plays_a_relative_row_from_the_working_directory(
+    tmp_path, monkeypatch
+):
+    """The same relative name with the file only in the working directory is
+    not in the audio folder, so nothing is played."""
+    from unittest.mock import Mock
+
+    from tldw_chatbook.UI.Screens import artifacts_screen
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "cwd-only-clip.wav").write_bytes(b"RIFF....WAVEfmt ")
+    app = _build_test_app(configured_default="artifacts")
+    app.notify = Mock()
+    briefing_id, audio_path = _seed_audio_report(
+        app, file_exists=False, stored_name="cwd-only-clip.wav"
+    )
+    audio_path.unlink(missing_ok=True)
+    played: list[Path] = []
+    monkeypatch.setattr(artifacts_screen, "play_audio_file", played.append)
+
+    async with _open_artifacts(app) as (screen, pilot):
+        await _wait_for_rows(screen, pilot)
+        screen.query_one(f"#artifacts-report-play-{briefing_id}", Button).press()
+        await _wait_until(
+            pilot, lambda: bool(played) or app.notify.call_count, what="the press"
+        )
+
+    assert played == [], "a file outside the audio folder must never be played"
+    assert "no longer exists" in str(app.notify.call_args.args[0])
+
+
+@pytest.mark.asyncio
+async def test_play_button_never_hands_a_dash_leading_name_to_the_player_as_an_option(
+    tmp_path, monkeypatch
+):
+    """A row named `-clip.wav` reaches the REAL player's argv as an absolute
+    path, never as a bare `-clip.wav` that the player would parse as an
+    option. Only `audio_player`'s own `subprocess` reference is faked, so the
+    app's other processes are untouched."""
+    import subprocess
+    import types
+    from unittest.mock import MagicMock, Mock
+
+    from tldw_chatbook.TTS import audio_player
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "-clip.wav").write_bytes(b"RIFF....WAVEfmt ")
+    app = _build_test_app(configured_default="artifacts")
+    app.notify = Mock()
+    briefing_id, _audio_path = _seed_audio_report(
+        app, file_exists=True, stored_name="-clip.wav"
+    )
+    spawned: list[list[str]] = []
+
+    def popen(argv, **kwargs):
+        spawned.append([str(part) for part in argv])
+        process = MagicMock()
+        process.poll.return_value = None
+        process.wait.side_effect = lambda *a, **k: 0
+        return process
+
+    monkeypatch.setattr(
+        audio_player,
+        "subprocess",
+        types.SimpleNamespace(
+            Popen=popen,
+            DEVNULL=subprocess.DEVNULL,
+            PIPE=subprocess.PIPE,
+            TimeoutExpired=subprocess.TimeoutExpired,
+        ),
+    )
+    player = audio_player.SimpleAudioPlayer()
+    player._system = "Darwin"  # afplay: deterministic on any host, no PATH probe
+    monkeypatch.setattr(audio_player, "_audio_player_instance", player)
+
+    async with _open_artifacts(app) as (screen, pilot):
+        await _wait_for_rows(screen, pilot)
+        screen.query_one(f"#artifacts-report-play-{briefing_id}", Button).press()
+        await _wait_until(
+            pilot, lambda: bool(spawned) or app.notify.call_count, what="the press"
+        )
+    player.stop()
+
+    assert len(spawned) == 1, (spawned, app.notify.call_args_list)
+    argv = spawned[0]
+    assert "-clip.wav" not in argv
+    assert Path(argv[-1]).is_absolute() and Path(argv[-1]).name == "-clip.wav"
+
+
+@pytest.mark.asyncio
+async def test_play_button_refuses_a_symlink_that_escapes_the_audio_dir(
+    tmp_path, monkeypatch
+):
+    """The in-dir file is swapped for a symlink to an outside file after the
+    listing: the press resolves the link and refuses it."""
+    from unittest.mock import Mock
+
+    from tldw_chatbook.UI.Screens import artifacts_screen
+
+    app = _build_test_app(configured_default="artifacts")
+    app.notify = Mock()
+    briefing_id, audio_path = _seed_audio_report(app, file_exists=False)
+    outside = tmp_path / "outside.wav"
+    outside.write_bytes(b"RIFF....WAVEfmt ")
+    played: list[Path] = []
+    monkeypatch.setattr(artifacts_screen, "play_audio_file", played.append)
+
+    async with _open_artifacts(app) as (screen, pilot):
+        await _wait_for_rows(screen, pilot)
+        # The session shares one user data dir, so an earlier test may have
+        # left a regular file at this name; replace it, and leave none behind.
+        audio_path.parent.mkdir(parents=True, exist_ok=True)
+        audio_path.unlink(missing_ok=True)
+        audio_path.symlink_to(outside)
+        try:
+            message, kwargs = await _press_play_and_read_refusal(
+                app, screen, pilot, briefing_id, played
+            )
+        finally:
+            audio_path.unlink(missing_ok=True)
+
+    assert message == _OUTSIDE_REFUSAL
+    assert kwargs.get("markup") is False
+
+
 @pytest.mark.asyncio
 async def test_kept_badge_is_exact_per_row_not_page_bound(tmp_path):
     """Qodo #14: kept-ness is resolved per displayed row id, so a keep that
@@ -570,8 +847,7 @@ async def test_kept_badge_is_exact_per_row_not_page_bound(tmp_path):
         screen._start_daily_reports_refresh()
         await _wait_for_rows(screen, pilot)
         assert "· kept" in _row_label(screen, kept_id), (
-            "the kept row must show the badge however many newer "
-            "briefings sit above it"
+            "the kept row must show the badge however many newer briefings sit above it"
         )
 
 

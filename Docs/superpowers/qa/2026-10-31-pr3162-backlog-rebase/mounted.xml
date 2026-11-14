@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="0" failures="4" skipped="0" tests="18" time="270.519" timestamp="2026-10-31T12:35:12.673788-07:00" hostname="DESKTOP-BISU2HE"><testcase classname="Tests.UI.test_console_archive_recovery_cards" name="test_visible_scope_is_exact_one_shot_decision[False]" time="1.054" /><testcase classname="Tests.UI.test_console_archive_recovery_cards" name="test_visible_scope_is_exact_one_shot_decision[True]" time="0.845" /><testcase classname="Tests.UI.test_console_archive_recovery_cards" name="test_expired_card_cannot_emit_allow" time="0.862" /><testcase classname="Tests.UI.test_console_archive_recovery_cards" name="test_queued_old_control_event_cannot_answer_replacement" time="1.095" /><testcase classname="Tests.UI.test_console_archive_recovery_cards" name="test_stale_scope_event_cannot_override_visible_choice" time="0.799" /><testcase classname="Tests.UI.test_console_archive_recovery_cards" name="test_library_recovery_navigation_can_await_a_leave_dialog[result]" time="1.033" /><testcase classname="Tests.UI.test_console_archive_recovery_cards" name="test_library_recovery_navigation_can_await_a_leave_dialog[imported]" time="0.861" /><testcase classname="Tests.UI.test_console_archive_recovery_cards" name="test_queued_results_retire_on_source_loss_and_remount_on_return[False]" time="0.565" /><testcase classname="Tests.UI.test_console_archive_recovery_cards" name="test_queued_results_retire_on_source_loss_and_remount_on_return[True]" time="0.791" /><testcase classname="Tests.UI.test_console_archive_recovery_cards" name="test_sync_waits_for_recovery_root_mount_then_initializes_controls[False]" time="0.922" /><testcase classname="Tests.UI.test_console_archive_recovery_cards" name="test_sync_waits_for_recovery_root_mount_then_initializes_controls[True]" time="0.845" /><testcase classname="Tests.UI.test_console_archive_recovery_cards" name="test_sync_ignores_recovery_root_during_app_exit" time="0.650" /><testcase classname="Tests.UI.test_console_archive_recovery_cards" name="test_recovery_controls_are_inert_when_app_exits[False]" time="0.717" /><testcase classname="Tests.UI.test_console_archive_recovery_cards" name="test_recovery_controls_are_inert_when_app_exits[True]" time="0.571" /><testcase classname="Tests.UI.test_console_archive_recovery_flow" name="test_production_recovery_keeps_exact_history_and_active_draft[button-size0]" time="69.175"><failure message="AssertionError: (ConsoleRunState(status=&lt;ConsoleRunStatus.IDLE: 'idle'&gt;, visible_copy=''), [], [])&#10;assert False&#10; +  where False = &lt;function mounted_recovery.&lt;locals&gt;.&lt;lambda&gt; at 0x0000022FB2E57CE0&gt;()">Tests\UI\test_console_archive_recovery_flow.py:321: in test_production_recovery_keeps_exact_history_and_active_draft
+    async with mounted_recovery(
+C:\Python312\Lib\contextlib.py:210: in __aenter__
+    return await anext(self.gen)
+Tests\UI\test_console_archive_recovery_flow.py:236: in mounted_recovery
+    await wait_until(
+Tests\UI\test_library_conversation_recovery_flow.py:20: in wait_until
+    assert predicate(), debug() if debug else "condition not reached"
+E   AssertionError: (ConsoleRunState(status=&lt;ConsoleRunStatus.IDLE: 'idle'&gt;, visible_copy=''), [], [])
+E   assert False
+E    +  where False = &lt;function mounted_recovery.&lt;locals&gt;.&lt;lambda&gt; at 0x0000022FB2E57CE0&gt;()</failure></testcase><testcase classname="Tests.UI.test_console_archive_recovery_flow" name="test_production_recovery_keeps_exact_history_and_active_draft[button-size1]" time="47.688"><failure message="AssertionError: (ConsoleRunState(status=&lt;ConsoleRunStatus.STREAMING: 'streaming'&gt;, visible_copy='Agent running.'), [], [])&#10;assert False&#10; +  where False = &lt;function mounted_recovery.&lt;locals&gt;.&lt;lambda&gt; at 0x0000022FA8864900&gt;()">Tests\UI\test_console_archive_recovery_flow.py:321: in test_production_recovery_keeps_exact_history_and_active_draft
+    async with mounted_recovery(
+C:\Python312\Lib\contextlib.py:210: in __aenter__
+    return await anext(self.gen)
+Tests\UI\test_console_archive_recovery_flow.py:236: in mounted_recovery
+    await wait_until(
+Tests\UI\test_library_conversation_recovery_flow.py:20: in wait_until
+    assert predicate(), debug() if debug else "condition not reached"
+E   AssertionError: (ConsoleRunState(status=&lt;ConsoleRunStatus.STREAMING: 'streaming'&gt;, visible_copy='Agent running.'), [], [])
+E   assert False
+E    +  where False = &lt;function mounted_recovery.&lt;locals&gt;.&lt;lambda&gt; at 0x0000022FA8864900&gt;()</failure></testcase><testcase classname="Tests.UI.test_console_archive_recovery_flow" name="test_production_recovery_keeps_exact_history_and_active_draft[agent-size0]" time="48.826"><failure message="AssertionError: (ConsoleRunState(status=&lt;ConsoleRunStatus.VALIDATING: 'validating'&gt;, visible_copy='Initializing hooks.'), [], [])&#10;assert False&#10; +  where False = &lt;function mounted_recovery.&lt;locals&gt;.&lt;lambda&gt; at 0x0000022FA8FDFF60&gt;()">Tests\UI\test_console_archive_recovery_flow.py:321: in test_production_recovery_keeps_exact_history_and_active_draft
+    async with mounted_recovery(
+C:\Python312\Lib\contextlib.py:210: in __aenter__
+    return await anext(self.gen)
+Tests\UI\test_console_archive_recovery_flow.py:236: in mounted_recovery
+    await wait_until(
+Tests\UI\test_library_conversation_recovery_flow.py:20: in wait_until
+    assert predicate(), debug() if debug else "condition not reached"
+E   AssertionError: (ConsoleRunState(status=&lt;ConsoleRunStatus.VALIDATING: 'validating'&gt;, visible_copy='Initializing hooks.'), [], [])
+E   assert False
+E    +  where False = &lt;function mounted_recovery.&lt;locals&gt;.&lt;lambda&gt; at 0x0000022FA8FDFF60&gt;()</failure></testcase><testcase classname="Tests.UI.test_console_archive_recovery_flow" name="test_production_recovery_keeps_exact_history_and_active_draft[agent-size1]" time="43.514"><failure message="AssertionError: (ConsoleRunState(status=&lt;ConsoleRunStatus.BLOCKED: 'blocked'&gt;, visible_copy='Required hook initialization failed.'), [], [])&#10;assert False&#10; +  where False = &lt;function mounted_recovery.&lt;locals&gt;.&lt;lambda&gt; at 0x0000022FA5FCBE20&gt;()">Tests\UI\test_console_archive_recovery_flow.py:321: in test_production_recovery_keeps_exact_history_and_active_draft
+    async with mounted_recovery(
+C:\Python312\Lib\contextlib.py:210: in __aenter__
+    return await anext(self.gen)
+Tests\UI\test_console_archive_recovery_flow.py:236: in mounted_recovery
+    await wait_until(
+Tests\UI\test_library_conversation_recovery_flow.py:20: in wait_until
+    assert predicate(), debug() if debug else "condition not reached"
+E   AssertionError: (ConsoleRunState(status=&lt;ConsoleRunStatus.BLOCKED: 'blocked'&gt;, visible_copy='Required hook initialization failed.'), [], [])
+E   assert False
+E    +  where False = &lt;function mounted_recovery.&lt;locals&gt;.&lt;lambda&gt; at 0x0000022FA5FCBE20&gt;()</failure></testcase></testsuite></testsuites>

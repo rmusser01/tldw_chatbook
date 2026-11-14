@@ -1,0 +1,143 @@
+{
+  "close": {
+    "t": 37.080544,
+    "event": "call",
+    "function": "_close_console_session_tab",
+    "file": "session.py",
+    "line": 3285,
+    "frame": 4823498304,
+    "state": {
+      "_console_sync_in_progress": true,
+      "_console_sync_requested": false,
+      "_console_attach_sync_complete": true,
+      "_console_attach_reconciled": true,
+      "_console_attach_reconcile_running": false,
+      "_console_control_bar_replay_whole_sync": false,
+      "_closing": false,
+      "active": "f7cd67a7-a06d-469a-aade-f657681b5e43",
+      "bound": "f7cd67a7-a06d-469a-aade-f657681b5e43",
+      "sessions": [
+        "f7cd67a7-a06d-469a-aade-f657681b5e43"
+      ],
+      "draft_kind": "empty",
+      "draft_length": 0,
+      "activation": 0,
+      "full_source_session": null,
+      "switch_owner": null,
+      "button_object": 4825685584,
+      "button_disabled": true,
+      "button_active": false,
+      "button_region": "Region(x=86, y=32, width=14, height=1)"
+    }
+  },
+  "missing": {
+    "t": 37.120264,
+    "event": "call",
+    "function": "_session_or_raise",
+    "file": "console_chat_store.py",
+    "line": 21505,
+    "frame": 4802809984,
+    "state": {},
+    "missing_session": "f7cd67a7-a06d-469a-aade-f657681b5e43",
+    "known_sessions": [
+      "0da21a58-af8e-40be-9d19-8d5dd80238d4"
+    ]
+  },
+  "resume": {
+    "t": 37.35181,
+    "event": "call",
+    "function": "_resume_console_workspace_conversation",
+    "file": "workspace.py",
+    "line": 6722,
+    "frame": 4609582128,
+    "state": {
+      "_console_sync_in_progress": true,
+      "_console_sync_requested": true,
+      "_console_attach_sync_complete": true,
+      "_console_attach_reconciled": true,
+      "_console_attach_reconcile_running": false,
+      "_console_control_bar_replay_whole_sync": false,
+      "_closing": false,
+      "active": "0da21a58-af8e-40be-9d19-8d5dd80238d4",
+      "bound": "f7cd67a7-a06d-469a-aade-f657681b5e43",
+      "sessions": [
+        "0da21a58-af8e-40be-9d19-8d5dd80238d4"
+      ],
+      "draft_kind": "empty",
+      "draft_length": 0,
+      "activation": 0,
+      "full_source_session": null,
+      "switch_owner": null,
+      "button_object": 4825685584,
+      "button_disabled": true,
+      "button_active": false,
+      "button_region": "Region(x=86, y=32, width=14, height=1)"
+    }
+  },
+  "exception": {
+    "t": 37.639738,
+    "event": "call",
+    "function": "_handle_exception",
+    "file": "app.py",
+    "line": 3263,
+    "frame": 4834984384,
+    "state": {
+      "_console_sync_in_progress": false,
+      "_console_sync_requested": false,
+      "_console_attach_sync_complete": true,
+      "_console_attach_reconciled": true,
+      "_console_attach_reconcile_running": false,
+      "_console_control_bar_replay_whole_sync": false,
+      "_closing": false,
+      "active": "0da21a58-af8e-40be-9d19-8d5dd80238d4",
+      "bound": "f7cd67a7-a06d-469a-aade-f657681b5e43",
+      "sessions": [
+        "0da21a58-af8e-40be-9d19-8d5dd80238d4",
+        "24f64d46-9502-468d-97cf-532abbced100"
+      ],
+      "draft_kind": "empty",
+      "draft_length": 0,
+      "activation": 1,
+      "full_source_session": null,
+      "switch_owner": null,
+      "button_object": 4825685584,
+      "button_disabled": true,
+      "button_active": false,
+      "button_region": "Region(x=86, y=32, width=14, height=1)"
+    },
+    "error": "WorkerFailed(\"Worker raised exception: KeyError('Unknown Console chat session: f7cd67a7-a06d-469a-aade-f657681b5e43')\")"
+  },
+  "rulesclick": {
+    "t": 59.462719,
+    "event": "call",
+    "function": "click",
+    "file": "pilot.py",
+    "line": 192,
+    "frame": 4828410880,
+    "state": {
+      "_console_sync_in_progress": false,
+      "_console_sync_requested": false,
+      "_console_attach_sync_complete": true,
+      "_console_attach_reconciled": true,
+      "_console_attach_reconcile_running": false,
+      "_console_control_bar_replay_whole_sync": true,
+      "_closing": false,
+      "active": "24f64d46-9502-468d-97cf-532abbced100",
+      "bound": "24f64d46-9502-468d-97cf-532abbced100",
+      "sessions": [
+        "0da21a58-af8e-40be-9d19-8d5dd80238d4",
+        "24f64d46-9502-468d-97cf-532abbced100"
+      ],
+      "draft_kind": "/rules",
+      "draft_length": 6,
+      "activation": 0,
+      "full_source_session": null,
+      "switch_owner": null,
+      "button_object": 4825685584,
+      "button_disabled": false,
+      "button_active": false,
+      "button_region": "Region(x=86, y=32, width=14, height=1)"
+    },
+    "selector": "'#console-send-message'"
+  }
+}

@@ -24,6 +24,8 @@ from tldw_chatbook.Widgets.Console.console_transcript import (
     ConsoleTranscriptMessage,
 )
 
+pytestmark = pytest.mark.bootstrap_profile
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(

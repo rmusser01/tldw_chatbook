@@ -5,6 +5,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-09-11 10:30'
+updated_date: '2026-11-12 19:38'
 labels:
   - library
   - notes
@@ -45,3 +46,7 @@ and a wave-3 group was editing that code in parallel.
 - [ ] #1 Saving an in-canvas edit and returning to the list shows that note's age as just-saved, without waiting for the refetch (`test_library_shell_note_save_then_back_refreshes_list_title_and_age` passes)
 - [ ] #2 The stamp the row shows comes from the save that actually happened (the client's own save time or a modified time the save path returns), not from a baseline the save leaves untouched
 <!-- AC:END -->
+
+## Implementation Notes
+
+**2026-11-12 (round-13 closeout).** Still red at the round-13 stack top 8b633d0101 (run.sh, `-n 4`, load ~13): `['Reading lis...ited)', '18w'] == ['Reading lis...ited)', 'now']`. TASK-39152 classified it as a product defect (the title is patched; the age and the tree branch are not, for 2.4 s or more after Back). The node is deselected from the `library-shell-dev` push job; its line in `scripts/library_shell_push_deselect.txt` names this task, and leaves when this lands. TASK-32185 AC#3 names the same node.

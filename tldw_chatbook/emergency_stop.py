@@ -19,6 +19,11 @@ from .Utils.atomic_file_ops import atomic_write_text
 from loguru import logger
 
 
+#: The exact command that lifts the stop. TASK-33620.1: the copy used to end
+#: "Clear it to resume." and never said how.
+EMERGENCY_STOP_CLEAR_COMMAND = "/emergency-stop clear"
+
+
 @dataclass(frozen=True, slots=True)
 class EmergencyStopState:
     """Whether new work is halted, and why."""
@@ -31,7 +36,7 @@ class EmergencyStopState:
         why = f" ({self.reason})" if self.reason else ""
         return (
             f"Emergency stop is active{why}: new runs and scheduled "
-            "dispatches are held. Clear it to resume."
+            f"dispatches are held. Run {EMERGENCY_STOP_CLEAR_COMMAND} to resume."
         )
 
 

@@ -8,8 +8,10 @@ from types import MethodType
 
 import pytest
 
+from Tests.served_canvas_gateway_double import served_gateway_double
 from tldw_chatbook import config as config_module
 from tldw_chatbook.Web_Server import serve
+from tldw_chatbook.Canvas import config_policy as canvas_config_policy_module
 
 
 class _BaseAppService:
@@ -35,13 +37,15 @@ async def test_disabled_served_child_starts_without_canvas_control_secret() -> N
     await service.start(100, 40)
 
     assert service.environment == {
-        "COLUMNS": "100", "ROWS": "40", "CHATBOOK_SERVED_CHILD": "1"
+        "COLUMNS": "100",
+        "ROWS": "40",
+        "CHATBOOK_SERVED_CHILD": "1",
     }
     await service.stop()
 
 
 @pytest.mark.asyncio
-async def test_live_disable_revokes_served_broker_gateway_and_browser_bindings() -> (
+async def test_live_disable_revokes_canvas_but_retains_active_terminal_bindings() -> (
     None
 ):
     order: list[str] = []
@@ -50,13 +54,11 @@ async def test_live_disable_revokes_served_broker_gateway_and_browser_bindings()
         async def aclose(self) -> None:
             order.append("broker")
 
-    class Gateway:
-        async def aclose(self) -> None:
-            order.append("gateway")
-
     owner = SimpleNamespace(
         _canvas_control_broker=Broker(),
-        _served_canvas_gateway=Gateway(),
+        _served_canvas_gateway=served_gateway_double(
+            aclose=lambda: order.append("gateway")
+        ),
         _served_canvas_launches={"browser": object()},
         _served_browser_children={"browser": "child"},
         _canvas_disabled_latched=False,
@@ -67,12 +69,14 @@ async def test_live_disable_revokes_served_broker_gateway_and_browser_bindings()
     assert order == ["broker", "gateway"]
     assert owner._canvas_control_broker is None
     assert owner._served_canvas_launches == {}
-    assert owner._served_browser_children == {}
+    assert owner._served_browser_children == {"browser": "child"}
     assert owner._canvas_disabled_latched is True
 
 
 @pytest.mark.asyncio
-async def test_policy_watcher_revokes_all_sibling_served_children() -> None:
+async def test_policy_watcher_revokes_sibling_controls_but_retains_terminal_bindings() -> (
+    None
+):
     enabled = [True]
     order: list[str] = []
 
@@ -80,13 +84,11 @@ async def test_policy_watcher_revokes_all_sibling_served_children() -> None:
         async def aclose(self) -> None:
             order.append("all-child-controls")
 
-    class Gateway:
-        async def aclose(self) -> None:
-            order.append("all-browser-previews")
-
     owner = SimpleNamespace(
         _canvas_control_broker=Broker(),
-        _served_canvas_gateway=Gateway(),
+        _served_canvas_gateway=served_gateway_double(
+            aclose=lambda: order.append("all-browser-previews")
+        ),
         _served_canvas_launches={"browser-a": object(), "browser-b": object()},
         _served_browser_children={"browser-a": "child-a", "browser-b": "child-b"},
         _canvas_disabled_latched=False,
@@ -103,10 +105,14 @@ async def test_policy_watcher_revokes_all_sibling_served_children() -> None:
     await task
 
     assert order == ["all-child-controls", "all-browser-previews"]
-    assert owner._served_browser_children == {}
+    assert owner._served_browser_children == {
+        "browser-a": "child-a",
+        "browser-b": "child-b",
+    }
     assert owner._served_canvas_launches == {}
 
 
+@pytest.mark.bootstrap_profile
 def test_create_server_passes_disabled_policy_to_served_owner(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
@@ -120,7 +126,7 @@ def test_create_server_passes_disabled_policy_to_served_owner(monkeypatch) -> No
     monkeypatch.setattr(
         serve,
         "get_canvas_config_policy",
-        lambda **_kwargs: config_module.build_canvas_config_policy(
+        lambda **_kwargs: canvas_config_policy_module.build_canvas_config_policy(
             {"canvas": {"enabled": False}}
         ),
         raising=False,

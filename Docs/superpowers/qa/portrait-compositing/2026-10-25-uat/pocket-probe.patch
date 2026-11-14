@@ -1,0 +1,83 @@
+--- pocket_tts_probe.py
++++ pocket_tts_probe.uat.py
+@@ -8,6 +8,7 @@
+ 
+ HERE = Path(__file__).resolve().parent
+ BASE = runpy.run_path(str(HERE / "imagegen_import_probe.py"))["CHILD"]
++BASE=BASE.replace('   controller=screen._portrait_performance()',"   for worker in tuple(app.workers):\n    if worker.group in ('ccp-load-character','personas-visual-identity-load'):await worker.wait()\n   await pilot.pause()\n   controller=screen._portrait_performance()")
+ CONFIG = """
+ [app_tts]
+ default_provider="openai"
+@@ -186,6 +187,36 @@
+   assert capture_open>=final_dac_end(first_stream+1)-.005
+   result['hands_free']={'utterances':2,'failures':0,'next_sentence_after_previous_tail':True,'listening_intent_after_final_tail':True,'microphone_hardware_exercised':False,'events':handoff}
+   hands._console_hands_free=None
++  print('checkpoint: real guarded authoring sample',flush=True)
++  personas,controller=await edit()
++  view=personas.query_one(PortraitPerformanceEditor)
++  view.query_one(Collapsible).collapsed=False
++  from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
++  sample_button=view.query_one('#portrait-performance-sample',Button)
++  assert not sample_button.disabled
++  prior_syntheses=len(synthesis)
++  sample_button.focus();await pilot.press('enter')
++  await ready(lambda:isinstance(app.screen,ConfirmationDialog))
++  disclosure=app.screen.message
++  assert '127.0.0.1:18765' in disclosure,disclosure
++  app.screen.query_one('#confirm-button',Button).focus();await pilot.press('enter')
++  await ready(lambda:controller._speech_task is not None)
++  avatar=view.query_one('#portrait-performance-staged',CharacterExpressionAvatar)
++  avatar.scroll_visible(animate=False,force=True)
++  sample_seen=[]
++  async with asyncio.timeout(90):
++   while controller._busy:
++    snap=controller._presentation.read() if controller._presentation else None
++    if snap is not None:
++     sample_seen.append({'state':snap.state,'mouth':snap.mouth,'timing_valid':snap.timing_valid,'pose':avatar._frame_index,'visible':avatar._visible()})
++    await asyncio.sleep(.02)
++  assert len(synthesis)==prior_syntheses+1,(len(synthesis),prior_syntheses)
++  assert any(x['state']=='playing' and x['timing_valid'] and x['mouth']!='rest' and x['visible'] and x['pose']%3!=0 for x in sample_seen),sample_seen[-15:]
++  assert controller.draft.can_apply
++  (output/'guarded-sample.wav').write_bytes(synthesis[-1]['data'])
++  result['guarded_sample']={'live_pocket':True,'disclosure':disclosure,'observations':sample_seen,'ready_after_playback':True}
++  app.save_screenshot('guarded-sample-finished.svg',path=str(output))
++
+ 
+ 
+ """
+@@ -211,7 +242,7 @@
+         + "); selector.chmod(0o600)",
+     )
+     script = script.replace("async def main():", INSTRUMENT + "\nasync def main():", 1)
+-    script = script.replace("output=root/'preview'", "output=root/'pocket-preview'")
++    script = script.replace("output=root/'preview'", "output=Path('/private/tmp/portrait-3244-live-pocket-release')")
+     script = script.replace(
+         "  await chat._character._apply_console_character_choice_async(ConsoleCharacterChoice(cid,'Samira — artwork qualification','new'))",
+         "  from tldw_chatbook.Character_Chat.character_conversation_navigation import ResolvedLocalCharacterKey\n"
+@@ -225,7 +256,7 @@
+         " async with app.run_test(size=(180,72)) as pilot:",
+         " from tldw_chatbook.Character_Chat.portrait_performance import capture_performance_source,normalize_performance_frames\n"
+         " source,_=capture_performance_source(db,character_id=cid,requested_state='idle')\n"
+-        " frames=normalize_performance_frames({role:(root/'selected'/(role+'.png')).read_bytes() for role in FRAME_ROLES})\n"
++        " frames=normalize_performance_frames({role:(root/'paired-v2'/'selected'/(role+'.png')).read_bytes() for role in FRAME_ROLES})\n"
+         " db.apply_character_portrait_performance(source,frames,expected_revision=0)\n"
+         " async with app.run_test(size=(180,72)) as pilot:",
+     )
+@@ -241,14 +272,14 @@
+     script = script.replace("__ASSET_ROOT__", repr(str(assets))).replace(
+         "__SOURCE__", repr(str(source))
+     )
+-    (assets / "pocket-preview").mkdir(exist_ok=True)
++    Path('/private/tmp/portrait-3244-live-pocket-release').mkdir(exist_ok=True)
+     with tempfile.TemporaryDirectory(prefix="radio-pocket-tts-") as folder:
+         try:
+-            _run(Path(folder), "speech", "pocket", script=script, timeout=240)
++            _run(Path(folder), "speech", "pocket", script=script, timeout=300, installed_package=Path("/private/tmp/portrait-3244-uat-release-installed/f9-native-package0/installed"))
+         finally:
+             log = Path(folder) / "restart-output.log"
+             if log.is_file():
+-                (assets / "pocket-preview/probe.log").write_text(log.read_text())
++                Path('/private/tmp/portrait-3244-live-pocket-release/probe.log').write_text(log.read_text())
+     print("PASS: actual Pocket TTS speech via mounted Console and native WAV sink")
+ 
+ 

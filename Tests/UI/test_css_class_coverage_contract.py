@@ -44,11 +44,24 @@ rather than folded into a blanket claim. (A seventh, `copy-command`, was
 a production `@on(Button.Pressed, ...)` route until IngestGuardrailModal
 was deleted; see the note where its entry used to be.)
 """
+
 import re
 from pathlib import Path
 
+# Collection-time import: this file's own body only reads source text, but the
+# Tests/UI autouse `_disable_model_catalog_refresh` fixture lazily imports
+# `tldw_chatbook.app`, whose module body runs `load_settings()`. Reaching that
+# import with a per-test profile selected while `config` is still bound to the
+# session profile trips the config-participant admission
+# (RecoveryRequired("raw_source_selection_changed")) at setup, before any
+# assertion -- the class documented for "any Tests/UI module that doesn't
+# import the app" (TASK-33621.36). Importing here binds config at collection
+# time, the same remedy as test_install_command_clipboard.py.
+import tldw_chatbook.app  # noqa: F401 - bind config before fixtures rebind its profile.
 from Tests.UI.test_non_obscuring_focus_contract import (
-    BUNDLE, css_selectors, css_selectors_contain_class,
+    BUNDLE,
+    css_selectors,
+    css_selectors_contain_class,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -74,7 +87,8 @@ CLASSES_ATTR = re.compile(r'classes="([^"{}]+)"')
 # against the bundle too, never this regex alone.
 DEFAULT_CSS_BLOCK = re.compile(
     r'(?:DEFAULT_CSS|CSS)\s*(?::\s*\w+\s*)?=\s*[fF]?(?:"""|\'\'\')(.*?)(?:"""|\'\'\')',
-    re.DOTALL)
+    re.DOTALL,
+)
 
 KNOWN_UNSTYLED: dict[str, str] = {
     # token: one-line reason it is allowed to have no rule.
@@ -128,11 +142,9 @@ KNOWN_UNSTYLED: dict[str, str] = {
         "hidden entirely via query_one(#id) + styles.display/height, never "
         "selected via the class."
     ),
-    "console-inspector-outer-scroll-hint": (
-        "duplicates #console-inspector-outer-scroll-hint; the pinned cue's "
-        "height/display are set inline and its copy is updated through the "
-        "id, so this class carries no independent style."
-    ),
+    # "console-inspector-outer-scroll-hint" removed 2026-10-02: the token
+    # gained a real .class rule, so the entry went stale — exactly what
+    # test_registry_entries_are_still_unstyled exists to catch.
     "console-left-rail-outer-hint": (
         "duplicates #console-left-rail-outer-hint; the pinned cue's "
         "height/display are set inline and its copy is updated through the "
@@ -217,8 +229,7 @@ KNOWN_UNSTYLED: dict[str, str] = {
         "queried."
     ),
     "console-workspace-status-row": (
-        "plain descriptive handoff-status-row Static; no distinct rule, "
-        "not queried."
+        "plain descriptive handoff-status-row Static; no distinct rule, not queried."
     ),
     # (xhigh review round) "copy-command" WAS here, as the event-routing
     # selector for @on(Button.Pressed, '.copy-command') in
@@ -260,12 +271,14 @@ KNOWN_UNSTYLED: dict[str, str] = {
     ),
 }
 
+
 def _scoped_files():
     for scope in SCOPES:
         if scope.is_file():
             yield scope
         else:
             yield from sorted(scope.rglob("*.py"))
+
 
 def _composed_tokens():
     tokens = {}
@@ -276,6 +289,7 @@ def _composed_tokens():
                 tokens.setdefault(token, path.relative_to(ROOT))
     return tokens
 
+
 def _styled_tokens():
     bundle_text = BUNDLE.read_text(encoding="utf-8")
     selectors = css_selectors(bundle_text)
@@ -283,6 +297,7 @@ def _styled_tokens():
         for block in DEFAULT_CSS_BLOCK.finditer(path.read_text(encoding="utf-8")):
             selectors.extend(css_selectors(block.group(1)))
     return selectors
+
 
 def test_every_composed_class_is_styled_or_registered():
     selectors = _styled_tokens()
@@ -297,20 +312,25 @@ def test_every_composed_class_is_styled_or_registered():
         missing.append(f"{token}  (first composed in {path})")
     assert not missing, (
         "Composed class tokens with no .class or #id rule in the bundle or "
-        "any DEFAULT_CSS, and not on KNOWN_UNSTYLED:\n  " + "\n  ".join(missing))
+        "any DEFAULT_CSS, and not on KNOWN_UNSTYLED:\n  " + "\n  ".join(missing)
+    )
+
 
 def test_registry_entries_are_still_unstyled():
     """A registry entry whose token gained a rule is stale — remove it."""
     selectors = _styled_tokens()
-    stale = [t for t in KNOWN_UNSTYLED
-             if css_selectors_contain_class(selectors, f".{t}")]
+    stale = [
+        t for t in KNOWN_UNSTYLED if css_selectors_contain_class(selectors, f".{t}")
+    ]
     assert not stale, f"KNOWN_UNSTYLED entries now styled — delete them: {stale}"
+
 
 def test_registry_entries_are_still_composed():
     """A registry entry no one composes anymore is dead weight — remove it."""
     composed = _composed_tokens()
     dead = [t for t in KNOWN_UNSTYLED if t not in composed]
     assert not dead, f"KNOWN_UNSTYLED entries no longer composed — delete them: {dead}"
+
 
 def test_f_string_default_css_block_is_visible_to_styled_tokens():
     """Pins the `[fF]?` widening of DEFAULT_CSS_BLOCK: an f-string-opened
@@ -337,9 +357,12 @@ def test_f_string_default_css_block_is_visible_to_styled_tokens():
     path = PACKAGE / "Widgets" / "Console" / "console_settings_modal.py"
     text = path.read_text(encoding="utf-8")
     blocks = list(DEFAULT_CSS_BLOCK.finditer(text))
-    assert blocks, "DEFAULT_CSS_BLOCK must match ConsoleSettingsModal's f-string DEFAULT_CSS"
+    assert blocks, (
+        "DEFAULT_CSS_BLOCK must match ConsoleSettingsModal's f-string DEFAULT_CSS"
+    )
     selectors = []
     for block in blocks:
         selectors.extend(css_selectors(block.group(1)))
     assert css_selectors_contain_class(selectors, ".console-settings-error"), (
-        "f-string DEFAULT_CSS selector .console-settings-error not visible to css_selectors()")
+        "f-string DEFAULT_CSS selector .console-settings-error not visible to css_selectors()"
+    )

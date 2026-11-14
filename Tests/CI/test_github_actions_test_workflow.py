@@ -231,7 +231,10 @@ def test_ci_shape_regression_runs_in_dedicated_comprehensive_job() -> None:
     ]
 
     assert "runs-on: ubuntu-latest" in shape
-    assert "if: github.event_name != 'workflow_dispatch' || inputs.backup_platform_only != true" in shape
+    assert (
+        "if: github.event_name != 'workflow_dispatch' || inputs.backup_platform_only != true"
+        in shape
+    )
     assert "uses: actions/checkout@v4" in shape
     assert "uses: actions/setup-python@v5" in shape
     assert 'python-version: "3.11"' in shape
@@ -252,7 +255,10 @@ def test_artifact_lease_gate_exposes_stable_required_context() -> None:
     assert "name: Artifact Lease Gate" in gate
     assert "runs-on: ubuntu-latest" in gate
     assert "needs: [artifact-lease-spike, artifact-lease-shape]" in gate
-    assert "if: always() && (github.event_name != 'workflow_dispatch' || inputs.backup_platform_only != true)" in gate
+    assert (
+        "if: always() && (github.event_name != 'workflow_dispatch' || inputs.backup_platform_only != true)"
+        in gate
+    )
     assert (
         'if [ "${{ needs.artifact-lease-spike.result }}" != "success" ] || '
         '[ "${{ needs.artifact-lease-shape.result }}" != "success" ]; then' in gate

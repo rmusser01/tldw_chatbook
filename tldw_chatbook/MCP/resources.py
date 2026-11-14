@@ -25,6 +25,12 @@ from ..DB.Client_Media_DB_v2 import (
 # `get_character_card_by_id()`), used below instead of these broken
 # imports (QA round mcp-hub-phase3-2026-07, Defect 2).
 
+# task-34399: this listing only surfaces id/title/created_at, so it reads
+# notes through list_notes' preview projection instead of transferring
+# every full body. Same cap as the DB's library list surface
+# (CharactersRAGDB._LIBRARY_NOTE_PREVIEW_CHARS = 241).
+_NOTE_LISTING_PREVIEW_CHARS = 241
+
 
 class MCPResources:
     """Container for MCP resource implementations."""
@@ -427,8 +433,11 @@ class MCPResources:
             # `get_recent_notes` never existed on CharactersRAGDB.
             # `list_notes` is the real, already-ordered equivalent (`last_modified
             # DESC`, per its own index/query) -- same `limit` kwarg, same
-            # id/title/created_at fields used below.
-            notes = self.chachanotes_db.list_notes(limit=limit)
+            # id/title/created_at fields used below. task-34399: the listing
+            # never reads bodies, so it takes the preview projection.
+            notes = self.chachanotes_db.list_notes(
+                limit=limit, preview_chars=_NOTE_LISTING_PREVIEW_CHARS
+            )
 
             resources = []
             for note in notes:

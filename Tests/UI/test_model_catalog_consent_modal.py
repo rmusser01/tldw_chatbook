@@ -125,13 +125,12 @@ async def test_splash_finishes_before_catalog_consent_and_deny_returns_home():
 
     def push_catalog_consent(self) -> None:
         observe_stack()
-        self.push_screen(
-            ModelCatalogConsentModal(), self._handle_model_catalog_consent
-        )
+        self.push_screen(ModelCatalogConsentModal(), self._handle_model_catalog_consent)
 
     app._push_model_catalog_consent_modal = MethodType(push_catalog_consent, app)
 
     async with app.run_test(size=(120, 40)) as pilot:
+
         def startup_ready() -> bool:
             stack = observe_stack()
             return any(screen is HomeScreen for screen in stack) and any(
@@ -168,8 +167,7 @@ async def test_splash_finishes_before_catalog_consent_and_deny_returns_home():
             for _, stack in observed[:first_consent]
         ), f"Home was not mounted before consent was pushed: {observed}"
         assert not observed[first_consent][0], (
-            "consent appeared before the splash completed; "
-            f"observed={observed}"
+            f"consent appeared before the splash completed; observed={observed}"
         )
         assert not any(
             ModelCatalogConsentModal in stack

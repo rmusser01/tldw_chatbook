@@ -1,4 +1,4 @@
-"""ADR-090: rationale + description ride the existing pending-call chain."""
+"""ADR-332: rationale + description ride the existing pending-call chain."""
 
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
 from tldw_chatbook.Chat.console_chat_controller import _collect_mcp_pending

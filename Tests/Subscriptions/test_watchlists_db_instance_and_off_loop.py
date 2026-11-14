@@ -317,8 +317,7 @@ async def test_a_scheduled_check_runs_no_sqlite_on_the_event_loop(
         db.conn.set_trace_callback(None)
 
     assert not loop_statements, (
-        "a scheduled check ran SQL on the event-loop thread: "
-        f"{loop_statements[:3]}"
+        f"a scheduled check ran SQL on the event-loop thread: {loop_statements[:3]}"
     )
 
     # Never vacuous: the check must really have done its work.
@@ -361,7 +360,12 @@ async def test_the_feed_parse_runs_off_the_event_loop_thread(
     setattr(monitor, parser, spy)
 
     items = await monitor.check_feed(
-        {"id": 1, "name": "Feed", "type": source_type, "source": "https://example.com/feed"}
+        {
+            "id": 1,
+            "name": "Feed",
+            "type": source_type,
+            "source": "https://example.com/feed",
+        }
     )
 
     assert items, "the parse must have produced items, or the spy proves nothing"

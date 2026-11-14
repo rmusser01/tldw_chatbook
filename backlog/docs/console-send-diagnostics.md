@@ -82,6 +82,6 @@ whether flicker continued after the blocked state. A log with no send-stage
 entries does not establish a successful send.
 
 Governance: ADR-029's TASK-31977 amendment. Trace admission remains governed by
-ADR-097 (the semantic trace ledger), section 15. No prompts, responses,
+ADR-337 (the semantic trace ledger), section 15. No prompts, responses,
 credentials, exception messages, traceback locals or private identifiers are
 added to these diagnostics.

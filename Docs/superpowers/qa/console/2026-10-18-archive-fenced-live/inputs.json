@@ -1,0 +1,78 @@
+{
+  "private_root": "/private/tmp/archive-recovery-profilev2-live-20261018",
+  "interpreter": "3.12.11 (main, Aug 14 2025, 16:05:17) [Clang 20.1.4 ]",
+  "source_head": "2391c827bb36f23ab7f517c281fc28bdff67d05f",
+  "input_hashes": {
+    "/private/tmp/archive-recovery-profilev2-live-20261018/transport_guard.py": {
+      "bytes": 11208,
+      "sha256": "273aef24ae333ca8169edfa9c0e902c1848d82a822ebd6ccaaef33b5555e7768"
+    },
+    "/private/tmp/archive-recovery-profilev2-live-20261018/drive.py": {
+      "bytes": 2903,
+      "sha256": "af70f5fda812b08a94c0697397efb875e2dc40b2a9fdf701650de429d5a5f7fb"
+    },
+    "/private/tmp/archive-recovery-profilev2-live-20261018/observe.py": {
+      "bytes": 5439,
+      "sha256": "2c8188a44aa64ed7b03ffc14ea9e3acbf35a92d4114ac3a2efb03961333762f6"
+    },
+    "/private/tmp/archive-recovery-profilev2-live-20261018/collect-fenced.py": {
+      "bytes": 4477,
+      "sha256": "3cbede0423eea119083a725c6b325d9d369989454d7d324ea4a7eb023e472518"
+    },
+    "/private/tmp/archive-recovery-profilev2-live-20261018/verify-fenced.py": {
+      "bytes": 8391,
+      "sha256": "7b72a04d2a9aea870d939047632ce30f97d527fc7b1a978b2a075966510b9bd4"
+    },
+    "/private/tmp/archive-recovery-profilev2-live-20261018/direct-fenced/config.toml": {
+      "bytes": 36265,
+      "sha256": "3a2a755319ad4b5e19df5112c7703e7e1bbd5362919417b9f1273054baa8727b"
+    },
+    "/private/tmp/archive-recovery-profilev2-live-20261018/direct-fenced/launch.py": {
+      "bytes": 1289,
+      "sha256": "9589e6316052de76065fc7a274bab06ef326e4ff8b90489714cf58434020cf75"
+    },
+    "/private/tmp/archive-recovery-profilev2-live-20261018/direct-fenced/seed.py": {
+      "bytes": 3420,
+      "sha256": "f6a7da12168fdd1d4ab421a638fc5067ed290a2a83fcc050eeb60694ceda7cc7"
+    },
+    "/private/tmp/archive-recovery-profilev2-live-20261018/direct-fenced/data/task7_live/tldw_chatbook_ChaChaNotes.db": {
+      "bytes": 4456448,
+      "sha256": "e6c055e6782b82ccaae6703e65a67ffd6562c345ae3703dd134a0b5b0a91e492"
+    },
+    "/private/tmp/archive-recovery-profilev2-live-20261018/direct-fenced/data/task7_live/tldw_chatbook_workspaces.db": {
+      "bytes": 131072,
+      "sha256": "a04e6776ad1aef5fd99ca9585dacc8889b0530f1cc6d000389a6c8baebed7a5a"
+    },
+    "/private/tmp/archive-recovery-profilev2-live-20261018/direct-fenced/data/task7_live/agent_runs.db": {
+      "bytes": 188416,
+      "sha256": "b7b5214fc8249c0a426a2d3ae07313c4234275b1a1b851dca71dfbec3e100326"
+    },
+    "/private/tmp/archive-recovery-profilev2-live-20261018/rag-fenced/config.toml": {
+      "bytes": 36227,
+      "sha256": "f5998a85031c88f95cab3efd6e6981a5f96aacb2f2fff0bcd9a09229637abaed"
+    },
+    "/private/tmp/archive-recovery-profilev2-live-20261018/rag-fenced/launch.py": {
+      "bytes": 1289,
+      "sha256": "9589e6316052de76065fc7a274bab06ef326e4ff8b90489714cf58434020cf75"
+    },
+    "/private/tmp/archive-recovery-profilev2-live-20261018/rag-fenced/seed.py": {
+      "bytes": 3420,
+      "sha256": "f6a7da12168fdd1d4ab421a638fc5067ed290a2a83fcc050eeb60694ceda7cc7"
+    },
+    "/private/tmp/archive-recovery-profilev2-live-20261018/rag-fenced/data/task7_live/tldw_chatbook_ChaChaNotes.db": {
+      "bytes": 4448256,
+      "sha256": "97b6210e7503fcbde66f4cd3654fe744b4da7bc73258d19fd93b391e625230ff"
+    },
+    "/private/tmp/archive-recovery-profilev2-live-20261018/rag-fenced/data/task7_live/tldw_chatbook_workspaces.db": {
+      "bytes": 131072,
+      "sha256": "b4c40c70580f87ab6fd5a75a52c4bcb12cbafaadb827e08f3807d636325036be"
+    },
+    "/private/tmp/archive-recovery-profilev2-live-20261018/rag-fenced/data/task7_live/agent_runs.db": {
+      "bytes": 188416,
+      "sha256": "fde59279cc51c205b7a60ef38bb70c39656cbff09f5d8976b433e433bae50419"
+    }
+  },
+  "normal_config_db_bodies_raw_private_dbs_full_http_hidden_reasoning_full_terminal_stream": "not copied",
+  "verify_command": "shared-python Docs/superpowers/qa/console/2026-10-18-archive-fenced-live/verify-fenced.py",
+  "collector_requires": "original named private config/DB/guard inputs; fails if config missing"
+}

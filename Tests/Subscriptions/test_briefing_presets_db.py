@@ -32,7 +32,9 @@ def test_briefing_preset_round_trip_including_nulls():
     """A preset created with only the required fields reads back with the
     optional columns genuinely NULL, not empty strings or missing keys."""
     db = SubscriptionsDB(":memory:", "test")
-    preset_id = db.insert_briefing_preset("Daily digest", roster_json='[{"name": "Host"}]')
+    preset_id = db.insert_briefing_preset(
+        "Daily digest", roster_json='[{"name": "Host"}]'
+    )
 
     row = db.get_briefing_preset(preset_id)
     assert row["id"] == preset_id
@@ -406,7 +408,8 @@ def test_set_watchlist_briefing_settings_default_preset_id_unset_leaves_alone_an
     # Set it once.
     db.set_watchlist_briefing_settings(watchlist_id, default_preset_id=preset_id)
     row = db.conn.execute(
-        "SELECT default_briefing_preset_id FROM watchlists WHERE id = ?", (watchlist_id,)
+        "SELECT default_briefing_preset_id FROM watchlists WHERE id = ?",
+        (watchlist_id,),
     ).fetchone()
     assert row["default_briefing_preset_id"] == preset_id
 
@@ -425,7 +428,8 @@ def test_set_watchlist_briefing_settings_default_preset_id_unset_leaves_alone_an
     # Passing `None` explicitly clears it.
     db.set_watchlist_briefing_settings(watchlist_id, default_preset_id=None)
     row = db.conn.execute(
-        "SELECT default_briefing_preset_id FROM watchlists WHERE id = ?", (watchlist_id,)
+        "SELECT default_briefing_preset_id FROM watchlists WHERE id = ?",
+        (watchlist_id,),
     ).fetchone()
     assert row["default_briefing_preset_id"] is None
 
@@ -458,7 +462,9 @@ def test_set_watchlist_briefing_settings_with_no_arguments_is_a_no_op():
 def _seed_items(db, count):
     """Insert `count` bare `subscription_items` rows; return their ids in
     insertion (== AUTOINCREMENT) order."""
-    source_id = db.add_subscription(name="Feed", type="rss", source="https://feed.example/f")
+    source_id = db.add_subscription(
+        name="Feed", type="rss", source="https://feed.example/f"
+    )
     ids = []
     with db.transaction() as conn:
         for n in range(count):
@@ -513,9 +519,13 @@ def test_get_subscription_items_by_ids_chunks_the_in_clause_at_500_params():
     assert len(result) == total  # every seeded id was actually found
 
     param_counts = [
-        len(call.args[1]) for call in spy_conn.execute.call_args_list if len(call.args) > 1
+        len(call.args[1])
+        for call in spy_conn.execute.call_args_list
+        if len(call.args) > 1
     ]
-    assert param_counts, "get_subscription_items_by_ids must have executed at least one query"
+    assert param_counts, (
+        "get_subscription_items_by_ids must have executed at least one query"
+    )
     assert max(param_counts) <= 500, (
         f"a statement was bound with {max(param_counts)} parameters against a "
         f"{total}-id lookup -- must be chunked at <= 500 params per statement"

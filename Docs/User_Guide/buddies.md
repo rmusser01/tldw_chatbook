@@ -3,6 +3,8 @@
 Open **Console → Menu → Buddy** to manage Buddy artwork, its follow target and
 the target's Persona. The floating Buddy's **⚙** control and Personas → **Manage Buddy** open the same form;
 focus the Buddy and press **m** for keyboard access.
+A complete, saved local Persona Visual pack also offers **Manage Buddy…**;
+save or cancel any visual draft first. Opening this form does not select or copy artwork.
 
 Choose installed artwork, preview an expression, and choose **Dynamic** or
 **Static**. Large libraries use **Previous** and **Next** to browse 100 Buddies at

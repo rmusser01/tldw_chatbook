@@ -63,6 +63,7 @@ These are raw-text/JSON assertions on purpose (matching
 files are read as source text rather than imported, so drift is caught
 without importing modules for their side effects alone.
 """
+
 from __future__ import annotations
 
 import json
@@ -73,12 +74,19 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 
 SYNC_SCRIPT = REPO / "Helper_Scripts" / "sync_chunking_engine.py"
-VENDOR_MANIFEST = REPO / "tldw_chatbook" / "Chunking" / "engine" / "VENDOR_MANIFEST.toml"
+VENDOR_MANIFEST = (
+    REPO / "tldw_chatbook" / "Chunking" / "engine" / "VENDOR_MANIFEST.toml"
+)
 SYNC_TEST = REPO / "Tests" / "Chunking" / "test_sync_script.py"
 
 VISUAL_IDENTITY = REPO / "tldw_chatbook" / "Character_Chat" / "visual_identity.py"
 SAMIRA_PACK = (
-    REPO / "tldw_chatbook" / "assets" / "characters" / "samira" / "visual_identity_pack.json"
+    REPO
+    / "tldw_chatbook"
+    / "assets"
+    / "characters"
+    / "samira"
+    / "visual_identity_pack.json"
 )
 VISUAL_IDENTITY_CONTRACT_TEST = (
     REPO / "Tests" / "Character_Chat" / "test_visual_identity_contract.py"
@@ -115,6 +123,7 @@ def _samira_pin() -> str:
 # Chunking-engine vendoring pin: 3 authoritative copies + the source of truth.
 # ---------------------------------------------------------------------------
 
+
 def test_chunking_pin_is_a_valid_sha() -> None:
     """The Chunking-engine vendoring pin itself is a 40-char hex SHA."""
     assert _SHA_RE.fullmatch(_chunking_pin())
@@ -146,6 +155,7 @@ def test_sync_test_pin_matches_sync_script_pin() -> None:
 # Samira visual-identity compatibility pin: 3 authoritative copies + the
 # source of truth (SAMIRA_SERVER_COMMIT in visual_identity.py itself).
 # ---------------------------------------------------------------------------
+
 
 def test_samira_pin_is_a_valid_sha() -> None:
     """The Samira compatibility pin itself is a 40-char hex SHA."""

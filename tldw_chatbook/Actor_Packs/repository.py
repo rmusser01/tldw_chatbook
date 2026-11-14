@@ -257,7 +257,7 @@ class ActorPackRepository:
                         allowed = authority_guard()
                     except Exception:
                         allowed = False
-                    depth = getattr(self.db._local, "transaction_depth", 0)
+                    depth = self.db.managed_transaction_depth()
                     if (
                         allowed is not True
                         or not connection.in_transaction
@@ -446,7 +446,7 @@ class ActorPackRepository:
         """Package seam for an already-owned single SQLite transaction."""
 
         connection = self.db.get_connection()
-        depth = getattr(self.db._local, "transaction_depth", 0)
+        depth = self.db.managed_transaction_depth()
         if not connection.in_transaction or depth != 1:
             raise ActorPackRepositoryError("actor_pack_repository_transaction_active")
         actor_id = _actor_id(actor_kind, local_actor_id)
@@ -523,7 +523,7 @@ class ActorPackRepository:
             raise ActorPackRepositoryError("actor_pack_repository_corrupt") from None
 
     def _require_no_transaction(self) -> None:
-        depth = getattr(self.db._local, "transaction_depth", 0)
+        depth = self.db.managed_transaction_depth()
         if self.db.get_connection().in_transaction or depth:
             raise ActorPackRepositoryError("actor_pack_repository_transaction_active")
 

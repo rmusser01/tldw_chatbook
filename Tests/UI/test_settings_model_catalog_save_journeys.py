@@ -6,6 +6,7 @@ import threading
 import pytest
 from textual.widgets import Button, Checkbox, Input, Static
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_settings_configuration_hub import _open_settings_category
 from Tests.UI.test_settings_model_catalog_toggles import _build_settings_app
 from Tests.UI.test_settings_provider_keyboard_journeys import (
@@ -63,6 +64,17 @@ async def _open(host, pilot):
     return host.screen
 
 
+async def _open_catalog_refresh(host, pilot):
+    """Open Advanced ▸ Catalog refresh from its title, as a keyboard user does.
+
+    TASK-33007.6, rewritten on purpose: the refresh controls sit in that
+    closed one-row disclosure, which stays open across a pane rebuild.
+    """
+    await _tab_to(host, pilot, "#settings-advanced-catalog-refresh CollapsibleTitle")
+    await pilot.press("enter")
+    await _settle(host, pilot)
+
+
 def _install(monkeypatch, writer):
     monkeypatch.setattr(
         settings_module, "load_settings", lambda: copy.deepcopy(writer.config)
@@ -88,6 +100,7 @@ async def test_catalog_keyboard_failure_retry_and_fractional_interval(
     async with host.run_test(size=size) as pilot:
         screen = await _open(host, pilot)
         assert not writer.calls
+        await _open_catalog_refresh(host, pilot)
         await _tab_to(host, pilot, MASTER)
         await pilot.press("space")
         await _settle(host, pilot)
@@ -113,6 +126,43 @@ async def test_catalog_keyboard_failure_retry_and_fractional_interval(
             "refresh_consent_recorded" not in call["model_catalog"]
             for call in writer.calls
         )
+
+
+# The real Settings app reads config under the per-test sandbox, which refuses
+# it (RecoveryRequired); a private profile lets it run in the UI lane (C16).
+@pytest.mark.asyncio
+@private_profile_test
+async def test_catalog_says_nothing_until_a_choice_is_saved(monkeypatch, request):
+    """#3057 capture finding 6 (10c): opened with nothing changed, Catalog
+    refresh said "Saved. Applies at next startup." under its "applies
+    immediately · no Save needed" hint. A control posting the value it was
+    built with writes nothing and says nothing; a field taken back to its
+    saved value drops the refusal it showed; a real write says it saved, and
+    a pane rebuild keeps that receipt."""
+    writer = ConfigWriter()
+    _install(monkeypatch, writer)
+    host = ProviderSettingsHarness(_build_settings_app(), "settings")
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = await _open(host, pilot)
+        await _open_catalog_refresh(host, pilot)
+        assert _status(screen) == ""
+        screen.mutate_reactive(SettingsScreen.active_category)
+        await _settle(host, pilot)
+        assert _status(screen) == ""
+        screen.query_one(HOURS, Input).value = "abc"
+        await _settle(host, pilot)
+        assert "not saved" in _status(screen).lower()
+        screen.query_one(HOURS, Input).value = "24"
+        await _settle(host, pilot)
+        assert _status(screen) == ""
+        assert not writer.calls
+        screen.query_one(HOURS, Input).value = "6"
+        await _settle(host, pilot)
+        assert writer.config["model_catalog"]["stale_after_hours"] == 6
+        assert _status(screen) == settings_module.MODEL_CATALOG_SAVED_COPY
+        screen.mutate_reactive(SettingsScreen.active_category)
+        await _settle(host, pilot)
+        assert _status(screen) == settings_module.MODEL_CATALOG_SAVED_COPY
 
 
 @pytest.mark.asyncio
@@ -197,6 +247,7 @@ async def test_catalog_checkbox_labels_are_fully_painted(size, theme, monkeypatc
     host.theme = theme
     async with host.run_test(size=size) as pilot:
         screen = await _open(host, pilot)
+        await _open_catalog_refresh(host, pilot)
         controls = list(screen.query("#settings-model-catalog-group Checkbox"))
         for checkbox in controls:
             await _tab_to(host, pilot, f"#{checkbox.id}")

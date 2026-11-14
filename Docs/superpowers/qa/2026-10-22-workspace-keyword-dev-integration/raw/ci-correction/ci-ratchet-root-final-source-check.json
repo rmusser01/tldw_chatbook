@@ -1,0 +1,31 @@
+{
+  "base": "007521567a9e961d2cd854432b357b545d8605d4",
+  "head": "e8c841d48ba35f99433842e5e7552f989867c01f",
+  "paths": [
+    "Docs/security/production-diagnostic-inventory.json",
+    "Tests/Architecture/test_module_size_ratchet.py",
+    "backlog/tasks/task-36006 - Manage-optional-keyword-indexes-in-Settings-and-qualify-release.md",
+    "tldw_chatbook/Chat/answer_citations.py",
+    "tldw_chatbook/Chat/console_chat_controller.py",
+    "tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "tldw_chatbook/Chat/console_local_review_hook.py",
+    "tldw_chatbook/Chat/console_project_index_preparation.py",
+    "tldw_chatbook/Chat/console_settings_durability.py",
+    "tldw_chatbook/UI/Screens/settings_screen.py",
+    "tldw_chatbook/UI/Settings_Modules/workspace_folder_bindings.py",
+    "tldw_chatbook/app_lifecycle.py"
+  ],
+  "checks": {
+    "complete_correction_diff_check": {
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    "status_before_metadata": {
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  },
+  "backend_query_store_scanner_authority_paths_changed": []
+}

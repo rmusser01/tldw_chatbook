@@ -5,9 +5,7 @@ import re
 from typing import Any
 
 
-_WATCHLISTS_OPERATION_ID = re.compile(
-    r"^local:(?:watchlist_run|briefing):[1-9][0-9]*$"
-)
+_WATCHLISTS_OPERATION_ID = re.compile(r"^local:(?:watchlist_run|briefing):[1-9][0-9]*$")
 
 
 @dataclass
@@ -85,6 +83,7 @@ class TaskResumeState:
             ``True`` when a live question payload is set.
         """
         return bool(self.pending_question)
+
     def has_pending_chat_create(self) -> bool:
         """Return whether a chat-creation confirmation should be shown."""
         return bool(self.pending_chat_create)
@@ -101,9 +100,7 @@ class TaskResumeState:
             "pending_chat_create": self.pending_chat_create,
             "diff_summary": self.diff_summary,
             "next_action": self.next_action,
-            "followed_watchlists_operations": list(
-                self.followed_watchlists_operations
-            ),
+            "followed_watchlists_operations": list(self.followed_watchlists_operations),
         }
 
     @classmethod
@@ -188,14 +185,18 @@ class TaskResumeState:
             return dict(value) if isinstance(value, dict) else None
 
         followed = data.get("followed_watchlists_operations")
-        followed_ids = tuple(
-            dict.fromkeys(
-                value
-                for value in followed
-                if isinstance(value, str)
-                and _WATCHLISTS_OPERATION_ID.fullmatch(value) is not None
+        followed_ids = (
+            tuple(
+                dict.fromkeys(
+                    value
+                    for value in followed
+                    if isinstance(value, str)
+                    and _WATCHLISTS_OPERATION_ID.fullmatch(value) is not None
+                )
             )
-        ) if isinstance(followed, list) else ()
+            if isinstance(followed, list)
+            else ()
+        )
 
         return cls(
             summary=_text("summary"),

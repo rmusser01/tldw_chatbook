@@ -18,6 +18,7 @@ class _Host(App):
     def on_mount(self):
         def cb(value):
             self.result = value
+
         self.push_screen(
             InternalPromptEditorModal(spec=self._spec, active_text=self._active),
             cb,

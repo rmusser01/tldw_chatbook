@@ -1,0 +1,565 @@
+{
+  "scope": "Exact task diagnostics/source before-images/commands/reviews/failures and native child allocation proof. No user profiles or unrelated file bodies included. Historical source/adverse limits retained; archive is not a new correctness gate.",
+  "created_utc": "2026-11-05T16:04:17.738775+00:00",
+  "code_head": "98e80353153e9042c8e0030da9755a55c003806b",
+  "zip_file": "evidence.zip",
+  "zip_sha256": "5ad363c58a1b1f3f3ff6247ee0ab4eaa442731bce0b202f577610a97cb6f42ec",
+  "zip_bytes": 859152,
+  "entry_count": 81,
+  "uncompressed_bytes": 4661856,
+  "entries": [
+    {
+      "entry": "native/initial-instrumentation-adverse-child.log",
+      "source": "/private/tmp/task38614-origin-red2/restart-output.log",
+      "bytes": 161987,
+      "sha256": "7cd99f46a9a20b9d7513b1c95832483f02c2622d8ff8eb62c2d0a4e972810175"
+    },
+    {
+      "entry": "native/native-origin-green-child.log",
+      "source": "/private/tmp/task38614-origin-green/restart-output.log",
+      "bytes": 182874,
+      "sha256": "994dade6cd4a930c0d8500428ad99a72ea7e70fc9bce36405dfda2330b584846"
+    },
+    {
+      "entry": "native/native-origin-red-child.log",
+      "source": "/private/tmp/task38614-origin-red3/restart-output.log",
+      "bytes": 189749,
+      "sha256": "c31e71adf76a2163a803df897bb5a2e3de5dd94d0a5e62d5304d86f09c081c10"
+    },
+    {
+      "entry": "workspace/baseline.json",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/baseline.json",
+      "bytes": 75305,
+      "sha256": "5e121663810275de3d82226f72a8f85e10e89a554ce6d573ceb7f0a3ff490f9d"
+    },
+    {
+      "entry": "workspace/review-5f03c716fe..98e8035315.diff",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/review-5f03c716fe..98e8035315.diff",
+      "bytes": 6934,
+      "sha256": "e7f4bc81b8e253b263a5a23572df220231cd1f26ee3c7ad24a26d137ae96f20b"
+    },
+    {
+      "entry": "workspace/review-85cdf8f529..5f03c716fe.diff",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/review-85cdf8f529..5f03c716fe.diff",
+      "bytes": 38437,
+      "sha256": "29c3aa555a23232f9467218ba9a28b3b477eba4922814d98b6000308c20ef001"
+    },
+    {
+      "entry": "workspace/root-call-site-inventory.json",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/root-call-site-inventory.json",
+      "bytes": 20205,
+      "sha256": "6b56889e0891658bd529f25739f236fc77f44dc4c090b85a2573dbe29fdee749"
+    },
+    {
+      "entry": "workspace/root-delivery-audit.json",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/root-delivery-audit.json",
+      "bytes": 817,
+      "sha256": "449f5f3d54794fefb5ed6b2bb3be9b4bad03d6d063d901bf6577c0772183f796"
+    },
+    {
+      "entry": "workspace/root-round1-delivery-audit.json",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/root-round1-delivery-audit.json",
+      "bytes": 1455,
+      "sha256": "1286120569e0f93991a029609215ef578c4af69a9e5dd87c785cb24172c1139e"
+    },
+    {
+      "entry": "workspace/task-1-before-hashes.json",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-before-hashes.json",
+      "bytes": 1082,
+      "sha256": "f7cf4129ac8a316462d30141a5386d7946886fd891759e33140214c8de73e9f5"
+    },
+    {
+      "entry": "workspace/task-1-before/agent.py",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-before/agent.py",
+      "bytes": 138388,
+      "sha256": "7106571617c8dee65f26a219a025adbc5c6a163a1ae5dcb08a93afbbc1daeb48"
+    },
+    {
+      "entry": "workspace/task-1-before/chat_screen.py",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-before/chat_screen.py",
+      "bytes": 1130530,
+      "sha256": "a144ee0bd7f25f69c5ac24c0cb88bc0cbb929ea00996fe5b2a670a2fa618b39c"
+    },
+    {
+      "entry": "workspace/task-1-before/console_spend_projection.py",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-before/console_spend_projection.py",
+      "bytes": 57106,
+      "sha256": "985be328aa4e1ac181243fd8d9e5f49a9f985930cd1f22dd1596457f46f6f2de"
+    },
+    {
+      "entry": "workspace/task-1-before/message.py",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-before/message.py",
+      "bytes": 139862,
+      "sha256": "fb7c9e0df1ba9d1ffb215dccab560b60624bd91a66999d9ea401a22f6e92e624"
+    },
+    {
+      "entry": "workspace/task-1-before/send_acknowledgement.py",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-before/send_acknowledgement.py",
+      "bytes": 32386,
+      "sha256": "c14d79e283eebde0c5497b1aef22d6ddc548c4b2f3ea5db29051ffc46a2d48bf"
+    },
+    {
+      "entry": "workspace/task-1-before/session.py",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-before/session.py",
+      "bytes": 298830,
+      "sha256": "31ef1f9698c37e32abdb2d333aad1dd1c42c0747a098e015c0c4c1e67bf7ab0f"
+    },
+    {
+      "entry": "workspace/task-1-before/test_console_readiness_config_projection.py",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-before/test_console_readiness_config_projection.py",
+      "bytes": 25205,
+      "sha256": "26d3821d13ad82ab13afec8c73e8a553aaf8cfac6e6351bdd7ba00a820a8d011"
+    },
+    {
+      "entry": "workspace/task-1-before/test_workflow_existing_admission.py",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-before/test_workflow_existing_admission.py",
+      "bytes": 6860,
+      "sha256": "dfb70cd937c9e8825325b26d7d392ecae67afc8e91dcacb6f2716c4d5d467027"
+    },
+    {
+      "entry": "workspace/task-1-before/wiring.py",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-before/wiring.py",
+      "bytes": 132661,
+      "sha256": "96d3dc66bc94ff9f1afbbd0e0585c4fd62b4e0fc74338811dbffb82c4db30a04"
+    },
+    {
+      "entry": "workspace/task-1-before/workspace.py",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-before/workspace.py",
+      "bytes": 373148,
+      "sha256": "f1f89a04fdf0f176a346b14f6568c7eda8363e37a7e5b41e1d1cb9beccd2e2aa"
+    },
+    {
+      "entry": "workspace/task-1-bootstrap/task_1_bootstrap_plugin.py",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-bootstrap/task_1_bootstrap_plugin.py",
+      "bytes": 1069,
+      "sha256": "1bd595e4b735375f7a93bc058c47b4d998a650ff7c7ed2380c02c8440c738ed2"
+    },
+    {
+      "entry": "workspace/task-1-brief.md",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-brief.md",
+      "bytes": 4341,
+      "sha256": "430646855312a0f5343176ec634d0043eacfa66c0a2319babfacf38459962a60"
+    },
+    {
+      "entry": "workspace/task-1-callers.txt",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-callers.txt",
+      "bytes": 14646,
+      "sha256": "dd60641ddb0f54205d8ba28eb22fb7a055a11370a15608f900240aff95387a79"
+    },
+    {
+      "entry": "workspace/task-1-commands.json",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-commands.json",
+      "bytes": 3913,
+      "sha256": "0f175fc58fb6905d2b2c495e24550815f5b9bd5c91e75ca1a4cf640421450c93"
+    },
+    {
+      "entry": "workspace/task-1-commit-receipt.json",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-commit-receipt.json",
+      "bytes": 4564,
+      "sha256": "d369996ac594078cf3750ece20fe46ea96cf8278f06474e4d20b2c79a212fdaf"
+    },
+    {
+      "entry": "workspace/task-1-controller-green-failures.json",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-controller-green-failures.json",
+      "bytes": 21032,
+      "sha256": "f54c740597d2cc337be67d55b8582067154d88f1a4df98fb5ca8157ffabaf8c6"
+    },
+    {
+      "entry": "workspace/task-1-controller-green.log",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-controller-green.log",
+      "bytes": 476547,
+      "sha256": "5889c58eecfeadb2663edceb1bb9dffb8c0bdfff8e763ff786cc016186518235"
+    },
+    {
+      "entry": "workspace/task-1-format-after.txt",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-format-after.txt",
+      "bytes": 53458,
+      "sha256": "e22e350c9c330e46f667828a65b48a9c0bed4d260c7ff034164b91c6f8f19ec1"
+    },
+    {
+      "entry": "workspace/task-1-format-before.txt",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-format-before.txt",
+      "bytes": 50406,
+      "sha256": "c7e194696c69f66499fbf06089619e5499f724fc6752a6b2c09f935c3b05fd21"
+    },
+    {
+      "entry": "workspace/task-1-format-range-comparison.json",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-format-range-comparison.json",
+      "bytes": 1480,
+      "sha256": "f3f688f22da801020a00e34bb9e328fdafefc2936a135599ee6eef38906e0795"
+    },
+    {
+      "entry": "workspace/task-1-lint-after.txt",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-lint-after.txt",
+      "bytes": 271719,
+      "sha256": "6649d0e144843c5d2513589aefa729269a80509ef9254d0c6fc17f873b90a73b"
+    },
+    {
+      "entry": "workspace/task-1-lint-before.txt",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-lint-before.txt",
+      "bytes": 271719,
+      "sha256": "68dc23ca37f086149ac6a228366d91046e90a53ab65776743b09015bf2961a43"
+    },
+    {
+      "entry": "workspace/task-1-live-control.log",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-live-control.log",
+      "bytes": 339,
+      "sha256": "2b63148c287029959d28570fd9c935d3bed6e0375785e83d7f209407037fff17"
+    },
+    {
+      "entry": "workspace/task-1-native-green-failures.json",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-native-green-failures.json",
+      "bytes": 2418,
+      "sha256": "7ed613fc5c4a739daf0e961a349e8101f824828e17fef3e8cc60f7b045b5dad7"
+    },
+    {
+      "entry": "workspace/task-1-native-green.log",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-native-green.log",
+      "bytes": 153450,
+      "sha256": "9e1cb934bd297727b5bb245c248a666f6de5ca962a49ef1a16359587e16c30aa"
+    },
+    {
+      "entry": "workspace/task-1-native-red.log",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-native-red.log",
+      "bytes": 335,
+      "sha256": "e7e0e173e1f039a7af3ac6f1ff9f9bc9b10afcfc3da61aea5d7a9dedb954d4b2"
+    },
+    {
+      "entry": "workspace/task-1-origin-green.log",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-origin-green.log",
+      "bytes": 26,
+      "sha256": "e6b557fb3056ff978085c1aa57ab336218dee4181124bd8af73ba23ba8b9eb15"
+    },
+    {
+      "entry": "workspace/task-1-origin-red.log",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-origin-red.log",
+      "bytes": 15549,
+      "sha256": "eb23dab83f332ab73d75753410b6f8f27de95b2991d486a4b27825f2b9e74ad5"
+    },
+    {
+      "entry": "workspace/task-1-origin.py",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-origin.py",
+      "bytes": 2033,
+      "sha256": "0501ba8986f472a1d5cedfd8a69fdafcdfb466d76b300909c641567f25c1fe28"
+    },
+    {
+      "entry": "workspace/task-1-originals-bootstrap-failures.json",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-originals-bootstrap-failures.json",
+      "bytes": 297,
+      "sha256": "c5a1a2b87eea7a05b6e810e5ea982d5ae2568d04cbea0cef043936cd592ddb24"
+    },
+    {
+      "entry": "workspace/task-1-originals-bootstrap.log",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-originals-bootstrap.log",
+      "bytes": 4293,
+      "sha256": "f33f78a5124e7ac6da06391ad47cb9cc63862a04b60880da528be2d12f9e3bc5"
+    },
+    {
+      "entry": "workspace/task-1-report.initial-frozen-d8beb008ff11ff28a17299bdc35178e0a80794d411a5e8dbf23235c7abf90faf.md",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-report.initial-frozen-d8beb008ff11ff28a17299bdc35178e0a80794d411a5e8dbf23235c7abf90faf.md",
+      "bytes": 9786,
+      "sha256": "d8beb008ff11ff28a17299bdc35178e0a80794d411a5e8dbf23235c7abf90faf"
+    },
+    {
+      "entry": "workspace/task-1-report.md",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-report.md",
+      "bytes": 16561,
+      "sha256": "75817ad90313c766d1778dce3d3cc031a58559dfd1f47739f8ac260e701ae3da"
+    },
+    {
+      "entry": "workspace/task-1-report.round1-frozen-75817ad90313c766d1778dce3d3cc031a58559dfd1f47739f8ac260e701ae3da.md",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-report.round1-frozen-75817ad90313c766d1778dce3d3cc031a58559dfd1f47739f8ac260e701ae3da.md",
+      "bytes": 16561,
+      "sha256": "75817ad90313c766d1778dce3d3cc031a58559dfd1f47739f8ac260e701ae3da"
+    },
+    {
+      "entry": "workspace/task-1-review.initial-frozen-5c7c16e881a9b8d1d1d905b7e549560af72d30387fc43f002d72c91e0d96b5fb.md",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-review.initial-frozen-5c7c16e881a9b8d1d1d905b7e549560af72d30387fc43f002d72c91e0d96b5fb.md",
+      "bytes": 12298,
+      "sha256": "5c7c16e881a9b8d1d1d905b7e549560af72d30387fc43f002d72c91e0d96b5fb"
+    },
+    {
+      "entry": "workspace/task-1-review.md",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-review.md",
+      "bytes": 12298,
+      "sha256": "5c7c16e881a9b8d1d1d905b7e549560af72d30387fc43f002d72c91e0d96b5fb"
+    },
+    {
+      "entry": "workspace/task-1-round1-alias-audit.json",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-round1-alias-audit.json",
+      "bytes": 3698,
+      "sha256": "8a0c4eae611817913b867963441676405af1e6ac186a990ec0503c20d29f13d5"
+    },
+    {
+      "entry": "workspace/task-1-round1-alias-green.before.json",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-round1-alias-green.before.json",
+      "bytes": 2316,
+      "sha256": "6e441d243889f322296d066a6f990ab1229d6ef50eac42f26cc0a372f2cce7ed"
+    },
+    {
+      "entry": "workspace/task-1-round1-alias-green.log",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-round1-alias-green.log",
+      "bytes": 472,
+      "sha256": "82775dd8a54f51ea3a5db9ae7907d17eace9c41539836c0d63e6fccd394d9e1b"
+    },
+    {
+      "entry": "workspace/task-1-round1-alias-green.receipt.json",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-round1-alias-green.receipt.json",
+      "bytes": 4008,
+      "sha256": "4cb068c5486c642a311367a9304f6b098aeb3c691d46323ba7427d289df12af7"
+    },
+    {
+      "entry": "workspace/task-1-round1-alias-red.before.json",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-round1-alias-red.before.json",
+      "bytes": 2312,
+      "sha256": "1d3e449884ce258d941449de6da626f1dbfeeec7fe1698208353d4b318da0e94"
+    },
+    {
+      "entry": "workspace/task-1-round1-alias-red.log",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-round1-alias-red.log",
+      "bytes": 17254,
+      "sha256": "e43dc231b3447e74f0e0ad373888e14624d1a5f2f4077722f78966ff224ad08f"
+    },
+    {
+      "entry": "workspace/task-1-round1-alias-red.receipt.json",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-round1-alias-red.receipt.json",
+      "bytes": 4005,
+      "sha256": "979037286352c12bfeb9e705bd3703d73d8947adb8527656454c4fcc52fb0f70"
+    },
+    {
+      "entry": "workspace/task-1-round1-before-hashes.json",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-round1-before-hashes.json",
+      "bytes": 377,
+      "sha256": "91c78f1c8344452d8186337cca132a6d8c79a73fc4bcfe522c5abab71cff9ab1"
+    },
+    {
+      "entry": "workspace/task-1-round1-before/console_spend_projection.py",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-round1-before/console_spend_projection.py",
+      "bytes": 57030,
+      "sha256": "b3c8e19c5ef1f503880683f2c95d7f53a3ae8947654042779f92d865b67790c6"
+    },
+    {
+      "entry": "workspace/task-1-round1-before/test_console_shared_context_policy.py",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-round1-before/test_console_shared_context_policy.py",
+      "bytes": 23353,
+      "sha256": "61544976005a666a053ea30d21ff6daa046d206f4f4385d5e87e6510d4e21da5"
+    },
+    {
+      "entry": "workspace/task-1-round1-before/test_console_sync_worker_admission.py",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-round1-before/test_console_sync_worker_admission.py",
+      "bytes": 5010,
+      "sha256": "9ecd7633756409c0702cfb0f2f7a6142cf24b96e068e0161f00e95b6aa1d6bf2"
+    },
+    {
+      "entry": "workspace/task-1-round1-commit-receipt.json",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-round1-commit-receipt.json",
+      "bytes": 530,
+      "sha256": "2ffb306a402d868d21d0ff3cc5d5b6221a05cff98b5fd520f1b13835dff6cc96"
+    },
+    {
+      "entry": "workspace/task-1-round1-covering.before.json",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-round1-covering.before.json",
+      "bytes": 3620,
+      "sha256": "3e8f5db8f278075a45c8536df52e54de9deb851f6e1f40340cbd93731e1a2e1d"
+    },
+    {
+      "entry": "workspace/task-1-round1-covering.log",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-round1-covering.log",
+      "bytes": 18960,
+      "sha256": "5ce8b10301ccc34f849ccae54d58936318bf21af84970dcca5a04e4f1c02d7e5"
+    },
+    {
+      "entry": "workspace/task-1-round1-covering.receipt.json",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-round1-covering.receipt.json",
+      "bytes": 5313,
+      "sha256": "65eac576080445b9b9d0a868aaf3478e893c6fa374334c0fcba735605c947c08"
+    },
+    {
+      "entry": "workspace/task-1-round1-final-controls.before.json",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-round1-final-controls.before.json",
+      "bytes": 2439,
+      "sha256": "572d107b2a9ffa873257ec3c0c75d2b249040fd308b21d89957844522259f63b"
+    },
+    {
+      "entry": "workspace/task-1-round1-final-controls.log",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-round1-final-controls.log",
+      "bytes": 732,
+      "sha256": "83e78134569c8b2ac4617200cb5eec434fa8de023689231c08d66bb683b86195"
+    },
+    {
+      "entry": "workspace/task-1-round1-final-controls.receipt.json",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-round1-final-controls.receipt.json",
+      "bytes": 4131,
+      "sha256": "013d53e2da01920b7e0b0ab3a0c2a9bafa64e81ca11a06b20f1e908f84dc25ae"
+    },
+    {
+      "entry": "workspace/task-1-round1-final-public.before.json",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-round1-final-public.before.json",
+      "bytes": 2332,
+      "sha256": "70cf7b063380a92410056c6850e79914839d795382c557de651657dcffa8c0fc"
+    },
+    {
+      "entry": "workspace/task-1-round1-final-public.log",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-round1-final-public.log",
+      "bytes": 332,
+      "sha256": "bd12c73782f1510eff5efd681d61c22a9a50b0b3051056c4076668cfe30de99d"
+    },
+    {
+      "entry": "workspace/task-1-round1-final-public.receipt.json",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-round1-final-public.receipt.json",
+      "bytes": 4024,
+      "sha256": "5e4e384f57665a52d89d1cc2845221850a4d403abcfe2ae1b4d34ef8c1e4ed3c"
+    },
+    {
+      "entry": "workspace/task-1-round1-references.txt",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-round1-references.txt",
+      "bytes": 14549,
+      "sha256": "deff31ce291dd215e752d1d46f1e6bf70dd1b07c5deee74dee3212029ccd27f3"
+    },
+    {
+      "entry": "workspace/task-1-round1-review.final-frozen-c49341fe4b281b42dc3767b3fa27cdd4e0472d1c461d8db1d96621aacbbe00b5.md",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-round1-review.final-frozen-c49341fe4b281b42dc3767b3fa27cdd4e0472d1c461d8db1d96621aacbbe00b5.md",
+      "bytes": 6757,
+      "sha256": "c49341fe4b281b42dc3767b3fa27cdd4e0472d1c461d8db1d96621aacbbe00b5"
+    },
+    {
+      "entry": "workspace/task-1-round1-review.md",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-round1-review.md",
+      "bytes": 6757,
+      "sha256": "c49341fe4b281b42dc3767b3fa27cdd4e0472d1c461d8db1d96621aacbbe00b5"
+    },
+    {
+      "entry": "workspace/task-1-round1-run.py",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-round1-run.py",
+      "bytes": 1589,
+      "sha256": "f5f36c3e3ff7edfd85c9fa2ee41b4cd43fea1ed00e03e8d68b58ff511739b930"
+    },
+    {
+      "entry": "workspace/task-1-round1-source-final.json",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-round1-source-final.json",
+      "bytes": 1328,
+      "sha256": "efa94d05f1d834b41501170b5b5cfa44891e10c1f4f0d98247b76b3cd37c33bf"
+    },
+    {
+      "entry": "workspace/task-1-round1-static-final.json",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-round1-static-final.json",
+      "bytes": 3374,
+      "sha256": "8031a5f1457a1944db00c5a63f86b6aa378b596eae5c75e56709409985265b49"
+    },
+    {
+      "entry": "workspace/task-1-round1-static.py",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-round1-static.py",
+      "bytes": 3130,
+      "sha256": "f674f48c7d23f3ecfd58e17615b853ab46d001bb2aedffd3251ff592f74d871b"
+    },
+    {
+      "entry": "workspace/task-1-source-final.json",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-source-final.json",
+      "bytes": 1328,
+      "sha256": "74021d87ca15e16d7d36058245bb63d45374bba7ad0099b653318a06db6a242a"
+    },
+    {
+      "entry": "workspace/task-1-static-final.json",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-static-final.json",
+      "bytes": 3374,
+      "sha256": "8c9dc0e5ec8560c35f529f2f1ee37b442b257c59a38f636bec3d7f8bf3b24acb"
+    },
+    {
+      "entry": "workspace/task-1-static.py",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-static.py",
+      "bytes": 3116,
+      "sha256": "83f61fc44d91186fa3fab7c77d8a6a3472956511dc598614906d3364c20f6a44"
+    },
+    {
+      "entry": "workspace/task-1-targeted-final.log",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-targeted-final.log",
+      "bytes": 842,
+      "sha256": "baf899bbc21a0604e62655c7820dd90727a0980aca6b2748b2491bbb75077022"
+    },
+    {
+      "entry": "workspace/task-1-worker-final.log",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-worker-final.log",
+      "bytes": 339,
+      "sha256": "8fd3ff471843f087b6c8acedc84a6099efbc73369facc4527a8c10cbc427bbd1"
+    },
+    {
+      "entry": "workspace/task-1-worker-green.log",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-worker-green.log",
+      "bytes": 339,
+      "sha256": "664a0c6597ffca74fcee83f9ba9648eec9d468999ae99d5ac79ba5665d3fe34a"
+    },
+    {
+      "entry": "workspace/task-1-worker-red.log",
+      "source": ".superpowers/sdd/2026-11-05-console-sync-coroutine-warning-fix/task-1-worker-red.log",
+      "bytes": 17827,
+      "sha256": "1650a38ce795774b56935af8f05f76d5c39df6488c7368544d240d82eb6e390b"
+    }
+  ],
+  "rulings": {
+    "count": 9,
+    "source": "ledger.md",
+    "source_sha256": "63a82ca49fc2ebb79717911294eee91946ee75d0f463030044f1a66a9fa0017a",
+    "source_lines": [
+      {
+        "line": 4,
+        "sha256": "66e33334962d0ee1a4f96da508836a70dbef5c27b12cb4685047649ec68c314d"
+      },
+      {
+        "line": 5,
+        "sha256": "23ae73cef20928b21903083b9d392742e37e66641f547a98a574d77398c031f2"
+      },
+      {
+        "line": 9,
+        "sha256": "6aab4dbbd468b3c90392238639f0ce129cd29934e4cb94cc9269424857faf5f6"
+      },
+      {
+        "line": 12,
+        "sha256": "b56f63b66be45c413642656221086181e21ede4ff1b22abe3528be02938da9b7"
+      },
+      {
+        "line": 15,
+        "sha256": "ae7d338be3a9a34b8d885216701edfcda6a8350acf4b799f0fbdaafb7115de6c"
+      },
+      {
+        "line": 19,
+        "sha256": "5c5b8c65bfddca793aef9168a86e9987acad1e25d67c0e4918253cfddbe15f07"
+      },
+      {
+        "line": 22,
+        "sha256": "d319851ef20e0c3b97d2014a0fc163142b0604e2828a6b4dc29cc512a327a001"
+      },
+      {
+        "line": 27,
+        "sha256": "9fa2bd4e93ff8533836b0851c0bea473b3020f4b87dda0f06d499efeae227f7a"
+      },
+      {
+        "line": 28,
+        "sha256": "98501f336c86bdc5c98ac686f6d5a67913327baa5faa9e67ba1e4504e61cb304"
+      }
+    ]
+  },
+  "standalone_copies": {
+    "implementation.md": {
+      "sha256": "75817ad90313c766d1778dce3d3cc031a58559dfd1f47739f8ac260e701ae3da",
+      "bytes": 16561
+    },
+    "review-initial.md": {
+      "sha256": "5c7c16e881a9b8d1d1d905b7e549560af72d30387fc43f002d72c91e0d96b5fb",
+      "bytes": 12298
+    },
+    "review-final.md": {
+      "sha256": "c49341fe4b281b42dc3767b3fa27cdd4e0472d1c461d8db1d96621aacbbe00b5",
+      "bytes": 6757
+    },
+    "ledger.md": {
+      "sha256": "63a82ca49fc2ebb79717911294eee91946ee75d0f463030044f1a66a9fa0017a",
+      "bytes": 8738
+    }
+  },
+  "limits": [
+    "Old14 launch epoch is unproven.",
+    "Interrupted/adverse/profile cohorts remain actual failed observations.",
+    "Raw fixture retirement markers do not prove application restart.",
+    "No full suite or provider replay."
+  ]
+}

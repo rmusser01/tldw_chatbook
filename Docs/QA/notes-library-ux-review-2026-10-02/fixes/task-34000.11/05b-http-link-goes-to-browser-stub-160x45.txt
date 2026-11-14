@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌──────────────────────────────────────────────────────────────┐  N  Saved 01:16 · Next: Press Edit to change this note.                                │
+│   a  │ Library notes · Ready                                        │  o    ‹ Notes   Typed link test                                                        │
+│   v  │ Notes (124)                                                  │  t                                                                                     │
+│      │ These notes live in the Library's own database — for notes   │  e                                                                                     │
+│      │ that live in a folder on disk, switch to Folder files. To    │  s   In the Library database only — no file on disk                                    │
+│      │ copy or keep a folder synced, choose Add from files.         │     Saved                                                                              │
+│      │                                                              │         Edit     Preview     Info                                                      │
+│      │ Filter                                                       │         Save     Use in Console                                                        │
+│      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │     ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓ │
+│      │ ▊ Filter notes… (Enter)                                    ▎ │     ┃Typed link test                                                                 ┃ │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     ┃ See [[Gardening log]] for soil notes. Docs: site                               ┃ │
+│      │                                                              │     ┃                                                                                ┃ │
+│      │    New     Sort: Newest     Select                           │     ┃                                                                                ┃ │
+│ ---> │    Add from files…     Export                                │     ┃                                                                                ┃ │
+│      │ Folders & placement                                          │     ┃                                                                                ┃ │
+│      │    New folder     Add to folder     Move note                │     ┃                                                                                ┃ │
+│      │    ○ Remove placement                                        │     ┃                                                                                ┃ │
+│      │                                                              │     ┃                                                                                ┃ │
+│      │                                                              │<--- ┃                                                                                ┃ │
+│      │  ▸ Agent_Lessons                                             │     ┃                                                                                ┃ │
+│      │  ▸ Journal                                                   │     ┃                                                                                ┃ │
+│      │  ▾ Meetings                                                  │     ┃                                                                                ┃ │
+│      │    Advisor meeting 2026-09-24 · 7m                           │     ┃                                                                                ┃ │
+│ ---> │    Standup 2026-09-29 · 7m                                   │     ┃                                                                                ┃ │
+│      │    Advisor meeting 2026-09-10 · 7m                           │     ┃                                                                                ┃ │
+│      │    ملاحظات الاجتماع — مراجعة المشروع · 7m                    │     ┃                                                                                ┃ │
+│      │    Meeting: design critique — Library rail · 7m              │     ┃                                                                                ┃ │
+│      │    Meeting notes 2026-09-30 · 7m                             │     ┃                                                                                ┃ │
+│      │  ▸ Projects                                                  │     ┃                                                                                ┃ │
+│      │  ▸ Recipes                                                   │     ┃                                                                                ┃ │
+│      │  ▸ Research                                                ▇ │     ┃                                                                                ┃ │
+│      │  ▸ Study                                                     │     ┃                     ╭──────────────────────────────────────────────────────────╮ │
+│      │  ▾ Unfiled                                                   │     ┃                     │                                                          │ │
+│      │    Typed link test · now                                     │     ┃                     │ Opened in browser: https://example.test/soil             │ │
+│      │    Verifier link test · 3m                                   │     ┃                     │                                                          │ │
+│      │    Quotes · 7m                                               │     ┗━━━━━━━━━━━━━━━━━━━━━╰──────────────────────────────────────────────────────────╯ │
+│      └──────────────────────────────────────────────────────────────┘                                                                                        │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  pgup/pgdn scroll | esc back to notes | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

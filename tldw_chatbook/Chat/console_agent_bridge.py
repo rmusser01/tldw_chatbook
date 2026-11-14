@@ -20,7 +20,7 @@ import threading
 import time
 from collections import deque
 from collections.abc import Awaitable
-from concurrent.futures import TimeoutError as FuturesTimeoutError
+from concurrent.futures import TimeoutError as FuturesTimeoutError  # noqa: F401 - lazy request helper compatibility seam
 from collections.abc import Collection, Mapping, Set as AbstractSet
 from dataclasses import dataclass, field, replace as dataclass_replace
 from pathlib import Path
@@ -30,22 +30,33 @@ from typing import Generic, TypeVar
 from uuid import uuid4
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Agents.workflow_models import WorkflowTaskClaim
     from tldw_chatbook.Agents.local_tool_provider import RunAdmittedWorkspaceRoot
     from tldw_chatbook.Agents.run_log_paging import RunLogPage, RunLogPageCursor
     from tldw_chatbook.Agents.execution_capacity import ExecutionOwner, OwnedOperation, RuntimeCapacity
-    from tldw_chatbook.Agents.fleet_messages import MessageStore, MessageInbox, ProgressMessage
+    from tldw_chatbook.Agents.fleet_messages import MessageStore, MessageInbox, ProgressMessage, MessageIdentity
     from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
     from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
-    from tldw_chatbook.Personal_Context.context_service import ProfileContextSnapshot
-    from tldw_chatbook.UI.Screens.change_review_screen import (
+    from tldw_chatbook.Personal_Context.context_service import (
+        ProfileContextRequest,
+        ProfileContextSelectionExplanation,
+        ProfileContextService,
+        ProfileContextSnapshot,
+    )
+    from tldw_chatbook.Workspaces.change_review_provider import (
         AgentRunsChangeReviewProvider,
     )
 
 from loguru import logger
+from tldw_chatbook.Agents.plain_chat_tool_surface import (
+    AppToolKillSwitch as _PreviewAppToolKillSwitch,
+    tool_kill_switch_engaged as _preview_kill_reader,
+)
 
+from tldw_chatbook.app_services import read_mcp_service
 from tldw_chatbook.Agents.activation import guarded as agent_execution_guard
 from tldw_chatbook.Agents.activation import (
-    async_worker_guard as agent_async_worker_guard,
+    async_worker_guard as agent_async_worker_guard,  # noqa: F401 - lazy request helper compatibility seam
 )
 
 from tldw_chatbook.Agents.agent_models import (
@@ -57,8 +68,8 @@ from tldw_chatbook.Agents.agent_models import (
     LOAD_TOOLS_NAME,
     MAX_RUN_CONTROL_STEPS,
     MAX_STEERING_CHARS,
-    RUN_CANCELLED,
-    RUN_DONE,
+    RUN_CANCELLED as RUN_CANCELLED,
+    RUN_DONE as RUN_DONE,
     RunBudget,
     RUNTIME_TOOL_NAMES,
     STEERING_SOURCE_USER,
@@ -81,7 +92,6 @@ from tldw_chatbook.Agents.agent_models import (
     RunOutcome,
     SkillFileBindings,
     ToolCall,
-    ToolCatalogEntry,
     ToolOutcome,
     ToolResult,
     ToolReviewValue,
@@ -94,9 +104,7 @@ from tldw_chatbook.Agents.agent_service import (
     RUN_LOG_PROMPT_SECTION,
     SUBAGENT_SYSTEM_PROMPT,
     AgentService,
-    FirstRequestSchemaPlan,
-    RunLogRequestPlan,
-    _count_model_messages,
+    ConsoleFirstRequestPlan as ConsoleFirstRequestPlan,
     build_first_request_schema_plan,
     build_run_log_request_plan,
 )
@@ -119,7 +127,7 @@ from tldw_chatbook.Agents.native_tools import (
     provider_supports_native_tools,
     schemas_to_openai_tools,
 )
-from tldw_chatbook.Agents.agent_stream import StreamGate
+from tldw_chatbook.Agents.agent_stream import StreamGate  # noqa: F401 - lazy request helper compatibility seam
 from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator, FleetHandle
 
 # task-24458: these six refusal STRINGS were the last module-scope edge
@@ -130,6 +138,7 @@ from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator, FleetHandle
 # modules resident at `_ui_ready` to compare a handful of strings. The set
 # they feed is now built on first use; see `_refusal_statuses`.
 from tldw_chatbook.Agents.mcp_tool_provider import (
+    CollisionFilteredMCPProvider as _CollisionFilteredMCPProvider,
     DENY_REFUSAL as MCP_DENY_REFUSAL,
     KILL_SWITCH_REFUSAL as MCP_KILL_SWITCH_REFUSAL,
     TIMEOUT_REFUSAL as MCP_TIMEOUT_REFUSAL,
@@ -143,7 +152,9 @@ from tldw_chatbook.Agents.mcp_tool_provider import (
 # module is imported on the Chat-screen mount leg).
 from tldw_chatbook.Agents.tool_catalog import (
     BuiltinToolProvider,
+    RECOVERY_RESERVED_TOOL_NAMES,
     CANVAS_RESERVED_TOOL_NAMES,
+    CODE_REVIEW_RESERVED_TOOL_NAMES,
     LIBRARY_RESERVED_TOOL_NAMES,
     PROFILE_RESERVED_TOOL_NAMES,
     SkillToolProvider,
@@ -179,12 +190,14 @@ from tldw_chatbook.Chat.console_raw_cli import (
 )
 from tldw_chatbook.Chat.console_display_state import (
     format_diff_feedback_disclosure,
-    render_diff_feedback_block,
+    render_diff_feedback_block as render_diff_feedback_block,
 )
 from tldw_chatbook.Chat.console_history_budget import ProviderContinuationSidecar
 from tldw_chatbook.Chat.console_prepared_request import (
-    CONTINUATION_OWNER_KEY,
+    CONTINUATION_OWNER_KEY as CONTINUATION_OWNER_KEY,
+    THINKING_OWNER_KEY,
     PreparedConsoleRequest,
+    PreparedProviderRequest as PreparedProviderRequest,
     build_console_request,
     freeze_json,
 )
@@ -199,59 +212,60 @@ from tldw_chatbook.Chat.console_trace_provenance import (
     TraceProvenanceSource,
     request_route_provenance,
 )
-from tldw_chatbook.Chat.console_trace_models import new_opaque_id
+from tldw_chatbook.Chat.console_trace_models import new_opaque_id  # noqa: F401 - lazy request helper compatibility seam
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.console_provider_gateway import (
-    ConsoleProviderCallSignals,
-    ConsoleProviderGateway,
+    ConsoleProviderCallSignals,  # noqa: F401 - lazy request helper compatibility seam
+    ConsoleProviderGateway,  # noqa: F401 - lazy request helper compatibility seam
     ConsoleProviderResolution,
     ConsoleProviderStreamSignals,
-    ProviderProprietaryThinkingEvidence,
-    ProviderThinkingDelta,
-    ProviderToolCalls,
+    ProviderProprietaryThinkingEvidence,  # noqa: F401 - lazy request helper compatibility seam
+    ProviderThinkingDelta,  # noqa: F401 - lazy request helper compatibility seam
+    ProviderToolCalls,  # noqa: F401 - lazy request helper compatibility seam
     ProviderTurnMetadata,
 )
-from tldw_chatbook.Chat.console_chat_store import require_thinking_persistence_support
+from tldw_chatbook.Chat.console_chat_store import require_thinking_persistence_support  # noqa: F401 - lazy request helper compatibility seam
 from tldw_chatbook.Chat.console_session_settings import (
-    CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
+    CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,  # noqa: F401 - lazy request helper compatibility seam
 )
 from tldw_chatbook.Chat.console_thinking_capture import (
     ThinkingCapture,
-    consume_call_thinking,
+    consume_call_thinking,  # noqa: F401 - lazy request helper compatibility seam
 )
 from tldw_chatbook.Chat.console_thinking_history import ProviderThinkingSidecar
-from tldw_chatbook.Chat.thinking_blocks import ThinkingEnvelope, ThinkingHistoryPolicy
+from tldw_chatbook.Provider_Contract.thinking_blocks import ThinkingEnvelope, ThinkingHistoryPolicy
 from tldw_chatbook.Chat.console_history_budget import DEFAULT_RESPONSE_RESERVATION
-from tldw_chatbook.Chat.provider_continuation import (
+from tldw_chatbook.Provider_Contract.provider_continuation import (
     ContinuationOwnerGroup,
+    bind_continuation_to_target,  # noqa: F401 - lazy request helper compatibility seam
     ContinuationRestoreTarget,
     ProviderContinuationCheckpoint,
 )
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.config import (
-    DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
-    MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
-    MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
-    coerce_int_setting,
-    get_cli_setting,
-    load_settings,
+    DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES as DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+    MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES as MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+    MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES as MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+    coerce_int_setting as coerce_int_setting,
+    get_cli_setting as get_cli_setting,
+    load_settings as load_settings,
 )
 
 from tldw_chatbook.Chat.console_skill_resolver import SKILL_UNTRUSTED_REFUSE
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB, _CHANGE_REVIEW_LIST_RUNS_SOURCE
 from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.Workspaces.change_review_consent import SkippedReviewRoot
 from tldw_chatbook.Workspaces.change_review_finalization import (
-    ChangeReviewFinalizeResult,
+    ChangeReviewFinalizeResult as ChangeReviewFinalizeResult,
 )
 from tldw_chatbook.Workspaces.change_turn_tracker import (
-    ChangeTurnTracker,
+    ChangeTurnTracker as ChangeTurnTracker,
     _BASELINE_TIMEOUT_SECONDS as _CHANGE_BOUNDARY_WAIT_SECONDS,
 )
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
 from tldw_chatbook.Internal_Prompts.catalog import CATALOG
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
-from tldw_chatbook.Utils.path_validation import validate_path
+from tldw_chatbook.Utils.path_validation import validate_path as validate_path
 from tldw_chatbook.Utils.token_counter import get_model_token_limit
 
 
@@ -1539,8 +1553,10 @@ def _refusal_statuses() -> Mapping[str, ConsoleActivityStatus]:
         LOCAL_GATE_ERROR_REFUSAL,
         LOCAL_KILL_SWITCH_REFUSAL,
         LOCAL_ROOT_CHANGED_REFUSAL,
+        LOCAL_RUN_WORKTREE_RELEASED_REFUSAL,
         LOCAL_TIMEOUT_REFUSAL,
         LOCAL_USER_DENY_REFUSAL,
+        LOCAL_WORKER_FAILED_REFUSAL,
     )
     from tldw_chatbook.Agents.raw_shell_tool_provider import RAW_SHELL_DENY_REFUSAL
 
@@ -1568,6 +1584,8 @@ def _refusal_statuses() -> Mapping[str, ConsoleActivityStatus]:
         LOCAL_GATE_ERROR_REFUSAL: "blocked",
         LOCAL_ROOT_CHANGED_REFUSAL: "blocked",
         LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL: "blocked",
+        LOCAL_WORKER_FAILED_REFUSAL: "blocked",
+        LOCAL_RUN_WORKTREE_RELEASED_REFUSAL: "blocked",
         MCP_UNRESOLVED_REFUSAL: "blocked",
         MCP_TIMEOUT_REFUSAL: "blocked",
     })
@@ -1948,6 +1966,8 @@ class SubAgentSummary:
         created_at: Saved run start timestamp, absent on live summaries.
         updated_at: Saved last-update timestamp; only an approximate end.
         detail: Bounded saved result or last meaningful step for this child.
+        resolved_provider: Frozen provider selection, absent for legacy runs.
+        resolved_model: Frozen model selection, absent for legacy runs.
     """
 
     text: str
@@ -1958,6 +1978,8 @@ class SubAgentSummary:
     created_at: str | None = None
     updated_at: str | None = None
     detail: str = ""
+    resolved_provider: str | None = None
+    resolved_model: str | None = None
 
 
 def _subagent_summaries_from_fleet(
@@ -1975,7 +1997,8 @@ def _subagent_summaries_from_fleet(
     included), only its private ``_live_ids`` liveness set shrinks on
     ``finish``. So once non-empty for a run, it stays the source for the
     rest of that run, and every child's real status/run_id/handle_id is
-    always current.
+    always current. Inline fallback rows receive the frozen target when
+    their child enters its model scope.
 
     ``handles`` non-empty means AT LEAST ONE handle has been reserved for
     this run -- and once that is true, ``handles`` is used EXCLUSIVELY;
@@ -2042,6 +2065,8 @@ def _subagent_summaries_from_fleet(
                 status=h.status,
                 run_id=h.run_id or "",
                 handle_id=h.handle_id,
+                resolved_provider=h.resolved_provider,
+                resolved_model=h.resolved_model,
             )
             for h in handles
         )
@@ -2268,6 +2293,7 @@ class SettledChild:
     session_id: str
     assistant_message_id: str
     settled_after_turn: bool = False
+    workflow_task: WorkflowTaskClaim | None = None
 
 
 @dataclass(frozen=True)
@@ -2437,6 +2463,8 @@ class _ModelCallLifeline:
         "_shutdown_lock",
         "_shutdown_requested",
         "_operation",
+        "_cleanup_returned",
+        "_driver_returned",
     )
 
     def __init__(
@@ -2450,6 +2478,8 @@ class _ModelCallLifeline:
         self._shutdown_lock = threading.Lock()
         self._shutdown_requested = False
         self._operation: OwnedOperation | None = None
+        self._cleanup_returned = False
+        self._driver_returned = False
         self.loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._run, name=name, daemon=True)
 
@@ -2463,6 +2493,7 @@ class _ModelCallLifeline:
             finally:
                 if self._operation is not None:
                     self._operation.finish()
+                self._driver_returned = True
 
     async def _cleanup(self) -> None:
         try:
@@ -2471,15 +2502,28 @@ class _ModelCallLifeline:
                 for task in asyncio.all_tasks()
                 if task is not asyncio.current_task()
             ]
-            for task in pending:
-                task.cancel()
+            from .console_preparation_reads import current_planning_preparation
+
+            planning = current_planning_preparation()
+            if planning is not None and planning.turn_lifeline is self:
+                planning._planning_return_source()
+            else:
+                for task in pending:
+                    task.cancel()
             try:
                 if pending:
                     await asyncio.gather(*pending, return_exceptions=True)
                 await self.loop.shutdown_asyncgens()
             finally:
-                if self._close_current_loop is not None:
-                    await self._close_current_loop()
+                try:
+                    if self._close_current_loop is not None:
+                        await self._close_current_loop()
+                finally:
+                    # A cancelled to_thread leaves its worker running (the
+                    # generic transport's chat_api_call): the model operation
+                    # stays owned until it returns, as ADR-134 requires.
+                    await self.loop.shutdown_default_executor()
+            self._cleanup_returned = True
         except BaseException:  # noqa: BLE001 -- cleanup cannot replace the run result
             logger.warning("model-call loop cleanup failed")
         finally:
@@ -2517,6 +2561,7 @@ class _ModelCallLifeline:
                     self._operation.mark_stopping()
                 if self._thread.ident is None:
                     self.loop.close()
+                    self._cleanup_returned = self._driver_returned = True
                 elif not self.loop.is_closed():
                     self.loop.call_soon_threadsafe(
                         lambda: self.loop.create_task(self._cleanup())
@@ -2635,6 +2680,40 @@ def _openai_usage_from_provider_call(
     return usage
 
 
+def _openai_usage_from_provider_calls(
+    payloads: Sequence[Mapping[str, Any] | None], *, provider: str, model: str
+) -> dict[str, Any] | None:
+    """Sum observed physical legs after validating every reported count.
+
+    Missing usage remains unknown (the automatic ledger retains its own
+    reservation); this view reports only observed usage. Malformed reported
+    usage invalidates the logical total so the existing budget fallback runs.
+    """
+    if len(payloads) == 1:
+        return _openai_usage_from_provider_call(payloads[0], provider=provider, model=model)
+    total: ProviderUsage | None = None
+    for payload in payloads:
+        if payload is None:
+            continue
+        if not isinstance(payload, Mapping) or not _has_strict_budget_usage_counts(payload):
+            return None
+        leg = ProviderUsage.from_provider_payload(payload, provider=provider, model=model)
+        if leg is None:
+            return None
+        total = leg if total is None else total.plus(leg)
+    if total is None:
+        return None
+    return {
+        "prompt_tokens": total.uncached_input + total.cache_read + total.cache_write,
+        "completion_tokens": total.output,
+        "total_tokens": total.total_tokens,
+        "prompt_tokens_details": {
+            "cached_tokens": total.cache_read,
+            "cache_creation_tokens": total.cache_write,
+        },
+    }
+
+
 class _StreamingProviderResponse(dict[str, Any]):
     """OpenAI-shaped public response plus one private typed continuation."""
 
@@ -2723,7 +2802,7 @@ def _fenced_project_instruction_payload_fits(
     """Validate the exact transformed fenced request before ledger advance."""
     try:
         limit = get_model_token_limit(model, provider)
-        used = _count_model_messages(
+        used = agent_service_module.count_model_messages(
             _serialize_project_instruction_rows_for_transport(
                 messages, native_tools=False
             ),
@@ -2944,6 +3023,7 @@ class ConsoleAgentTraceRequestFactory:
         actor_id: str,
         chain_id: str,
         continuation_groups: Sequence[ContinuationOwnerGroup] = (),
+        thinking_owner_key: str | None = None,
     ) -> PreparedConsoleRequest:
         """Bind current agent rows to admitted references or new artifacts."""
 
@@ -2951,17 +3031,36 @@ class ConsoleAgentTraceRequestFactory:
         assert provenance is not None
         base_rows = self.admitted_request.flattened_messages()
         base_descriptors = provenance.flattened_messages()
+        thinking_owners = {
+            group.owner_message_id
+            for unit in self.admitted_request.compactable
+            for group in unit.thinking_groups
+        } | {
+            group.owner_message_id
+            for group in self.admitted_request.active_thinking_groups
+        }
         search_from = 0
         descriptors: list[TraceProvenance] = []
         for message in messages:
             # Prepared rows are recursively frozen, while agent transport rows
             # carry mutable JSON arrays. Compare the same representation so an
             # unchanged multimodal message keeps its admitted saved owner.
-            frozen_message = freeze_json(message)
+            compared = message
+            if (
+                thinking_owner_key is not None
+                and THINKING_OWNER_KEY not in message
+                and type(owner := message.get(thinking_owner_key)) is str
+                and owner in thinking_owners
+            ):
+                # Only the adapter's validated owner alias may change spelling.
+                compared = dict(message)
+                compared[THINKING_OWNER_KEY] = compared.pop(thinking_owner_key)
+            frozen_message = freeze_json(compared)
             descriptor: TraceProvenance | None = None
             for index in range(search_from, len(base_rows)):
                 candidate = base_descriptors[index]
-                if base_rows[index] == frozen_message and _agent_can_reuse_descriptor(
+                base_message = base_rows[index]
+                if base_message == frozen_message and _agent_can_reuse_descriptor(
                     candidate,
                     message,
                 ):
@@ -3055,7 +3154,7 @@ def reset_session_stalls(*args: Any, **kwargs: Any) -> None:
 
     _impl(*args, **kwargs)
 
-#: ADR-147 Task 6B: per-call sampling kwarg (Task 6's ``_CHAT_CALL_PARAM_MAP``
+#: ADR-344 Task 6B: per-call sampling kwarg (Task 6's ``_CHAT_CALL_PARAM_MAP``
 #: values, Agents/agent_service.py) -> ``ConsoleProviderResolution`` field of
 #: the same meaning. ``stream_chat`` carries sampling on the RESOLUTION (the
 #: gateway maps fields onto ``chat_api_call`` kwargs in
@@ -3113,6 +3212,9 @@ class _StreamingModelAdapter:
     chunk is always accounted for, while still stopping the stream promptly
     (no more chunks are pulled once cancellation is observed) and letting the
     loop's own boundary check catch the cancellation on the next poll.
+    While NO chunk arrives it is also polled on a timer (TASK-33666; see
+    ``watch_content_stalls``), so a Stop ends the wait on a silent provider.
+    That poll runs only between chunks, so it never drops a received one.
 
     ``chat_call`` bridges into async gateway code via the single event
     ``loop`` passed in at construction — created once by
@@ -3140,6 +3242,78 @@ class _StreamingModelAdapter:
     fleet.
     """
 
+    def _acknowledge_live_native_continuation(self, original, projected, model_result):
+        from types import MappingProxyType
+
+        from tldw_chatbook.Agents.agent_models import (
+            FinalContinuation,
+            ToolBatchReady,
+            ToolCallExecuting,
+            ToolCallFinished,
+        )
+        from tldw_chatbook.Chat.console_trace_continuation import (
+            LiveNativeContinuationCustody,
+        )
+        from tldw_chatbook.Provider_Contract.provider_continuation import transition_provider_call
+
+        self._live_native_custody = None
+        if projected is not self._live_native_persisted_event:
+            raise ValueError("live_native_acknowledgment")
+        self._live_native_persisted_event = None
+        if original.context != projected.context:
+            raise ValueError("live_native_acknowledgment")
+        context = original.context
+        if context.agent_kind != "primary" or context.durability != "persistent":
+            return
+        if context.owner_message_id != self._assistant_message_id:
+            raise ValueError("live_native_owner")
+        if isinstance(original, (ToolBatchReady, FinalContinuation)):
+            checkpoint = original.checkpoint
+            self._live_native_results = {}
+        elif isinstance(original, (ToolCallExecuting, ToolCallFinished)):
+            checkpoint = self._live_native_checkpoint
+            if checkpoint is None:
+                raise ValueError("live_native_acknowledgment")
+            checkpoint = transition_provider_call(
+                checkpoint,
+                call_id=original.call_id,
+                expected_revision=original.expected_checkpoint_revision,
+                target=(
+                    "executing"
+                    if isinstance(original, ToolCallExecuting)
+                    else original.target_state
+                ),
+                result=None
+                if isinstance(original, ToolCallExecuting)
+                else original.result,
+            )
+            if isinstance(original, ToolCallFinished):
+                if type(model_result) is not str:
+                    raise ValueError("live_native_result_projection")
+                self._live_native_results[original.call_id] = model_result
+        else:
+            raise ValueError("live_native_acknowledgment")
+        self._live_native_checkpoint = checkpoint
+        message = self._store.get_message(self._assistant_message_id)
+        durable = message.provider_continuation
+        version = message.provider_continuation_message_version
+        if (
+            durable is None
+            or type(version) is not int
+            or durable.checkpoint_revision != checkpoint.checkpoint_revision
+        ):
+            raise ValueError("live_native_acknowledgment")
+        self._live_native_custody = LiveNativeContinuationCustody(
+            self._live_native_invocation,
+            message.persisted_message_id or message.id,
+            context.run_id,
+            version,
+            checkpoint,
+            MappingProxyType(dict(self._live_native_results)),
+            self,
+            durable,
+        )
+
     def __init__(
         self,
         *,
@@ -3150,6 +3324,7 @@ class _StreamingModelAdapter:
         should_cancel,
         loop,
         native_tools: bool,
+        session_id: str | None = None,
         provider_stream_signals: ConsoleProviderStreamSignals | None = None,
         continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
         continuation_target: ContinuationRestoreTarget | None = None,
@@ -3167,6 +3342,7 @@ class _StreamingModelAdapter:
         self._gateway = provider_gateway
         self._resolution = resolution
         self._assistant_message_id = assistant_message_id
+        self._session_id = session_id
         self._should_cancel = should_cancel
         # TASK-28227: armed by run_reply's redirect-ready hook; cuts the
         # PRIMARY's in-flight stream only (see stream_cut in chat_call).
@@ -3174,6 +3350,11 @@ class _StreamingModelAdapter:
         self._loop = loop
         self._native_tools = native_tools
         self._provider_stream_signals = provider_stream_signals
+        self._live_native_invocation = object()
+        self._live_native_custody = None
+        self._live_native_persisted_event = None
+        self._live_native_checkpoint = None
+        self._live_native_results = {}
         self._continuation_sidecar = tuple(continuation_sidecar)
         self._continuation_target = continuation_target
         self._continuation_owner_key = continuation_owner_key
@@ -3332,6 +3513,16 @@ class _StreamingModelAdapter:
             self._thread_loop.loop = previous
             lifeline.shutdown()
 
+    @contextlib.contextmanager
+    def review_request_admission(self, callback):
+        """Bind a rejection-only host check to this thread's next request."""
+        previous = getattr(self._thread_loop, "review_admission", None)
+        self._thread_loop.review_admission = callback
+        try:
+            yield
+        finally:
+            self._thread_loop.review_admission = previous
+
     def chat_call(
         self,
         *,
@@ -3394,612 +3585,18 @@ class _StreamingModelAdapter:
         continuation_groups: tuple[ContinuationOwnerGroup, ...] = (),
         **per_call_kwargs,
     ) -> dict:
-        """Stream one turn, honoring ADR-147 per-call routing kwargs.
+        from tldw_chatbook.Chat.console_streaming_request import chat_call_impl
 
-        Task 6 emits a spawned child's resolved target onto every call:
-        ``api_endpoint`` (raw provider id, possibly ``custom-ep:<slug>``),
-        ``model``, ``api_base_url``, and the 13 sampling kwargs mapped by
-        ``_PER_CALL_SAMPLING_RESOLUTION_FIELDS``. An ``api_endpoint`` naming
-        a DIFFERENT provider re-resolves through the gateway's own send
-        seam (``resolve_for_send``) so the bytes stream from the child's
-        provider; a call on the parent's provider overlays only what it
-        carries onto a per-call copy of the parent resolution. A call
-        carrying none of these behaves exactly as before, on
-        ``self._resolution`` itself -- which is never mutated, since the
-        adapter is shared across concurrent children. An unknown/unready
-        per-call provider raises through the same channel as a stream
-        failure, never a silent fallback to the parent. A routed call on a
-        continuation-pinned turn raises the typed ``ContinuationConflictError``
-        from request preparation (the restore target pins the parent's
-        provider/model/base_url) -- loud, through that same channel.
-        """
-        attributed = getattr(self._thread_loop, "run_scope", None)
-        usage_sequence = getattr(self._thread_loop, "live_usage_sequence", None)
-        if attributed is not None:
-            usage_run_id, usage_agent_kind = attributed
-        sampling_overlays = {
-            field: per_call_kwargs.pop(kwarg)
-            for kwarg, field in _PER_CALL_SAMPLING_RESOLUTION_FIELDS.items()
-            if per_call_kwargs.get(kwarg) is not None
-        }
-        api_base_url = per_call_kwargs.pop("api_base_url", None)
-        # Any keys still in per_call_kwargs stay ignored, exactly as before.
-        # Same-target decision keys on the parent's RAW selection identity,
-        # not the flattened execution key: a child explicitly routed to the
-        # built-in family of a custom-ep parent (e.g. `llama_cpp` under
-        # `custom-ep:qwen-local`) is a DIFFERENT target and must resolve the
-        # built-in provider independently, while an inheriting child names
-        # the raw slug and reuses this resolution (qodo PR-2651 High).
-        # Plain providers leave ``selected_provider`` empty and fall through
-        # to the historical execution_key/provider chain unchanged.
-        parent_selected_provider = str(
-            getattr(self._resolution, "selected_provider", "") or ""
+        return chat_call_impl(
+            self,
+            messages_payload=messages_payload,
+            model=model,
+            api_endpoint=api_endpoint,
+            streaming=streaming,
+            tools=tools,
+            continuation_groups=continuation_groups,
+            **per_call_kwargs,
         )
-        parent_execution_key = str(
-            getattr(self._resolution, "execution_key", "") or ""
-        )
-        parent_endpoint = (
-            parent_selected_provider
-            or parent_execution_key
-            or getattr(self._resolution, "provider", "")
-            or ""
-        )
-        requested_endpoint = str(api_endpoint or "").strip()
-        # "agent" is build_console_first_request_plan's no-identity
-        # fallback, not a provider id: it names THIS resolution by
-        # construction.
-        if requested_endpoint == "agent":
-            requested_endpoint = ""
-        # Fourth spelling seam (ADR-179 Qodo follow-up): the bridge-level
-        # send names the parent's OWN flattened execution key (the first
-        # request plan puts ``execution_key`` on every run-turn call), which
-        # for a swapped custom-ep selection is an execution-ONLY spelling
-        # ("custom-hosted" under "custom-ep:<slug>") that no caller could
-        # have selected as a standalone target -- re-resolving it as a
-        # provider id fails "Unknown provider". The resolution's
-        # selected_provider<->execution_key pairing is therefore same-target
-        # ONLY for spellings Console cannot select independently; a family
-        # key that IS selectable ("llama_cpp" under "custom-ep:qwen-local")
-        # keeps qodo PR-2651 High's reroute protection.
-        same_target = requested_endpoint == parent_endpoint or (
-            bool(parent_selected_provider)
-            and requested_endpoint == parent_execution_key
-            and requested_endpoint
-            not in CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS
-        )
-        rerouted = bool(requested_endpoint) and not same_target
-
-        transport_messages = _serialize_project_instruction_rows_for_transport(
-            messages_payload, native_tools=self._native_tools
-        )
-        is_subagent = self._is_subagent(transport_messages)
-        # Resolve sidecars after the trace factory has built the neutral request.
-        # The reserved canonical key is valid only once its groups are attached.
-        # This temporary scalar also keeps mandatory continuation ownership separate.
-        call_thinking_owner_key = "_tldw_call_thinking_owner"
-        if not is_subagent and self._thinking_sidecar and self._thinking_owner_key:
-            historical_owners = {
-                sidecar.owner_message_id for sidecar in self._thinking_sidecar
-            }
-            for row in transport_messages:
-                historical_owner = row.get(self._thinking_owner_key)
-                if (
-                    isinstance(historical_owner, str)
-                    and historical_owner in historical_owners
-                ):
-                    row[call_thinking_owner_key] = historical_owner
-                if self._thinking_owner_key not in {
-                    call_thinking_owner_key,
-                    self._continuation_owner_key,
-                }:
-                    row.pop(self._thinking_owner_key, None)
-        transport_messages, call_sidecars = consume_call_thinking(
-            transport_messages, owner_key=call_thinking_owner_key
-        )
-        call_thinking_sidecar = (
-            () if is_subagent else self._thinking_sidecar
-        ) + call_sidecars
-        call_capture = ThinkingCapture(assistant_owner_id=new_opaque_id())
-        # TASK-28227: a redirect aborts only the PRIMARY's in-flight
-        # model stream. Children keep the plain cancel predicate --
-        # cutting a fleet child's stream on a primary redirect would
-        # truncate its turn with no redirect entry in ITS mailbox to
-        # explain it. Never wired into LoopDeps.should_cancel: aborting
-        # is not cancelling.
-        stream_cut = (
-            self._should_cancel
-            if is_subagent
-            else (lambda: self._should_cancel() or self._primary_stream_abort())
-        )
-        request_count = int(getattr(self._thread_loop, "request_count", 0))
-        self._thread_loop.request_count = request_count + 1
-        route = (
-            ConsoleRequestRoute.AGENT_FIRST
-            if request_count == 0
-            else ConsoleRequestRoute.TOOL_LOOP
-        )
-        route_actor_id = getattr(self._thread_loop, "route_actor_id", None)
-        route_chain_id = getattr(self._thread_loop, "route_chain_id", None)
-        if route_actor_id is None or route_chain_id is None:
-            recover_route = getattr(
-                self._gateway, "_trace_recovery_route_identity", None
-            )
-            recovered = (
-                recover_route(self._provider_stream_signals)
-                if request_count == 0 and not is_subagent and callable(recover_route)
-                else None
-            )
-            if recovered is None:
-                route_actor_id = new_opaque_id()
-                route_chain_id = new_opaque_id()
-            else:
-                route_actor_id, route_chain_id = recovered
-            self._thread_loop.route_actor_id = route_actor_id
-            self._thread_loop.route_chain_id = route_chain_id
-        # Named definitions can override the model while staying on the
-        # parent's provider endpoint. The adapter is shared by concurrent
-        # parent/child turns, so keep that override immutable and call-local.
-        call_resolution = self._resolution
-        if model and model != self._resolution.model:
-            # Endpoint/model metadata is frozen for the primary target; it is
-            # not rediscovered for overrides during a running agent loop.
-            call_resolution = dataclass_replace(
-                self._resolution,
-                model=model,
-                reasoning_replay=None,
-                local_structured_thinking=False,
-            )
-        # ADR-147 Task 6B: per-call sampling/base-url kwargs overlay the
-        # call-local resolution (model already handled above). Only the
-        # dispatch/stream/usage paths read ``effective_resolution``; a
-        # rerouted call re-resolves entirely inside ``_consume``.
-        effective_resolution = call_resolution
-        if (
-            not rerouted
-            and isinstance(call_resolution, ConsoleProviderResolution)
-            and (
-                sampling_overlays
-                or (api_base_url and api_base_url != call_resolution.base_url)
-            )
-        ):
-            # Resolved child params are a complete stack. Clear optional
-            # parent-only knobs that are absent from it; legacy calls with no
-            # sampling kwargs retain their existing resolution behavior.
-            overlays = (
-                dict.fromkeys(_PER_CALL_SAMPLING_RESOLUTION_FIELDS.values())
-                if is_subagent and sampling_overlays
-                else {}
-            )
-            overlays.update(sampling_overlays)
-            if api_base_url and api_base_url != call_resolution.base_url:
-                overlays["base_url"] = str(api_base_url)
-            if overlays:
-                effective_resolution = dataclass_replace(
-                    call_resolution, **overlays
-                )
-        call_continuation_target = self._continuation_target
-        if is_subagent and call_continuation_target is not None:
-            call_continuation_target = dataclass_replace(
-                call_continuation_target, model=call_resolution.model or ""
-            )
-        gate = StreamGate()
-        any_streamed = False
-        native_calls: list[dict] = []
-        terminal_metadata: ProviderTurnMetadata | None = None
-        call_signals: ConsoleProviderCallSignals | None = None
-        live_provider_usage_enabled = True
-        gateway_signals: (
-            ConsoleProviderStreamSignals | ConsoleProviderCallSignals | None
-        ) = self._provider_stream_signals
-        if isinstance(self._gateway, ConsoleProviderGateway):
-            aggregate_signals = (
-                self._provider_stream_signals or ConsoleProviderStreamSignals()
-            )
-            call_signals = aggregate_signals.new_usage_call()
-            gateway_signals = call_signals
-
-        @agent_async_worker_guard(self)
-        async def _consume() -> None:
-            nonlocal any_streamed, terminal_metadata, effective_resolution, live_provider_usage_enabled
-            if rerouted:
-                # Task 6B: the child names a provider other than the
-                # parent's -- re-resolve through the gateway's send seam
-                # BEFORE anything prepares or streams, so the whole turn
-                # (request preparation included) speaks to the child.
-                effective_resolution = await self._resolve_routed_resolution(
-                    provider=requested_endpoint,
-                    model=model,
-                    api_base_url=api_base_url,
-                    sampling_overlays=sampling_overlays,
-                )
-            # Forwarding `tools=` only when it is non-None (rather than
-            # always passing the keyword, even as None) keeps every
-            # pre-Task-5 gateway fake elsewhere in the test suite — whose
-            # `stream_chat(resolution, messages)` signature predates this
-            # parameter and has no matching call-site to update under this
-            # task's own touched-files constraint — working unchanged for
-            # the (still overwhelmingly common) fence path, where `tools`
-            # is always None. The real gateway and any fake built against
-            # this task's own `tools=None` contract see identical behavior
-            # either way, since the callee-side default is also None.
-            dispatch_messages = transport_messages
-            stream_kwargs = {"tools": tools} if tools is not None else {}
-            prepare_request = getattr(self._gateway, "prepare_chat_request", None)
-            semantic_messages = transport_messages
-            if continuation_groups:
-                if call_continuation_target is None or not self._continuation_owner_key:
-                    raise ValueError("Provider continuation request is not pinned.")
-                owner_ids = {group.owner_message_id for group in continuation_groups}
-                rewritten_messages: list[dict[str, Any]] = []
-                for message in transport_messages:
-                    row = dict(message)
-                    owner_id = row.get(self._continuation_owner_key)
-                    if type(owner_id) is str and owner_id in owner_ids:
-                        row[CONTINUATION_OWNER_KEY] = owner_id
-                    if (
-                        is_subagent
-                        or not self._thinking_sidecar
-                        or self._thinking_owner_key != self._continuation_owner_key
-                    ):
-                        row.pop(self._continuation_owner_key, None)
-                    rewritten_messages.append(row)
-                semantic_messages = rewritten_messages
-            if self._trace_request_factory is not None:
-                if not callable(prepare_request):
-                    raise ValueError("Capture On agent gateway cannot prepare requests")
-                dispatch_messages = prepare_request(
-                    effective_resolution,
-                    self._trace_request_factory.build(
-                        semantic_messages,
-                        tools=tools or (),
-                        route=route,
-                        actor_id=route_actor_id,
-                        chain_id=route_chain_id,
-                        continuation_groups=continuation_groups,
-                    ),
-                    route=route,
-                    route_actor_id=route_actor_id,
-                    route_chain_id=route_chain_id,
-                    continuation_target=call_continuation_target,
-                    thinking_sidecar=call_thinking_sidecar,
-                    thinking_policy=self._thinking_policy,
-                    thinking_owner_key=call_thinking_owner_key,
-                    capture_mode=self._capture_mode,
-                )
-                stream_kwargs.pop("tools", None)
-            elif continuation_groups and callable(prepare_request):
-                dispatch_messages = prepare_request(
-                    effective_resolution,
-                    build_console_request(
-                        semantic_messages,
-                        tools=tools or (),
-                        continuation_groups=continuation_groups,
-                        capture_mode=self._capture_mode,
-                    ),
-                    route=route,
-                    route_actor_id=route_actor_id,
-                    route_chain_id=route_chain_id,
-                    continuation_target=call_continuation_target,
-                    thinking_sidecar=call_thinking_sidecar,
-                    thinking_policy=self._thinking_policy,
-                    thinking_owner_key=call_thinking_owner_key,
-                    capture_mode=self._capture_mode,
-                )
-                stream_kwargs.pop("tools", None)
-            elif (
-                call_thinking_sidecar
-                or (not is_subagent and self._continuation_sidecar)
-            ) and callable(prepare_request):
-                # The constructor sidecar belongs to the primary turn. A
-                # child has its own history and must never consume it.
-                dispatch_messages = prepare_request(
-                    effective_resolution,
-                    transport_messages,
-                    tools=tools,
-                    route=route,
-                    route_actor_id=route_actor_id,
-                    route_chain_id=route_chain_id,
-                    continuation_target=call_continuation_target,
-                    continuation_sidecar=()
-                    if is_subagent
-                    else self._continuation_sidecar,
-                    continuation_owner_key=self._continuation_owner_key,
-                    thinking_sidecar=call_thinking_sidecar,
-                    thinking_policy=self._thinking_policy,
-                    thinking_owner_key=call_thinking_owner_key,
-                    capture_mode=self._capture_mode,
-                )
-                stream_kwargs.pop("tools", None)
-            if gateway_signals is not None:
-                stream_kwargs["signals"] = gateway_signals
-            emission_synthetic: bool | None = None
-
-            def observe_emission(synthetic: bool) -> None:
-                nonlocal emission_synthetic
-                emission_synthetic = synthetic
-
-            if isinstance(self._gateway, ConsoleProviderGateway):
-                stream_kwargs["emission_observer"] = observe_emission
-            owner_session_id = self._store.session_id_for_message(
-                self._assistant_message_id
-            )
-            require_thinking_persistence_support(
-                self._store.persistence,
-                persistent=(
-                    self._store.persistence is not None
-                    and not self._store.session_is_ephemeral(owner_session_id)
-                ),
-                may_emit_thinking=bool(
-                    getattr(effective_resolution, "may_emit_thinking", False)
-                ),
-            )
-            from tldw_chatbook.Chat.stream_stall_watchdog import (
-                watch_content_stalls,
-            )
-
-            async for chunk in watch_content_stalls(
-                self._gateway.stream_chat(
-                    effective_resolution,
-                    dispatch_messages,
-                    route=route,
-                    route_actor_id=route_actor_id,
-                    route_chain_id=route_chain_id,
-                    capture_mode=self._capture_mode,
-                    **stream_kwargs,
-                ),
-                _stall_timeout_seconds(),
-                provider=effective_resolution.provider,
-            ):
-                synthetic = emission_synthetic is True
-                emission_synthetic = None
-                if terminal_metadata is not None:
-                    raise ValueError("Provider terminal metadata must be final.")
-                if isinstance(
-                    chunk,
-                    (ProviderThinkingDelta, ProviderProprietaryThinkingEvidence),
-                ):
-                    if (
-                        isinstance(chunk, ProviderThinkingDelta)
-                        and attributed is not None
-                    ):
-                        thinking_text = getattr(chunk, "text", None)
-                        if isinstance(thinking_text, str) and thinking_text:
-                            self._emit_live_usage(
-                                AgentLiveUsageEvent(
-                                    "text",
-                                    usage_run_id,
-                                    usage_agent_kind,
-                                    usage_sequence,
-                                    time.monotonic(),
-                                    text=thinking_text,
-                                )
-                            )
-                    call_capture.observe(chunk)
-                    if not is_subagent:
-                        update = self._thinking_capture.observe(chunk)
-                        if update.envelope is not None:
-                            # task-33081: validated=True -- the capture
-                            # enforces the canonical limits incrementally
-                            # per delta; re-validating the whole growing
-                            # envelope here was quadratic.
-                            self._store.replace_message_thinking(
-                                self._assistant_message_id,
-                                update.envelope,
-                                generation_token=self._generation_token,
-                                validated=True,
-                            )
-                    if stream_cut():
-                        break
-                    continue
-                if isinstance(chunk, ProviderToolCalls):
-                    # Plan-B contract: structured deltas never hit the
-                    # transcript — captured here, surfaced only through the
-                    # returned message dict's `tool_calls`.
-                    native_calls.extend(chunk.tool_calls)
-                    if chunk.metadata is not None:
-                        if not isinstance(chunk.metadata, ProviderTurnMetadata):
-                            raise ValueError("Provider terminal metadata is malformed.")
-                        terminal_metadata = chunk.metadata
-                    if not is_subagent:
-                        self._thinking_capture.observe(chunk)
-                    if stream_cut():
-                        break
-                    continue
-                visible = gate.feed(chunk)
-                if (
-                    isinstance(chunk, str)
-                    and chunk
-                    and attributed is not None
-                    and not synthetic
-                ):
-                    self._emit_live_usage(
-                        AgentLiveUsageEvent(
-                            "text",
-                            usage_run_id,
-                            usage_agent_kind,
-                            usage_sequence,
-                            time.monotonic(),
-                            text=chunk,
-                        )
-                    )
-                if (
-                    live_provider_usage_enabled
-                    and call_signals is not None
-                    and attributed is not None
-                ):
-                    try:
-                        partial_usage = call_signals.usage_snapshot()
-                        partial_count = self._provider_output_count(partial_usage)
-                        if partial_count is not None:
-                            self._emit_live_usage(
-                                AgentLiveUsageEvent(
-                                    "provider_usage",
-                                    usage_run_id,
-                                    usage_agent_kind,
-                                    usage_sequence,
-                                    time.monotonic(),
-                                    provider_output_tokens=partial_count,
-                                )
-                            )
-                    except Exception:  # noqa: BLE001 — optional observation only
-                        live_provider_usage_enabled = False
-                        logger.warning(
-                            "live provider usage observation failed; "
-                            "telemetry disabled for call"
-                        )
-                if visible and not is_subagent:
-                    self._thinking_capture.observe_answer(visible)
-                    self._store.append_stream_chunk(self._assistant_message_id, visible)
-                    any_streamed = True
-                if stream_cut():
-                    break
-            tail = gate.flush_tail()
-            if tail and not is_subagent:
-                self._thinking_capture.observe_answer(tail)
-                self._store.append_stream_chunk(self._assistant_message_id, tail)
-                any_streamed = True
-
-        # PR2a Task 6.5: submit to the run's loop rather than driving it
-        # from this thread. Every caller — the primary run's worker thread
-        # and each fleet child's own thread — may be inside `chat_call`
-        # simultaneously, and only ONE thread may ever drive a loop.
-        # `run_coroutine_threadsafe` is the documented cross-thread entry
-        # point; `.result()` blocks THIS thread (exactly as
-        # `run_until_complete` did, including re-raising the coroutine's
-        # exception) while the loop, on its own thread, interleaves this
-        # turn with whatever other agents of this run have in flight.
-        #
-        # The wait is BOUNDED. A bare `.result()` deadlocks forever in one
-        # real case: a child ABANDONED by `_settle_fleet` (which gives a
-        # wedged child `FLEET_JOIN_TIMEOUT_SECONDS` and then walks away)
-        # can still be sitting here when `run_reply`'s finally stops the
-        # loop -- after which its coroutine is never scheduled again and
-        # nothing will ever complete this future. The child's thread is a
-        # daemon, so the process still exits, but it would hold its
-        # provider connection and any locks it owns for the life of the
-        # session. Timing out turns that into an ordinary turn failure the
-        # run loop already knows how to report.
-        #
-        # PR3a-1 Task 1: `_submit_loop`, not `self._loop`. A fleet child
-        # submits to the lifeline IT owns (parked on this thread by
-        # `child_lifeline`), so `run_reply`'s end-of-turn teardown of the
-        # TURN's loop can no longer strand a child mid-call -- the case the
-        # timeout above was the last line of defence against.
-        from tldw_chatbook.Chat.stream_stall_watchdog import StreamStallError
-
-        future = asyncio.run_coroutine_threadsafe(_consume(), self._submit_loop)
-        _stall_session_id = self._store.session_id_for_message(
-            self._assistant_message_id
-        )
-        try:
-            future.result(timeout=_CHAT_CALL_TIMEOUT_SECONDS)
-        except FuturesTimeoutError:
-            future.cancel()
-            raise TimeoutError(
-                f"provider turn did not complete within {_CHAT_CALL_TIMEOUT_SECONDS}s"
-            ) from None
-        except StreamStallError:
-            # AC#3: a content stall is reported distinctly from a network error
-            # and from a user cancel. AC#4: repeated stalls against the same
-            # provider in a session surface a warning instead of silent retries.
-            provider_label = self._resolution.provider
-            repeated = record_session_stall(_stall_session_id, provider_label)
-            # A stall is terminal for the turn (StreamStallError is non-transient,
-            # so the run loop does not retry it). The threshold branch just marks
-            # a provider that keeps stalling across turns in this session (AC#4).
-            logger.warning(
-                "provider stream stalled: no content within the stall window "
-                "(provider={}, repeated_this_session={})",
-                provider_label,
-                repeated,
-            )
-            raise
-        # A productive turn clears this session's stall streak (AC#4).
-        reset_session_stalls(_stall_session_id, self._resolution.provider)
-        _visible, tool_call = gate.result()
-        if tool_call is not None and not native_calls and not is_subagent:
-            self._thinking_capture.observe_tool()
-        if any_streamed and not is_subagent:
-            # Finding A: this turn leaked prose to the store before it was
-            # known to be a tool call (a well-behaved fence-first tool call
-            # never streams anything, so any_streamed stays False and this
-            # never fires for the common case). Now that the full buffer is
-            # in and the authoritative parse is available, discard that
-            # leaked prose so it doesn't survive to garble the next turn's
-            # chunks on the same message. Extended for native tool-calls
-            # (Task 5): a native turn that streamed leaked prose before its
-            # ProviderToolCalls sentinel arrived must be reset the same way.
-            if tool_call is not None or native_calls:
-                self._store.reset_stream_content(self._assistant_message_id)
-            elif self._primary_stream_abort():
-                # TASK-28227 review F2: this prose turn was cut by a
-                # redirect and the re-asked turn will stream into the SAME
-                # message -- without a separator the transcript glues
-                # "...theRight — ..." together. The loop drains the redirect
-                # only after this call returns, so the flag is still up here.
-                self._store.append_stream_chunk(self._assistant_message_id, "\n\n")
-        message: dict = {"content": gate.full_text}
-        if native_calls:
-            message["tool_calls"] = native_calls
-        response: dict[str, Any] = {"choices": [{"message": message}]}
-        # Design decision (TASK-16270): usage accounting is pure
-        # observability. By the time this block runs, the provider turn has
-        # already streamed and completed successfully — a failure HERE is
-        # bookkeeping failing, not the model call failing, so it must never
-        # convert the finished turn into an error outcome (PR #1612 hoisted
-        # this accounting out of the signals-only guard, which made an
-        # accounting crash fatal to an otherwise-successful run). A genuine
-        # provider failure still classifies as an error: it raises from the
-        # streaming/consume path above, OUTSIDE this wrap. On failure the
-        # turn completes with the usage simply missing, and the cause is
-        # logged.
-        usage: dict[str, Any] | None = None
-        raw_usage_payload: object = None
-        provider_count: int | None = None
-        try:
-            raw_usage_payload = (
-                terminal_metadata.usage if terminal_metadata is not None else None
-            )
-            if raw_usage_payload is None and call_signals is not None:
-                raw_usage_payload = call_signals.usage_snapshot()
-            usage = _openai_usage_from_provider_call(
-                raw_usage_payload,
-                provider=effective_resolution.provider,
-                model=effective_resolution.model or model or "",
-            )
-            if usage is None and call_signals is not None:
-                usage = _openai_usage_from_provider_call(
-                    call_signals.usage_snapshot(),
-                    provider=effective_resolution.provider,
-                    model=effective_resolution.model or model or "",
-                )
-            provider_count = self._provider_output_count(raw_usage_payload)
-        except Exception as exc:  # noqa: BLE001 — observability is never fatal
-            usage = None
-            provider_count = None
-            logger.warning(
-                "usage accounting failed after a successful provider turn; "
-                "completing the turn without usage (exception_type={})",
-                type(exc).__name__,
-            )
-        if usage is not None:
-            response["usage"] = usage
-        if attributed is not None and provider_count is not None:
-            self._emit_live_usage(
-                AgentLiveUsageEvent(
-                    "provider_usage",
-                    usage_run_id,
-                    usage_agent_kind,
-                    usage_sequence,
-                    time.monotonic(),
-                    provider_output_tokens=provider_count,
-                )
-            )
-        call_envelope = call_capture.settle(
-            "stopped" if stream_cut() else "complete"
-        ).envelope
-        result = _StreamingProviderResponse(response, terminal_metadata, call_envelope)
-        return result
 
     @staticmethod
     def _provider_output_count(usage: object) -> int | None:
@@ -4011,6 +3608,14 @@ class _StreamingModelAdapter:
                 return value
         return None
 
+    @classmethod
+    def _provider_calls_output_count(cls, payloads) -> int | None:
+        """Keep text estimates until the current leg reports output usage."""
+        if not payloads or payloads[-1] is None:
+            return None
+        counts = [cls._provider_output_count(item) for item in payloads if item is not None]
+        return sum(counts) if counts and all(count is not None for count in counts) else None
+
     async def _resolve_routed_resolution(
         self,
         *,
@@ -4018,14 +3623,16 @@ class _StreamingModelAdapter:
         model: str | None,
         api_base_url: str | None,
         sampling_overlays: Mapping[str, Any],
+        execution_provider: str = "",
     ) -> ConsoleProviderResolution:
         """Re-resolve a per-call provider target through the gateway's send seam.
 
         Runs inside ``_consume`` on the run's loop because
         ``resolve_for_send`` is async (the direct-llama path probes
-        reachability). The seam is custom-ep aware per ADR-146, so a
+        reachability). The seam is custom-ep aware per ADR-343, so a
         ``custom-ep:<slug>`` id resolves through its registry entry's family
-        and credential. Re-resolving per call -- never caching -- matches
+        and credential. A routed run can pin its execution family separately.
+        Re-resolving per call -- never caching -- matches
         Console's per-send discipline: a credential or readiness change
         between turns takes effect on the very next call.
 
@@ -4034,6 +3641,7 @@ class _StreamingModelAdapter:
             model: Per-call model, or None to fall back to the provider's
                 configured default.
             api_base_url: Per-call endpoint override, or None.
+            execution_provider: Internal frozen execution family for routed runs.
             sampling_overlays: Provided sampling values keyed by
                 ``ConsoleProviderSelection`` field name.
 
@@ -4058,6 +3666,7 @@ class _StreamingModelAdapter:
                 provider=provider,
                 base_url=str(api_base_url) if api_base_url else None,
                 base_url_is_pinned=bool(api_base_url),
+                execution_provider=execution_provider,
                 explicit_model=str(model) if model else None,
                 **sampling_overlays,
             )
@@ -4184,6 +3793,7 @@ def _non_colliding_skill_entries(
         | set(library_names)
         | set(profile_names)
         | set(canvas_names)
+        | RECOVERY_RESERVED_TOOL_NAMES
         | RUNTIME_TOOL_NAMES
     )
     eligible = _eligible_skill_entries(context)
@@ -4224,43 +3834,6 @@ def _compose_run_allowed_tools(
         )
     )
     return tuple(builtin_names) + skill_names + (SPAWN_TOOL_NAME,)
-
-
-class _CollisionFilteredMCPProvider:
-    """View over a composed MCP provider that hides collision-excluded entries.
-
-    Registered into the run's registry INSTEAD OF the raw provider, so
-    ``ToolCatalogRegistry.list_catalog()`` (a raw sweep across every
-    registered provider) never surfaces a shadowed MCP entry either --
-    mirrors ``_non_colliding_skill_entries``'s own raw-catalog exclusion
-    invariant (a colliding skill is filtered out before ``SkillToolProvider``
-    is even constructed, so its catalog never contains it). MCP tools are
-    already fully composed by the time this run sees them (T3: composed
-    once, by the caller, on the main loop), so this wraps rather than
-    reconstructs -- a read-time filter only. The underlying provider's own
-    state (its composed catalog, per-turn decision stamps) is never
-    touched, and ``invoke``/``load_schema`` are simple pass-throughs: a
-    filtered-out tool id can never reach them anyway, since the registry's
-    own owner/name caches are built exclusively from this wrapper's
-    (already-filtered) ``list_catalog()``.
-    """
-
-    def __init__(self, provider: Any, allowed_names: frozenset[str]) -> None:
-        self._provider = provider
-        self._allowed_names = allowed_names
-
-    def list_catalog(self) -> list[ToolCatalogEntry]:
-        return [
-            entry
-            for entry in self._provider.list_catalog()
-            if entry.name in self._allowed_names
-        ]
-
-    def load_schema(self, tool_id: str) -> ToolSchema:
-        return self._provider.load_schema(tool_id)
-
-    def invoke(self, tool_id: str, args: dict) -> ToolResult:
-        return self._provider.invoke(tool_id, args)
 
 
 def _non_colliding_mcp_names(
@@ -4456,12 +4029,16 @@ def _compose_run_registry_and_allowed(
     local_provider: Any | None = None,
     virtual_cli_provider: Any | None = None,
     raw_shell_provider: Any | None = None,
+    recovery_provider: Any | None = None,
     library_provider: Any | None = None,
     library_authority: Any | None = None,
     persona_policy_rules: tuple[Mapping[str, Any], ...] | None = None,
     profile_provider: Any | None = None,
+    code_review_provider: Any | None = None,
     canvas_provider: Any | None = None,
     canvas_authority: Any | None = None,
+    preview_canvas_profile_snapshot: Any | None = None,
+    storage_provider: Callable[[], Any] | None = None,
 ) -> tuple[ToolCatalogRegistry, tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
     """Build a fresh per-run tool registry + allow-list from a skills snapshot.
 
@@ -4569,6 +4146,11 @@ def _compose_run_registry_and_allowed(
     """
     if (scratch_root is None) != (scratch_lease is None):
         raise ValueError("Console scratch root and lease must be supplied together")
+    from .console_ordinary_tree import current_ordinary_tree
+
+    ordinary = current_ordinary_tree()
+    if ordinary is not None:
+        ordinary.check_local_sources()
     registry = ToolCatalogRegistry(ephemeral=ephemeral)
     builtin_provider = BuiltinToolProvider(
         gate=builtin_gate,
@@ -4580,18 +4162,37 @@ def _compose_run_registry_and_allowed(
         diff_sink=diff_sink,
         sandbox_root=scratch_root,
         sandbox_lease=scratch_lease,
+        storage_provider=storage_provider,
     )
     registry.register_provider(builtin_provider)
     builtin_names = tuple(entry.name for entry in builtin_provider.list_catalog())
+    if ordinary is not None:
+        ordinary.bind_builtin_provider(builtin_provider, builtin_names)
     canvas_names: tuple[str, ...] = ()
     if canvas_provider is not None and registry.register_canvas_provider(
         canvas_provider, canvas_authority
     ):
         canvas_names = tuple(entry.name for entry in canvas_provider.list_catalog())
+    elif canvas_provider is None and preview_canvas_profile_snapshot is not None:
+        from tldw_chatbook.Agents.canvas_tool_provider import build_canvas_tool_catalog
+
+        canvas_names = tuple(entry.name for entry in build_canvas_tool_catalog())
+    review_names: tuple[str, ...] = ()
+    if (
+        code_review_provider is not None
+        and registry._authenticated_review_provider(code_review_provider)
+    ):
+        registry.register_provider(code_review_provider)
+        review_names = tuple(entry.name for entry in code_review_provider.list_catalog())
     local_names: tuple[str, ...] = ()
     if local_provider is not None:
         registry.register_provider(local_provider)
         local_names = tuple(e.name for e in local_provider.list_catalog())
+        from .console_ordinary_tree import current_ordinary_tree
+
+        ordinary = current_ordinary_tree()
+        if ordinary is not None:
+            ordinary.bind_local_provider(local_provider, local_names)
     if virtual_cli_provider is not None:
         registry.register_provider(virtual_cli_provider)
         local_names += tuple(e.name for e in virtual_cli_provider.list_catalog())
@@ -4603,11 +4204,18 @@ def _compose_run_registry_and_allowed(
     # every collision filter below so a skill or MCP tool can never shadow
     # them -- but they never join the skill-runner narrowing set (the
     # returned builtin/local names below stay Library-free).
+    recovery_names: tuple[str, ...] = ()
+    if recovery_provider is not None and registry.register_archive_recovery_provider(
+        recovery_provider, recovery_provider.authority
+    ):
+        recovery_names = tuple(e.name for e in recovery_provider.list_catalog())
     library_names: tuple[str, ...] = ()
     if library_provider is not None and registry.register_builtin_library_provider(
         library_provider, library_authority
     ):
         library_names = tuple(e.name for e in library_provider.list_catalog())
+        if ordinary is not None:
+            ordinary.bind_library_provider(library_provider, library_names)
     profile_names: tuple[str, ...] = ()
     if profile_provider is not None and not ephemeral:
         registry.register_provider(profile_provider)
@@ -4618,7 +4226,7 @@ def _compose_run_registry_and_allowed(
         local_names=local_names,
         library_names=LIBRARY_RESERVED_TOOL_NAMES,
         profile_names=PROFILE_RESERVED_TOOL_NAMES,
-        canvas_names=CANVAS_RESERVED_TOOL_NAMES,
+        canvas_names=CANVAS_RESERVED_TOOL_NAMES | CODE_REVIEW_RESERVED_TOOL_NAMES,
     )
     # Defense in depth, NOT the guarantee: a temporary session refuses every
     # skill and MCP call at `ToolCatalogRegistry.invoke_by_name` regardless
@@ -4639,8 +4247,10 @@ def _compose_run_registry_and_allowed(
     allowed_tools = (
         tuple(builtin_names)
         + canvas_names
+        + review_names
         + local_names
         + library_names
+        + recovery_names
         + profile_names
         + skill_names
     )
@@ -4651,7 +4261,9 @@ def _compose_run_registry_and_allowed(
             | set(LIBRARY_RESERVED_TOOL_NAMES)
             | set(PROFILE_RESERVED_TOOL_NAMES)
             | set(CANVAS_RESERVED_TOOL_NAMES)
+            | set(CODE_REVIEW_RESERVED_TOOL_NAMES)
             | set(skill_names)
+            | RECOVERY_RESERVED_TOOL_NAMES
             | RUNTIME_TOOL_NAMES
         )
         # Single partition call (finding 8, substrate review): the two
@@ -4717,25 +4329,21 @@ def _compose_run_registry_and_allowed(
 
 
 @dataclass(frozen=True, slots=True)
-class ConsoleFirstRequestPlan:
-    """Pure, disposable inputs for the Console agent's first model request."""
+class _PreparedNativeReply:
+    """Original native resources; the producer frame owns their finalizers."""
 
-    registry: ToolCatalogRegistry
-    allowed_tools: tuple[str, ...]
-    builtin_names: tuple[str, ...]
-    local_names: tuple[str, ...]
-    skill_names: frozenset[str]
-    config: AgentConfig
-    schemas: FirstRequestSchemaPlan
-    run_log: RunLogRequestPlan
-    messages: list[dict]
-    api_endpoint: str
-    profile_context_snapshot: ProfileContextSnapshot
-    # Raw selection id before family flattening (``custom-ep:<slug>`` when
-    # the session's provider names a registry endpoint; otherwise equals
-    # ``api_endpoint``). Spawn resolution uses it as ``parent_provider`` so
-    # an inheriting child snapshots the endpoint, not the execution family.
-    selected_provider: str = ""
+    service: AgentService
+    first_request_plan: ConsoleFirstRequestPlan
+    session_id: str
+    progress_owner_id: str
+    resolution: Any
+    adapter: _StreamingModelAdapter
+    turn_lifeline: _ModelCallLifeline | None
+    project_instruction_context: _ProjectInstructionDispatchContext | None
+    review_state_scope: Any
+    run_log_writer: Any
+    child_change_state: _ChildChangeState
+    run_primary: Callable[[], tuple[str, RunOutcome]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -4751,16 +4359,228 @@ def _console_first_request_runtime_context(
     db: Any, budget: RunBudget
 ) -> tuple[tuple[AgentDefinition, ...], int]:
     """Return the exact named-agent roster and fleet gate for one turn."""
-    definitions = tuple(
-        definition_from_row(row) for row in db.list_agent_definitions(enabled_only=True)
-    )
-    max_live = agent_service_module._coerce_max_live_subagents(
-        agent_service_module._setting(
+    with operation_owned_connection(db):
+        definitions = tuple(
+            definition_from_row(row)
+            for row in db.list_agent_definitions(enabled_only=True)
+        )
+    max_live = agent_service_module.coerce_max_live_subagents(
+        agent_service_module.setting(
             agent_service_module.MAX_LIVE_SUBAGENTS_KEY,
             agent_service_module.DEFAULT_MAX_LIVE_SUBAGENTS,
         )
     )
     return definitions, max_live if budget.max_subagents > 0 else 1
+
+
+def _advertised_path_root_aliases(
+    allowed_tools: Sequence[str],
+    *,
+    local_provider: Any | None,
+    virtual_cli_provider: Any | None,
+) -> tuple[str, ...] | None:
+    """Return the root aliases the model's offered path tools accept.
+
+    TASK-33940.1: feeds ``workspace_context_note`` so it names folders by the
+    aliases the fs_*/git_*/virtual_cli schemas actually carry. A provider whose
+    tools were filtered out of the allow-list contributes nothing.
+
+    Returns:
+        The union of the advertised providers' aliases, ``()`` when no path
+        tool is offered, or ``None`` when only legacy alias-free providers are.
+    """
+    from tldw_chatbook.Agents.local_tool_provider import PATH_AUTHORITY_TOOL_NAMES
+    from tldw_chatbook.Agents.virtual_cli_provider import VIRTUAL_CLI_TOOL_NAME
+
+    offered = set(allowed_tools)
+    aliases: set[str] = set()
+    alias_free = False
+    for provider, names in (
+        (local_provider, PATH_AUTHORITY_TOOL_NAMES),
+        (virtual_cli_provider, frozenset({VIRTUAL_CLI_TOOL_NAME})),
+    ):
+        if provider is None or not offered & names:
+            continue
+        if provider is local_provider and "fs_search_index" in offered & names:
+            ordinary = (offered & names) - {"fs_search_index"}
+            if not ordinary:
+                aliases.update(provider.project_index_aliases())
+                continue
+        provider_aliases = provider.path_root_aliases()
+        if provider_aliases is None:
+            alias_free = True
+            continue
+        aliases.update(provider_aliases)
+    if alias_free and not aliases:
+        return None
+    return tuple(sorted(aliases))
+
+
+def _advertised_scratch_relative_tools(
+    allowed_tools: Sequence[str], builtin_names: Sequence[str]
+) -> tuple[str, ...]:
+    """Return offered built-ins whose relative paths resolve in scratch."""
+    from tldw_chatbook.Tools.file_operation_tools import SCRATCH_RELATIVE_PATH_TOOLS
+
+    builtins = set(builtin_names)
+    return tuple(
+        sorted(
+            name
+            for name in allowed_tools
+            if name in SCRATCH_RELATIVE_PATH_TOOLS and name in builtins
+        )
+    )
+
+
+def _resolve_native_tool_context(messages, registry, eligible):
+    from dataclasses import replace
+
+    from tldw_chatbook.Agents.agent_models import PluginContextText
+    from tldw_chatbook.Plugins.host_references import resolve_tool_ceiling
+
+    def origin(value):
+        return (
+            replace(
+                value,
+                allowed_tools=resolve_tool_ceiling(
+                    value.allowed_tools, registry, eligible
+                ),
+            )
+            if value.allowed_tools is not None
+            else value
+        )
+
+    def content(value):
+        if isinstance(value, list):
+            return [
+                (
+                    dict(part, text=content(part["text"]))
+                    if isinstance(part, dict) and "text" in part
+                    else part
+                )
+                for part in value
+            ]
+        if not isinstance(value, PluginContextText):
+            return value
+        return PluginContextText(
+            str(value),
+            tuple(origin(row) for row in value.checked_origins()),
+            tuple(
+                replace(
+                    row,
+                    package_origins=tuple(origin(item) for item in row.package_origins),
+                )
+                for row in value.checked_hook_origins()
+            ),
+        )
+
+    return [dict(row, content=content(row.get("content"))) for row in messages]
+
+
+def _compose_first_request_catalog(
+    *,
+    shared_registry: ToolCatalogRegistry,
+    shared_allowed_tools: tuple[str, ...],
+    context: Mapping[str, Any],
+    skills_present: bool,
+    mcp_provider: Any | None,
+    builtin_gate: Any | None,
+    local_provider: Any | None,
+    virtual_cli_provider: Any | None,
+    raw_shell_provider: Any | None,
+    recovery_provider: Any | None,
+    library_provider: Any | None,
+    library_authority: Any | None,
+    profile_provider: Any | None,
+    workspace_id: str | None,
+    workspace_read_binding_ids: tuple[str, ...] | None,
+    workspace_write_binding_ids: tuple[str, ...] | None,
+    workspace_binding_authority: tuple[Any, ...] | None,
+    ephemeral: bool,
+    diff_sink: Callable[[tuple[str, str, str, str]], None] | None,
+    scratch_root: Path | None,
+    scratch_lease: Callable[[], ContextManager[Path]] | None,
+    code_review_provider: Any | None,
+    persona_policy_rules: tuple[Mapping[str, Any], ...] | None,
+    canvas_provider: Any | None,
+    canvas_authority: Any | None,
+    preview_canvas_profile_snapshot: Any | None,
+    storage_provider: Callable[[], Any] | None,
+):
+    """Compose the one actual catalog before message-dependent request planning."""
+    fresh = bool(
+        skills_present
+        or mcp_provider is not None
+        or builtin_gate is not None
+        or local_provider is not None
+        or virtual_cli_provider is not None
+        or raw_shell_provider is not None
+        or recovery_provider is not None
+        or library_provider is not None
+        or profile_provider is not None
+        or canvas_provider is not None
+        or code_review_provider is not None
+        or preview_canvas_profile_snapshot
+        or scratch_root is not None
+        or scratch_lease is not None
+    )
+    if fresh:
+        registry, allowed_tools, builtin_names, local_names = (
+            _compose_run_registry_and_allowed(
+                context,
+                mcp_provider=mcp_provider,
+                builtin_gate=builtin_gate,
+                workspace_id=workspace_id,
+                workspace_read_binding_ids=workspace_read_binding_ids,
+                workspace_write_binding_ids=workspace_write_binding_ids,
+                workspace_binding_authority=workspace_binding_authority,
+                ephemeral=ephemeral,
+                diff_sink=diff_sink,
+                scratch_root=scratch_root,
+                scratch_lease=scratch_lease,
+                local_provider=local_provider,
+                virtual_cli_provider=virtual_cli_provider,
+                raw_shell_provider=raw_shell_provider,
+                recovery_provider=recovery_provider,
+                library_provider=library_provider,
+                library_authority=library_authority,
+                persona_policy_rules=persona_policy_rules,
+                profile_provider=profile_provider,
+                code_review_provider=code_review_provider,
+                canvas_provider=canvas_provider,
+                canvas_authority=canvas_authority,
+                preview_canvas_profile_snapshot=preview_canvas_profile_snapshot,
+                storage_provider=storage_provider,
+            )
+        )
+    else:
+        registry = shared_registry
+        allowed_tools = shared_allowed_tools
+        builtin_names = tuple(
+            entry.name for entry in registry.list_catalog() if entry.source == "builtin"
+        )
+        local_names = ()
+    skill_names = (
+        frozenset(
+            str(item["name"])
+            for item in _non_colliding_skill_entries(
+                context,
+                builtin_names,
+                local_names=local_names,
+                library_names=LIBRARY_RESERVED_TOOL_NAMES,
+                profile_names=PROFILE_RESERVED_TOOL_NAMES,
+                canvas_names=CANVAS_RESERVED_TOOL_NAMES | CODE_REVIEW_RESERVED_TOOL_NAMES,
+            )
+        )
+        if skills_present and not ephemeral
+        else frozenset()
+    )
+    from .console_ordinary_tree import current_ordinary_tree
+
+    ordinary = current_ordinary_tree()
+    if ordinary is not None:
+        ordinary.bind_catalog(registry, allowed_tools)
+    return registry, allowed_tools, builtin_names, local_names, skill_names
 
 
 def build_console_first_request_plan(
@@ -4774,6 +4594,7 @@ def build_console_first_request_plan(
     local_provider: Any | None,
     virtual_cli_provider: Any | None = None,
     raw_shell_provider: Any | None = None,
+    recovery_provider: Any | None = None,
     library_provider: Any | None,
     library_authority: Any | None,
     profile_provider: Any | None = None,
@@ -4805,9 +4626,14 @@ def build_console_first_request_plan(
     persona_policy_rules: tuple[Mapping[str, Any], ...] | None = None,
     profile_context_service: Any | None = None,
     personal_context_snapshot: ProfileContextSnapshot | None = None,
+    code_review_provider: Any | None = None,
     canvas_provider: Any | None = None,
     canvas_authority: Any | None = None,
+    preview_canvas_profile_snapshot: Any | None = None,
     progress_inbox_exists: bool = False,
+    light_surface: bool = False,
+    storage_provider: Callable[[], Any] | None = None,
+    _catalog: tuple | None = None,
 ) -> ConsoleFirstRequestPlan:
     """Build live/preview-identical first-request inputs without live effects.
 
@@ -4847,6 +4673,12 @@ def build_console_first_request_plan(
         persona_policy_rules: Optional persona rules applied to tool composition.
         profile_context_service: Optional profile snapshot builder for this turn.
         personal_context_snapshot: Optional prebuilt snapshot used verbatim.
+        preview_canvas_profile_snapshot: Immutable Canvas profile data for budgeting;
+            no Canvas provider is registered and no authority is issued.
+        light_surface: TASK-34100.5.3 -- plan plain chat's light tool surface
+            (``Agents/plain_chat_tool_surface.py``): the safe set plus the
+            tools the user switched on, no runtime tools (sub-agents, skills,
+            chat forks, run log, discovery), and the minimal prompt.
 
     Returns:
         A frozen catalog, config, message, schema, and run-log plan shared by
@@ -4857,66 +4689,96 @@ def build_console_first_request_plan(
         ProfileContextSnapshot,
     )
 
-    fresh = bool(
-        skills_present
-        or mcp_provider is not None
-        or builtin_gate is not None
-        or local_provider is not None
-        or virtual_cli_provider is not None
-        or raw_shell_provider is not None
-        or library_provider is not None
-        or profile_provider is not None
-        or canvas_provider is not None
-        or scratch_root is not None
-        or scratch_lease is not None
+    registry, allowed_tools, builtin_names, local_names, skill_names = (
+        _catalog
+        if _catalog is not None
+        else _compose_first_request_catalog(
+            shared_registry=shared_registry,
+            shared_allowed_tools=shared_allowed_tools,
+            context=context,
+            skills_present=skills_present,
+            mcp_provider=mcp_provider,
+            builtin_gate=builtin_gate,
+            local_provider=local_provider,
+            virtual_cli_provider=virtual_cli_provider,
+            raw_shell_provider=raw_shell_provider,
+            recovery_provider=recovery_provider,
+            code_review_provider=code_review_provider,
+            library_provider=library_provider,
+            library_authority=library_authority,
+            profile_provider=profile_provider,
+            workspace_id=workspace_id,
+            workspace_read_binding_ids=workspace_read_binding_ids,
+            workspace_write_binding_ids=workspace_write_binding_ids,
+            workspace_binding_authority=workspace_binding_authority,
+            ephemeral=ephemeral,
+            diff_sink=diff_sink,
+            scratch_root=scratch_root,
+            scratch_lease=scratch_lease,
+            persona_policy_rules=persona_policy_rules,
+            canvas_provider=canvas_provider,
+            canvas_authority=canvas_authority,
+            preview_canvas_profile_snapshot=preview_canvas_profile_snapshot,
+            storage_provider=storage_provider,
+        )
     )
-    if fresh:
-        registry, allowed_tools, builtin_names, local_names = (
-            _compose_run_registry_and_allowed(
-                context,
-                mcp_provider=mcp_provider,
-                builtin_gate=builtin_gate,
-                workspace_id=workspace_id,
-                workspace_read_binding_ids=workspace_read_binding_ids,
-                workspace_write_binding_ids=workspace_write_binding_ids,
-                workspace_binding_authority=workspace_binding_authority,
-                ephemeral=ephemeral,
-                diff_sink=diff_sink,
-                scratch_root=scratch_root,
-                scratch_lease=scratch_lease,
-                local_provider=local_provider,
-                virtual_cli_provider=virtual_cli_provider,
-                raw_shell_provider=raw_shell_provider,
-                library_provider=library_provider,
-                library_authority=library_authority,
-                persona_policy_rules=persona_policy_rules,
-                profile_provider=profile_provider,
-                canvas_provider=canvas_provider,
-                canvas_authority=canvas_authority,
+    user_source_names: tuple[str, ...] = ()
+    if light_surface:
+        # TASK-34100.5.3 (owner ruling 2026-10-04, "Light surface by
+        # default"): the one place plain chat's offered surface is narrowed.
+        # Live dispatch and both previews pass through here, so what the
+        # previews count is what the send carries.
+        from tldw_chatbook.Agents import plain_chat_tool_surface as surface
+
+        user_source_names = (
+            surface.provider_names(library_provider)
+            + surface.provider_names(raw_shell_provider)
+            + tuple(sorted(surface.user_mcp_tool_names(mcp_provider)))
+        )
+        light_tools = surface.light_surface_allowed_tools(
+            allowed_tools,
+            builtin_names=builtin_names,
+            local_names=surface.provider_names(local_provider),
+            user_source_names=user_source_names,
+        )
+        if _catalog is not None:
+            from tldw_chatbook.Agents.workflow_task_scope import (
+                current_planning_authorization,
             )
-        )
-    else:
-        registry = shared_registry
-        allowed_tools = shared_allowed_tools
-        builtin_names = tuple(
-            entry.name for entry in registry.list_catalog() if entry.source == "builtin"
-        )
-        local_names = ()
-    skill_names = (
-        frozenset(
-            str(item["name"])
-            for item in _non_colliding_skill_entries(
-                context,
-                builtin_names,
-                local_names=local_names,
-                library_names=LIBRARY_RESERVED_TOOL_NAMES,
-                profile_names=PROFILE_RESERVED_TOOL_NAMES,
-                canvas_names=CANVAS_RESERVED_TOOL_NAMES,
+
+            planning = current_planning_authorization()
+            if (
+                planning is not None
+                and planning.registry is registry
+                and planning.allowed == frozenset(allowed_tools)
+            ):
+                # The live planning catalog already bounds these reads.
+                workflow_local_tools = planning.allowed.intersection(
+                    local_names, {"fs_list", "fs_read"}
+                )
+            elif planning is None and local_provider is not None:
+                from .console_workflow_preparation import (
+                    current_workflow_execution_local_tools,
+                )
+
+                workflow_local_tools = current_workflow_execution_local_tools(
+                    registry, allowed_tools, local_provider
+                )
+            else:
+                workflow_local_tools = ()
+            light_tools = tuple(
+                name for name in allowed_tools
+                if name in light_tools or name in workflow_local_tools
             )
+        allowed_tools = light_tools
+        user_source_names = tuple(
+            name for name in user_source_names if name in allowed_tools
         )
-        if skills_present and not ephemeral
-        else frozenset()
-    )
+        install_skill_enabled = run_skill_script_enabled = False
+        fork_chat_enabled = new_chat_enabled = worktree_merge_enabled = False
+        spawn_override_enabled, spawn_override_targets = False, ()
+        agent_definitions, fleet_max_live, progress_inbox_exists = (), 1, False
+        run_budget = surface.light_surface_budget(run_budget or console_run_budget())
     resolved_model = str(getattr(resolution, "model", "") or fallback_model)
     api_endpoint = str(
         getattr(resolution, "execution_key", "")
@@ -4931,40 +4793,44 @@ def build_console_first_request_plan(
         str(getattr(resolution, "selected_provider", "") or "") or api_endpoint
     )
     run_log = build_run_log_request_plan()
-    direct_prompt = compose_agent_system_prompt(
-        session_system_prompt,
-        offer_find_load=False,
+    # Lazy (ADR-097 UI-ready census): only a send plans its first request.
+    from tldw_chatbook.Agents.first_request_window import PLAIN_CHAT_SYSTEM_PROMPT
+
+    plain_prompt = (session_system_prompt or "").strip() or PLAIN_CHAT_SYSTEM_PROMPT
+    # TASK-34100.5.3: the light surface's prompt is the plain one plus one
+    # line, sent only when its tools are (a tool-less fallback gets the
+    # plain prompt alone). The meter's re-plan builds the same pair.
+    direct_prompt = (
+        surface.light_surface_prompts(session_system_prompt)[1]  # bound above
+        if light_surface
+        else compose_agent_system_prompt(session_system_prompt, offer_find_load=False)
     )
-    discovery_prompt = compose_agent_system_prompt(
-        session_system_prompt,
-        offer_find_load=True,
+    discovery_prompt = (
+        plain_prompt
+        if light_surface
+        else compose_agent_system_prompt(session_system_prompt, offer_find_load=True)
     )
     discovery_prompt = _append_canvas_discovery_hint(discovery_prompt, allowed_tools)
     from tldw_chatbook.Tools.remote_binding_status import (
         get_remote_binding_status_cache,
     )
 
-    workspace_note = workspace_context_note(
-        workspace_id,
-        binding_authority=workspace_binding_authority,
-        status_cache=get_remote_binding_status_cache(),
-    )
     response_reserve = (
         getattr(resolution, "max_tokens", None) or DEFAULT_RESPONSE_RESERVATION
     )
     from tldw_chatbook.Agents.agent_models import plugin_tool_ceiling
 
+    agent_messages = _resolve_native_tool_context(
+        agent_messages, registry, frozenset(allowed_tools)
+    )
     allowed_tools = plugin_tool_ceiling(agent_messages, allowed_tools)
     config = AgentConfig(
         model=resolved_model,
         system_prompt=direct_prompt,
-        # TASK-26002: so the loop can name the provider when it reports a
-        # provider-level fault (an empty-response run is otherwise
-        # indistinguishable from the agent deciding it was finished).
-        # Reuses `api_endpoint` above rather than re-deriving it -- that is the
-        # key the request is actually sent under, and it already carries the
-        # execution_key -> provider -> "agent" fallback.
-        provider=api_endpoint,
+        # Keep selection identity on model calls; api_endpoint remains the
+        # execution key used for capabilities and protocol preparation.
+        provider=selected_provider,
+        base_url=getattr(resolution, "base_url", None),
         fallback_providers=console_fallback_providers(),
         allowed_tools=allowed_tools,
         budget=(
@@ -4974,27 +4840,87 @@ def build_console_first_request_plan(
         ),
         native_tools=native_tools,
         reasoning_replay=getattr(resolution, "reasoning_replay", None),
-        workspace_context_note=workspace_note,
         response_reserve_tokens=response_reserve,
     )
+    catalog_entries = None
+    schema_loader = None
+    if preview_canvas_profile_snapshot is not None:
+        if canvas_provider is not None:
+            raise ValueError("Canvas preview cannot accompany a live provider")
+        from tldw_chatbook.Agents.canvas_tool_provider import (
+            build_canvas_tool_catalog,
+            load_canvas_tool_schema,
+        )
+
+        entries = registry.list_catalog()
+        canvas_entries = build_canvas_tool_catalog()
+        canvas_ids = frozenset(entry.id for entry in canvas_entries)
+        # Match live order, retaining metadata for discovery without eagerly
+        # loading denied, oversized or unreadable schemas.
+        catalog_entries = (
+            *(entry for entry in entries if entry.source == "builtin"),
+            *canvas_entries,
+            *(entry for entry in entries if entry.source != "builtin"),
+        )
+
+        def schema_loader(tool_id: str) -> ToolSchema:
+            if tool_id in canvas_ids:
+                return load_canvas_tool_schema(tool_id, preview_canvas_profile_snapshot)
+            return registry.load_schema(tool_id)
+    from tldw_chatbook.Agents.automatic_work_runtime import current_automatic_work
+
+    automatic = current_automatic_work()
+    if automatic is not None and automatic.goal is not None:
+        config = automatic.goal.narrow_config(
+            config, registry, catalog_entries=catalog_entries
+        )
+        allowed_tools = config.allowed_tools
+    # Describe only the final offered capabilities, including Goal scope
+    # narrowing, before schema/request construction consumes the note.
+    from .console_preparation_reads import current_agent_sources
+
+    original_sources = current_agent_sources()
+    workspace_note = workspace_context_note(
+        workspace_id,
+                         registry=original_sources.registry if original_sources is not None else None,
+        binding_authority=workspace_binding_authority,
+        status_cache=get_remote_binding_status_cache(),
+        path_tool_aliases=_advertised_path_root_aliases(
+            allowed_tools,
+            local_provider=local_provider,
+            virtual_cli_provider=virtual_cli_provider,
+        ),
+        workspace_read_tools=set(allowed_tools)
+        & {"fs_list", "fs_glob", "fs_grep", "fs_read", "fs_search_index"},
+        project_index_aliases=(
+            local_provider.project_index_aliases()
+            if local_provider is not None and "fs_search_index" in allowed_tools
+            else ()
+        ),
+        scratch_relative_tools=_advertised_scratch_relative_tools(
+            allowed_tools, builtin_names
+        ),
+    )
+    config = dataclass_replace(config, workspace_context_note=workspace_note)
     messages = agent_messages
     if turn_bundle_block:
         messages, _ = _append_to_last_user_message(agent_messages, turn_bundle_block)
-    schemas = build_first_request_schema_plan(
-        registry,
-        allowed_tools,
-        config,
-        api_endpoint,
-        messages,
+    from .console_preparation_reads import current_planning_preparation
+
+    schema_flags: dict[str, Any] = dict(
         skill_file_enabled=bool(skills_present and turn_skill_bindings),
         install_skill_enabled=install_skill_enabled,
-        managed_skill_promotion_enabled=library_provider is not None,
+        managed_skill_promotion_enabled=(
+            library_provider is not None and not light_surface
+        ),
         run_skill_script_enabled=run_skill_script_enabled,
         fork_chat_enabled=fork_chat_enabled,
         new_chat_enabled=new_chat_enabled,
         spawn_override_enabled=spawn_override_enabled,
         spawn_override_targets=spawn_override_targets,
-        run_log_active=run_log.requested,
+        # The run log itself still records a light run; its tools are not
+        # part of the light surface.
+        run_log_active=run_log.requested and not light_surface and current_planning_preparation() is None,
         agent_definitions=agent_definitions,
         fleet_active=fleet_max_live > 1,
         # Live fleet construction opens an inbox before the first request.
@@ -5004,7 +4930,54 @@ def build_console_first_request_plan(
         fleet_max_live=fleet_max_live,
         direct_system_prompt=direct_prompt,
         discovery_system_prompt=discovery_prompt,
+        # A tool-less request carries only the session's own prompt (or a
+        # neutral one-liner, never the tool-protocol prompt: V2-F2).
+        plain_system_prompt=plain_prompt,
+        catalog_entries=catalog_entries,
+        schema_loader=schema_loader,
+        allow_discovery=not light_surface,
+        # The safe set outlasts opt-in extras that no longer fit (R3-3).
+        fallback_tools=surface.LIGHT_SURFACE_TOOL_NAMES if light_surface else (),
     )
+    schemas = build_first_request_schema_plan(
+        registry,
+        allowed_tools,
+        config,
+        api_endpoint,
+        messages,
+        # TASK-34100.5 AC#6: the same window the send preflight used.
+        context_window=getattr(resolution, "context_window", None),
+        **schema_flags,
+    )
+    review_service = getattr(code_review_provider, "service", None)
+    resume = getattr(review_service, "native_resume", None)
+    if resume is not None and resume[1] is not None:
+        from tldw_chatbook.Agents.code_review_models import ReviewRefused
+
+        required = {"code_review_guide", "code_review_read"}
+        disclosed = {schema.name for schema in schemas.active_schemas}
+        runtime = {schema.name for schema in schemas.runtime_schemas}
+        discoverable = (
+            {
+                entry.name
+                for entry in registry.list_catalog()
+                if not allowed_tools or entry.name in allowed_tools
+            }
+            if schemas.offer_find_load
+            else set()
+        )
+        if (
+            not schemas.request_fits
+            or "spawn_subagent" not in runtime
+            or not required.issubset(disclosed | discoverable)
+        ):
+            reason = "review_stage_tools_unreachable"
+            review_service.native_coordinator.mark_continuation_blocked(
+                resume[1], reason
+            )
+            if automatic is not None:
+                automatic.ledger.pause(automatic.chain_id, reason)
+            raise ReviewRefused(reason)
     config = dataclass_replace(config, system_prompt=schemas.system_prompt)
     profile_workspace_id = (
         None if workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID else workspace_id
@@ -5049,7 +5022,7 @@ def build_console_first_request_plan(
                 budget_system_prompt = f"{budget_system_prompt}\n\n{canvas_guidance}"
             if workspace_note:
                 budget_system_prompt = f"{budget_system_prompt}\n\n{workspace_note}"
-            required_tokens = _count_model_messages(
+            required_tokens = agent_service_module.count_model_messages(
                 [
                     {"role": "system", "content": budget_system_prompt},
                     *messages,
@@ -5059,7 +5032,7 @@ def build_console_first_request_plan(
                 reasoning_replay=config.reasoning_replay,
             )
             if native_schema_rows:
-                required_tokens += _count_model_messages(
+                required_tokens += agent_service_module.count_model_messages(
                     [
                         {
                             "role": "system",
@@ -5105,6 +5078,36 @@ def build_console_first_request_plan(
         api_endpoint=api_endpoint,
         profile_context_snapshot=profile_snapshot,
         selected_provider=selected_provider,
+        # TASK-34100.5.3 review round 1: what the context meter re-plans.
+        tool_surface_inputs=functools.partial(
+            _capture_tool_surface_inputs, registry, allowed_tools, config, schema_flags
+        ),
+        user_source_names=user_source_names,
+    )
+
+
+def _capture_tool_surface_inputs(
+    registry: Any,
+    allowed_tools: tuple[str, ...],
+    config: AgentConfig,
+    schema_flags: Mapping[str, Any],
+) -> Any:
+    """Freeze one plan's schema-planner inputs for the context meter.
+
+    TASK-34100.5.3 review round 1: ``ConsoleAgentBridge.preview_tool_schemas``
+    re-runs the planner on these inputs against whatever resolution it is
+    asked about. The catalog is copied as schemas, so no provider is kept.
+    """
+    from tldw_chatbook.Chat.console_tool_surface_preview import (
+        SchemaCatalog,
+        ToolSurfacePlanInputs,
+    )
+
+    return ToolSurfacePlanInputs(
+        catalog=SchemaCatalog.from_registry(registry, allowed_tools),
+        allowed_tools=allowed_tools,
+        config=config,
+        schema_flags=dict(schema_flags),
     )
 
 
@@ -5132,8 +5135,14 @@ class _BridgeSkillRunner:
         definition_digests: Mapping[str, str] | None = None,
         plugin_entries: Sequence[Mapping[str, Any]] = (),
         owned_mcp_names: tuple[str, ...] = (),
+        plugin_registry=None,
+        plugin_eligible: frozenset[str] = frozenset(),
+        plugin_provider: str = "",
     ) -> None:
         self._owned_mcp_names = owned_mcp_names
+        self._plugin_registry = plugin_registry
+        self._plugin_eligible = plugin_eligible
+        self._plugin_provider = plugin_provider
         self._plugin_entries = {str(row["tool_name"]): row for row in plugin_entries}
         self._skills_service = skills_service
         self._skill_names = skill_names
@@ -5202,6 +5211,27 @@ class _BridgeSkillRunner:
         declared_allowed_tools = (
             result.get("allowed_tools") if isinstance(result, Mapping) else None
         )
+        model = None
+        if name in self._plugin_entries:
+            from tldw_chatbook.Chat.provider_readiness import provider_config_key
+            from tldw_chatbook.Plugins.host_references import resolve_tool_ceiling
+
+            try:
+                declared_allowed_tools = resolve_tool_ceiling(
+                    declared_allowed_tools, self._plugin_registry, self._plugin_eligible
+                )
+                model = result.get("model_override")
+                if model and (
+                    not self._plugin_provider
+                    or provider_config_key(result.get("model_provider", ""))
+                    != provider_config_key(self._plugin_provider)
+                ):
+                    raise PermissionError("plugin_model_parent_mismatch")
+            except PermissionError:
+                return ToolResult(
+                    ok=False,
+                    error="Plugin constraints are unavailable; review and retry.",
+                )
         # Narrow-only against THIS run's builtin + local tool names: a skill
         # can never grant its child a tool the parent run doesn't have (no
         # runtime tools, no MCP tools, no other skills). Local tools in the
@@ -5239,7 +5269,9 @@ class _BridgeSkillRunner:
                 f"{rendered}\n\nBundled files (readable via skill_file): {rows}",
                 rendered,
             )
-        return spawn(rendered, allowed_tools=allowed_tools)
+        return spawn(
+            rendered, allowed_tools=allowed_tools, **({"model": model} if model else {})
+        )
 
 
 @dataclass(slots=True)
@@ -5272,6 +5304,8 @@ class ConsoleAgentBridge:
         change_tracker: Any | None = None,
         buddy_sink: "PersonaBuddyConsoleAdapter | None" = None,
         change_finalization_coordinator: Any | None = None,
+        change_review_native: Any | None = None,
+        change_revert_native: Any | None = None,
         runtime_capacity: RuntimeCapacity | None = None,
         runtime_capacity_factory: Callable[[], RuntimeCapacity] | None = None,
         message_store: MessageStore | None = None,
@@ -5287,10 +5321,36 @@ class ConsoleAgentBridge:
         ensure_run_hooks: Callable[[], Any] | None = None,
         app_config: Mapping[str, Any] | None = None,
         get_hooks_v2: Callable[[str], Any] | None = None,
+        light_tool_surface: Callable[[], bool] | None = None,
+        tool_kill_switch: Callable[[], bool] | None = None,
+        storage_provider: Callable[[], Any] | None = None,
     ) -> None:
         self._message_store = message_store
+        # ADR-250 s6: the host's ProfileStorage for the note and expand tools.
+        self._storage_provider = storage_provider
+        # TASK-34100.5.3: asked once per send whether plain chat gets the
+        # light tool surface (``plain_chat_tool_surface``). ``ConsoleRuntime``
+        # passes the config reader; ``None`` (test harnesses built before the
+        # light surface existed) keeps the full agent surface.
+        self._light_tool_surface = light_tool_surface
+        # TASK-34100.5.3 review: the MCP hub's kill switch, read per preview.
+        # With it on the controller composes no local tools, so the meter
+        # must not count ``ask_user``. ``None``: nothing to honor.
+        self._tool_kill_switch = tool_kill_switch
+        #: Per-session memory of each send's tool surface, which
+        #: ``preview_tool_schemas`` re-plans for the resolution it is asked
+        #: about (``console_tool_surface_preview``); built on first use.
+        self._tool_surface_memory: Any | None = None
         self._progress_closed = False
+        self._progress_shutdown_task: asyncio.Task[None] | None = None
+        self._progress_close_drains: dict[
+            str, tuple[MessageStore, str, MessageInbox | None]
+        ] = {}
         self._message_store_lock = threading.RLock()
+        self._progress_consumer_lock = threading.Lock()
+        self._progress_consumers: dict[str, Callable[[str, str, MessageIdentity], None]] = {}
+        if message_store is not None:
+            message_store.on_enqueue = self._on_progress_enqueue
         self._runtime_capacity = runtime_capacity
         self._runtime_capacity_factory = runtime_capacity_factory
         self._runtime_capacity_lock = threading.RLock()
@@ -5302,6 +5362,10 @@ class ConsoleAgentBridge:
         self._change_tracker = change_tracker
         self._buddy_sink = buddy_sink
         self._change_finalization_coordinator = change_finalization_coordinator
+        self._change_revert_native = change_revert_native
+        self._native_undo_expected = change_revert_native is not None
+        self._change_review_native = change_review_native
+        self._native_change_review_expected = change_review_native is not None
         self._store = store
         if self._store is not None and message_store is not None:
             self._store.register_progress_message_store(message_store)
@@ -5313,11 +5377,12 @@ class ConsoleAgentBridge:
         self._live_usage_closed = False
         self._raw_shell_marker_lock = threading.Lock()
         self._tool_activity_runs = {}
+        self.approval_feedback_store = None
         self._raw_shell_markers: dict[tuple[str, str], _RawShellMarkerState] = {}
         self._skills_service = skills_service
         self._native_tools_enabled = native_tools_enabled
         self._ensure_run_hooks = ensure_run_hooks
-        # ADR-147: forwarded to every AgentService this bridge builds; None
+        # ADR-344: forwarded to every AgentService this bridge builds; None
         # (every production site) leaves the service on its live
         # ``load_settings()`` fallback. Tests inject a fake-key mapping so
         # the spawn resolver's readiness gate does not depend on host
@@ -5326,7 +5391,7 @@ class ConsoleAgentBridge:
         self._get_hooks_v2 = get_hooks_v2
         if registry is None:
             registry = ToolCatalogRegistry()
-            registry.register_provider(BuiltinToolProvider())
+            registry.register_provider(BuiltinToolProvider(storage_provider=storage_provider))
         self._registry = registry
         self._allowed_tools = tuple(e.name for e in registry.list_catalog()) + (
             SPAWN_TOOL_NAME,
@@ -5563,6 +5628,186 @@ class ConsoleAgentBridge:
         # so a lock per dict could not express it.
         self._change_window_lock = threading.Lock()
 
+    def light_surface_for(
+        self,
+        turn_skill_bindings: Sequence[str] = (),
+        *,
+        session_id: str | None = None,
+        conversation_id: str | None = None,
+    ) -> bool:
+        """Whether THIS send gets plain chat's light tool surface.
+
+        TASK-34100.5.3. A turn the user explicitly binds a skill to
+        (``$skill``) keeps the agent surface: the user asked for that skill.
+        So does a conversation with agent work still in flight -- live
+        sub-agents, or progress reports nobody has read (review round 1,
+        F8): turning Full agent tools off mid-run must not leave the wake
+        turn unable to read its children or reach their fleet. A reader that
+        raises keeps the light surface (fail closed). Without a
+        ``conversation_id`` (the meter, the Tools chip) the session's own is
+        looked up, so they see the same fleet the send does.
+
+        A goal iteration is not plain chat either (review round 3, R3-1): its
+        reviewed launch selected its tools and runtime tools
+        (``run_skill_script``, the only path to a command-backed check's
+        evidence), and ``goal.narrow_config`` / ``permits_runtime`` govern it.
+        """
+        if self._light_tool_surface is None or turn_skill_bindings:
+            return False
+        from tldw_chatbook.Agents.automatic_work_runtime import current_automatic_work
+
+        automatic = current_automatic_work()
+        if automatic is not None and automatic.goal is not None:
+            return False
+        try:
+            light = bool(self._light_tool_surface())
+        except Exception:  # noqa: BLE001 -- never widen on a failed read
+            return True
+        if not light:
+            return False
+        if conversation_id is None:
+            conversation_id = self._preview_conversation_id(session_id)
+        return not self._agent_work_in_flight(session_id, conversation_id)
+
+    def composed_local_tools_available(self, service: Any, engaged: bool) -> bool | None:
+        """Reuse a same-source compose observation for the Tools chip."""
+        from tldw_chatbook.Agents.plain_chat_tool_surface import AppToolKillSwitch
+
+        switch = self._tool_kill_switch
+        if (
+            type(self) is ConsoleAgentBridge
+            and type(switch) is AppToolKillSwitch
+            and read_mcp_service(switch.app) is service
+        ):
+            return not engaged
+        return None
+
+    def light_surface_local_tools_available(self) -> bool:
+        """Whether a send now composes local tools (the kill switch is off).
+
+        The meter and the Tools chip ask this; a read that raises counts as
+        engaged, as the controller's compose path does.
+        """
+        if self._tool_kill_switch is None:
+            return True
+        try:
+            return not self._tool_kill_switch()
+        except Exception:  # noqa: BLE001 -- the compose path fails closed too
+            return False
+
+    def _agent_work_in_flight(
+        self, session_id: str | None, conversation_id: str | None
+    ) -> bool:
+        """Live sub-agents in this conversation, or unread progress reports."""
+        try:
+            if session_id is not None:
+                inbox = self._session_progress_inbox(session_id)
+                if inbox is not None and inbox.snapshot():
+                    return True
+            if conversation_id is not None:
+                with self._fleet_admission_lock:
+                    coordinator = self._fleet_coordinators.get(conversation_id)
+                if coordinator is not None and coordinator.live_count() > 0:
+                    return True
+        except Exception:  # noqa: BLE001 -- an unreadable fleet stays light
+            return False
+        return False
+
+    def _surface_memory(self) -> Any:
+        if self._tool_surface_memory is None:
+            # Lazy (ADR-097 UI-ready census): only a send or a preview needs it.
+            from tldw_chatbook.Chat.console_tool_surface_preview import (
+                ToolSurfaceMemory,
+            )
+
+            self._tool_surface_memory = ToolSurfaceMemory()
+        return self._tool_surface_memory
+
+    def _remember_tool_surface(
+        self, session_id: str, plan: ConsoleFirstRequestPlan, *, light_surface: bool
+    ) -> None:
+        """Record what this send's tool surface was, for the context meter."""
+        if plan.tool_surface_inputs is None:
+            return
+        try:
+            memory = self._surface_memory()
+            if light_surface:
+                from tldw_chatbook.Chat.console_tool_surface_preview import (
+                    SchemaCatalog,
+                )
+
+                memory.remember_light_sources(
+                    session_id,
+                    SchemaCatalog.from_registry(
+                        plan.registry, plan.user_source_names
+                    ).schemas, config=plan.config,
+                )
+            else:
+                memory.remember_full(session_id, plan.tool_surface_inputs())
+        except Exception:  # noqa: BLE001 -- the meter never breaks a send
+            logger.opt(exception=True).warning(
+                "ConsoleAgentBridge: could not record the tool surface for the meter"
+            )
+
+    def preview_tool_surface(
+        self,
+        resolution: Any = None,
+        *,
+        session_id: str | None = None,
+        messages: Sequence[Mapping[str, Any]] = (),
+        turn_skill_bindings: tuple[str, ...] = (),
+        _prepared: Any = None,
+    ) -> Any:
+        """Estimate the selected request using current prompt and admitted skills.
+
+        Catalog capabilities remain an estimate until dispatch. Compatibility
+        reads the live switch; owned preflight supplies a one-pass observation
+        without execution authority.
+        """
+        from tldw_chatbook.Chat.console_tool_surface_preview import (
+            preview_tool_surface,
+        )
+
+        return preview_tool_surface(
+            self,
+            resolution,
+            session_id=session_id,
+            messages=messages,
+            turn_skill_bindings=turn_skill_bindings,
+            _prepared=_prepared,
+        )
+
+    def preview_tool_schemas(
+        self,
+        resolution: Any = None,
+        *,
+        session_id: str | None = None,
+        messages: Sequence[Mapping[str, Any]] = (),
+    ) -> list[dict[str, Any]]:
+        """Selected native tool rows; use preview_tool_surface for full accounting."""
+        return list(
+            self.preview_tool_surface(
+                resolution, session_id=session_id, messages=messages
+            ).tools
+        )
+
+    def _preview_conversation_id(self, session_id: str | None) -> str | None:
+        """The conversation a send for ``session_id`` keys its fleet by.
+
+        The controller's own rule (``_agent_conversation_id``): the persisted
+        conversation id, else the session id. Review round 1 (F8): without
+        it the meter missed live sub-agents that keep the agent surface.
+        """
+        if session_id is None:
+            return None
+        try:
+            for session in self._store.sessions():
+                if session.id == session_id:
+                    return session.persisted_conversation_id or session_id
+        except Exception:  # noqa: BLE001 -- the meter never breaks a send
+            return None
+        return session_id
+
     def native_tool_schemas(self) -> list[dict[str, Any]]:
         """Return the native tool schemas available to this bridge.
 
@@ -5610,11 +5855,11 @@ class ConsoleAgentBridge:
         turn_skill_bindings: tuple[str, ...] = (),
         turn_bundle_block: str = "",
         skills_context: Mapping[str, Any] | None = None,
+        fork_chat_enabled: bool = False,
+        new_chat_enabled: bool = False,
         request_skill_install_enabled: bool = False,
         request_skill_script_enabled: bool = False,
         worktree_merge_enabled: bool = False,
-        fork_chat_enabled: bool = False,
-        new_chat_enabled: bool = False,
         persona_policy_rules: tuple[Mapping[str, Any], ...] | None = None,
         profile_context_service: Any | None = None,
         profile_provider: Any | None = None,
@@ -5690,6 +5935,9 @@ class ConsoleAgentBridge:
             profile_context_service=profile_context_service,
             personal_context_snapshot=personal_context_snapshot,
             progress_inbox_exists=self._session_progress_inbox(session_id) is not None,
+            light_surface=self.light_surface_for(
+                turn_skill_bindings, session_id=session_id
+            ),
         )
         if plan.run_log.requested:
             # A disposable preview cannot bind a real run-log writer, so it
@@ -5714,6 +5962,7 @@ class ConsoleAgentBridge:
             runtime_schemas=list(plan.schemas.runtime_schemas),
             messages=list(plan.messages),
             active_schemas=plan.schemas.active_schemas,
+            input_budget_tokens=plan.schemas.schema_input_budget_tokens,
             log_active=False,
         )
         payload: dict[str, Any] = {
@@ -5742,18 +5991,42 @@ class ConsoleAgentBridge:
         library_provider: Any | None = None,
         library_authority: Any | None = None,
         profile_provider: Any | None = None,
+        canvas_profile_snapshot: Any | None = None,
         scratch_root: Path | None = None,
         scratch_lease: Callable[[], ContextManager[Path]] | None = None,
         turn_skill_bindings: tuple[str, ...] = (),
         turn_bundle_block: str = "",
+        fork_chat_enabled: bool = False,
+        new_chat_enabled: bool = False,
         request_skill_install_enabled: bool = False,
         request_skill_script_enabled: bool = False,
         worktree_merge_enabled: bool = False,
-        fork_chat_enabled: bool = False,
-        new_chat_enabled: bool = False,
+        persona_policy_rules: tuple[Mapping[str, Any], ...] | None = None,
         profile_context_service: Any | None = None,
+        selection_sink: Callable[
+            [ProfileContextService, ProfileContextRequest, ProfileContextSelectionExplanation],
+            None,
+        ] | None = None,
     ) -> ProfileContextSnapshot:
         """Build the exact reserved profile snapshot for disposable Next Send."""
+
+        if selection_sink is not None and profile_context_service is not None:
+            source = profile_context_service
+
+            class _PreviewSelectionBuilder:
+                def build_snapshot(self, request: ProfileContextRequest) -> ProfileContextSnapshot:
+                    explain = getattr(source, "build_explained_snapshot", None)
+                    if not callable(explain):
+                        return source.build_snapshot(request)
+                    result = explain(request)
+                    if result.explanation is not None:
+                        try:
+                            selection_sink(source, request, result.explanation)
+                        except Exception:  # noqa: BLE001, S110 - inspection cannot change the model block.
+                            pass
+                    return result.snapshot
+
+            profile_context_service = _PreviewSelectionBuilder()
 
         context: Mapping[str, Any] = {}
         if self._skills_service is not None:
@@ -5785,6 +6058,7 @@ class ConsoleAgentBridge:
             library_provider=library_provider,
             library_authority=library_authority,
             profile_provider=profile_provider,
+            preview_canvas_profile_snapshot=canvas_profile_snapshot,
             workspace_id=workspace_id,
             ephemeral=ephemeral,
             diff_sink=None,
@@ -5807,19 +6081,238 @@ class ConsoleAgentBridge:
             agent_definitions=runtime_definitions,
             fleet_max_live=fleet_max_live,
             run_budget=run_budget,
+            persona_policy_rules=persona_policy_rules,
             profile_context_service=profile_context_service,
             progress_inbox_exists=(
                 session_id is not None
                 and self._session_progress_inbox(session_id) is not None
+            ),
+            light_surface=self.light_surface_for(
+                turn_skill_bindings, session_id=session_id
             ),
         )
         return plan.profile_context_snapshot
 
     # -- run ------------------------------------------------------------
 
+    async def _prepare_workflow_reply(
+        self, *, phase, task_id, binding, resolution, **kwargs
+    ):
+        """Prepare original task custody without a primary turn or provider call."""
+        from .console_workflow_preparation import prepare_workflow_reply
+
+        return await prepare_workflow_reply(
+            self,
+            phase=phase,
+            task_id=task_id,
+            binding=binding,
+            resolution=resolution,
+            **kwargs,
+        )
+
     @agent_execution_guard
     @_retire_generation_attempt_after_reply
     def run_reply(
+        self,
+        *,
+        conversation_id: str,
+        session_id: str,
+        resolution: Any,
+        assistant_message_id: str,
+        model: str,
+        session_system_prompt: str,
+        agent_messages: list[dict],
+        should_cancel: Callable[[], bool],
+        expected_progress_owner_id: str | None = None,
+        work_origin: WorkOrigin = WorkOrigin.MANUAL,
+        work_chain_id: str | None = None,
+        provider_stream_signals: ConsoleProviderStreamSignals | None = None,
+        supersede_previous: bool = False,
+        mcp_provider: Any | None = None,
+        builtin_gate: Any | None = None,
+        scratch_root: Path | None = None,
+        scratch_lease: Callable[[], ContextManager[Path]] | None = None,
+        # PR2a Task 5: `(calls, run_id)` -- forwarded straight to
+        # `AgentService(review_tool_calls=...)`, which binds each run's own
+        # id in before handing it to `LoopDeps`.
+        review_tool_calls: (
+            Callable[[list[ToolCall], str], dict[str, ToolReviewValue]] | None
+        ) = None,
+        on_steer_ready: Callable[[Callable[[str], str | None]], None] | None = None,
+        # TASK-28227: fired once the run's mailbox registers, with a bound
+        # `redirect(text) -> refusal | None` -- the Redirect button's and
+        # /redirect's hook, exactly like on_steer_ready is /steer's.
+        on_redirect_ready: Callable[[Callable[[str], str | None]], None] | None = None,
+        change_roots: Sequence[Path] | None = None,
+        worktree_repo_authority: RunAdmittedWorkspaceRoot | None = None,
+        change_root_aliases: Sequence[str] = (),
+        change_review_skipped_roots: Sequence[SkippedReviewRoot] = (),
+        turn_skill_bindings: tuple[str, ...] = (),
+        on_tool_surface_selected: Callable[[int], None] | None = None,
+        turn_bundle_block: str = "",
+        request_skill_install_confirm: Callable[[str], bool] | None = None,
+        request_skill_script_confirm: Callable[[dict], dict] | None = None,
+        request_chat_create_confirm: Callable[[dict], dict] | None = None,
+        execute_agent_chat_create: Callable[[dict], dict] | None = None,
+        prepare_agent_chat_create: Callable[[dict], dict] | None = None,
+        # TASK-28238 phase 2 Task 6: forwarded straight to
+        # `AgentService.run_turn(request_worktree_merge_confirm=...)` --
+        # unlike `request_skill_script_confirm` above, this is never
+        # consumed inside a bridge-built closure; `merge_agent_worktree`/
+        # `discard_agent_worktree` are the service's OWN closures (Task 5),
+        # so there is nothing for `run_reply` to do with it but pass it on.
+        request_worktree_merge_confirm: Callable[[dict], dict] | None = None,
+        local_provider: Any | None = None,
+        virtual_cli_provider: Any | None = None,
+        raw_shell_provider: Any | None = None,
+        recovery_provider: Any | None = None,
+        library_provider: Any | None = None,
+        library_authority: Any | None = None,
+        managed_skill_promotion_gate: Any | None = None,
+        profile_provider: Any | None = None,
+        code_review_provider: Any | None = None,
+        canvas_provider: Any | None = None,
+        canvas_authority: Any | None = None,
+        skills_context: Mapping[str, Any] | None = None,
+        workspace_id: str | None = None,
+        workspace_ephemeral: bool | None = None,
+        workspace_read_binding_ids: tuple[str, ...] | None = None,
+        workspace_write_binding_ids: tuple[str, ...] | None = None,
+        workspace_binding_authority: tuple[Any, ...] | None = None,
+        # PR2a Task 7: called with the run id of every sub-agent this turn
+        # cancels or abandons, so its still-armed approval cards are failed
+        # closed and taken off screen instead of staying pressable for a
+        # run that is already over. Forwarded straight to
+        # `AgentService(revoke_approvals=...)`; `None` (a caller with no UI)
+        # leaves cancellation exactly as it was.
+        revoke_approvals: Callable[[str], object] | None = None,
+        plugin_cancel_root: Callable[[], object] | None = None,
+        on_tool_terminal: Callable[[str, str, str], object] | None = None,
+        on_tool_result_terminal: (
+            Callable[[str, str, str, ToolResult], object] | None
+        ) = None,
+        on_run_terminal: Callable[[str], object] | None = None,
+        native_tools_enabled: bool | None = None,
+        restore_provider_continuation: ProviderContinuationCheckpoint | None = None,
+        restore_provider_target: ContinuationRestoreTarget | None = None,
+        expand_provider_continuation: (
+            Callable[[ProviderContinuationCheckpoint], list[dict]] | None
+        ) = None,
+        resume_provider_continuation: bool = False,
+        continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
+        continuation_target: ContinuationRestoreTarget | None = None,
+        continuation_owner_key: str | None = None,
+        thinking_sidecar: tuple[ProviderThinkingSidecar, ...] = (),
+        thinking_policy: ThinkingHistoryPolicy = "auto",
+        thinking_owner_key: str | None = None,
+        generation_token: int | None = None,
+        startup_instruction_candidate: StartupInstructionCandidate | None = None,
+        project_instruction_nested_max_bytes: int | None = None,
+        run_budget: RunBudget | None = None,
+        confirm_project_instruction_dispatch: (
+            Callable[[InstructionSnapshot], str] | None
+        ) = None,
+        on_project_instruction_activation: (
+            Callable[[ProjectInstructionActivationEvent], None] | None
+        ) = None,
+        propagate_trace_call_persistence_errors: bool = False,
+        capture_mode: ConsoleTraceCaptureMode = ConsoleTraceCaptureMode.CAPTURE_OFF,
+        trace_request: PreparedConsoleRequest | None = None,
+        persona_policy_rules: tuple[Mapping[str, Any], ...] | None = None,
+        profile_context_service: Any | None = None,
+        personal_context_snapshot: ProfileContextSnapshot | None = None,
+        accepted_turn_id: str | None = None,
+        parent_budget_deadline: float | None = None,
+        on_primary_budget_settled: Callable[[RunBudget | bool], None] | None = None,
+    ) -> tuple[str, RunOutcome]:
+        with self._prepare_native_reply(
+            conversation_id=conversation_id,
+            session_id=session_id,
+            resolution=resolution,
+            assistant_message_id=assistant_message_id,
+            model=model,
+            session_system_prompt=session_system_prompt,
+            agent_messages=agent_messages,
+            should_cancel=should_cancel,
+            expected_progress_owner_id=expected_progress_owner_id,
+            work_origin=work_origin,
+            work_chain_id=work_chain_id,
+            provider_stream_signals=provider_stream_signals,
+            supersede_previous=supersede_previous,
+            mcp_provider=mcp_provider,
+            builtin_gate=builtin_gate,
+            scratch_root=scratch_root,
+            scratch_lease=scratch_lease,
+            review_tool_calls=review_tool_calls,
+            on_steer_ready=on_steer_ready,
+            on_redirect_ready=on_redirect_ready,
+            change_roots=change_roots,
+            worktree_repo_authority=worktree_repo_authority,
+            change_root_aliases=change_root_aliases,
+            change_review_skipped_roots=change_review_skipped_roots,
+            turn_skill_bindings=turn_skill_bindings,
+            turn_bundle_block=turn_bundle_block,
+            request_skill_install_confirm=request_skill_install_confirm,
+            request_skill_script_confirm=request_skill_script_confirm,
+            request_chat_create_confirm=request_chat_create_confirm,
+            execute_agent_chat_create=execute_agent_chat_create,
+            prepare_agent_chat_create=prepare_agent_chat_create,
+            request_worktree_merge_confirm=request_worktree_merge_confirm,
+            local_provider=local_provider,
+            virtual_cli_provider=virtual_cli_provider,
+            raw_shell_provider=raw_shell_provider,
+            library_provider=library_provider,
+            library_authority=library_authority,
+            managed_skill_promotion_gate=managed_skill_promotion_gate,
+            profile_provider=profile_provider,
+            canvas_provider=canvas_provider,
+            canvas_authority=canvas_authority,
+            skills_context=skills_context,
+            workspace_id=workspace_id,
+            workspace_ephemeral=workspace_ephemeral,
+            workspace_read_binding_ids=workspace_read_binding_ids,
+            workspace_write_binding_ids=workspace_write_binding_ids,
+            workspace_binding_authority=workspace_binding_authority,
+            revoke_approvals=revoke_approvals,
+            plugin_cancel_root=plugin_cancel_root,
+            on_tool_terminal=on_tool_terminal,
+            on_tool_result_terminal=on_tool_result_terminal,
+            on_run_terminal=on_run_terminal,
+            native_tools_enabled=native_tools_enabled,
+            restore_provider_continuation=restore_provider_continuation,
+            restore_provider_target=restore_provider_target,
+            expand_provider_continuation=expand_provider_continuation,
+            resume_provider_continuation=resume_provider_continuation,
+            continuation_sidecar=continuation_sidecar,
+            continuation_target=continuation_target,
+            continuation_owner_key=continuation_owner_key,
+            thinking_sidecar=thinking_sidecar,
+            thinking_policy=thinking_policy,
+            thinking_owner_key=thinking_owner_key,
+            generation_token=generation_token,
+            startup_instruction_candidate=startup_instruction_candidate,
+            project_instruction_nested_max_bytes=project_instruction_nested_max_bytes,
+            run_budget=run_budget,
+            confirm_project_instruction_dispatch=confirm_project_instruction_dispatch,
+            on_project_instruction_activation=on_project_instruction_activation,
+            propagate_trace_call_persistence_errors=propagate_trace_call_persistence_errors,
+            capture_mode=capture_mode,
+            trace_request=trace_request,
+            persona_policy_rules=persona_policy_rules,
+            profile_context_service=profile_context_service,
+            personal_context_snapshot=personal_context_snapshot,
+            accepted_turn_id=accepted_turn_id,
+            parent_budget_deadline=parent_budget_deadline,
+            on_primary_budget_settled=on_primary_budget_settled,
+            recovery_provider=recovery_provider,
+            code_review_provider=code_review_provider,
+            on_tool_surface_selected=on_tool_surface_selected,
+        ) as prepared:
+            result = prepared.run_primary()
+        return result
+
+    @contextlib.contextmanager
+    def _prepare_native_reply(
         self,
         *,
         conversation_id: str,
@@ -5860,6 +6353,7 @@ class ConsoleAgentBridge:
         request_skill_script_confirm: Callable[[dict], dict] | None = None,
         request_chat_create_confirm: Callable[[dict], dict] | None = None,
         execute_agent_chat_create: Callable[[dict], dict] | None = None,
+        prepare_agent_chat_create: Callable[[dict], dict] | None = None,
         # TASK-28238 phase 2 Task 6: forwarded straight to
         # `AgentService.run_turn(request_worktree_merge_confirm=...)` --
         # unlike `request_skill_script_confirm` above, this is never
@@ -5924,2251 +6418,102 @@ class ConsoleAgentBridge:
         persona_policy_rules: tuple[Mapping[str, Any], ...] | None = None,
         profile_context_service: Any | None = None,
         personal_context_snapshot: ProfileContextSnapshot | None = None,
-    ) -> tuple[str, RunOutcome]:
-        replay = getattr(resolution, "reasoning_replay", None)
-        if replay is not None and thinking_policy in {"include", "exclude"}:
-            resolution = dataclass_replace(
-                resolution,
-                reasoning_replay=dataclass_replace(
-                    replay,
-                    mode="all" if thinking_policy == "include" else "off",
-                    source="conversation",
-                ),
-            )
-        canvas_turn_controller = None
-        canvas_run_id = None
-        lifecycle_reader = getattr(canvas_provider, "lifecycle_binding", None)
-        if callable(lifecycle_reader):
-            try:
-                lifecycle_binding = lifecycle_reader(canvas_authority)
-                if (
-                    isinstance(lifecycle_binding, tuple)
-                    and len(lifecycle_binding) == 2
-                    and isinstance(lifecycle_binding[1], str)
-                    and lifecycle_binding[1]
-                ):
-                    canvas_turn_controller, canvas_run_id = lifecycle_binding
-            except Exception:
-                canvas_turn_controller = None
-                canvas_run_id = None
-        if generation_token is None:
-            generation_token = self._store.begin_generation_attempt(
-                assistant_message_id
-            )
-        # Capture before setup can yield to native close/state replacement.
-        # Reusing a native ID must not let this delayed run bind its successor.
-        with self._store.progress_owner_scope(
-            session_id, message_store=self.message_store
-        ) as initial_progress_owner_id:
-            if initial_progress_owner_id is None or (
-                expected_progress_owner_id is not None
-                and initial_progress_owner_id != expected_progress_owner_id
-            ):
-                from tldw_chatbook.Agents.fleet_messages import MessageError
+        accepted_turn_id: str | None = None,
+        parent_budget_deadline: float | None = None,
+        on_primary_budget_settled: Callable[[RunBudget | bool], None] | None = None,
+        recovery_provider: Any | None = None,
+        code_review_provider: Any | None = None,
+        on_tool_surface_selected: Callable[[int], None] | None = None,
+        _workflow_preparation: Any | None = None,
+    ):
+        from . import console_agent_preparation
 
-                raise MessageError("unavailable")
-        protocol = getattr(resolution, "continuation_protocol", None)
-        if continuation_target is None and isinstance(protocol, str) and protocol:
-            provider = getattr(resolution, "execution_key", None)
-            model_name = getattr(resolution, "model", None)
-            base_url = getattr(resolution, "base_url", None)
-            if not all(
-                isinstance(value, str) and value
-                for value in (provider, model_name, base_url)
-            ):
-                raise ValueError("Provider continuation request is not pinned.")
-            continuation_target = ContinuationRestoreTarget(
-                provider=provider,
-                protocol=protocol,
-                model=model_name,
-                api_base_url=base_url,
-            )
-        if continuation_target is not None and continuation_owner_key is None:
-            continuation_owner_key = CONTINUATION_OWNER_KEY
-        # Per-run tool registry + allow-list (Task 12, extended by P5-T6 for
-        # MCP, by task-545/T6 for a per-run builtin_gate, and extended again
-        # for local tools): rebuilt FRESH for this run whenever there is a
-        # skills service, an already-composed MCP or local provider, OR a
-        # builtin_gate for this run (never
-        # cached across runs, and never the shared self._registry/
-        # self._allowed_tools built at construction) -- so a skill or MCP
-        # tool approved/edited/revoked since the last run always takes
-        # effect on the very next one. `mcp_provider` is built and
-        # composed by the CALLER (ConsoleChatController._compose_mcp_
-        # provider, on the running Textual main loop, BEFORE this method
-        # is dispatched onto asyncio.to_thread) -- see MCPToolProvider's
-        # own module docstring for why `compose_catalog()`'s async I/O can
-        # never run from inside this worker-thread method. `builtin_gate`
-        # MUST route through this fresh-build branch rather than the
-        # shared fast path below: the shared path's own `BuiltinToolProvider`
-        # is built once at bridge-construction time with `gate=None` (its
-        # own lazy default), which would be a SECOND, independently-built
-        # gate the run's review hook never stamps -- see
-        # `_compose_run_registry_and_allowed`'s own docstring for the
-        # desync this would cause. None of skills service, MCP provider,
-        # local provider, or builtin_gate: the shipped shared
-        # registry/allow-list is used unchanged -- the no-skills, no-MCP,
-        # no-local-tools, no-gate path stays
-        # byte-identical to before this task (existing callers that never
-        # pass `builtin_gate` see no behavior change at all).
-        skill_runner = None
-        # TASK-1366: this run's UI-side diff channel. When this run takes
-        # the fresh-build branch below, the provider's strip seam
-        # (BuiltinToolProvider.invoke) appends
-        # ``(tool_name, file_path, old, new)`` here BEFORE the raw contents
-        # are removed from the LLM/run-log-bound result; the on_step
-        # handler below pairs each capture with its STEP_TOOL_RESULT (via
-        # ``_pair_step_diff``) and hangs it on the TOOL marker message
-        # (session-only ``tool_diff``). Threading: invoke() runs on the
-        # tool call's PER-CALL DAEMON THREAD (AgentService.
-        # _call_with_timeout) while on_step runs on this run's worker
-        # thread. In the normal case the daemon thread is joined before
-        # the result step is emitted, so a capture always precedes its
-        # step; on timeout/cancel the thread is abandoned unjoined and a
-        # late capture can land cross-thread AFTER its step -- the pairing
-        # rule (most-recent match, everything older is stale) tolerates
-        # both orderings, and deque append/scan/del degrade to a cosmetic
-        # missed pairing at worst. The shared fast path's construction-
-        # time provider has no sink (a cross-run provider must not capture
-        # into one run's queue), so gate-less callers simply get no diff
-        # capture -- their rows render exactly as before. Production always
-        # passes builtin_gate (console_chat_controller), i.e. the
-        # fresh-build branch.
-        pending_diffs: deque[tuple[str, str, str, str]] = deque()
-        # task-4 (skills-fork-reachability): one SkillFileBindings per run,
-        # handed to BOTH AgentService (the loop's authorization + reader
-        # closure -- Task 3) and this run's _BridgeSkillRunner (which grants
-        # a spawned skill's own name pre-spawn) -- never two independently-
-        # seeded copies, or the runner's grant would never reach the loop's
-        # check. `authorized` starts empty here (Task 5 seeds the turn's
-        # $skill names); the reader is a SYNC adapter over the async scope-
-        # service read, matching _BridgeSkillRunner.run's own
-        # asyncio.run-in-worker-thread pattern just below.
-        skill_file_bindings = None
-        context: Mapping[str, Any] = skills_context or {}
-        if self._skills_service is not None and skills_context is None:
-            context = asyncio.run(self._skills_service.get_context(mode="local"))
-        plugin_service = getattr(
-            getattr(self._skills_service, "local_service", None), "plugin_service", None
-        )
-        if restore_provider_continuation is not None:
-            if plugin_service is not None:
-                context = asyncio.run(
-                    plugin_service.resume_maximum(
-                        context,
-                        restore_provider_continuation,
-                        self._store._session_or_raise(
-                            session_id
-                        ).persisted_conversation_id
-                        or "",
-                        assistant_message_id,
-                    )
-                )
-            elif restore_provider_continuation.schema_version == 2:
-                raise PermissionError("Managed continuation service unavailable.")
-            else:
-                context = dict(context, plugin_resume_constraint="zero")
-                context["available_skills"] = [
-                    row
-                    for row in context.get("available_skills", ())
-                    if not row.get("plugin_owned")
-                ]
-                context["context_text"] = "\n".join(
-                    str(row.get("name", "")) for row in context["available_skills"]
-                )
-        if plugin_service is not None and (
-            context.get("plugin_resume_constraint") is not None
-            or any(
-                item.get("plugin_owned") for item in context.get("available_skills", ())
-            )
-        ):
-            context = asyncio.run(
-                plugin_service.admit(
-                    context, context.get("plugin_run_id") or "pending:" + uuid4().hex
-                )
-            )
-        plugin_entries = tuple(
-            row
-            for row in context.get("available_skills", ())
-            if row.get("plugin_owned")
-        )
-        run_workspace_id = workspace_id
-        run_is_ephemeral = bool(workspace_ephemeral)
-        if self._store is not None and workspace_id is None:
-            try:
-                run_workspace_id = self._store.session_workspace_id(session_id)
-            except KeyError:
-                pass
-        if self._store is not None and workspace_ephemeral is None:
-            try:
-                run_is_ephemeral = self._store.session_is_ephemeral(session_id)
-            except KeyError:
-                pass
-        from tldw_chatbook.Skills_Interop.skill_script_runner import (
-            sandbox_supported,
-        )
-
-        script_tool_enabled = bool(
-            self._skills_service is not None
-            and request_skill_script_confirm is not None
-            and sandbox_supported()
-        )
-        native_tools = (
-            bool(native_tools_enabled)
-            if native_tools_enabled is not None
-            else (
-                True
-                if self._native_tools_enabled is None
-                else bool(self._native_tools_enabled())
-            )
-        )
-        run_budget = (
-            intersect_console_run_budget(run_budget, console_run_budget())
-            if run_budget is not None
-            else console_run_budget()
-        )
-        runtime_definitions, fleet_max_live = _console_first_request_runtime_context(
-            self._db, run_budget
-        )
-        if plugin_entries and not run_is_ephemeral:
-            eligible = frozenset(
-                row.name
-                for provider in (
-                    self._registry,
-                    mcp_provider,
-                    local_provider,
-                    virtual_cli_provider,
-                    raw_shell_provider,
-                    library_provider,
-                    profile_provider,
-                    canvas_provider,
-                )
-                if provider is not None
-                for row in provider.list_catalog()
-            )
-            managed = asyncio.run(
-                plugin_service.agent_presets(
-                    plugin_entries,
-                    eligible,
-                    parent_provider=str(
-                        getattr(resolution, "selected_provider", "")
-                        or getattr(resolution, "execution_key", "")
-                        or getattr(resolution, "provider", "")
-                    ),
-                )
-            )
-            if {item.name for item in managed} & {
-                item.name for item in runtime_definitions
-            }:
-                raise PermissionError("plugin_agent_namespace_collision")
-            runtime_definitions = (*runtime_definitions, *managed)
-        # Build the exact outbound user payload before schema planning. Both
-        # automatic riders can change whether direct catalog disclosure still
-        # leaves the configured response reserve, so the planner and live run
-        # must receive the same immutable message snapshot.
-        planning_messages = agent_messages
-        if turn_bundle_block:
-            planning_messages, _ = _append_to_last_user_message(
-                planning_messages, turn_bundle_block
-            )
-        diff_feedback_included_ids: list[int] = []
-        diff_feedback_included_notes: list[dict] = []
-        try:
-            pending_notes = self._db.pending_notes_for_conversation(conversation_id)
-            diff_feedback_block, diff_feedback_included_ids = (
-                render_diff_feedback_block(pending_notes)
-            )
-            diff_feedback_included_notes = pending_notes[
-                : len(diff_feedback_included_ids)
-            ]
-            if diff_feedback_block:
-                planning_messages, attached = _append_to_last_user_message(
-                    planning_messages, diff_feedback_block
-                )
-                if not attached:
-                    logger.warning(
-                        "change_review: "
-                        f"{len(diff_feedback_included_ids)} pending diff-"
-                        "feedback note(s) held back -- no user message "
-                        "could carry the block this turn"
-                    )
-                    diff_feedback_included_ids = []
-                    diff_feedback_included_notes = []
-        except Exception:  # noqa: BLE001 -- notes must never break the reply
-            logger.opt(exception=True).warning(
-                "change_review: could not attach pending diff-feedback notes"
-            )
-            diff_feedback_included_ids = []
-            diff_feedback_included_notes = []
-        # advertised) rather than auto-denying every call, the same
-        # advertised-equals-usable rule as `install_skill_tool`/
-        # `run_skill_script_tool` below. Built up here (before the first
-        # request plan) because the plan's schema flags must reflect
-        # whether the tools exist.
-        # `run_id`: the run's own id only exists once `run_turn` mints it
-        # (far below), so the originating assistant message id -- this
-        # turn's stable identity, already in scope -- rides in the payload
-        # under the `run_id` key instead.
-        fork_chat_tool = new_chat_tool = None
-        if (
-            request_chat_create_confirm is not None
-            and execute_agent_chat_create is not None
-        ):
-            fork_chat_tool, new_chat_tool = build_chat_create_tool_closures(
-                confirm=request_chat_create_confirm,
-                execute=execute_agent_chat_create,
-                session_id=session_id,
-                run_id=assistant_message_id,
-            )
-
-        # TASK-32874 (Qodo round, finding 1): the prebuilt plan is the one
-        # the Console actually runs with, so the routing flags MUST be
-        # computed here or the gated provider/model args are never
-        # advertised -- this also un-blinds spawn_subagent's own override
-        # args on this path (same flags, same plan builder).
-        from tldw_chatbook.Agents.agent_routing import (
-            load_agents_routing_config as _load_spawn_routing,
-        )
-        from tldw_chatbook.Agents.agent_service import _spawn_override_targets
-
-        try:
-            _spawn_routing_cfg = _load_spawn_routing()
-        except ValueError:
-            _spawn_routing_cfg = None
-        chat_create_spawn_override_enabled = bool(
-            _spawn_routing_cfg is not None
-            and _spawn_routing_cfg.spawn_override_enabled
-        )
-        chat_create_spawn_override_targets = (
-            _spawn_override_targets(load_settings(), _spawn_routing_cfg)
-            if chat_create_spawn_override_enabled
-            else ()
-        )
-
-        first_request_plan = build_console_first_request_plan(
-            shared_registry=self._registry,
-            shared_allowed_tools=self._allowed_tools,
-            context=context,
-            skills_present=self._skills_service is not None,
+        with console_agent_preparation._prepare_native_reply(
+            self,
+            conversation_id=conversation_id,
+            session_id=session_id,
+            resolution=resolution,
+            assistant_message_id=assistant_message_id,
+            model=model,
+            session_system_prompt=session_system_prompt,
+            agent_messages=agent_messages,
+            should_cancel=should_cancel,
+            expected_progress_owner_id=expected_progress_owner_id,
+            work_origin=work_origin,
+            work_chain_id=work_chain_id,
+            provider_stream_signals=provider_stream_signals,
+            supersede_previous=supersede_previous,
             mcp_provider=mcp_provider,
             builtin_gate=builtin_gate,
+            scratch_root=scratch_root,
+            scratch_lease=scratch_lease,
+            review_tool_calls=review_tool_calls,
+            on_steer_ready=on_steer_ready,
+            on_redirect_ready=on_redirect_ready,
+            change_roots=change_roots,
+            worktree_repo_authority=worktree_repo_authority,
+            change_root_aliases=change_root_aliases,
+            change_review_skipped_roots=change_review_skipped_roots,
+            turn_skill_bindings=turn_skill_bindings,
+            turn_bundle_block=turn_bundle_block,
+            request_skill_install_confirm=request_skill_install_confirm,
+            request_skill_script_confirm=request_skill_script_confirm,
+            request_chat_create_confirm=request_chat_create_confirm,
+            execute_agent_chat_create=execute_agent_chat_create,
+            prepare_agent_chat_create=prepare_agent_chat_create,
+            request_worktree_merge_confirm=request_worktree_merge_confirm,
             local_provider=local_provider,
             virtual_cli_provider=virtual_cli_provider,
             raw_shell_provider=raw_shell_provider,
             library_provider=library_provider,
             library_authority=library_authority,
+            managed_skill_promotion_gate=managed_skill_promotion_gate,
             profile_provider=profile_provider,
             canvas_provider=canvas_provider,
             canvas_authority=canvas_authority,
-            workspace_id=run_workspace_id,
+            skills_context=skills_context,
+            workspace_id=workspace_id,
+            workspace_ephemeral=workspace_ephemeral,
             workspace_read_binding_ids=workspace_read_binding_ids,
             workspace_write_binding_ids=workspace_write_binding_ids,
             workspace_binding_authority=workspace_binding_authority,
-            ephemeral=run_is_ephemeral,
-            diff_sink=pending_diffs.append,
-            scratch_root=scratch_root,
-            scratch_lease=scratch_lease,
-            resolution=resolution,
-            fallback_model=model,
-            session_system_prompt=session_system_prompt,
-            native_tools=native_tools,
-            turn_skill_bindings=turn_skill_bindings,
-            turn_bundle_block="",
-            install_skill_enabled=bool(
-                self._skills_service is not None
-                and request_skill_install_confirm is not None
-            ),
-            run_skill_script_enabled=script_tool_enabled,
-            fork_chat_enabled=bool(fork_chat_tool is not None),
-            new_chat_enabled=bool(new_chat_tool is not None),
-            spawn_override_enabled=chat_create_spawn_override_enabled,
-            spawn_override_targets=chat_create_spawn_override_targets,
-            worktree_merge_enabled=request_worktree_merge_confirm is not None,
-            agent_messages=planning_messages,
-            agent_definitions=runtime_definitions,
-            fleet_max_live=fleet_max_live,
-            run_budget=run_budget,
-            persona_policy_rules=persona_policy_rules,
-            profile_context_service=profile_context_service,
-            personal_context_snapshot=personal_context_snapshot,
-            progress_inbox_exists=self._session_progress_inbox(session_id) is not None,
-        )
-        registry = first_request_plan.registry
-        allowed_tools = first_request_plan.allowed_tools
-        config = first_request_plan.config
-        project_instruction_context = None
-        service_confirm_project_instruction_dispatch = (
-            confirm_project_instruction_dispatch
-        )
-        if startup_instruction_candidate is not None:
-            project_instruction_context = _ProjectInstructionDispatchContext(
-                nested_max_bytes=coerce_int_setting(
-                    project_instruction_nested_max_bytes
-                    if project_instruction_nested_max_bytes is not None
-                    else get_cli_setting(
-                        "console",
-                        "project_instructions_nested_max_bytes",
-                        DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
-                    ),
-                    DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
-                    minimum=MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
-                    maximum=MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
-                ),
-                on_activation=on_project_instruction_activation,
-                final_payload_fits=(
-                    None
-                    if config.native_tools
-                    and provider_supports_native_tools(
-                        first_request_plan.api_endpoint,
-                        reasoning_replay=config.reasoning_replay,
-                    )
-                    else lambda rows: _fenced_project_instruction_payload_fits(
-                        rows,
-                        model=config.model,
-                        provider=first_request_plan.api_endpoint,
-                        response_reserve_tokens=config.response_reserve_tokens,
-                        reasoning_replay=config.reasoning_replay,
-                    )
-                ),
-            )
-            original_confirm = confirm_project_instruction_dispatch
-
-            def service_confirm_project_instruction_dispatch(snapshot):
-                project_instruction_context.accept_primary_snapshot(snapshot)
-                bind_promotion_context = getattr(
-                    local_provider, "bind_instruction_promotion_context", None
-                )
-                if callable(bind_promotion_context):
-                    bind_promotion_context(
-                        snapshotter=project_instruction_context.snapshot_promotion_target,
-                        revalidator=project_instruction_context.revalidate_promotion_target,
-                    )
-                decision = "cancel"
-                try:
-                    decision = (
-                        original_confirm(snapshot)
-                        if original_confirm is not None
-                        else "cancel"
-                    )
-                    return decision
-                finally:
-                    if decision != "proceed":
-                        project_instruction_context.discard_primary_snapshot()
-                        unbind_promotion_context = getattr(
-                            local_provider, "unbind_instruction_promotion_context", None
-                        )
-                        if callable(unbind_promotion_context):
-                            unbind_promotion_context()
-
-        admitted_skill_definition_digests = {
-            str(item["name"]): str(item["definition_digest"])
-            for item in _eligible_skill_entries(context)
-            if item.get("name") and item.get("definition_digest")
-        }
-        admitted_skill_definition_digests.update(
-            (entry["name"], entry["definition_digest"]) for entry in plugin_entries
-        )
-        if self._skills_service is not None:
-            local_skills = getattr(self._skills_service, "local_service", None)
-            if local_skills is None and hasattr(
-                self._skills_service, "trust_service"
-            ):
-                local_skills = self._skills_service
-            trust_service = getattr(local_skills, "trust_service", None)
-
-            def current_skill_definition_digest(skill_name: str) -> str | None:
-                for entry in plugin_entries:
-                    if skill_name in {entry["name"], entry["tool_name"]}:
-                        return plugin_service.current_definition(
-                            skill_name, entry["plugin_admission"]
-                        )
-                if trust_service is None:
-                    return None
-                return trust_service.current_fingerprint_digest(skill_name)
-
-            skill_file_bindings = SkillFileBindings(
-                authorized=set(),
-                reader=lambda skill_name, path: asyncio.run(
-                    self._skills_service.read_skill_file(
-                        skill_name,
-                        path,
-                        mode="local",
-                        **next(
-                            (
-                                {"plugin_admission": entry["plugin_admission"]}
-                                for entry in plugin_entries
-                                if skill_name in {entry["name"], entry["tool_name"]}
-                            ),
-                            {},
-                        ),
-                    )
-                ),
-                current_definition_digest=current_skill_definition_digest,
-            )
-            skill_runner = _BridgeSkillRunner(
-                skills_service=self._skills_service,
-                plugin_entries=plugin_entries,
-                skill_names=first_request_plan.skill_names,
-                builtin_names=first_request_plan.builtin_names,
-                local_names=first_request_plan.local_names,
-                owned_mcp_names=tuple(
-                    entry.name
-                    for entry in registry.list_catalog()
-                    if entry.source == "plugin_mcp"
-                    and entry.name in first_request_plan.config.allowed_tools
-                ),
-                skill_file_bindings=skill_file_bindings,
-                definition_digests={
-                    name: digest
-                    for name, digest in admitted_skill_definition_digests.items()
-                    if name in first_request_plan.skill_names
-                },
-            )
-        prepare_managed_skill_promotion_tool = None
-        if (
-            self._skills_service is not None
-            and managed_skill_promotion_gate is not None
-        ):
-            managed_skill_promotion_gate.bind_reader(
-                lambda skill_name: asyncio.run(
-                    self._skills_service.get_skill(skill_name, mode="local")
-                )
-            )
-            prepare_managed_skill_promotion_tool = managed_skill_promotion_gate.invoke
-        # task-5 (skills-fork-reachability): seed this run's own bindings
-        # with the names the CONTROLLER already resolved/spliced for the
-        # triggering turn (a leading `$skill` mention, or embedded mentions
-        # that actually spliced) -- so the primary agent's very first turn
-        # can already read that skill's bundle via skill_file, matching
-        # what a spawned skill child gets for its OWN bundle (Task 4).
-        # `skill_file_bindings` is None whenever there is no skills service
-        # for this run, in which case a non-empty `turn_skill_bindings`
-        # (which can only happen when the controller's own skills-service-
-        # gated substitution ran) has nothing to seed.
-        if skill_file_bindings is not None:
-            for skill_name in turn_skill_bindings:
-                skill_file_bindings.authorize(
-                    skill_name,
-                    admitted_skill_definition_digests.get(skill_name),
-                )
-        # Agent-callable skill install (5th runtime tool). Built only when
-        # BOTH a skills service AND a confirm callback exist -- without a
-        # callback the tool is simply absent (never advertised) rather than
-        # auto-denying every call; wired to AgentService, which pins/
-        # dispatches it for the top-level agent only. Order (load-bearing):
-        # enforce policy (no prompt on denial) -> classify URL (no prompt on
-        # a bad URL) -> in-chat confirm (plain blocking call, OUTSIDE asyncio.run)
-        # -> asyncio.run(install) -> broad-catch wrap. import_skill_file
-        # raises a bare ValueError("local_skill_exists:...") on collision, so
-        # the install catch is broad.
-        install_skill_tool = None
-        if (
-            self._skills_service is not None
-            and request_skill_install_confirm is not None
-        ):
-            scope = self._skills_service
-
-            def install_skill_tool(url: str) -> ToolResult:
-                from tldw_chatbook.Skills_Interop.skill_remote_fetch import (
-                    classify_skill_source_url,
-                    install_skill_from_url,
-                )
-                from tldw_chatbook.runtime_policy.types import PolicyDeniedError
-
-                try:
-                    scope.enforce_install_remote()
-                except PolicyDeniedError as exc:
-                    return ToolResult(ok=False, error=exc.user_message)
-                except Exception as exc:  # noqa: BLE001
-                    return ToolResult(ok=False, error=str(exc))
-                try:
-                    classify_skill_source_url(url)
-                except Exception as exc:  # noqa: BLE001 (RemoteSkillError etc.)
-                    return ToolResult(ok=False, error=str(exc))
-                try:
-                    allowed = bool(
-                        request_skill_install_confirm(url)
-                        if request_skill_install_confirm is not None
-                        else False
-                    )
-                except Exception:  # noqa: BLE001 — a UI error fails closed
-                    allowed = False
-                if not allowed:
-                    return ToolResult(
-                        ok=False, error="The user declined to install this skill."
-                    )
-                try:
-                    from tldw_chatbook.Agents.automatic_work_runtime import (
-                        current_automatic_work,
-                    )
-
-                    automatic_work = current_automatic_work()
-                    if automatic_work is not None:
-                        automatic_work.check()
-                    result = asyncio.run(
-                        install_skill_from_url(url, scope_service=scope)
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    return ToolResult(ok=False, error=str(exc))
-                name = result.get("name", "") if isinstance(result, dict) else ""
-                return ToolResult(
-                    ok=True,
-                    content=(
-                        f'Installed "{name}" — it is pending your review and '
-                        "cannot run until you approve it in Library > Skills."
-                    ),
-                )
-
-        # Trust-gated skill script execution (6th runtime tool). Built only
-        # when a skills service AND a confirm callback exist AND this
-        # platform's sandbox is actually usable -- without any one of the
-        # three the tool is absent (never advertised) rather than
-        # auto-denying every call. The platform check matters because the
-        # sandbox (skill_script_runner.run_script_subprocess) depends on
-        # POSIX-only primitives (process-group teardown, RLIMIT_* via the
-        # `resource` module) that do not exist on Windows: "advertised must
-        # equal usable" -- a tool the model can call but that always raises
-        # is a defect, not a graceful degradation, so it must simply not be
-        # wired on an unsupported platform. Order (load-bearing): enforce
-        # policy (no prompt on denial) -> describe/resolve (no prompt on a
-        # bad path or an unrunnable type) -> grant check (no prompt when the
-        # user already granted this skill) -> confirm (plain blocking call,
-        # OUTSIDE any asyncio.run) -> run -> broad-catch wrap.
-        # run_skill_script re-verifies policy/trust/path authoritatively, so
-        # a stale plan can never widen what actually executes.
-        run_skill_script_tool = None
-        if script_tool_enabled:
-            scope = self._skills_service
-            trust_service = getattr(
-                getattr(scope, "local_service", None), "trust_service", None
-            )
-
-            def run_skill_script_tool(
-                skill_name: str, script_path: str, args: list[str]
-            ) -> ToolResult:
-                from tldw_chatbook.runtime_policy.types import PolicyDeniedError
-
-                try:
-                    scope.enforce_run_script()
-                except PolicyDeniedError as exc:
-                    return ToolResult(ok=False, error=exc.user_message)
-                except Exception as exc:  # noqa: BLE001
-                    return ToolResult(ok=False, error=str(exc))
-                try:
-                    plan = asyncio.run(
-                        scope.describe_skill_script(skill_name, script_path)
-                    )
-                except Exception as exc:  # noqa: BLE001 (trust/path/type)
-                    return ToolResult(ok=False, error=f"run_skill_script: {exc}")
-
-                granted = False
-                if trust_service is not None:
-                    try:
-                        granted = bool(
-                            trust_service.script_execution_granted(skill_name)
-                        )
-                    except Exception:  # noqa: BLE001 — doubt ⇒ prompt
-                        granted = False
-                if not granted:
-                    try:
-                        decision = request_skill_script_confirm(
-                            {
-                                # plan.skill_name, not the agent's raw
-                                # spelling: the service normalizes the name
-                                # it acts on, and a consent card must show
-                                # the value that will actually be used.
-                                "skill_name": str(
-                                    getattr(plan, "skill_name", None) or skill_name
-                                ),
-                                "script_path": script_path,
-                                "mechanism": plan.mechanism,
-                                "interpreter": plan.interpreter_display,
-                                "is_binary": plan.is_binary,
-                                "args": [str(a) for a in args],
-                            }
-                        )
-                    except Exception:  # noqa: BLE001 — a UI error fails closed
-                        decision = {"allow": False, "remember": False}
-                    if not isinstance(decision, Mapping):
-                        decision = {"allow": False, "remember": False}
-                    if not decision.get("allow", False):
-                        return ToolResult(
-                            ok=False, error="The user declined to run this script."
-                        )
-                    if decision.get("remember", False) and trust_service is not None:
-                        # Deliberate ordering: this persists the standing
-                        # grant BEFORE run_skill_script below actually runs,
-                        # so "remember my choice" sticks even if this
-                        # particular run then fails (e.g. trust revoked
-                        # mid-flight). That is fine -- run_skill_script
-                        # re-verifies policy/trust/path authoritatively on
-                        # every call regardless of this grant, so recording
-                        # it early never widens what is allowed to execute.
-                        try:
-                            trust_service.grant_script_execution(skill_name)
-                        except Exception:  # noqa: BLE001 — grant is best-effort
-                            logger.opt(exception=True).debug(
-                                "Failed to persist skill script grant"
-                            )
-                try:
-                    from tldw_chatbook.Agents.automatic_work_runtime import (
-                        current_automatic_work,
-                    )
-
-                    automatic_work = current_automatic_work()
-                    if automatic_work is not None:
-                        automatic_work.check()
-                    if scratch_root is not None and scratch_lease is not None:
-                        with scratch_lease():
-                            outcome = asyncio.run(
-                                scope.run_skill_script(
-                                    skill_name,
-                                    script_path,
-                                    list(args),
-                                    output_root=(scratch_root / "skill_script_output"),
-                                )
-                            )
-                    else:
-                        outcome = asyncio.run(
-                            scope.run_skill_script(
-                                skill_name,
-                                script_path,
-                                list(args),
-                            )
-                        )
-                except Exception as exc:  # noqa: BLE001
-                    return ToolResult(ok=False, error=f"run_skill_script: {exc}")
-
-                lines = [f"exit_code: {outcome.exit_code}"]
-                if outcome.timed_out:
-                    lines.append("timed out — the script was killed")
-                if outcome.output_capped:
-                    lines.append("output was truncated at the size cap")
-                for warning in outcome.sandbox_warnings:
-                    lines.append(f"note: {warning}")
-                if outcome.stdout:
-                    lines.append(f"stdout:\n{outcome.stdout}")
-                if outcome.stderr:
-                    lines.append(f"stderr:\n{outcome.stderr}")
-                # task-584: report WHAT was produced, never its contents. This
-                # string enters the model's context, and a script's artifact is
-                # not trust-reviewed material -- the listing is name + size, and
-                # the path lets the user (or a file tool, where enabled) open it.
-                if outcome.output_files:
-                    listed = ", ".join(
-                        f"{item['name']} ({item['size']} bytes)"
-                        for item in outcome.output_files
-                    )
-                    lines.append(
-                        f"produced {len(outcome.output_files)} file(s): {listed}"
-                    )
-                    display_output_dir = str(outcome.output_dir)
-                    if scratch_root is not None and outcome.output_dir is not None:
-                        try:
-                            display_output_dir = str(
-                                Path(outcome.output_dir)
-                                .resolve()
-                                .relative_to(scratch_root.resolve())
-                            )
-                        except ValueError:
-                            display_output_dir = "private scratch output"
-                    lines.append(f"output directory: {display_output_dir}")
-                return ToolResult(ok=True, content="\n".join(lines))
-
-        # One event loop for the whole run (PR #629 Fix 1(c)): every turn
-        # this run makes -- primary tool-call turns, any sub-agent turns,
-        # and the final-answer turn -- bridges through this same loop via
-        # `_StreamingModelAdapter.chat_call`, instead of each turn spinning
-        # up (and tearing down) its own loop via `asyncio.run()`. That
-        # per-turn churn forced a client swap on the gateway's owned httpx
-        # client every single turn (see
-        # `ConsoleProviderGateway._active_http_client`); reusing one loop
-        # for the whole run means at most one swap per run.
-        #
-        # PR2a Task 6.5: the loop gets its OWN thread. It is no longer
-        # driven by `run_until_complete` from whichever agent's thread is
-        # calling, because with the fleet ON by default several of them
-        # call at once and a loop may only ever be driven by one thread --
-        # the second concurrent driver raises "This event loop is already
-        # running" and kills that child's run. `chat_call` now submits
-        # with `run_coroutine_threadsafe`, so this thread is the single
-        # driver and the callers merely wait on their own futures.
-        # Constructed here (with the loop it drives) but STARTED only just
-        # before the try/finally that owns its shutdown, a few hundred
-        # lines below: a raise in the composition work between the two
-        # would otherwise leave a daemon thread spinning `run_forever`
-        # forever with nothing to stop it. Same ordering rule -- and the
-        # same failure -- as `AgentService`'s own `thread.start()` guard.
-        #
-        # PR3a-1 Task 1: the loop+thread pair is now a `_ModelCallLifeline`
-        # (identical construction, start ordering and teardown -- see its
-        # docstring), because a fleet CHILD now owns one of its own from
-        # birth via `adapter.child_lifeline`. This one stays exactly what
-        # it always was: the PRIMARY agent's, turn-scoped.
-        turn_lifeline = _ModelCallLifeline(
-            "console-agent-loop",
-            close_current_loop=getattr(self._gateway, "aclose_current_loop", None),
-        )
-        thinking_capture = ThinkingCapture(assistant_owner_id=assistant_message_id)
-        adapter = _StreamingModelAdapter(
-            store=self._store,
-            provider_gateway=self._gateway,
-            resolution=resolution,
-            assistant_message_id=assistant_message_id,
-            should_cancel=should_cancel,
-            loop=turn_lifeline.loop,
-            native_tools=(
-                config.native_tools
-                and provider_supports_native_tools(
-                    first_request_plan.api_endpoint,
-                    reasoning_replay=config.reasoning_replay,
-                )
-            ),
-            provider_stream_signals=provider_stream_signals,
+            revoke_approvals=revoke_approvals,
+            plugin_cancel_root=plugin_cancel_root,
+            on_tool_terminal=on_tool_terminal,
+            on_tool_result_terminal=on_tool_result_terminal,
+            on_run_terminal=on_run_terminal,
+            native_tools_enabled=native_tools_enabled,
+            restore_provider_continuation=restore_provider_continuation,
+            restore_provider_target=restore_provider_target,
+            expand_provider_continuation=expand_provider_continuation,
+            resume_provider_continuation=resume_provider_continuation,
             continuation_sidecar=continuation_sidecar,
             continuation_target=continuation_target,
             continuation_owner_key=continuation_owner_key,
             thinking_sidecar=thinking_sidecar,
             thinking_policy=thinking_policy,
             thinking_owner_key=thinking_owner_key,
-            thinking_capture=thinking_capture,
             generation_token=generation_token,
+            startup_instruction_candidate=startup_instruction_candidate,
+            project_instruction_nested_max_bytes=project_instruction_nested_max_bytes,
+            run_budget=run_budget,
+            confirm_project_instruction_dispatch=confirm_project_instruction_dispatch,
+            on_project_instruction_activation=on_project_instruction_activation,
+            propagate_trace_call_persistence_errors=propagate_trace_call_persistence_errors,
             capture_mode=capture_mode,
             trace_request=trace_request,
-        )
-
-        # PR3a-1 Task 6b (audit F1): this turn's own key into
-        # `self._live[conversation_id]`. Minted here because `run_turn`
-        # only hands back the primary run id when the turn ENDS, and the
-        # rail must show "running" from the moment it starts; every write
-        # below (start, each primary step, the terminal publish) uses this
-        # one key, so an earlier turn's surviving child -- which writes
-        # under its OWN run id -- can never land in it.
-        primary_live_key = uuid4().hex
-        adapter._live_usage_sink = functools.partial(
-            self._observe_live_usage,
-            conversation_id=conversation_id,
-        )
-        child_change_state = _ChildChangeState(
-            owner_key=primary_live_key,
-            survivor_key=assistant_message_id,
-        )
-        child_path_root = None
-        if scratch_root is not None:
-            try:
-                child_path_root = scratch_root.expanduser().resolve()
-            except (OSError, RuntimeError, ValueError):
-                logger.warning(
-                    "change_review: could not normalize the attributed child WRITE root"
-                )
-        live_steps = _LiveStepFeed()
-        subagents: list[SubAgentSummary] = []
-        #: run key -> that run's own live step feed. The primary's entry is
-        #: `live_steps` itself, so every existing reader of that local is
-        #: unchanged.
-        run_live_steps: dict[str, _LiveStepFeed] = {primary_live_key: live_steps}
-        buddy_tool_sequences: dict[str, deque[int]] = {}
-        primary_buddy_run_ids: set[str] = set()
-        raw_shell_progress_run_ids: set[str] = set()
-        self._publish_live(
-            conversation_id,
-            primary_live_key,
-            AgentLiveSnapshot(status="running"),
-            primary=True,
-        )
-        # PR3a-1 Task 6b (audit F1): bound the per-run slots -- one turn's
-        # worth plus whatever is still live. Must run AFTER the publish
-        # above, which is what tells it which key is this turn's.
-        self._prune_live_run_slots(conversation_id)
-        # A live run is starting -- live_snapshot takes over as the rail's
-        # source of truth for this conversation from here on, so any
-        # previously cached historical (DB-derived) summary is stale.
-        self._historical_cache.pop(conversation_id, None)
-        planning_deriver = _PendingPrimaryPlanningDeriver()
-        from .console_tool_activity import ConsoleToolActivity
-
-        tool_activity = ConsoleToolActivity(self._store, session_id)
-        tool_activity_run_ids: set[str] = set()
-
-        def on_tool_activity(step: AgentStep, agent_kind: str, run_id: str) -> None:
-            if agent_kind != AGENT_KIND_PRIMARY or not run_id:
-                return
-            self._tool_activity_runs[run_id] = tool_activity
-            tool_activity_run_ids.add(run_id)
-            if step.kind == "tool_proposed":
-                planning = planning_deriver.observe(
-                    dataclass_replace(step, kind=STEP_TOOL_CALL),
-                    agent_kind,
-                    actual_thinking_round_ordinals=_thinking_round_ordinals(
-                        thinking_capture.snapshot().envelope
-                    ),
-                )
-                if planning is not None:
-                    self._append_marker(
-                        session_id,
-                        planning.content,
-                        activity_presentation=planning.activity_presentation,
-                        activity_round_ordinal=planning.activity_round_ordinal,
-                    )
-            tool_activity.observe(step, planning_deriver.active_round_ordinal)
-
-        def on_step(step: AgentStep, agent_kind: str, run_id: str) -> None:
-            if agent_kind == AGENT_KIND_PRIMARY and run_id:
-                self._live_primary_runs[conversation_id] = run_id
-            # PR 2a (task-3): AgentService now attributes every step to its
-            # run id so a fleet of concurrent children can be told apart.
-            # PR3a-1 Task 6b (audit F1): that attribution is finally USED.
-            # PR 2b Task 2 argued it was redundant because the bridge runs
-            # one primary at a time -- true only while a run cannot outlive
-            # its turn. It can now, so a child's step arriving after this
-            # turn returned would otherwise be published into the slot the
-            # NEXT turn owns: wrong step list, wrong count, and a
-            # `status="running"` that never clears. Each run's feed and
-            # each run's published snapshot are keyed by that run instead.
-            # (`service.fleet_snapshot()` below still supplies the
-            # `subagents` rows, and is still the authority for a child's
-            # STATUS -- this splits the STEP feed, not the row list.)
-            live_key = (
-                primary_live_key
-                if agent_kind == AGENT_KIND_PRIMARY
-                # An empty run id (no run attributed) falls back to this
-                # turn's own key -- the pre-fix destination, so nothing
-                # regresses for a step that cannot be attributed.
-                else (run_id or primary_live_key)
-            )
-            if agent_kind != AGENT_KIND_PRIMARY and run_id:
-                touched_paths = ChangeTurnTracker.tool_touched_paths((step,))
-                normalized_paths: list[str] = []
-                inherited_claim = None
-                for raw_path in touched_paths:
-                    try:
-                        path = Path(raw_path)
-                        if child_path_root is not None:
-                            normalized_paths.append(
-                                str(
-                                    validate_path(
-                                        path,
-                                        child_path_root,
-                                        redact_paths=True,
-                                        allow_hidden=True,
-                                    )
-                                )
-                            )
-                        elif path.is_absolute():
-                            normalized_paths.append(str(path))
-                        else:
-                            normalized_paths.append(raw_path)
-                    except ValueError:
-                        logger.warning(
-                            "change_review: could not normalize one attributed "
-                            "child WRITE path"
-                        )
-                with self._change_window_lock:
-                    child_change_state.touched_paths.update(normalized_paths)
-                    window = self._post_turn_change_windows.get(conversation_id)
-                    if (
-                        touched_paths
-                        and window is not None
-                        and window.successor_claim is not None
-                        and any(
-                            state is child_change_state for state in window.child_states
-                        )
-                    ):
-                        inherited_claim = window.successor_claim
-                if (
-                    normalized_paths
-                    and self._change_finalization_coordinator is not None
-                ):
-                    self._change_finalization_coordinator.record_survivor_paths(
-                        assistant_message_id,
-                        normalized_paths,
-                    )
-                if inherited_claim is not None:
-                    try:
-                        claim_ready = inherited_claim.ready.wait(
-                            _CHANGE_BOUNDARY_WAIT_SECONDS
-                        )
-                    except Exception:  # noqa: BLE001 -- tracking is best effort
-                        claim_ready = False
-                    claim_failed = True
-                    claim_handle = None
-                    if claim_ready:
-                        with self._change_window_lock:
-                            claim_failed = inherited_claim.failed
-                            claim_handle = inherited_claim.handle
-                    baseline_trusted = False
-                    if not claim_failed and claim_handle is not None:
-                        try:
-                            claim_handle.await_baseline()
-                            baselines = dict(claim_handle.baselines)
-                            roots = tuple(claim_handle.roots)
-                            baseline_trusted = not claim_handle.errors and all(
-                                baselines.get(str(root)) for root in roots
-                            )
-                        except Exception:  # noqa: BLE001 -- tracking is best effort
-                            baseline_trusted = False
-                    if not baseline_trusted:
-                        with self._change_window_lock:
-                            inherited_claim.failed = True
-            buddy_run_id = run_id or live_key
-            buddy_sink = self._buddy_sink
-            if buddy_sink is not None:
-                if agent_kind == AGENT_KIND_PRIMARY:
-                    primary_buddy_run_ids.add(buddy_run_id)
-                if step.kind == STEP_TOOL_CALL:
-                    buddy_tool_sequences.setdefault(buddy_run_id, deque()).append(
-                        step.index
-                    )
-                    buddy_sink.tool_step(buddy_run_id, step.index, step.kind, session_id=session_id)
-                elif step.kind == STEP_TOOL_RESULT:
-                    sequences = buddy_tool_sequences.get(buddy_run_id)
-                    sequence = sequences.popleft() if sequences else step.index
-                    buddy_sink.tool_step(buddy_run_id, sequence, step.kind, session_id=session_id)
-                    if sequences is not None and not sequences:
-                        buddy_tool_sequences.pop(buddy_run_id, None)
-                elif step.kind == STEP_ERROR:
-                    buddy_sink.release_run(buddy_run_id)
-            key_steps = run_live_steps.setdefault(live_key, _LiveStepFeed())
-            key_steps.append(
-                # `time.monotonic()` HERE is the step's real start: this hook
-                # runs synchronously inside the runtime loop, before the work
-                # the step announces (a STEP_TOOL_CALL lands one statement
-                # ahead of `deps.invoke_tool`). See `AgentLiveStep.started_at`.
-                AgentLiveStep(
-                    step.kind, self._summarize(step), agent_kind, time.monotonic()
-                )
-            )
-            # TASK-1366: pair this result step with the raw before/after
-            # contents the provider's diff_sink captured at the strip seam,
-            # when this call was a diff-carrying file write. Sub-agent
-            # result steps pair-and-discard too (their writes can ride this
-            # run's provider) even though only primary steps drop markers.
-            # See _pair_step_diff for the threading model and the staleness
-            # rule that keeps an abandoned call's late capture from pairing
-            # with a later write.
-            tool_diff: tuple[str, str, str] | None = None
-            if step.kind == STEP_TOOL_RESULT and pending_diffs:
-                tool_diff = _pair_step_diff(pending_diffs, step.tool_name)
-            planning_marker = planning_deriver.observe(
-                step,
-                agent_kind,
-                actual_thinking_round_ordinals=_thinking_round_ordinals(
-                    thinking_capture.snapshot().envelope
-                ),
-            )
-            if agent_kind == AGENT_KIND_PRIMARY:
-                # Adoption may succeed before its display update raises. Register
-                # cleanup first so an interrupted run still detaches that marker.
-                if step.tool_name == "shell_exec" and run_id:
-                    raw_shell_progress_run_ids.add(run_id)
-                raw_shell_projected = self._project_raw_shell_step(
-                    session_id,
-                    run_id,
-                    step,
-                    agent_kind,
-                )
-                if planning_marker is not None:
-                    self._append_marker(
-                        session_id,
-                        planning_marker.content,
-                        full_output=planning_marker.tool_output_full,
-                        activity_presentation=(planning_marker.activity_presentation),
-                        activity_round_ordinal=(planning_marker.activity_round_ordinal),
-                    )
-                if step.kind == STEP_SPAWN:
-                    # PR2b Task 2: this is this run's ONLY source of rows
-                    # on the inline path (fleet off, `[agents]
-                    # max_live_subagents <= 1`) -- there is no coordinator
-                    # there, ever, so every entry appended here stays live
-                    # for the run's whole duration. On a fleet-ON run it
-                    # is superseded, publish by publish, as soon as ANY
-                    # handle has been reserved (`_subagent_summaries_
-                    # from_fleet` then uses `service.fleet_snapshot()`
-                    # exclusively, not a merge -- see that function's own
-                    # docstring for why a positional merge was tried and
-                    # reverted: it silently duplicated a child's row
-                    # forever whenever an EARLIER spawn in the same run
-                    # had been refused, e.g. an unknown named agent).
-                    # Entries appended here past that point are still
-                    # correct, just unused by that publish.
-                    subagents.append(SubAgentSummary(step.summary or ""))
-                # format_agent_step_marker is the single source of truth for
-                # marker text -- shared with resume_marker_messages below --
-                # so live and resume-rebuilt transcripts render identically
-                # (Plan-B final-review Medium-1). See its docstring for why
-                # the text must stay raw/unescaped.
-                marker_text = (
-                    None
-                    if raw_shell_projected
-                    else format_agent_step_marker(
-                        step.kind,
-                        tool_name=step.tool_name,
-                        result=step.result,
-                        summary=step.summary,
-                    )
-                )
-                if step.kind == STEP_TOOL_RESULT and not raw_shell_projected:
-                    lifecycle_content = (
-                        marker_text or f"⚙ {step.tool_name} → {step.result}"
-                    )
-                    if tool_activity.complete(
-                        step,
-                        build_step_activity_presentation(
-                            step.kind,
-                            tool_name=step.tool_name,
-                            result=step.result,
-                            tool_outcome=step.tool_outcome,
-                        ),
-                        lifecycle_content,
-                        tool_diff,
-                        record_trajectory=marker_text is not None,
-                    ):
-                        marker_text = None
-                if marker_text is not None:
-                    self._append_marker(
-                        session_id,
-                        marker_text,
-                        full_output=full_step_output(
-                            step.kind,
-                            result=step.result,
-                            summary=step.summary,
-                            marker_text=marker_text,
-                        ),
-                        tool_diff=tool_diff,
-                        activity_presentation=build_step_activity_presentation(
-                            step.kind,
-                            tool_name=step.tool_name,
-                            result=step.result,
-                            tool_outcome=step.tool_outcome,
-                        ),
-                        activity_round_ordinal=(planning_deriver.active_round_ordinal),
-                    )
-            # Content-free operational logging for tool outcomes. The actual
-            # invocation lives inside AgentService, so this intentionally
-            # records no arguments, results, summaries, or provider ids.
-            if step.kind == STEP_TOOL_RESULT:
-                logger.debug(
-                    "agent tool call: agent_kind={agent_kind} tool={tool_name} "
-                    "outcome=completed step={step_index}",
-                    agent_kind=agent_kind,
-                    tool_name=step.tool_name,
-                    step_index=step.index,
-                )
-            elif step.kind == STEP_ERROR:
-                logger.warning(
-                    "agent step error: agent_kind={agent_kind} tool={tool_name} "
-                    "outcome=error step={step_index}",
-                    agent_kind=agent_kind,
-                    tool_name=step.tool_name,
-                    step_index=step.index,
-                )
-            self._publish_live(
-                conversation_id,
-                live_key,
-                AgentLiveSnapshot(
-                    status="running",
-                    step=key_steps.count,
-                    steps=key_steps.tail(5),
-                    # PR2b Task 2: rebuilt from the fleet's REAL live state
-                    # on every publish, not appended once and left stuck at
-                    # the "running" default -- see
-                    # `_subagent_summaries_from_fleet`'s docstring.
-                    subagents=_subagent_summaries_from_fleet(
-                        service.fleet_snapshot(), subagents
-                    ),
-                ),
-                # PR3a-1 Task 6b: a step from a child NEVER moves the rail's
-                # summary pointer. Only `run_reply` (this turn) may.
-                primary=False,
-            )
-
-        # C1 (probe-verified security regression): thread the composed MCP
-        # provider's stamp_scope() through as AgentService's generic
-        # review_state_scope seam whenever one was composed for this run --
-        # see AgentService.__init__'s own comment and
-        # MCPToolProvider.stamp_scope's docstring for the exact adversarial
-        # interleave this protects against (a spawned child's own turn(s)
-        # clobbering the parent turn's already-decided MCP approval stamps).
-        # getattr(..., None) rather than a bare attribute access: mcp_provider
-        # is typed Any (a ToolProvider-shaped double in tests may not define
-        # stamp_scope at all, and MUST NOT be forced to); production always
-        # hands in a real, fully-composed MCPToolProvider here, which always
-        # has it.
-        # task-628: the seam holds ONE context manager, but two components
-        # now own per-turn stamp state a nested sub-agent run would clobber
-        # -- the MCP provider's `_stamped_decisions` and the built-in gate's
-        # `_stamps`. Compose whichever exist rather than leaving the gate's
-        # state unguarded (it was, before this task, and unlike MCP it has
-        # no per-call approval fallback to degrade to: a lost stamp fails
-        # closed outright). ADR-032 adds the local provider's stamp state
-        # to the same composition.
-        _scopes = [
-            scope
-            for scope in (
-                getattr(mcp_provider, "stamp_scope", None)
-                if mcp_provider is not None
-                else None,
-                getattr(builtin_gate, "stamp_scope", None)
-                if builtin_gate is not None
-                else None,
-                getattr(local_provider, "stamp_scope", None)
-                if local_provider is not None
-                else None,
-                getattr(virtual_cli_provider, "stamp_scope", None)
-                if virtual_cli_provider is not None
-                else None,
-                getattr(raw_shell_provider, "stamp_scope", None)
-                if raw_shell_provider is not None
-                else None,
-            )
-            if scope is not None
-        ]
-        review_state_scope = _combine_state_scopes(_scopes)
-
-        # TASK-1971 (Agent Change Review): kick the baseline snapshot in the
-        # background NOW -- it rides the model's first-token latency -- and
-        # gate tool dispatch on its completion by wrapping the review hook,
-        # which the runtime invokes before every tool batch executes. A tool
-        # writing before B settles would race its own change into the
-        # baseline and vanish from the diff. Tracking failures never block
-        # the run (spec failure posture): begin_turn cannot raise, and the
-        # wrapper's await records timeouts as per-root disclosures.
-        change_handle = None
-        change_reservation = None
-        successor_claim: _SuccessorBoundaryClaim | None = None
-        inherited_child_states_at_b: tuple[_ChildChangeState, ...] = ()
-        # PR3a-1 Task 6c: measured BEFORE this turn's B. Any sub-agent
-        # running now belongs to an EARLIER turn (this one has not spawned
-        # anything yet), and a working-tree differ cannot tell its writes
-        # from this turn's agent's -- so this turn's record is stamped
-        # `turn_concurrent_subagent` and discloses the overlap rather than
-        # implying sole authorship.
-        concurrent_subagent = self._live_child_count(conversation_id) > 0
-        if self._change_finalization_coordinator is not None and change_roots:
-            try:
-                change_reservation = self._change_finalization_coordinator.register(
-                    change_roots,
-                    survivor_key=assistant_message_id,
-                )
-            except Exception:  # noqa: BLE001 -- tracking must never block a run
-                logger.opt(exception=True).warning(
-                    "change_review: coordinator admission failed; turn untracked"
-                )
-        elif self._change_tracker is not None and change_roots:
-            boundary_failed = False
-            while True:
-                close_window = None
-                close_done = None
-                claim_to_release = None
-                begin_failed = False
-                with self._change_window_lock:
-                    prior_window = self._post_turn_change_windows.get(conversation_id)
-                    if prior_window is not None and prior_window.closing:
-                        close_window = prior_window
-                        close_done = prior_window.close_done
-                    else:
-                        inherited_states = {
-                            state.owner_key: state
-                            for state in self._child_change_states.get(
-                                conversation_id, {}
-                            ).values()
-                        }
-                        successor_claim = None
-                        if prior_window is not None:
-                            successor_claim = _SuccessorBoundaryClaim()
-                            prior_window.successor_claim = successor_claim
-                            inherited_states.update(
-                                {
-                                    state.owner_key: state
-                                    for state in prior_window.child_states
-                                }
-                            )
-                        concurrent_subagent = concurrent_subagent or any(
-                            state.live_scopes > 0 or state.pending_scopes > 0
-                            for state in inherited_states.values()
-                        )
-                        inherited_child_states_at_b = tuple(inherited_states.values())
-                        begin_paths = sorted(
-                            {
-                                path
-                                for state in inherited_child_states_at_b
-                                for path in state.touched_paths
-                            }
-                        )
-                        try:
-                            change_handle = self._change_tracker.begin_turn(
-                                change_roots,
-                                touched_paths=begin_paths,
-                            )
-                        except Exception:  # noqa: BLE001 -- tracking is best effort
-                            change_handle = None
-                            begin_failed = True
-                        if successor_claim is not None:
-                            if successor_claim.failed:
-                                change_handle = None
-                                successor_claim.handle = None
-                            else:
-                                successor_claim.handle = change_handle
-                                successor_claim.failed = change_handle is None
-                            claim_to_release = successor_claim
-
-                if close_done is None:
-                    if claim_to_release is not None:
-                        claim_to_release.ready.set()
-                    if begin_failed:
-                        logger.warning(
-                            "change_review: begin_turn failed; turn untracked"
-                        )
-                    break
-                try:
-                    close_completed = close_done.wait(_CHANGE_BOUNDARY_WAIT_SECONDS)
-                except Exception:  # noqa: BLE001 -- tracking is best effort
-                    close_completed = False
-                if close_completed:
-                    with self._change_window_lock:
-                        close_completed = close_window.close_succeeded is True
-                if not close_completed:
-                    boundary_failed = True
-                    break
-
-            if boundary_failed:
-                change_handle = None
-                successor_claim = None
-                logger.warning(
-                    "change_review: prior survivor close did not finish "
-                    "successfully; successor turn untracked"
-                )
-        # run-hooks (Task 5): resolve the app-owned engine ONCE per turn (its
-        # presence answer re-runs while unconfigured -- the runtime's R17
-        # rule -- so a first-ever [hooks] entry takes effect on the next
-        # turn). `None` (unconfigured, or a bridge built without the runtime
-        # accessor -- every test harness) builds the service exactly as
-        # before: no PostToolUse dep, byte-identical run behavior.
-        run_hooks_engine = (
-            self._ensure_run_hooks() if self._ensure_run_hooks is not None else None
-        )
-        # A restriction-only guard sees every call, including Canvas tools
-        # that intentionally skip interactive approval. The permission chain
-        # remains independent and cannot override a hook refusal.
-        guard_tool_calls = (
-            run_hooks_engine.wrap_review(lambda calls, run_id: {}, session_id=session_id)
-            if run_hooks_engine is not None else None
-        )
-        baseline_gate = change_reservation or change_handle
-        before_tool_dispatch = None
-        alias_by_root: dict[str, str] = {}
-        if baseline_gate is not None:
-            timeout_warned = False
-            alias_by_root = {
-                str(root): str(alias)
-                for root, alias in zip(
-                    baseline_gate.roots,
-                    change_root_aliases,
-                    strict=False,
-                )
-            }
-
-            def on_baseline_timeout() -> None:
-                nonlocal timeout_warned
-                if timeout_warned:
-                    return
-                timeout_warned = True
-                handle = getattr(baseline_gate, "_handle", baseline_gate)
-                timed_out_roots = [
-                    root
-                    for root, error in handle.errors.items()
-                    if "baseline snapshot still running" in error
-                ]
-                for index, root in enumerate(timed_out_roots, start=1):
-                    self._append_marker(
-                        session_id,
-                        format_change_review_skipped_marker(
-                            alias_by_root.get(root, f"workspace {index}"),
-                            "baseline timed out; this turn's changes are not tracked",
-                        ),
-                    )
-
-            if (
-                change_reservation is not None
-                and self._change_finalization_coordinator is not None
-            ):
-                coordinator_wait = getattr(
-                    self._change_finalization_coordinator,
-                    "await_baseline",
-                    None,
-                )
-                await_baseline = (
-                    functools.partial(coordinator_wait, change_reservation)
-                    if callable(coordinator_wait)
-                    else change_reservation.await_baseline
-                )
-            else:
-                await_baseline = baseline_gate.await_baseline
-            before_tool_dispatch = build_change_review_dispatch_gate(
-                await_baseline,
-                on_timeout=on_baseline_timeout,
-            )
-
-        if plugin_entries:
-            original_review = review_tool_calls
-            original_dispatch = before_tool_dispatch
-
-            def review_tool_calls(calls, kind):
-                active_plugin_entries = bind_plugin_actor()
-                plugin_service.check_entries_from_agent(active_plugin_entries)
-                decisions = original_review(calls, kind) if original_review else {}
-                plugin_service.check_entries_from_agent(active_plugin_entries)
-                return decisions
-
-            def before_tool_dispatch(calls, pure_runtime_tools):
-                active_plugin_entries = bind_plugin_actor()
-                plugin_service.check_entries_from_agent(active_plugin_entries)
-                if original_dispatch is not None:
-                    original_dispatch(calls, pure_runtime_tools)
-                plugin_service.check_entries_from_agent(active_plugin_entries)
-
-        run_log_writer = None
-        if scratch_root is not None and scratch_lease is not None:
-            from tldw_chatbook.Agents.run_log import RunLogWriter, resolve_log_root
-
-            run_log_root: Path | None = None
-            try:
-                with scratch_lease():
-                    run_log_root = resolve_log_root(
-                        sandbox_root=scratch_root,
-                        workspace_id=run_workspace_id,
-                    )
-            except Exception:  # noqa: BLE001 -- writer will fail closed on lease
-                run_log_root = None
-            run_log_writer = RunLogWriter(
-                root=run_log_root or scratch_root,
-                access_scope=scratch_lease,
-                on_bound=functools.partial(
-                    self._remember_run_log_authority,
-                    session_id=session_id,
-                    conversation_id=conversation_id,
-                    access_scope=scratch_lease,
-                ),
-            )
-
-        def on_child_settled(run_id: str | None, status: str) -> None:
-            try:
-                engine = self._ensure_run_hooks() if self._ensure_run_hooks else None
-                if engine is not None:
-                    engine.notify(
-                        "SubagentStop", session_id=session_id, run_id=run_id,
-                        data={"child_run_id": run_id, "status": status},
-                    )
-            except Exception:  # noqa: BLE001 -- observation cannot prevent settlement
-                logger.warning("SubagentStop observer failed; continuing settlement")
-            try:
-                if not service.live_subagent_handles():
-                    with self._change_window_lock:
-                        child_change_state.pending_scopes = 0
-                        states = self._child_change_states.get(conversation_id)
-                        if (
-                            states is not None
-                            and states.get(child_change_state.owner_key)
-                            is child_change_state
-                        ):
-                            states.pop(child_change_state.owner_key, None)
-                            if not states:
-                                self._child_change_states.pop(conversation_id, None)
-                        has_window = conversation_id in self._post_turn_change_windows
-                    if has_window:
-                        self._close_post_turn_change_window_if_idle(conversation_id)
-            finally:
-                self._on_fleet_child_settled(
-                    conversation_id,
-                    session_id,
-                    assistant_message_id,
-                    run_id,
-                    status,
-                )
-
-        def _redirect_ready(redirect_fn, abort_probe):
-            # TASK-28227: arm the primary stream's abort probe,
-            # then hand the Console its redirect hook. The probe
-            # reaches ONLY the adapter's stream_cut predicate --
-            # LoopDeps.should_cancel never sees it, so a
-            # redirect can never kill the run.
-            adapter._primary_stream_abort = abort_probe
-            if on_redirect_ready is not None:
-                on_redirect_ready(redirect_fn)
-
-        with self._store.progress_owner_scope(
-            session_id, message_store=self.message_store
-        ) as progress_owner_id:
-            if progress_owner_id != initial_progress_owner_id:
-                from tldw_chatbook.Agents.fleet_messages import MessageError
-
-                raise MessageError("unavailable")
-            fleet_coordinator = self._conversation_fleet_coordinator(
-                conversation_id,
-                create=bool(
-                    first_request_plan.schemas.runtime_schemas
-                    or first_request_plan.schemas.active_schemas
-                ),
-                progress_owner_id=progress_owner_id,
-            )
-            message_inbox = self.message_store.get_inbox(progress_owner_id)
-        plugin_root_id = ""
-        plugin_producer_pin = None
-
-        def bind_plugin_root(actual_run_id: str) -> None:
-            nonlocal plugin_root_id, plugin_producer_pin
-            plugin_root_id = actual_run_id
-            if plugin_entries:
-                if plugin_cancel_root is None:
-                    raise PermissionError(
-                        "Plugin run cancellation owner is unavailable."
-                    )
-
-                def cancel_root():
-                    plugin_cancel_root()
-                    if revoke_approvals is not None:
-                        revoke_approvals(actual_run_id)
-
-                plugin_service.bind_run(plugin_entries, actual_run_id, cancel_root)
-                if plugin_producer_pin is None:
-                    # Capture capabilities at real binding. The store finalizer
-                    # binds its durable conversation ID only after persisting it.
-                    conversation_id = (
-                        self._store._session_or_raise(
-                            session_id
-                        ).persisted_conversation_id
-                        or session_id
-                    )
-                    plugin_producer_pin = plugin_service.capture_resume_pin(
-                        plugin_entries,
-                        actual_run_id,
-                        conversation_id,
-                        assistant_message_id,
-                    )
-
-        def bind_plugin_actor():
-            from tldw_chatbook.Agents.run_context import current_run_actor
-
-            actor = current_run_actor()
-            if actor is None:
-                raise PermissionError("Plugin run identity is unavailable.")
-            actual_run_id = actor.run_id
-            if actor.kind == "primary":
-                bind_plugin_root(actual_run_id)
-                return plugin_entries
-            handle = next(
-                (
-                    item
-                    for item in service.fleet_snapshot()
-                    if item.run_id == actual_run_id
-                ),
-                None,
-            )
-            if handle is None:
-                if actor.parent_run_id != plugin_root_id or plugin_cancel_root is None:
-                    raise PermissionError("Plugin child ownership is unavailable.")
-
-                def cancel_inline_child():
-                    plugin_cancel_root()
-                    if revoke_approvals is not None:
-                        revoke_approvals(actual_run_id)
-
-                plugin_service.bind_run(
-                    plugin_entries,
-                    actual_run_id,
-                    cancel_inline_child,
-                    parent_run_id=actor.parent_run_id,
-                )
-                return plugin_entries
-            ceiling = handle.managed_resume_ceiling
-            if handle.managed_resume_handle_id is not None:
-                ceiling = plugin_service.fleet_resume_ceiling(
-                    handle.managed_resume_pin,
-                    handle.managed_resume_run_id,
-                    handle.managed_resume_handle_id,
-                    plugin_entries,
-                )
-            child_entries = plugin_service.constrain_entries(plugin_entries, ceiling)
-            plugin_service.bind_run(
-                child_entries,
-                actual_run_id,
-                lambda: service.cancel_subagent(handle.handle_id),
-                handle.handle_id,
-                parent_run_id=actor.parent_run_id,
-                component_ceiling=ceiling,
-            )
-            if handle.managed_pin is None:
-                pin = plugin_service.capture_resume_pin(
-                    child_entries,
-                    actual_run_id,
-                    session_id,
-                    handle.handle_id,
-                )
-                service._fleet.set_managed_custody(
-                    handle.handle_id,
-                    required=bool(plugin_entries),
-                    pin=pin,
-                    resume_ceiling=ceiling,
-                    resume_pin=handle.managed_resume_pin,
-                    resume_run_id=handle.managed_resume_run_id,
-                    resume_handle_id=handle.managed_resume_handle_id,
-                )
-            return child_entries
-
-        def plugin_run_terminal(actual_run_id: str) -> None:
-            if plugin_entries:
-                plugin_service.complete_run(actual_run_id)
-            if on_run_terminal is not None:
-                on_run_terminal(actual_run_id)
-
-        def plugin_checked_chat_call(**kwargs):
-            active_plugin_entries = ()
-            if plugin_entries:
-                active_plugin_entries = bind_plugin_actor()
-                plugin_service.check_entries_from_agent(active_plugin_entries)
-                from tldw_chatbook.Plugins.context import check_send_context
-
-                kwargs["messages_payload"] = check_send_context(
-                    kwargs["messages_payload"]
-                )
-            result = adapter.chat_call(**kwargs)
-            if plugin_entries:
-                plugin_service.check_entries_from_agent(active_plugin_entries)
-            return result
-
-        def finalize_managed_checkpoint(
-            checkpoint, conversation_id, message_id, run_id
-        ):
-            if plugin_producer_pin is None or run_id != plugin_root_id:
-                raise PermissionError("Managed continuation producer is unavailable.")
-            pin = json.loads(plugin_producer_pin)
-            session = self._store._session_or_raise(session_id)
-            if (
-                session.persisted_conversation_id != conversation_id
-                or message_id != assistant_message_id
-            ):
-                raise PermissionError("Managed continuation durable owner changed.")
-            if pin["conversation_id"] not in {session_id, conversation_id}:
-                raise PermissionError("Managed continuation original owner changed.")
-            pin["conversation_id"] = conversation_id
-            return plugin_service.seal_resume_checkpoint(
-                json.dumps(pin),
-                checkpoint,
-                conversation_id,
-                message_id,
-            )
-
-        def persist_continuation(event):
-            if (
-                plugin_entries
-                and event.context.durability == "persistent"
-                and event.context.agent_kind == "primary"
-            ):
-                bind_plugin_root(event.context.run_id)
-            return self._store.persist_provider_continuation_event(
-                event,
-                checkpoint_finalizer=(
-                    finalize_managed_checkpoint if plugin_entries else None
-                ),
-            )
-
-        hooks_v2_engine = self._get_hooks_v2(session_id) if self._get_hooks_v2 else None
-        service = AgentService(
-            self._db,
-            registry,
-            chat_call=plugin_checked_chat_call if plugin_entries else adapter.chat_call,
-            runtime_capacity=self.runtime_capacity,
-            work_origin=work_origin,
-            work_chain_id=work_chain_id,
-            worktree_repo_authority=worktree_repo_authority,
-            clock=self._clock,
-            app_config=self._app_config,
-            on_step=on_step,
-            on_tool_activity=on_tool_activity,
-            # TASK-25903: hands the controller a steer(text) bound to THIS
-            # run once its mailbox registers -- run ids are minted inside
-            # run_turn, so the caller cannot key by one.
-            on_primary_steer_ready=on_steer_ready,
-            on_primary_redirect_ready=_redirect_ready,
-            skill_runner=skill_runner,
-            skill_file_bindings=skill_file_bindings,
-            review_tool_calls=review_tool_calls,
-            guard_tool_calls=guard_tool_calls,
-            hooks_v2_engine=hooks_v2_engine,
-            hooks_v2_session_id=session_id,
-            hooks_v2_turn_id=assistant_message_id,
-            # Standalone work has no plugin dependency graph.
-            hooks_v2_required_handler_ids=lambda _run_id: (),
-            hooks_v2_definition_requirements=(
-                lambda definition, messages: (
-                    hooks_v2_engine.native_plugins.requirements_for(
-                        definition, registry, messages
-                    )
-                )
-            )
-            if hooks_v2_engine is not None
-            and getattr(hooks_v2_engine, "native_plugins", None) is not None
-            else None,
-            before_tool_dispatch=before_tool_dispatch,
-            review_state_scope=review_state_scope,
-            install_skill_tool=install_skill_tool,
-            prepare_managed_skill_promotion_tool=(prepare_managed_skill_promotion_tool),
-            run_skill_script_tool=run_skill_script_tool,
-            fork_chat_tool=fork_chat_tool,
-            new_chat_tool=new_chat_tool,
-            run_log_writer=run_log_writer,
-            post_tool_call=(
-                run_hooks_engine.post_tool_dep(session_id=session_id)
-                if run_hooks_engine is not None
-                else None
-            ),
-            run_log_request_plan=first_request_plan.run_log,
-            revoke_approvals=revoke_approvals,
-            on_tool_terminal=on_tool_terminal,
-            on_tool_result_terminal=on_tool_result_terminal,
-            on_run_terminal=lambda run_id: self._on_live_run_terminal(
-                run_id, plugin_run_terminal if plugin_entries else on_run_terminal
-            ),
-            run_model_scope=functools.partial(
-                self._live_usage_run_scope,
-                adapter,
-                conversation_id,
-                primary_live_key,
-            ),
-            managed_child_required=bool(plugin_entries),
-            managed_child_resume=(
-                (
-                    lambda retained: plugin_service.fleet_resume_ceiling(
-                        retained.managed_pin,
-                        retained.run_id,
-                        retained.handle_id,
-                        plugin_entries,
-                    )
-                )
-                if plugin_service is not None
-                else None
-            ),
-            persist_provider_continuation=persist_continuation,
-            expand_provider_continuation=expand_provider_continuation,
-            prepare_provider_continuation_request=bool(
-                continuation_target is not None
-                and callable(getattr(self._gateway, "prepare_chat_request", None))
-            ),
-            # PR3a-1 Task 1: every fleet child gets its own model-call
-            # lifeline, entered on the child's own thread and torn down
-            # when the CHILD finishes -- never when this turn does.
-            # PR3a-1 Task 6c wraps that lifeline (it does not replace it)
-            # so the same enter/exit also counts live children: "the last
-            # child of this conversation just finished" is the signal that
-            # closes a survivor's change-review window, and nothing else
-            # in the bridge knows it (the coordinator marks a handle
-            # terminal only AFTER this scope exits).
-            inline_child_model_scope=adapter.child_lifeline,
-            child_model_scope=functools.partial(
-                self._child_run_scope,
-                conversation_id,
-                adapter,
-                child_change_state,
-            ),
-            # PR3a-2 Task 2: the settle half of the same seam. The wrapper
-            # above binds this turn's IDENTITY -- session + originating
-            # assistant message -- and removes Task 3's live WRITE state
-            # only after this service's final handle settles, then forwards
-            # to the existing fan-out path. The run id arrives per call from
-            # `run_child`'s finally, where it is first knowable.
-            on_child_settled=on_child_settled,
-            # PR3a-1 Task 6a: this CONVERSATION's coordinator, not this
-            # turn's -- the only thing that makes `[agents]
-            # max_live_subagents` a bound on the fleet rather than on one
-            # message, and the only thing an earlier turn's survivor is
-            # still visible and stoppable through. `None` when the fleet
-            # kill switch is on, which leaves `AgentService` to take its
-            # own inline path exactly as before.
-            fleet_coordinator=fleet_coordinator,
-            message_inbox=message_inbox,
-            startup_instruction_candidate=startup_instruction_candidate,
-            confirm_project_instruction_dispatch=(
-                service_confirm_project_instruction_dispatch
-            ),
-            project_instruction_context=project_instruction_context,
-            on_ephemeral_runtime_warning=(
-                (
-                    lambda code, _names, _count: on_project_instruction_activation(
-                        ProjectInstructionActivationEvent(
-                            outcome_codes=(code,),
-                        )
-                    )
-                )
-                if on_project_instruction_activation is not None
-                else None
-            ),
-            propagate_trace_call_persistence_errors=(
-                propagate_trace_call_persistence_errors
-            ),
-        )
-        # PR2b Task 1: publish BEFORE `run_turn` is called (below) -- see
-        # `self._fleet_services`'s own docstring in `__init__` for the
-        # lifetime/thread-safety contract this relies on.
-        self._fleet_services[conversation_id] = service
-        # PR3a-2 Task 4: open the survivor-discriminator window for THIS
-        # turn -- a child settling while this id is present finished
-        # within its turn (see `_inflight_turn_message_ids`); the matching
-        # discard is the FIRST statement of the `finally` below.
-        with self._change_window_lock:
-            self._inflight_turn_message_ids.add(assistant_message_id)
-
-        supersede_run_id = (
-            self._previous_primary_run_id(conversation_id)
-            if supersede_previous
-            else None
-        )
-        run_messages = list(first_request_plan.messages)
-        execution_owner = None
-        try:
-            execution_owner = self.runtime_capacity.begin_execution(
-                origin=work_origin, conversation_id=conversation_id
-            )
-            # FIRST statement in the block that owns this thread's
-            # shutdown -- see its construction above. Not merely *before*
-            # the try: one inserted line there would silently re-open the
-            # leak. If start() itself raises (thread exhaustion), the
-            # finally still runs and still closes the loop; `is_alive()`
-            # is False for a never-started thread, so the close branch is
-            # the one taken and no fd leaks.
-            turn_lifeline.start(owner=execution_owner)
-            run_id, outcome = service.run_turn(
-                execution_owner=execution_owner,
-                conversation_id=conversation_id,
-                messages=run_messages,
-                config=config,
-                # Intentionally NOT forwarding the native in-memory id here.
-                # create_run would store it, but the native id can never match
-                # any persisted_message_id -- so a run left unfinished (stopped
-                # mid-run, cancelled, failed, or crashed) would hold a stale,
-                # non-null id that resume anchoring can never match (and Task 3
-                # would drop as "off-path", silently hiding its markers). By
-                # omitting it the run row starts NULL; the controller writes the
-                # durable PERSISTED id onto the run on EVERY terminal path once
-                # the reply is persisted (see record_run_assistant_message), and
-                # any still-unfinished run stays NULL for resume's null->ordinal
-                # fallback. run_turn's assistant_message_id threading stays a
-                # generic service capability (its own tests call it directly).
-                # execution_key-first (Task 5): the service's capability
-                # check keys off api_endpoint, and execution_key is by
-                # definition "Provider key passed to chat_api_call" — the
-                # PROVIDER_PARAM_MAP key space provider_supports_native_tools
-                # matches against. `provider` (the display key) and then
-                # "agent" remain fallbacks for fakes lacking either
-                # attribute (e.g. resolution=object() in existing tests),
-                # which keeps them on the fence path unchanged.
-                api_endpoint=first_request_plan.api_endpoint,
-                # Raw selection identity for spawn resolution: an inheriting
-                # child of custom-ep:<slug> must snapshot the endpoint (and
-                # its registry base URL), not the flattened execution family.
-                parent_raw_provider=first_request_plan.selected_provider,
-                should_cancel=should_cancel,
-                supersede_run_id=supersede_run_id,
-                continuation_owner_message_id=assistant_message_id,
-                continuation_durability=(
-                    "ephemeral"
-                    if self._store.session_is_ephemeral(session_id)
-                    else "persistent"
-                ),
-                restore_provider_continuation=restore_provider_continuation,
-                restore_provider_target=restore_provider_target,
-                resume_provider_continuation=resume_provider_continuation,
-                continuation_sidecar=continuation_sidecar,
-                continuation_target=continuation_target,
-                continuation_owner_key=continuation_owner_key,
-                first_request_schema_plan=first_request_plan.schemas,
-                request_worktree_merge_confirm=request_worktree_merge_confirm,
-                requested_run_id=canvas_run_id,
-            )
-        finally:
-            # PR3a-2 Task 4: this turn is over -- from here on a settling
-            # child of it is a background (after-turn) completion. First
-            # statement of the finally so the window closes even when
-            # `run_turn` raised, before any teardown below can block.
-            with self._change_window_lock:
-                self._inflight_turn_message_ids.discard(assistant_message_id)
-            if canvas_turn_controller is not None:
-                try:
-                    canvas_turn_controller.finish_assistant_run(
-                        assistant_message_id,
-                        actual_run_id=(run_id if "run_id" in locals() else ""),
-                        terminal_status=(
-                            outcome.status if "outcome" in locals() else "error"
-                        ),
-                    )
-                except Exception:
-                    logger.warning("canvas run settlement failed closed")
-            if managed_skill_promotion_gate is not None:
-                managed_skill_promotion_gate.unbind_reader()
-            unbind_promotion_context = getattr(
-                local_provider, "unbind_instruction_promotion_context", None
-            )
-            if callable(unbind_promotion_context):
-                unbind_promotion_context()
-            run_cancelled = "outcome" in locals() and outcome.status == RUN_CANCELLED
-            self._clear_raw_shell_progress(
-                raw_shell_progress_run_ids, cancelled=run_cancelled
-            )
-            try:
-                tool_activity.finish(run_cancelled)
-            except Exception as exc:  # noqa: BLE001 — display cannot prevent run teardown
-                logger.warning(
-                    "Console tool activity display could not be settled ({})",
-                    type(exc).__name__,
-                )
-            for activity_run_id in tool_activity_run_ids:
-                self._tool_activity_runs.pop(activity_run_id, None)
-            if self._buddy_sink is not None:
-                for buddy_run_id in primary_buddy_run_ids:
-                    self._buddy_sink.release_run(buddy_run_id)
-            # PR2b Task 1: clear the published service in the SAME
-            # teardown path that already tears this run down -- not a
-            # second one. From this point `fleet_snapshot` reverts to `[]`
-            # for this conversation (unless a newer run has already
-            # published over this one -- see `_teardown_fleet_service`),
-            # even on a raised/cancelled run (this `finally` always runs).
-            # Pinned choice: a completed run's snapshot goes back to `[]`,
-            # not the run's terminal handles (see
-            # `test_fleet_snapshot_reflects_two_live_handles_in_flight_
-            # then_empty_after_run_completes`).
-            self._teardown_fleet_service(conversation_id, service)
-            # PR2a Task 6.5: stop the driver thread before closing, and
-            # join it (the stop/join/close ordering, and why a wedged
-            # thread keeps its loop open, now live in
-            # `_ModelCallLifeline.shutdown`).
-            #
-            # PR3a-1 Task 1: this tears down the PRIMARY agent's loop and
-            # nothing else. It used to be the whole run tree's -- and the
-            # comment here used to argue that was safe because "run_turn
-            # has already settled every fleet child ... so nothing should
-            # still be submitting", an invariant PR 3a deliberately
-            # breaks. A fleet child submits to a lifeline it owns itself
-            # (see `_StreamingModelAdapter.child_lifeline`), so a child
-            # still running when this line executes keeps a live transport
-            # to the model rather than losing one out from under it.
-            try:
-                turn_lifeline.shutdown()
-            finally:
-                if execution_owner is not None:
-                    execution_owner.finish_root()
-            # TASK-1971: E snapshot on EVERY terminal path -- completed,
-            # failed, cancelled, or crashed. A run that died halfway through
-            # editing is when review matters most. `run_id` is unbound when
-            # run_turn itself raised before creating the run row; the
-            # records are then logged instead of stored (nothing to attach
-            # them to), and the exception still propagates unchanged.
-            if change_reservation is not None:
-                try:
-                    if "run_id" in locals():
-                        _steps = outcome.steps if "outcome" in locals() else []
-                        _primary_paths = ChangeTurnTracker.tool_touched_paths(_steps)
-                        _touched_paths = list(
-                            dict.fromkeys(
-                                (
-                                    *_primary_paths,
-                                    *sorted(child_change_state.touched_paths),
-                                )
-                            )
-                        )
-                        finalization = self._change_finalization_coordinator.finalize(
-                            change_reservation,
-                            run_id=run_id,
-                            touched_paths=_touched_paths,
-                            kind=(
-                                CHANGE_KIND_TURN_CONCURRENT_SUBAGENT
-                                if concurrent_subagent
-                                else CHANGE_KIND_TURN
-                            ),
-                            has_live_survivors=(
-                                self._live_child_count_for_turn(assistant_message_id)
-                                > 0
-                            ),
-                        )
-                        if finalization is ChangeReviewFinalizeResult.OVERLOAD_VISIBLE:
-                            error = (
-                                change_reservation.admission_error
-                                or "change-review finalization queue unavailable"
-                            )
-                            for index, root in enumerate(
-                                change_reservation.roots,
-                                start=1,
-                            ):
-                                self._append_marker(
-                                    session_id,
-                                    format_change_tracking_failure_marker(
-                                        alias_by_root.get(
-                                            str(root), f"workspace {index}"
-                                        ),
-                                        error,
-                                    ),
-                                )
-                    else:
-                        self._change_finalization_coordinator.cancel(change_reservation)
-                except Exception:  # noqa: BLE001 -- never mask the run outcome
-                    logger.opt(exception=True).warning(
-                        "change_review: finalization scheduling failed; "
-                        "turn changes untracked"
-                    )
-            elif change_handle is not None:
-                # PR3a-1 Task 6c: close the EARLIER turn's survivor
-                # window before this turn's E. A timed-out close waiter
-                # cannot prove that close-time handoff finished, so this
-                # turn must fail closed instead of overtaking it.
-                boundary_safe = self._close_post_turn_change_window(conversation_id)
-                with self._change_window_lock:
-                    claim_failed = (
-                        successor_claim is not None and successor_claim.failed
-                    )
-                if not boundary_safe or claim_failed:
-                    change_handle = None
-            if change_handle is not None:
-                try:
-                    _steps = outcome.steps if "outcome" in locals() else []
-                    _current_live_handles = service.live_subagent_handles()
-                    _current_state_pending = bool(_current_live_handles)
-                    with self._change_window_lock:
-                        if _current_state_pending:
-                            _live_states = self._child_change_states.setdefault(
-                                conversation_id, {}
-                            )
-                            _live_states[child_change_state.owner_key] = (
-                                child_change_state
-                            )
-                            child_change_state.pending_scopes = max(
-                                0,
-                                len(_current_live_handles)
-                                - child_change_state.live_scopes,
-                            )
-                        _pending_child_states_before_e = tuple(
-                            self._child_change_states.get(conversation_id, {}).values()
-                        )
-                        _e_child_states = {
-                            state.owner_key: state
-                            for state in inherited_child_states_at_b
-                        }
-                        _e_child_states.update(
-                            {
-                                state.owner_key: state
-                                for state in _pending_child_states_before_e
-                            }
-                        )
-                        if child_change_state.touched_paths:
-                            _e_child_states[child_change_state.owner_key] = (
-                                child_change_state
-                            )
-                        _child_paths_before_e = sorted(
-                            {
-                                path
-                                for state in _e_child_states.values()
-                                for path in state.touched_paths
-                            }
-                        )
-                    # A handle can settle between the parent-visible query
-                    # and registration. Keep the captured reference for E,
-                    # but do not strand a dead state in the live map after
-                    # its one settle callback already ran.
-                    if _current_state_pending and not service.live_subagent_handles():
-                        with self._change_window_lock:
-                            states = self._child_change_states.get(conversation_id)
-                            if (
-                                states is not None
-                                and states.get(child_change_state.owner_key)
-                                is child_change_state
-                                and child_change_state.live_scopes == 0
-                            ):
-                                child_change_state.pending_scopes = 0
-                                states.pop(child_change_state.owner_key, None)
-                                if not states:
-                                    self._child_change_states.pop(conversation_id, None)
-                    _primary_paths = ChangeTurnTracker.tool_touched_paths(_steps)
-                    _touched_paths = list(
-                        dict.fromkeys((*_primary_paths, *_child_paths_before_e))
-                    )
-                    _records = self._change_tracker.end_turn(
-                        change_handle,
-                        touched_paths=_touched_paths,
-                    )
-                    if "run_id" in locals():
-                        self._record_change_snapshots(
-                            run_id=run_id,
-                            records=_records,
-                            kind=(
-                                CHANGE_KIND_TURN_CONCURRENT_SUBAGENT
-                                if concurrent_subagent
-                                else CHANGE_KIND_TURN
-                            ),
-                        )
-                        self._append_change_markers(
-                            session_id,
-                            run_id,
-                            _records,
-                            kind=(
-                                CHANGE_KIND_TURN_CONCURRENT_SUBAGENT
-                                if concurrent_subagent
-                                else CHANGE_KIND_TURN
-                            ),
-                        )
-                        if _pending_child_states_before_e:
-                            self._open_post_turn_change_window(
-                                conversation_id,
-                                run_id=run_id,
-                                session_id=session_id,
-                                handle=change_handle,
-                                child_states=_pending_child_states_before_e,
-                            )
-                    elif _records:
-                        logger.warning(
-                            "change_review: run crashed before a run row "
-                            f"existed; {len(_records)} change record(s) "
-                            "not stored"
-                        )
-                except Exception:  # noqa: BLE001 -- never mask the run's outcome
-                    logger.opt(exception=True).warning(
-                        "change_review: end_turn failed; turn changes untracked"
-                    )
-            if "run_id" in locals() and change_review_skipped_roots:
-                self._append_skipped_change_review_markers(
-                    session_id,
-                    change_review_skipped_roots,
-                )
-            # task-5 (turn-file-annotate, spec §4): stamp exactly the
-            # notes this run's attach seam included (captured above,
-            # before `run_turn` was even called) and disclose what was
-            # sent. Placed BESIDE the marker seam above -- not inside
-            # `_append_change_markers`, and deliberately NOT nested under
-            # `if change_handle is not None:`: diff-feedback notes are
-            # about what the user told the agent, unrelated to whether
-            # THIS turn's own tracked roots changed, or whether change
-            # tracking is even configured for this run at all -- the
-            # marker seam's internal `if files:` gate ("nothing to
-            # report") must not become a reason to strand notes that were
-            # genuinely delivered in the outbound payload. Gated only on
-            # the run having actually produced assistant output: a run
-            # that errors, gets cancelled empty-handed, or crashes before
-            # a run row exists leaves every attached note pending for the
-            # retry -- the block only ever lived in the outbound COPY (see
-            # the attach seam above run_turn), so nothing is lost by not
-            # stamping. `run_id`/`outcome` are bound together by the same
-            # assignment, so the one `locals()` check covers both. Double
-            # delivery is impossible by construction (the pending query
-            # excludes already-stamped rows). Never breaks the reply.
-            if (
-                "run_id" in locals()
-                and outcome.final_text
-                and diff_feedback_included_ids
-            ):
-                try:
-                    # task-6 fix round: stamp with the id of THIS
-                    # (completing) run -- the run whose completion is
-                    # actually doing the delivering, which resume
-                    # re-derivation anchors the disclosure row to. `run_id`
-                    # is already known-bound by the `locals()` check above.
-                    #
-                    # Qodo #4 (PR #1779 fix round): disclose only the ids
-                    # `mark_notes_delivered` reports ACTUALLY stamped, not
-                    # every id this seam captured -- a concurrent delivery
-                    # elsewhere could have already stamped one of them
-                    # first (the UPDATE's own `delivered_at IS NULL` guard
-                    # silently skips it), and disclosing a note nobody
-                    # verifiably delivered on THIS run's completion would
-                    # be dishonest. Concurrent replies on one conversation
-                    # are architecturally serialized today, so this is
-                    # defense in depth, not a reachable-today bug.
-                    stamped_ids = set(
-                        self._db.mark_notes_delivered(
-                            diff_feedback_included_ids, delivered_by_run_id=run_id
-                        )
-                    )
-                    disclosed_notes = [
-                        note
-                        for note in diff_feedback_included_notes
-                        if int(note["id"]) in stamped_ids
-                    ]
-                    if disclosed_notes:
-                        self._store.append_message(
-                            session_id,
-                            role=ConsoleMessageRole.TOOL,
-                            content=format_diff_feedback_disclosure(disclosed_notes),
-                            activity_presentation=ConsoleActivityPresentation(
-                                "feedback", "Feedback delivered", "done"
-                            ),
-                        )
-                except Exception:  # noqa: BLE001 -- notes must never break the reply
-                    logger.opt(exception=True).warning(
-                        "change_review: could not stamp/disclose diff feedback"
-                    )
-        capture_outcome = (
-            "complete"
-            if outcome.status == RUN_DONE
-            else "stopped"
-            if outcome.status == RUN_CANCELLED
-            else "failed"
-        )
-        capture_update = thinking_capture.settle(capture_outcome)
-        if capture_update.envelope is not None:
-            self._store.settle_message_thinking(
-                assistant_message_id,
-                capture_update.envelope,
-                generation_token=generation_token,
-            )
-        for step in outcome.steps:
-            logger.info(
-                "agent run step",
-                agent_kind=AGENT_KIND_PRIMARY,
-                step_kind=step.kind,
-                tool_name=step.tool_name,
-                summary=step.summary,
-                step_index=step.index,
-            )
-        logger.info(
-            "console agent bridge run_reply end",
-            conversation_id=conversation_id,
-            session_id=session_id,
-            outcome_status=outcome.status,
-            final_text_len=len(outcome.final_text),
-            step_count=len(outcome.steps),
-        )
-        # PR3a-1 Task 6b (audit F1): under THIS turn's own key, so the
-        # terminal status it writes is final -- a surviving child's later
-        # steps land in the child's own slot and can no longer reset this
-        # one to "running" for the rest of the process's life.
-        self._publish_live(
-            conversation_id,
-            primary_live_key,
-            AgentLiveSnapshot(
-                status=outcome.status,
-                step=live_steps.count,
-                steps=live_steps.tail(5),
-                # PR2b Task 2: `service` here -- NOT `self.fleet_snapshot(
-                # conversation_id)` -- deliberately: the `finally` block
-                # just above already ran `self._teardown_fleet_service`,
-                # which pops THIS run's own `self._fleet_services` entry
-                # (assuming no overlapping resend already overwrote it --
-                # see that method's docstring), so a lookup by
-                # conversation_id here would see `[]` and wipe out every
-                # child's final status right when the run ends. The
-                # `service` local variable is unaffected by that pop -- by
-                # this point `_settle_fleet` (called from inside
-                # `run_turn`, before it returned above) has already
-                # joined/abandoned every fleet child, so every handle
-                # `service.fleet_snapshot()` returns here is already
-                # terminal.
-                subagents=_subagent_summaries_from_fleet(
-                    service.fleet_snapshot(), subagents
-                ),
-            ),
-            primary=True,
-        )
-        # The run just finished -- drop any stale historical cache entry so
-        # a *later* resume (in a future process) always re-derives fresh
-        # rather than reading this run's now-superseded snapshot (belt and
-        # braces on top of the pop at run start above).
-        self._historical_cache.pop(conversation_id, None)
-        return run_id, outcome
+            persona_policy_rules=persona_policy_rules,
+            profile_context_service=profile_context_service,
+            personal_context_snapshot=personal_context_snapshot,
+            accepted_turn_id=accepted_turn_id,
+            parent_budget_deadline=parent_budget_deadline,
+            on_primary_budget_settled=on_primary_budget_settled,
+            recovery_provider=recovery_provider,
+            code_review_provider=code_review_provider,
+            on_tool_surface_selected=on_tool_surface_selected,
+            _workflow_preparation=_workflow_preparation,
+        ) as prepared:
+            yield prepared
 
     def _teardown_fleet_service(
         self, conversation_id: str, service: AgentService
@@ -8505,6 +6850,8 @@ class ConsoleAgentBridge:
         assistant_message_id: str,
         run_id: str | None,
         status: str,
+        *,
+        workflow_task: WorkflowTaskClaim | None = None,
     ) -> None:
         """Record one settlement, notify individually, then fire any final drain.
 
@@ -8539,6 +6886,7 @@ class ConsoleAgentBridge:
             # HERE knows which was which by fire time.
             record = SettledChild(
                 run_id=run_id,
+                workflow_task=workflow_task,
                 status=status,
                 session_id=session_id,
                 assistant_message_id=assistant_message_id,
@@ -8958,19 +7306,60 @@ class ConsoleAgentBridge:
 
     @property
     def message_store(self):
-        """Create the shared progress store only when execution needs it."""
+        """Create the shared progress store; publish loaded hints after initialization."""
+        from tldw_chatbook.Agents.fleet_messages import MessageError, MessageStore
+
+        created = False
         with self._message_store_lock:
             if self._progress_closed:
-                from tldw_chatbook.Agents.fleet_messages import MessageError
-
                 raise MessageError("unavailable")
             if self._message_store is None:
-                from tldw_chatbook.Agents.fleet_messages import MessageStore
-
                 self._message_store = MessageStore()
+                self._message_store.on_enqueue = self._on_progress_enqueue
+                # Revocation may race construction; assignment precedes this
+                # check so close can always deny this exact newly created store.
+                if self._progress_closed:
+                    self._message_store.begin_close()
+                    raise MessageError("unavailable")
                 if self._store is not None:
-                    self._store.register_progress_message_store(self._message_store)
-            return self._message_store
+                    self._store.register_progress_message_store(
+                        self._message_store, publish_hints=False
+                    )
+                created = True
+            message_store = self._message_store
+            if self._progress_closed:
+                message_store.begin_close()
+                raise MessageError("unavailable")
+        if created and self._store is not None:
+            for session_id in self._store.progress_owner_ids():
+                if self._progress_closed or self._message_store is not message_store:
+                    break
+                self._store.publish_progress_inbox_hints(
+                    session_id, message_store=message_store
+                )
+        return message_store
+
+    def on_progress_enqueued(
+        self, name: str, consumer: Callable[[str, str, MessageIdentity], None]
+    ) -> None:
+        """Register body-free committed-report hints; callbacks grant no authority."""
+        with self._progress_consumer_lock:
+            self._progress_consumers[name] = consumer
+
+    def _on_progress_enqueue(
+        self, owner_key: str, message_id: str, identity: MessageIdentity
+    ) -> None:
+        """Publish only after queue admission/commit, outside queue and owner locks."""
+        with self._progress_consumer_lock:
+            consumers = tuple(self._progress_consumers.values())
+        for consumer in consumers:
+            try:
+                consumer(owner_key, message_id, identity)
+            except Exception as exc:  # noqa: BLE001 -- one hint cannot block another
+                logger.warning(
+                    "progress hint consumer raised (exception_type={})",
+                    type(exc).__name__,
+                )
 
     def _session_progress_inbox(self, session_id: str) -> MessageInbox | None:
         """Noncreating lookup of the native session's exact progress owner."""
@@ -8982,6 +7371,20 @@ class ConsoleAgentBridge:
             return (
                 self._message_store.get_inbox(owner_id) if owner_id is not None else None
             )
+
+    def progress_pending_metadata(
+        self, session_id: str
+    ) -> tuple[tuple[str, MessageIdentity], ...]:
+        """Read current IDs/source metadata for a native session; never consume."""
+        inbox = self._session_progress_inbox(session_id)
+        if inbox is None:
+            return ()
+        from tldw_chatbook.Agents.fleet_messages import MessageError
+
+        try:
+            return inbox.pending_metadata()
+        except MessageError:
+            return ()
 
     def progress_snapshot(self, owner_id: str) -> tuple[ProgressMessage, ...]:
         """Inspect an opaque owner key from store.progress_owner_id; never allocate."""
@@ -9023,28 +7426,99 @@ class ConsoleAgentBridge:
     def close_progress(
         self, session_id: str, *, conversation_id: str | None = None
     ) -> None:
-        """Release a native binding before cancellation; last close drops progress."""
+        """Revoke a native binding; last close retains saved pending reports."""
         if self._progress_closed or self._message_store is None:
-            return None
+            return
         with self._store.progress_owner_scope(
             session_id, release=True, message_store=self._message_store
         ) as owner_id:
             if owner_id is not None:
                 self._fleet_coordinators.pop(conversation_id or session_id, None)
 
-    def close_all_progress(self) -> None:
-        """Permanently invalidate progress before worker shutdown."""
+    def begin_close_progress(
+        self, session_id: str, *, conversation_id: str | None = None
+    ) -> None:
+        """Immediately revoke native authority; leave physical cleanup to runtime."""
+        if self._progress_closed or self._message_store is None:
+            return
+        message_store = self._message_store
+        with self._store.progress_owner_scope(
+            session_id, release=True, message_store=message_store, defer_close=True
+        ) as owner_id:
+            if owner_id is not None:
+                inbox = message_store.begin_close_inbox(owner_id)
+                self._progress_close_drains[session_id] = (
+                    message_store, owner_id, inbox
+                )
+                self._fleet_coordinators.pop(conversation_id or session_id, None)
+
+    async def await_progress_closed(self, session_id: str) -> None:
+        """Own exact queue cleanup until admitted SQL physically releases its lock."""
+        record = self._progress_close_drains.get(session_id)
+        if record is None:
+            return
+        message_store, owner_id, inbox = record
+        physical = asyncio.create_task(
+            asyncio.to_thread(message_store.finish_close_inbox, owner_id, inbox),
+            name=f"console-progress-close-{session_id[:8]}",
+        )
+        cancelled = False
+        try:
+            while True:
+                try:
+                    await asyncio.shield(physical)
+                    break
+                except asyncio.CancelledError:
+                    cancelled = True
+        finally:
+            if self._progress_close_drains.get(session_id) is record:
+                self._progress_close_drains.pop(session_id, None)
+        if cancelled:
+            raise asyncio.CancelledError
+
+    def begin_close_all_progress(self) -> None:
+        """Immediately revoke all live authority without waiting for durable SQL."""
+        # This deny-only latch must never wait for initialization's SQL drain.
+        self._progress_closed = True
+        message_store = self._message_store
+        if message_store is not None:
+            message_store.begin_close()
         with self._runtime_capacity_lock:
             self._runtime_capacity_closed = True
-        with self._message_store_lock:
-            self._progress_closed = True
-            if self._message_store is not None:
-                self._message_store.close()
-            self._fleet_coordinators.clear()
+        self._fleet_coordinators.clear()
         with self._live_usage_lock:
             self._live_usage_closed = True
             self._live_turn_usage.clear()
             self._live_usage_owners.clear()
+
+    async def await_all_progress_closed(self) -> None:
+        """Retain physical queue cleanup through close timeout or cancellation."""
+        if self._progress_shutdown_task is None:
+            self._progress_shutdown_task = asyncio.create_task(
+                asyncio.to_thread(self._finish_close_all_progress),
+                name="console-progress-dispose",
+            )
+        cancelled = False
+        while True:
+            try:
+                await asyncio.shield(self._progress_shutdown_task)
+                break
+            except asyncio.CancelledError:
+                cancelled = True
+        if cancelled:
+            raise asyncio.CancelledError
+
+    def _finish_close_all_progress(self) -> None:
+        """Wait away from the UI for initialization, then release exact queue state."""
+        with self._message_store_lock:
+            message_store = self._message_store
+        if message_store is not None:
+            message_store.close()
+
+    def close_all_progress(self) -> None:
+        """Synchronous compatibility cleanup outside runtime's async disposal."""
+        self.begin_close_all_progress()
+        self._finish_close_all_progress()
 
     def _conversation_fleet_coordinator(
         self,
@@ -9052,6 +7526,7 @@ class ConsoleAgentBridge:
         *,
         create: bool = True,
         progress_owner_id: str | None = None,
+        message_inbox: MessageInbox | None = None,
     ) -> FleetCoordinator | None:
         """The coordinator for this conversation, built on first use.
 
@@ -9100,8 +7575,8 @@ class ConsoleAgentBridge:
         # _setting` is what tests monkeypatch to flip the kill switch
         # (e.g. `test_inline_fleet_off_spawn_still_produces_a_live_
         # subagent_row`), and a bound from-import would not see it.
-        max_live = agent_service_module._coerce_max_live_subagents(
-            agent_service_module._setting(
+        max_live = agent_service_module.coerce_max_live_subagents(
+            agent_service_module.setting(
                 agent_service_module.MAX_LIVE_SUBAGENTS_KEY,
                 agent_service_module.DEFAULT_MAX_LIVE_SUBAGENTS,
             )
@@ -9113,27 +7588,40 @@ class ConsoleAgentBridge:
         # same way -- construction for a new coordinator, an in-place
         # re-size for an existing one. Replacing the coordinator would
         # drop the retained transcripts along with every live handle.
-        retained_transcripts = agent_service_module._coerce_retained_transcripts(
-            agent_service_module._setting(
+        retained_transcripts = agent_service_module.coerce_retained_transcripts(
+            agent_service_module.setting(
                 agent_service_module.RETAINED_TRANSCRIPTS_KEY,
                 agent_service_module.DEFAULT_RETAINED_TRANSCRIPTS,
             )
         )
         retained_transcript_max_chars = (
-            agent_service_module._coerce_retained_transcript_max_chars(
-                agent_service_module._setting(
+            agent_service_module.coerce_retained_transcript_max_chars(
+                agent_service_module.setting(
                     agent_service_module.RETAINED_TRANSCRIPT_MAX_CHARS_KEY,
                     agent_service_module.DEFAULT_RETAINED_TRANSCRIPT_MAX_CHARS,
                 )
             )
         )
+        progress_store = self.message_store
+        if message_inbox is None:
+            message_inbox = progress_store.get_inbox(progress_owner_id or conversation_id)
+            if message_inbox is None and create:
+                # Production passes the exact native-prepared inbox; legacy
+                # direct callers also wait before taking fleet admission.
+                message_inbox = progress_store.open_inbox(
+                    progress_owner_id or conversation_id
+                )
         with self._fleet_admission_lock:
+            if self._progress_closed:
+                from tldw_chatbook.Agents.fleet_messages import MessageError
+
+                raise MessageError("unavailable")
             coordinator = self._fleet_coordinators.get(conversation_id)
             if (
                 coordinator is not None
                 and progress_owner_id is not None
                 and coordinator.message_inbox
-                is not self.message_store.get_inbox(progress_owner_id)
+                is not message_inbox
             ):
                 # Native state replacement closed the previous inbox. A new binding
                 # must not reuse a coordinator carrying that revoked capability.
@@ -9145,7 +7633,7 @@ class ConsoleAgentBridge:
                 coordinator = FleetCoordinator(
                     max_live=max_live,
                     clock=self._clock,
-                    message_inbox=self.message_store.open_inbox(progress_owner_id or conversation_id),
+                    message_inbox=message_inbox,
                     retained_transcripts=retained_transcripts,
                     retained_transcript_max_chars=retained_transcript_max_chars,
                     on_reserve=functools.partial(
@@ -9411,7 +7899,35 @@ class ConsoleAgentBridge:
         primary_live_key: str,
         run_id: str,
         agent_kind: str,
+        *,
+        inline_subagents: list[SubAgentSummary] | None = None,
     ):
+        snapshot = self._live.get(conversation_id, {}).get(primary_live_key)
+        if (
+            agent_kind == AGENT_KIND_SUBAGENT
+            and inline_subagents
+            and snapshot is not None
+            and snapshot.steps
+            and snapshot.steps[-1].kind == STEP_SPAWN
+        ):
+            # An inline child's model scope starts after its row is saved,
+            # before its first provider call. The primary's pending SPAWN
+            # identifies the latest fallback row; skill calls/refusals cannot
+            # reuse it after their parent step has advanced.
+            target = self._db.get_run_resolved_target(run_id)
+            if target is not None:
+                inline_subagents[-1] = dataclass_replace(
+                    inline_subagents[-1],
+                    run_id=run_id,
+                    resolved_provider=target["provider"],
+                    resolved_model=target["model"],
+                )
+                self._publish_live(
+                    conversation_id,
+                    primary_live_key,
+                    dataclass_replace(snapshot, subagents=tuple(inline_subagents)),
+                    primary=False,
+                )
         owner = (conversation_id, agent_kind, primary_live_key)
         with self._live_usage_lock:
             registered = not self._live_usage_closed
@@ -9430,10 +7946,15 @@ class ConsoleAgentBridge:
         self,
         run_id: str,
         callback: Callable[[str], object] | None,
+        *,
+        observation_owners: tuple[object, ...] = (),
     ) -> None:
         with self._live_usage_lock:
             self._live_usage_owners.pop(run_id, None)
             self._live_turn_usage.pop(run_id, None)
+        from .console_tool_activity import retire_child_approval_feedback
+
+        retire_child_approval_feedback(self, run_id, observation_owners)
         if callback is not None:
             callback(run_id)
 
@@ -9839,7 +8360,8 @@ class ConsoleAgentBridge:
         cached = self._historical_cache.get(conversation_id)
         if cached is not None:
             return cached
-        snapshot = self._derive_historical_snapshot(conversation_id)
+        with operation_owned_connection(self._db):
+            snapshot = self._derive_historical_snapshot(conversation_id)
         self._historical_cache[conversation_id] = snapshot
         return snapshot
 
@@ -9990,9 +8512,10 @@ class ConsoleAgentBridge:
             rather than a lookup error); its ``parent_run_id`` when it is
             a recorded sub-agent run.
         """
-        record = self._db.get_run_metadata(run_id)
-        parent_run_id = record.get("parent_run_id") if record else None
-        return parent_run_id or run_id
+        with operation_owned_connection(self._db):
+            record = self._db.get_run_metadata(run_id)
+            parent_run_id = record.get("parent_run_id") if record else None
+            return parent_run_id or run_id
 
     def run_log_available(
         self, run_id: str, *, cancelled: Callable[[], bool] | None = None
@@ -10281,27 +8804,10 @@ class ConsoleAgentBridge:
         self, conversation_id: str
     ) -> list[tuple[str | None, list[ConsoleChatMessage]]]:
         """Return anchored blocks containing only durable Change Review rows."""
-        records = [
-            record
-            for record in self._db.list_runs(conversation_id, include_superseded=False)
-            if record["agent_kind"] == AGENT_KIND_PRIMARY
-        ]
-        records.reverse()
-        snapshots: dict[str, list[dict]] = {}
-        try:
-            for row in self._db.change_snapshots_for_conversation(conversation_id):
-                snapshots.setdefault(str(row["run_id"]), []).append(row)
-        except Exception:  # noqa: BLE001 -- transcript refresh must degrade safely
-            snapshots = {}
-        return [
-            (
-                record.get("assistant_message_id"),
-                self._change_review_marker_block(
-                    record, snapshots.get(str(record.get("id")), ())
-                ),
+        with operation_owned_connection(self._db):
+            return _read_change_review_markers(
+                self._db, conversation_id, self._change_review_marker_block
             )
-            for record in records
-        ]
 
     def resume_marker_messages(
         self,
@@ -10360,162 +8866,163 @@ class ConsoleAgentBridge:
         Placement of the returned blocks into a transcript is the caller's
         job -- see ``inject_resume_agent_markers``.
         """
-        records = self._db.list_runs(
-            conversation_id,
-            include_superseded=False,
-            agent_kind=AGENT_KIND_PRIMARY,
-        )
-        records.reverse()  # list_runs is newest-first; markers must read chronologically
-        thinking_rounds_by_owner = thinking_round_ordinals_by_assistant_message_id or {}
-        # TASK-1972 review round: ONE conversation-level query, grouped in
-        # memory -- the per-run lookup was an N+1 over sqlite on every
-        # resume (finding 3).
-        snap_by_run: dict[str, list[dict]] = {}
-        try:
-            for _row in self._db.change_snapshots_for_conversation(conversation_id):
-                snap_by_run.setdefault(str(_row["run_id"]), []).append(_row)
-        except Exception:  # noqa: BLE001 -- resume must not die on this
-            snap_by_run = {}
-        # task-6 fix round (CRITICAL C1): ONE batched, GUARDED query for
-        # the whole conversation -- same no-N+1 precedent as the snapshot
-        # fetch immediately above, and the same "resume must not die on
-        # this" posture: a change_notes read failure must degrade to no
-        # disclosure rows, not break conversation resume entirely.
-        #
-        # Grouped by (target_run_id, delivered_at) where target_run_id is
-        # `delivered_by_run_id` -- the run whose COMPLETION actually
-        # stamped the note delivered, matching live emission's placement
-        # exactly, and immune to both failure modes an earlier version of
-        # this method had: (a) one live batch spanning notes anchored to
-        # TWO different runs no longer fragments into two resume rows --
-        # it stays one row, keyed on the single delivering run; (b) a note
-        # annotated against a run that later became superseded (and so is
-        # excluded from `records`, silently dropping any block keyed to
-        # it) still surfaces, because the delivering run -- typically
-        # still live/non-superseded -- is what the row is keyed to, not
-        # the (possibly off-branch) annotated run.
-        #
-        # `delivered_by_run_id` is NULL on rows stamped before that column
-        # existed (a pre-migration DB) or by any future caller that omits
-        # it -- there is no way to recover which run delivered those, so
-        # they fall back to the note's OWN `run_id` (the annotated run):
-        # the same position this method used before the fix round, kept
-        # here only as the legacy floor, not the common path.
-        disclosure_batches: dict[str, dict[str, list[dict]]] = {}
-        try:
-            for _note in self._db.delivered_notes_for_conversation(conversation_id):
-                _target = _note.get("delivered_by_run_id") or _note.get("run_id")
-                _delivered_at = str(_note.get("delivered_at"))
-                disclosure_batches.setdefault(str(_target), {}).setdefault(
-                    _delivered_at, []
-                ).append(_note)
-        except Exception:  # noqa: BLE001 -- resume must not die on this
-            disclosure_batches = {}
-        blocks: list[tuple[str | None, list[ConsoleChatMessage]]] = []
-        for record in records:
-            block: list[ConsoleChatMessage] = []
-            steps = record.get("steps") or []
-            planning_deriver = _PendingPrimaryPlanningDeriver()
-            actual_thinking_rounds = thinking_rounds_by_owner.get(
-                str(record.get("assistant_message_id") or ""),
-                frozenset(),
+        with operation_owned_connection(self._db):
+            records = self._db.list_runs(
+                conversation_id,
+                include_superseded=False,
+                agent_kind=AGENT_KIND_PRIMARY,
             )
-            for step in steps:
-                kind = str(step.get("kind") or "")
-                planning_marker = planning_deriver.observe(
-                    step,
-                    AGENT_KIND_PRIMARY,
-                    actual_thinking_round_ordinals=actual_thinking_rounds,
+            records.reverse()  # list_runs is newest-first; markers must read chronologically
+            thinking_rounds_by_owner = thinking_round_ordinals_by_assistant_message_id or {}
+            # TASK-1972 review round: ONE conversation-level query, grouped in
+            # memory -- the per-run lookup was an N+1 over sqlite on every
+            # resume (finding 3).
+            snap_by_run: dict[str, list[dict]] = {}
+            try:
+                for _row in self._db.change_snapshots_for_conversation(conversation_id):
+                    snap_by_run.setdefault(str(_row["run_id"]), []).append(_row)
+            except Exception:  # noqa: BLE001 -- resume must not die on this
+                snap_by_run = {}
+            # task-6 fix round (CRITICAL C1): ONE batched, GUARDED query for
+            # the whole conversation -- same no-N+1 precedent as the snapshot
+            # fetch immediately above, and the same "resume must not die on
+            # this" posture: a change_notes read failure must degrade to no
+            # disclosure rows, not break conversation resume entirely.
+            #
+            # Grouped by (target_run_id, delivered_at) where target_run_id is
+            # `delivered_by_run_id` -- the run whose COMPLETION actually
+            # stamped the note delivered, matching live emission's placement
+            # exactly, and immune to both failure modes an earlier version of
+            # this method had: (a) one live batch spanning notes anchored to
+            # TWO different runs no longer fragments into two resume rows --
+            # it stays one row, keyed on the single delivering run; (b) a note
+            # annotated against a run that later became superseded (and so is
+            # excluded from `records`, silently dropping any block keyed to
+            # it) still surfaces, because the delivering run -- typically
+            # still live/non-superseded -- is what the row is keyed to, not
+            # the (possibly off-branch) annotated run.
+            #
+            # `delivered_by_run_id` is NULL on rows stamped before that column
+            # existed (a pre-migration DB) or by any future caller that omits
+            # it -- there is no way to recover which run delivered those, so
+            # they fall back to the note's OWN `run_id` (the annotated run):
+            # the same position this method used before the fix round, kept
+            # here only as the legacy floor, not the common path.
+            disclosure_batches: dict[str, dict[str, list[dict]]] = {}
+            try:
+                for _note in self._db.delivered_notes_for_conversation(conversation_id):
+                    _target = _note.get("delivered_by_run_id") or _note.get("run_id")
+                    _delivered_at = str(_note.get("delivered_at"))
+                    disclosure_batches.setdefault(str(_target), {}).setdefault(
+                        _delivered_at, []
+                    ).append(_note)
+            except Exception:  # noqa: BLE001 -- resume must not die on this
+                disclosure_batches = {}
+            blocks: list[tuple[str | None, list[ConsoleChatMessage]]] = []
+            for record in records:
+                block: list[ConsoleChatMessage] = []
+                steps = record.get("steps") or []
+                planning_deriver = _PendingPrimaryPlanningDeriver()
+                actual_thinking_rounds = thinking_rounds_by_owner.get(
+                    str(record.get("assistant_message_id") or ""),
+                    frozenset(),
                 )
-                if planning_marker is not None:
-                    block.append(planning_marker)
-                text = format_agent_step_marker(
-                    kind,
-                    tool_name=step.get("tool_name"),
-                    result=step.get("result"),
-                    summary=step.get("summary"),
-                )
-                if text is not None:
+                for step in steps:
+                    kind = str(step.get("kind") or "")
+                    planning_marker = planning_deriver.observe(
+                        step,
+                        AGENT_KIND_PRIMARY,
+                        actual_thinking_round_ordinals=actual_thinking_rounds,
+                    )
+                    if planning_marker is not None:
+                        block.append(planning_marker)
+                    text = format_agent_step_marker(
+                        kind,
+                        tool_name=step.get("tool_name"),
+                        result=step.get("result"),
+                        summary=step.get("summary"),
+                    )
+                    if text is not None:
+                        block.append(
+                            ConsoleChatMessage(
+                                role=ConsoleMessageRole.TOOL,
+                                content=text,
+                                status="complete",
+                                activity_presentation=build_step_activity_presentation(
+                                    str(step.get("kind") or ""),
+                                    tool_name=step.get("tool_name"),
+                                    result=step.get("result"),
+                                    tool_outcome=step.get("tool_outcome"),
+                                ),
+                                activity_round_ordinal=(
+                                    planning_deriver.active_round_ordinal
+                                ),
+                                # AC#5: a resumed marker is as expandable as a
+                                # live one -- the step rows carry the full result.
+                                tool_output_full=full_step_output(
+                                    str(step.get("kind") or ""),
+                                    result=step.get("result"),
+                                    summary=step.get("summary"),
+                                    marker_text=text,
+                                ),
+                            )
+                        )
+                snap_rows = snap_by_run.get(str(record.get("id")), [])
+                block.extend(self._change_review_marker_block(record, snap_rows))
+                # task-6 (turn-file-annotate, spec §4) + fix round: append this
+                # run's own diff-feedback disclosure row(s) -- i.e. every
+                # delivery batch keyed to THIS run as the delivering run (see
+                # `disclosure_batches` construction above for the grouping and
+                # legacy-fallback rules). Placed after this run's own marker
+                # rows (steps, change-summary/failure rows), never gated on
+                # `snap_rows`, so a run with delivered notes but no snapshot
+                # rows at all (tracking failed or was never configured --
+                # delivery does not depend on tracking succeeding) still
+                # yields its disclosure row(s). This is the designed healer
+                # for Task 5's live seam, which stamps `delivered_at` then
+                # appends the disclosure row in one `try`: if the append fails
+                # after the stamp lands, the DB still records the delivery but
+                # the live transcript never got a row -- a fresh resume
+                # surfaces it regardless, byte-identical to what live emission
+                # would have produced (same shared `format_diff_feedback_disclosure`).
+                for _delivered_at in sorted(
+                    disclosure_batches.get(str(record.get("id")), {})
+                ):
                     block.append(
                         ConsoleChatMessage(
                             role=ConsoleMessageRole.TOOL,
-                            content=text,
+                            content=format_diff_feedback_disclosure(
+                                disclosure_batches[str(record.get("id"))][_delivered_at]
+                            ),
                             status="complete",
-                            activity_presentation=build_step_activity_presentation(
-                                str(step.get("kind") or ""),
-                                tool_name=step.get("tool_name"),
-                                result=step.get("result"),
-                                tool_outcome=step.get("tool_outcome"),
-                            ),
-                            activity_round_ordinal=(
-                                planning_deriver.active_round_ordinal
-                            ),
-                            # AC#5: a resumed marker is as expandable as a
-                            # live one -- the step rows carry the full result.
-                            tool_output_full=full_step_output(
-                                str(step.get("kind") or ""),
-                                result=step.get("result"),
-                                summary=step.get("summary"),
-                                marker_text=text,
+                            activity_presentation=ConsoleActivityPresentation(
+                                "feedback", "Feedback delivered", "done"
                             ),
                         )
                     )
-            snap_rows = snap_by_run.get(str(record.get("id")), [])
-            block.extend(self._change_review_marker_block(record, snap_rows))
-            # task-6 (turn-file-annotate, spec §4) + fix round: append this
-            # run's own diff-feedback disclosure row(s) -- i.e. every
-            # delivery batch keyed to THIS run as the delivering run (see
-            # `disclosure_batches` construction above for the grouping and
-            # legacy-fallback rules). Placed after this run's own marker
-            # rows (steps, change-summary/failure rows), never gated on
-            # `snap_rows`, so a run with delivered notes but no snapshot
-            # rows at all (tracking failed or was never configured --
-            # delivery does not depend on tracking succeeding) still
-            # yields its disclosure row(s). This is the designed healer
-            # for Task 5's live seam, which stamps `delivered_at` then
-            # appends the disclosure row in one `try`: if the append fails
-            # after the stamp lands, the DB still records the delivery but
-            # the live transcript never got a row -- a fresh resume
-            # surfaces it regardless, byte-identical to what live emission
-            # would have produced (same shared `format_diff_feedback_disclosure`).
-            for _delivered_at in sorted(
-                disclosure_batches.get(str(record.get("id")), {})
-            ):
-                block.append(
-                    ConsoleChatMessage(
-                        role=ConsoleMessageRole.TOOL,
-                        content=format_diff_feedback_disclosure(
-                            disclosure_batches[str(record.get("id"))][_delivered_at]
-                        ),
-                        status="complete",
-                        activity_presentation=ConsoleActivityPresentation(
-                            "feedback", "Feedback delivered", "done"
-                        ),
-                    )
-                )
-            blocks.append((record.get("assistant_message_id"), block))
+                blocks.append((record.get("assistant_message_id"), block))
 
-        try:
-            local_records = self._db.local_command_resume_records(conversation_id)
-        except Exception:  # noqa: BLE001 -- poison local rows must not break resume
-            local_records = []
-        for record in local_records:
-            if not isinstance(record, Mapping):
-                continue
-            anchor = record.get("assistant_message_id")
-            if anchor is not None and (type(anchor) is not str or not anchor.strip()):
-                continue
-            marker = local_command_resume_marker(record)
-            if marker is not None:
-                blocks.append(
-                    (
-                        anchor
-                        if anchor is not None
-                        else TRANSCRIPT_START_MARKER_ANCHOR,
-                        [marker],
+            try:
+                local_records = self._db.local_command_resume_records(conversation_id)
+            except Exception:  # noqa: BLE001 -- poison local rows must not break resume
+                local_records = []
+            for record in local_records:
+                if not isinstance(record, Mapping):
+                    continue
+                anchor = record.get("assistant_message_id")
+                if anchor is not None and (type(anchor) is not str or not anchor.strip()):
+                    continue
+                marker = local_command_resume_marker(record)
+                if marker is not None:
+                    blocks.append(
+                        (
+                            anchor
+                            if anchor is not None
+                            else TRANSCRIPT_START_MARKER_ANCHOR,
+                            [marker],
+                        )
                     )
-                )
-        return blocks
+            return blocks
 
     def append_todo_marker(
         self, session_id: str, tasks: list[dict[str, object]]
@@ -10672,7 +9179,7 @@ class ConsoleAgentBridge:
         """
         if self._change_tracker is None:
             return None
-        from tldw_chatbook.UI.Screens.change_review_screen import (
+        from tldw_chatbook.Workspaces.change_review_provider import (
             AgentRunsChangeReviewProvider,
         )
 
@@ -10680,6 +9187,8 @@ class ConsoleAgentBridge:
             db=self._db,
             service=self._change_tracker.service,
             conversation_id=conversation_id,
+            undo_native=self._change_revert_native,
+            native_undo_expected=self._native_undo_expected,
         )
 
     @staticmethod
@@ -10867,62 +9376,36 @@ class ConsoleAgentBridge:
         event: RawCliStreamEvent | RawCliResult,
     ) -> None:
         """Apply bounded progress to the exact app-owned raw-shell marker."""
-        key = (run_id, call_id)
-        with self._raw_shell_marker_lock:
-            state = self._raw_shell_markers.get(key)
-            if state is None:
-                return
-            if isinstance(event, RawCliResult):
-                state.result = event
-                return
-            if not isinstance(event, RawCliStreamEvent):
-                return
-            try:
-                state.stdout, state.stderr, clipped = self._append_raw_shell_preview(
-                    state.stdout,
-                    state.stderr,
-                    event,
-                )
-            except UnicodeError:
-                return
-            state.truncated = state.truncated or event.truncated or clipped
-            started_at = state.presentation.started_at_monotonic
-            if started_at is None:
-                started_at = self._clock()
-            state.presentation = dataclass_replace(
-                state.presentation,
-                lifecycle_state="running",
-                started_at_monotonic=started_at,
-                elapsed_seconds=max(0.0, self._clock() - started_at),
-                truncated=state.truncated,
-            )
-            self._update_raw_shell_marker(state)
+        from .console_tool_activity import apply_raw_shell_progress
+
+        apply_raw_shell_progress(
+            self, run_id, call_id, event,
+            result_type=RawCliResult,
+            stream_type=RawCliStreamEvent,
+            replace_presentation=dataclass_replace,
+            step_factory=AgentStep,
+        )
 
     def _clear_raw_shell_progress(
         self, run_ids: AbstractSet[str], *, cancelled: bool = False
     ) -> None:
         """Detach ended runs before settling rows so late worker events are ignored."""
-        if not run_ids:
-            return
-        with self._raw_shell_marker_lock:
-            states = [
-                self._raw_shell_markers.pop(key)
-                for key in tuple(self._raw_shell_markers)
-                if key[0] in run_ids
-            ]
-        for state in states:
-            try:
-                self._settle_raw_shell_marker(
-                    state,
-                    outcome="cancelled" if cancelled else "failure",
-                    message=(f"{state.stderr}\n\n" if state.stderr else "")
-                    + "Run ended before a result was received. Process cleanup is unknown.",
-                )
-            except Exception as exc:  # noqa: BLE001 — display cannot prevent run teardown
-                logger.warning(
-                    "Console shell activity display could not be settled ({})",
-                    type(exc).__name__,
-                )
+        from .console_tool_activity import clear_raw_shell_progress
+
+        clear_raw_shell_progress(self, run_ids, cancelled=cancelled, log=logger)
+
+    def project_approval_feedback(self, session_id: str, run_id: str) -> None:
+        """Keep the latest facts on the owning tool before its run maps retire."""
+        from .console_tool_activity import project_approval_feedback
+
+        project_approval_feedback(
+            self, session_id, run_id, replace_presentation=dataclass_replace
+        )
+
+    def _observe_approval_step(self, session_id: str, run_id: str, step: AgentStep) -> None:
+        from .console_tool_activity import observe_approval_step
+
+        observe_approval_step(self, session_id, run_id, step)
 
     def set_tool_approval_pending(
         self,
@@ -10999,8 +9482,12 @@ class ConsoleAgentBridge:
         )
         return records[0]["id"] if records else None
 
-    def _derive_historical_snapshot(self, conversation_id: str) -> AgentLiveSnapshot:
-        primary_records = self._db.list_runs(
+    def _derive_historical_snapshot(
+        self, conversation_id: str, *, database: AgentRunsDB | None = None
+    ) -> AgentLiveSnapshot:
+        # Keep the exact database captured before the worker was issued.
+        database = self._db if database is None else database
+        primary_records = database.list_runs(
             conversation_id,
             include_superseded=False,
             agent_kind=AGENT_KIND_PRIMARY,
@@ -11008,7 +9495,7 @@ class ConsoleAgentBridge:
         if not primary_records:
             return AgentLiveSnapshot()
         primary = primary_records[0]
-        subagent_records = self._db.list_runs(
+        subagent_records = database.list_runs(
             conversation_id,
             include_superseded=False,
             agent_kind=AGENT_KIND_SUBAGENT,
@@ -11044,6 +9531,29 @@ class ConsoleAgentBridge:
                 if any(step.get(key) for key in ("summary", "result", "tool_name")):
                     detail = ConsoleAgentBridge._summarize_persisted_step(step)
                     break
+        provider = record.get("resolved_provider")
+        model = record.get("resolved_model")
+        if record.get("fallback_targets_json") is not None:
+            provider = model = None
+            try:
+                targets = json.loads(record["fallback_targets_json"])
+                index = record.get("active_fallback_index", 0)
+                if (
+                    type(targets) is list
+                    and 1
+                    <= len(targets)
+                    <= agent_models_constants.MAX_PRESET_FALLBACK_MODELS + 1
+                    and type(index) is int
+                    and 0 <= index < len(targets)
+                ):
+                    target = targets[index]
+                    if isinstance(target, dict) and all(
+                        isinstance(target.get(key), str) and target[key]
+                        for key in ("provider", "model")
+                    ):
+                        provider, model = target["provider"], target["model"]
+            except (ValueError, TypeError):
+                pass
         return SubAgentSummary(
             text=str(record.get("task") or "sub-agent"),
             status=str(record.get("status") or "running"),
@@ -11052,6 +9562,8 @@ class ConsoleAgentBridge:
             created_at=record.get("created_at"),
             updated_at=record.get("updated_at"),
             detail=detail,
+            resolved_provider=provider,
+            resolved_model=model,
         )
 
     @staticmethod
@@ -11100,6 +9612,7 @@ def build_chat_create_tool_closures(
     *,
     confirm: Callable[[dict], dict],
     execute: Callable[[dict], dict],
+    prepare: Callable[[dict], dict] | None = None,
     session_id: str,
     run_id: str,
 ) -> tuple[Callable[[dict], ToolResult], Callable[[dict], ToolResult]]:
@@ -11128,6 +9641,7 @@ def build_chat_create_tool_closures(
         ``(fork_chat_tool, new_chat_tool)`` -- each ``args -> ToolResult``.
     """
     denials = {"fork_chat": 0, "new_chat": 0}
+    remembered: set[object] = set()
 
     def _run(tool: str, args: dict) -> ToolResult:
         if denials[tool] >= _CHAT_CREATE_DENIAL_LIMIT:
@@ -11161,6 +9675,13 @@ def build_chat_create_tool_closures(
                     error=f"invalid_args: {name} must be a string, got "
                     f"{type(value).__name__}",
                 )
+        if tool == "new_chat":
+            try:
+                public = validate_new_chat_arguments(args)
+            except ValueError as exc:
+                return ToolResult(ok=False, error=str(exc))
+        else:
+            public = {}
         title = raw_title.strip()[:CHAT_CREATE_TITLE_MAX]
         opening_prompt = raw_prompt
         instructions = raw_instructions
@@ -11189,23 +9710,49 @@ def build_chat_create_tool_closures(
             "model": model,
             "preset": preset,
         }
-        # Qodo 2761 round, finding 1: NO closure-local remember memo. The
-        # controller's session grants are the single remember authority,
-        # and they REFUSE to ride for sub-agent requesters -- caching a
-        # remember here would let a later child-run call on this turn skip
-        # consent entirely.
-        try:
-            decision = confirm(dict(payload))
-        except Exception:  # noqa: BLE001 — a UI error fails closed
-            decision = {"allow": False, "remember": False}
-        if not isinstance(decision, Mapping) or not decision.get(
-            "allow", False
-        ):
-            denials[tool] += 1
-            return ToolResult(
-                ok=False,
-                error="The user declined. Do not retry this turn.",
-            )
+        grant_scope: object = tool
+        if tool == "new_chat":
+            if prepare is None:
+                return ToolResult(ok=False, error="creation_preparation_unavailable")
+            from tldw_chatbook.Agents.run_context import current_run_id
+
+            payload.update(public)
+            payload["source_run_id"] = current_run_id()
+            payload["source_message_id"] = run_id
+            try:
+                payload = prepare(payload)
+                grant_scope = payload["_grant_scope"]
+                hash(grant_scope)
+                if payload.get("_creation_token") is None:
+                    raise ValueError("creation_authority_unavailable")
+            except Exception as exc:
+                from tldw_chatbook.Agents.agent_routing import RoutingError
+
+                if isinstance(exc, RoutingError):
+                    return ToolResult(ok=False, error=f"{exc.code}: {exc}")
+                return ToolResult(ok=False, error="creation_preparation_refused")
+        # Trusted preparation rechecks the captured primary or child actor.
+        # Child decisions never remember, so every child request confirms anew.
+        child_request = (
+            tool == "new_chat" and payload.get("source_agent_kind") == "subagent"
+        )
+        if tool != "new_chat" or child_request or grant_scope not in remembered:
+            try:
+                decision = confirm(dict(payload))
+            except Exception:
+                decision = {"allow": False, "remember": False}
+            if not isinstance(decision, Mapping) or not decision.get("allow", False):
+                denials[tool] += 1
+                _release_chat_creation_token(payload)
+                return ToolResult(
+                    ok=False, error="The user declined. Do not retry this turn."
+                )
+            if (
+                tool == "new_chat"
+                and not child_request
+                and decision.get("remember", False)
+            ):
+                remembered.add(grant_scope)
         # Broad-catch the EXECUTE phase exactly like the sibling
         # run_skill_script_tool does: a raising executor must surface as
         # the outcome contract (ok=False, execution_failed), never as an
@@ -11215,6 +9762,8 @@ def build_chat_create_tool_closures(
             outcome = execute(dict(payload))
         except Exception as exc:  # noqa: BLE001 — the outcome contract is the error boundary
             return ToolResult(ok=False, error=f"execution_failed: {exc}")
+        finally:
+            _release_chat_creation_token(payload)
         if not isinstance(outcome, dict) or not outcome.get("ok"):
             kind = (
                 str(outcome.get("kind", "execution_failed"))
@@ -11232,6 +9781,11 @@ def build_chat_create_tool_closures(
             "opening prompt as a draft in its input box; the user reviews and "
             "sends it themselves. Do not send messages into the new chat."
         )
+        if tool == "new_chat":
+            note = (
+                "Creation is saved. Do not repeat creation to recover a blocked "
+                "or uncertain start. Inspect this chat and use its normal controls."
+            )
         content = json.dumps(
             {
                 "title": outcome.get("title"),
@@ -11240,6 +9794,20 @@ def build_chat_create_tool_closures(
                 "copied_messages": outcome.get("copied_messages"),
                 "draft_set": bool(outcome.get("draft_set")),
                 "note": note,
+                **(
+                    {
+                        key: outcome.get(key)
+                        for key in (
+                            "destination",
+                            "scope_type",
+                            "mode",
+                            "launch_status",
+                            "reason",
+                        )
+                    }
+                    if tool == "new_chat"
+                    else {}
+                ),
             }
         )
         return ToolResult(ok=True, content=content)
@@ -11251,3 +9819,228 @@ def build_chat_create_tool_closures(
         return _run("new_chat", args)
 
     return fork_chat_tool, new_chat_tool
+
+
+def validate_new_chat_arguments(arguments: Mapping[str, Any]) -> dict[str, str]:
+    """Validate public creation fields without carrying model-supplied authority.
+
+    Args:
+        arguments: Public title, opening_prompt, instructions, destination,
+            mode, and optional provider/model/preset strings. Omitted fields
+            retain empty-string, same_workspace, and draft defaults. Unknown
+            authority fields are discarded by the shared validator.
+
+    Returns:
+        The eight validated fields, with title trimmed after its length check
+        and literal prompts, instructions, and routing strings preserved.
+
+    Raises:
+        ValueError: An input-free invalid_args or payload_too_large category for
+            non-string fields, unsupported choices, exceeded limits, or a
+            blank opening_prompt in start mode.
+    """
+    from tldw_chatbook.Agents.agent_models import validate_console_new_chat_arguments
+
+    return validate_console_new_chat_arguments(arguments)
+
+
+def _release_chat_creation_token(payload: dict) -> None:
+    """Drop private preparation custody on every terminal tool path."""
+    release = getattr(payload.get("_creation_token"), "close", None)
+    if callable(release):
+        release()
+
+
+# Definition-time originals for the finite stock run-log availability read.
+_RUN_LOG_PROBE_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    (
+        (globals(), "ConsoleAgentBridge", ConsoleAgentBridge),
+        *(
+            (ConsoleAgentBridge, name, vars(ConsoleAgentBridge)[name])
+            for name in (
+                "resolve_run_log_target",
+                "latest_primary_run_id",
+                "_owning_run_id_for_log",
+                "run_log_available",
+                "_run_log_authority_for",
+                "_read_run_log_page",
+            )
+        ),
+        (globals(), "AgentRunsDB", AgentRunsDB),
+        (globals(), "operation_owned_connection", operation_owned_connection),
+    ),
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for _owner, _name, descriptor in (
+            (globals(), "ConsoleAgentBridge", ConsoleAgentBridge),
+            *(
+                (ConsoleAgentBridge, name, vars(ConsoleAgentBridge)[name])
+                for name in (
+                    "resolve_run_log_target",
+                    "latest_primary_run_id",
+                    "_owning_run_id_for_log",
+                    "run_log_available",
+                    "_run_log_authority_for",
+                    "_read_run_log_page",
+                )
+            ),
+            (globals(), "AgentRunsDB", AgentRunsDB),
+            (globals(), "operation_owned_connection", operation_owned_connection),
+        )
+        if callable(descriptor) or isinstance(descriptor, (staticmethod, classmethod))
+        for outer in (
+            descriptor.__func__
+            if isinstance(descriptor, (staticmethod, classmethod))
+            else descriptor,
+        )
+        if hasattr(outer, "__code__")
+        for function in (
+            outer,
+            *((outer.__wrapped__,) if hasattr(outer, "__wrapped__") else ()),
+            *(
+                (outer.__wrapped__.__wrapped__,)
+                if hasattr(outer, "__wrapped__")
+                and hasattr(outer.__wrapped__, "__wrapped__")
+                else ()
+            ),
+        )
+    ),
+)
+
+
+# Exact current badge callbacks; custom callbacks retain their original path.
+from inspect import getattr_static as _badge_count_getattr_static
+
+_SUBAGENT_BADGE_LIVE_CALLBACKS = (
+    ConsoleAgentBridge.__getattribute__,
+    ConsoleAgentBridge.__dict__["__dict__"],
+    tuple(
+        (name, function, function.__code__, function.__globals__)
+        for name, function in (
+            ("live_snapshot", ConsoleAgentBridge.live_snapshot),
+            ("run_log_target_token", ConsoleAgentBridge.run_log_target_token),
+        )
+    ),
+)
+
+_SUBAGENT_BADGE_COUNT_CALLBACK = (
+    ConsoleAgentBridge,
+    "subagent_counts",
+    ConsoleAgentBridge.subagent_counts,
+    ConsoleAgentBridge.subagent_counts.__code__,
+    ConsoleAgentBridge.subagent_counts.__globals__,
+    ConsoleAgentBridge.__getattribute__,
+    _badge_count_getattr_static(ConsoleAgentBridge, "__dict__"),
+)
+del _badge_count_getattr_static
+
+
+def _read_change_review_markers(
+    database, conversation_id, render, *, require_current=None
+):
+    """Read one captured database, preserving public ordering and error handling."""
+    if require_current is not None:
+        require_current()
+    original, code, defaults = _CHANGE_REVIEW_LIST_RUNS_SOURCE
+    reader = database.list_runs
+    if (
+        type(database) is AgentRunsDB
+        and getattr(reader, "__func__", None) is original
+        and original.__code__ is code
+        and original.__defaults__ is defaults
+    ):
+        records = database.list_change_review_run_anchors(conversation_id)
+    else:
+        # Preserve the existing callback contract for custom DB adapters.
+        records = [
+            record
+            for record in reader(conversation_id, include_superseded=False)
+            if record["agent_kind"] == AGENT_KIND_PRIMARY
+        ]
+        records.reverse()
+    if require_current is not None:
+        require_current()
+    snapshots: dict[str, list[dict]] = {}
+    try:
+        for row in database.change_snapshots_for_conversation(conversation_id):
+            snapshots.setdefault(str(row["run_id"]), []).append(row)
+    except Exception:  # noqa: BLE001 -- transcript refresh must degrade safely
+        snapshots = {}
+    if require_current is not None:
+        require_current()
+    return [
+        (
+            record.get("assistant_message_id"),
+            render(record, snapshots.get(str(record.get("id")), ())),
+        )
+        for record in records
+    ]
+
+
+
+# Direct defining callbacks for finite marker presentation.
+_CONSOLE_PRESENTATION_SOURCES = tuple(
+    (
+        name,
+        vars(ConsoleAgentBridge)[name],
+        (
+            (
+                function,
+                function.__code__,
+                function.__defaults__,
+                function.__kwdefaults__,
+                tuple((function.__kwdefaults__ or {}).items()),
+            ),
+        ),
+    )
+    for name in (
+        "change_review_marker_messages",
+        "_change_review_marker_block",
+        "preview_tool_surface",
+        "light_surface_local_tools_available",
+    )
+    for descriptor in (vars(ConsoleAgentBridge)[name],)
+    for function in (
+        descriptor.__func__ if isinstance(descriptor, staticmethod) else descriptor,
+    )
+)
+_CHANGE_REVIEW_MARKER_SOURCES = _CONSOLE_PRESENTATION_SOURCES[:2]
+_CONSOLE_TOOL_PREVIEW_METHODS = tuple(
+    (name, method, bindings[0][1])
+    for name, method, bindings in _CONSOLE_PRESENTATION_SOURCES[2:]
+)
+
+
+# Original collision view is part of ordinary catalog identity, not a new owner.
+_NATIVE_ORDINARY_COLLISION_PROVIDER = _CollisionFilteredMCPProvider
+_CONSOLE_PRESENTATION_HELPER_SOURCES = tuple(
+    (
+        function,
+        function.__code__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        tuple((function.__kwdefaults__ or {}).items()),
+    )
+    for function in (
+        _read_change_review_markers,
+        _preview_kill_reader,
+        _PreviewAppToolKillSwitch.__call__,
+    )
+)
+_CHANGE_REVIEW_MARKER_HELPER_SOURCE = _CONSOLE_PRESENTATION_HELPER_SOURCES[0]
+_CONSOLE_PREVIEW_KILL_SOURCE = _CONSOLE_PRESENTATION_HELPER_SOURCES[1]
+_CONSOLE_PREVIEW_APP_KILL_SOURCE = _CONSOLE_PRESENTATION_HELPER_SOURCES[2]

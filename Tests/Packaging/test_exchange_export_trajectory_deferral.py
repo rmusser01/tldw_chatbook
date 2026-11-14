@@ -416,9 +416,7 @@ def test_exchange_export_dialog_works_from_the_deferred_state(
     Args:
         tmp_path: pytest fixture; isolated dir for the subprocess's HOME/XDG.
     """
-    code = _DIALOG_FROM_DEFERRED_STATE_SNIPPET.format(
-        forbidden=FORBIDDEN_ON_CHAT_LEG
-    )
+    code = _DIALOG_FROM_DEFERRED_STATE_SNIPPET.format(forbidden=FORBIDDEN_ON_CHAT_LEG)
     result = _run_isolated_python(tmp_path, code)
     assert result.returncode == 0, (
         f"deferred-state dialog flow failed:\nstdout={result.stdout}\n"

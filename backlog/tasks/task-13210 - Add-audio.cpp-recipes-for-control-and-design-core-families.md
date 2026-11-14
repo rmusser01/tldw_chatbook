@@ -12,7 +12,7 @@ labels:
 dependencies:
   - TASK-13209
 references:
-  - backlog/decisions/050-audio-cpp-generated-model-setup-ownership.md
+  - backlog/decisions/308-audio-cpp-generated-model-setup-ownership.md
   - backlog/decisions/051-private-tts-clone-reference-assets.md
 documentation:
   - Docs/superpowers/specs/2026-08-09-audio-cpp-guided-model-setup-design.md

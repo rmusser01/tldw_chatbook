@@ -32,12 +32,9 @@ from loguru import logger
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Workspaces.change_tracking import (
     ChangeTrackingError,
+    RevertRefusedError as RevertRefusedError,
     ShadowRepoService,
 )
-
-
-class RevertRefusedError(ChangeTrackingError):
-    """The revert was refused before touching anything (active run)."""
 
 
 @dataclass(frozen=True)
@@ -48,11 +45,13 @@ class RevertOutcome:
         path: Root-relative path.
         ok: Whether the restore landed.
         error: Failure copy when ``ok`` is False.
+        settled: Required native history/bookkeeping is positively observed.
     """
 
     path: str
     ok: bool
     error: str = ""
+    settled: bool = True
 
 
 @dataclass(frozen=True)
@@ -173,8 +172,14 @@ def revert_paths(
         One :class:`RevertOutcome` per requested path, in order.
 
     Raises:
-        RevertRefusedError: A run is active — finish or stop it first.
+        RevertRefusedError: A run is active, or the original native call does not
+            authorize this exact unconsumed selection.
     """
+    from .change_revert_ownership import native_undo_call
+
+    native = native_undo_call()
+    if native is not None:
+        native.require_revert(service, db, row, paths)
     if run_active():
         raise RevertRefusedError(
             "a run is active on this workspace — finish or stop the run first"
@@ -187,6 +192,7 @@ def revert_paths(
 
     outcomes: list[RevertOutcome] = []
     reverted: list[str] = []
+    attempted = False
     for path in paths:
         unsafe = _unsafe_reason(path)
         if unsafe is not None:
@@ -203,6 +209,9 @@ def revert_paths(
             )
             continue
         try:
+            attempted = True
+            if native is not None:
+                native.required_proven = False
             if change.status == "A":
                 _guarded_uncreate(repo, root, baseline, path)
             elif change.status == "R" and change.old_path:
@@ -213,24 +222,36 @@ def revert_paths(
                 repo.restore_paths(baseline, [path])
             outcomes.append(RevertOutcome(path=path, ok=True))
             reverted.append(path)
-        except (ChangeTrackingError, OSError) as exc:
-            outcomes.append(
-                RevertOutcome(path=path, ok=False, error=str(exc)[:300])
-            )
+        except Exception as exc:  # Native partial effects require snapshot.
+            if native is None and not isinstance(exc, (ChangeTrackingError, OSError)):
+                raise
+            outcomes.append(RevertOutcome(path=path, ok=False, error=str(exc)[:300]))
 
-    if reverted:
+    if reverted or native is not None and attempted:
+        snapshot_proven = False
         try:
-            repo.snapshot("revert")
-        except ChangeTrackingError:
+            snapshot_proven = bool(repo.snapshot("revert"))
+        except Exception as exc:  # Report unknown native settlement.
+            if native is None and not isinstance(exc, ChangeTrackingError):
+                raise
             logger.opt(exception=True).warning(
                 "change_review: post-revert snapshot failed"
             )
         try:
-            db.update_change_snapshot_reverted(int(row["id"]), reverted)
+            if reverted:
+                db.update_change_snapshot_reverted(int(row["id"]), reverted)
         except Exception:  # noqa: BLE001 -- bookkeeping must not undo the revert
             logger.opt(exception=True).warning(
                 "change_review: could not record reverted paths"
             )
+        if native is not None:
+            native.required_proven = snapshot_proven and (
+                not reverted or native.observe_reverted(row, reverted)
+            )
+            if not native.required_proven:
+                from dataclasses import replace
+
+                outcomes = [replace(outcome, settled=False) for outcome in outcomes]
     return outcomes
 
 

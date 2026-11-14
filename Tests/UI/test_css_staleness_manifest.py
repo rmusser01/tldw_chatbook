@@ -15,6 +15,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -55,9 +56,9 @@ def _manifest_with_current(css_tree: Path) -> dict[str, list]:
 
 
 def _bump_mtime(path: Path, past_manifest: bool = True) -> None:
-    now = time.time()
+    previous = path.stat().st_mtime
     offset = 10 if past_manifest else -10
-    os.utime(path, (now + offset, now + offset))
+    os.utime(path, (previous + offset, previous + offset))
 
 
 def test_mtime_move_with_unchanged_content_is_not_stale(css_tree: Path) -> None:
@@ -74,6 +75,7 @@ def test_real_content_change_is_stale(css_tree: Path) -> None:
     _write_manifest(css_tree, _manifest_with_current(css_tree))
     module = css_tree / "css" / "core" / "_base.tcss"
     module.write_text("/* base EDITED */\n")
+    _bump_mtime(module)  # Writes can share a filesystem timestamp tick.
 
     stale, reason = _generated_css_is_stale(css_tree)
     assert stale
@@ -90,7 +92,9 @@ def test_content_change_masked_by_newer_sheets_is_stale(css_tree: Path) -> None:
     _write_manifest(css_tree, _manifest_with_current(css_tree))
     module = css_tree / "css" / "core" / "_base.tcss"
     module.write_text("/* base EDITED */\n")
-    # The pull also rewrote every generated sheet (all mtimes now).
+    _bump_mtime(module)  # Writes can share a filesystem timestamp tick.
+    # The pull rewrote sheets after the source edit, masking it from the legacy rule.
+    sheets_mtime = module.stat().st_mtime + 10
     for name in (
         "tldw_cli_modular.tcss",
         build_css.WIDGET_DEFAULTS_SELF_FILENAME,
@@ -98,7 +102,7 @@ def test_content_change_masked_by_newer_sheets_is_stale(css_tree: Path) -> None:
         build_css.SCREEN_CSS_SELF_FILENAME,
         build_css.SCREEN_CSS_SCOPED_FILENAME,
     ):
-        _bump_mtime(css_tree / "css" / name)
+        os.utime(css_tree / "css" / name, (sheets_mtime, sheets_mtime))
 
     stale, reason = _generated_css_is_stale(css_tree)
     assert stale, (
@@ -158,6 +162,7 @@ def test_gained_bundled_css_declaration_is_stale(css_tree: Path) -> None:
     carrier = css_tree / "Widgets" / "demo_widget.py"
     carrier.parent.mkdir()
     carrier.write_text("class Demo:\n    BUNDLED_CSS = 'Demo { color: red; }'\n")
+    _bump_mtime(carrier)  # The new carrier must postdate the recorded build.
 
     stale, reason = _generated_css_is_stale(css_tree)
     assert stale
@@ -337,6 +342,10 @@ class TestBuilderIntegration:
         (css_dir / "core" / "_base.tcss").write_text(
             distinctive_rule + "\n", encoding="utf-8"
         )
+        # build_widget_defaults() reads the token file (design_token_preamble).
+        (css_dir / "core" / "_variables.tcss").write_text(
+            "$ds-space-1: 1;\n", encoding="utf-8"
+        )
 
         monkeypatch.setattr(bc, "CSS_MODULES", ["core/_base.tcss"])
         monkeypatch.setattr(bc.widget_css, "iter_blocks", lambda root, attr: [])
@@ -382,8 +391,24 @@ class TestBuilderIntegration:
         stale, reason = _generated_css_is_stale(package)
         assert not stale, f"unchanged content after builder run: {reason!r}"
 
-        # Real edit: stale.
+        # A write may reset the synthetic future timestamp to the coarse wall clock.
+        edited_mtime = module.stat().st_mtime + 10
         module.write_text("/* base EDITED */\n")
+        os.utime(module, (edited_mtime, edited_mtime))
         stale, reason = _generated_css_is_stale(package)
         assert stale
         assert "_base.tcss" in reason
+
+
+def test_no_stylesheet_uses_import() -> None:
+    """TASK-36523: Textual CSS rejects ``@import`` with a ``TokenError``, so a
+    sheet that uses one can never be loaded. ``css/main.tcss`` was such a
+    sheet, and it went on importing two deleted sheets unnoticed. The app's
+    modules are listed in ``build_css.CSS_MODULES``."""
+    package = Path(build_css.__file__).parents[1]
+    offenders = [
+        str(path.relative_to(package))
+        for path in sorted(package.rglob("*.tcss"))
+        if re.search(r"^\s*@import\b", path.read_text(encoding="utf-8"), re.M)
+    ]
+    assert not offenders, offenders

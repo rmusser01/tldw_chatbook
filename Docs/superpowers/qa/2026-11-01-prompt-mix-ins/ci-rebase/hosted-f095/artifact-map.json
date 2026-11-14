@@ -1,0 +1,588 @@
+{
+  "/private/tmp/mixins-f095-perf-contracts/report.md": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/report.md",
+    "source_sha256": "17821fe0093e6db9297e4a46643a6bcc8e39d27f48b4d938d67724b7df98e300"
+  },
+  "/private/tmp/mixins-f095-perf-contracts/contracts.log": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/contracts.log.json",
+    "source_sha256": "e5994e008cb73ee73324f3120e80782f7de7f01d4d06eb8d4b4885d7aae1cf25"
+  },
+  "/private/tmp/mixins-f095-perf-contracts/contracts.xml": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/contracts.xml.json",
+    "source_sha256": "13d1ae01417c350075fbbd340ec15e320bb397db91bb8150e1c243fc4eaf1f96"
+  },
+  "/private/tmp/mixins-f095-perf-contracts/final.log": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/final.log.json",
+    "source_sha256": "a922505a78bf2b725ec01494a52a0d660d5e833123da785b8ed6a94de116e914"
+  },
+  "/private/tmp/mixins-f095-perf-contracts/final.xml": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/final.xml.json",
+    "source_sha256": "3409c10196c35335dc92b1dd013cacf409eb211e93ae466e27bac29eb4dc75a7"
+  },
+  "/private/tmp/mixins-f095-perf-contracts/history-report.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/history-report.json",
+    "source_sha256": "3a7cc009d7f46445d03bbe11d6f440e726e5dff919c655841d050ee09b5c94f1"
+  },
+  "/private/tmp/mixins-f095-perf-contracts/run_observed.py": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/run_observed.py",
+    "source_sha256": "1fd8c2ec9262e6ed5e6360bfb328de744e47732f81de2d14252709c7f3b06782"
+  },
+  "/private/tmp/mixins-f095-perf-contracts/lint.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/lint.json",
+    "source_sha256": "6698b3f7c940ae6bab0cf7490791d33b8bb0627ac57d46849905d45c2dbaa0c2"
+  },
+  "/private/tmp/mixins-f095-perf-contracts/patch.diff": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/patch.diff.json",
+    "source_sha256": "992bd6c59f8afd63825ffdcc3e3b0fdb561a2d7bd834be59700cd81b9616690c"
+  },
+  "/private/tmp/mixins-f095-perf-contracts/source-proof.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/source-proof.json",
+    "source_sha256": "7f737529aba1dfdf5e3946588cddc80d502dfa5d37255e1561744a27111aa0f9"
+  },
+  "/private/tmp/mixins-f095-perf-contracts/history-assertion-proof.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/history-assertion-proof.json",
+    "source_sha256": "1041e6f286530b886e41c0a3f5a69b79730f84061ef3c7e8b9c0668bf73cae72"
+  },
+  "/private/tmp/mixins-f095-perf-contracts/write_report.py": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/write_report.py",
+    "source_sha256": "df1fbf3b80b24a64bf0a9aec0b3324e7b1c77ccee5b00b1c4483b302299619ca"
+  },
+  "/private/tmp/mixins-ci-f095-perf-red.log": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/mixins-ci-f095-perf-red.log.json",
+    "source_sha256": "04311ed16213bf31590a48551c1f4430037897dc43511d9e6997a02336f93813"
+  },
+  "/private/tmp/mixins-f095-perf-contracts/artifact-files.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/artifact-files.json",
+    "source_sha256": "e3480d5f2cb63f06ee36ea0b3ee0be94852763efff5f76de8557a0c835719c3d"
+  },
+  "/private/tmp/mixins-pr3346-hosted-perf-review.md": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/mixins-pr3346-hosted-perf-review.md",
+    "source_sha256": "aaa09010112f8abfb01843ca93231233725f19a14c90f926bfe153042adc4c37"
+  },
+  "/private/tmp/mixins-f095-firstsend/report.md": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/firstsend/report.md",
+    "source_sha256": "c9f4f5b592a375766dd277d55dd0bc491dd69baa4ef993350fa3845bf7bdf6e3"
+  },
+  "/private/tmp/mixins-f095-firstsend/red.log": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/firstsend/red.log.json",
+    "source_sha256": "fc625f375d1be3b650f1702752450bd472643f27efe04f949f5fa3e1b8a689ea"
+  },
+  "/private/tmp/mixins-f095-firstsend/green.log": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/firstsend/green.log.json",
+    "source_sha256": "7d3a9e6a53e25d4e1fb9660f0c4d345cbaab8501a2d96c1a4793afb0f91403b2"
+  },
+  "/private/tmp/mixins-f095-firstsend/green.xml": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/firstsend/green.xml.json",
+    "source_sha256": "d0169d835073b2a952100f451d42e57fb1156ab5bdfa96e3fd423d5cd61a767d"
+  },
+  "/private/tmp/mixins-f095-firstsend/run_controls.py": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/firstsend/run_controls.py",
+    "source_sha256": "980a918c4b4d0213d4a186504835e4d4fb8d5720868400ac19bfc59cd161828c"
+  },
+  "/private/tmp/mixins-f095-firstsend/static.py": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/firstsend/static.py",
+    "source_sha256": "224c7f9eb1de6a96f8305dc51e73850bbe4188e6bbf6240ec27b35f699a74eaf"
+  },
+  "/private/tmp/mixins-f095-firstsend/lint-source.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/firstsend/lint-source.json",
+    "source_sha256": "31c41972cc801ebafafc20976c85e684eaacde676442338079e825fad22f3a52"
+  },
+  "/private/tmp/mixins-f095-firstsend/unchanged-web-tool-bodies.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/firstsend/unchanged-web-tool-bodies.json",
+    "source_sha256": "54b8b102c4611f9051ab11239ebc989569fe9f68618c90e9c9b3d5ab4e3dfd02"
+  },
+  "/private/tmp/mixins-f095-firstsend/lean_html_probe.py": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/firstsend/lean_html_probe.py",
+    "source_sha256": "bcb99f3d6d26aaa2c41cd55c659ebcd3467927355d28b591d0ea05ef2e592ace"
+  },
+  "/private/tmp/mixins-f095-firstsend/lean-html-order.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/firstsend/lean-html-order.json",
+    "source_sha256": "0b98ea1a0c1ff18ad37b2a3eb62a75a9b67e3334830610eac7a5bf839dcd6fe8"
+  },
+  "/private/tmp/mixins-f095-firstsend/patch.diff": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/firstsend/patch.diff.json",
+    "source_sha256": "3680a315fef34df84ecb3a410464b56ca97aed2f6925eea9762dd6104d62829b"
+  },
+  "/private/tmp/mixins-f095-firstsend/format.log": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/firstsend/format.log.json",
+    "source_sha256": "fd2299c9f1c6dc869070883e281051bfe93aacf66c1a3b0069f45b4aa410ca50"
+  },
+  "/private/tmp/mixins-f095-firstsend/source-final.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/firstsend/source-final.json",
+    "source_sha256": "a2a00dd77fdb5bb4f2e6aaa732f0fcfda768e798170c76677063c6051f044ed1"
+  },
+  "/private/tmp/mixins-f095-firstsend/inventory.py": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/firstsend/inventory.py",
+    "source_sha256": "3d12698f801c3bb8760dde2cb3cc800ea00510817185fb8100fdd807d3eca5e9"
+  },
+  "/private/tmp/mixins-ci-f095-ui16-red.log": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/review-and-hosted/mixins-ci-f095-ui16-red.log.json.gz",
+    "source_sha256": "41c0b500dace47f73acac8ac11ecdc23d27c6f377d675806ca538b86845b1b5d",
+    "retained_encoding": "gzip",
+    "uncompressed_retained_sha256": "f6c155cc8d1da6126f7cfd9a9c3e04cef805f06e84751adb4e2453edfbaf2462"
+  },
+  "/private/tmp/mixins-perf-f095-firstsend.log": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/firstsend/mixins-perf-f095-firstsend.log.json",
+    "source_sha256": "4611131aa98840ac1a35cd5be659ff39f5ce2d0acb02f7808bc89091ca96231f"
+  },
+  "/private/tmp/mixins-perf-f095-firstsend-test_ui_ready_module_census-_boot_and_census.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/firstsend/mixins-perf-f095-firstsend-test_ui_ready_module_census-_boot_and_census.json",
+    "source_sha256": "3d37e781185d322dd492b622984fb27ca34fbd7cd56d8a16b73371eff50f7792"
+  },
+  "/private/tmp/mixins-perf-f095-firstsend-test_boot_worker_census-_boot_and_census.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/firstsend/mixins-perf-f095-firstsend-test_boot_worker_census-_boot_and_census.json",
+    "source_sha256": "022e98c23f9ff6195481768ae62390c67a023a35c3797edb1306818d4c5bacbd"
+  },
+  "/private/tmp/mixins-perf-f095-firstsend-test_screen_preimport_payload_budget-_run_census.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/firstsend/mixins-perf-f095-firstsend-test_screen_preimport_payload_budget-_run_census.json",
+    "source_sha256": "91b0c80c0eaefe59edfffa711c4b4a6c7061d60f8549383ab9148e694e9d51c6"
+  },
+  "/private/tmp/mixins-perf-f095-firstsend-test_screen_preimport_payload_budget-warmup.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/firstsend/mixins-perf-f095-firstsend-test_screen_preimport_payload_budget-warmup.json",
+    "source_sha256": "08210bc96a9ec8f51a5b8a55feb3f7f2b3deab4bb6f3e493203733b7d6206c26"
+  },
+  "/private/tmp/mixins-perf-probe.py": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/firstsend/mixins-perf-probe.py",
+    "source_sha256": "0e671fdc3e15b81d7d06a185610de510d45640aedfa8c195131656e4c0d4dd1c"
+  },
+  "/private/tmp/mixins-f095-firstsend/artifact-files.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/firstsend/artifact-files.json",
+    "source_sha256": "292af5bcef6b5ff35be5b2b98857e592bfeed9f9565ffc23c79529d42a85e6b5"
+  },
+  "/private/tmp/mixins-f095-cycles/report.md": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/cycles/report.md",
+    "source_sha256": "452d14511db5bf8d943d0b679f96205548321c469af54950de18316a251b9e88"
+  },
+  "/private/tmp/mixins-f095-cycles/tests.log": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/cycles/tests.log.json",
+    "source_sha256": "179491cd6a86e7c4cb0bbddc34bd0be9d5d594bb65edc40dee1463e2dbc7b60a"
+  },
+  "/private/tmp/mixins-f095-cycles/tests.xml": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/cycles/tests.xml.json",
+    "source_sha256": "84b1425669c0a820449b8d1bb9cfd0658f912e3b790e1c83e584479f305f2438"
+  },
+  "/private/tmp/mixins-f095-cycles/patch.diff": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/cycles/patch.diff.json",
+    "source_sha256": "c3614de2d214e4d6e21c578a9c0c270871ecc576c0f5ba40827e3f7835688ae7"
+  },
+  "/private/tmp/mixins-f095-cycles/source-proof.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/cycles/source-proof.json",
+    "source_sha256": "a41fe671d6730062aeef344cdab74f5d8c5fa25ae7ad57018e1622209a77dfed"
+  },
+  "/private/tmp/mixins-f095-cycles/lint-current.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/cycles/lint-current.json",
+    "source_sha256": "bd3eb1127a3e318bf9f0e8024b68d6a3d4de9ee62f9873e57950ce89abd3a42c"
+  },
+  "/private/tmp/mixins-f095-cycles/format-check.log": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/cycles/format-check.log.json",
+    "source_sha256": "fd2299c9f1c6dc869070883e281051bfe93aacf66c1a3b0069f45b4aa410ca50"
+  },
+  "/private/tmp/mixins-f095-cycles/write_report.py": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/cycles/write_report.py",
+    "source_sha256": "e9c8bfd862c98ecd394517f950e50c32690b2ab2807659d6624edefae41c9534"
+  },
+  "/private/tmp/mixins-ci-f095-ui29-red.log": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/review-and-hosted/mixins-ci-f095-ui29-red.log.json",
+    "source_sha256": "42cde29b01a56205d66534874c3fdb70856b67fc0eba2a4c8ca106f36c2366ff"
+  },
+  "/private/tmp/mixins-f095-cycles/artifact-files.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/cycles/artifact-files.json",
+    "source_sha256": "5bbf9c9d15ceaa16d9c9dc9ab58f397439a6d8a79e8e431572683f3f377915d3"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui3-anqs9n0b/report.md": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/send-ready/report.md",
+    "source_sha256": "b9d02c2e9975be13722f9fb0b756ad870bf9611b6684aa358730a0e8b697efd1"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui3-anqs9n0b/source-inventory.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/send-ready/source-inventory.json",
+    "source_sha256": "a42552b2d17374b059e9124e2db3d711ab41cb155ba244c1fc02a6353434735f"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui3-anqs9n0b/final-test.py": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/send-ready/final-test.py",
+    "source_sha256": "95d9e09eace05edb39a13dcfebcb54090bfa75319438399b6bde47cb15acc781"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui3-anqs9n0b/baseline-test-original.py": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/send-ready/baseline-test-original.py",
+    "source_sha256": "ebe4e4dc240b549bcbefc7fb6cd093746071050be86df5fea8f3b91387fb618d"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui3-anqs9n0b/final-diff.patch": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/send-ready/final-diff.patch.json",
+    "source_sha256": "c334129730e8e092aef4ada708f88396e31943d0d4dab86f43738f105336c741"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui3-anqs9n0b/static-checks.txt": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/send-ready/static-checks.txt.json",
+    "source_sha256": "3d0a55c2fcc267263902f67e03b4b1313d92ad0f387129dbb90675fb09e07dda"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui3-anqs9n0b/hosted-red.log": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/send-ready/hosted-red.log.json",
+    "source_sha256": "57e3d511f500c16840293641bbc6f2fba6f2fec64115f3acac683222b6208eef"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui3-anqs9n0b/run.py": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/send-ready/run.py",
+    "source_sha256": "1124f2e214ed4ca30bb0812edd406ccbc2da8b8da78aca7f47c45a7827f5f348"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui3-anqs9n0b/exact.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/send-ready/exact.json",
+    "source_sha256": "d29cd9d2f9f276e9c6408158b5923d1d537b7be9db7c9abcfbc99a4263c22bf2"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui3-anqs9n0b/exact.log": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/send-ready/exact.log.json",
+    "source_sha256": "38c1e38ebfa1a9debbfa790dfa510c0306c735ee4a8c40e4210558d42ee11159"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui3-anqs9n0b/exact.xml": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/send-ready/exact.xml.json",
+    "source_sha256": "b906b320f9a03b0c8760fe059a91f2d3ce7d8c33590f590302e02ab09736d22c"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui3-anqs9n0b/control.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/send-ready/control.json",
+    "source_sha256": "5c31983ea63093d3bbab31968661c77a03e566cfa7561bd844008df4dcdb2a32"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui3-anqs9n0b/control.log": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/send-ready/control.log.json",
+    "source_sha256": "4352ee1e8a1e4ccfe959abad8e8c2d3bd22c2845a2282532887165f701490128"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui3-anqs9n0b/control.xml": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/send-ready/control.xml.json",
+    "source_sha256": "5b6fa8f42b8fe7c03ea072991d75d06dd87dd6c8e629edf769b1bba2f5be5179"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui3-anqs9n0b/control-expired.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/send-ready/control-expired.json",
+    "source_sha256": "c5de10bbed556c600a9048cd5e7408dde34a00e14a119edff8f64bbe502559b3"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui3-anqs9n0b/control-expired.log": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/send-ready/control-expired.log.json",
+    "source_sha256": "c68da2bf72f135afe37ccb58b1400c50d096c0dbdd2fd5ac85ddc3d0c61407d1"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui3-anqs9n0b/control-expired.xml": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/send-ready/control-expired.xml.json",
+    "source_sha256": "e85d87e5b8c3060f2ea532639b90a133445fc107e8cdf2dde260b645040fc116"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui3-anqs9n0b/final-module.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/send-ready/final-module.json",
+    "source_sha256": "bd5d5839c8c7110df8bb6c0f5a09dcd1e3accfc82639069c933f8f2b19287d59"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui3-anqs9n0b/final-module.log": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/send-ready/final-module.log.json",
+    "source_sha256": "021a78d9906c73c71dfcac48ad47dc71bc2e2738bec47f5f29f746b5c365bcc3"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui3-anqs9n0b/final-module.xml": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/send-ready/final-module.xml.json",
+    "source_sha256": "503a1602e3c71a6236ad8fab5e1943874eaf9719893383c41e7eb4d283d00db3"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui3-anqs9n0b/natural-replay.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/send-ready/natural-replay.json",
+    "source_sha256": "0191270b65ebf07f3453dfc3648154b2971550ec470467fc22a7215b262051b0"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui3-anqs9n0b/natural-replay.log": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/send-ready/natural-replay.log.json",
+    "source_sha256": "16628187fb59a64ff74c7efc4541736cc67c070174e48e3a905bb1eaf3bc0859"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui3-anqs9n0b/natural-replay.xml": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/send-ready/natural-replay.xml.json",
+    "source_sha256": "8d931cb944bfbf0f99a03591a3647f9bc02575749474513aa0b122ec1ef94871"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui3-anqs9n0b/baseline-natural-replay.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/send-ready/baseline-natural-replay.json",
+    "source_sha256": "5c87a1e99328337161521b2e1ff583c49527243e39ff1ae362006ec2b46fec82"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui3-anqs9n0b/baseline-natural-replay.log": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/send-ready/baseline-natural-replay.log.json",
+    "source_sha256": "4311887b6de94c26100be45c1b34a06e05a024317dc49ec141f80379d487f7e6"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui3-anqs9n0b/baseline-natural-replay.xml": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/send-ready/baseline-natural-replay.xml.json",
+    "source_sha256": "06b14b96934daa4ae9bb064bb11b8eb728522537c76d37f5fe8d65d394f3542d"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui3-anqs9n0b/final-replay-control.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/send-ready/final-replay-control.json",
+    "source_sha256": "c839f75901869b0a96b723bdf165f31e66f4bc323abfca97a402ed68c54fe0ca"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui3-anqs9n0b/final-replay-control.log": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/send-ready/final-replay-control.log.json",
+    "source_sha256": "2226da2026d8892495ed378662bc46d5b1c503628eaba7688c29417d179a8fb8"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui3-anqs9n0b/final-replay-control.xml": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/send-ready/final-replay-control.xml.json",
+    "source_sha256": "49f3910f24bd166026e278063d0ecad755adeabde6b2f2c3cad88da555c8a35f"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui3-anqs9n0b/baseline-final-control.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/send-ready/baseline-final-control.json",
+    "source_sha256": "3b3e99727471325966e2d02f5df9dab074bde6eefaf7daeab0143dfecc5ed748"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui3-anqs9n0b/baseline-final-control.log": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/send-ready/baseline-final-control.log.json",
+    "source_sha256": "20ab7e5ea23f76ab425028963c189f6ac9607f58df0badc0531a9e9cf8787a4b"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui3-anqs9n0b/baseline-final-control.xml": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/send-ready/baseline-final-control.xml.json",
+    "source_sha256": "23f3991244ae1e79653dfa04ee3216c6926f1e7c2fad1c5b4d00ff84e166adcd"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui3-anqs9n0b/report-files.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/send-ready/report-files.json",
+    "source_sha256": "b64aa0d1a8842950c0cdbe6f8a394e28ea589a994fa7768ac86e6d23159203af"
+  },
+  "/private/tmp/mixins-pr3346-firstsend-followup-review.md": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/review-and-hosted/mixins-pr3346-firstsend-followup-review.md",
+    "source_sha256": "3f8a102848646d4a12d0271503083acc58b85ffd0a4ab98eea2d50cf3dc7218f"
+  },
+  "/private/tmp/mixins-pr3346-send-ready-review.md": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/review-and-hosted/mixins-pr3346-send-ready-review.md",
+    "source_sha256": "a6b341e0484af85f86eb931b142dd0153fee32c89f1fa912e05276f79c9cad20"
+  },
+  "/private/tmp/mixins-pr3346-optional-warmup-review.md": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/review-and-hosted/mixins-pr3346-optional-warmup-review.md",
+    "source_sha256": "5596757bb5a27d82e7b4013a9198caf1f095abd572fc34bc3a49f9916cb48b98"
+  },
+  "/private/tmp/mixins-f095-followup-architecture.log": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/review-and-hosted/mixins-f095-followup-architecture.log.json",
+    "source_sha256": "7065305bb041782ed69c9a2e60bc4edac9b19d3351b7e1accd186943572399e3"
+  },
+  "/private/tmp/mixins-ci-f095-ui3-red.log": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/review-and-hosted/mixins-ci-f095-ui3-red.log.json",
+    "source_sha256": "57e3d511f500c16840293641bbc6f2fba6f2fec64115f3acac683222b6208eef"
+  },
+  "/private/tmp/mixins-ci-f095-ui19-red.log": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/review-and-hosted/mixins-ci-f095-ui19-red.log.json.gz",
+    "source_sha256": "8a2527f0336e2de91dfc959cd772ef746b48d636c470e22843c0fc605ae3f3ea",
+    "retained_encoding": "gzip",
+    "uncompressed_retained_sha256": "f1116eac91224f87386828eb4d70d15888807877ab6a28470b37f92264313ad6"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui19-l34gz_tj/report.md": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/library-readiness/report.md",
+    "source_sha256": "c83331ee46f76ba5c646add0756004078b5279b9a9c514b880f003149f84bed1"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui19-l34gz_tj/hosted-red.log": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/library-readiness/hosted-red.log.json.gz",
+    "source_sha256": "8a2527f0336e2de91dfc959cd772ef746b48d636c470e22843c0fc605ae3f3ea",
+    "retained_encoding": "gzip",
+    "uncompressed_retained_sha256": "f1116eac91224f87386828eb4d70d15888807877ab6a28470b37f92264313ad6"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui19-l34gz_tj/ui19_probe.py": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/library-readiness/ui19_probe.py",
+    "source_sha256": "6d53cd552094223ac14938f66b527dee5bbcce6a5286033e4f7242935e6b7969"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui19-l34gz_tj/predicates.jsonl": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/library-readiness/predicates.jsonl.json",
+    "source_sha256": "ddaf6c5cfa7d6f7bad557bb10bb8a47432b9267f95edf71ae250cab1e9ac9cc3"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui19-l34gz_tj/run.py": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/library-readiness/run.py",
+    "source_sha256": "1124f2e214ed4ca30bb0812edd406ccbc2da8b8da78aca7f47c45a7827f5f348"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui19-l34gz_tj/observed.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/library-readiness/observed.json",
+    "source_sha256": "d3646365377051358f14643ce5825cb0b8f3cab414736cbe61ed03e4e9440172"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui19-l34gz_tj/observed.log": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/library-readiness/observed.log.json.gz",
+    "source_sha256": "0811585bf6ca12a1db1b3f9a55abed587d745b7040e834d4dff1ac9bd4f9a54a",
+    "retained_encoding": "gzip",
+    "uncompressed_retained_sha256": "8bc1257eb568d91aa1b30ae8a19f296c10ed9abef408d2dc8ff3636e7311ab61"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui19-l34gz_tj/observed.xml": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/library-readiness/observed.xml.json",
+    "source_sha256": "d0b43ff7232bbd2039c487e43c0f11b9c898ef8abb82e9b6c737091000d65ee8"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui19-l34gz_tj/observed-fixed.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/library-readiness/observed-fixed.json",
+    "source_sha256": "6097de5d4951c8682e40f00fbd9b16d35455085a1b0d0f39039b5a259b9971e2"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui19-l34gz_tj/observed-fixed.log": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/library-readiness/observed-fixed.log.json",
+    "source_sha256": "1c216318d2659fb99fc0e1a0b9a7258b5a990b44a3aaeebcdba9e24b13ad47b0"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui19-l34gz_tj/observed-fixed.xml": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/library-readiness/observed-fixed.xml.json",
+    "source_sha256": "8a2a8b8322fba7c6dfdde9173eb9c964c7d9b526ded63b7be7dce114cfe37d55"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui19-l34gz_tj/probe-hash.txt": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/library-readiness/probe-hash.txt.json",
+    "source_sha256": "492bb1009ab74e3a9a07ca725aaf81450ab078e4c8ec9bc041d0a4628d2ada78"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui19-l34gz_tj/static-proof.py": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/library-readiness/static-proof.py",
+    "source_sha256": "117206027dde7137cc70c7353b0324f7fc0f615fca506132493bdb6e8e5757ca"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui19-l34gz_tj/static-proof.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/library-readiness/static-proof.json",
+    "source_sha256": "4acdce5466b51778cf045f08e58085b29417d4aed5959192c53a3f97b986f8cd"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui19-l34gz_tj/diagnostics-covering.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/library-readiness/diagnostics-covering.json",
+    "source_sha256": "109c46c384050c0668329354a8153d81bfd07b62ec54bfa5b910744f5bd69355"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui19-l34gz_tj/diagnostics-covering.log": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/library-readiness/diagnostics-covering.log.json",
+    "source_sha256": "5a3c32ee3003686837b1569b7dac5d7135a398319403ab2db9c763c7075b33fd"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui19-l34gz_tj/diagnostics-covering.xml": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/library-readiness/diagnostics-covering.xml.json",
+    "source_sha256": "29f2618a9f55814cf86a1cbab2251972f7e4a97dbfbdc762e2d15059c7f8bf70"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui19-l34gz_tj/final-diff.patch": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/library-readiness/final-diff.patch.json",
+    "source_sha256": "6deab77b2b1bbe14d7ecb83be626a0fc5fb49987cfe0b39cbc7a97452e754826"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui19-l34gz_tj/final-diagnostics-test.py": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/library-readiness/final-diagnostics-test.py",
+    "source_sha256": "546fe8e103474859902128bccca92e0d040d55b089a51385492a455b51a558b9"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui19-l34gz_tj/report-files.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/library-readiness/report-files.json",
+    "source_sha256": "3a8df9b9f655f690752e5ae64483dba540c1a17444381bab7f2c828543781ccf"
+  },
+  "/private/tmp/mixins-pr3346-library-readiness-diagnostics-review.md": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/review-and-hosted/mixins-pr3346-library-readiness-diagnostics-review.md",
+    "source_sha256": "a3b6b158a2dc416a7c81bfb1f47db08abf8ca0d1a578770eb28b06ffde08bc0c"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui28-hud_keud/ast-proof.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/response-cleanup/ast-proof.json",
+    "source_sha256": "eb7fd14eaae97a86eb8ac4abf848b4557bf241b5d56dbd364fa273a994a05b76"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui28-hud_keud/baseline-response_rules_fixtures-format.txt": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/response-cleanup/baseline-response_rules_fixtures-format.txt.json",
+    "source_sha256": "fd2299c9f1c6dc869070883e281051bfe93aacf66c1a3b0069f45b4aa410ca50"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui28-hud_keud/baseline-response_rules_fixtures.py": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/response-cleanup/baseline-response_rules_fixtures.py",
+    "source_sha256": "a648d920085e9269b3961c57bdb565088be60af50d1b92626c83314cc994af9a"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui28-hud_keud/baseline-test_console_response_rules-format.txt": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/response-cleanup/baseline-test_console_response_rules-format.txt.json",
+    "source_sha256": "5fd9d80308374ccae24ed39869d646c8ff749e23d83049606f33db1d309bc52e"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui28-hud_keud/baseline-test_console_response_rules.py": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/response-cleanup/baseline-test_console_response_rules.py",
+    "source_sha256": "2b227288c25394b1dfb08c7b3e121b38a3dcda2de253bf6ac9d39deadf98ef39"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui28-hud_keud/cleanup-controls.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/response-cleanup/cleanup-controls.json",
+    "source_sha256": "dcbd05a1547d1b10d14f0c0bace596402001b02b8afac89f0c800c523d0a64aa"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui28-hud_keud/cleanup-controls.log": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/response-cleanup/cleanup-controls.log.json",
+    "source_sha256": "1499877bda50bd69e7140028b09b9609f2eaa99f2e8838f8ad57589acf4b415b"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui28-hud_keud/cleanup-controls.xml": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/response-cleanup/cleanup-controls.xml.json",
+    "source_sha256": "b9122281564b64b8546ae3f8ef6360cd44b80bc9abee537774dfee3158be1de3"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui28-hud_keud/current-response_rules_fixtures-format.txt": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/response-cleanup/current-response_rules_fixtures-format.txt.json",
+    "source_sha256": "fd2299c9f1c6dc869070883e281051bfe93aacf66c1a3b0069f45b4aa410ca50"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui28-hud_keud/current-test_console_response_rules-format.txt": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/response-cleanup/current-test_console_response_rules-format.txt.json",
+    "source_sha256": "5b3b720e0d7d15f2b50cfde538f9267e8ab8e74980fa55f92ac96b99dbb1f81e"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui28-hud_keud/diff-check.txt": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/response-cleanup/diff-check.txt.json",
+    "source_sha256": "5ad216f8080400df036996258494bb0d3b5a489affb3d8c0a2bcc5f2cf4c0c99"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui28-hud_keud/final-diff.patch": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/response-cleanup/final-diff.patch.json",
+    "source_sha256": "2d97f944081496f558f1436f7b846976648d2a132fa90459487fd4d30d3f7c3f"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui28-hud_keud/final-response_rules_fixtures.py": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/response-cleanup/final-response_rules_fixtures.py",
+    "source_sha256": "98272ace16c4b897d713911a826b2745f669dc2351ef88aebf31d2adfdf95e40"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui28-hud_keud/final-test_console_response_rules.py": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/response-cleanup/final-test_console_response_rules.py",
+    "source_sha256": "1bfd03dd30ed0e57085fd1183f3f32f3c7bae24ffc9591facb735b900486a4bf"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui28-hud_keud/gated-controls.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/response-cleanup/gated-controls.json",
+    "source_sha256": "8ffa826c00781900ae93fab376aa1a8232158dd0515a2ed4fc07dd6417337d8b"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui28-hud_keud/gated-controls.log": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/response-cleanup/gated-controls.log.json",
+    "source_sha256": "b4d972cb6b5fab4c0eae29a9194257aa752b71f96d166941384e90f15dbdf1c7"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui28-hud_keud/gated-controls.xml": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/response-cleanup/gated-controls.xml.json",
+    "source_sha256": "e4528ef5da673e46098ed2207f70bbd41e5d312756cc615a9147d8b8807789ba"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui28-hud_keud/hosted-red.log": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/response-cleanup/hosted-red.log.json",
+    "source_sha256": "78f8028d4db0e40704289e624dc4adbca10ab8cc0ac4e89719927fcb1c95bcbf"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui28-hud_keud/injected.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/response-cleanup/injected.json",
+    "source_sha256": "1a9912ebdf0f83e8d2fbf47b5c4e1963f642a92258bf76a24df803c6e5f683ff"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui28-hud_keud/injected.log": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/response-cleanup/injected.log.json",
+    "source_sha256": "a9b36833228d7846caa1e438cbe8ae30cfd239065b54c1a9b5ef3a2049e6c27e"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui28-hud_keud/injected.xml": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/response-cleanup/injected.xml.json",
+    "source_sha256": "f7aa74625a420bdf33cd3104ba68117017bda305a3bc2920b5ba122705098012"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui28-hud_keud/phases.jsonl": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/response-cleanup/phases.jsonl.json.gz",
+    "source_sha256": "414b091a6efad4076459072127264703568d2b40b504d987929b3f55b08bad3a",
+    "retained_encoding": "gzip",
+    "uncompressed_retained_sha256": "33dc33005e6339ab1ce01a18a94c699219cf2c24b0dc877ba24e80b5bd8b7953"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui28-hud_keud/probe.py": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/response-cleanup/probe.py",
+    "source_sha256": "b05bf5f72aefb8f20ea3f177c8bc6d038e5525264fdea18a139217e016f7c8c1"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui28-hud_keud/rebuild.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/response-cleanup/rebuild.json",
+    "source_sha256": "5b47790ad926efbd9daeb78f6e4a7a00f57a4c512894807040378816597794d9"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui28-hud_keud/rebuild.log": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/response-cleanup/rebuild.log.json",
+    "source_sha256": "87e4f343dede0f98c90ecd9ece4f5de5e87a5e46752bdcbc8ea76b141e26ffbc"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui28-hud_keud/rebuild.xml": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/response-cleanup/rebuild.xml.json",
+    "source_sha256": "e0fd2351b761d8f2fdd8a9a64e0b00f6446e6f5543f0c9925bd79772c239f634"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui28-hud_keud/report.md": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/response-cleanup/report.md",
+    "source_sha256": "133268641e55c4fc76587772eb3e8c1207646cec61688da7d505f4916f585038"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui28-hud_keud/run.py": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/response-cleanup/run.py",
+    "source_sha256": "b0ce95f7beac27012aca4f7f17fac16204aa445541f15dd80f0c43b0a54b79e2"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui28-hud_keud/shard28.txt": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/response-cleanup/shard28.txt.json",
+    "source_sha256": "dbf96a3969bbc96247c606e006290a2b058b1b9ea2c319d088b0d8b1dcc50826"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui28-hud_keud/static-proof.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/response-cleanup/static-proof.json",
+    "source_sha256": "91dcfe3b09fd871e1b1db7e7678d793319b38d7cc941fca75bd5c23721798e96"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui28-hud_keud/report-files.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/response-cleanup/report-files.json",
+    "source_sha256": "0e6224c07ee15f26e79278f234783c9da69eed578137ea85968ef20551d17b8a"
+  },
+  "/private/tmp/mixins-pr3346-response-rules-cleanup-review.md": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/review-and-hosted/mixins-pr3346-response-rules-cleanup-review.md",
+    "source_sha256": "98bfa969f9d31b2d1955e3352604a6d2933347fd1b9e9ca3190c014c871bdffa"
+  },
+  "/private/tmp/mixins-pr3346-final-gate-enrollment-review.md": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/review-and-hosted/mixins-pr3346-final-gate-enrollment-review.md",
+    "source_sha256": "434eacf2ef8c2659cc21b9da7a4a27a4880617d9d9a89c8b3b17b2d893524b59"
+  },
+  "/private/tmp/mixins-f095-ui-census.log": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/review-and-hosted/mixins-f095-ui-census.log.json",
+    "source_sha256": "aa5c90da5a766edd8059d41b0a7aa72635c269f137fce37666007df8f7aa7372"
+  },
+  "/private/tmp/mixins-f095-ui-census-tests.log": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/review-and-hosted/mixins-f095-ui-census-tests.log.json",
+    "source_sha256": "d317cd48fe3beae08d3e0b2f4834d1a41f89fa20b8c23cc7d061bdbeec2f2f2f"
+  },
+  "/private/tmp/mixins-f095-final-diagnostics.log": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/review-and-hosted/mixins-f095-final-diagnostics.log.json",
+    "source_sha256": "167cc50c0935f17042c6a7adb86b709fe4845a9752c10bd8aea26d3e81d065cf"
+  },
+  "/private/tmp/mixins-ci-f095-ui28-progress.log": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/review-and-hosted/mixins-ci-f095-ui28-progress.log.json",
+    "source_sha256": "78f8028d4db0e40704289e624dc4adbca10ab8cc0ac4e89719927fcb1c95bcbf"
+  }
+}

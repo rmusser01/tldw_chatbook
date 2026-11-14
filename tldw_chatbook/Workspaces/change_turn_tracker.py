@@ -225,6 +225,13 @@ class ChangeTurnTracker:
             root = queue.pop(0)
             key = str(root)
             try:
+                from tldw_chatbook.Workspaces.change_review_ownership import (
+                    native_snapshot_source,
+                )
+
+                source = native_snapshot_source()
+                if source is not None:
+                    source.validate_root(root)
                 scan = scan_root(root)
                 if scan.over_budget:
                     preparations.append(
@@ -292,9 +299,7 @@ class ChangeTurnTracker:
                     repo = self.service.repo_for_root(root)
                     eligible = self._eligible_touched_paths(root, touched_paths)
                     if eligible:
-                        baseline = repo.snapshot(
-                            "turn baseline", force_paths=eligible
-                        )
+                        baseline = repo.snapshot("turn baseline", force_paths=eligible)
                     else:
                         baseline = repo.snapshot("turn baseline")
                     oversize = repo.last_oversize_excluded
@@ -481,15 +486,11 @@ class ChangeTurnTracker:
                         adds=sum(c.adds for c in changed),
                         dels=sum(c.dels for c in changed),
                     )
-                    self._defer_to_successor(
-                        successor_handle, key, provided, eligible
-                    )
+                    self._defer_to_successor(successor_handle, key, provided, eligible)
                     records.append(record)
                     continue
                 force_paths = list(
-                    dict.fromkeys(
-                        (*eligible, *handle.force_paths_for_root(key))
-                    )
+                    dict.fromkeys((*eligible, *handle.force_paths_for_root(key)))
                 )
                 if force_paths:
                     end = repo.snapshot("turn end", force_paths=force_paths)
@@ -501,9 +502,7 @@ class ChangeTurnTracker:
                 # disclosure covers exactly what is not tracked.
                 registered = handle.auto_registered.get(key, ())
                 nested = tuple(
-                    rel
-                    for rel in repo.last_nested_repos
-                    if rel not in registered
+                    rel for rel in repo.last_nested_repos if rel not in registered
                 )
                 if end == baseline:
                     # TASK-1975 (AC#6): an oversized file CREATED during
@@ -515,9 +514,7 @@ class ChangeTurnTracker:
                     )
                     # TASK-1976: a repo cloned mid-turn is a NEW hole —
                     # same disclosure rule as new oversize.
-                    new_nested = set(nested) - set(
-                        handle.baseline_nested.get(key, ())
-                    )
+                    new_nested = set(nested) - set(handle.baseline_nested.get(key, ()))
                     if new_oversize or new_nested:
                         records.append(
                             TurnChangeRecord(
@@ -584,9 +581,7 @@ class ChangeTurnTracker:
         # TASK-1975: force-add exists to defeat IGNORE rules, not the size
         # cap -- a tool-written oversized file is disclosed, never committed.
         cap = change_review_setting("max_file_bytes", DEFAULT_MAX_FILE_BYTES)
-        return [
-            rel for rel in in_root if not self._over_cap(root, rel, cap)
-        ]
+        return [rel for rel in in_root if not self._over_cap(root, rel, cap)]
 
     @staticmethod
     def _over_cap(root: Path, rel: str, cap: int) -> bool:
@@ -646,7 +641,9 @@ class ChangeTurnTracker:
         return out
 
 
-def initialize_shadow_root(root: Path | str) -> None:
+def initialize_shadow_root(
+    root: Path | str, *, service: ShadowRepoService | None = None
+) -> None:
     """Synchronously create one root's initial shadow snapshot.
 
     Background ownership belongs to :class:`ChangeReviewConsentService`;
@@ -655,12 +652,13 @@ def initialize_shadow_root(root: Path | str) -> None:
 
     Args:
         root: Canonical workspace folder root.
+        service: Original native shadow storage selection, when admitted.
 
     Raises:
         ChangeTrackingError: If shadow Git is unavailable.
         Exception: If repository initialization or snapshotting fails.
     """
-    service = ShadowRepoService()
+    service = service if service is not None else ShadowRepoService()
     if not service.available:
         raise ChangeTrackingError("Change Review shadow Git is unavailable.")
     service.repo_for_root(root).snapshot("root registered")

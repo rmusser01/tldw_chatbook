@@ -1,0 +1,271 @@
+ 1:  6a42ecc7bb =  1:  cd31c02461 Keep Windows cold display reads off the UI thread
+ 2:  cb0e00300f =  2:  2ca29c30ce Record post-PR Console profiles and remaining hotspots
+ 3:  6870c6b459 =  3:  10853ca994 Pin profiling baseline and clarify diagnostic initialization
+ 4:  3ff055e123 !  4:  0610b9c23a Prepare Console attention and workspace reads off the UI thread
+    @@ tldw_chatbook/UI/Screens/chat_screen.py
+     @@ tldw_chatbook/UI/Screens/chat_screen.py: from ..Console_Modules.left_rail import (
+      )
+      from ..Console_Modules.workspace import (
+    -     CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS as CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS,
+    +     CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS as CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS,  # noqa: PLC0414 -- retain the original module export.
+     +    _WorkspaceAvailabilityObsolete,
+      )
+      from ..Console_Modules.message import ConsoleMessageController
+ 5:  aa7b421606 =  5:  e761994749 perf(console): prepare checked config before FULL presentation
+ 6:  74ad67cd95 !  6:  82ad9ad3f2 Reduce native storage initialization polling and ancestry work
+    @@ backlog/decisions/126-complete-local-backup-and-recovery.md: this fixed-root pre
+     +surviving creation intent and changed path/security evidence must still refuse.
+     
+      ## backlog/docs/lessons-testing-evidence.md ##
+    -@@ backlog/docs/lessons-testing-evidence.md: before publication. Empty withdrawals now retain those recovery rounds; accepted
+    - decisions and ordinary sealing checks remain unchanged. Exercise recovery through
+    - the next request's real history projection, not just the successful tool return.
+    - Evidence: `Docs/superpowers/qa/2026-10-18-multi-model-code-review/v1-conflict-offline/report.md`.
+    -+
+    +@@ backlog/docs/lessons-testing-evidence.md: unresolved assertion baseline-only merely because the host was slow. Ordinary
+    + Windows TEMP also failed admission before pytest collection; these runs needed
+    + native 0700 config/temp directories rather than relaxed permission validation.
+    + Evidence: `Docs/superpowers/qa/2026-10-31-pr3162-backlog-rebase.md`.
+     +
+     +## Sub-resolution async polling can manufacture Windows stalls (TASK-35595, 2026-10-19)
+     +
+ 7:  9640c567fb =  7:  da266f6dc2 perf: reduce repeated CSS and Console presentation work
+ 8:  331a33bf2c =  8:  d645e86727 docs: close Windows presentation performance task
+ 9:  8c96dba860 =  9:  e359380891 perf: reject impossible Console CSS selector candidates
+10:  5a927e7972 = 10:  a6582fc3a2 docs: close Console CSS matching follow-up
+11:  159ce45cc1 = 11:  86e40a231a perf: defer contended Console and hidden Home presentation
+12:  f1f1cf0aa9 = 12:  45274268a2 docs: close Console presentation profiling follow-up
+13:  c0e66aa31b = 13:  f730481878 Preserve recorded Console spend while tokenizer estimates are unavailable
+14:  89037b6f86 = 14:  35c03485b8 perf: avoid repeated Console derivation and impossible pseudo matches
+15:  3958d57386 = 15:  1e9b26728c docs: pin rebased config and CSS profile controls
+16:  89d10b4111 = 16:  2daf5b7d83 docs: record config and CSS profiling gains and latency limits
+17:  5030245a33 = 17:  093e718781 docs: close config and CSS performance follow-up
+18:  cf032c3398 = 18:  59af55f22b perf(console): keep return input responsive during reconciliation
+19:  0d4b945c23 = 19:  23472ee400 docs(perf): close Console return profiling follow-up
+20:  106f8d85cf = 20:  2897ac3fe8 Verify config and CSS savings on the current Console return path
+21:  9abe9fb971 = 21:  fdb5b9996a perf(console): avoid redundant return acknowledgement synchronization
+22:  db08040fac = 22:  cdb62d19db docs(perf): close attachment completion profiling follow-up
+23:  6e743b5f64 = 23:  13681adb58 perf: match subject-only CSS without ancestor scans
+24:  ae1b154cb8 = 24:  a6ce200b48 docs(perf): verify integrated Console return results and limits
+25:  6ba1c9bfe1 = 25:  588f056b4e docs(perf): retain Console return qualification hold
+26:  882b56fe7b = 26:  34db0a2d33 perf(home): stop unissued content reads after suspension
+27:  1b7f8b9cb2 = 27:  88f8360d76 docs(perf): qualify native Console attachment demand and waits
+28:  6d2f038fdb = 28:  c94e9635b2 docs(perf): record published native wait qualification limits
+29:  6e2e7d247f = 29:  019b8a9f7a perf(console): defer expired direct display to checked refresh
+30:  81af8bb3f1 = 30:  9c80fd307b docs(perf): record direct control-bar verification and mixed latency
+31:  475c610502 = 31:  b7b4a8c090 docs(backlog): record control-bar PR publication and limits
+32:  e200b5cc77 ! 32:  1a27bb6fe5 perf(console): share finite context inputs with transcript memory display
+    @@ Docs/Architecture/console.md: scope (TASK-35613). Each loads current config once
+      into the finite `console-attach-reconciliation` view worker (TASK-35614).
+      Textual awaits async after-refresh callbacks inside the screen message pump;
+     
+    - ## Tests/UI/test_console_native_transcript.py ##
+    -@@ Tests/UI/test_console_native_transcript.py: async def test_console_mounts_native_transcript_region():
+    - 
+    - 
+    - @pytest.mark.asyncio
+    -+@private_profile_test
+    - async def test_mounted_console_sync_replaces_effective_memory_banner_without_stacking(
+    -+    request,
+    -     monkeypatch,
+    - ):
+    -     app = _build_test_app()
+    -@@ Tests/UI/test_console_native_transcript.py: async def test_mounted_console_sync_replaces_effective_memory_banner_without_sta
+    -             ),
+    -         )
+    - 
+    --        await console._sync_native_console_chat_ui()
+    -+        await console._sync_native_console_transcript(force=True)
+    -         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+    -         assert transcript.memory_banner_presentation is not None
+    -         await _wait_for_selector(
+    -@@ Tests/UI/test_console_native_transcript.py: async def test_mounted_console_sync_replaces_effective_memory_banner_without_sta
+    -         )
+    - 
+    -         current_effective[0] = EffectiveMemoryResult(EffectiveMemoryKind.RAW)
+    --        await console._sync_native_console_chat_ui()
+    -+        await console._sync_native_console_transcript(force=True)
+    -         assert len(transcript.query(".console-transcript-summary-banner")) == 0
+    -         assert transcript.selected_message_id == messages[-1].id
+    -         assert transcript.to_plain_text(width=80) == plain_before
+    -@@ Tests/UI/test_console_native_transcript.py: async def test_mounted_console_sync_replaces_effective_memory_banner_without_sta
+    -         )
+    - 
+    -         current_effective[0] = range_effective
+    --        await console._sync_native_console_chat_ui()
+    -+        await console._sync_native_console_transcript(force=True)
+    -         assert len(transcript.query(".console-transcript-summary-banner")) == 1
+    - 
+    -         second_session = store.create_session(title="Second branch")
+    -         current_effective[0] = EffectiveMemoryResult(EffectiveMemoryKind.RAW)
+    --        await console._sync_native_console_chat_ui()
+    -+        await console._sync_native_console_transcript(force=True)
+    -         assert store.active_session_id == second_session.id
+    -         assert len(transcript.query(".console-transcript-summary-banner")) == 0
+    - 
+    -         store.switch_session(session.id)
+    -         current_effective[0] = range_effective
+    --        await console._sync_native_console_chat_ui()
+    -+        await console._sync_native_console_transcript(force=True)
+    -         assert len(transcript.query(".console-transcript-summary-banner")) == 1
+    - 
+    - 
+    -
+      ## Tests/UI/test_console_transcript_context_projection.py (new) ##
+     @@
+     +"""Transcript painting shares finite context display work without awaiting it."""
+    @@ tldw_chatbook/UI/Console_Modules/console_spend_projection.py: from types import
+      from typing import Any
+      
+      from ...Chat.assistant_generation_state import assistant_state_allows_provider_history
+    --from ...Chat.console_chat_controller import _is_empty_transcript_row
+    +-from ...Chat.console_chat_controller import (_is_empty_transcript_row, ConsoleChatController, _CONSOLE_CONTEXT_PRESENTATION_READERS)
+     +from ...Chat.console_chat_controller import (
+     +    ConsoleChatController,
+    ++    _CONSOLE_CONTEXT_PRESENTATION_READERS,
+     +    _is_empty_transcript_row,
+     +)
+    + from ...Chat.console_received_dispatch import stock_native_methods
+      from ...Chat.console_chat_models import (
+          ConsoleChatMessage,
+    -     ConsoleDispatchRecoveryKind,
+     @@ tldw_chatbook/UI/Console_Modules/console_spend_projection.py: from . import tokenizer_display as _tokenizer_display
+      
+      _PRICING_DISPLAY_SOURCE = _pricing_display._SOURCE_CAPSULE
+    @@ tldw_chatbook/UI/Console_Modules/console_spend_projection.py: def console_readin
+          """Share disposable presentation inputs behind exact owner/revision fences.
+      
+     @@ tldw_chatbook/UI/Console_Modules/console_spend_projection.py: class ConsoleContextReadSnapshot:
+    +                 store.session_settings_revision(session_id),
+                      store.session_context_summary(session_id),
+    -                 controller.run_state_for(session_id).status,
+                      self.config_projection._key() if self.config_projection else None,
+     +                _context_presentation_source_key(controller),
+                  )
+33:  58ad8f201e = 33:  ce51db027a docs(perf): record transcript context profiles and validation limits
+34:  fd922602df = 34:  a6af60249b docs: plan PR3166 current-dev integration
+35:  e021a376b2 ! 35:  746db2f76c fix: preserve current native owners in PR3166 integration
+    @@ Docs/security/production-diagnostic-inventory.json
+            "reason": "remaining Chatbook production diagnostic owner"
+          },
+          {
+    --      "call_count": 116,
+    --      "diagnostic_digest": "dc2d77c862e74e93f183",
+    -+      "call_count": 117,
+    -+      "diagnostic_digest": "34ef94f317377acdb5d0",
+    +-      "call_count": 117,
+    +-      "diagnostic_digest": "c4acf3c2c2428f4084ed",
+    ++      "call_count": 118,
+    ++      "diagnostic_digest": "3969b15138e6344c5a7b",
+            "owner": "TASK-494",
+            "path": "tldw_chatbook/UI/Screens/chat_screen.py",
+            "reason": "remaining Chatbook production diagnostic owner"
+    @@ Tests/Architecture/test_library_modules_size_ratchet.py: _BUDGETS: dict[str, int
+     
+      ## Tests/Architecture/test_module_size_ratchet.py ##
+     @@ Tests/Architecture/test_module_size_ratchet.py: _REPO_ROOT = Path(__file__).resolve().parents[2]
+    - 
+    - #: path -> max line count. LOWER these when a module shrinks. Never raise
+    - #: them to silence a failure — see the module docstring.
+    + # 2026-10-31, PR #3162: the user explicitly waived size limits for this
+    + # backlog rebase. Affected rows are pinned to exact measured values; see
+    + # Docs/superpowers/qa/2026-10-31-pr3162-backlog-rebase.md.
+     +# 2026-10-31 PR3166: exact final integration measurements under the user
+     +# backlog size-limit waiver; no spare budget and no behavioral guard changes.
+      _BUDGETS: dict[str, int] = {
+    -     # TASK-33011 decomposition: lowered as each extraction PR lands
+    -     # (entry tail -> app_entry.py: 21,234 measured -> 20,484; destinations
+    +     # TASK-32695: existing owners receive pure moves; retain their measured ceilings.
+    +     "tldw_chatbook/Utils/app_shutdown.py": 776,
+     @@ Tests/Architecture/test_module_size_ratchet.py: _BUDGETS: dict[str, int] = {
+          # while the owner still reports "starting" (M-2), tolerates a sync or
+          # Future-returning ``start`` (M-3), records the lazy task (M-1); three
+    @@ Tests/Architecture/test_module_size_ratchet.py: _BUDGETS: dict[str, int] = {
+          # out of app.py (LifecycleMixin); governed there, so governed here.
+          # TASK-33621.13: 2,140 -> 2,134 (keep-alive dead-pump handling moved
+     @@ Tests/Architecture/test_module_size_ratchet.py: _BUDGETS: dict[str, int] = {
+    -     # TASK-36361: staged completion delegates to the same-owner helper (-45).
+    -     # TASK-36387: five badge branches read the category list's table (-3).
+    -     # TASK-36388: the context-window suppress queue nothing wrote goes (-13).
+    --    "tldw_chatbook/UI/Screens/settings_screen.py": 35602,
+    -+    "tldw_chatbook/UI/Screens/settings_screen.py": 35654,
+    +     #: 2026-10-31, PR #3155 / TASK-18925: explicit user size-limit waiver.
+    +     #: Keep canonical notification settings together; exact measured size,
+    +     #: with no reflow/extraction solely to satisfy the old ceiling.
+    +-    "tldw_chatbook/UI/Screens/settings_screen.py": 35674,
+    ++    "tldw_chatbook/UI/Screens/settings_screen.py": 35726,
+          # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
+          # at birth so the split cannot regrow a god module there. New code for
+          # either goes in a sibling module under UI/Settings_Modules/.
+    @@ Tests/Architecture/test_module_size_ratchet.py: _BUDGETS: dict[str, int] = {
+          # asks storage for its count by title only (owner decision 2026-10-27),
+          # so the two can no longer disagree.
+          # 2026-10-30: re-measured after rebasing onto dev 134108dd84 (owner rule: the row is the exact measurement): 8747 -> 8763.
+    --    "tldw_chatbook/UI/Console_Modules/workspace.py": 8763,
+    -+    "tldw_chatbook/UI/Console_Modules/workspace.py": 8924,
+    +-    "tldw_chatbook/UI/Console_Modules/workspace.py": 8774,
+    ++    "tldw_chatbook/UI/Console_Modules/workspace.py": 8935,
+          "tldw_chatbook/Chat/console_provider_gateway.py": 8160,
+          # 2026-10-27, TASK-33620.15.22 (owner decision: a fix over a size ratchet
+          # raises the row with a dated comment; never squeeze code to fit):
+    @@ Tests/Architecture/test_module_size_ratchet.py: _BUDGETS: dict[str, int] = {
+          # TASK-37620: document the live workspace-alignment seam rather than
+          # historical extraction call counts, retaining activation notifications.
+     -    "tldw_chatbook/UI/Console_Modules/session.py": 6990,
+    -+    "tldw_chatbook/UI/Console_Modules/session.py": 6994,
+    ++    "tldw_chatbook/UI/Console_Modules/session.py": 7002,
+          # 2026-10-29, TASK-36941.1 (owner decision: a fix over a size ratchet
+          # raises the row with a dated comment; never squeeze code to fit):
+          # 6987 -> 6993 (+6). transaction() rolls back on BaseException, and its
+          # docstring says so.
+          "tldw_chatbook/DB/Subscriptions_DB.py": 6993,
+          "tldw_chatbook/Media/local_media_reading_service.py": 6911,
+    --    "tldw_chatbook/Chat/console_runtime.py": 6686,
+    -+    "tldw_chatbook/Chat/console_runtime.py": 6810,
+    -     "tldw_chatbook/Chat/console_trace_service.py": 6662,
+    +-    "tldw_chatbook/Chat/console_runtime.py": 6943,
+    ++    "tldw_chatbook/Chat/console_runtime.py": 7067,
+    +     "tldw_chatbook/Chat/console_trace_service.py": 6679,
+          "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": 6108,
+          "tldw_chatbook/Notes/notes_sync_executor.py": 6007,
+     @@ Tests/Architecture/test_module_size_ratchet.py: _BUDGETS: dict[str, int] = {
+    @@ Tests/Architecture/test_module_size_ratchet.py: _BUDGETS: dict[str, int] = {
+     
+      ## Tests/Architecture/test_screen_size_ratchet.py ##
+     @@ Tests/Architecture/test_screen_size_ratchet.py: _REPO_ROOT = Path(__file__).resolve().parents[2]
+    - #: feature tree measured 17,000/565. PR #2050 removes two remaining
+    - #: compatibility methods and keeps fork state behind the message controller;
+    - #: the final merged tree measures 16,966/563.
+    + # 2026-10-31, PR #3162: the user explicitly waived size limits for this
+    + # backlog rebase. Affected rows are pinned to exact measured values; see
+    + # Docs/superpowers/qa/2026-10-31-pr3162-backlog-rebase.md.
+     +# 2026-10-31 PR3166: exact final integration measurements under the user
+     +# backlog size-limit waiver; no spare budget and no behavioral guard changes.
+      _BUDGETS: dict[str, tuple[str, int, int]] = {
+          #: Re-pinned 2026-09-19 (core-review TASK-32809.1). The ratchet had
+          #: gone red on dev -- ~8,400 lines of feature work re-consumed the
+     @@ Tests/Architecture/test_screen_size_ratchet.py: _BUDGETS: dict[str, tuple[str, int, int]] = {
+    -     #: are the screen-owned half of the Review reports key: the `u` Binding,
+    -     #: its workbench-shortcut legend entry, the action attribute and the
+    -     #: `wiring` import that supplies it; the presenter lives in wiring.py.
+    --    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24335, 737),
+    -+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24443, 739),
+    +     #: 2026-10-31, PR #3155 / TASK-18925: explicit user size-limit waiver.
+    +     #: Retain the notification hooks and bounded shutdown repair in place;
+    +     #: pin the measured tree exactly, without reflow/extraction to fit.
+    +-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24301, 739),
+    ++    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24409, 741),
+          #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
+          #: missing for the entire month in which library_screen.py tripled from
+          #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
+    @@ Tests/Architecture/test_screen_size_ratchet.py: _BUDGETS: dict[str, tuple[str, i
+          #: expand-the-limits rule): P1-B's .17/.14/.12/.11/.71 screen work on top of
+          #: dev's decomposed screen: 37542 -> 37759 lines, 1354 -> 1361 methods (measured).
+     -    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37759, 1361),
+    -+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37802, 1362),
+    ++    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37805, 1362),
+      }
+      
+      # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard
+36:  1e89f753ee = 36:  dbd505bf72 fix(console): retain original checked display freshness
+37:  2de76fded8 = 37:  fc3a6a9e63 docs: retain original native fixture evidence path

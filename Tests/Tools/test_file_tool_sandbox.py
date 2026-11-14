@@ -28,7 +28,9 @@ def _sandbox_only_roots(monkeypatch):
 
 
 def test_sandbox_root_is_real_dir_not_literal(monkeypatch, tmp_path):
-    monkeypatch.setattr(fot, "_resolve_sandbox_config", lambda: str(tmp_path / "tool_sandbox"))
+    monkeypatch.setattr(
+        fot, "_resolve_sandbox_config", lambda: str(tmp_path / "tool_sandbox")
+    )
     root = fot._tool_sandbox_root()
     assert root == (tmp_path / "tool_sandbox").resolve()
     assert root.is_dir()  # created
@@ -284,6 +286,7 @@ def test_read_file_refuses_wal_sidecar_of_this_apps_own_sqlite_db(monkeypatch):
 
 def test_read_file_refuses_chroma_vector_store_file_even_when_sandbox_root_contains_it(
     monkeypatch,
+    tmp_path,
 ):
     """TASK-848 AC#1: ``chromadb/chroma.sqlite3`` -- plaintext chunks of the
     same conversations and notes ``ChaChaNotes.db`` protects -- must not
@@ -292,11 +295,17 @@ def test_read_file_refuses_chroma_vector_store_file_even_when_sandbox_root_conta
     existing-directory exemption); only the file directly inside it is
     refused.
     """
-    from tldw_chatbook.RAG_Search.simplified.config import (
-        default_chroma_persist_directory,
-    )
+    from Tests.Backup_Recovery.config_test_support import select_config_source
+    from tldw_chatbook.RAG_Search.simplified import config as rag_config
 
-    chroma_dir = default_chroma_persist_directory()
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
+    assert config_path.resolve().is_relative_to(tmp_path.resolve())
+    assert Path(os.environ["HOME"]).resolve().is_relative_to(tmp_path.resolve())
+    monkeypatch.setenv("RAG_PERSIST_DIR", str(tmp_path / "chroma"))
+    select_config_source(monkeypatch, config_path, vars(rag_config))
+
+    chroma_dir = rag_config.default_chroma_persist_directory()
+    assert chroma_dir.resolve().is_relative_to(tmp_path.resolve())
     chroma_dir.mkdir(parents=True, exist_ok=True)
     (chroma_dir / "chroma.sqlite3").write_text("plaintext vector chunk marker")
 
@@ -419,12 +428,12 @@ def test_default_sandbox_configuration_still_works_end_to_end():
 # hidden files/directories is not allowed"), so `.git/config` was already
 # unreachable here -- disabling the new `is_git_metadata_write` check leaves
 # the refusal test passing. The real gap was in the OTHER family
-# (`local_tool_impls`), which sets `allow_hidden=True` per ADR-032 so a
+# (`local_tool_impls`), which sets `allow_hidden=True` per ADR-300 so a
 # coding agent can read dotfiles; that is where the guard is load-bearing
 # and mutation-proven (see `Tests/Tools/test_local_tool_sensitive_paths.py`).
 #
 # The check is still wired here as defense-in-depth -- if this family ever
-# adopts `allow_hidden` the way ADR-032 drove the other one to, the guard is
+# adopts `allow_hidden` the way ADR-300 drove the other one to, the guard is
 # already in place -- but these tests are honest about which mechanism does
 # the work today, rather than crediting the new one for a refusal it did not
 # produce.
@@ -467,5 +476,3 @@ def test_is_git_metadata_write_predicate_is_exact_on_components():
 
 
 # -- task-32804.12: bound the recursive ListDirectory walk --------------------
-
-

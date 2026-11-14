@@ -1,0 +1,67 @@
+{
+  "time": "2026-10-28T09:26:38.868500+00:00",
+  "head": "cc907deb187f4e3de99e9f1bab2f73983ac1870a",
+  "runs": [
+    {
+      "id": 40647284044,
+      "name": "TASK-32011 one-off Linux storage evidence",
+      "status": "completed",
+      "conclusion": "skipped",
+      "jobs": {
+        "skipped": 1
+      },
+      "failures": []
+    },
+    {
+      "id": 40647283947,
+      "name": "TASK-19637 pinned workspace platform evidence",
+      "status": "completed",
+      "conclusion": "skipped",
+      "jobs": {
+        "skipped": 1
+      },
+      "failures": []
+    },
+    {
+      "id": 40647284011,
+      "name": "Perf Guard",
+      "status": "completed",
+      "conclusion": "success",
+      "jobs": {
+        "success": 1
+      },
+      "failures": []
+    },
+    {
+      "id": 40647283957,
+      "name": "Derived Artifacts",
+      "status": "completed",
+      "conclusion": "failure",
+      "jobs": {
+        "success": 22,
+        "failure": 2,
+        "cancelled": 1
+      },
+      "failures": [
+        {
+          "id": 122678943800,
+          "name": "UI Fast Lane (1)",
+          "conclusion": "failure",
+          "steps": [
+            "Run the gated Tests/UI slice"
+          ]
+        },
+        {
+          "id": 122714846484,
+          "name": "Derived artifacts reproduce from their sources",
+          "conclusion": "failure",
+          "steps": [
+            "Require successful UI fast lane"
+          ]
+        }
+      ]
+    }
+  ],
+  "qualification": "cc907 workflow failure retained, not waived by local passes. UI1 failed the original acknowledgement compositor continuity gate; remaining application lanes and Perf succeeded. The reviewed native batching repair and successor-head CI must qualify closure.",
+  "failing_ui_log_sha256": "25ebfa7580f39395618273125c8965df4a95bca34c4edcb435bcd8187ff5320f"
+}

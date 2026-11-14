@@ -135,6 +135,8 @@ _SHADOWED_BUILTIN_NAMES = frozenset(
         "prepare_managed_skill_promotion",
         "read_agent_messages",
         "report_to_supervisor",
+        "list_peer_agents",
+        "send_to_peer",
         "context",
         "doctor",
         "emergency-stop",
@@ -723,6 +725,9 @@ class SkillEditorState:
     # line (no frontmatter description on disk) -- shown as a hint, never
     # echoed into the Description field.
     description_derived: bool = False
+    plugin_owned: bool = False
+    plugin_installation_id: str | None = None
+    plugin_component_id: str | None = None
 
 
 def _text(value: Any) -> str:
@@ -1119,8 +1124,17 @@ def build_skill_editor_state(detail: Mapping[str, Any]) -> SkillEditorState:
         body=body,
         supporting_files=supporting_files,
         version=_to_int(detail.get("version")),
-        trust_status=_text(detail.get("trust_status")) or "trusted",
-        trust_blocked=bool(detail.get("trust_blocked", False)),
+        plugin_owned=bool(detail.get("plugin_owned")),
+        plugin_installation_id=_text(detail.get("plugin_installation_id")) or None,
+        plugin_component_id=_text(detail.get("plugin_component_id")) or None,
+        trust_status=(
+            "plugin_managed"
+            if detail.get("plugin_owned")
+            else _text(detail.get("trust_status")) or "trusted"
+        ),
+        trust_blocked=bool(
+            detail.get("plugin_owned") or detail.get("trust_blocked", False)
+        ),
         trust_changed_files=tuple(str(item) for item in changed_files),
     )
 

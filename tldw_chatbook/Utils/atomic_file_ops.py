@@ -5,6 +5,7 @@ This module provides atomic file write operations to prevent data corruption
 from partial writes due to crashes, power failures, or other interruptions.
 """
 
+import errno
 import os
 import stat
 import tempfile
@@ -20,6 +21,127 @@ from .file_durability import flush_file, fsync_parent_directory
 #: opens ``O_CREAT|O_EXCL|O_NOFOLLOW`` at exactly this mode, so a private write
 #: is never observable at a wider one -- provided nothing chmods it afterwards.
 PRIVATE_MODE = 0o600
+
+
+#: What ``link()`` answers on a filesystem that cannot hard-link at all --
+#: FAT32/exFAT sticks, many SMB/NFS mounts, FUSE drivers without a ``link``
+#: operation. Only these (and any ``PermissionError``, i.e. EPERM/EACCES: the
+#: directory is known writable, the temporary file was just created in it) send
+#: a no-clobber publish to its exclusive-create fallback. Anything else -- a
+#: failing disk, a full one, a vanished folder -- is a real failure and is
+#: raised as itself, with nothing reserved at the destination.
+HARD_LINK_UNSUPPORTED_ERRNOS = frozenset(
+    {
+        errno.ENOSYS,  # FUSE: the driver implements no link()
+        errno.EXDEV,  # layered/union mounts that cannot link within a folder
+        errno.EMLINK,  # the filesystem's link maximum is one
+        # Windows reports ERROR_INVALID_FUNCTION / ERROR_NOT_SUPPORTED on
+        # FAT/exFAT, both of which CPython maps to EINVAL.
+        errno.EINVAL,
+        getattr(errno, "ENOTSUP", errno.EINVAL),  # macOS msdos/exfat/smbfs
+        getattr(errno, "EOPNOTSUPP", errno.EINVAL),
+    }
+)
+
+
+def _hard_links_unsupported(error: OSError) -> bool:
+    """Whether a failed ``os.link`` means "this filesystem has no hard links".
+
+    Args:
+        error: What ``os.link`` raised. Never a ``FileExistsError`` -- that is
+            the no-clobber answer and the caller handles it first.
+
+    Returns:
+        True when the publish should fall back to an exclusive create.
+    """
+    return (
+        isinstance(error, PermissionError)
+        or error.errno in HARD_LINK_UNSUPPORTED_ERRNOS
+    )
+
+
+def _discard_placeholder(file_path: Path, identity: tuple[int, int]) -> None:
+    """Remove the empty placeholder a failed fallback publish reserved.
+
+    Only OUR placeholder is removed: the same inode the exclusive create
+    returned, still a regular file, still empty. A file another writer put
+    at the name in the meantime -- or wrote bytes into -- is left alone;
+    leaving a stray empty file behind is the lesser failure.
+
+    Args:
+        file_path: The destination that was reserved.
+        identity: ``(st_dev, st_ino)`` of the placeholder as it was created.
+    """
+    try:
+        current = os.lstat(file_path)
+    except OSError:
+        return
+    if (
+        stat.S_ISREG(current.st_mode)
+        and current.st_size == 0
+        and (current.st_dev, current.st_ino) == identity
+    ):
+        try:
+            os.unlink(file_path)
+        except OSError:
+            pass
+
+
+def _publish_no_clobber(temp_path: str, file_path: Path) -> None:
+    """Publish a finished temporary file at ``file_path`` only if nothing is there.
+
+    A same-directory hard link publishes the fully fsynced inode atomically
+    and only if the destination is still absent. Unlike an exists()+replace
+    sequence, no competing file can be lost in the check/write gap.
+
+    Where the filesystem cannot hard-link (``HARD_LINK_UNSUPPORTED_ERRNOS``),
+    the name is reserved with an exclusive create instead --
+    ``O_CREAT | O_EXCL`` fails with ``FileExistsError`` if anything is there,
+    a dangling symlink included -- and the temporary file is then renamed
+    over that placeholder, which this call owns. A file that was there first
+    is still never replaced, and a competing exclusive or link-based writer
+    still loses cleanly. What no portable primitive closes on such a
+    filesystem is a writer that opens the reserved name WITHOUT ``O_EXCL``
+    in the instant between the reservation and the rename.
+
+    On return the temporary file no longer exists under its own name.
+
+    Args:
+        temp_path: The finished, fsynced temporary file, in ``file_path``'s
+            own directory.
+        file_path: The destination.
+
+    Raises:
+        FileExistsError: Something is at ``file_path``. Nothing was changed.
+        OSError: The publish failed -- including a ``link()`` failure that
+            does not mean "no hard links here", which is never retried. The
+            placeholder this call reserved, if any, is removed again, and
+            the temporary file is still at ``temp_path`` for the caller to
+            remove.
+    """
+    try:
+        os.link(temp_path, file_path)
+    except FileExistsError:
+        raise
+    except OSError as error:
+        if not _hard_links_unsupported(error):
+            raise
+    else:
+        os.unlink(temp_path)
+        return
+
+    # 0o600: the placeholder is only ever seen for an instant, and the rename
+    # brings the temporary file's own (already final) mode with it.
+    descriptor = os.open(file_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    try:
+        reserved = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    try:
+        os.replace(temp_path, file_path)
+    except BaseException:
+        _discard_placeholder(file_path, (reserved.st_dev, reserved.st_ino))
+        raise
 
 
 def _resolve_target_mode(
@@ -80,7 +202,10 @@ def atomic_write_text(
         overwrite: Replace an existing destination when True. When False,
             publish the completed temporary file with an atomic no-clobber
             link and raise ``FileExistsError`` if another writer created the
-            destination first.
+            destination first. On a filesystem without hard links (FAT32,
+            exFAT, many SMB/NFS mounts) the name is reserved with an
+            exclusive create and the temporary file renamed over that
+            placeholder instead -- see ``_publish_no_clobber``.
         private: Publish owner-only (0o600). The temporary file is already
             created ``O_CREAT|O_EXCL|O_NOFOLLOW`` at 0o600 by ``mkstemp``, so
             this simply suppresses the widening ``chmod`` that would otherwise
@@ -88,6 +213,8 @@ def atomic_write_text(
             and ``preserve_existing_mode`` are ignored when True.
 
     Raises:
+        FileExistsError: ``overwrite`` is False and something is already at
+            the destination. It is left untouched.
         OSError: If the write or rename operation fails
         IOError: If the temporary file cannot be created
     """
@@ -131,12 +258,9 @@ def atomic_write_text(
             # Atomic rename (on POSIX) or replace (cross-platform).
             os.replace(temp_path, str(file_path))
         else:
-            # A same-directory hard link atomically publishes the fully
-            # fsynced inode only if the destination is still absent. Unlike
-            # an exists()+replace sequence, no competing file can be lost in
-            # the check/write gap.
-            os.link(temp_path, file_path)
-            os.unlink(temp_path)
+            # A no-clobber link; an exclusive create + rename where the
+            # filesystem has no hard links.
+            _publish_no_clobber(temp_path, file_path)
         temp_path = None
         # The rename/link is atomic but not durable until the directory entry
         # itself is persisted.

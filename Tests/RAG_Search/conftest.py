@@ -167,6 +167,23 @@ class EmbeddingFactoryCompat:
         return f"EmbeddingFactoryCompat(provider={self.provider}, model={self.model})"
 
 
+@pytest.fixture(autouse=True)
+def _retire_keyword_leg_pools(request):
+    """Retire the FTS5 pools a keyword-leg test's services opened.
+
+    TASK-39142 / TASK-39049: those tests never close their RAGService, so the
+    pool thread's media DB handle stayed open and ``--storage-lease-guard``
+    (the recovered-suites lane) failed 33 of them.
+    """
+    yield
+    if request.node.path.name.startswith("test_keyword_leg_"):
+        from tldw_chatbook.RAG_Search.simplified.db_connection_pool import (
+            close_all_pools,
+        )
+
+        close_all_pools()
+
+
 # ===========================================
 # Directory Fixtures
 # ===========================================

@@ -41,6 +41,7 @@ from tldw_chatbook.RAG_Search.ingestion_indexing import (
     IngestionIndexer,
     backfill_semantic_index,
     conversation_document,
+    index_entries,
     install_media_ingest_hook,
     media_document,
     media_index_entry,
@@ -150,6 +151,10 @@ class FakeRAGService:
         self.cache = FakeSearchCache()
         self.indexed_docs = []
         self.fail = False
+        # TASK-38591: when set, results mimic a PARTIAL store -- success=True
+        # with a non-None error (some chunks failed embedding generation),
+        # exactly what indexing_helpers._record_success produces.
+        self.partial = False
         self.close_calls = 0
 
     def close(self):
@@ -164,7 +169,15 @@ class FakeRAGService:
         self.indexed_docs.extend(documents)
         return [
             IndexingResult(
-                doc_id=d["id"], chunks_created=2, time_taken=0.0, success=True
+                doc_id=d["id"],
+                chunks_created=2,
+                time_taken=0.0,
+                success=True,
+                error=(
+                    "2 chunks failed embedding generation"
+                    if self.partial
+                    else None
+                ),
             )
             for d in documents
         ]
@@ -666,6 +679,66 @@ class TestIngestionIndexer:
         assert indexer.wait_until_idle(timeout=10)
         assert indexer.stats()["indexed"] == 1
         assert indexing_db.get_indexed_item_info("45", "media") is not None
+
+    def test_partial_chunk_loss_is_surfaced_and_left_for_retry(
+        self, indexer, fake_service, indexing_db
+    ):
+        """TASK-38591(b): success=True + error is a partial store; the item
+        must NOT be recorded as fully indexed (that would skip it forever)
+        and the loss must surface in the summary the daemon reports."""
+        fake_service.partial = True
+        entry = _entry("77")
+        summary = asyncio.run(index_entries(fake_service, indexing_db, [entry]))
+
+        assert fake_service.indexed_docs, "the document WAS submitted for indexing"
+        assert summary["indexed"] == 0
+        assert summary["failed"] == 1
+        assert any("partial chunk loss" in message for message in summary["errors"])
+        # No indexing-state row: the item re-indexes on the next pass.
+        assert indexing_db.get_indexed_item_info("77", "media") is None
+
+    def test_partial_item_is_retried_until_it_fully_succeeds(
+        self, indexer, fake_service, indexing_db
+    ):
+        """The unchanged-timestamp retry: a partially-stored item is
+        re-indexed (same last_modified) until a pass fully succeeds, after
+        which the normal skip semantics resume."""
+        entry = _entry("78", last_modified=datetime.now(timezone.utc))
+
+        fake_service.partial = True
+        asyncio.run(index_entries(fake_service, indexing_db, [entry]))
+        assert len(fake_service.indexed_docs) == 1
+        # Same last_modified, NOT skipped -- retry, not full success.
+        asyncio.run(index_entries(fake_service, indexing_db, [entry]))
+        assert len(fake_service.indexed_docs) == 2
+
+        fake_service.partial = False
+        summary = asyncio.run(index_entries(fake_service, indexing_db, [entry]))
+        assert summary["indexed"] == 1
+        assert indexing_db.get_indexed_item_info("78", "media") is not None
+        # Fully indexed now: an unchanged rerun skips.
+        summary = asyncio.run(index_entries(fake_service, indexing_db, [entry]))
+        assert summary["skipped"] == 1
+        assert len(fake_service.indexed_docs) == 3
+
+    def test_partial_update_of_previously_indexed_item_keeps_old_timestamp(
+        self, fake_service, indexing_db
+    ):
+        """A partial re-index of an item recorded at an older timestamp
+        leaves that OLD row in place (so the newer last_modified still
+        compares as un-indexed), rather than pinning the new one."""
+        old = datetime.now(timezone.utc) - timedelta(hours=1)
+        indexing_db.mark_item_indexed("79", "media", last_modified=old, chunk_count=2)
+
+        fake_service.partial = True
+        entry = _entry("79", last_modified=datetime.now(timezone.utc))
+        summary = asyncio.run(index_entries(fake_service, indexing_db, [entry]))
+        assert summary["failed"] == 1
+
+        info = indexing_db.get_indexed_item_info("79", "media")
+        assert info is not None
+        recorded = datetime.fromisoformat(str(info["last_modified"]))
+        assert recorded == old, "partial store must not advance the timestamp"
 
     def test_submit_does_not_block_caller(self, indexing_db):
         release = threading.Event()
@@ -1665,3 +1738,50 @@ class TestFirstRunIndexingIsNotReportedAsFailure:
         assert notes and notes[-1][0] == "failure", (
             f"a real failure was downgraded on a configured install: {notes}"
         )
+
+
+@pytest.mark.unit
+class TestBackfillCliStorage:
+    """TASK-36947.7 (ADR-250 s6): the backfill CLI opens only the databases its
+    item types read, through the shared factory, and closes them in a finally."""
+
+    @staticmethod
+    def _run(tmp_path, monkeypatch, argv, seen, *, fail=False):
+        import tldw_chatbook.config as config
+        from tldw_chatbook.DB.ChaChaNotes_DB import ConsoleLibraryMigrationSeed
+        from tldw_chatbook.RAG_Search import backfill
+
+        async def fake_backfill(**kwargs):
+            seen.update(kwargs)
+            if fail:
+                raise RuntimeError("backfill failed")
+            return {"status": "ok", "failed": 0}
+
+        monkeypatch.setattr(backfill, "semantic_indexing_available", lambda: True)
+        monkeypatch.setattr(backfill, "backfill_semantic_index", fake_backfill)
+        monkeypatch.setattr(config, "get_media_db_path", lambda: tmp_path / "media.db")
+        monkeypatch.setattr(
+            config, "get_chachanotes_db_path", lambda: tmp_path / "chachanotes.db"
+        )
+        monkeypatch.setattr(
+            config,
+            "load_console_library_migration_seed",
+            lambda *_a, **_k: ConsoleLibraryMigrationSeed(auto_retrieve_on_send=False),
+        )
+        return backfill.main(argv)
+
+    def test_opens_only_what_the_types_need_and_closes_it(self, tmp_path, monkeypatch):
+        seen = {}
+        assert self._run(tmp_path, monkeypatch, ["--types", "media"], seen) == 0
+
+        assert seen["chachanotes_db"] is None
+        assert isinstance(seen["media_db"], MediaDatabase)
+        assert getattr(seen["media_db"]._local, "conn", None) is None
+
+    def test_closes_the_databases_when_the_backfill_raises(self, tmp_path, monkeypatch):
+        seen = {}
+        with pytest.raises(RuntimeError, match="backfill failed"):
+            self._run(tmp_path, monkeypatch, ["--types", "note"], seen, fail=True)
+
+        assert seen["media_db"] is None
+        assert getattr(seen["chachanotes_db"]._local, "conn", None) is None

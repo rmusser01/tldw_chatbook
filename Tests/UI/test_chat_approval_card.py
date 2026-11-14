@@ -9,15 +9,26 @@ falling back to the full set if the request is empty/invalid/unknown.
 
 import pytest
 
-from Tests.app_module_patches import patch_app_global
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
     _DECISION_OPTIONS,
+    ChatApprovalCard,
     _default_decision_for_row,
     _format_row_header,
     _is_raw_shell_row,
     _options_for_row,
     format_approval_effects,
 )
+
+# Widget imports bind config at collection; retain that private source.
+pytestmark = pytest.mark.bootstrap_profile
+
+
+def test_card_resize_before_composition_keeps_layout_retryable() -> None:
+    """A premature resize must leave the real card ready for its later reflow."""
+    card = ChatApprovalCard()
+    card._sync_control_layout()
+    assert not card.has_class("approval-compact")
 
 
 def test_fast_decision_control_copy_has_one_named_source():
@@ -29,18 +40,19 @@ def test_fast_decision_control_copy_has_one_named_source():
     from tldw_chatbook.Widgets.Chat_Widgets import chat_approval_card as mod
 
     expected = {
-        "_APPROVE_ONCE_LABEL": "Approve once",
+        "_APPROVE_ONCE_LABEL": "Allow once",
         "_DENY_LABEL": "Deny",
-        "_RAW_APPROVE_ONCE_LABEL": "Run once",
+        "_RAW_APPROVE_ONCE_LABEL": "Allow once",
         "_FAST_APPROVE_CLASS": "approval-row-fast-approve",
         "_FAST_DENY_CLASS": "approval-row-fast-deny",
-        "_FAST_APPROVE_TOOLTIP": (
-            "Approve once and resume immediately (skips Select + Submit)."
-        ),
-        "_FAST_DENY_TOOLTIP": "Deny and resume immediately (skips Select + Submit).",
+        "_FAST_APPROVE_TOOLTIP": ("Allow this call once and resume the run."),
+        "_FAST_DENY_TOOLTIP": "Deny this call and resume the run.",
     }
     method_literals = set()
-    for method in (mod.ChatApprovalCard.set_batch, mod.ChatApprovalCard._update_mounted_single_row):
+    for method in (
+        mod.ChatApprovalCard.set_batch,
+        mod.ChatApprovalCard._update_mounted_single_row,
+    ):
         tree = ast.parse(textwrap.dedent(inspect.getsource(method)))
         method_literals.update(
             node.value
@@ -185,7 +197,7 @@ def test_no_caller_focuses_the_submit_button_directly():
         "tldw_chatbook/Widgets/Console/console_status_chips.py",
         "tldw_chatbook/UI/Screens/chat_screen.py",
     ):
-        src = Path(rel).read_text()
+        src = Path(rel).read_text(encoding="utf-8")
         if '"#approval-submit"' in src:
             offenders.append(rel)
     assert not offenders, f"these focus the commit control directly: {offenders}"
@@ -228,7 +240,7 @@ def test_collapsed_rows_disclose_every_argument_set():
 
 @pytest.mark.unit
 def test_grouped_rows_take_the_first_non_empty_rationale():
-    """ADR-090 (task 5): a blank-earlier rationale must not mask a later one.
+    """ADR-332 (task 5): a blank-earlier rationale must not mask a later one.
 
     Fence-path calls collapse by `llm_name`; if the first call's `rationale`
     is blank but a later same-name call states one, the group's row must
@@ -240,10 +252,18 @@ def test_grouped_rows_take_the_first_non_empty_rationale():
     )
 
     calls = [
-        {"llm_name": "read_file", "rationale": "", "description": "",
-         "arguments": {"path": "a.md"}},
-        {"llm_name": "read_file", "rationale": "checking references",
-         "description": "Reads a file", "arguments": {"path": "b.md"}},
+        {
+            "llm_name": "read_file",
+            "rationale": "",
+            "description": "",
+            "arguments": {"path": "a.md"},
+        },
+        {
+            "llm_name": "read_file",
+            "rationale": "checking references",
+            "description": "Reads a file",
+            "arguments": {"path": "b.md"},
+        },
     ]
     collapsed = _collapse_pending_calls(calls)
     assert len(collapsed) == 1
@@ -257,11 +277,12 @@ def test_grouped_rows_take_the_first_non_empty_rationale():
     assert _collapse_pending_calls(blanks)[0]["rationale"] == ""
 
 
-# TASK-1845's "colour is never the only carrier of state" contract for the
-# needs-decision flag is exercised end to end (row class AND header text)
-# by the live `_mark_row_needs_decision` mechanism's own tests in
+# TASK-1845's "colour is never the only carrier of state" contract for a row
+# still needing a decision is exercised end to end in
 # ``test_console_mcp_approval.py`` (e.g.
-# ``test_approve_all_leaves_raw_shell_row_on_deny_and_flags_needs_decision``).
+# ``test_review_individually_keeps_raw_shell_row_on_deny_and_requires_its_choice``):
+# since #3036 (a2fcbe61bc) no bulk press partially applies, so that state is
+# the staged review's text hint and disabled Apply, not a row flag.
 # A unit test used to cover the same claim here via a `needs_decision` key
 # on the row entry dict, but no producer ever set that key on a real entry
 # -- `_format_row_header`'s read of it was dead code, removed alongside
@@ -310,9 +331,9 @@ def test_a_timed_out_approval_produces_its_own_marker():
     assert "write_file" in marker
     low = marker.lower()
     assert "timed out" in low or "timeout" in low
-    assert "not run" in low or "auto-denied" in low, (
-        f"the marker must say the call did NOT run: {marker!r}"
-    )
+    assert (
+        "not run" in low or "auto-denied" in low
+    ), f"the marker must say the call did NOT run: {marker!r}"
 
 
 @pytest.mark.unit
@@ -330,9 +351,9 @@ def test_the_approval_card_carries_its_design_system_treatment():
     from tldw_chatbook.Widgets.Chat_Widgets import chat_approval_card as mod
 
     src = inspect.getsource(mod.ChatApprovalCard)
-    assert "ds-approval-card" in src, (
-        "the card does not apply the design system's approval treatment"
-    )
+    assert (
+        "ds-approval-card" in src
+    ), "the card does not apply the design system's approval treatment"
 
 
 @pytest.mark.unit
@@ -345,15 +366,15 @@ def test_tool_trace_is_not_the_faintest_text_on_screen():
     """
     from pathlib import Path
 
-    css = Path("tldw_chatbook/css/components/_agentic_terminal.tcss").read_text()
+    css = Path("tldw_chatbook/css/features/_console.tcss").read_text(encoding="utf-8")
     import re
 
     m = re.search(r"\.console-transcript-message-tool\s*\{([^}]*)\}", css, re.S)
     assert m, "tool-row rule is missing"
     body = m.group(1)
-    assert "dim" not in body, (
-        f"the tool trace is still dimmed below every other row: {body.strip()!r}"
-    )
+    assert (
+        "dim" not in body
+    ), f"the tool trace is still dimmed below every other row: {body.strip()!r}"
 
 
 @pytest.mark.unit
@@ -378,9 +399,9 @@ def test_distinct_calls_get_their_own_row_and_verdict():
         {"llm_name": "read_file", "call_id": "b", "arguments": {"path": "secrets.md"}},
     ]
     rows = _collapse_pending_calls(distinct)
-    assert len(rows) == 2, (
-        f"two distinct calls must be two decisions, got {len(rows)} row(s)"
-    )
+    assert (
+        len(rows) == 2
+    ), f"two distinct calls must be two decisions, got {len(rows)} row(s)"
     assert {r["call_id"] for r in rows} == {"a", "b"}
 
     # No call_id -> the runtime can only apply a name-keyed verdict, so one row.
@@ -397,7 +418,7 @@ def test_distinct_calls_get_their_own_row_and_verdict():
 
 
 def test_format_approval_deadline_hides_copy_when_no_deadline_armed():
-    """ADR-067: 0/None deadline (the new shipped default) renders NO
+    """ADR-314: 0/None deadline (the new shipped default) renders NO
     countdown copy. Pins the TASK-1844 behavior now that 0 is the norm."""
     from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
         format_approval_deadline,
@@ -431,20 +452,23 @@ def _decision_select_width() -> int:
         Path(__file__).resolve().parents[2]
         / "tldw_chatbook"
         / "css"
-        / "components"
-        / "_agentic_terminal.tcss"
-    ).read_text()
-    # `;`-anchored so the `width: 1fr` in the BuddyConversationModal
-    # override further down the file cannot match as "1", and the property
-    # name anchored at a line start so `min-width:`/`max-width:` cannot
-    # stand in for the `width` that actually sizes the closed Select.
+        / "features"
+        / "_console_approvals.tcss"
+    ).read_text(encoding="utf-8")
+    # Only the unscoped wide rule defines this budget; compact and Buddy
+    # overrides do not. Resolve its shipped token rather than a retired literal.
     match = re.search(
-        r"(?<![-\w ])\.approval-row-decision\s*\{[^}]*?^\s*width:\s*(\d+);",
+        r"(?<![-\w ])\.approval-row-decision\s*\{[^}]*?\bwidth:\s*(\$ds-[a-z0-9-]+);",
         source,
-        re.S | re.M,
+        re.S,
     )
-    assert match, "`.approval-row-decision` no longer sets an explicit width"
-    return int(match.group(1))
+    assert match, "`.approval-row-decision` no longer sets a token-backed width"
+    tokens = (
+        Path(__file__).resolve().parents[2] / "tldw_chatbook/css/core/_variables.tcss"
+    ).read_text(encoding="utf-8")
+    value = re.search(r"^" + re.escape(match.group(1)) + r":\s*(\d+);", tokens, re.M)
+    assert value, "The Select width token must resolve to a cell count"
+    return int(value.group(1))
 
 
 @pytest.mark.unit
@@ -475,8 +499,8 @@ def test_every_decision_label_fits_the_closed_select():
 def test_every_offered_decision_states_its_scope():
     """AC#2: a decision the card offers must say how long it lasts."""
     from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
-        DECISION_SCOPE_COPY,
         _RAW_SHELL_DECISION_OPTIONS,
+        DECISION_SCOPE_COPY,
     )
 
     offered = {
@@ -495,13 +519,13 @@ def test_persistent_decisions_name_where_to_undo_them():
         DECISION_SCOPE_COPY,
     )
 
-    assert "MCP ▸ Tools" in DECISION_SCOPE_COPY["allow_matching"]
-    assert "MCP ▸ Permissions" in DECISION_SCOPE_COPY["always_allow"]
+    assert "Settings ▸ Tools & MCP ▸ Tools" in DECISION_SCOPE_COPY["allow_matching"]
+    assert "Settings ▸ Tools & MCP ▸ Permissions" in DECISION_SCOPE_COPY["always_allow"]
 
 
 @pytest.mark.unit
-def test_the_high_risk_explanation_differs_for_reads_and_mutations():
-    """AC#3: the reads-only sentence was also shown for `write_file`."""
+def test_the_high_risk_explanation_describes_current_policy():
+    """Effects do not change the reason or promise a permanent review floor."""
     from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
         format_approval_reason,
     )
@@ -510,8 +534,8 @@ def test_the_high_risk_explanation_differs_for_reads_and_mutations():
     mutate = format_approval_reason(
         {"reason": "risk_floored", "effects": ["mutates_local"]}
     )
-    assert read == "High risk: this tool reads local data and always asks first."
-    assert mutate == "High risk: this tool changes local data and always asks first."
+    assert read == "High risk: current policy requires approval for this call."
+    assert mutate == "High risk: current policy requires approval for this call."
 
 
 @pytest.mark.unit
@@ -686,9 +710,9 @@ async def test_three_row_approval_card_stays_bounded():
         )
         # Three 7-line rows exceed `#approval-batch-rows`' `max-height: 15`,
         # so the rows scroll and the bar sits directly under that cap.
-        assert actions.region.y >= batch_rows.region.bottom, (
-            "the action bar must stay below the rows it commits"
-        )
+        assert (
+            actions.region.y >= batch_rows.region.bottom
+        ), "the action bar must stay below the rows it commits"
         assert card.region.bottom - actions.region.bottom <= 2, (
             f"{card.region.bottom - actions.region.bottom} rows sit between "
             "the action bar and the card's bottom border"
@@ -696,7 +720,10 @@ async def test_three_row_approval_card_stays_bounded():
 
 
 @pytest.mark.asyncio
-async def test_action_bar_is_actually_visible_at_80x24_in_the_production_console():
+@private_profile_test
+async def test_action_bar_is_actually_visible_at_80x24_in_the_production_console(
+    request: pytest.FixtureRequest,
+) -> None:
     """AC#2: at 80x24 the Submit button is on screen AND not clipped away.
 
     Region alone is not evidence here: pre-fix the button reported a
@@ -704,74 +731,75 @@ async def test_action_bar_is_actually_visible_at_80x24_in_the_production_console
     share (6 rows) clipped it, so the compositor handed those coordinates
     to the transcript's empty state instead. `get_widget_at` is the check
     that fails on the bug the live pass actually saw.
+
+    Args:
+        request: Pytest fixture used by the private-profile wrapper to select
+            this test and allocate its isolated child process.
     """
     import time
 
     from Tests.UI.app_factory import _build_test_app
+    from Tests.UI.test_console_headless_approval import _arm, _risk_row
+    from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
+    from tldw_chatbook.config import save_setting_to_cli_config
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-    from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 
-    def _settings_without_splash(section, key=None, default=None):
-        if section == "splash_screen" and key == "enabled":
-            return False
-        return default
-
+    assert save_setting_to_cli_config("splash_screen", "enabled", False)
     app = _build_test_app()
-    with patch_app_global(
-        "get_cli_setting", side_effect=_settings_without_splash
-    ):
-        async with app.run_test(size=(80, 24)) as pilot:
-            deadline = time.monotonic() + 15.0
-            while time.monotonic() < deadline:
-                screen = app.screen
-                if (
-                    isinstance(screen, ChatScreen)
-                    and screen.is_mounted
-                    and screen.query("#console-task-surface")
-                ):
-                    break
-                await pilot.pause(0.05)
-            else:
-                raise AssertionError("Production Console did not finish mounting")
+    _configure_native_ready_console(app)
+    async with app.run_test(size=(80, 24)) as pilot:
+        deadline = time.monotonic() + 15.0
+        while time.monotonic() < deadline:
+            screen = app.screen
+            if (
+                app._initial_screen_pushed
+                and isinstance(screen, ChatScreen)
+                and screen.is_mounted
+                and screen.query("#console-task-surface")
+            ):
+                break
+            await pilot.pause(0.05)
+        else:
+            raise AssertionError("Production Console did not finish mounting")
 
-            screen.set_task_resume_state(
-                TaskResumeState(
-                    pending_approval={
-                        "calls": _pending_calls(1),
-                        "timeout_seconds": 45.0,
-                    }
-                )
-            )
+        controller = screen._ensure_console_chat_controller()
+        session_id = controller.store.active_session_id
+        worker, _ = _arm(controller, session_id, call=_risk_row())
+        try:
             deadline = time.monotonic() + 8.0
             while time.monotonic() < deadline:
                 cards = screen.query("#chat-approval-card")
-                if cards and cards.first().display and cards.first().query(
-                    ".approval-row"
+                if (
+                    cards
+                    and cards.first().display
+                    and cards.first().query(".approval-row")
                 ):
                     break
                 await pilot.pause(0.05)
             else:
                 raise AssertionError("Approval batch did not finish rendering")
-            # An approval can only reach a Console the user has already set
-            # up, so the first-run modal is never up at the same time; left
-            # covering the workbench it would be the widget every hit test
-            # below reported, measuring nothing about the card. `display =
-            # False` is not enough -- the screen re-syncs the modal during
-            # the pause that follows, so it has to go.
-            await screen.query("#console-setup-modal").remove()
+            assert not screen.query_one("#console-setup-modal").display
             await pilot.pause()
 
-            submit = screen.query_one("#approval-submit")
+            submit = screen.query_one(".approval-row-fast-approve")
             x, y = submit.region.center
-            assert submit.region in app.screen.region, (
-                f"Submit at {submit.region} is off an 80x24 screen"
-            )
+            assert (
+                submit.region in app.screen.region
+            ), f"Submit at {submit.region} is off an 80x24 screen"
             hit, _region = app.screen.get_widget_at(int(x), int(y))
-            assert hit.id == "approval-submit", (
+            assert hit.has_class("approval-row-fast-approve"), (
                 "the Submit button's own coordinates render "
                 f"{hit.id or type(hit).__name__} instead -- the approval card "
                 "is clipped by its task surface at 80x24"
             )
+        finally:
+            controller.begin_shutdown()
+            for _ in range(40):
+                if not worker.is_alive():
+                    break
+                await pilot.pause(0.05)
+            assert not worker.is_alive()
+            worker.join()
 
 
 @pytest.mark.asyncio
@@ -834,3 +862,56 @@ async def test_every_task_surface_card_hugs_its_content():
                 f"the task surface is {surface.size.height} lines tall for "
                 f"{visible} lines of visible cards"
             )
+
+
+# --- TASK-35028: the deadline countdown write is equality-gated --------------
+
+
+@pytest.mark.asyncio
+async def test_deadline_tick_repaints_only_when_the_countdown_copy_moves(
+    monkeypatch,
+):
+    """The card's 1 s deadline tick costs a string compare while M:SS stands.
+
+    TASK-35028: ``#approval-deadline`` is a bare height:auto Static, so an
+    ungated per-tick write armed a whole-screen relayout every second even
+    though the copy only changes once per second.
+    """
+    import time
+    from types import SimpleNamespace
+
+    from textual.widgets import Static
+
+    from tldw_chatbook.Widgets.Chat_Widgets import chat_approval_card as module
+
+    app = _task_surface_harness()
+    async with app.run_test(size=(200, 50)) as pilot:
+        card = await _mounted_batch(app, pilot, 1)
+        label = card.query_one("#approval-deadline", Static)
+        assert card._deadline_at is not None and card._deadline_timer is not None
+        calls = []
+        original_update = label.update
+
+        def counting_update(*args, **kwargs):
+            calls.append(args)
+            return original_update(*args, **kwargs)
+
+        label.update = counting_update
+        deadline = card._deadline_at
+        # Freeze the card's clock mid-countdown: the first tick paints (or
+        # matches whatever the arm painted), and any further tick within the
+        # same second must not repaint at all.
+        clock = [deadline - 30.0]
+        monkeypatch.setattr(
+            module, "time", SimpleNamespace(monotonic=lambda: clock[0])
+        )
+        card._render_deadline(label)
+        painted_once = len(calls)
+        card._render_deadline(label)
+        card._render_deadline(label)
+        assert len(calls) == painted_once, "unchanged ticks must not repaint"
+        # Past the deadline the copy clears once, then the timer stops.
+        clock[0] = deadline + 0.001
+        card._render_deadline(label)
+        assert len(calls) == painted_once + 1
+        assert card._deadline_timer is None

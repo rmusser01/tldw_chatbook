@@ -225,4 +225,6 @@ class WsTransport:
         try:
             await self._ws.close()
         except Exception as exc:
-            logger.warning(f"WsTransport.close: error closing socket: op=close error={exc!r}")
+            logger.warning(
+                f"WsTransport.close: error closing socket: op=close error={exc!r}"
+            )

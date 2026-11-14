@@ -8,6 +8,7 @@ the real listers (fake app-level seams), save-persisted writing through
 Inspector run-recipe line, save-unpersisted holding the scope on the
 session, and Clear working in both branches.
 """
+
 from __future__ import annotations
 
 import time
@@ -28,6 +29,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     _visible_text,
 )
 from Tests.UI.app_factory import _build_test_app as _build_base_test_app
+from Tests.UI.app_factory import swap_app_aliases
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_display_state import ConsoleRetrievalScopeState
 from tldw_chatbook.Chat.rag_scope import (
@@ -38,7 +40,10 @@ from tldw_chatbook.Chat.rag_scope import (
     write_conversation_scope,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
-from tldw_chatbook.Widgets.Console.console_status_chips import ConsoleScopeChip
+from tldw_chatbook.Widgets.Console.console_status_chips import (
+    ConsoleStatusChips,
+    ConsoleStatusText,
+)
 from tldw_chatbook.Widgets.Console.console_retrieval_scope_row import (
     CLEAR_BTN_ID,
     EDIT_BTN_ID,
@@ -52,7 +57,34 @@ from tldw_chatbook.Widgets.Console.console_scope_picker_modal import (
 )
 from tldw_chatbook.Workspaces.registry_service import WorkspaceNotFound
 
-SCOPE_CHIP_ID = "console-scope-chip"
+# TASK-35160: the scope chip is the status line's "scope" segment; the
+# strip's public seam (segment state + pure render) replaces chip queries.
+
+
+def _scope_strip(console) -> ConsoleStatusChips:
+    return console.query_one("#console-status-chips", ConsoleStatusChips)
+
+
+def _scope_segment(console):
+    """The scope segment's full state (visible flag + emphasis)."""
+    for segment in _scope_strip(console)._build_segments():
+        if segment.name == "scope":
+            return segment
+    raise AssertionError("scope segment missing")
+
+
+def _scope_tooltip(console) -> str:
+    """The scope detail text from the strip's pure render.
+
+    TASK-35160: per-segment tooltips no longer render (detail lives in the
+    destinations); the breakdown wording contract stays on the pure render
+    the line itself is built from, read here against the strip's own state.
+    """
+    _label, tooltip, _hidden, _alert = _scope_strip(console)._scope_chip_render(
+        _scope_strip(console).scope_state
+    )
+    return tooltip
+
 
 
 def _build_test_app(*args, **kwargs):
@@ -131,9 +163,18 @@ class _SpyMediaReadingScopeService:
         self.items = items or []
         self.calls: list[dict] = []
 
-    async def search_media(self, *, mode=None, query=None, limit=20, offset=0, **filters):
-        self.calls.append({"mode": mode, "query": query, "limit": limit, "offset": offset})
-        return {"items": self.items, "total": len(self.items), "offset": offset, "limit": limit}
+    async def search_media(
+        self, *, mode=None, query=None, limit=20, offset=0, **filters
+    ):
+        self.calls.append(
+            {"mode": mode, "query": query, "limit": limit, "offset": offset}
+        )
+        return {
+            "items": self.items,
+            "total": len(self.items),
+            "offset": offset,
+            "limit": limit,
+        }
 
 
 class _SpyNotesScopeService:
@@ -254,13 +295,16 @@ async def test_retrieval_scope_row_zero_db_on_forced_recompose():
     async with host.run_test(size=(240, 64)) as pilot:
         console = host.screen_stack[-1]
         row = await _open_inspector_and_get_row(console, pilot)
-        assert _static_plain_text(row.query_one(f"#{LABEL_ID}", Static)) == "Scope: everything"
-        assert console.query_one(f"#{SCOPE_CHIP_ID}").display is False
+        assert (
+            _static_plain_text(row.query_one(f"#{LABEL_ID}", Static))
+            == "Scope: everything"
+        )
+        assert _scope_segment(console).visible is False
 
         session = console._session._active_native_console_session()
         session.persisted_conversation_id = "conv-not-cached"
         raising_db = _RaisingDB()
-        app.chachanotes_db = raising_db
+        swap_app_aliases(app, chachanotes_db=raising_db)
 
         console.refresh(recompose=True)
         await pilot.pause()
@@ -269,8 +313,11 @@ async def test_retrieval_scope_row_zero_db_on_forced_recompose():
 
         assert raising_db.calls == []
         row = console.query_one(f"#{ROW_ID}")
-        assert _static_plain_text(row.query_one(f"#{LABEL_ID}", Static)) == "Scope: everything"
-        assert console.query_one(f"#{SCOPE_CHIP_ID}").display is False
+        assert (
+            _static_plain_text(row.query_one(f"#{LABEL_ID}", Static))
+            == "Scope: everything"
+        )
+        assert _scope_segment(console).visible is False
 
 
 @pytest.mark.asyncio
@@ -328,8 +375,7 @@ async def test_narrow_button_opens_modal_with_real_listers_wired():
     notes_spy = _SpyNotesScopeService()
     app.media_reading_scope_service = media_spy
     app.notes_scope_service = notes_spy
-    app.media_db = None
-    app.chachanotes_db = None
+    swap_app_aliases(app, media_db=None, chachanotes_db=None)
     host = ConsoleHarness(app)
     async with host.run_test(size=(240, 64)) as pilot:
         console = host.screen_stack[-1]
@@ -340,7 +386,9 @@ async def test_narrow_button_opens_modal_with_real_listers_wired():
         for _ in range(20):
             await pilot.pause(0.02)
 
-        modals = [s for s in host.screen_stack if isinstance(s, ConsoleScopePickerModal)]
+        modals = [
+            s for s in host.screen_stack if isinstance(s, ConsoleScopePickerModal)
+        ]
         assert len(modals) == 1
         modal = modals[0]
         assert modal._target_label == "Chat 1"
@@ -397,9 +445,7 @@ async def test_conversation_inspector_projects_raw_title_and_workspace_to_one_li
         rows = console._selected_console_conversation_inspector_rows()
         values = {row.label: row.value for row in rows}
 
-        assert values["Selected conversation"] == (
-            "Ops ?[bold]Alpha[/bold][/broken]"
-        )
+        assert values["Selected conversation"] == ("Ops ?[bold]Alpha[/bold][/broken]")
         assert values["Workspace"] == "Lab ?[green]North[/green][/bad]"
         assert all("\n" not in value and "\t" not in value for value in values.values())
         assert session.title == raw_title
@@ -429,15 +475,16 @@ async def test_edit_button_seeds_modal_from_held_scope():
     app = _build_test_app()
     app.media_reading_scope_service = _SpyMediaReadingScopeService()
     app.notes_scope_service = _SpyNotesScopeService()
-    app.media_db = None
-    app.chachanotes_db = None
+    swap_app_aliases(app, media_db=None, chachanotes_db=None)
     host = ConsoleHarness(app)
     async with host.run_test(size=(240, 64)) as pilot:
         console = host.screen_stack[-1]
         await _open_inspector_and_get_row(console, pilot)
         session = console._session._active_native_console_session()
         session.rag_scope_holder.set(
-            RagScope(items=(ScopeItem("media", "m1"),), updated_at="2026-01-01T00:00:00Z")
+            RagScope(
+                items=(ScopeItem("media", "m1"),), updated_at="2026-01-01T00:00:00Z"
+            )
         )
         console._sync_console_retrieval_scope_row()
         await pilot.pause()
@@ -447,7 +494,9 @@ async def test_edit_button_seeds_modal_from_held_scope():
         for _ in range(20):
             await pilot.pause(0.02)
 
-        modals = [s for s in host.screen_stack if isinstance(s, ConsoleScopePickerModal)]
+        modals = [
+            s for s in host.screen_stack if isinstance(s, ConsoleScopePickerModal)
+        ]
         assert len(modals) == 1
         modal = modals[0]
         assert ("media", "m1") in modal._selected
@@ -456,21 +505,26 @@ async def test_edit_button_seeds_modal_from_held_scope():
 @pytest.mark.asyncio
 async def test_save_unpersisted_stores_in_holder_and_refreshes_row():
     app = _build_test_app()
-    app.media_db = _AlwaysExistsMediaDB()
+    swap_app_aliases(app, media_db=_AlwaysExistsMediaDB())
     host = ConsoleHarness(app)
     async with host.run_test(size=(240, 64)) as pilot:
         console = host.screen_stack[-1]
         row = await _open_inspector_and_get_row(console, pilot)
         session = console._session._active_native_console_session()
         assert session.persisted_conversation_id is None
-        scope = RagScope(items=(ScopeItem("media", "m1"),), updated_at="2026-01-01T00:00:00Z")
+        scope = RagScope(
+            items=(ScopeItem("media", "m1"),), updated_at="2026-01-01T00:00:00Z"
+        )
 
         await console._retrieval._apply_console_retrieval_scope_save(session, scope)
         await pilot.pause()
 
         assert session.rag_scope_holder.scope == scope
         row = console.query_one(f"#{ROW_ID}")
-        assert _static_plain_text(row.query_one(f"#{LABEL_ID}", Static)) == "Scope: 1 items"
+        assert (
+            _static_plain_text(row.query_one(f"#{LABEL_ID}", Static))
+            == "Scope: 1 items"
+        )
 
 
 @pytest.mark.asyncio
@@ -494,8 +548,7 @@ async def test_scope_saved_unpersisted_then_first_send_flush_refreshes_row():
     try:
         note_id = db.add_note(title="N1", content="body")
         app = _build_test_app()
-        app.chachanotes_db = db
-        app.media_db = _AlwaysExistsMediaDB()
+        swap_app_aliases(app, chachanotes_db=db, media_db=_AlwaysExistsMediaDB())
         host = ConsoleHarness(app)
         async with host.run_test(size=(240, 64)) as pilot:
             console = host.screen_stack[-1]
@@ -548,8 +601,7 @@ async def test_save_persisted_writes_through_refreshes_row_and_run_recipe():
     try:
         note_id = db.add_note(title="N1", content="body")
         app = _build_test_app()
-        app.chachanotes_db = db
-        app.media_db = _AlwaysExistsMediaDB()
+        swap_app_aliases(app, chachanotes_db=db, media_db=_AlwaysExistsMediaDB())
         host = ConsoleHarness(app)
         async with host.run_test(size=(240, 64)) as pilot:
             console = host.screen_stack[-1]
@@ -582,7 +634,7 @@ async def test_save_persisted_corrupt_metadata_surfaces_honest_notify():
     db = CharactersRAGDB(":memory:", "test-client")
     try:
         app = _build_test_app()
-        app.chachanotes_db = db
+        swap_app_aliases(app, chachanotes_db=db)
         notifications: list[tuple[str, dict]] = []
         app.notify = lambda message, **kwargs: notifications.append((message, kwargs))
         host = ConsoleHarness(app)
@@ -631,7 +683,7 @@ async def test_save_persisted_conflict_error_surfaces_specific_notify():
     db = CharactersRAGDB(":memory:", "test-client")
     try:
         app = _build_test_app()
-        app.chachanotes_db = db
+        swap_app_aliases(app, chachanotes_db=db)
         notifications: list[tuple[str, dict]] = []
         app.notify = lambda message, **kwargs: notifications.append((message, kwargs))
         host = ConsoleHarness(app)
@@ -644,7 +696,9 @@ async def test_save_persisted_conflict_error_surfaces_specific_notify():
 
             def _raise_conflict(*args, **kwargs):
                 raise ConflictError(
-                    "Version mismatch", entity="conversations", entity_id=conversation_id
+                    "Version mismatch",
+                    entity="conversations",
+                    entity_id=conversation_id,
                 )
 
             db.update_conversation = _raise_conflict
@@ -672,7 +726,7 @@ async def test_save_persisted_conversation_not_found_surfaces_specific_notify():
     db = CharactersRAGDB(":memory:", "test-client")
     try:
         app = _build_test_app()
-        app.chachanotes_db = db
+        swap_app_aliases(app, chachanotes_db=db)
         notifications: list[tuple[str, dict]] = []
         app.notify = lambda message, **kwargs: notifications.append((message, kwargs))
         host = ConsoleHarness(app)
@@ -690,7 +744,9 @@ async def test_save_persisted_conversation_not_found_surfaces_specific_notify():
             await console._retrieval._apply_console_retrieval_scope_save(session, scope)
             await pilot.pause()
 
-            assert notifications, "expected an honest notify when the conversation is gone"
+            assert notifications, (
+                "expected an honest notify when the conversation is gone"
+            )
             message, kwargs = notifications[-1]
             assert "corrupt" not in message.lower()
             assert kwargs.get("severity") == "error"
@@ -707,7 +763,9 @@ async def test_clear_button_unpersisted_session():
         row = await _open_inspector_and_get_row(console, pilot)
         session = console._session._active_native_console_session()
         session.rag_scope_holder.set(
-            RagScope(items=(ScopeItem("media", "m1"),), updated_at="2026-01-01T00:00:00Z")
+            RagScope(
+                items=(ScopeItem("media", "m1"),), updated_at="2026-01-01T00:00:00Z"
+            )
         )
         console._sync_console_retrieval_scope_row()
         await pilot.pause()
@@ -719,7 +777,10 @@ async def test_clear_button_unpersisted_session():
 
         assert session.rag_scope_holder.scope is None
         row = console.query_one(f"#{ROW_ID}")
-        assert _static_plain_text(row.query_one(f"#{LABEL_ID}", Static)) == "Scope: everything"
+        assert (
+            _static_plain_text(row.query_one(f"#{LABEL_ID}", Static))
+            == "Scope: everything"
+        )
         assert list(row.query(f"#{NARROW_BTN_ID}"))
 
 
@@ -728,8 +789,7 @@ async def test_clear_button_persisted_session():
     db = CharactersRAGDB(":memory:", "test-client")
     try:
         app = _build_test_app()
-        app.chachanotes_db = db
-        app.media_db = _AlwaysExistsMediaDB()
+        swap_app_aliases(app, chachanotes_db=db, media_db=_AlwaysExistsMediaDB())
         host = ConsoleHarness(app)
         async with host.run_test(size=(240, 64)) as pilot:
             console = host.screen_stack[-1]
@@ -784,8 +844,7 @@ async def test_resume_console_workspace_conversation_refreshes_row_and_chip():
     try:
         note_id = db.add_note(title="N1", content="body")
         app = _build_test_app()
-        app.chachanotes_db = db
-        app.media_db = _AlwaysExistsMediaDB()
+        swap_app_aliases(app, chachanotes_db=db, media_db=_AlwaysExistsMediaDB())
         conversation_id = db.add_conversation({"title": "Resumed scoped chat"})
         assert conversation_id
         scope = RagScope(
@@ -816,7 +875,7 @@ async def test_resume_console_workspace_conversation_refreshes_row_and_chip():
                 _static_plain_text(row.query_one(f"#{LABEL_ID}", Static))
                 == "Scope: everything"
             )
-            assert console.query_one(f"#{SCOPE_CHIP_ID}").display is False
+            assert _scope_segment(console).visible is False
 
             resumed = await console._workspace._resume_console_workspace_conversation(
                 conversation_id
@@ -833,9 +892,9 @@ async def test_resume_console_workspace_conversation_refreshes_row_and_chip():
                 _static_plain_text(row.query_one(f"#{LABEL_ID}", Static))
                 == "Scope: 2 items"
             )
-            chip = console.query_one(f"#{SCOPE_CHIP_ID}", ConsoleScopeChip)
-            assert chip.display is True
-            assert _static_plain_text(chip) == "Scope: 2"
+            segment = _scope_segment(console)
+            assert segment.visible is True
+            assert _scope_strip(console).segment_text("scope") == "Scope: 2"
     finally:
         db.close_connection()
 
@@ -867,8 +926,7 @@ async def test_initial_mount_of_restored_persisted_scoped_session_warms_row_and_
     try:
         note_id = db.add_note(title="N1", content="body")
         app = _build_test_app()
-        app.chachanotes_db = db
-        app.media_db = _AlwaysExistsMediaDB()
+        swap_app_aliases(app, chachanotes_db=db, media_db=_AlwaysExistsMediaDB())
         conversation_id = db.add_conversation({"title": "Restart-scoped chat"})
         assert conversation_id
         scope = RagScope(
@@ -918,9 +976,7 @@ async def test_initial_mount_of_restored_persisted_scoped_session_warms_row_and_
             label_text = _static_plain_text(row.query_one(f"#{LABEL_ID}", Static))
             while label_text != "Scope: 2 items" and time.monotonic() < deadline:
                 await pilot.pause(0.05)
-                label_text = _static_plain_text(
-                    row.query_one(f"#{LABEL_ID}", Static)
-                )
+                label_text = _static_plain_text(row.query_one(f"#{LABEL_ID}", Static))
 
             assert label_text == "Scope: 2 items", (
                 "expected the retrieval-scope row to reflect the already-"
@@ -928,18 +984,19 @@ async def test_initial_mount_of_restored_persisted_scoped_session_warms_row_and_
                 "with no resume/switch/save in this screen instance -- "
                 f"got {label_text!r}"
             )
-            chip = console.query_one(f"#{SCOPE_CHIP_ID}", ConsoleScopeChip)
-            assert chip.display is True
-            assert _static_plain_text(chip) == "Scope: 2"
+            segment = _scope_segment(console)
+            assert segment.visible is True
+            assert _scope_strip(console).segment_text("scope") == "Scope: 2"
     finally:
         db.close_connection()
 
 
-# --- task-10: "Scope" chip --------------------------------------------
+# --- task-10: "Scope" segment ------------------------------------------
 #
-# The chip lives in the Console status-pill strip below the composer
-# (``#console-scope-chip``, a sibling of "Sources: 0" / "Library search: off")
-# and renders from the exact same ``ConsoleRetrievalScopeState`` snapshot as
+# The scope segment rides the Console status line below the composer (the
+# "scope" segment of ``#console-status-text``, sibling of the "Sources: 0"
+# segment) and renders from the exact same ``ConsoleRetrievalScopeState``
+# snapshot as
 # the Inspector row above -- see ``ChatScreen._sync_console_retrieval_scope_row``
 # and ``ConsoleStatusChips.sync_scope_chip``/``_scope_chip_render``.
 
@@ -952,8 +1009,7 @@ async def test_scope_chip_hidden_when_unscoped():
         console = host.screen_stack[-1]
         await _open_console_inspector(console, pilot)
 
-        chip = console.query_one(f"#{SCOPE_CHIP_ID}", ConsoleScopeChip)
-        assert chip.display is False
+        assert _scope_segment(console).visible is False
 
 
 @pytest.mark.asyncio
@@ -975,35 +1031,37 @@ async def test_scope_chip_shows_count_and_tooltip_when_scoped():
         console._sync_console_retrieval_scope_row()
         await pilot.pause()
 
-        chip = console.query_one(f"#{SCOPE_CHIP_ID}", ConsoleScopeChip)
-        assert chip.display is True
-        assert _static_plain_text(chip) == "Scope: 2"
+        segment = _scope_segment(console)
+        assert segment.visible is True
+        assert _scope_strip(console).segment_text("scope") == "Scope: 2"
         # Phase-3 will widen this to the two-level breakdown ("conversation
         # scope (A items) and workspace scope (B items)") once workspace-level
         # scoping resolves through the same seam; today it is
         # conversation-only.
-        assert str(chip.tooltip) == "Only searching: conversation scope (2 items)."
-        assert not chip.has_class("console-chip-alert")
+        assert _scope_tooltip(console) == "Only searching: conversation scope (2 items)."
+        assert _scope_segment(console).alert is False
 
 
 @pytest.mark.asyncio
 async def test_scope_chip_refreshes_on_modal_save():
     app = _build_test_app()
-    app.media_db = _AlwaysExistsMediaDB()
+    swap_app_aliases(app, media_db=_AlwaysExistsMediaDB())
     host = ConsoleHarness(app)
     async with host.run_test(size=(240, 64)) as pilot:
         console = host.screen_stack[-1]
         await _open_console_inspector(console, pilot)
         session = console._session._active_native_console_session()
         assert session.persisted_conversation_id is None
-        scope = RagScope(items=(ScopeItem("media", "m1"),), updated_at="2026-01-01T00:00:00Z")
+        scope = RagScope(
+            items=(ScopeItem("media", "m1"),), updated_at="2026-01-01T00:00:00Z"
+        )
 
         await console._retrieval._apply_console_retrieval_scope_save(session, scope)
         await pilot.pause()
 
-        chip = console.query_one(f"#{SCOPE_CHIP_ID}", ConsoleScopeChip)
-        assert chip.display is True
-        assert _static_plain_text(chip) == "Scope: 1"
+        segment = _scope_segment(console)
+        assert segment.visible is True
+        assert _scope_strip(console).segment_text("scope") == "Scope: 1"
 
 
 @pytest.mark.asyncio
@@ -1016,8 +1074,7 @@ async def test_scope_chip_refreshes_on_persist_transition_flush():
     try:
         note_id = db.add_note(title="N1", content="body")
         app = _build_test_app()
-        app.chachanotes_db = db
-        app.media_db = _AlwaysExistsMediaDB()
+        swap_app_aliases(app, chachanotes_db=db, media_db=_AlwaysExistsMediaDB())
         host = ConsoleHarness(app)
         async with host.run_test(size=(240, 64)) as pilot:
             console = host.screen_stack[-1]
@@ -1030,7 +1087,7 @@ async def test_scope_chip_refreshes_on_persist_transition_flush():
             )
 
             await console._retrieval._apply_console_retrieval_scope_save(session, scope)
-            assert console.query_one(f"#{SCOPE_CHIP_ID}").display is True
+            assert _scope_segment(console).visible is True
 
             store.append_message(
                 session.id,
@@ -1040,9 +1097,9 @@ async def test_scope_chip_refreshes_on_persist_transition_flush():
             )
             await pilot.pause()
 
-            chip = console.query_one(f"#{SCOPE_CHIP_ID}", ConsoleScopeChip)
-            assert chip.display is True
-            assert _static_plain_text(chip) == "Scope: 2"
+            segment = _scope_segment(console)
+            assert segment.visible is True
+            assert _scope_strip(console).segment_text("scope") == "Scope: 2"
     finally:
         db.close_connection()
 
@@ -1050,14 +1107,13 @@ async def test_scope_chip_refreshes_on_persist_transition_flush():
 @pytest.mark.asyncio
 async def test_scope_chip_click_opens_picker_modal():
     """Same handler seam as the Inspector row's Edit button (task-9):
-    activating the chip -- via ``_on_click`` or Enter/Space while focused,
-    exactly like ``ConsoleApprovalsChip`` -- posts ``OpenRequested``, which
-    ``ChatScreen`` routes straight into
-    ``_open_console_retrieval_scope_picker``. Driven via focus + Enter
-    here (the codebase's established activation pattern for these header
-    chips, e.g. the approvals chip's own contract tests) rather than a
-    pixel-coordinate ``pilot.click``, which is flaky against this
-    viewport's clipped/overflowing chip row."""
+    activating the scope segment -- via ``_on_click`` or Enter/Space while
+    the line is focused -- posts ``OpenRequested``, which ``ChatScreen``
+    routes straight into ``_open_console_retrieval_scope_picker``. Driven
+    via the line's segment cursor + Enter here (TASK-35160's successor of
+    the header chips' focus + Enter pattern) rather than a pixel-coordinate
+    ``pilot.click``, which is flaky against this viewport's
+    clipped/overflowing strip."""
     app = _build_test_app()
     host = ConsoleHarness(app)
     async with host.run_test(size=(240, 64)) as pilot:
@@ -1065,20 +1121,32 @@ async def test_scope_chip_click_opens_picker_modal():
         await _open_console_inspector(console, pilot)
         session = console._session._active_native_console_session()
         session.rag_scope_holder.set(
-            RagScope(items=(ScopeItem("media", "m1"),), updated_at="2026-01-01T00:00:00Z")
+            RagScope(
+                items=(ScopeItem("media", "m1"),), updated_at="2026-01-01T00:00:00Z"
+            )
         )
         console._sync_console_retrieval_scope_row()
         await pilot.pause()
 
-        chip = console.query_one(f"#{SCOPE_CHIP_ID}", ConsoleScopeChip)
-        chip.focus()
+        assert _scope_segment(console).visible is True
+        line = console.query_one(
+            "#console-status-text", ConsoleStatusText
+        )
+        line.focus()
         await pilot.pause()
+        for _ in range(len(line.segment_spans)):
+            if line.segment_spans[line._cursor][0] == "scope":
+                break
+            await pilot.press("right")
+        assert line.segment_spans[line._cursor][0] == "scope"
         await pilot.press("enter")
         await pilot.pause()
         for _ in range(20):
             await pilot.pause(0.02)
 
-        modals = [s for s in host.screen_stack if isinstance(s, ConsoleScopePickerModal)]
+        modals = [
+            s for s in host.screen_stack if isinstance(s, ConsoleScopePickerModal)
+        ]
         assert len(modals) == 1
 
 
@@ -1097,19 +1165,19 @@ async def test_scope_chip_empty_state_action_required_styling_and_cause_tooltip(
         console = host.screen_stack[-1]
         await _open_console_inspector(console, pilot)
 
-        console._retrieval._build_console_retrieval_scope_state = lambda: ConsoleRetrievalScopeState.empty(
-            cause="deleted-items"
+        console._retrieval._build_console_retrieval_scope_state = lambda: (
+            ConsoleRetrievalScopeState.empty(cause="deleted-items")
         )
         console._sync_console_retrieval_scope_row()
         await pilot.pause()
 
-        chip = console.query_one(f"#{SCOPE_CHIP_ID}", ConsoleScopeChip)
-        assert chip.display is True
-        assert _static_plain_text(chip) == "Scope: no sources"
-        assert chip.has_class("console-chip-alert")
+        segment = _scope_segment(console)
+        assert segment.visible is True
+        assert _scope_strip(console).segment_text("scope") == "Scope: no sources"
+        assert segment.alert is True
         # TX-03: plain-language cause phrase; the raw token never renders.
-        assert "the scoped items have been deleted" in str(chip.tooltip)
-        assert "deleted-items" not in str(chip.tooltip)
+        assert "the scoped items have been deleted" in _scope_tooltip(console)
+        assert "deleted-items" not in _scope_tooltip(console)
 
 
 # --- task-13: workspace-level scope entry point + intersection ---------
@@ -1131,7 +1199,7 @@ async def test_workspace_rag_scope_button_disabled_when_registry_unavailable():
     affordance is gated off, per the task brief's Default-workspace
     decision: only a REAL registry row can be scoped."""
     app = _build_test_app()
-    app.workspace_registry_service = None
+    swap_app_aliases(app, workspace_registry_service=None)
     host = ConsoleHarness(app)
     async with host.run_test(size=(240, 64)) as pilot:
         console = host.screen_stack[-1]
@@ -1169,7 +1237,7 @@ async def test_workspace_rag_scope_button_opens_modal_with_universe_none():
     async with host.run_test(size=(240, 64)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, f"#{WORKSPACE_SCOPE_BTN_ID}")
-                # TASK-23193/23199 leave Workspaces closed by default, and a button
+        # TASK-23193/23199 leave Workspaces closed by default, and a button
         # inside a closed section has no reachable geometry -- the hit test
         # below lands on the nav bar. Open it, which is what a user does
         # before pressing anything in it.
@@ -1207,7 +1275,9 @@ async def test_workspace_rag_scope_button_opens_modal_with_universe_none():
         for _ in range(20):
             await pilot.pause(0.02)
 
-        modals = [s for s in host.screen_stack if isinstance(s, ConsoleScopePickerModal)]
+        modals = [
+            s for s in host.screen_stack if isinstance(s, ConsoleScopePickerModal)
+        ]
         assert len(modals) == 1
         modal = modals[0]
         assert modal._universe is None
@@ -1229,7 +1299,9 @@ async def test_workspace_rag_scope_save_persists_via_registry():
             items=(ScopeItem("media", "m1"),), updated_at="2026-01-01T00:00:00Z"
         )
 
-        await console._workspace._apply_console_workspace_scope_save(active.workspace_id, scope)
+        await console._workspace._apply_console_workspace_scope_save(
+            active.workspace_id, scope
+        )
         await pilot.pause()
 
         assert registry.get_workspace_scope(active.workspace_id) == scope
@@ -1257,7 +1329,9 @@ async def test_workspace_rag_scope_save_catches_workspace_not_found():
             items=(ScopeItem("media", "m1"),), updated_at="2026-01-01T00:00:00Z"
         )
 
-        await console._workspace._apply_console_workspace_scope_save("workspace-default", scope)
+        await console._workspace._apply_console_workspace_scope_save(
+            "workspace-default", scope
+        )
         await pilot.pause()
 
         assert notifications, "expected an honest notify on WorkspaceNotFound"
@@ -1292,7 +1366,9 @@ async def test_conversation_picker_universe_is_workspace_scope_when_set():
         for _ in range(20):
             await pilot.pause(0.02)
 
-        modals = [s for s in host.screen_stack if isinstance(s, ConsoleScopePickerModal)]
+        modals = [
+            s for s in host.screen_stack if isinstance(s, ConsoleScopePickerModal)
+        ]
         assert len(modals) == 1
         modal = modals[0]
         assert modal._universe == frozenset({("media", "m1"), ("note", "n1")})
@@ -1307,8 +1383,7 @@ async def test_chip_tooltip_shows_intersection_breakdown_when_both_levels_set():
     try:
         note_id = db.add_note(title="N1", content="body")
         app = _build_test_app()
-        app.chachanotes_db = db
-        app.media_db = _AlwaysExistsMediaDB()
+        swap_app_aliases(app, chachanotes_db=db, media_db=_AlwaysExistsMediaDB())
         host = ConsoleHarness(app)
         async with host.run_test(size=(240, 64)) as pilot:
             console = host.screen_stack[-1]
@@ -1330,14 +1405,16 @@ async def test_chip_tooltip_shows_intersection_breakdown_when_both_levels_set():
                 updated_at="2026-01-01T00:00:00Z",
             )
 
-            await console._retrieval._apply_console_retrieval_scope_save(session, conv_scope)
+            await console._retrieval._apply_console_retrieval_scope_save(
+                session, conv_scope
+            )
             await pilot.pause()
 
-            chip = console.query_one(f"#{SCOPE_CHIP_ID}", ConsoleScopeChip)
-            assert chip.display is True
+            segment = _scope_segment(console)
+            assert segment.visible is True
             # conversation {m1, note} ∩ workspace {m1, m2} -> {m1}.
-            assert _static_plain_text(chip) == "Scope: 1"
-            assert str(chip.tooltip) == (
+            assert _scope_strip(console).segment_text("scope") == "Scope: 1"
+            assert _scope_tooltip(console) == (
                 "Only searching: conversation scope (2 items) and workspace "
                 "scope (2 items) — 1 in both."
             )
@@ -1350,7 +1427,7 @@ async def test_chip_tooltip_shows_workspace_only_breakdown():
     """A workspace scope with NO conversation scope -> single-level
     workspace-scope tooltip (not the conversation-flavored default)."""
     app = _build_test_app()
-    app.media_db = _AlwaysExistsMediaDB()
+    swap_app_aliases(app, media_db=_AlwaysExistsMediaDB())
     host = ConsoleHarness(app)
     async with host.run_test(size=(240, 64)) as pilot:
         console = host.screen_stack[-1]
@@ -1359,7 +1436,9 @@ async def test_chip_tooltip_shows_workspace_only_breakdown():
         active = registry.get_active_workspace()
         registry.set_workspace_scope(
             active.workspace_id,
-            RagScope(items=(ScopeItem("media", "m1"),), updated_at="2026-01-01T00:00:00Z"),
+            RagScope(
+                items=(ScopeItem("media", "m1"),), updated_at="2026-01-01T00:00:00Z"
+            ),
         )
         session = console._session._active_native_console_session()
 
@@ -1367,10 +1446,10 @@ async def test_chip_tooltip_shows_workspace_only_breakdown():
         console._sync_console_retrieval_scope_row()
         await pilot.pause()
 
-        chip = console.query_one(f"#{SCOPE_CHIP_ID}", ConsoleScopeChip)
-        assert chip.display is True
-        assert _static_plain_text(chip) == "Scope: 1"
-        assert str(chip.tooltip) == "Only searching: workspace scope (1 item)."
+        segment = _scope_segment(console)
+        assert segment.visible is True
+        assert _scope_strip(console).segment_text("scope") == "Scope: 1"
+        assert _scope_tooltip(console) == "Only searching: workspace scope (1 item)."
 
 
 @pytest.mark.asyncio
@@ -1382,8 +1461,7 @@ async def test_no_workspace_overlap_renders_empty_state_on_row_and_chip():
     db = CharactersRAGDB(":memory:", "test-client")
     try:
         app = _build_test_app()
-        app.chachanotes_db = db
-        app.media_db = _AlwaysExistsMediaDB()
+        swap_app_aliases(app, chachanotes_db=db, media_db=_AlwaysExistsMediaDB())
         host = ConsoleHarness(app)
         async with host.run_test(size=(240, 64)) as pilot:
             console = host.screen_stack[-1]
@@ -1393,7 +1471,8 @@ async def test_no_workspace_overlap_renders_empty_state_on_row_and_chip():
             registry.set_workspace_scope(
                 active.workspace_id,
                 RagScope(
-                    items=(ScopeItem("media", "m-ws"),), updated_at="2026-01-01T00:00:00Z"
+                    items=(ScopeItem("media", "m-ws"),),
+                    updated_at="2026-01-01T00:00:00Z",
                 ),
             )
             store = console._ensure_console_chat_store()
@@ -1403,7 +1482,9 @@ async def test_no_workspace_overlap_renders_empty_state_on_row_and_chip():
                 items=(ScopeItem("media", "m-conv"),), updated_at="2026-01-01T00:00:00Z"
             )
 
-            await console._retrieval._apply_console_retrieval_scope_save(session, conv_scope)
+            await console._retrieval._apply_console_retrieval_scope_save(
+                session, conv_scope
+            )
             await pilot.pause()
 
             row = console.query_one(f"#{ROW_ID}")
@@ -1413,12 +1494,12 @@ async def test_no_workspace_overlap_renders_empty_state_on_row_and_chip():
             assert "share no items" in str(label.tooltip)
             assert "no-workspace-overlap" not in str(label.tooltip)
 
-            chip = console.query_one(f"#{SCOPE_CHIP_ID}", ConsoleScopeChip)
-            assert chip.display is True
-            assert _static_plain_text(chip) == "Scope: no sources"
-            assert chip.has_class("console-chip-alert")
-            assert "share no items" in str(chip.tooltip)
-            assert "no-workspace-overlap" not in str(chip.tooltip)
+            segment = _scope_segment(console)
+            assert segment.visible is True
+            assert _scope_strip(console).segment_text("scope") == "Scope: no sources"
+            assert segment.alert is True
+            assert "share no items" in _scope_tooltip(console)
+            assert "no-workspace-overlap" not in _scope_tooltip(console)
     finally:
         db.close_connection()
 
@@ -1442,7 +1523,7 @@ async def test_switch_between_resumed_sessions_refreshes_stale_workspace_scope()
     not a made-up scenario.
     """
     app = _build_test_app()
-    app.media_db = _AlwaysExistsMediaDB()
+    swap_app_aliases(app, media_db=_AlwaysExistsMediaDB())
     host = ConsoleHarness(app)
     async with host.run_test(size=(240, 64)) as pilot:
         console = host.screen_stack[-1]
@@ -1493,10 +1574,12 @@ async def test_switch_between_resumed_sessions_refreshes_stale_workspace_scope()
         assert (
             _static_plain_text(row.query_one(f"#{LABEL_ID}", Static))
             == "Scope: 2 items"
-        ), "switching back to an already-resumed session must not keep the stale cached scope"
-        chip = console.query_one(f"#{SCOPE_CHIP_ID}", ConsoleScopeChip)
-        assert chip.display is True
-        assert _static_plain_text(chip) == "Scope: 2"
+        ), (
+            "switching back to an already-resumed session must not keep the stale cached scope"
+        )
+        segment = _scope_segment(console)
+        assert segment.visible is True
+        assert _scope_strip(console).segment_text("scope") == "Scope: 2"
 
 
 # --- TASK-24607 -------------------------------------------------------------

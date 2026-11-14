@@ -4,6 +4,23 @@
  * Navigation patterns and menus
  * ======================================== */
 
+/* TASK-33641.1: the active top tab's outline. The app-wide `.is-active`
+   border ($ds-action-focus, i.e. $primary) painted it on the tab's
+   $primary-darken-1 fill (MainNavigationBar's widget-tier CSS): 1.19 to
+   1.34:1 on every theme. The theme guard (themes.py ACTIVE_EDGE_VARIABLE)
+   works out a colour at 3:1 on that fill. The fill is restated here because
+   this tier's `Button:hover` / `Button:focus` fills replaced it (tier beats
+   specificity), and no one outline colour reads on all three; the `:focus`
+   form outranks `Button:hover:focus`. Bold underline carries focus, as on a
+   variant Button and as the widget's own `.nav-button.is-active:focus` rule
+   always said. Kept above the clip-ghost rule, which has the last word on a
+   ghosted button. */
+.nav-button.is-active,
+.nav-button.is-active:focus {
+    background: $primary-darken-1;
+    border: round $tldw-active-edge;
+}
+
 /* task-3200 review round 1 (main_navigation.py, MainNavigationBar.DEFAULT_CSS):
    a destination button whose render straddles the nav strip's scroll viewport
    edge gets `.nav-button-clip-ghost` + `disabled = True` so it reads as empty
@@ -21,8 +38,8 @@
    class-plus-pseudo-class one -- no `!important` needed on this side. */
 .nav-button.nav-button-clip-ghost:disabled {
     opacity: 100%;
-    background: $background;
-    color: $background;
+    background: $surface;
+    color: $surface;
 }
 
 /* ADR-161 task 8b: the `NavigationButton.active` / `:focus` /

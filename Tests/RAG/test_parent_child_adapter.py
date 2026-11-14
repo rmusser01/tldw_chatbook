@@ -1,5 +1,6 @@
 # Tests/RAG/test_parent_child_adapter.py
 """Q5 ruling: ECS retired; adapter preserves the parent/child retrieval shape."""
+
 import pytest
 
 
@@ -8,6 +9,7 @@ TEXT = "# Section A\n\nPara one under A.\n\n## Sub A1\n\nDeep text.\n\n# Section
 
 def test_parent_child_shape():
     from tldw_chatbook.RAG_Search import parent_child_adapter as pca
+
     result = pca.chunk_with_parent_retrieval(TEXT, max_size=100, overlap=0)
     assert "chunks" in result and "parent_chunks" in result
     for parent in result["parent_chunks"]:
@@ -22,11 +24,14 @@ def test_structureaware_engine_underneath():
     # The adapter must call the engine's hierarchical path, not ECS logic.
     from tldw_chatbook.RAG_Search import parent_child_adapter as pca
     from tldw_chatbook.Chunking.engine import Chunker
+
     calls = []
     real = Chunker.chunk_text_hierarchical_flat
+
     def spy(self, text, **kwargs):
         calls.append(kwargs)
         return real(self, text, **kwargs)
+
     monkeypatch_obj = pytest.MonkeyPatch()
     monkeypatch_obj.setattr(Chunker, "chunk_text_hierarchical_flat", spy)
     try:
@@ -34,7 +39,7 @@ def test_structureaware_engine_underneath():
         assert calls, "adapter must delegate to the engine's hierarchical path"
         # The engine's structure_aware strategy is the only structure-aware
         # implementation (Q5 ruling) — any other method must fail this test.
-        assert calls[0]['method'] == 'structure_aware'
+        assert calls[0]["method"] == "structure_aware"
     finally:
         monkeypatch_obj.undo()
 
@@ -84,9 +89,19 @@ def test_ecs_delegation_legacy_shape():
     assert result["chunks"] and result["parent_chunks"]
     # Legacy per-chunk keys the two RAG indexing consumers read.
     for chunk in result["chunks"]:
-        assert {"text", "start_char", "end_char", "chunk_index", "chunk_type",
-                "level", "parent_index", "children_indices", "word_count",
-                "char_count", "metadata"} <= set(chunk.keys())
+        assert {
+            "text",
+            "start_char",
+            "end_char",
+            "chunk_index",
+            "chunk_type",
+            "level",
+            "parent_index",
+            "children_indices",
+            "word_count",
+            "char_count",
+            "metadata",
+        } <= set(chunk.keys())
         assert chunk["metadata"]["parent_chunk_index"] is not None
 
 
@@ -171,6 +186,7 @@ def test_parent_text_is_sanitized_like_children():
     relaxed, so this pins real behavior under pytest.
     """
     from tldw_chatbook.RAG_Search import parent_child_adapter as pca
+
     bidi = "‮"
     text = f"# Section A\n\nSafe text {bidi}spoofed{bidi} more text.\n"
     result = pca.chunk_with_parent_retrieval(text, max_size=100, overlap=0)

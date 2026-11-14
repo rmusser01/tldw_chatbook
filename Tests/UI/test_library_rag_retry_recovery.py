@@ -101,6 +101,7 @@ async def test_retrieval_notice_keeps_paid_disclosure_visible(size, theme, monke
         query="tides",
         mode="rag",
         provider_name="openai",
+        provider_model="gpt-4.1-mini",
         retrieval_status="failed",
     )
     async with host.run_test(size=size) as pilot:
@@ -120,7 +121,7 @@ async def test_retrieval_notice_keeps_paid_disclosure_visible(size, theme, monke
         ):
             _assert_painted(screen, screen.query_one(selector))
         painted = " ".join(strip.text for strip in screen._compositor.render_strips())
-        assert "To openai: question + evidence" in painted
+        assert "To openai · gpt-4.1-mini: question + evidence" in painted
         assert "Retrieval failed. Run again to retry." in painted
 
 

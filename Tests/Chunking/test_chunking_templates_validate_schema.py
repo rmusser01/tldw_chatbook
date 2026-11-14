@@ -6,8 +6,10 @@ import pytest
 # Skipped: the /validate HTTP endpoint stays server-side; chatbook ships local validation parity (Chunking/template_validation.py) pinned by its own fixture-table suite — no router to mount a TestClient against. Terminal disposition (2026-08-23 program close):
 # pinned by Tests/Chunking/test_descope_ledger.py; a re-sync regenerates
 # this block verbatim.
-pytest.importorskip("tldw_chatbook.NoSuchDeferredModule",
-                    reason="skipped: the /validate HTTP endpoint stays server-side; chatbook ships local validation parity (Chunking/template_validation.py) pinned by its own fixture-table suite — no router to mount a TestClient against")
+pytest.importorskip(
+    "tldw_chatbook.NoSuchDeferredModule",
+    reason="skipped: the /validate HTTP endpoint stays server-side; chatbook ships local validation parity (Chunking/template_validation.py) pinned by its own fixture-table suite — no router to mount a TestClient against",
+)
 from fastapi.testclient import TestClient
 
 
@@ -20,7 +22,9 @@ def test_validate_template_schema_classifier_errors():
     # Minimal app mounting the router directly
     os.environ.setdefault("AUTH_MODE", "single_user")
     from fastapi import FastAPI
-    from tldw_Server_API.app.api.v1.endpoints.chunking_templates import router as tmpl_router
+    from tldw_Server_API.app.api.v1.endpoints.chunking_templates import (
+        router as tmpl_router,
+    )
     from tldw_chatbook.Chunking._shims.AuthNZ.settings import get_settings
 
     app = FastAPI()
@@ -32,11 +36,15 @@ def test_validate_template_schema_classifier_errors():
         "chunking": {"method": "sentences", "config": {}},
         "classifier": {"bogus_field": 1},  # not allowed per TemplateConfig
     }
-    r = client.post("/api/v1/chunking/templates/validate", json=payload, headers=headers)
+    r = client.post(
+        "/api/v1/chunking/templates/validate", json=payload, headers=headers
+    )
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["valid"] is False
     # At least one error mentions classifier
     fields = [e.get("field", "") for e in (body.get("errors") or [])]
     msgs = [e.get("message", "") for e in (body.get("errors") or [])]
-    assert any("classifier" in f for f in fields) or any("classifier" in m for m in msgs)
+    assert any("classifier" in f for f in fields) or any(
+        "classifier" in m for m in msgs
+    )

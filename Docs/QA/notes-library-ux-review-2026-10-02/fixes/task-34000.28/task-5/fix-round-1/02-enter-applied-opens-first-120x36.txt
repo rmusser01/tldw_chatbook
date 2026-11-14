@@ -1,0 +1,36 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌────────────────────────────────────────────────────────┐  N  Saved · Next: Keep editing; changes save         │
+│   a  │ Library notes · Ready                                  │  o  automatically.                                   │
+│   v  │ Notes (122)                                            │  t    ‹ Notes   Index — start here                   │
+│      │ These notes live in the Library's own database — for   │  e                                                   │
+│      │ notes that live in a folder on disk, switch to Folder  │  s                                                   │
+│      │ files. To copy or keep a folder synced, choose Add     │      In the Library database only — no file on disk  │
+│      │ from files.                                            │     Saved                                            │
+│      │                                                        │         Edit     Preview     Info                    │
+│      │ Filter                                                 │         Save     Use in Console                      │
+│ ---> │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │     Title                                            │
+│      │ ▊ start here                                         ▎ │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     ▊ Index — start here                           ▎ │
+│      │                                                        │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      │    New     ○ Sort: Newest     Select                   │<---                                                  │
+│      │    Add from files…     Export                          │     Keywords                                         │
+│      │ Folders & placement                                    │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │    New folder     Add to folder     Move note          │     ▊ index                                        ▎ │
+│      │    ○ Remove placement                                  │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│ ---> │ Sort unavailable — clear the filter                    │                                                      │
+│      │ filter: start here · 1 result                          │     Body                                             │
+│      │                                                        │     ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓ │
+│      │   Clear filter                                         │     ┃ # Index                                      ┃ │
+│      │  ▾ Unfiled                                             │     ┃                                              ┃ │
+│      │    Index — start here · Unfiled · now                  │     ┃ Links to everything.                         ┃ │
+│      │                                                        │     ┃                                              ┃ │
+│      │                                                        │     ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ │
+│      │                                                        │                                                      │
+│      └────────────────────────────────────────────────────────┘                                       5 words · 1:1  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  typing in field | esc back to notes | ctrl+end end of note | F1 · F6 · Ctrl+P · Ctrl+Q

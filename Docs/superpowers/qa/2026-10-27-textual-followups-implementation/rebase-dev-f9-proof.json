@@ -1,0 +1,59 @@
+{
+  "old_head": "0323886005b1286d070e01ad5185fe4240b0bb53",
+  "new_dev": "f9baac87068f44ea650bb5e6535df7a2e3043021",
+  "old_dev": "773cc9729cfbc9c13c14b56724fcb02efd3a54a3",
+  "backup_ref": "codex/textual-37031-37034-before-dev-f9",
+  "production_tree": "e4265ce072b5213a57d64359ebf0184d0dc761c4",
+  "owned_python_blobs": {
+    "Tests/Architecture/test_module_size_ratchet.py": "2e77ca9f486c9019b88b36b86e5de9fd119f41db",
+    "Tests/Library/test_library_file_export.py": "6e2841fbce53912c0f710e858bc728b00250705e",
+    "Tests/UI/test_evals_bench_editor.py": "23b4e0f07325bd7d2f8d53631feea283c77993ef",
+    "Tests/UI/test_evals_bench_save_publication.py": "1ef13959c6a38e44936e7233c99252ef88065714",
+    "Tests/UI/test_evals_screen.py": "6cb58dd76d282d0888d916526c1a53ac84585cda",
+    "Tests/UI/test_library_prompt_export_journeys.py": "18ea6f9506388364eca3b19bba26d8cf965a4f5e",
+    "Tests/UI/test_library_prompt_export_responsiveness.py": "4351fcbeb375bdb0008ef46bb29f31f3a0d91884",
+    "Tests/UI/test_reminder_form.py": "e83b164e3fa1dea4c3916fe02289b44129f23a89",
+    "Tests/UI/test_schedules_reminder_form_saves.py": "6014b5bcb1bae5fa2e09e2dd4062a84cfa5c4405",
+    "Tests/UI/test_schedules_transfer_actions.py": "db468e4f5fe53b7eff873254dbb02f032d8e0e7b",
+    "Tests/UI/test_speech_effects_placeholder.py": "f2dc5ec534201c135e089687a312bdba201682dc",
+    "Tests/UI/test_speech_footer_scope.py": "f375142acda56371709052a3770861ee4e5e1903",
+    "Tests/UI/test_speech_rail_navigation.py": "14b238ddf04592536cb8a2796b2ba0ef5377277f",
+    "Tests/UI/test_speech_shortcuts.py": "33ae502c202cb255c546eaac544a78be4cff782e",
+    "Tests/UI/test_stts_capability_state.py": "2672ea3111bf52fd3637f0de63b8f72a9d320200",
+    "scripts/check_ui_pr_gate_census.py": "62ba794a1f95540faf8030f78966dd3eb74bfd5f",
+    "tldw_chatbook/Scheduling/services/scheduling_service.py": "d83355542743f7ed0df2cf627443a3d647b84276",
+    "tldw_chatbook/UI/Evals/bench_editor.py": "5761ddf8f1b23a6be8af1ed970ff9bb60350ae5e",
+    "tldw_chatbook/UI/Library_Modules/library_file_export.py": "8c16f53afe81ec0d7d65ab22e611ad78540959d2",
+    "tldw_chatbook/UI/STTS_Window.py": "faf62252f13890132e57990e5f3dc12428c0ab9f",
+    "tldw_chatbook/UI/Screens/evals_screen.py": "60878049545991c8136b5da593181a4a91e0abf2",
+    "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py": "7dfea8ede54c80abf7e2b0e51002f593fe99612b",
+    "tldw_chatbook/UI/Screens/stts_screen.py": "d361cab7b4c09823e31c8b77f9e8ff56c291d65c"
+  },
+  "incoming_paths": [
+    ".github/workflows/derived-artifacts.yml",
+    "Tests/CI/test_ci_queue_pressure_contract.py",
+    "Tests/UI/test_console_first_send_preimport.py",
+    "backlog/docs/lessons-testing-evidence.md",
+    "backlog/tasks/task-33620.15.15 - Tests-put-TASK-33620.15.5s-run-start-pins-on-a-PR-required-lane.md",
+    "backlog/tasks/task-37120 - CI-stop-pytests-major-version-reaching-the-PR-lanes-unreviewed.md",
+    "backlog/tasks/task-37121 - CI-reconcile-the-UI-census-ledgers-R11-rule-with-its-bootstrap_profile-files.md",
+    "scripts/check_ui_pr_gate_census.py",
+    "scripts/ui_pr_gate_census.txt"
+  ],
+  "rebased_head": "a2ab4c7d759d0977fe6dca4fff249e9acfbd0e57",
+  "entire_production_tree_identical": true,
+  "only_changed_owned_python_blob": [
+    "scripts/check_ui_pr_gate_census.py"
+  ],
+  "six_unshared_incoming_paths_byte_identical": [
+    ".github/workflows/derived-artifacts.yml",
+    "Tests/CI/test_ci_queue_pressure_contract.py",
+    "Tests/UI/test_console_first_send_preimport.py",
+    "backlog/tasks/task-33620.15.15 - Tests-put-TASK-33620.15.5s-run-start-pins-on-a-PR-required-lane.md",
+    "backlog/tasks/task-37120 - CI-stop-pytests-major-version-reaching-the-PR-lanes-unreviewed.md",
+    "backlog/tasks/task-37121 - CI-reconcile-the-UI-census-ledgers-R11-rule-with-its-bootstrap_profile-files.md"
+  ],
+  "lesson_top_incoming_and_own_append_preserved": true,
+  "census_entries": 1080,
+  "census_floor": 1080
+}

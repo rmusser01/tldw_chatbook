@@ -112,30 +112,12 @@ _INACTIVE_STAGED_SUMMARIES = {
     "no staged work",
     "no sources attached",
 }
-_NEGATIVE_READINESS_TERMS = {
-    "blocked",
-    "missing source",
-    "no results",
-    "not available",
-    "not requested",
-    "not staged",
-    "unavailable",
-}
-_POSITIVE_READINESS_TERMS = {
-    "attached",
-    "available",
-    "ready",
-    "retrieving",
-    "staged",
-}
-_SETUP_BLOCKER_LABEL_TERMS = {"model", "provider"}
-_SETUP_BLOCKER_READINESS_TERMS = {
-    "blocked",
-    "invalid",
-    "missing",
-    "unavailable",
-    "unconfigured",
-}
+#: TASK-33621.11: the structured identity of the Inspector rows the rail
+#: badge reads (``ConsoleDisplayRow.code``). The badge keys on a row's code
+#: and status, never on the words in its label, value or recovery copy.
+CONSOLE_ROW_PROVIDER = "provider"
+CONSOLE_ROW_EVIDENCE = "evidence"
+_BADGE_ROW_CODES = frozenset({CONSOLE_ROW_PROVIDER, CONSOLE_ROW_EVIDENCE})
 
 
 @dataclass(frozen=True)
@@ -199,6 +181,57 @@ class ConsoleRailState:
     inspector_more_open: bool = False
     environment_open: bool = True
     tasks_open: bool = True
+
+
+#: (DOM selector, label field, badge field) for each rail's collapsed handle.
+_RAIL_HANDLE_COPY_FIELDS = (
+    ("#console-context-rail-handle", "left_label", "left_badge"),
+    ("#console-inspector-rail-handle", "right_label", "right_badge"),
+)
+
+
+def console_rail_handle_copy(
+    state: ConsoleRailState,
+) -> tuple[tuple[str, str, str], ...]:
+    """Return ``(selector, label, badge)`` for each rail handle.
+
+    Args:
+        state: The effective rail state.
+
+    Returns:
+        One row per handle, Context first.
+    """
+    return tuple(
+        (selector, getattr(state, label), getattr(state, badge))
+        for selector, label, badge in _RAIL_HANDLE_COPY_FIELDS
+    )
+
+
+def console_rail_handle_copy_only_changed(
+    previous: ConsoleRailState | None, current: ConsoleRailState
+) -> bool:
+    """True when two rail states differ only in the handles' label or badge.
+
+    TASK-36012: a run's start and end change the Inspector handle's badge
+    (``running``) and nothing else. That copy moves no rail, section or
+    column, so it needs the handles repainted, not the whole rail cascade
+    (which re-hid every Inspector row and asked for two rail layouts).
+
+    Args:
+        previous: The state last applied, or None before the first apply.
+        current: The incoming state.
+
+    Returns:
+        True only for a real change confined to handle copy.
+    """
+    if previous is None or previous == current:
+        return False
+    copy_fields = {
+        name: getattr(current, name)
+        for _selector, label, badge in _RAIL_HANDLE_COPY_FIELDS
+        for name in (label, badge)
+    }
+    return replace(previous, **copy_fields) == current
 
 
 def _sanitize_key_part(value: Any) -> str:
@@ -291,12 +324,47 @@ def build_console_rail_preference_key(
     )
 
 
-def collect_prunable_console_rail_keys(
-    stored_keys: Any,
-    *,
-    live_scope_ids: Any,
-) -> list[str]:
-    """Return stored rail-preference keys whose scope is no longer live.
+def take_console_rail_seed_flush(
+    rail_state_config: dict[str, Any],
+    unsaved: dict[str, dict[str, bool]],
+    saving_key: str,
+) -> list[tuple[str, dict[str, bool]]]:
+    """Return the unsaved seed defaults to write ahead of saving one record.
+
+    TASK-36385: Console holds a defaults seed in memory instead of saving it
+    at mount. A record saved later could become that scope's seed source at
+    the next launch (a workspace record seeds a missing shared layout; the
+    shared layout seeds a missing workspace), so seeding would re-derive
+    instead of happening once. Before any rail record is saved, the defaults
+    seeded this session are written first, and so are the shared layout's
+    when a workspace record is saved while the shared layout is absent.
+
+    Args:
+        rail_state_config: The live in-memory rail-state table; a missing
+            shared layout is filled with defaults here.
+        unsaved: Records the seed set to defaults without saving, by key;
+            emptied here.
+        saving_key: The record about to be saved.
+
+    Returns:
+        ``(key, defaults)`` pairs still held as seeded (a record the user
+        edited, or a reload replaced, is not the seeded object any more).
+    """
+    shared_key = build_console_rail_preference_key(layout_scope="global").value
+    if saving_key != shared_key and shared_key not in rail_state_config:
+        defaults = serialize_console_rail_stored_preferences(None)
+        rail_state_config[shared_key] = unsaved[shared_key] = defaults
+    pending = dict(unsaved)
+    unsaved.clear()
+    return [
+        (key, latched)
+        for key, latched in pending.items()
+        if key != saving_key and rail_state_config.get(key) is latched
+    ]
+
+
+def collect_prunable_console_rail_keys(stored_keys: Any) -> list[str]:
+    """Return stored rail-preference keys left over from the per-chat scheme.
 
     TASK-718: preferences are per-workspace (``:layout`` scope) with the
     legacy ``:global`` scope kept as the migration source, so every other
@@ -307,13 +375,10 @@ def collect_prunable_console_rail_keys(
     Args:
         stored_keys: Iterable of stored config key strings (non-string
             entries are ignored). ``None`` is treated as empty.
-        live_scope_ids: Accepted for API compatibility; conversation/session
-            liveness no longer affects prunability.
 
     Returns:
         The subset of ``stored_keys`` safe to delete, order-preserved.
     """
-    del live_scope_ids
     prunable: list[str] = []
     for key in stored_keys or ():
         if not isinstance(key, str):
@@ -582,26 +647,17 @@ def build_console_context_rail_badge(
     return ""
 
 
-def _row_text_parts(row: Any) -> tuple[str, str, str, str]:
-    return (
-        _clean_text(getattr(row, "label", "")),
-        _clean_text(getattr(row, "status", "")),
-        _clean_text(getattr(row, "value", "")),
-        _clean_text(getattr(row, "text", "")),
-    )
-
-
 def _normalized_status(value: Any) -> str:
     status = getattr(value, "value", value)
     return _clean_text(status).lower()
 
 
-def _has_row_match(rows: tuple[Any, ...], candidates: set[str]) -> bool:
-    for row in rows:
-        combined = " ".join(part.lower() for part in _row_text_parts(row) if part)
-        if any(candidate in combined for candidate in candidates):
-            return True
-    return False
+def _row_code(row: Any) -> str:
+    return _clean_text(getattr(row, "code", ""))
+
+
+def _row_status(row: Any) -> str:
+    return _normalized_status(getattr(row, "status", ""))
 
 
 _ACTIVE_RUN_STATUS_VALUES = frozenset(
@@ -609,39 +665,15 @@ _ACTIVE_RUN_STATUS_VALUES = frozenset(
 )
 
 
-def _has_setup_blocker_row(rows: tuple[Any, ...]) -> bool:
-    for row in rows:
-        label, status, value, text = _row_text_parts(row)
-        category = label.lower()
-        if not any(term in category for term in _SETUP_BLOCKER_LABEL_TERMS):
-            continue
+def console_badge_inspector_rows(inspector_state: Any) -> tuple[Any, ...]:
+    """Return only rows whose blocked state should outrank review badges.
 
-        readiness = " ".join(part.lower() for part in (status, value, text) if part)
-        if _contains_any_term(readiness, _SETUP_BLOCKER_READINESS_TERMS):
-            return True
-
-    return False
-
-
-def _contains_any_term(text: str, terms: set[str]) -> bool:
-    tokens = set(re.findall(r"[a-z0-9]+", text))
-    return bool(tokens & terms)
-
-
-def _has_row_readiness_match(rows: tuple[Any, ...], category_terms: set[str]) -> bool:
-    for row in rows:
-        label, status, value, text = _row_text_parts(row)
-        category = label.lower()
-        readiness = " ".join(part.lower() for part in (status, value, text) if part)
-        if not readiness or any(
-            term in readiness for term in _NEGATIVE_READINESS_TERMS
-        ):
-            continue
-        if any(term in category for term in category_terms) and _contains_any_term(
-            readiness, _POSITIVE_READINESS_TERMS
-        ):
-            return True
-    return False
+    Selected by structured row code (TASK-33621.11): the label lookup this
+    replaced silently lost the retrieval row when it was renamed.
+    """
+    return tuple(
+        row for row in inspector_state.rows if _row_code(row) in _BADGE_ROW_CODES
+    )
 
 
 def build_console_inspector_rail_badge(
@@ -659,8 +691,7 @@ def build_console_inspector_rail_badge(
     Task-400: the staged-sources Context section lives in the Inspector rail,
     so its "N staged"/"staged" badge surfaces here. Precedence: failed,
     setup, blocked, approvals, then an active run (``running``), then tools;
-    staged context outranks the informational artifact/source readiness
-    fallbacks.
+    staged context outranks the informational ``artifact`` fallback.
 
     TASK-33620.4: an active run is read from the STRUCTURED ``run_status``
     (the canonical active set) and shows ``running`` just below approvals
@@ -668,9 +699,14 @@ def build_console_inspector_rail_badge(
     never ``setup`` -- the row-text match below turned every healthy run
     into ``setup`` while the Provider row mislabelled it blocked.
 
+    TASK-33621.11 (AC#5): rows choose a badge only by their structured
+    ``status`` and ``code`` -- ``failed``/``blocked`` statuses, and ``setup``
+    for a blocked Provider row -- never by words in their copy. Dev badged a
+    ready Evidence row "blocked" because its recovery said "1 blocked".
+
     Args:
         run_status: Current Console run status value or enum.
-        inspector_rows: Inspector display rows used for keyword matching.
+        inspector_rows: Coded Inspector rows (``console_badge_inspector_rows``).
         tool_count: Pending tool-call count.
         approval_count: Pending approval count.
         can_save_chatbook: Whether a Chatbook artifact save is available.
@@ -682,16 +718,17 @@ def build_console_inspector_rail_badge(
         The highest-precedence badge string, or ``""`` when nothing applies.
     """
     normalized_run_status = _normalized_status(run_status)
-    if normalized_run_status == "failed" or _has_row_match(inspector_rows, {"failed"}):
+    row_statuses = {_row_status(row) for row in inspector_rows}
+    if normalized_run_status == "failed" or "failed" in row_statuses:
         return "failed"
 
-    if _has_setup_blocker_row(inspector_rows):
+    if any(
+        _row_code(row) == CONSOLE_ROW_PROVIDER and _row_status(row) == "blocked"
+        for row in inspector_rows
+    ):
         return "setup"
 
-    if normalized_run_status == "blocked" or _has_row_match(
-        inspector_rows,
-        {"blocked"},
-    ):
+    if normalized_run_status == "blocked" or "blocked" in row_statuses:
         return "blocked"
 
     approvals = _coerce_non_negative_int(approval_count)
@@ -713,14 +750,8 @@ def build_console_inspector_rail_badge(
     if _has_active_staged_summary(staged_summary):
         return "staged"
 
-    if can_save_chatbook or _has_row_readiness_match(
-        inspector_rows,
-        {"artifact", "chatbook"},
-    ):
+    if can_save_chatbook:
         return "artifact"
-
-    if _has_row_readiness_match(inspector_rows, {"source", "rag"}):
-        return "source"
 
     return ""
 
@@ -794,6 +825,58 @@ def resolve_console_rail_priority(
         # badge here re-renders the handle and drops keyboard focus from
         # the reveal button (caught by test_console_edge_rail_geometry).
         left_forced_collapsed=True,
+    )
+
+
+#: TASK-33625.3: below this width both rails yield while the Terminal owns
+#: the Console center. At 80x24 an Inspector the user had opened left the
+#: shell about 44x6 with clipped tabs and actions; a terminal needs the
+#: columns more than a reading rail does. Same boundary as the default
+#: Context collapse, so the "narrow" bands agree.
+CONSOLE_TERMINAL_RAIL_YIELD_COLUMNS = CONSOLE_RAIL_LEFT_COMPACT_COLLAPSE_COLUMNS
+
+
+def yield_console_rails_to_terminal(
+    rail_state: ConsoleRailState,
+    available_columns: int | None,
+    *,
+    reclaimed: frozenset[str] = frozenset(),
+) -> ConsoleRailState:
+    """Collapse the rails for an open Terminal at narrow widths, render-only.
+
+    TASK-33625.3. Like every responsive rule here this is a rendering
+    override: the stored preference (and ``preferred_*_open``) is untouched,
+    so "Return to transcript" or a wider window brings the rails back. The
+    yield is a default, not a lock: a side the user asked for while the
+    Terminal owns the center (Alt+C, Alt+I, a handle) is ``reclaimed`` and
+    renders by the ordinary rules, so those toggles never go dead.
+
+    Args:
+        rail_state: Effective rail state after every other rule.
+        available_columns: Current terminal width, when known.
+        reclaimed: Sides (``"left"``, ``"right"``) exempt from the yield.
+
+    Returns:
+        The original state at or above the yield width, or a copy with each
+        unreclaimed rail collapsed and its compact override withdrawn.
+    """
+    if available_columns is None or available_columns >= (
+        CONSOLE_TERMINAL_RAIL_YIELD_COLUMNS
+    ):
+        return rail_state
+    left_open = rail_state.left_open and "left" in reclaimed
+    right_open = rail_state.right_open and "right" in reclaimed
+    if (left_open, right_open) == (rail_state.left_open, rail_state.right_open):
+        return rail_state
+    left_override = rail_state.left_compact_override and left_open
+    right_override = rail_state.right_compact_override and right_open
+    return replace(
+        rail_state,
+        left_open=left_open,
+        right_open=right_open,
+        left_compact_override=left_override,
+        right_compact_override=right_override,
+        compact_override=left_override or right_override,
     )
 
 

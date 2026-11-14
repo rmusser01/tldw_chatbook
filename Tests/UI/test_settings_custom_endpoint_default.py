@@ -1,7 +1,7 @@
 """Settings opens when the saved default provider is a custom endpoint.
 
 TASK-33002.12: with ``[chat_defaults] provider = "custom-ep:<slug>"`` (the
-ADR-146 registry), opening Settings killed the app -- readiness canonicalized
+ADR-343 registry), opening Settings killed the app -- readiness canonicalized
 the id to ``custom_ep:<slug>``, which ``ProviderReadiness`` rejects with
 ``ValueError('Provider key is invalid.')``. Readiness for a registry id now
 resolves through the registry, and a dangling slug reads as an honest
@@ -28,6 +28,7 @@ from Tests.UI.test_settings_configuration_hub import (
     _open_settings_category,
     _settle_settings_mount_storm,
 )
+from Tests.UI.test_settings_narrow_layout import _region_rows, _SettingsCssHarness
 from tldw_chatbook.Chat.console_session_settings import (
     build_console_settings_readiness,
     build_default_console_session_settings,
@@ -39,10 +40,10 @@ from tldw_chatbook.Chat.provider_readiness import (
 )
 from tldw_chatbook.config import save_settings_to_cli_config
 from tldw_chatbook.UI.Screens.settings_screen import (
-    ENDPOINT_NOT_FOUND_SETTINGS_COPY,
     PROVIDER_MANUAL_SELECT_VALUE,
     SettingsScreen,
 )
+from tldw_chatbook.UI.Settings_Modules.category_panels import PROVIDERS_MODELS_PANEL
 
 _ENTRY = {
     "display_name": "GPU box",
@@ -118,8 +119,13 @@ async def test_settings_opens_on_a_dangling_registry_default_honestly(request):
 
         await _open_settings_category(pilot, "#settings-category-providers-models")
         await _settle_settings_mount_storm(pilot)
-        rendered = _all_static_text(screen)
-        assert ENDPOINT_NOT_FOUND_SETTINGS_COPY in rendered, rendered
+        # Review of PR #3057 (R1 #11), rewritten on purpose: the 55-cell
+        # sentence was cut by the API key row's ellipsis; the row says it in
+        # its Source word and a help line that fits.
+        assert _text(screen, "#settings-provider-key-status") == "this endpoint"
+        assert _text(screen, "#settings-provider-api-key-help") == (
+            "not found · choose another provider"
+        )
 
 
 # --- readiness seam (no mount) -------------------------------------------
@@ -250,8 +256,15 @@ def test_settings_registry_facts_resolve_either_spelling(spelling):
     assert screen._provider_endpoint_row(spelling) == (
         "Endpoint key: custom_endpoints.gpu-box.base_url"
     )
-    assert screen._provider_endpoint_display_value(spelling) == (
-        "http://192.168.1.5:8080"
+    # TASK-33007.2, rewritten on purpose: the Endpoint row's help names the
+    # entry's URL (the readiness block's Endpoint line is gone).
+    from tldw_chatbook.UI.Settings_Modules.providers_models_card import (
+        endpoint_row_copy,
+    )
+
+    assert endpoint_row_copy(screen, spelling, "") == (
+        "this endpoint",
+        "http://192.168.1.5:8080 · edit in Custom endpoints",
     )
 
 
@@ -272,7 +285,7 @@ def test_ordinary_provider_readiness_is_unchanged(provider, ready, reason):
     ("provider", "blocked"), [("custom-ep:gpu-box", False), ("custom-ep:gone", True)]
 )
 def test_home_console_readiness_seam_handles_a_registry_default(provider, blocked):
-    """Home's readiness (``_home_console_provider_ready``) rides this seam."""
+    """Home's readiness (``_home_console_model_state``) rides this seam."""
     config = {**_config(), "chat_defaults": {"provider": provider, "model": "model-a"}}
     settings = build_default_console_session_settings(config)
     readiness = build_console_settings_readiness(
@@ -347,8 +360,9 @@ def test_registry_load_flags_an_invalid_api_key_env_without_logging_it(caplog):
 async def test_settings_opens_on_an_entry_with_an_invalid_api_key_env(request):
     app = _registry_default_app("custom-ep:gpu-box")
     app.app_config["custom_endpoints"]["gpu-box"]["api_key_env"] = "gpu-key"
-    host = DestinationHarness(app, "settings")
-    async with host.run_test(size=(180, 50)) as pilot:
+    # The real stylesheet at full screen: the row is one line with an ellipsis.
+    host = _SettingsCssHarness(app, "settings")
+    async with host.run_test(size=(211, 44)) as pilot:
         await _settle_settings_mount_storm(pilot)
         screen = _active_destination_screen(host)
         overview = _text(screen, "#settings-overview-configuration")
@@ -357,12 +371,13 @@ async def test_settings_opens_on_an_entry_with_an_invalid_api_key_env(request):
 
         await _open_settings_category(pilot, "#settings-category-providers-models")
         await _settle_settings_mount_storm(pilot)
-        for selector in (
-            "#settings-provider-credential-status",
-            "#settings-provider-key-status",
-        ):
-            status = _text(screen, selector)
-            assert "credential env var name is invalid" in status, status
+        # Fix round 1 (finding 26), rewritten on purpose: the readiness
+        # recovery (about 200 cells) was this row's help and was cut before
+        # the word "invalid"; the row has its own sentence, read as painted.
+        help_line = screen.query_one("#settings-provider-api-key-help", Static)
+        painted = "".join(_region_rows(screen, help_line))
+        assert "invalid Env var · edit this endpoint" in painted, painted
+        assert _text(screen, "#settings-provider-key-status") == "this endpoint"
         assert "gpu-key" not in _all_static_text(screen)
 
 
@@ -415,12 +430,13 @@ async def test_providers_models_states_the_entry_endpoint_and_credential(
         screen = _active_destination_screen(host)
         await _open_settings_category(pilot, "#settings-category-providers-models")
         await _settle_settings_mount_storm(pilot)
-        for selector in (
-            "#settings-provider-credential-status",
-            "#settings-provider-key-status",
-        ):
-            assert expected in _text(screen, selector), _text(screen, selector)
-        assert "http://192.168.1.5:8080" in _text(screen, "#settings-provider-endpoint")
+        # TASK-33007.2, rewritten on purpose: the API key and Endpoint rows
+        # say the entry's credential and URL in their help lines.
+        help_text = _text(screen, "#settings-provider-api-key-help")
+        assert expected in help_text, help_text
+        assert "http://192.168.1.5:8080" in _text(
+            screen, "#settings-provider-endpoint-help"
+        )
         key_row = "".join(_text(screen, "#settings-provider-endpoint-key").split())
         assert "custom_endpoints.gpu-box.base_url" in key_row, key_row
 
@@ -438,6 +454,9 @@ async def test_providers_models_states_the_entry_endpoint_and_credential(
 
 _REGISTRY_LOCKED_FIELDS = (
     "#settings-model-value",
+    # TASK-33007.3, extended on purpose: the Default model picker is the
+    # visible control in front of the adapter, and it locks with it (R9).
+    "#settings-model-picker",
     "#settings-provider-endpoint-value",
     "#settings-provider-api-key",
     "#settings-provider-api-key-clear",
@@ -491,6 +510,7 @@ async def test_providers_models_locks_a_registry_default_and_links_to_its_editor
         await pilot.pause()
         for selector in (
             "#settings-model-value",
+            "#settings-model-picker",
             "#settings-provider-endpoint-value",
             "#settings-provider-api-key",
             "#settings-provider-credential-env-var",
@@ -527,7 +547,9 @@ def test_provider_widget_value_reads_the_saved_provider_before_the_select_mounts
     monkeypatch.setattr(screen, "query_one", query_one)
     monkeypatch.setattr(
         screen,
-        "_provider_setting_values_mapping",
+        # Fix round 1 (finding 6), rewritten on purpose: the fallback is the
+        # provider the form shows, which is a link's while no draft exists.
+        "_provider_display_setting_values",
         lambda: {"provider": "custom-ep:gpu-box"},
     )
     assert screen._provider_widget_value() == "custom-ep:gpu-box"
@@ -603,7 +625,7 @@ async def test_home_readiness_computes_a_malformed_default(request, provider):
             # The badge's own seam; ``#home-details-body`` mounts on a timer
             # (test_home_model_badge_reports_blocked_without_credential flakes
             # on NoMatches at HEAD).
-            ready = home._home_console_provider_ready(
+            ready, _failed = home._home_console_model_state(
                 background_credentials=False, allow_fresh_load=False
             )
             assert ready is False
@@ -617,8 +639,6 @@ async def test_home_readiness_computes_a_malformed_default(request, provider):
 @private_profile_test
 async def test_revert_to_a_registry_default_relocks_model_discovery(request):
     """Revert restored the registry id but left llama_cpp's Discover live."""
-    from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
-
     host = DestinationHarness(_registry_default_app("custom-ep:gpu-box"), "settings")
     async with host.run_test(size=(180, 50)) as pilot:
         await _settle_settings_mount_storm(pilot)
@@ -641,7 +661,7 @@ async def test_revert_to_a_registry_default_relocks_model_discovery(request):
         screen._refresh_model_discovery_widgets()
         assert not any(button.disabled for button in buttons)
 
-        screen._revert_category(SettingsCategoryId.PROVIDERS_MODELS)
+        PROVIDERS_MODELS_PANEL.discard(screen)  # r's discard, after its confirm
         await _settle_settings_mount_storm(pilot)
         assert screen._provider_widget_value() == "custom-ep:gpu-box"
         assert [button.id for button in buttons if not button.disabled] == []

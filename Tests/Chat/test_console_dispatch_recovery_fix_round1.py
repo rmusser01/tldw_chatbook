@@ -551,3 +551,78 @@ async def test_ephemeral_owner_survives_close_restore_and_dies_only_at_app_teard
     await runtime.dispose()
 
     assert store.dispatch_recovery_for_session(session_id) is None
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "none",
+        "revision",
+        "frozen-revision",
+        "automatic",
+        "allowed",
+        "policy-change",
+        "unavailable",
+        "temporary",
+        "destination",
+        "direct-tools",
+        "sources",
+        "scope",
+        "error",
+    ],
+)
+def test_missing_policy_recovery_preserves_frozen_authority(change: str) -> None:
+    frozen = _new_session_authority()
+    frozen = replace(frozen, policy=replace(frozen.policy, source="missing"))
+    if change == "automatic":
+        frozen = replace(
+            frozen,
+            policy=replace(frozen.policy, auto_retrieve=ConsoleAutoRetrieve.AUTOMATIC),
+        )
+    elif change == "allowed":
+        frozen = replace(
+            frozen,
+            policy=replace(
+                frozen.policy, assistant_access=ConsoleAssistantLibraryAccess.ALLOWED
+            ),
+        )
+    elif change in {"unavailable", "temporary"}:
+        frozen = replace(frozen, policy=replace(frozen.policy, source=change))
+    elif change == "frozen-revision":
+        frozen = replace(frozen, policy=replace(frozen.policy, policy_revision=1))
+    current = replace(
+        frozen,
+        policy=replace(frozen.policy, source="durable", policy_revision=1),
+        attempt_id="retry-attempt",
+    )
+    if change == "revision":
+        current = replace(current, policy=replace(current.policy, policy_revision=2))
+    elif change == "policy-change":
+        current = replace(
+            current,
+            policy=replace(
+                current.policy, assistant_access=ConsoleAssistantLibraryAccess.ALLOWED
+            ),
+        )
+    elif change == "destination":
+        current = replace(
+            current,
+            provider_intent=replace(
+                current.provider_intent, endpoint="https://changed.example"
+            ),
+        )
+    elif change == "direct-tools":
+        current = replace(current, direct_library_tools=True)
+    elif change == "sources":
+        current = replace(current, source_types=("notes",))
+    elif change == "scope":
+        current = replace(
+            current, scope_snapshot=ConsoleLibraryItemScopeSnapshot((), (), False)
+        )
+    elif change == "error":
+        current = replace(
+            current, policy=replace(current.policy, error_code="policy_read_error")
+        )
+    assert ConsoleChatController._dispatch_authority_matches(current, frozen) is (
+        change == "none"
+    )

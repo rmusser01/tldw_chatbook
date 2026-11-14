@@ -1,0 +1,74 @@
+[
+  {
+    "source": "/private/tmp/archive-capture-task2-red.log",
+    "path": "red.log",
+    "bytes": 14497,
+    "sha256": "b521b8cc677b250949f06039eadb8c09c7ad744960a1e77cc3b07a5f14658a2e"
+  },
+  {
+    "source": "/private/tmp/archive-capture-task2-green.log",
+    "path": "green.log",
+    "bytes": 732,
+    "sha256": "0a6ae46f3268c54c3e4f907dfd8b246f063ac6ca1020accecee259f7ce9b3900"
+  },
+  {
+    "source": "/private/tmp/archive-capture-task2-ruff.log",
+    "path": "ruff.log",
+    "bytes": 24354,
+    "sha256": "8cff355585203fc4091f3bfcd0d5e5e4336d88fe21ad39bb6ee088cd19abde9f"
+  },
+  {
+    "source": "/private/tmp/archive-capture-task2-format.log",
+    "path": "format.log",
+    "bytes": 15956,
+    "sha256": "056f9639829d5ff8d37b1e85bb3e5209c277a209bec5439883a0e2157bd7d89f"
+  },
+  {
+    "source": "/private/tmp/archive-capture-task2-ruff-test-final.log",
+    "path": "ruff-test-final.log",
+    "bytes": 2222,
+    "sha256": "e7ed2a8faa929ba4ae32cda48b3dbd4a11287d0e7eb42bd5c8ff2ff0ad14b3d1"
+  },
+  {
+    "source": "/private/tmp/archive-capture-task2-format-test-final.log",
+    "path": "format-test-final.log",
+    "bytes": 25,
+    "sha256": "fd2299c9f1c6dc869070883e281051bfe93aacf66c1a3b0069f45b4aa410ca50"
+  },
+  {
+    "source": "/private/tmp/archive-capture-task2-ruff-test-clean.log",
+    "path": "ruff-test-clean.log",
+    "bytes": 19,
+    "sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18"
+  },
+  {
+    "source": "/private/tmp/archive-capture-task2-format-test-clean.log",
+    "path": "format-test-clean.log",
+    "bytes": 25,
+    "sha256": "fd2299c9f1c6dc869070883e281051bfe93aacf66c1a3b0069f45b4aa410ca50"
+  },
+  {
+    "source": "/private/tmp/archive-capture-task2-ruff-baseline.json",
+    "path": "ruff-baseline.json",
+    "bytes": 25378,
+    "sha256": "29b1a26da835af14cd7da08f13da787af9b93f80f7556ae6c5d6f68df939a86c"
+  },
+  {
+    "source": "/private/tmp/archive-capture-task2-ruff-current.json",
+    "path": "ruff-current.json",
+    "bytes": 25378,
+    "sha256": "9f4644b35f5226693f09d7756a65e63dd417b9ee20d6fbc82b98fb06a6cf471c"
+  },
+  {
+    "source": "/private/tmp/archive-capture-task2-static.json",
+    "path": "static.json",
+    "bytes": 438,
+    "sha256": "35fdd44f6bf4325267e43d6dd7107710c96209f65e05e6be646c771161df5282"
+  },
+  {
+    "source": "/private/tmp/archive-capture-task2-static-final.json",
+    "path": "static-final.json",
+    "bytes": 542,
+    "sha256": "c4e83e6ba087ec48b0047e2333a100c5f18baa4001f2d38e54ea3c8416582152"
+  }
+]

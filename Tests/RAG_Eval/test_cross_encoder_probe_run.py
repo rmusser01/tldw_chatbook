@@ -58,6 +58,7 @@ cache -- the same gate every harness module uses, never a new one:
     RAG_EVAL=1 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
         .venv/bin/pytest Tests/RAG_Eval/test_cross_encoder_probe_run.py -s
 """
+
 from __future__ import annotations
 
 import time
@@ -223,9 +224,7 @@ def _run_arm(
         rows_returned.append(len(rows))
         before_ids = rows_to_doc_ids(rows, lookup)
 
-        window = rows_to_search_results(
-            rows, window_id=f"{arm}|{mode}|{query.id}"
-        )
+        window = rows_to_search_results(rows, window_id=f"{arm}|{mode}|{query.id}")
         empty_documents += sum(1 for item in window if not item.document)
         predict_start = time.perf_counter()
         outcome = runtime.run(reranker.rerank(query.query, window))
@@ -235,9 +234,7 @@ def _run_arm(
 
         reranked_rows = reorder_rows(rows, outcome.results)
         moved = sum(
-            1
-            for position, row in enumerate(reranked_rows)
-            if row is not rows[position]
+            1 for position, row in enumerate(reranked_rows) if row is not rows[position]
         )
         row_order_changes += moved
         queries_reordered += 1 if moved else 0
@@ -342,8 +339,7 @@ def _format_cross_check(
             equal = abs(theirs - ours) < 1e-9
             if not equal:
                 mismatches.append(
-                    f"{arm.mode}/{metric}: run_eval {theirs:.6f} != "
-                    f"probe {ours:.6f}"
+                    f"{arm.mode}/{metric}: run_eval {theirs:.6f} != probe {ours:.6f}"
                 )
             lines.append(
                 f"{arm.mode:<10}{metric:<12}{theirs:>12.6f}{ours:>14.6f}"
@@ -376,7 +372,9 @@ def _format_metrics(arms: Sequence[ModeArm]) -> str:
     ]
     lines.append("-" * len(lines[-1]))
     for arm in arms:
-        for move in metric_moves(arm.before, arm.after, ("mrr", "ndcg", "precision", "recall", "f1")):
+        for move in metric_moves(
+            arm.before, arm.after, ("mrr", "ndcg", "precision", "recall", "f1")
+        ):
             if move.improved:
                 flag = "GAIN"
             elif move.regressed:
@@ -385,8 +383,7 @@ def _format_metrics(arms: Sequence[ModeArm]) -> str:
                 flag = "no"
             note = (
                 "invariant under permutation"
-                if move.metric in PERMUTATION_INVARIANT_METRICS
-                and arm.depth <= K
+                if move.metric in PERMUTATION_INVARIANT_METRICS and arm.depth <= K
                 else ""
             )
             lines.append(
@@ -595,9 +592,7 @@ def test_the_cross_encoder_probe_over_the_real_fixtures(tmp_path, capsys, monkey
     arm_a_scored = [arm for arm in arm_a if arm.mode in VERDICT_MODES]
     plain_arm = next(arm for arm in arm_a if arm.mode == "plain")
     cross_check, mismatches = _format_cross_check(arm_a, baseline)
-    verdict_block, arc_verdict = _format_verdict(
-        {ARM_A: arm_a_scored, ARM_B: arm_b}
-    )
+    verdict_block, arc_verdict = _format_verdict({ARM_A: arm_a_scored, ARM_B: arm_b})
 
     with capsys.disabled():
         print("\n" + "=" * 78)

@@ -1,0 +1,4 @@
+{
+  "sha256": "efbe0978d06b7d19346986865679a224dc3ae371b25a4d5c858752474f4120b4",
+  "raw_text": "Tests/Tools/test_character_tool_service.py:8:1: I001 [*] Import block is un-sorted or un-formatted\nFound 1 error.\n[*] 1 fixable with the `--fix` option.\n"
+}

@@ -1,0 +1,900 @@
+[
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 23,
+      "row": 30
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_agent_bridge.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from __future__ import annotations\n\nimport asyncio\nimport contextlib\nimport functools\nimport json\nimport os\nimport re\nimport threading\nimport time\nfrom collections import deque\nfrom collections.abc import Awaitable, Collection, Mapping\nfrom collections.abc import Set as AbstractSet\nfrom concurrent.futures import TimeoutError as FuturesTimeoutError\nfrom dataclasses import dataclass, field\nfrom dataclasses import replace as dataclass_replace\nfrom pathlib import Path\nfrom types import MappingProxyType\nfrom typing import (\n    TYPE_CHECKING,\n    Any,\n    Callable,\n    ContextManager,\n    Generic,\n    Sequence,\n    TypeVar,\n    cast,\n)\nfrom uuid import uuid4\n\n",
+          "end_location": {
+            "column": 1,
+            "row": 32
+          },
+          "location": {
+            "column": 1,
+            "row": 11
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 1,
+      "row": 11
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 11,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "UP035",
+    "end_location": {
+      "column": 80,
+      "row": 28
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_agent_bridge.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from typing import TYPE_CHECKING, Any, ContextManager, cast\nfrom collections.abc import Callable, Sequence",
+          "end_location": {
+            "column": 80,
+            "row": 28
+          },
+          "location": {
+            "column": 1,
+            "row": 28
+          }
+        }
+      ],
+      "message": "Import from `collections.abc`"
+    },
+    "location": {
+      "column": 1,
+      "row": 28
+    },
+    "message": "Import from `collections.abc` instead: `Callable`, `Sequence`",
+    "name": "deprecated-import",
+    "noqa_row": 28,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/deprecated-import"
+  },
+  {
+    "cell": null,
+    "code": "UP035",
+    "end_location": {
+      "column": 80,
+      "row": 28
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_agent_bridge.py",
+    "fix": null,
+    "location": {
+      "column": 1,
+      "row": 28
+    },
+    "message": "`typing.ContextManager` is deprecated, use `contextlib.AbstractContextManager` instead",
+    "name": "deprecated-import",
+    "noqa_row": 28,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/deprecated-import"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 6,
+      "row": 40
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_agent_bridge.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "    from tldw_chatbook.Agents.execution_capacity import (\n        ExecutionOwner,\n        OwnedOperation,\n        RuntimeCapacity,\n    )\n    from tldw_chatbook.Agents.fleet_messages import (\n        MessageInbox,\n        MessageStore,\n        ProgressMessage,\n    )\n    from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy\n    from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter\n    from tldw_chatbook.Personal_Context.context_service import ProfileContextSnapshot\n    from tldw_chatbook.UI.Screens.change_review_screen import (\n        AgentRunsChangeReviewProvider,\n    )\n",
+          "end_location": {
+            "column": 1,
+            "row": 41
+          },
+          "location": {
+            "column": 1,
+            "row": 33
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 5,
+      "row": 33
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 33,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 68,
+      "row": 240
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_agent_bridge.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from loguru import logger\n\nfrom tldw_chatbook.Agents import agent_models as agent_models_constants\nfrom tldw_chatbook.Agents import agent_service as agent_service_module\nfrom tldw_chatbook.Agents.agent_models import (\n    AGENT_KIND_PRIMARY,\n    AGENT_KIND_SUBAGENT,\n    CHECK_AGENTS_TOOL_NAME,\n    FENCE_TOOL_RESULT_PREFIX,\n    FIND_TOOLS_NAME,\n    LOAD_TOOLS_NAME,\n    MAX_RUN_CONTROL_STEPS,\n    MAX_STEERING_CHARS,\n    RUN_CANCELLED,\n    RUN_DONE,\n    RUN_LOG_SLICE_TOOL_NAME,\n    RUN_LOG_STATS_TOOL_NAME,\n    RUNTIME_TOOL_NAMES,\n    SEARCH_RUN_LOG_TOOL_NAME,\n    SKILL_FILE_TOOL_NAME,\n    SPAWN_TOOL_NAME,\n    STEERING_SOURCE_USER,\n    STEP_ERROR,\n    STEP_MODEL,\n    STEP_SPAWN,\n    STEP_TOOL_CALL,\n    STEP_TOOL_RESULT,\n    TERMINAL_RUN_STATUSES,\n    WAIT_AGENTS_TOOL_NAME,\n    AgentConfig,\n    AgentDefinition,\n    AgentStep,\n    RunBudget,\n    RunOutcome,\n    SkillFileBindings,\n    ToolCall,\n    ToolCatalogEntry,\n    ToolOutcome,\n    ToolResult,\n    ToolSchema,\n    WorkOrigin,\n    definition_from_row,\n)\nfrom tldw_chatbook.Agents.agent_runtime import (\n    render_tool_protocol,\n    split_visible_text_and_tool_call,\n)\nfrom tldw_chatbook.Agents.agent_service import (\n    RUN_LOG_PROMPT_SECTION,\n    SUBAGENT_SYSTEM_PROMPT,\n    AgentService,\n    FirstRequestSchemaPlan,\n    RunLogRequestPlan,\n    _count_model_messages,\n    build_first_request_schema_plan,\n    build_run_log_request_plan,\n)\nfrom tldw_chatbook.Agents.agent_stream import StreamGate\nfrom tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator, FleetHandle\n\n# task-24458: these six refusal STRINGS were the last module-scope edge\n# from the Console onto `Agents.local_tool_provider`, and through it the\n# whole workspace tool-execution cluster (`Tools.workspace_tool_executor`,\n# `Tools.{git,local,patch}_tool_impls`, `Tools.workspace_root_pin`,\n# `Tools.workspace_tool_protocol`, `Utils.filesystem_identity`) -- seven\n# modules resident at `_ui_ready` to compare a handful of strings. The set\n# they feed is now built on first use; see `_refusal_statuses`.\nfrom tldw_chatbook.Agents.mcp_tool_provider import (\n    DENY_REFUSAL as MCP_DENY_REFUSAL,\n)\nfrom tldw_chatbook.Agents.mcp_tool_provider import (\n    KILL_SWITCH_REFUSAL as MCP_KILL_SWITCH_REFUSAL,\n)\nfrom tldw_chatbook.Agents.mcp_tool_provider import (\n    TIMEOUT_REFUSAL as MCP_TIMEOUT_REFUSAL,\n)\nfrom tldw_chatbook.Agents.mcp_tool_provider import (\n    UNRESOLVED_REFUSAL as MCP_UNRESOLVED_REFUSAL,\n)\nfrom tldw_chatbook.Agents.mcp_tool_provider import (\n    USER_DENY_REFUSAL as MCP_USER_DENY_REFUSAL,\n)\nfrom tldw_chatbook.Agents.native_tools import (\n    provider_supports_native_tools,\n    schemas_to_openai_tools,\n)\nfrom tldw_chatbook.Agents.project_instruction_resolver import (\n    InstructionPromotionSnapshot,\n    InstructionSnapshot,\n    StartupInstructionCandidate,\n)\nfrom tldw_chatbook.Agents.project_instruction_runtime import (\n    InstructionActivationLedger,\n    InstructionDeliveryReceipt,\n    InstructionPreparation,\n    PromotionSnapshotRevalidation,\n)\n\n# NOTE (boot budget, ADR-097): `Agents.persona_policy` and\n# `Agents.run_tool_policy` are imported lazily at their per-run use site in\n# `_compose_registry` so they stay out of the UI-ready module census (this\n# module is imported on the Chat-screen mount leg).\nfrom tldw_chatbook.Agents.tool_catalog import (\n    CANVAS_RESERVED_TOOL_NAMES,\n    LIBRARY_RESERVED_TOOL_NAMES,\n    PROFILE_RESERVED_TOOL_NAMES,\n    RECOVERY_RESERVED_TOOL_NAMES,\n    BuiltinToolProvider,\n    SkillToolProvider,\n    ToolCatalogRegistry,\n    intersect_skill_tools,\n)\nfrom tldw_chatbook.Agents.tool_refusals import TOOL_KILL_SWITCH_REFUSAL\nfrom tldw_chatbook.Chat.console_chat_controller import (\n    KILL_SWITCH_REFUSAL as CONTROLLER_KILL_SWITCH_REFUSAL,\n)\nfrom tldw_chatbook.Chat.console_chat_controller import (\n    USER_DENIED_REFUSAL as CONTROLLER_USER_DENIED_REFUSAL,\n)\nfrom tldw_chatbook.Chat.console_chat_models import (\n    CONSOLE_GLOBAL_WORKSPACE_ID,\n    ConsoleActivityPresentation,\n    ConsoleActivityStatus,\n    ConsoleChatMessage,\n    ConsoleMessageRole,\n    ProjectInstructionActivationEvent,\n    RawCliPresentation,\n)\nfrom tldw_chatbook.Chat.console_chat_store import require_thinking_persistence_support\nfrom tldw_chatbook.Chat.console_display_state import (\n    format_diff_feedback_disclosure,\n    render_diff_feedback_block,\n)\nfrom tldw_chatbook.Chat.console_history_budget import (\n    DEFAULT_RESPONSE_RESERVATION,\n    ProviderContinuationSidecar,\n)\nfrom tldw_chatbook.Chat.console_prepared_request import (\n    CONTINUATION_OWNER_KEY,\n    PreparedConsoleRequest,\n    build_console_request,\n    freeze_json,\n)\nfrom tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY\nfrom tldw_chatbook.Chat.console_provider_gateway import (\n    ConsoleProviderCallSignals,\n    ConsoleProviderGateway,\n    ConsoleProviderStreamSignals,\n    ProviderProprietaryThinkingEvidence,\n    ProviderThinkingDelta,\n    ProviderToolCalls,\n    ProviderTurnMetadata,\n)\nfrom tldw_chatbook.Chat.console_raw_cli import (\n    format_raw_cli_content,\n    local_command_resume_marker,\n    raw_cli_activity_presentation,\n    raw_cli_terminal_lifecycle,\n)\nfrom tldw_chatbook.Chat.console_skill_resolver import SKILL_UNTRUSTED_REFUSE\nfrom tldw_chatbook.Chat.console_thinking_capture import (\n    ThinkingCapture,\n    consume_call_thinking,\n)\nfrom tldw_chatbook.Chat.console_thinking_history import ProviderThinkingSidecar\nfrom tldw_chatbook.Chat.console_trace_models import new_opaque_id\nfrom tldw_chatbook.Chat.console_trace_provenance import (\n    ConsoleRequestRoute,\n    ConsoleTraceCaptureMode,\n    DerivedTraceProvenance,\n    OmittedTraceProvenance,\n    ProviderArtifactTraceProvenance,\n    SavedRevisionTraceProvenance,\n    TraceProvenance,\n    TraceProvenanceSource,\n    request_route_provenance,\n)\nfrom tldw_chatbook.Chat.provider_continuation import (\n    ContinuationOwnerGroup,\n    ContinuationRestoreTarget,\n    ProviderContinuationCheckpoint,\n)\nfrom tldw_chatbook.Chat.provider_usage import ProviderUsage\nfrom tldw_chatbook.Chat.thinking_blocks import ThinkingEnvelope, ThinkingHistoryPolicy\nfrom tldw_chatbook.config import (\n    DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,\n    MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,\n    MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,\n    coerce_int_setting,\n    get_cli_setting,\n)\nfrom tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB\nfrom tldw_chatbook.Internal_Prompts import get_internal_prompt\nfrom tldw_chatbook.Internal_Prompts.catalog import CATALOG\nfrom tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError\nfrom tldw_chatbook.Tools.raw_cli_executor import (\n    MAX_RAW_PREVIEW_BYTES,\n    RawCliResult,\n    RawCliStreamEvent,\n)\nfrom tldw_chatbook.Tools.workspace_file_roots import workspace_context_note\nfrom tldw_chatbook.Utils.path_validation import validate_path\nfrom tldw_chatbook.Utils.token_counter import get_model_token_limit\nfrom tldw_chatbook.Workspaces.change_review_consent import SkippedReviewRoot\nfrom tldw_chatbook.Workspaces.change_review_finalization import (\n    ChangeReviewFinalizeResult,\n)\nfrom tldw_chatbook.Workspaces.change_turn_tracker import (\n    _BASELINE_TIMEOUT_SECONDS as _CHANGE_BOUNDARY_WAIT_SECONDS,\n)\nfrom tldw_chatbook.Workspaces.change_turn_tracker import (\n    ChangeTurnTracker,\n)\n\n\n",
+          "end_location": {
+            "column": 1,
+            "row": 243
+          },
+          "location": {
+            "column": 1,
+            "row": 42
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 1,
+      "row": 42
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 42,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 10,
+      "row": 586
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_agent_bridge.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "        from tldw_chatbook.config import (\n            DEFAULT_CONSOLE_AGENT_BUDGET_WARNING_FRACTION,\n            DEFAULT_CONSOLE_AGENT_MAX_MODEL_RETRIES,\n            DEFAULT_CONSOLE_AGENT_MAX_MODEL_TURNS,\n            DEFAULT_CONSOLE_AGENT_MAX_STEPS,\n            DEFAULT_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS,\n            DEFAULT_CONSOLE_AGENT_MAX_TOTAL_TOKENS,\n            DEFAULT_CONSOLE_AGENT_MAX_WALL_SECONDS,\n            MIN_CONSOLE_AGENT_BUDGET_WARNING_FRACTION,\n            MIN_CONSOLE_AGENT_MAX_MODEL_RETRIES,\n            MIN_CONSOLE_AGENT_MAX_MODEL_TURNS,\n            MIN_CONSOLE_AGENT_MAX_STEPS,\n            MIN_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS,\n            MIN_CONSOLE_AGENT_MAX_TOTAL_TOKENS,\n            MIN_CONSOLE_AGENT_MAX_WALL_SECONDS,\n            coerce_float_setting,\n            coerce_int_setting,\n            get_cli_setting,\n        )\n",
+          "end_location": {
+            "column": 1,
+            "row": 587
+          },
+          "location": {
+            "column": 1,
+            "row": 568
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 9,
+      "row": 568
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 568,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "PYI041",
+    "end_location": {
+      "column": 38,
+      "row": 673
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_agent_bridge.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "float",
+          "end_location": {
+            "column": 38,
+            "row": 673
+          },
+          "location": {
+            "column": 27,
+            "row": 673
+          }
+        }
+      ],
+      "message": "Remove redundant type"
+    },
+    "location": {
+      "column": 27,
+      "row": 673
+    },
+    "message": "Use `float` instead of `int | float`",
+    "name": "redundant-numeric-union",
+    "noqa_row": 673,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/redundant-numeric-union"
+  },
+  {
+    "cell": null,
+    "code": "PYI041",
+    "end_location": {
+      "column": 60,
+      "row": 673
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_agent_bridge.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "float",
+          "end_location": {
+            "column": 60,
+            "row": 673
+          },
+          "location": {
+            "column": 49,
+            "row": 673
+          }
+        }
+      ],
+      "message": "Remove redundant type"
+    },
+    "location": {
+      "column": 49,
+      "row": 673
+    },
+    "message": "Use `float` instead of `int | float`",
+    "name": "redundant-numeric-union",
+    "noqa_row": 673,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/redundant-numeric-union"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 56,
+      "row": 740
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_agent_bridge.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "Any | None",
+          "end_location": {
+            "column": 56,
+            "row": 740
+          },
+          "location": {
+            "column": 44,
+            "row": 740
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 44,
+      "row": 740
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 740,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 21,
+      "row": 878
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_agent_bridge.py",
+    "fix": null,
+    "location": {
+      "column": 12,
+      "row": 878
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 878,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "RUF023",
+    "end_location": {
+      "column": 35,
+      "row": 2020
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_agent_bridge.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "(\"_tail\", \"count\")",
+          "end_location": {
+            "column": 35,
+            "row": 2020
+          },
+          "location": {
+            "column": 17,
+            "row": 2020
+          }
+        }
+      ],
+      "message": "Apply a natural sort to `_LiveStepFeed.__slots__`"
+    },
+    "location": {
+      "column": 17,
+      "row": 2020
+    },
+    "message": "`_LiveStepFeed.__slots__` is not sorted",
+    "name": "unsorted-dunder-slots",
+    "noqa_row": 2020,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-dunder-slots"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 43,
+      "row": 2028
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_agent_bridge.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "deque[AgentLiveStep]",
+          "end_location": {
+            "column": 43,
+            "row": 2028
+          },
+          "location": {
+            "column": 21,
+            "row": 2028
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 21,
+      "row": 2028
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 2028,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 43,
+      "row": 2030
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_agent_bridge.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "AgentLiveStep",
+          "end_location": {
+            "column": 43,
+            "row": 2030
+          },
+          "location": {
+            "column": 28,
+            "row": 2030
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 28,
+      "row": 2030
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 2030,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 58,
+      "row": 2034
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_agent_bridge.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "tuple[AgentLiveStep, ...]",
+          "end_location": {
+            "column": 58,
+            "row": 2034
+          },
+          "location": {
+            "column": 31,
+            "row": 2034
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 31,
+      "row": 2034
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 2034,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP046",
+    "end_location": {
+      "column": 60,
+      "row": 2200
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_agent_bridge.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "[_FleetSettlementEvent: (FleetChildSettled, FleetDrained)]",
+          "end_location": {
+            "column": 29,
+            "row": 2200
+          },
+          "location": {
+            "column": 29,
+            "row": 2200
+          }
+        },
+        {
+          "content": "",
+          "end_location": {
+            "column": 61,
+            "row": 2200
+          },
+          "location": {
+            "column": 29,
+            "row": 2200
+          }
+        }
+      ],
+      "message": "Use type parameters"
+    },
+    "location": {
+      "column": 30,
+      "row": 2200
+    },
+    "message": "Generic class `_FleetSettlementFanout` uses `Generic` subclass instead of type parameters",
+    "name": "non-pep695-generic-class",
+    "noqa_row": 2200,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep695-generic-class"
+  },
+  {
+    "cell": null,
+    "code": "RUF023",
+    "end_location": {
+      "column": 6,
+      "row": 2330
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_agent_bridge.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "(\n        \"_close_current_loop\",\n        \"_name\",\n        \"_operation\",\n        \"_shutdown_lock\",\n        \"_shutdown_requested\",\n        \"_thread\",\n        \"loop\",\n    )",
+          "end_location": {
+            "column": 6,
+            "row": 2330
+          },
+          "location": {
+            "column": 17,
+            "row": 2322
+          }
+        }
+      ],
+      "message": "Apply a natural sort to `_ModelCallLifeline.__slots__`"
+    },
+    "location": {
+      "column": 17,
+      "row": 2322
+    },
+    "message": "`_ModelCallLifeline.__slots__` is not sorted",
+    "name": "unsorted-dunder-slots",
+    "noqa_row": 2322,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-dunder-slots"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 21,
+      "row": 2624
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_agent_bridge.py",
+    "fix": null,
+    "location": {
+      "column": 12,
+      "row": 2624
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 2624,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 6,
+      "row": 2912
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_agent_bridge.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "    import math\n    import os\n\n    from tldw_chatbook.Chat.stream_stall_watchdog import (\n        DEFAULT_STALL_TIMEOUT_SECONDS,\n    )\n    from tldw_chatbook.config import get_cli_setting\n",
+          "end_location": {
+            "column": 1,
+            "row": 2913
+          },
+          "location": {
+            "column": 1,
+            "row": 2906
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 5,
+      "row": 2906
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 2906,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 56,
+      "row": 4680
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_agent_bridge.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "PersonaBuddyConsoleAdapter | None",
+          "end_location": {
+            "column": 56,
+            "row": 4680
+          },
+          "location": {
+            "column": 21,
+            "row": 4680
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 21,
+      "row": 4680
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 4680,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 74,
+      "row": 4889
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_agent_bridge.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "_PostTurnChangeWindow",
+          "end_location": {
+            "column": 74,
+            "row": 4889
+          },
+          "location": {
+            "column": 51,
+            "row": 4889
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 51,
+      "row": 4889
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 4889,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 75,
+      "row": 4895
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_agent_bridge.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "_ChildChangeState",
+          "end_location": {
+            "column": 75,
+            "row": 4895
+          },
+          "location": {
+            "column": 56,
+            "row": 4895
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 56,
+      "row": 4895
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 4895,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 4971
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_agent_bridge.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 4971
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 4971,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 50,
+      "row": 5072
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_agent_bridge.py",
+    "fix": null,
+    "location": {
+      "column": 36,
+      "row": 5072
+    },
+    "message": "Undefined name `fork_chat_tool`",
+    "name": "undefined-name",
+    "noqa_row": 5072,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 48,
+      "row": 5073
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_agent_bridge.py",
+    "fix": null,
+    "location": {
+      "column": 35,
+      "row": 5073
+    },
+    "message": "Undefined name `new_chat_tool`",
+    "name": "undefined-name",
+    "noqa_row": 5073,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 5317
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_agent_bridge.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 5317
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 5317,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 81,
+      "row": 5714
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_agent_bridge.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "                from tldw_chatbook.runtime_policy.types import PolicyDeniedError\n                from tldw_chatbook.Skills_Interop.skill_remote_fetch import (\n                    classify_skill_source_url,\n                    install_skill_from_url,\n                )\n",
+          "end_location": {
+            "column": 1,
+            "row": 5715
+          },
+          "location": {
+            "column": 1,
+            "row": 5710
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 17,
+      "row": 5710
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 5710,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 33,
+      "row": 6772
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_agent_bridge.py",
+    "fix": null,
+    "location": {
+      "column": 24,
+      "row": 6772
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 6772,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "RET501",
+    "end_location": {
+      "column": 24,
+      "row": 7984
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_agent_bridge.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "return",
+          "end_location": {
+            "column": 24,
+            "row": 7984
+          },
+          "location": {
+            "column": 13,
+            "row": 7984
+          }
+        }
+      ],
+      "message": "Remove explicit `return None`"
+    },
+    "location": {
+      "column": 13,
+      "row": 7984
+    },
+    "message": "Do not explicitly `return None` in function if it is the only possible return value",
+    "name": "unnecessary-return-none",
+    "noqa_row": 7984,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unnecessary-return-none"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 48,
+      "row": 9407
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_agent_bridge.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "AgentRunsChangeReviewProvider | None",
+          "end_location": {
+            "column": 48,
+            "row": 9407
+          },
+          "location": {
+            "column": 10,
+            "row": 9407
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 10,
+      "row": 9407
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 9407,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  }
+]

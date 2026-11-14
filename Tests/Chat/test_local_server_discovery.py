@@ -1,12 +1,31 @@
 """Pure local-server discovery tests (task-188) using httpx.MockTransport."""
 
 import errno
+import tomllib
+from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
+import toml
+
+from Tests.Backup_Recovery.config_test_support import select_config_source
 
 import tldw_chatbook.Chat.local_server_discovery as local_discovery_module
-from tldw_chatbook.Chat.console_provider_endpoints import DEFAULT_LLAMACPP_BASE_URL
+from tldw_chatbook.Chat import console_settings_defaults as defaults_module
+from tldw_chatbook.Chat.console_settings_apply import (
+    FULL_MODEL_DEFAULT_FIELDS,
+    ConsoleSettingsAction,
+)
+from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
+from tldw_chatbook.Chat.console_provider_endpoints import (
+    DEFAULT_LLAMACPP_BASE_URL,
+    UNSAVED_ENDPOINT_COPY,
+    generic_endpoint_differs,
+    normalize_generic_endpoint_for_compare,
+    safe_endpoint_display,
+    unsaved_endpoint_copy,
+)
 from tldw_chatbook.Chat.local_server_discovery import (
     DEFAULT_LLAMACPP_DISCOVERY_URL,
     DEFAULT_OLLAMA_DISCOVERY_URL,
@@ -20,6 +39,31 @@ from tldw_chatbook.Chat.local_server_discovery import (
     normalize_probe_base_url,
     probe_models_endpoint,
 )
+from tldw_chatbook.Chat.console_project_instructions import (
+    canonical_provider_endpoint_identity,
+    fingerprint_canonical_locator,
+    project_instruction_notice_key,
+    sanitized_destination_label,
+)
+from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.provider_setup_persistence import (
+    ProviderSetupDraft,
+    build_provider_setup_mutation,
+)
+from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
+    fingerprint_endpoint,
+    supports_openai_compatible_model_discovery,
+)
+from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+    KOBOLDCPP_NATIVE_ROUTE_REFUSAL,
+    URL_BASED_PROVIDER_KEYS,
+    koboldcpp_native_endpoint,
+    koboldcpp_route_refusal,
+    resolve_provider_endpoint,
+)
+from tldw_chatbook.UI.Console_Modules import model_switcher as model_switcher_module
+from tldw_chatbook.UI.Console_Modules.model_switcher import adoption_endpoints_differ
 
 # These ARE the tests of the probe implementation, so they opt out of the
 # autouse `_no_local_server_probes` guard (Tests/conftest.py, task-15111).
@@ -110,17 +154,26 @@ def test_a_host_name_refused_on_every_address_reads_as_refused() -> None:
 def test_candidates_include_wellknown_defaults_first() -> None:
     candidates = build_local_server_candidates({})
 
-    # Stock `llama-server` port (8080) first, then Chatbook's documented
-    # convention (9099), then the stock Ollama port.
+    # Each default probes the IPv4 address and hostname, in that order.
+    # Keep llama.cpp's two conventions before Ollama and the Custom engines.
     assert [candidate.base_url for candidate in candidates] == [
         DEFAULT_LLAMACPP_DISCOVERY_URL,
+        "http://localhost:8080",
         DEFAULT_LLAMACPP_BASE_URL,
+        "http://localhost:9099",
         DEFAULT_OLLAMA_DISCOVERY_URL,
+        "http://localhost:11434",
+        "http://127.0.0.1:1234",
+        "http://localhost:1234",
+        "http://127.0.0.1:1337",
+        "http://localhost:1337",
+        "http://127.0.0.1:5001",
+        "http://localhost:5001",
     ]
     assert [candidate.provider_key for candidate in candidates] == [
-        "llama_cpp",
-        "llama_cpp",
-        "ollama",
+        "llama_cpp", "llama_cpp", "llama_cpp", "llama_cpp",
+        "ollama", "ollama",
+        "custom", "custom", "custom", "custom", "custom", "custom",
     ]
 
 
@@ -276,18 +329,21 @@ async def test_ollama_candidate_falls_back_to_api_tags() -> None:
 
 @pytest.mark.asyncio
 async def test_llamacpp_candidate_gets_no_ollama_fallback() -> None:
-    seen_paths: list[str] = []
+    seen_urls: list[str] = []
 
     async def handler(request: httpx.Request) -> httpx.Response:
         if request.url.port == 8080:
-            seen_paths.append(request.url.path)
+            seen_urls.append(str(request.url))
             return httpx.Response(404, text="not found")
         raise httpx.ConnectError("refused", request=request)
 
     servers = await discover_local_servers({}, http_client=_client(handler))
 
     assert servers == ()
-    assert seen_paths == ["/v1/models"]
+    assert seen_urls == [
+        "http://127.0.0.1:8080/v1/models",
+        "http://localhost:8080/v1/models",
+    ]
 
 
 # --- probe_models_endpoint (settings-modal Discover button) ------------------
@@ -473,7 +529,11 @@ async def test_probe_handles_recursive_json_as_bounded_failure(monkeypatch) -> N
     def recursive_loads(body: bytes) -> object:
         raise RecursionError("secret recursive decoder detail")
 
-    monkeypatch.setattr(local_discovery_module.json, "loads", recursive_loads)
+    # Replace only this module's json: patching json.loads itself also broke
+    # the storage admission's control-record read (object_pairs_hook).
+    monkeypatch.setattr(
+        local_discovery_module, "json", SimpleNamespace(loads=recursive_loads)
+    )
 
     result = await probe_models_endpoint(
         "http://127.0.0.1:9099",
@@ -847,3 +907,1629 @@ async def test_probe_rejects_non_chat_and_unrecognized_only_listing() -> None:
     assert result.detail == (
         "No models endpoint at http://127.0.0.1:9099 (unrecognized API payload)."
     )
+
+
+#: TASK-36517: every provider the endpoint contract serves, as the task's
+#: dev probe listed them; koboldcpp on the native route its send needs.
+_CONTRACT_PROVIDERS = (
+    *sorted(URL_BASED_PROVIDER_KEYS),
+    "openai",
+    "deepinfra",
+    "anthropic",
+)
+
+
+def _endpoint_for(provider: str, host: str, scheme: str = "http://") -> str:
+    path = "/api/v1/generate" if provider == "koboldcpp" else "/v1"
+    return f"{scheme}{host}:5001{path}"
+
+
+def _saved_endpoint(provider: str, endpoint: str) -> str | None:
+    """The endpoint the provider save writes, or None when it refuses."""
+    try:
+        mutation = build_provider_setup_mutation(
+            ProviderSetupDraft(
+                provider=provider,
+                model="m",
+                endpoint=endpoint,
+                credential_source="none",
+                credential_revision=0,
+                draft_generation=1,
+            ),
+            {"api_settings": {}},
+        )
+    except ValueError:
+        return None
+    (table,) = (
+        values
+        for section, values in mutation.section_values.items()
+        if section.startswith("api_settings.")
+    )
+    return table.get("api_url") or table.get("api_base_url")
+
+
+@pytest.mark.parametrize("provider", _CONTRACT_PROVIDERS)
+def test_an_underscore_host_saves_and_discovers_like_its_hyphen_spelling(provider):
+    """TASK-36517 AC#1/AC#2: a Docker Compose name such as ``kobold_cpp`` was
+    refused by the save ("valid host and port") while Discover models listed
+    from it. Both now accept it exactly as they accept ``kobold-cpp``."""
+    hyphen = _endpoint_for(provider, "kobold-cpp")
+    underscore = _endpoint_for(provider, "kobold_cpp")
+
+    assert resolve_provider_endpoint(provider, underscore).errors == ()
+    saved = _saved_endpoint(provider, underscore)
+    assert saved is not None
+    assert saved == _saved_endpoint(provider, hyphen).replace("-", "_")
+    assert supports_openai_compatible_model_discovery(provider, underscore) is True
+    assert supports_openai_compatible_model_discovery(provider, hyphen) is True
+
+
+#: TASK-36517 AC#3's hosts: each breaks a host rule other than "_".
+_HOSTS_REFUSED_FOR_ANOTHER_REASON = (
+    "-kobold",
+    "kobold-",
+    "-kobold_cpp",
+    "kobold_cpp-",
+    "kob..old",
+    "kob_..old",
+    "kob%41ld",
+    "kob_%41ld",
+    "kob*old",
+    "kob_*old",
+    "1.2.3",
+    "a" * 64,
+    "a_" * 32,
+    ".".join(["a" * 60] * 5),
+)
+
+
+@pytest.mark.parametrize("host", _HOSTS_REFUSED_FOR_ANOTHER_REASON)
+def test_hosts_refused_for_another_reason_are_still_refused(host):
+    """TASK-36517 AC#3: allowing "_" relaxes no other host rule, with or
+    without an underscore in the host."""
+    for provider in _CONTRACT_PROVIDERS:
+        endpoint = _endpoint_for(provider, host)
+        assert resolve_provider_endpoint(provider, endpoint).errors == (
+            "Endpoint URL must include a valid host and port.",
+        ), provider
+        assert _saved_endpoint(provider, endpoint) is None, provider
+
+
+def test_an_underscore_host_displays_and_compares_as_itself():
+    """TASK-36517 review: Console's display and compare helpers kept the old
+    label rule, so every underscore host read "invalid endpoint" and two
+    different ones compared equal, as one sentinel."""
+    first, second = "http://my_proxy.corp/v1", "http://other_proxy.corp/v1"
+
+    assert safe_endpoint_display(first) == first
+    assert normalize_generic_endpoint_for_compare(first) == (
+        "http://my_proxy.corp/v1/chat/completions"
+    )
+    assert normalize_generic_endpoint_for_compare(
+        second
+    ) != normalize_generic_endpoint_for_compare(first)
+    assert generic_endpoint_differs(first, {"api_url": second}) is True
+    assert generic_endpoint_differs(first, {"api_url": first}) is False
+    # The other label rules still refuse.
+    for refused in ("http://-my_proxy.corp/v1", "http://my_proxy-.corp/v1"):
+        assert safe_endpoint_display(refused) == "invalid endpoint"
+
+
+#: Consent keys for hosts the project-instruction parser accepted before
+#: TASK-36517, measured at 3795dee3bd: allowing "_" must not move any of them.
+_NOTICE_KEYS_BEFORE_UNDERSCORES = {
+    "http://kobold-cpp:5001/v1": (
+        "735cc3db6de8cffdec48e7e1d3941c7c34b03d812c1a8e68dce0a8f01817180e"
+    ),
+    "https://My-Proxy.corp/v1/": (
+        "aa7ba74582109afee14981af841a0ee435ebc65e722a60584838664840bc6a90"
+    ),
+    "http://127.0.0.1:5001/api/v1/generate": (
+        "230a4eb202e98922dd8500ab912ba358797508c63878267e0edb3f8a0f2c7295"
+    ),
+    "https://bücher.example/v1": (
+        "9c2eb1086a90887408a48e6c5e276b214e1e40d3f0fcd41d8f7b99ef551623a3"
+    ),
+    "http://[::1]:8080/v1": (
+        "904ad8976b81be75c1b119602a56909d35d01517b07eee0aaa2128ca7ffc98b6"
+    ),
+}
+
+
+def test_an_underscore_host_gets_a_project_instruction_key_and_its_origin_label():
+    """TASK-36517 review r8e-rev2: project instructions kept their own label
+    rule, so a Console send to ``kobold_cpp`` raised "invalid provider
+    endpoint" while keying its consent (the foreground run was cancelled,
+    traces read "[invalid endpoint]")."""
+    locator = fingerprint_canonical_locator("workspace:/r8e")
+    for endpoint, origin in (
+        ("http://kobold_cpp:5001/v1", "http://kobold_cpp:5001"),
+        ("http://My_Proxy.corp/v1", "http://my_proxy.corp"),
+    ):
+        key = project_instruction_notice_key(locator, "koboldcpp", endpoint)
+        assert len(key) == 64 and int(key, 16) >= 0
+        assert canonical_provider_endpoint_identity(endpoint) == f"{origin}/v1"
+        assert sanitized_destination_label("KoboldCpp", endpoint) == (
+            f"KoboldCpp ({origin})"
+        )
+    for endpoint, key in _NOTICE_KEYS_BEFORE_UNDERSCORES.items():
+        assert project_instruction_notice_key(locator, "koboldcpp", endpoint) == key
+    for refused in (
+        "http://-bad.corp/v1",
+        "http://bad-.corp/v1",
+        "http://-bad_x.corp/v1",
+    ):
+        with pytest.raises(ValueError, match="invalid provider endpoint"):
+            project_instruction_notice_key(locator, "koboldcpp", refused)
+        assert sanitized_destination_label("KoboldCpp", refused) == (
+            "KoboldCpp (invalid endpoint)"
+        )
+
+
+#: TASK-39150: bracketed zone ids, ``%25``-encoded and raw.
+_PROJECT_ZONE_ID_ENDPOINTS = (
+    "http://[fe80::1%25en0]:5001",
+    "http://[fe80::1%en0]:5001",
+    "http://[fe80::1%25en0]:5001/v1",
+    "https://[fe80::1%25eth0]/v1",
+)
+
+
+def _project_instruction_endpoint_callers(endpoint):
+    """What each project-instruction identity caller makes of ``endpoint``."""
+    from tldw_chatbook.Chat import console_exchange_export
+    from tldw_chatbook.Chat.console_chat_controller import (
+        build_project_instruction_dispatch_notice,
+    )
+    from tldw_chatbook.Chat.console_exchange_capture import build_request_capture
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        ConsoleProviderStreamSignals,
+    )
+    from tldw_chatbook.Chat.console_trace_final_values import (
+        verify_provider_request_shadow,
+    )
+    from tldw_chatbook.Chat.console_trace_models import new_opaque_id
+    from tldw_chatbook.Chat.console_trace_provenance import (
+        ProviderRequestProvenance,
+        SavedRevisionTraceProvenance,
+    )
+
+    seen = {}
+    locator = fingerprint_canonical_locator("workspace:/39150")
+    for name, call in (
+        ("identity", lambda: canonical_provider_endpoint_identity(endpoint)),
+        ("notice_key", lambda: project_instruction_notice_key(locator, "vllm", endpoint)),
+    ):
+        try:
+            seen[name] = call()
+        except ValueError as error:
+            seen[name] = f"ValueError: {error}"
+    seen["label"] = sanitized_destination_label("vLLM", endpoint)
+    notice = build_project_instruction_dispatch_notice(
+        SimpleNamespace(
+            startup_source_metadata=None,
+            startup_source=None,
+            primary_delivery=SimpleNamespace(outcomes=()),
+            warning_codes=(),
+        ),
+        session_id="session-39150",
+        resolution=SimpleNamespace(provider="vLLM", execution_key="vllm", base_url=endpoint),
+    )
+    seen["controller_label"] = notice.destination_label
+    signals = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
+    call = signals.new_usage_call()
+    call.begin_exchange(
+        provider="vllm", model="m", endpoint=endpoint, request={}, omitted_keys=()
+    )
+    call.close_exchange()
+    seen["gateway_capture"] = signals.exchange_captures()[0].endpoint
+    seen["exchange_capture"] = build_request_capture({"api_base_url": endpoint})[0][
+        "api_base_url"
+    ]
+    seen["exchange_export"] = console_exchange_export._endpoint(endpoint)
+    saved = SavedRevisionTraceProvenance(new_opaque_id())
+    values = {
+        "api_endpoint": "vllm",
+        "messages_payload": [{"role": "user", "content": "safe"}],
+        "model": "m",
+    }
+    shadow = verify_provider_request_shadow(
+        actual_kwargs=values,
+        expected_kwargs=dict(values),
+        provenance=ProviderRequestProvenance(messages=(saved,), messages_payload=(saved,)),
+        project_handler_kwargs=lambda projected: {
+            "input_data": projected["messages_payload"],
+            "model": projected["model"],
+        },
+        endpoint_identity=endpoint,
+    )
+    seen["trace_final_values"] = (
+        shadow.endpoint_identity if shadow.available else shadow.as_content_free_record()
+    )
+    return seen
+
+
+@pytest.mark.parametrize("endpoint", _PROJECT_ZONE_ID_ENDPOINTS)
+def test_a_zone_id_endpoint_is_refused_by_project_instructions_like_a_refused_host(
+    endpoint,
+):
+    """TASK-39150 AC#1/AC#2: the project-instruction parser accepted any IP
+    literal first, so a zone id kept its zone in the destination label and the
+    canonical identity, against the 2026-11-06 refuse-everywhere ruling. Every
+    caller now treats it exactly as it treats ``-bad.corp``."""
+    refused = _project_instruction_endpoint_callers("http://-bad.corp:5001/v1")
+    assert refused == {
+        "identity": "ValueError: invalid provider endpoint",
+        "notice_key": "ValueError: invalid provider endpoint",
+        "label": "vLLM (invalid endpoint)",
+        "controller_label": "vLLM (invalid endpoint)",
+        "gateway_capture": "[invalid endpoint]",
+        "exchange_capture": "[invalid endpoint]",
+        "exchange_export": "[invalid endpoint]",
+        "trace_final_values": {"available": False, "omission_reason": "sanitizer_failed"},
+    }
+
+    assert _project_instruction_endpoint_callers(endpoint) == refused
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "identity", "label", "key"),
+    [
+        (
+            "http://[fe80::1]:5001",
+            "http://[fe80::1]:5001",
+            "vLLM (http://[fe80::1]:5001)",
+            "f8df26aa2ff15278ae691e9b5c26d32013a8a05f398a04ef6221f9c82008cee4",
+        ),
+        (
+            "http://[FE80::0001]:5001/v1/",
+            "http://[fe80::1]:5001/v1",
+            "vLLM (http://[fe80::1]:5001)",
+            "6a7b4bac3614846f43292b135a1c0f9f2b69b585a7cf85a366a4e0dbd4964210",
+        ),
+        (
+            "http://[fd12:3456::9]:8080/v1",
+            "http://[fd12:3456::9]:8080/v1",
+            "vLLM (http://[fd12:3456::9]:8080)",
+            "0c71cec0889e1901ae14d66b056cdd9fbaca61e45c9ed7f27e6ea55032dd16c6",
+        ),
+    ],
+)
+def test_zone_less_link_local_and_ula_literals_keep_their_project_identity(
+    endpoint, identity, label, key
+):
+    """TASK-39150 AC#3: only the zone is refused. Keys measured at ae9f9e8d21."""
+    seen = _project_instruction_endpoint_callers(endpoint)
+
+    assert seen["identity"] == identity
+    assert seen["label"] == seen["controller_label"] == label
+    assert seen["notice_key"] == key
+    assert seen["gateway_capture"] == seen["exchange_export"] == identity
+    assert seen["trace_final_values"] == identity
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "identity"),
+    [
+        ("http://127.1:5001", "http://127.1:5001"),
+        ("https://bücher.example/v1", "https://xn--bcher-kva.example/v1"),
+        ("http://localhost..:5001", "http://localhost:5001"),
+    ],
+)
+def test_hosts_the_contract_refuses_but_the_send_accepts_keep_their_identity(
+    endpoint, identity
+):
+    """TASK-39150 AC#4, deliberate: the save refuses these hosts, but Console's
+    send still resolves them from a hand-edited config, so refusing them here
+    would only turn such a send with project instructions into a cancelled run
+    and drop its stored consent."""
+    seen = _project_instruction_endpoint_callers(endpoint)
+
+    assert seen["identity"] == identity
+    assert len(seen["notice_key"]) == 64
+
+
+#: TASK-38963: single-label hosts, the Docker Compose service-name shape.
+_SINGLE_LABEL_HOSTS = ("kobold", "kobold_cpp")
+#: TASK-39041: the spellings the save reads as ``http://`` without a scheme.
+_LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "[::1]")
+#: TASK-39041: a link-local IPv6 address with a zone id (refused everywhere).
+_ZONE_ID_HOST = "[fe80::1%25en0]"
+
+
+@pytest.mark.parametrize("scheme", ["http://", ""], ids=["scheme", "no-scheme"])
+@pytest.mark.parametrize(
+    "host",
+    [
+        "kobold-cpp",
+        "kobold_cpp",
+        *_HOSTS_REFUSED_FOR_ANOTHER_REASON,
+        *_SINGLE_LABEL_HOSTS,
+        *_LOOPBACK_HOSTS,
+        _ZONE_ID_HOST,
+    ],
+)
+def test_discover_models_accepts_exactly_the_hosts_the_save_accepts(host, scheme):
+    """TASK-38963 AC#1: Discover models parsed the URL itself, so it listed
+    from hosts such as ``-kobold`` or ``1.2.3`` and from a schemeless remote
+    host, all of which the save refuses. Both now decide by the contract.
+    TASK-39041: QwenCloud refused a loopback endpoint typed without a scheme,
+    and the others listed from a zone id; both followed the save since."""
+    for provider in _CONTRACT_PROVIDERS:
+        endpoint = _endpoint_for(provider, host, scheme)
+        saves = _saved_endpoint(provider, endpoint) is not None
+        assert supports_openai_compatible_model_discovery(provider, endpoint) is (
+            saves
+        ), (provider, endpoint, saves)
+        if host in _LOOPBACK_HOSTS:
+            assert saves, (provider, endpoint)
+
+
+def test_an_ipv6_zone_id_is_refused_by_discover_the_save_and_console():
+    """TASK-39041 AC#4. Owner decision (2026-11-06): refuse everywhere. Zone
+    ids are link-local only, the save and TTS refused them, and Discover
+    listed from them while Console compared one as itself."""
+    for provider in _CONTRACT_PROVIDERS:
+        endpoint = _endpoint_for(provider, _ZONE_ID_HOST)
+        assert _saved_endpoint(provider, endpoint) is None, provider
+        assert supports_openai_compatible_model_discovery(provider, endpoint) is (
+            False
+        ), provider
+        assert safe_endpoint_display(endpoint) == "invalid endpoint", provider
+        assert normalize_generic_endpoint_for_compare(endpoint) == (
+            "invalid endpoint"
+        ), provider
+
+
+@pytest.mark.parametrize(
+    ("host", "expected"),
+    [
+        (_ZONE_ID_HOST, "unknown"),
+        ("[fe80::1%en0]", "unknown"),
+        ("localhost..", "unknown"),  # review r12s-rev1 M3: refused as typed
+        ("[fe80::1]", "private_network"),
+        ("[fd12:3456::9]", "private_network"),
+    ],
+)
+def test_console_egress_reads_a_zone_id_as_an_endpoint_it_cannot_use(host, expected):
+    """TASK-39137: the owner's 2026-11-06 ruling refuses zone ids everywhere,
+    but Console's Library egress classifier read one as a private network and
+    kept the zone in its identity. Without a zone, link-local and ULA literals
+    stay private."""
+    from tldw_chatbook.Chat.console_dispatch_checkpoint import ConsoleEgressClass
+    from tldw_chatbook.Chat.console_library_destination import (
+        resolve_console_destination,
+    )
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        ConsoleProviderResolution,
+    )
+
+    destination = resolve_console_destination(
+        ConsoleProviderResolution(
+            provider="vllm",
+            base_url=f"http://{host}:5001/v1",
+            model="m",
+            ready=True,
+        )
+    )
+    assert destination.egress_class is ConsoleEgressClass(expected)
+    if expected == "unknown":
+        assert destination.endpoint_identity == "external/unknown"
+    else:
+        assert destination.endpoint_identity == f"http://{host}:5001"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("host", _LOOPBACK_HOSTS)
+async def test_qwencloud_discover_reads_a_schemeless_loopback_endpoint_as_http(host):
+    """TASK-39041 AC#1: Settings hands the typed Endpoint field to Discover.
+    For QwenCloud, ``localhost:5001/v1`` read as the scheme ``localhost``, so
+    Discover reported "unsupported" and never asked the server, although **s**
+    saves ``http://localhost:5001/v1``."""
+    from tldw_chatbook.LLM_Provider_Catalog.local_llm_provider_catalog_service import (
+        LocalLLMProviderCatalogService,
+    )
+    from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
+        discover_openai_compatible_models,
+    )
+
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        return httpx.Response(200, json={"data": [{"id": "qwen-local"}]})
+
+    async def discovery_client(**kwargs):
+        async with _client(handler) as http_client:
+            return await discover_openai_compatible_models(**kwargs, client=http_client)
+
+    statuses = []
+    for endpoint in (f"{host}:5001/v1", f"http://{host}:5001/v1"):
+        service = LocalLLMProviderCatalogService(
+            provider_catalog_loader=lambda: {"QwenCloud": []},
+            settings_loader=lambda: {"providers": {"QwenCloud": []}},
+            discovery_client=discovery_client,
+            environ={},
+        )
+        result = await service.discover_models(
+            provider="QwenCloud",
+            staged_settings={
+                "api_settings": {
+                    "qwencloud": {"api_base_url": endpoint, "api_key": "k"}
+                }
+            },
+            use_shared_cache=False,
+        )
+        statuses.append(result.status)
+
+    assert statuses == ["success", "success"]
+    assert requested == [f"http://{host}:5001/v1/models"] * 2
+
+
+def test_a_single_label_host_displays_and_compares_as_itself():
+    """TASK-38963 AC#2: Console's display and compare took a single-label
+    host with a scheme for a pasted token, so ``http://kobold:5001`` read
+    "invalid endpoint" and two different such servers compared equal."""
+    for endpoint in ("http://kobold:5001", "http://kobold_cpp:5001"):
+        assert safe_endpoint_display(endpoint) == endpoint
+    assert generic_endpoint_differs(
+        "http://other:5001", {"api_url": "http://kobold:5001"}
+    ) is True
+    assert generic_endpoint_differs(
+        "http://kobold:5001/", {"api_url": "http://kobold:5001"}
+    ) is False
+    assert adoption_endpoints_differ(
+        "koboldcpp", "http://kobold:5001", "http://other:5001"
+    ) is True
+    assert adoption_endpoints_differ(
+        "koboldcpp", "http://kobold_cpp:5001", "http://kobold_cpp:5001/"
+    ) is False
+    # A single label with no port can still be a pasted key: never echoed.
+    assert safe_endpoint_display("http://unit-test-key") == "invalid endpoint"
+    # Review r10e-rev1: without a port, a path still says it is an endpoint,
+    # and two different servers never compare as the one sentinel.
+    for endpoint in ("http://kobold/v1", "http://kobold_cpp/api/v1/generate"):
+        assert safe_endpoint_display(endpoint) == endpoint
+    for saved, other in (
+        ("http://kobold/v1", "http://other/v1"),
+        ("http://kobold/api/v1/generate", "http://other/api/v1/generate"),
+        ("http://kobold", "http://other"),
+    ):
+        assert generic_endpoint_differs(other, {"api_url": saved}) is True, saved
+        assert generic_endpoint_differs(f"{saved}/", {"api_url": saved}) is False
+        assert adoption_endpoints_differ("koboldcpp", saved, other) is True, saved
+    assert safe_endpoint_display("http://kobold") == "invalid endpoint"
+    # Review r10e-rev2: the path counts only after a typed scheme.
+    assert safe_endpoint_display("unit-test-key/v1") == "invalid endpoint"
+
+
+#: TASK-38963 review r10e-rev2: keys holding "/", pasted without a scheme
+#: (moved here in rev3 so a PR lane runs it).
+_SCHEMELESS_KEYS_WITH_A_SLASH = (
+    "abcDEF123/xyz+789=",
+    "sk-abc123def456/extra",
+    "unit-test-key/v1",
+    "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+)
+
+
+@pytest.mark.parametrize("pasted", _SCHEMELESS_KEYS_WITH_A_SLASH)
+def test_a_schemeless_token_with_a_slash_is_never_echoed(pasted: str) -> None:
+    """A single label's path counts only after a typed scheme: rev1 let any
+    path through, so these keys displayed (and compared) as themselves."""
+    key = pasted.split("/", 1)[0]
+
+    assert safe_endpoint_display(pasted) == "invalid endpoint"
+    assert normalize_generic_endpoint_for_compare(pasted) == "invalid endpoint"
+    copy = unsaved_endpoint_copy(pasted, {"api_url": "http://127.0.0.1:9099/v1"})
+    assert key not in copy and key.lower() not in copy
+    assert "Selected endpoint: invalid endpoint." in copy
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "saved", "session"),
+    [
+        (
+            "koboldcpp",
+            "http://kobold_cpp:5001/api/v1/generate",
+            "http://other_kobold:5001/api/v1/generate",
+        ),
+        # Review r10e-rev1: the same servers without a port.
+        ("koboldcpp", "http://kobold/api/v1/generate", "http://other/api/v1/generate"),
+        ("vllm", "http://vllm/v1", "http://other_vllm/v1"),
+    ],
+)
+async def test_a_different_single_label_session_endpoint_is_blocked_as_unsaved(
+    provider, saved, session
+):
+    """TASK-38963 AC#3: both single-label endpoints compared as the one
+    "invalid endpoint" sentinel, so the unsaved-endpoint guard let a session
+    on another server send as though it were the saved one."""
+
+    def no_send(**_kwargs: object) -> dict[str, object]:
+        raise AssertionError("a blocked endpoint never sends")
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {provider: {"api_url": saved, "model": "m"}}
+        },
+        environ={},
+        chat_api_call_fn=no_send,
+    )
+
+    blocked = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider=provider, base_url=session, explicit_model="m", streaming=False
+        )
+    )
+    same = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider=provider, base_url=saved, explicit_model="m", streaming=False
+        )
+    )
+
+    assert blocked.ready is False
+    assert blocked.visible_copy == (
+        f"{UNSAVED_ENDPOINT_COPY} Selected endpoint: {session}. "
+        f"Saved endpoint: {saved}."
+    )
+    assert same.ready is True, same.visible_copy
+
+
+class _AdoptionStore:
+    active_session_id = "session-1"
+
+    def __init__(self) -> None:
+        self.ephemeral: list[object] = []
+
+    def adopt_session_ephemeral_endpoint(self, _session_id, *, settings, policy):
+        del settings
+        self.ephemeral.append(policy)
+
+
+class _AdoptionScreen:
+    """The ChatScreen surface ``adopt_detected_local_server`` reads."""
+
+    def __init__(self, app_config: dict) -> None:
+        self.notes: list[str] = []
+        self.session_settings: list[object] = []
+        self.store = _AdoptionStore()
+        self.app_instance = SimpleNamespace(
+            notify=lambda message, **_kwargs: self.notes.append(message)
+        )
+        self._session = SimpleNamespace(
+            _replace_active_console_session_settings=self.session_settings.append
+        )
+        self._app_config = app_config
+
+    @staticmethod
+    def _config_section(config, key):
+        value = config.get(key, {})
+        return value if isinstance(value, dict) else {}
+
+    def _provider_readiness_app_config(self):
+        return self._app_config
+
+    def _ensure_console_chat_store(self):
+        return self.store
+
+    def _sync_console_chat_core_state(self) -> None:
+        pass
+
+    def _sync_console_settings_summary(self) -> None:
+        pass
+
+    def _sync_console_transcript_guidance(self) -> None:
+        pass
+
+
+def _adopt(monkeypatch, provider: str, saved: str, detected: str):
+    """Adopt ``detected`` over a saved endpoint; return the screen and the save."""
+    writes: list[dict] = []
+
+    def fake_save(section_values):
+        writes.append(section_values)
+        return True
+
+    monkeypatch.setattr(model_switcher_module, "save_settings_to_cli_config", fake_save)
+    screen = _AdoptionScreen({"api_settings": {provider: {"api_url": saved}}})
+    model_switcher_module.adopt_detected_local_server(
+        screen,
+        DiscoveredLocalServer(
+            provider_key=provider, base_url=detected, model_ids=("detected-model",)
+        ),
+        ConsoleSessionSettings(provider=provider, model="detected-model"),
+    )
+    return screen, writes
+
+
+@pytest.mark.parametrize(
+    ("provider", "name", "saved", "detected"),
+    [
+        (
+            "koboldcpp",
+            "KoboldCpp",
+            "http://kobold_cpp:5001/api/v1/generate",
+            "http://127.0.0.1:5001",
+        ),
+        (
+            "koboldcpp",
+            "KoboldCpp",
+            "http://kobold_cpp/api/v1/generate",
+            "http://127.0.0.1:5001",
+        ),
+        ("llama_cpp", "llama.cpp", "http://llama_cpp:8080", "http://127.0.0.1:9099"),
+    ],
+)
+def test_the_adoption_toast_names_a_saved_single_label_endpoint(
+    monkeypatch, provider, name, saved, detected
+):
+    """TASK-38963 AC#3: the toast read "Keeping the saved endpoint invalid
+    endpoint for KoboldCpp"; it names the endpoint it keeps."""
+    screen, writes = _adopt(monkeypatch, provider, saved, detected)
+
+    assert screen.notes == [
+        (
+            f"Keeping the saved endpoint {saved} for {name}; using the detected "
+            "server for this session only."
+        )
+    ]
+    assert "api_url" not in writes[0][f"api_settings.{provider}"]
+
+
+#: TASK-38964: koboldcpp endpoints its native send cannot use, and its route.
+_KOBOLD_OFF_ROUTE = (
+    "http://127.0.0.1:5001",
+    "http://127.0.0.1:5001/v1",
+    "http://127.0.0.1:5001/v1/chat/completions",
+)
+_KOBOLD_NATIVE = "http://127.0.0.1:5001/api/v1/generate"
+
+
+@pytest.fixture
+def _reset_console_default_intents(monkeypatch):
+    """Fresh intent bookkeeping, as ``test_console_settings_defaults`` keeps."""
+    for name, value in (
+        ("_LATEST_INTENT_GENERATION", None),
+        ("_LATEST_INTENT_FINGERPRINT", None),
+        ("_LATEST_INTENT_ACTION", None),
+        ("_LATEST_INTENT_LIFECYCLE", None),
+        ("_ACTIVE_INTENT_CALLS", set()),
+        ("_PENDING_RETRY_STATE", None),
+        ("_ACTIVE_RUNTIME_PUBLICATION_CLAIM", None),
+        ("_NEXT_RUNTIME_PUBLICATION_CLAIM_TOKEN", 0),
+    ):
+        monkeypatch.setattr(defaults_module, name, value, raising=False)
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "written"),
+    [*((value, False) for value in _KOBOLD_OFF_ROUTE), (_KOBOLD_NATIVE, True)],
+)
+def test_make_default_writes_a_koboldcpp_endpoint_only_on_its_native_route(
+    tmp_path, monkeypatch, _reset_console_default_intents, endpoint, written
+):
+    """TASK-38964 AC#2/AC#5: Chat settings' "Make default for new chats"
+    wrote a koboldcpp root as is, and chat_with_kobold then posted the
+    native payload to it. Only the native route is written."""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        toml.dumps(
+            {
+                "api_settings": {
+                    "koboldcpp": {"api_url": "http://localhost:5001/api/v1/generate"}
+                },
+                "chat_defaults": {"provider": "openai", "model": "old-model"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    select_config_source(monkeypatch, config_path, vars(defaults_module))
+    before = config_path.read_bytes()
+
+    outcome = defaults_module.apply_console_default_intent(
+        defaults_module.ConsoleDefaultMutationIntent(
+            generation=1,
+            action=ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+            provider_config_key="koboldcpp",
+            literal_model_id="kobold-model",
+            field_mask=FULL_MODEL_DEFAULT_FIELDS,
+            values={"temperature": 0.25},
+            endpoint_patch=defaults_module.ConsoleEndpointPatch(
+                endpoint, "koboldcpp", True, True
+            ),
+        )
+    )
+
+    if written:
+        assert outcome.runtime_published is True, outcome
+        saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
+        assert saved["api_settings"]["koboldcpp"]["api_url"] == endpoint
+        assert saved["chat_defaults"]["provider"] == "koboldcpp"
+    else:
+        assert outcome.file_replaced is False
+        assert outcome.failure_phase is defaults_module.ConsoleDefaultSavePhase.BEFORE_REPLACE
+        assert config_path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    ("configured", "native"),
+    [
+        *((value, _KOBOLD_NATIVE) for value in _KOBOLD_OFF_ROUTE),
+        ("http://localhost:5001/kobold", "http://localhost:5001/kobold/api/v1/generate"),
+        # Review r10e-rev1: a root at KoboldAI's /api base gets one /api.
+        *(
+            (f"http://127.0.0.1:5001{path}", _KOBOLD_NATIVE)
+            for path in ("/api", "/api/", "/api/v1")
+        ),
+    ],
+)
+def test_server_adoption_writes_koboldcpp_s_native_route(
+    monkeypatch, configured, native
+):
+    """TASK-38964 AC#3: adopting a detected koboldcpp wrote its root (the only
+    shape discovery finds) as ``api_url``. It writes the root's native route,
+    and this chat sends there too."""
+    root = local_discovery_module.normalize_probe_base_url(configured)
+    assert root is not None and not root.endswith("/generate")
+
+    screen, writes = _adopt(monkeypatch, "koboldcpp", configured, root)
+
+    assert writes[0]["api_settings.koboldcpp"]["api_url"] == native
+    assert [settings.base_url for settings in screen.session_settings] == [native]
+    assert screen.notes == []
+
+
+def test_server_adoption_writes_other_providers_detected_endpoint_unchanged(
+    monkeypatch,
+):
+    """TASK-38964 AC#5: only koboldcpp's write moves to its native route."""
+    screen, writes = _adopt(
+        monkeypatch, "llama_cpp", "http://127.0.0.1:9099", "http://127.0.0.1:9099"
+    )
+
+    assert writes[0]["api_settings.llama_cpp"]["api_url"] == "http://127.0.0.1:9099"
+    assert [settings.base_url for settings in screen.session_settings] == [
+        "http://127.0.0.1:9099"
+    ]
+
+
+def test_koboldcpp_route_rule_lives_in_the_contract_alone():
+    """TASK-38964 AC#1: the wizard's /api/v1/generate check moved to the
+    contract; every write path reads it there."""
+    for endpoint in _KOBOLD_OFF_ROUTE:
+        assert koboldcpp_route_refusal("koboldcpp", endpoint) == (
+            KOBOLDCPP_NATIVE_ROUTE_REFUSAL
+        )
+        # A chat URL the contract resolved decides the same way.
+        chat_url = resolve_provider_endpoint("koboldcpp", endpoint).chat_url
+        assert koboldcpp_route_refusal("koboldcpp", chat_url) == (
+            KOBOLDCPP_NATIVE_ROUTE_REFUSAL
+        )
+        assert koboldcpp_native_endpoint(endpoint) == _KOBOLD_NATIVE
+    assert koboldcpp_route_refusal("koboldcpp", _KOBOLD_NATIVE) == ""
+    assert koboldcpp_native_endpoint(_KOBOLD_NATIVE) == _KOBOLD_NATIVE
+    assert koboldcpp_route_refusal("custom", "http://127.0.0.1:5001") == ""
+    assert koboldcpp_route_refusal("koboldcpp", "") == ""
+    sources = {
+        path: path.read_text(encoding="utf-8")
+        for path in (Path(__file__).parents[2] / "tldw_chatbook").rglob("*.py")
+    }
+    checks = [
+        str(path)
+        for path, text in sources.items()
+        if 'endswith("/api/v1/generate")' in text
+        or "first_run_endpoint_refusal" in text
+    ]
+    assert checks == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["vllm", "custom"])
+async def test_discover_names_the_contracts_reason_for_a_refused_host(provider):
+    """Review r10e-rev1 of TASK-38963: Discover refused ``-kobold`` with
+    "Configure an explicit http:// or https:// /v1 models endpoint", which
+    that URL already is. It names the contract's reason, as **s** would."""
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook.LLM_Provider_Catalog.local_llm_provider_catalog_service import (
+        LocalLLMProviderCatalogService,
+    )
+
+    client = AsyncMock()
+    service = LocalLLMProviderCatalogService(
+        provider_catalog_loader=lambda: {provider: []},
+        settings_loader=lambda: {
+            "providers": {provider: []},
+            "api_settings": {provider: {"api_url": "http://-kobold:8000/v1"}},
+        },
+        discovery_client=client,
+    )
+
+    result = await service.discover_models(provider=provider)
+
+    assert result.status == "unsupported"
+    assert result.error.message == "Endpoint URL must include a valid host and port."
+    assert result.error.recovery_hint == ""
+    assert (
+        _saved_endpoint(provider, "http://-kobold:8000/v1") is None
+    )  # the save refuses it for that reason
+    client.assert_not_awaited()
+
+
+#: TASK-38963 review r10e-rev3: provider key shapes pasted into an endpoint
+#: field without a scheme (the reviewer's probes 8 and 9).
+_KEY_SHAPED_ENDPOINTS = (
+    "aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1dE",
+    "0123456789abcdef" * 4,
+    "dapi" + "0123456789abcdef" * 2,
+    "csk-" + "ab1cd2ef3gh4" * 4,
+    "fw_" + "Ab1Cd2Ef3Gh4" * 2,
+    "AIzaSyD-1234567890abcdefghijklmnopqrstu",
+    "gsk_" + "a1B2c3D4" * 7,
+    "xai-" + "Q" * 80,
+    "sk-abc123def456/extra",
+    "0123456789abcdef0123456789abcdef.AbCdEfGhIjKlMnOp",
+)
+
+
+@pytest.mark.parametrize("key", _KEY_SHAPED_ENDPOINTS)
+def test_a_refused_endpoints_fingerprint_never_carries_a_pasted_key(key):
+    """The fingerprint of an endpoint the contract refuses read
+    ``http://<key>/...``; it is the sentinel."""
+    assert resolve_provider_endpoint("custom", key).errors
+    fingerprint = fingerprint_endpoint(key)
+
+    assert fingerprint == "[invalid-endpoint]"
+    assert key.lower()[:12] not in fingerprint.lower()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", _KEY_SHAPED_ENDPOINTS[:2])
+async def test_a_failed_catalog_refresh_logs_no_part_of_a_pasted_key(tmp_path, key):
+    """Auto-refresh logged "failed for MistralAI (fingerprint http://<key>/)"
+    at INFO, past the file sink's redaction, on every launch."""
+    from loguru import logger
+
+    from tldw_chatbook.LLM_Provider_Catalog.local_llm_provider_catalog_service import (
+        LocalLLMProviderCatalogService,
+    )
+    from tldw_chatbook.LLM_Provider_Catalog.model_catalog_settings import (
+        ModelCatalogSettings,
+    )
+    from tldw_chatbook.LLM_Provider_Catalog.model_discovery_disk_cache import (
+        ModelCatalogDiskStore,
+    )
+
+    service = LocalLLMProviderCatalogService(
+        provider_catalog_loader=lambda: {"MistralAI": ["saved-1"]},
+        settings_loader=lambda: {
+            "providers": {"MistralAI": ["saved-1"]},
+            "api_settings": {"mistralai": {"api_base_url": key, "api_key": "k"}},
+        },
+        save_discovered_models_callback=lambda _values: True,
+        environ={},
+    )
+    logged: list[str] = []
+    sink_id = logger.add(lambda message: logged.append(str(message)), level="DEBUG")
+    try:
+        report = await service.refresh_stale_configured_providers(
+            catalog_settings=ModelCatalogSettings(),
+            disk_store=ModelCatalogDiskStore(tmp_path / "cache.json"),
+            provider_list_keys=("MistralAI",),
+        )
+    finally:
+        logger.remove(sink_id)
+
+    assert report.outcomes[0].status == "failed", report
+    text = "".join(logged).lower()
+    assert "auto-refresh failed for mistralai" in text
+    for start in range(0, len(key) - 7, 4):
+        assert key.lower()[start : start + 8] not in text, key[start : start + 8]
+
+
+#: Providers whose Console default write takes an endpoint patch, each with
+#: a saved table that makes the pair ready.
+_DEFAULT_WRITE_PROVIDERS = {
+    "vllm": {"api_url": "http://127.0.0.1:8000/v1"},
+    "llama_cpp": {"api_url": "http://127.0.0.1:9099"},
+    "ollama": {"api_url": "http://127.0.0.1:11434"},
+    "custom": {"api_url": "http://127.0.0.1:8000/v1/chat/completions"},
+    "openai": {"api_key": "test-key", "api_base_url": "https://api.openai.com/v1"},
+}
+
+
+#: TASK-39042: loopback endpoints typed without a scheme, which **s** saves.
+_SCHEMELESS_LOOPBACK_ENDPOINTS = ("localhost:8080", "127.0.0.1:8080/v1", "[::1]:8080/v1")
+#: TASK-39042: a synthetic ZAI-shaped key (``<32 hex>.<16>``) pasted into an
+#: endpoint field, with ``/v1`` appended and with an ``sk-`` prefix.
+_DOTTED_KEY = "0123456789abcdef0123456789abcdef.ABCDEFGHijklmnop"
+_DOTTED_KEY_ENDPOINTS = (_DOTTED_KEY, f"{_DOTTED_KEY}/v1", f"sk-{_DOTTED_KEY}")
+
+
+@pytest.mark.parametrize("provider", ["vllm", "ollama", "custom"])
+@pytest.mark.parametrize("endpoint", _SCHEMELESS_LOOPBACK_ENDPOINTS)
+def test_chat_settings_reads_a_schemeless_loopback_endpoint_as_the_save_does(
+    provider, endpoint
+):
+    """TASK-39042 AC#1: readiness ran ``validate_url``, which needs a typed
+    scheme, so Chat settings read "Invalid URL" for ``localhost:8080`` and
+    could not save what **s** saves."""
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_console_settings_readiness,
+        validate_console_session_settings,
+    )
+
+    settings = ConsoleSessionSettings(provider=provider, model="m", base_url=endpoint)
+    app_config = {"api_settings": {provider: dict(_DEFAULT_WRITE_PROVIDERS[provider])}}
+    readiness = build_console_settings_readiness(
+        settings, app_config=app_config, environ={}
+    )
+
+    assert _saved_endpoint(provider, endpoint) is not None
+    assert readiness.label != "Invalid URL", readiness
+    assert readiness.blocker != "endpoint_invalid", readiness
+    assert validate_console_session_settings(settings, app_config=app_config) == []
+
+
+#: TASK-39151 review: the Endpoint line's copy for an invalid endpoint.
+_ADD_SCHEME_ROW = "Endpoint: Invalid (add http:// or https://)"
+_INVALID_ROW = "Endpoint: Invalid"
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "row"),
+    [
+        ("gpu-box.lan:8080", _ADD_SCHEME_ROW),
+        ("192.168.1.20:8080", _ADD_SCHEME_ROW),
+        *[(key, _INVALID_ROW) for key in _DOTTED_KEY_ENDPOINTS],
+    ],
+)
+def test_llamacpp_readiness_refuses_a_remote_endpoint_typed_without_a_scheme(
+    endpoint, row
+):
+    """TASK-39042 AC#2: llama.cpp's ``normalize_llamacpp_base_url`` added
+    ``http://`` first, so readiness read Ready for a remote host the save
+    refuses ("Remote endpoint URLs must include an HTTP or HTTPS scheme.")."""
+    from tldw_chatbook.Chat.console_session_settings import (
+        ConsoleSettingsContextEstimate,
+        build_console_settings_readiness,
+        build_console_settings_summary_state,
+    )
+
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp", model="m", base_url=endpoint
+    )
+    readiness = build_console_settings_readiness(
+        settings,
+        app_config={"api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:9099"}}},
+        environ={},
+    )
+
+    assert _saved_endpoint("llama_cpp", endpoint) is None
+    assert readiness.label != "Ready", readiness
+    assert readiness.blocker == "endpoint_invalid", readiness
+    # AC#3: the Chat settings Endpoint row never names the value. Rewritten on
+    # purpose by TASK-39151 AC#3: an address is told to add its scheme and a
+    # key-shaped value reads plain "Invalid", not "Not configured".
+    assert build_console_settings_summary_state(
+        settings, ConsoleSettingsContextEstimate(None, None, ""), readiness
+    ).endpoint_row == row
+
+
+@pytest.mark.parametrize("endpoint", _DOTTED_KEY_ENDPOINTS)
+def test_a_schemeless_dotted_key_is_never_shown_as_a_host(endpoint):
+    """TASK-39042 AC#3: a value without a scheme displayed as itself whenever
+    ``http://<value>`` resolved, so a pasted ZAI-shaped key read as a host,
+    lower-cased, in the display, the unsaved copy and the preview."""
+    assert safe_endpoint_display(endpoint) == "invalid endpoint"
+    assert local_discovery_module.endpoint_display(endpoint) == "invalid endpoint"
+    copy = unsaved_endpoint_copy(endpoint, {"api_url": "http://127.0.0.1:9099"})
+    assert "Selected endpoint: invalid endpoint." in copy
+    assert defaults_module.parse_console_endpoint_preview(endpoint) is None
+    assert defaults_module.format_console_endpoint_preview(endpoint) is None
+    for text in (copy, safe_endpoint_display(endpoint)):
+        assert _DOTTED_KEY.lower()[:12] not in text.lower()
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "shown"),
+    [
+        ("http://gpu-box.lan/v1", "http://gpu-box.lan/v1"),
+        ("https://api.example.com", "https://api.example.com"),
+        ("localhost:8080", "http://localhost:8080"),
+        ("127.0.0.1/v1", "http://127.0.0.1/v1"),
+        ("[::1]:8080/v1", "http://[::1]:8080/v1"),
+        ("local-service:9090/v1", "local-service:9090/v1"),
+        ("gpu-box.lan:8080", "gpu-box.lan:8080"),
+    ],
+)
+def test_values_with_a_scheme_a_port_or_a_loopback_host_display_as_before(
+    endpoint, shown
+):
+    """TASK-39042 AC#4: only a schemeless, port-less remote value changed."""
+    assert safe_endpoint_display(endpoint) == shown
+
+
+#: Review r10e-rev4 (the reviewer's probe16): shapes **s** refuses, with an
+#: authority the Console default writer took.
+_REFUSED_PATHS_AND_PORTS = (
+    "http://127.0.0.1:8000/v1/models/v1",
+    "http://127.0.0.1:8000/v1/api/v1/generate",
+    "http://127.0.0.1:8000/a//b",
+    "http://127.0.0.1:8000/v1/../x",
+    "http://127.0.0.1:8000/v1%2Fx",
+    "http://127.0.0.1:0/v1",
+    "http://127.0.0.1:8000/v1#frag",
+    "http://127.0.0.1:8000/v1?api_key=sk-secret123",
+    "http://127.0.0.1:8000/v1/chat/completions/v1",
+)
+
+
+@pytest.mark.parametrize("provider", sorted(_DEFAULT_WRITE_PROVIDERS))
+@pytest.mark.parametrize(
+    ("endpoint", "written"),
+    [
+        *((key, False) for key in _KEY_SHAPED_ENDPOINTS),
+        ("gpu-box.lan:8000/v1", False),
+        *((value, False) for value in _REFUSED_PATHS_AND_PORTS),
+        ("http://127.0.0.1:8001/v1", True),
+        # TASK-39042: Chat settings read these as "Invalid URL".
+        *((value, True) for value in _SCHEMELESS_LOOPBACK_ENDPOINTS),
+    ],
+)
+def test_make_default_never_writes_an_endpoint_the_contract_refuses(
+    tmp_path, monkeypatch, _reset_console_default_intents, provider, endpoint, written
+):
+    """TASK-38964 review r10e-rev3: Save endpoint & use model takes any
+    authority the preview parses, a pasted key included ("Remote/unknown").
+    Nothing the contract refuses may reach the config file."""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        toml.dumps(
+            {
+                "api_settings": {provider: dict(_DEFAULT_WRITE_PROVIDERS[provider])},
+                "chat_defaults": {"provider": "anthropic", "model": "old-model"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    select_config_source(monkeypatch, config_path, vars(defaults_module))
+    before = config_path.read_bytes()
+
+    outcome = defaults_module.apply_console_default_intent(
+        defaults_module.ConsoleDefaultMutationIntent(
+            generation=1,
+            action=ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+            provider_config_key=provider,
+            literal_model_id="some-model",
+            field_mask=FULL_MODEL_DEFAULT_FIELDS,
+            values={"temperature": 0.25},
+            endpoint_patch=defaults_module.ConsoleEndpointPatch(
+                endpoint, provider, True, True
+            ),
+        )
+    )
+
+    if written:
+        assert outcome.runtime_published is True, outcome
+        saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
+        # TASK-39042, rewritten on purpose: the writer wrote the typed value
+        # ("localhost:8080" with no scheme); it writes what **s** writes.
+        assert _saved_endpoint(provider, endpoint) in (
+            saved["api_settings"][provider].values()
+        )
+    else:
+        assert outcome.file_replaced is False
+        assert config_path.read_bytes() == before
+    # The writer and **s** decide alike (review r10e-rev4).
+    assert written is (_saved_endpoint(provider, endpoint) is not None)
+
+
+@pytest.mark.parametrize("key", [k for k in _KEY_SHAPED_ENDPOINTS if "." not in k])
+def test_the_default_recovery_summary_never_names_a_pasted_key(key):
+    """TASK-38964 review r10e-rev3: Chat settings' "Not written to disk"
+    summary named the endpoint through the preview, which took a bare key
+    for a remote authority and showed it lower-cased."""
+    from tldw_chatbook.Widgets.Console.console_settings_modal import (
+        ConsoleSettingsModal,
+    )
+
+    intent = defaults_module.ConsoleDefaultMutationIntent(
+        generation=1,
+        action=ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+        provider_config_key="vllm",
+        literal_model_id="vllm-model",
+        field_mask=FULL_MODEL_DEFAULT_FIELDS,
+        values={},
+        endpoint_patch=defaults_module.ConsoleEndpointPatch(key, "vllm", True, True),
+    )
+    modal = SimpleNamespace(
+        _default_durability_state=SimpleNamespace(
+            recovery_intent=intent,
+            failure_phase=defaults_module.ConsoleDefaultSavePhase.BEFORE_REPLACE,
+        )
+    )
+
+    summary = ConsoleSettingsModal._default_recovery_summary(modal)
+
+    assert summary.startswith("Not written to disk")
+    assert key.lower()[:12] not in summary.lower()
+    assert defaults_module.format_console_endpoint_preview(key) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "typed", "sent"),
+    [
+        ("vllm", "localhost:8080", "http://localhost:8080"),
+        ("ollama", "127.0.0.1:8080", "http://127.0.0.1:8080"),
+        ("local_vllm", "[::1]:8080", "http://[::1]:8080"),
+        ("local_ollama", "localhost:8080", "http://localhost:8080"),
+        ("local_llamafile", "localhost:8080", "http://localhost:8080"),
+        ("strata", "localhost:8080", "http://localhost:8080"),
+        ("qwencloud", "localhost:8080/v1", "http://localhost:8080/v1"),
+    ],
+)
+async def test_a_schemeless_loopback_session_endpoint_reaches_the_adapter_with_http(
+    provider, typed, sent
+):
+    """TASK-39042 review C1: readiness took ``localhost:8080`` for every
+    URL-based provider, but the send passed it to the adapter as typed, and
+    requests raised ``InvalidSchema`` (QwenCloud was blocked at send)."""
+    from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
+    from tldw_chatbook.Chat.provider_setup_persistence import (
+        persisted_endpoint_for_key,
+        provider_endpoint_key,
+    )
+
+    key = provider_endpoint_key(provider)
+    saved = persisted_endpoint_for_key(provider, key, typed)
+    calls: list[dict] = []
+
+    def adapter(**kwargs):
+        calls.append(kwargs)
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {provider: {key: saved, "model": "m", "api_key": "k"}}
+        },
+        environ={},
+        chat_api_call_fn=adapter,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider=provider, explicit_model="m", base_url=typed, streaming=False
+        )
+    )
+
+    assert resolution.ready, resolution.visible_copy
+    [chunk async for chunk in gateway.stream_chat(resolution, [{"role": "user", "content": "x"}])]
+    assert calls[0]["api_base_url"] == sent
+
+
+def test_a_chat_settings_draft_with_a_schemeless_loopback_endpoint_restores():
+    """TASK-39042 review C1: the suspended-draft snapshot checked the session
+    endpoint with ``validate_url``, so a draft holding ``localhost:8080``
+    failed to restore and "Configure credential…" could not open."""
+    from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
+    from tldw_chatbook.Widgets.Console.console_settings_modal import (
+        ConsoleSettingsDraftSnapshot,
+    )
+
+    snapshot = ConsoleSettingsDraftSnapshot(
+        settings=ConsoleSessionSettings(
+            provider="vllm", model="m", base_url="localhost:8080"
+        ),
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        raw_values={"console-settings-base-url": "localhost:8080"},
+        provider_model_drafts={"vllm": "m"},
+        provider_base_url_drafts={"vllm": "localhost:8080"},
+        active_view="model",
+        scroll_anchor=0,
+        focus_control_id=None,
+        disclosure_state={"advanced_generation": False, "connection_details": True},
+    )
+    restored = ConsoleSettingsDraftSnapshot.from_mapping(snapshot.to_mapping())
+
+    assert restored is not None
+    assert restored.settings.base_url == "localhost:8080"
+
+
+@pytest.mark.parametrize(
+    "typed",
+    [
+        "localhost:8080@gpu-box.lan:9000",
+        "127.0.0.1:1@203.0.113.9",
+        "[::1]:8080@evil.example",
+    ],
+)
+def test_a_loopback_spelling_before_user_info_is_never_read_as_loopback(typed):
+    """TASK-39042 review r11g-rev2: ``read_schemeless_loopback`` checked the
+    whole netloc, so ``localhost:8080@gpu-box.lan:9000`` became
+    ``http://localhost:8080@gpu-box.lan:9000``, whose host is gpu-box.lan."""
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_console_settings_readiness,
+    )
+    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+        read_schemeless_loopback,
+    )
+
+    assert read_schemeless_loopback(typed) == typed
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(provider="vllm", model="m", base_url=typed),
+        app_config={"api_settings": {"vllm": {"api_url": "http://127.0.0.1:8000/v1"}}},
+        environ={},
+    )
+    assert readiness.blocker == "endpoint_invalid", readiness
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "configured", "sent"),
+    [
+        ("aphrodite", "localhost:8080/v1", "http://localhost:8080/v1"),
+        ("oobabooga", "127.0.0.1:5000/v1", "http://127.0.0.1:5000/v1"),
+        ("tabbyapi", "[::1]:5000/v1", "http://[::1]:5000/v1"),
+        (
+            "koboldcpp",
+            "localhost:5001/api/v1/generate",
+            "http://localhost:5001/api/v1/generate",
+        ),
+    ],
+)
+async def test_a_hand_edited_schemeless_loopback_endpoint_is_sent_as_readiness_reads_it(
+    provider, configured, sent
+):
+    """TASK-39042 review r11g-rev2: these four adapters got no
+    ``api_base_url`` and read their own config raw, so a hand-edited
+    ``localhost:8080/v1`` that readiness accepts (and the gateway pinned as
+    ``http://``) would reach the server without its scheme. The adapter takes
+    ``api_base_url`` before its config, so the stub sees the URL it would use."""
+    from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
+    from tldw_chatbook.Chat.provider_setup_persistence import provider_endpoint_key
+
+    key = provider_endpoint_key(provider)
+    calls: list[dict] = []
+
+    def adapter(**kwargs):
+        calls.append(kwargs)
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {provider: {key: configured, "model": "m", "api_key": "k"}}
+        },
+        environ={},
+        chat_api_call_fn=adapter,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider=provider, explicit_model="m", streaming=False)
+    )
+
+    assert resolution.ready, resolution.visible_copy
+    [chunk async for chunk in gateway.stream_chat(resolution, [{"role": "user", "content": "x"}])]
+    assert calls[0].get("api_base_url") == sent
+
+
+#: TASK-39151: remote llama.cpp endpoints typed without a scheme (save refuses).
+_REMOTE_SCHEMELESS_LLAMACPP = ("gpu-box.lan:8080", "192.168.1.20:8080", "llama:8080")
+
+
+def _llamacpp_source(source, endpoint):
+    """Session settings and config holding ``endpoint`` in one llama.cpp place."""
+    config = {"api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:9099"}}}
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="m")
+    if source == "session":
+        settings = ConsoleSessionSettings(provider="llama_cpp", model="m", base_url=endpoint)
+    elif source == "config":
+        config["api_settings"]["llama_cpp"]["api_url"] = endpoint
+    else:
+        config["custom_endpoints"] = {
+            "gpu": {"display_name": "GPU box", "family": "llama_cpp", "base_url": endpoint}
+        }
+        settings = ConsoleSessionSettings(provider="custom-ep:gpu", model="m")
+    return settings, config
+
+
+async def _resolve_llamacpp_send(settings, config, seen):
+    """Resolve a send as Console does, through a transport that records URLs."""
+    from tldw_chatbook.Chat.console_chat_controller import (
+        build_console_provider_selection_from_settings,
+    )
+
+    def handler(request):
+        seen.append(str(request.url))
+        if request.url.path == "/v1/models":
+            return httpx.Response(200, json=_openai_models_payload("m"))
+        return httpx.Response(200, json={"status": "ok"})
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: config,
+        environ={},
+        http_client=_client(handler),
+    )
+    selection = build_console_provider_selection_from_settings(
+        settings, app_config=config, workspace_context=None
+    )
+    return await gateway.resolve_for_send(selection)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("endpoint", _REMOTE_SCHEMELESS_LLAMACPP)
+@pytest.mark.parametrize("source", ["session", "config", "custom_entry"])
+async def test_llamacpp_never_probes_a_remote_endpoint_typed_without_a_scheme(
+    source, endpoint, monkeypatch
+):
+    """TASK-39151 AC#1: both ``normalize_llamacpp_base_url`` copies added
+    ``http://`` to any value without a scheme, so the send-time resolution
+    probed ``http://gpu-box.lan:8080/health`` and read Ready, whether the value
+    came from the session, the config or a custom endpoint entry."""
+    monkeypatch.delenv("TLDW_CONSOLE_LLAMA_CPP_BASE_URL", raising=False)
+    settings, config = _llamacpp_source(source, endpoint)
+    seen: list[str] = []
+
+    resolution = await _resolve_llamacpp_send(settings, config, seen)
+
+    assert seen == []
+    assert resolution.ready is False
+
+
+@pytest.mark.parametrize("endpoint", _REMOTE_SCHEMELESS_LLAMACPP)
+@pytest.mark.parametrize("place", ["api_settings", "console_override", "environment"])
+def test_llamacpp_readiness_refuses_a_held_endpoint_typed_without_a_scheme(
+    place, endpoint
+):
+    """TASK-39151 AC#2: with no session endpoint, readiness never looked at the
+    endpoint the send would use, so a hand-edited ``gpu-box.lan:8080`` read
+    Ready."""
+    from tldw_chatbook.Chat.console_session_settings import (
+        ConsoleSettingsContextEstimate,
+        build_console_settings_readiness,
+        build_console_settings_summary_state,
+    )
+
+    config = {"api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:9099"}}}
+    environ = {}
+    if place == "api_settings":
+        config["api_settings"]["llama_cpp"]["api_url"] = endpoint
+    elif place == "console_override":
+        config["console"] = {"llama_cpp_base_url_override": endpoint}
+    else:
+        environ["TLDW_CONSOLE_LLAMA_CPP_BASE_URL"] = endpoint
+
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="m")
+    readiness = build_console_settings_readiness(
+        settings, app_config=config, environ=environ
+    )
+
+    assert readiness.label != "Ready", readiness
+    assert readiness.blocker == "endpoint_invalid", readiness
+    # Review r13s-rev1: the Endpoint line agrees, not "Not configured".
+    assert build_console_settings_summary_state(
+        settings, ConsoleSettingsContextEstimate(None, None, ""), readiness
+    ).endpoint_row == _ADD_SCHEME_ROW
+
+
+@pytest.mark.asyncio
+async def test_a_saved_chat_with_a_remote_schemeless_llamacpp_endpoint_sends_nothing(
+    monkeypatch,
+):
+    """TASK-39151 AC#3: a chat saved before TASK-39042 can hold
+    ``gpu-box.lan:8080`` as its session endpoint. Its next send probed that
+    host as ``http://``, and its Endpoint row read "Not configured"."""
+    import json
+    from dataclasses import asdict
+
+    from tldw_chatbook.Chat.console_provider_endpoints import (
+        INVALID_LLAMACPP_BASE_URL_COPY,
+    )
+    from tldw_chatbook.Chat.console_session_settings import (
+        ConsoleSettingsContextEstimate,
+        build_console_settings_readiness,
+        build_console_settings_summary_state,
+        parse_persisted_console_session_settings,
+    )
+
+    monkeypatch.delenv("TLDW_CONSOLE_LLAMA_CPP_BASE_URL", raising=False)
+    stored = ConsoleSessionSettings(
+        provider="llama_cpp", model="m", base_url="gpu-box.lan:8080"
+    )
+    settings = parse_persisted_console_session_settings(
+        json.dumps({"console_session_settings": {"version": 1, **asdict(stored)}})
+    )
+    assert settings == stored
+    config = {"api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:9099"}}}
+    seen: list[str] = []
+
+    resolution = await _resolve_llamacpp_send(settings, config, seen)
+
+    assert seen == []
+    assert resolution.ready is False
+    assert resolution.visible_copy == INVALID_LLAMACPP_BASE_URL_COPY
+    readiness = build_console_settings_readiness(settings, app_config=config, environ={})
+    row = build_console_settings_summary_state(
+        settings, ConsoleSettingsContextEstimate(None, None, ""), readiness
+    ).endpoint_row
+    assert row == _ADD_SCHEME_ROW
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "row"),
+    [
+        *[
+            (address, _ADD_SCHEME_ROW)
+            for address in (
+                "gpu-box.lan:8080/v1",
+                "192.168.1.20",
+                "[fd12::9]:8080",
+                "LOCALHOST:8080",
+                "127.0.0.2:8080",
+            )
+        ],
+        *[
+            (value, _INVALID_ROW)
+            for value in (
+                "sk-proj-abcdefghijklmnopqrstuvwx",
+                "gpu-box.lan",
+                "ftp://gpu-box.lan:8080",
+                # Review r13s-rev2: user info or a query is never told to add
+                # a scheme; the contract refuses it for that, not the scheme.
+                "user:pw@gpu-box.lan:8080",
+                ":secretpw@gpu-box.lan:8080",
+                "gpu-box.lan:8080?key=sk-x",
+            )
+        ],
+    ],
+)
+def test_the_endpoint_line_tells_only_an_address_to_add_a_scheme(endpoint, row):
+    """TASK-39151 review r13s-rev1: the Endpoint line told any value without a
+    scheme to add one, a pasted key included, which would then read Ready and
+    be probed as a host. Only a host and port, or an IP literal, that the
+    contract refuses for lacking a scheme is told to add one, and adding it is
+    then enough (``LOCALHOST:8080`` and ``127.0.0.2:8080`` too: only the exact
+    loopback spellings may leave it out)."""
+    from tldw_chatbook.Chat.console_session_settings import (
+        ConsoleSettingsContextEstimate,
+        build_console_settings_readiness,
+        build_console_settings_summary_state,
+    )
+
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="m", base_url=endpoint)
+    readiness = build_console_settings_readiness(
+        settings,
+        app_config={"api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:9099"}}},
+        environ={},
+    )
+
+    assert readiness.blocker == "endpoint_invalid", readiness
+    assert build_console_settings_summary_state(
+        settings, ConsoleSettingsContextEstimate(None, None, ""), readiness
+    ).endpoint_row == row
+    if row == _ADD_SCHEME_ROW:
+        assert resolve_provider_endpoint("llama_cpp", f"http://{endpoint}").errors == ()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("typed", "base"),
+    [
+        ("localhost:8080", "http://localhost:8080"),
+        ("127.0.0.1:8080/v1", "http://127.0.0.1:8080"),
+        ("[::1]:8080", "http://[::1]:8080"),
+        ("http://gpu-box.lan:8080", "http://gpu-box.lan:8080"),
+        ("https://gpu-box.lan:8443/v1", "https://gpu-box.lan:8443"),
+    ],
+)
+@pytest.mark.parametrize("source", ["session", "config", "custom_entry"])
+async def test_llamacpp_loopback_or_schemed_endpoints_resolve_as_before(
+    source, typed, base, monkeypatch
+):
+    """TASK-39151 AC#4: only a remote value without a scheme changed."""
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_console_settings_readiness,
+    )
+
+    monkeypatch.delenv("TLDW_CONSOLE_LLAMA_CPP_BASE_URL", raising=False)
+    settings, config = _llamacpp_source(source, typed)
+    seen: list[str] = []
+
+    resolution = await _resolve_llamacpp_send(settings, config, seen)
+
+    assert seen == [f"{base}/health"]
+    assert resolution.ready is True, resolution.visible_copy
+    assert resolution.base_url == base
+    readiness = build_console_settings_readiness(settings, app_config=config, environ={})
+    assert readiness.blocker is None, readiness
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "sent"),
+    [
+        *[(address, None) for address in _REMOTE_SCHEMELESS_LLAMACPP],
+        ("localhost:8080/v1", "http://localhost:8080"),
+        ("http://gpu-box.lan:8080/v1", "http://gpu-box.lan:8080"),
+    ],
+)
+def test_chat_with_llama_refuses_a_remote_endpoint_typed_without_a_scheme(
+    endpoint, sent, monkeypatch
+):
+    """TASK-39151 review r13s-rev1: outside Console, ``chat_with_llama`` kept
+    a hand-edited ``gpu-box.lan:8080`` schemeless and ``requests`` failed it as
+    a network error ("No connection adapters were found"). It is a
+    configuration error, raised before anything is sent."""
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls_Local as local_calls
+    from tldw_chatbook.Provider_Contract import ChatConfigurationError
+
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        local_calls,
+        "_chat_with_openai_compatible_local_server",
+        lambda **kwargs: calls.append(kwargs) or "ok",
+    )
+    # No config read: the endpoint comes from the argument.
+    monkeypatch.setattr(
+        local_calls,
+        "get_runtime_config_snapshot",
+        lambda: SimpleNamespace(values={"api_settings": {}}),
+    )
+    messages = [{"role": "user", "content": "x"}]
+
+    if sent is None:
+        with pytest.raises(ChatConfigurationError, match=r"http:// or https://"):
+            local_calls.chat_with_llama(
+                messages, api_url=endpoint, model="m", api_key_resolved=True
+            )
+        assert calls == []
+    else:
+        local_calls.chat_with_llama(
+            messages, api_url=endpoint, model="m", api_key_resolved=True
+        )
+        assert [call["api_base_url"] for call in calls] == [sent]
+
+
+@pytest.mark.parametrize(
+    "endpoint", ["ftp://user:hunter2@gpu-box.lan:8080", "htp://gpu-box.lan:8080/v1"]
+)
+@pytest.mark.parametrize(
+    "provider", ["llama_cpp", "local_llamacpp", "local_llamafile", "strata", "polystrata"]
+)
+def test_chat_with_llama_refuses_a_non_http_scheme_without_echoing_it(
+    provider, endpoint, monkeypatch
+):
+    """TASK-39151 review r13s-rev2: M5's guard checked only for "://", so an
+    ``ftp://`` or ``htp://`` endpoint reached ``requests`` and failed as a 503
+    whose message echoed the whole URL, user info included. Every provider
+    that dispatches to ``chat_with_llama`` now refuses it as a configuration
+    error that names no part of the value, before anything is sent."""
+    from tldw_chatbook.Chat.Chat_Functions import API_CALL_HANDLERS
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls_Local as local_calls
+    from tldw_chatbook.Provider_Contract import ChatConfigurationError
+
+    assert API_CALL_HANDLERS[provider] is local_calls.chat_with_llama
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        local_calls,
+        "_chat_with_openai_compatible_local_server",
+        lambda **kwargs: calls.append(kwargs) or "ok",
+    )
+    monkeypatch.setattr(
+        local_calls,
+        "get_runtime_config_snapshot",
+        lambda: SimpleNamespace(values={"api_settings": {}}),
+    )
+
+    with pytest.raises(ChatConfigurationError, match=r"http:// or https://") as caught:
+        local_calls.chat_with_llama(
+            [{"role": "user", "content": "x"}],
+            api_url=endpoint,
+            model="m",
+            provider_name=provider,
+            api_key_resolved=True,
+        )
+
+    assert calls == []
+    for part in ("hunter2", "user:", "gpu-box", "ftp", "htp"):
+        assert part not in str(caught.value)

@@ -128,12 +128,19 @@ class TestTreeViewSimple:
             def __init__(self, is_directory):
                 self.is_directory = is_directory
                 self.selected = False
+                # B20: real TreeNodes carry a stored checkbox handle that is
+                # None until mounted.
+                self.checkbox = None
 
         dir_node = MockNode(True)
         child1 = MockNode(False)
         child2 = MockNode(False)
 
         tree.nodes = {"src": dir_node, "src/file1.py": child1, "src/file2.py": child2}
+        # B20: cascades walk the child index, which the production loaders
+        # (_build_tree_nodes/expand_node) maintain; seed it the same way.
+        tree._register_child("src", "src/file1.py")
+        tree._register_child("src", "src/file2.py")
         tree.selection = set()
 
         # Select directory

@@ -5,7 +5,7 @@ from textual.app import ComposeResult
 from textual.containers import Grid, Vertical
 from textual.widgets import Button, Collapsible, Static, TextArea
 
-from ..UI.Screens.settings_advanced_config import AdvancedConfigSettings
+from ..UI.Settings_Modules.settings_advanced_config import AdvancedConfigSettings
 from .confirmation_dialog import ConfirmationDialog
 
 

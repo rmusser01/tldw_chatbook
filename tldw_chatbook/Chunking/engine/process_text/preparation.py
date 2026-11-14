@@ -39,11 +39,17 @@ def _prepare_frontmatter_options(
 ) -> tuple[PreparedText, bool, str]:
     """Copy options, inject tokenizer overrides, and extract frontmatter controls."""
     opts = dict(options or {})
-    if tokenizer_name_or_path and "tokenizer_name_or_path" not in opts and "tokenizer_name" not in opts:
+    if (
+        tokenizer_name_or_path
+        and "tokenizer_name_or_path" not in opts
+        and "tokenizer_name" not in opts
+    ):
         opts["tokenizer_name_or_path"] = tokenizer_name_or_path
 
     frontmatter_enabled_opt = opts.pop("enable_frontmatter_parsing", None)
-    frontmatter_enabled = True if frontmatter_enabled_opt is None else bool(frontmatter_enabled_opt)
+    frontmatter_enabled = (
+        True if frontmatter_enabled_opt is None else bool(frontmatter_enabled_opt)
+    )
     sentinel_key_raw = opts.pop("frontmatter_sentinel_key", FRONTMATTER_SENTINEL_KEY)
     sentinel_key = str(sentinel_key_raw or FRONTMATTER_SENTINEL_KEY)
 
@@ -87,11 +93,15 @@ def _parse_frontmatter(
                     and sentinel_key in parsed_candidate
                     and bool(parsed_candidate.get(sentinel_key))
                 ):
-                    json_meta = {k: v for k, v in parsed_candidate.items() if k != sentinel_key}
+                    json_meta = {
+                        k: v for k, v in parsed_candidate.items() if k != sentinel_key
+                    }
                     leading_ws = len(processed_text) - len(stripped)
                     tail = stripped[end_idx:]
                     tail_trimmed = tail.lstrip("\n\r")
-                    prefix_offset += leading_ws + end_idx + (len(tail) - len(tail_trimmed))
+                    prefix_offset += (
+                        leading_ws + end_idx + (len(tail) - len(tail_trimmed))
+                    )
                     processed_text = tail_trimmed
         except CHUNKER_NONCRITICAL_EXCEPTIONS:
             pass
@@ -117,7 +127,7 @@ def extract_header(prepared: PreparedText) -> PreparedText:
         m = header_re.match(processed_text)
         if m:
             header_text = m.group(1)
-            tail = processed_text[len(header_text):]
+            tail = processed_text[len(header_text) :]
             tail_trimmed = tail.lstrip()
             prefix_offset += len(header_text) + (len(tail) - len(tail_trimmed))
             processed_text = tail_trimmed

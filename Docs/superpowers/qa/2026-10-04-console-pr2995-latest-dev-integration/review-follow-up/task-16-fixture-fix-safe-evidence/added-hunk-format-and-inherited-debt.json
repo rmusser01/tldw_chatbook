@@ -1,0 +1,21 @@
+{
+  "only_two_marker_hunks_formatted": true,
+  "rows": [
+    {
+      "added_hunk_format_preserved": true,
+      "after_debt_units": 95,
+      "before_debt_units": 95,
+      "entire_formatter_output_changes_only_selected_added_marker": true,
+      "no_owner_reflow": true,
+      "path": "Tests/UI/test_console_ask_user_typed_answers.py"
+    },
+    {
+      "added_hunk_format_preserved": true,
+      "after_debt_units": 0,
+      "before_debt_units": 0,
+      "entire_formatter_output_changes_only_selected_added_marker": true,
+      "no_owner_reflow": true,
+      "path": "Tests/UI/test_personas_workbench.py"
+    }
+  ]
+}

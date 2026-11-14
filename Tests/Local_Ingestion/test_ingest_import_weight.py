@@ -177,3 +177,84 @@ def test_app_import_excludes_docling_and_torchvision(tmp_path: Path) -> None:
         f"docling/torchvision leaked into sys.modules just from importing "
         f"tldw_chatbook.app: {payload['loaded']}"
     )
+
+
+def test_settings_modules_import_without_reading_config(tmp_path: Path) -> None:
+    """TASK-36945.3 AC#3: importing the modules that used to read settings at
+    import time (Document/PDF processing libs, optional_deps, rag_service, app)
+    must not read settings or open the config file.
+
+    ``tldw_chatbook.config`` itself loads the config on import, and other
+    transitive imports (Chunk_Lib) read settings too, so ``tldw_chatbook.config``
+    is imported first and the recorder counts only reads made from module-level
+    code (or a function called directly from it) of the five modules.
+    """
+
+    result = _run_isolated_python(
+        tmp_path,
+        f"""
+        import builtins, io, json, sys
+        import tldw_chatbook.config as cfg
+
+        FIVE = ("Document_Processing_Lib.py", "PDF_Processing_Lib.py",
+                "optional_deps.py", "rag_service.py", "tldw_chatbook/app.py")
+        def from_five():
+            f = sys._getframe(2)
+            while f is not None and ("importlib" in f.f_code.co_filename
+                                     or f.f_code.co_filename.endswith("tldw_chatbook/config.py")):
+                f = f.f_back
+            return f is not None and f.f_code.co_filename.endswith(FIVE)
+
+        reads = []
+        for name in ("load_settings", "get_cli_setting", "get_cli_config_value",
+                     "load_cli_config_and_ensure_existence"):
+            orig = getattr(cfg, name, None)
+            if orig is None:
+                continue
+            def make(orig, name):
+                def wrapper(*a, **k):
+                    if from_five():
+                        reads.append(name)
+                    return orig(*a, **k)
+                return wrapper
+            setattr(cfg, name, make(orig, name))
+
+        real_open = builtins.open
+        def rec_open(file, *a, **k):
+            if str(file).endswith("config.toml") and from_five():
+                reads.append("open:" + str(file))
+            return real_open(file, *a, **k)
+        builtins.open = rec_open
+        io.open = rec_open
+
+        import tldw_chatbook.Local_Ingestion.Document_Processing_Lib
+        import tldw_chatbook.Local_Ingestion.PDF_Processing_Lib
+        import tldw_chatbook.Utils.optional_deps
+        import tldw_chatbook.RAG_Search.simplified.rag_service
+        import tldw_chatbook.app
+        print(json.dumps(reads))
+        """,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout.strip().splitlines()[-1]) == []
+
+
+def test_use_time_settings_reads_propagate_recovery_required() -> None:
+    """TASK-36945.3: the real accessor and guard raise through the use-time reads.
+
+    This file is NOT on ``keep_bootstrap_profile``, so the per-test sandbox
+    re-selects the config away from the one the participant was bound to, and
+    the guarded read raises ``raw_source_selection_changed``. Nothing is
+    patched: a swallowed read (``except Exception``) would turn this red.
+    """
+    import pytest
+
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+    from tldw_chatbook.Local_Ingestion import Document_Processing_Lib as doc_lib
+    from tldw_chatbook.RAG_Search.simplified import rag_service
+
+    with pytest.raises(RecoveryRequired, match="raw_source_selection_changed"):
+        rag_service._rag_const("MAX_CITATION_MATCHES")
+    with pytest.raises(RecoveryRequired, match="raw_source_selection_changed"):
+        doc_lib._document_chunk_defaults()

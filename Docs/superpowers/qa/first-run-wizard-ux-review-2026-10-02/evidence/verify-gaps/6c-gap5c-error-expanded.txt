@@ -1,0 +1,45 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4   More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                Speak replies   ▌   Hands-free   ▌     Ready · not tested
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                             │ Conversation | Reply with exactly: moonsho...                                                     │
+                  Context ◂  │   Reply with exactly…  ✕    New tab     Temporary                                                 │
+   Terminal                  │                                                                                                   │
+ ──────────────────────────  │                                                                                                   │
+ Workspaces             ▸    │  ───────────────────────────────────────────────────────────────────────────────────────────────  │
+ ──────────────────────────  │   User                                                                                            │
+ Conversations          ▾    │   Reply with exactly: moonshot ok                                                                 │
+     Archive this chat       │  ───────────────────────────────────────────────────────────────────────────────────────────────  │
+      Archived chats         │  ▊ Assistant                                                                                      │
+     Search all chats…       │  ▊   ▾ Error                                                                         · failed     │
+   Reply with exactly:       │  ▊                                                                                                │
+   moonsho...                │  ▊                                                                                                │◂ Inspect
+                             │  ▊                                                                                                │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │  ▊    Guide: j/k select · Esc clear                                                               │
+  ▊  Filter      ▎           │  ▊                                                                                                │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │  ▊   ┌──────────────────────────────────────────────────────────────────────────────────────┐     │
+                             │  ▊   │ ⚠ Provider continuation could not be persisted; retry or recover the interrupted     │     │
+  Chats                 ▾    │  ▊   │ run.                                                                                 │     │
+   Reply with exactl…  ⛔    │  ▊   └──────────────────────────────────────────────────────────────────────────────────────┘     │
+   Blocked                   │  ▊                                                                                                │
+                             │  ▊                                                                                                │
+ ──────────────────────────  │  ▊                                                                                                │
+ ▼ Model · Agent · Details   │  ▊                                                                                                │
+                             │  ───────────────────────────────────────────────────────────────────────────────────────────────  │ blocked
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                                                                                                          │
+│  Response delivery status is unknown on the source device.                                                                               │
+│  Retry anyway may send a duplicate request because delivery status is unknown.                                                           │
+│    Retry anyway       Discard                                                                                                            │
+│                                                                                                                                      ▆▆  │
+│                                                                                                                                          │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+ Status ▾   Library · Auto off · Agent blocked     Provider: Moonshot AI     Model: kimi-k3     System Prompt: off     Assistant: General
+
+│  Composer ▾  Menu  Ask, command, or paste task...       Send blocked — resolve response recovery first       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+P · Ctrl+Q

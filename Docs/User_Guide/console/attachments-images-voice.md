@@ -13,7 +13,8 @@ images with `/generate-image`, and how to dictate into the draft with the
 
 Everything on this page lives in the Console composer — the input strip at
 the bottom of the Console screen (**Ctrl+2**). The buttons referenced here
-are **Send**, **Mic**, **Attach**, and **Save**, to the right of the draft.
+are **Send** and **Dictate** (the Mic button), to the right of the draft, and
+the composer's **Menu**, left of the draft, which holds **Attach file**.
 
 ## Layout tour
 
@@ -21,15 +22,15 @@ are **Send**, **Mic**, **Attach**, and **Save**, to the right of the draft.
 
 With a file staged, the composer shows a **📎** indicator between the draft
 and the buttons — `📎 photo.png · 184 B` for one file, or `📎 3 files` for
-several — the **Attach** button relabels to **Attach +**, and a **✕**
-button appears for clearing what's staged. While dictating, a status chip
+several — and a **✕** button appears after **Dictate** for clearing what's
+staged. While dictating, a status chip
 (for example `● 0:07` plus the words heard so far) appears in the same area.
 
 ## Features & controls
 
 ### Three ways to attach a file
 
-1. **Attach** button — opens the **"Select File to Attach"** picker, with
+1. **Menu ▸ Attach file** — opens the **"Select File to Attach"** picker, with
    file-type filter rows: **All Supported Files**, **Image Files**,
    **Document Files**, **E-book Files**, **Text Files**, **Code Files**,
    **Data Files**, and **All Files**.
@@ -72,20 +73,58 @@ not the file picker. (That control is labeled **Context rail** as of
 
 - The **📎** indicator names a single staged file with its size; two or
   more collapse to a count (`📎 3 files`).
-- **Attach +** stages another file (its tooltip tracks the count).
+- **Menu ▸ Attach file** stages another file; the **📎** indicator shows the
+  new count.
 - **✕** removes **everything** staged at once — toast "Attachment cleared".
   There is no per-file removal; to drop one of three, clear all and
   re-attach the two you want.
+- A staged image is enough to send: with an image staged and an empty
+  draft, **Send** is ready and sends the image on its own, provided the
+  current model accepts images (otherwise Send is blocked; see the vision
+  check below). Clearing the image with **✕** returns Send to "Send
+  disabled: type a message" at once. After a send, Send shows the queue
+  copy while the reply runs and returns to "Send disabled: type a message"
+  once it finishes. An inserted text file is draft text, so it makes Send
+  ready like anything you type.
 
 ### Vision check before sending
 
 If an image is staged but the current model can't accept images, Send is
-blocked with: "Console send blocked: <model> can't accept images. Remove
-the attachment, switch to a vision model, or mark this model as
-vision-capable under [model_capabilities.models] in config.toml."
+disabled and a row above the status line names the model and the cause —
+`<model> can't accept images` — with two buttons:
+
+- **Remove images** clears what's staged (the same as **✕**); your draft
+  stays.
+- **Switch model** opens Switch model (**Alt+M**); your draft and the image
+  stay staged, and Send is ready again once you pick a model that reads
+  images. The row goes away and the keyboard is back in your draft, so you
+  can keep typing or press Enter to send.
+
+From the composer, **Shift+Tab** reaches **Switch model**, then **Remove
+images**; **Enter** presses the focused one.
+
+A model name too long for the row is cut short with `…`; hover the row's
+text for the full message. If no model is chosen yet, the row stays hidden
+and the strip asks you to choose a model first; the row appears once you
+pick one that can't read images.
+
+Where the composer row has room, the strip beside Send reads
+`Send blocked — this model can't accept images` (it is not a link). Hovering
+Send, or pressing Enter, gives the full message: "Console send blocked:
+<model> can't accept images. Remove the attachment, switch to a vision
+model, or mark this model as vision-capable under
+[model_capabilities.models] in config.toml."
+
+With the Anthropic provider, every Claude model from the 4 generation on
+(Haiku 4.5, Sonnet, Opus and Fable included) is treated as able to read
+images, even when your
+config.toml still carries an older `[model_capabilities]` pattern list. An
+explicit `vision = false` entry for a model under
+`[model_capabilities.models]` still wins.
 
 An image already in the conversation is re-sent with every later turn. If the
-provider rejects it, the failure row suggests switching to a vision-capable
+provider refuses it (a 400, 413, 415 or 422 whose message is about the
+image), the failure row suggests switching to a vision-capable
 model, or typing `/rewind` and restoring to the prompt that added the image —
 the later turns stay available as a branch. It never suggests Delete, which
 would remove every turn after that message.
@@ -100,6 +139,23 @@ action row:
 - **Save Image** — writes the message's images to disk; the default folder
   is `save_location` under `[chat.images]` in config.toml (`~/Downloads`).
 
+### Character radio portrait
+
+Open **Context → Character** to see the active character's portrait inside a
+recessed frame, with its identity above and voice status below. **Ready**,
+**Preparing voice**, **Transmitting**, **Paused** and **Voice unavailable**
+follow the character's owned speech activity. The level bar uses fresh measured
+output; silence empties it, and unavailable timing hides it while retaining
+status. Normal layouts reserve its row, so speech does not move the controls.
+Compact layouts omit the bar first. Authored image colors and the current theme
+are preserved; no radio noise or continuous static is added.
+
+Prepared living portraits use audio-reactive mouth poses plus independent blinking
+and subtle idle movement. Reduce motion, Static and existing animation/reaction
+preferences still apply. Click the portrait for its full-size viewer; the existing
+reaction picker still selects expressions. Prepare/import or generate the six poses
+under [Personas → Living portrait](../roleplay-chat-dictionaries/characters-and-personas.md).
+
 ### Generating images — `/generate-image`
 
 Type `/generate-image [:backend] [@style] <prompt>` in the composer to run
@@ -113,16 +169,21 @@ get: "No image generation backend configured. Set
 [image_generation].default_backend, or use /generate-image :backend
 <prompt>."
 
+If a batch fails, the command comes back into the composer so **Enter**
+runs it again. Anything you typed after sending it stays in the composer;
+if the composer has changed since (new text, another chat), your text is
+left alone and the failure message shows the command to send again.
+
 ### Voice dictation — the Mic button
 
 The **Mic** button walks through four states:
 
 | Button reads | Meaning | Pressing it |
 |---|---|---|
-| **Mic** | Idle | Starts dictation |
-| **Mic…** | Preparing the speech model | Cancels ("Dictation cancelled.") |
-| **Rec ●** | Recording | Stops and transcribes |
-| **Text…** | Transcribing | Disabled — wait for the text |
+| **Dictate** | Idle | Starts dictation |
+| **Cancel** | Preparing the speech model | Cancels ("Dictation cancelled."); in Hands-free it leaves the loop |
+| **Dictating** | Recording | Stops and transcribes |
+| **Dictate…** | Transcribing | Disabled — wait for the text |
 
 A status chip beside the draft tracks progress: "◌ Preparing microphone…",
 then `● 0:07` with the latest recognized words while recording, then
@@ -131,7 +192,28 @@ is never sent automatically, so you can edit before pressing Enter.
 
 - **First run:** "Preparing the speech model for the first time. The first
   run downloads it and can take several minutes. Nothing is being recorded
-  yet — the microphone opens once the model is ready."
+  yet — the microphone opens once the model is ready." Current adapters
+  show **Loading speech model…**: they do not expose an exact download
+  artifact or a native-load heartbeat. **Cancel** ends the recording attempt
+  promptly; preparation continues in the background until it finishes or you
+  quit. Another press cannot start a second preparation while that work or its
+  cleanup is still running, even after leaving and returning to Console.
+  Completed disk-cache bytes remain available to the provider on a later try;
+  resumability depends on that provider and transport. If cleanup fails, quit
+  and restart before trying again.
+- **Model download or load fails:** the attempt ends with one message —
+  "Dictation failed: The 'parakeet-mlx' speech model could not be downloaded
+  or loaded. Nothing was recorded. Check your network connection and try
+  again, or choose another model in Settings ▸ Speech & TTS. The log has the
+  details." The microphone never opens, the chip clears and the button reads
+  **Dictate** again; pressing it is the retry.
+- **Download inactivity:** `dictation.model_prepare_stall_seconds` defaults
+  to 120 seconds, but applies only when an adapter identifies an exact active
+  download artifact. Current legacy speech adapters do not supply this, so
+  they have no automatic inactivity bound. Quiet cache files cannot establish
+  that a native load is stuck. Use **Cancel** to leave Loading; quitting ends
+  remaining background work. Byte progress is not qualified for Xet,
+  Lightning Whisper, NeMo or opaque post-download loading.
 - **Length cap:** a capture stops itself at 60 seconds — "Dictation limit
   reached; transcribing the captured audio."
 - **Requires optional extras.** Without a microphone backend: "Microphone
@@ -204,7 +286,7 @@ confirmed app quit are their cancellation boundaries.
 
 ## Common tasks
 
-1. **Attach an image and ask about it** — click **Attach**, pick the image
+1. **Attach an image and ask about it** — choose **Menu ▸ Attach file**, pick the image
    in "Select File to Attach" (the **Image Files** filter helps), confirm
    the `📎` indicator appears, type your question, press Enter.
 2. **Paste a screenshot** — take the screenshot to the clipboard, focus the
@@ -262,7 +344,7 @@ On macOS, use the switch.
   actually processed (task-222).
 - **Alt+V says "Clipboard images aren't readable on this platform — use
   Attach or drop a file."** — clipboard image capture isn't available in
-  this environment; use **Attach** or drop the file instead.
+  this environment; use **Menu ▸ Attach file** or drop the file instead.
 - **Dropping several files attaches only the first** — drop the rest one at
   a time, or copy them and use **Alt+V**, which attaches up to the limit.
 - **"No audio was captured from the microphone."** after stopping —

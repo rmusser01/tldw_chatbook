@@ -1,0 +1,40 @@
+                                                                                      ╭─────────────╮
+ ‹ leplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Resea  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Providers & Models
+┌──────────────────────────────┐  │  ┌───────────────────────────────────────────────────────┐  │  ┌───────────────────┐
+│                              │  │  │                                                       │  │  │                   │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Applies to new and      │  │  │  Scope Inspector  │
+│  No filter | / focus         │  │  │  unused open chats · used chats keep theirs           │  │  │                   │
+│  category search             │  │  │  (Console: Alt+M)                                     │  │  │ Selected          │
+│                              │  │  │                                                       │  │  │ category:         │
+│  Core                        │  │  │  Providers & Models                                   │  │  │ Providers &       │
+│      Overview (view)         │  │  │ ┌──────────────────────────────────────────────────┐  │  │  │ Models            │
+│    > Providers & Models      │  │  │ │ ╭──────────────────────────────────────────────╮ │  │  │  │ No unsaved        │
+│      Web Search              │  │  │ │ │  ▶ Prompt-cache snapshots                    │ │▇ │  │  │ changes           │
+│      Speech & TTS            │  │  │ │ │                                              │ │  │  │  │  Guided edits:    │
+│  Interface                   │  │  │ │ ╰──────────────────────────────────────────────╯ │  │  │  │  change a field   │
+│      Appearance              │  │  │ │                                                  │  │  │  │  first.           │
+│      Theme                   │  │  │ │  Connect                                         │  │  │  │  Save (s) — no ch │
+│      Splash Screen           │  │  │ │ Provider                                         │  │  │  │  Revert (r) — no  │
+│      Console Behavior        │  │  │ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │  │  │  │ Local-only: saves │
+│  Data & Privacy              │  │  │ │ ▊  Search providers by name or ID              ▎ │  │  │  │ write your config │
+│      Storage                 │  │  │ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │  │  │  │ file.             │
+│      Workspaces              │  │  │ │ Nebius Token Factory                             │  │  │  │  Focused          │
+│      Tool Profiles           │  │  │ │ Nous Research                                    │  │  │  │  setting: None  ▇ │
+│      Privacy & Security      │  │  │ │ Novita AI                                        │  │  │  │  — Tab to a     ▃ │
+│      Network                 │  │  │ │ NVIDIA NIM                                       │  │  │  │  setting          │
+│      My Profile              │  │  │ │ Ollama Cloud                                     │  │  │  │  Purpose:         │
+│  Troubleshooting             │  │  │ │ OpenAI                                           │  │  │  │  Configure the    │
+│      Diagnostics (view)      │  │  │ │ Choose a provider or enter a supported provider  │  │  │  │  default          │
+│      About (view)            │  │  │ │ alias.                                           │  │  │  │  provider,        │
+│      Agents                  │  │  │ │ Model                   │ gpt-5.6-terra          │  │  │  │  model,           │
+│  Expert                      │  │  │ │ Endpoint                │ https://api.openai.co  │  │  │  │  endpoint, and    │
+│      Hooks                   │  │  │ │                                                  │  │  │  │  credential       │
+│      Internal Prompts        │  │  │ │  Credentials                                     │  │  │  │  source.          │
+│      Advanced Config       ▇ │  │  │ │  API key source: missing; set OPENAI_API_KEY or  │  │  │  │ ▼ more — scroll   │
+│                              │  │  │                                                       │  │  │                   │
+└──────────────────────────────┘  │  └───────────────────────────────────────────────────────┘  │  └───────────────────┘
+ Open dashboard, notifications, and active work.
+  s save category | r revert category | t test provider | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

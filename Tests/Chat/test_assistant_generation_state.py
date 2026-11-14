@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from tldw_chatbook.Chat.assistant_generation_state import (
+from tldw_chatbook.DB.assistant_generation_state import (
     AssistantGenerationState,
     normalize_assistant_generation_state,
     unresolved_imported_generation_state_copy,
@@ -71,11 +71,11 @@ def test_assistant_state_uses_the_closed_state_vocabulary():
     [
         (
             AssistantGenerationState.ACCEPTED,
-            "Response accepted on another device; waiting for dispatch.",
+            "Response accepted; waiting for dispatch.",
         ),
         (
             AssistantGenerationState.DISPATCH_STARTED,
-            "Response delivery status is unknown on the source device.",
+            "Response delivery status is unknown.",
         ),
     ],
 )

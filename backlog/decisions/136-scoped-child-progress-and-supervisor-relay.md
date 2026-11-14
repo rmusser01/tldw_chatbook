@@ -6,7 +6,7 @@ Date: 2026-09-08
 Review: [Pre-implementation review, 2026-09-09](../../Docs/superpowers/reviews/2026-09-09-scoped-agent-messaging-review.md)
 Task: [TASK-32022](../tasks/task-32022%20-%20Design-scoped-bidirectional-agent-messaging.md)
 Spec: [Scoped messaging design](../../Docs/superpowers/specs/2026-09-08-scoped-agent-messaging-design.md)
-Related decisions: [ADR-032](032-local-agent-tool-permission-boundary.md), [ADR-063](063-hosted-provider-wire-and-durable-tool-continuation.md), [ADR-129](129-fleet-mailbox-and-wake-reliability.md), [ADR-134](134-fleet-admission-and-automatic-work-budgets.md), [ADR-135](135-fleet-completion-delivery-and-crash-recovery.md)
+Related decisions: [ADR-300](300-local-agent-tool-permission-boundary.md), [ADR-063](063-hosted-provider-wire-and-durable-tool-continuation.md), [ADR-129](129-fleet-mailbox-and-wake-reliability.md), [ADR-134](134-fleet-admission-and-automatic-work-budgets.md), [ADR-135](135-fleet-completion-delivery-and-crash-recovery.md)
 
 ## Problem and existing behavior
 

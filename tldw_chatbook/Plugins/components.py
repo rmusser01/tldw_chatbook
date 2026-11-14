@@ -56,6 +56,11 @@ def component_summary(
         "plugin_component_id": component_id,
         "plugin_revision": inspection.effective_digest,
         "description": definition.get("description", ""),
+        **(
+            {"arguments": definition.get("arguments", [])}
+            if component.kind == "command"
+            else {}
+        ),
         "context": "inline",
         "user_invocable": component.kind == "command"
         or (component.kind == "rule" and definition.get("mode") == "manual"),

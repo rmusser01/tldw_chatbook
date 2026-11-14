@@ -12,13 +12,20 @@ from textual.widgets import Button, Static
 
 from tldw_chatbook.Notes.recovery_review import NotesRecoveryReview
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 from tldw_chatbook.Widgets.status_line import set_status_line
 
 
-class NotesRecoveryDialog(ModalScreen[None]):
-    """Inspect an owner dry-run and request a separately confirmed approval."""
+class NotesRecoveryDialog(SafeModalDismissMixin, ModalScreen[None]):
+    """Inspect an owner dry-run and request a separately confirmed approval.
 
-    BINDINGS: ClassVar = [("escape", "close", "Close")]
+    TASK-38985: it adopts the Library's shared safe dismissal, like its sibling
+    ``SkillRecoveryReviewModal``. Close, Escape and a backdrop click each close
+    it once, and focus returns to its opener.
+    """
+
+    BINDINGS: ClassVar = [("escape", "request_safe_cancel", "Close")]
+    SAFE_MODAL_CONTENT = "#notes-recovery-dialog"
     BUNDLED_CSS = """
     NotesRecoveryDialog { align: center middle; }
     #notes-recovery-dialog { width: 85%; max-width: 100; height: 85%;
@@ -187,9 +194,6 @@ class NotesRecoveryDialog(ModalScreen[None]):
             self._busy = False
 
     @on(Button.Pressed, "#notes-recovery-close")
-    def close_pressed(self, event: Button.Pressed) -> None:
+    async def close_pressed(self, event: Button.Pressed) -> None:
         event.stop()
-        self.action_close()
-
-    def action_close(self) -> None:
-        self.dismiss(None)
+        await self.request_safe_cancel(source="visible")

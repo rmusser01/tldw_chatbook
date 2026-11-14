@@ -244,6 +244,7 @@ async def test_matcher_rejects_non_mousedown_events():
     assert match_selection_begin_container_crash(exc_info.value, mouse_up) is None
 
 
+@pytest.mark.bootstrap_profile
 def test_tldwcli_carries_the_guard_before_app():
     """Wiring pin: TldwCli must inherit the guard, ahead of App in the MRO,
     or the live app is unprotected no matter what the mixin tests prove."""

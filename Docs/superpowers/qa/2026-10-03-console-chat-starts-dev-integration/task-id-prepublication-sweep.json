@@ -1,0 +1,15 @@
+{
+  "refs": {
+    "HEAD": "ec8eda1d39a5d8ae8ed043b4270da173b95f6652",
+    "origin/dev": "d294c4871ff5b7585ad746bd6991c0934f61c639",
+    "origin/main": "f3aeb32fb3d230c0774c7fc349729d9f75c96366"
+  },
+  "max_task_id_all_refs": 34100,
+  "duplicates": {
+    "task-33802": [
+      "task-33802 - Census-typing-burst-helper-spawn-flake-under-concurrent-IO-load.md",
+      "task-33802 - Design-Console-chat-destinations-and-bounded-agent-starts.md"
+    ]
+  },
+  "chosen": 34101
+}

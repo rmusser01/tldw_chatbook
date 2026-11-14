@@ -1,0 +1,57 @@
+{
+  "head": "7ac214599d4969a4d1a57db8bef41ff02eb433c9",
+  "paths": [
+    {
+      "path": "Tests/Performance/test_ui_latency_guardrails.py",
+      "f095_sha256": "9c7b218ee6fcacc94c6e16229577280ef49437c4d384f04676d3f6eb5038fca4",
+      "current_sha256": "9c7b218ee6fcacc94c6e16229577280ef49437c4d384f04676d3f6eb5038fca4",
+      "identical": true
+    },
+    {
+      "path": "tldw_chatbook/app.py",
+      "f095_sha256": "17763f62c47c81c0c843668006bb8e3ae318ffe6f203914d23609009df44922a",
+      "current_sha256": "17763f62c47c81c0c843668006bb8e3ae318ffe6f203914d23609009df44922a",
+      "identical": true
+    },
+    {
+      "path": "tldw_chatbook/app_lifecycle.py",
+      "f095_sha256": "937526133306fc924db7502a5595c697cb9a903391d9af06e4cee9f7a40c88e8",
+      "current_sha256": "937526133306fc924db7502a5595c697cb9a903391d9af06e4cee9f7a40c88e8",
+      "identical": true
+    },
+    {
+      "path": "tldw_chatbook/app_navigation.py",
+      "f095_sha256": "0b8ecfe04ecd435e498a55e32c2fce9b1f418257e34be09a3a3f09955825e894",
+      "current_sha256": "0b8ecfe04ecd435e498a55e32c2fce9b1f418257e34be09a3a3f09955825e894",
+      "identical": true
+    },
+    {
+      "path": "tldw_chatbook/UI/Navigation/shell_destinations.py",
+      "f095_sha256": "69e815def6aecaf4270768e74e37ee97eff4da53808ea3312aa2bbb19cb99fca",
+      "current_sha256": "69e815def6aecaf4270768e74e37ee97eff4da53808ea3312aa2bbb19cb99fca",
+      "identical": true
+    },
+    {
+      "path": "tldw_chatbook/UI/Navigation/screen_registry.py",
+      "f095_sha256": "cb788568bfb455a8a8439bea67f7c6601dd6fb1c2212d88cda2e662cfa738e7e",
+      "current_sha256": "cb788568bfb455a8a8439bea67f7c6601dd6fb1c2212d88cda2e662cfa738e7e",
+      "identical": true
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/settings_screen.py",
+      "f095_sha256": "dec0a83ac50b7e174f45b248d7e41661b5ce9b65816ea87f93f32f70700575fe",
+      "current_sha256": "dec0a83ac50b7e174f45b248d7e41661b5ce9b65816ea87f93f32f70700575fe",
+      "identical": true
+    },
+    {
+      "path": "tldw_chatbook/css/tldw_cli_modular.tcss",
+      "f095_sha256": "d974a2a76b5a22d7b7161f3056750e5fe1ea1480c79b13845560a1ade9c4f405",
+      "current_sha256": "d974a2a76b5a22d7b7161f3056750e5fe1ea1480c79b13845560a1ade9c4f405",
+      "identical": true
+    }
+  ],
+  "production_changed_paths": [
+    "tldw_chatbook/Chat/console_first_send_modules.py",
+    "tldw_chatbook/Tools/web_tool_impls.py"
+  ]
+}

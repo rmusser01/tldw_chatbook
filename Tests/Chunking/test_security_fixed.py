@@ -177,25 +177,42 @@ class TestReDoSProtection:
             # This should either be rejected during validation or timeout quickly
             try:
                 result = chunker.chunk_text(
-                    text, method="ebook_chapters", custom_chapter_pattern=evil_pattern, max_size=100, overlap=0
+                    text,
+                    method="ebook_chapters",
+                    custom_chapter_pattern=evil_pattern,
+                    max_size=100,
+                    overlap=0,
                 )
 
                 # If it doesn't raise, it should at least complete quickly
                 elapsed_time = time.time() - start_time
-                assert elapsed_time < 3.0, f"Pattern {evil_pattern} took too long ({elapsed_time:.2f}s)"
+                assert elapsed_time < 3.0, (
+                    f"Pattern {evil_pattern} took too long ({elapsed_time:.2f}s)"
+                )
 
             except (InvalidInputError, ChunkingError) as e:
                 # Expected - pattern was rejected
                 elapsed_time = time.time() - start_time
-                assert elapsed_time < 3.0, f"Pattern rejection took too long ({elapsed_time:.2f}s)"
+                assert elapsed_time < 3.0, (
+                    f"Pattern rejection took too long ({elapsed_time:.2f}s)"
+                )
                 # Verify it was rejected for the right reason
                 assert any(
-                    keyword in str(e).lower() for keyword in ["dangerous", "regex", "timeout", "complexity", "pattern"]
+                    keyword in str(e).lower()
+                    for keyword in [
+                        "dangerous",
+                        "regex",
+                        "timeout",
+                        "complexity",
+                        "pattern",
+                    ]
                 )
             except Exception as e:
                 # Unexpected error
                 elapsed_time = time.time() - start_time
-                assert elapsed_time < 3.0, f"Unexpected error after {elapsed_time:.2f}s: {e}"
+                assert elapsed_time < 3.0, (
+                    f"Unexpected error after {elapsed_time:.2f}s: {e}"
+                )
                 raise
 
     @pytest.mark.timeout(10)
@@ -219,7 +236,11 @@ class TestReDoSProtection:
             try:
                 start_time = time.time()
                 result = chunker.chunk_text(
-                    text, method="ebook_chapters", custom_chapter_pattern=pattern, max_size=100, overlap=0
+                    text,
+                    method="ebook_chapters",
+                    custom_chapter_pattern=pattern,
+                    max_size=100,
+                    overlap=0,
                 )
 
                 elapsed_time = time.time() - start_time
@@ -229,7 +250,10 @@ class TestReDoSProtection:
 
             except (InvalidInputError, ChunkingError) as e:
                 # Expected - pattern was rejected
-                assert any(keyword in str(e).lower() for keyword in ["dangerous", "regex", "complexity", "invalid"])
+                assert any(
+                    keyword in str(e).lower()
+                    for keyword in ["dangerous", "regex", "complexity", "invalid"]
+                )
 
     def test_safe_patterns_work(self):
         """Test that safe regex patterns work correctly."""
@@ -248,7 +272,11 @@ class TestReDoSProtection:
         for pattern in safe_patterns:
             try:
                 result = chunker.chunk_text(
-                    text, method="ebook_chapters", custom_chapter_pattern=pattern, max_size=100, overlap=0
+                    text,
+                    method="ebook_chapters",
+                    custom_chapter_pattern=pattern,
+                    max_size=100,
+                    overlap=0,
                 )
                 assert isinstance(result, list)
                 assert len(result) > 0
@@ -272,7 +300,9 @@ class TestInputSanitization:
         # Null bytes should be handled (removed or escaped)
         for chunk in result:
             # Either null bytes are removed or preserved safely
-            assert "\x00" not in chunk or chunk.count("\x00") == malicious_text.count("\x00")
+            assert "\x00" not in chunk or chunk.count("\x00") == malicious_text.count(
+                "\x00"
+            )
 
     def test_unicode_normalization(self):
         """Test that unicode is properly normalized to prevent bypasses."""
@@ -307,7 +337,9 @@ class TestInputSanitization:
 
     def test_deeply_nested_json_limited(self):
         """Test that deeply nested JSON has depth limits."""
-        from tldw_chatbook.Chunking.engine.strategies.json_xml import JSONChunkingStrategy
+        from tldw_chatbook.Chunking.engine.strategies.json_xml import (
+            JSONChunkingStrategy,
+        )
 
         strategy = JSONChunkingStrategy()
 
@@ -363,8 +395,8 @@ class TestResourceLimits:
         pytest.importorskip(
             "tldw_chatbook.Chunking.engine.async_chunker",
             reason="async_chunker is NOT VENDORED (descope 2026-08-23 spec "
-                    "§4.2: server http_client/exceptions deps; chatbook "
-                    "chunks in-process — no consumer)",
+            "§4.2: server http_client/exceptions deps; chatbook "
+            "chunks in-process — no consumer)",
         )
         from tldw_chatbook.Chunking.engine.async_chunker import AsyncChunker
         import asyncio

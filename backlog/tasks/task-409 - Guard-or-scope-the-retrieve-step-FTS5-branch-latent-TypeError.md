@@ -1,7 +1,7 @@
 ---
 id: TASK-409
 title: Guard or scope the retrieve-step FTS5 branch latent TypeError
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-21 09:48'
 labels:
@@ -19,6 +19,13 @@ Pre-existing latent bug confirmed dead-but-armed by two reviews (task-256's PR 6
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A custom TOML pipeline with a bare retrieve step over notes/conversations FTS either works or fails at load with a clear message (no runtime TypeError)
-- [ ] #2 Regression test covers the branch
+- [x] #1 A custom TOML pipeline with a bare retrieve step over notes/conversations FTS either works or fails at load with a clear message (no runtime TypeError)
+- [x] #2 Regression test covers the branch
 <!-- AC:END -->
+
+
+## Closeout audit 2026-10-11
+
+Board-hygiene flip (cohort A, Jun-Jul 2026 status sweep). **Verdict: DONE** — evidence verified against origin/dev (a3c47c6c72).
+
+The retrieve-step FTS5 branch now guards the argument shape: 'Only search_media_fts5 accepts keyword_filter' — search_conversations_fts5/search_notes_fts5 are called WITHOUT the 4th positional (pipeline_builder_simple.py:232-250); landed in the RAG-scope review wave (3b98e27557).

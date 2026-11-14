@@ -1,0 +1,28 @@
+# Appearance step: theme + splash CARD only; no splash on/off, duration, reduce-motion, density, ascii glyphs
+## Step compose (FirstRunSetupWizard.py:7121-7158) widgets:
+6:            yield Label("Theme", classes="setup-field-label")
+7:            with SetupRadioSet(id="setup-theme-choice", classes="setup-choice-list"):
+9:            yield Button(
+14:            yield Label("Splash screen card", classes="setup-field-label")
+15:            with SetupRadioSet(id="setup-splash-choice", classes="setup-choice-list"):
+16:                yield SetupRadioButton("Surprise me (random)", value=True)
+21:            yield Button(
+
+## Template defaults the step leaves untouched:
+[appearance]
+character_expression_mode = "dynamic"  # Dynamic animates character expressions; Static changes poses without motion
+density = "normal"  # compact, normal, or comfortable default control density
+animations_enabled = true  # Enable optional UI animations where supported
+smooth_scrolling = true  # Enable smooth scrolling where supported
+reduce_motion = false  # Render animations as static frames (splash screen, Console setup backdrop)
+ascii_glyphs = false  # Substitute ASCII status markers for unicode glyphs (narrow-font terminals)
+console_transcript_style = "role_accents"  # neutral, role_accents, or immersive_rp
+[splash_screen]
+# Splash screen configuration for startup animations
+# See Docs/Examples/SPLASH_SCREENS_CATALOG.md for all available splash screens
+enabled = true  # Enable/disable splash screen
+duration = __DEFAULT_SPLASH_DURATION__  # Duration in seconds to display splash screen
+DEFAULT_SPLASH_DURATION_SECONDS (Constants.py:525):
+DEFAULT_SPLASH_DURATION_SECONDS: float = 7.0
+
+splash cards offered: 78 (10 shown + 'Show all cards...')

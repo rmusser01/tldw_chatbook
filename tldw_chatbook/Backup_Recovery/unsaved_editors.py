@@ -1,7 +1,7 @@
 """Read-only refusal for unsaved installed editor state before maintenance."""
 
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 
 from textual.containers import Vertical
 from textual.css.query import QueryError
@@ -30,7 +30,7 @@ def _text(value: object) -> bool:
 
 
 def _settings_drafts_dirty(drafts) -> bool:
-    from tldw_chatbook.UI.Screens.settings_config_models import (
+    from tldw_chatbook.state.settings_config_models import (
         SettingsCategoryId,
         SettingsDraft,
     )
@@ -57,14 +57,26 @@ def _speech_snapshot_dirty(snapshot) -> bool:
         return False
     if not _exact(
         snapshot,
-        "Widgets.Settings_Widgets.speech_tts_settings_panel",
+        "Widgets.Settings_Widgets.speech_tts_panel_types",
         "SpeechTTSPanelDraftSnapshot",
     ):
         raise TypeError("unknown speech settings snapshot")
-    return (
-        snapshot.state != snapshot.original_state
-        or snapshot.realtime_draft != snapshot.realtime_original
-    )
+    # Every field but the two navigation ones is half of a draft/original
+    # pair. Read from the dataclass, so a pair added later is compared too
+    # (the pipeline voice pair was not, TASK-33007); a field that pairs with
+    # nothing is an unknown shape, never clean.
+    values = {item.name: getattr(snapshot, item.name) for item in fields(snapshot)}
+    values.pop("configure_provider", None)
+    values.pop("draft_revision", None)
+    dirty = False
+    for original in [name for name in values if "original" in name]:
+        draft = original.removeprefix("original_").replace("_original", "_draft")
+        if draft not in values:
+            raise TypeError("unknown speech settings snapshot")
+        dirty = values.pop(original) != values.pop(draft) or dirty
+    if values:
+        raise TypeError("unknown speech settings snapshot")
+    return dirty
 
 
 def _clean_settings_form(owner) -> bool:
@@ -176,6 +188,131 @@ def _console_snapshot_dirty(state) -> bool:
     return launch is not None
 
 
+#: Every key ``SettingsScreen.save_state`` can write; a test pins it to that
+#: source. An unknown key refuses, so a missing one blocks every kept visit.
+SETTINGS_SNAPSHOT_KEYS = frozenset(
+    {
+        # View state, shape-checked only.
+        "active_category",
+        "category_search_query",
+        "hooks_snapshot",  # the saved hooks' review; their edits are a draft
+        "mcp_hub_view_state",  # Tools & MCP hub pane's view state (ADR-240)
+        "provider_return_continuation",
+        "discovered_pick",  # TASK-35011: the pick s adds to the saved list
+        # Drafts: retained work while unsaved.
+        "settings_drafts",
+        "speech_tts_panel_draft",
+        "web_search_session",
+        "raw_config_session",
+        "snapshot_preferences",  # written only while unsaved
+        # Registered panels' staged edits (TASK-1378.1); unsaved_titles names
+        # a dirty one, since only the panel can compare it with the config.
+        "category_panel_states",
+        "unsaved_titles",  # the screen's own list of its unsaved categories
+    }
+)
+
+
+def _is_panel_state(category, values) -> bool:
+    from tldw_chatbook.state.settings_config_models import SettingsCategoryId
+
+    return (
+        type(category) is SettingsCategoryId
+        and type(values) is dict
+        and all(type(key) is str and type(value) is str for key, value in values.items())
+    )
+
+
+def _settings_panels_dirty(owner) -> bool:
+    """A registered panel's staged edit, answered as the screen answers it."""
+    states = owner._category_panel_states
+    if type(states) is not dict or any(
+        not _is_panel_state(category, values) for category, values in states.items()
+    ):
+        raise TypeError("unknown settings panel state")
+    return any(type(owner)._category_has_unsaved_changes(owner, c) for c in states)
+
+
+def _settings_snapshot_dirty(state: dict) -> bool:
+    if set(state) - SETTINGS_SNAPSHOT_KEYS:
+        raise TypeError("unknown retained Settings field")
+    if any(
+        type(state[key]) is not str
+        for key in ("active_category", "category_search_query")
+        if key in state
+    ):
+        raise TypeError("unknown retained Settings navigation")
+    hooks = state.get("hooks_snapshot")
+    if hooks is not None and not _exact(
+        hooks, "Agents.hook_permissions", "HookReviewSnapshot"
+    ):
+        raise TypeError("unknown retained hook review")
+    continuation = state.get("provider_return_continuation")
+    if continuation is not None and (
+        type(continuation) is not dict
+        or set(continuation) != {"target", "conflict", "outcome"}
+        or type(continuation["target"]) is not dict
+        or type(continuation["conflict"]) is not bool
+        or (
+            continuation["outcome"] is not None
+            and type(continuation["outcome"]) is not str
+        )
+    ):
+        raise TypeError("unknown retained provider return")
+    pick = state.get("discovered_pick")
+    if pick is not None and (
+        type(pick) is not tuple
+        or len(pick) != 2
+        or any(type(part) is not str for part in pick)
+    ):
+        raise TypeError("unknown retained discovered pick")
+    panel_states = state.get("category_panel_states", {})
+    if type(panel_states) is not dict or any(
+        not _is_panel_state(category, values)
+        for category, values in panel_states.items()
+    ):
+        raise TypeError("unknown retained Settings panel state")
+    dirty = _settings_drafts_dirty(state.get("settings_drafts", {}))
+    dirty = _speech_snapshot_dirty(state.get("speech_tts_panel_draft")) or dirty
+    if "web_search_session" in state:
+        from tldw_chatbook.state.settings_config_models import SettingsCategoryId
+
+        session = state["web_search_session"]
+        if not _exact(session, "UI.Settings_Modules.settings_web_search", "WebSearchSettings"):
+            raise TypeError("unknown retained web search session")
+        drafts = {SettingsCategoryId.WEB_SEARCH: session.draft}
+        dirty = _settings_drafts_dirty(drafts) or dirty
+    if "raw_config_session" in state:
+        session = state["raw_config_session"]
+        module = "UI.Settings_Modules.settings_advanced_config"
+        if (
+            not _exact(session, module, "AdvancedConfigSettings")
+            or not _exact(session.state, module, "RawConfigDraft")
+            or type(session.state.text) is not str
+            or type(session.state.baseline_text) is not str
+        ):
+            raise TypeError("unknown retained raw config session")
+        dirty = session.state.text != session.state.baseline_text or dirty
+    if "snapshot_preferences" in state:
+        kept = state["snapshot_preferences"]
+        module = "LLM_Management.snapshot_settings"
+        if (
+            type(kept) is not tuple
+            or len(kept) != 2
+            or not _exact(kept[0], module, "SnapshotPreferences")
+            or type(kept[1]) is not tuple
+            or len(kept[1]) != 2
+            or type(kept[1][0]) is not bool
+            or type(kept[1][1]) is not str
+        ):
+            raise TypeError("unknown retained snapshot preferences")
+        dirty = True
+    titles = state.get("unsaved_titles", [])
+    if type(titles) is not list or any(type(title) is not str for title in titles):
+        raise TypeError("unknown retained Settings titles")
+    return bool(titles) or dirty
+
+
 def _retained_editors(store) -> list[UnsavedEditor]:
     if not _exact(store, "UI.Navigation.screen_state_store", "ScreenStateStore"):
         raise TypeError("unknown screen state owner")
@@ -200,21 +337,7 @@ def _retained_editors(store) -> list[UnsavedEditor]:
             raise TypeError("unknown retained screen shape")
         state = envelope.snapshot
         if route == "settings":
-            if set(state) - {
-                "active_category",
-                "category_search_query",
-                "settings_drafts",
-                "speech_tts_panel_draft",
-            }:
-                raise TypeError("unknown retained Settings field")
-            if any(
-                type(state[key]) is not str
-                for key in ("active_category", "category_search_query")
-                if key in state
-            ):
-                raise TypeError("unknown retained Settings navigation")
-            dirty = _settings_drafts_dirty(state.get("settings_drafts", {}))
-            dirty = _speech_snapshot_dirty(state.get("speech_tts_panel_draft")) or dirty
+            dirty = _settings_snapshot_dirty(state)
         elif route == "chat":
             dirty = _console_snapshot_dirty(state)
         elif route == "library":
@@ -476,36 +599,9 @@ def _editor(owner: object) -> list[UnsavedEditor]:
     dirty = False
     label = "Editor"
     if _exact(owner, "UI.Screens.chat_screen", "ChatScreen"):
-        label = "Console composer"
-        # Read the controls directly: the normal composer accessor memoizes,
-        # while draft reconciliation writes back to sessions and clears stashes.
-        from tldw_chatbook.Widgets.Console.console_composer_bar import (
-            ConsoleComposerBar,
-        )
-
-        composers = list(owner.query(ConsoleComposerBar))
-        if len(composers) != 1 or type(composers[0]) is not ConsoleComposerBar:
-            raise TypeError("unknown mounted composer")
-        dirty = _text(composers[0].draft_text())
-        snapshot = owner._session._console_draft_switch_snapshot
-        if snapshot is not None:
-            if type(snapshot) is not tuple or len(snapshot) != 3:
-                raise TypeError("unknown draft transition")
-            dirty = _text(snapshot[1]) or dirty
-        # Enter retains a typed capture until its callback takes custody. The
-        # composer keeps the draft until accepted work owns it; there is no
-        # separate screen-owned inflight stash in the installed send path.
-        pending = owner._console_pending_send
-        if pending is not None:
-            if not _exact(pending, "UI.Screens.chat_screen", "_ConsolePendingSend"):
-                raise TypeError("unknown pending send")
-            stash = pending.stash
-            if stash is not None and not _exact(
-                stash, "Widgets.Console.console_composer_bar", "ConsoleDraftStash"
-            ):
-                raise TypeError("unknown draft stash")
-            if stash is not None:
-                dirty = _text(stash.text) or bool(stash.segments) or dirty
+        # The screen reads its composer, switch snapshot and send capture
+        # without reconciling them, and raises TypeError on an unknown shape.
+        label, dirty = "Console composer", owner.has_unsaved_editor_state()
     elif _exact(owner, "Widgets.Console.console_composer_bar", "ConsoleComposerBar"):
         label, dirty = "Console composer", _text(owner.draft_text())
     elif _exact(owner, "UI.Screens.library_screen", "LibraryScreen"):
@@ -564,6 +660,7 @@ def _editor(owner: object) -> list[UnsavedEditor]:
         label = "Settings"
         dirty = _settings_drafts_dirty(owner._settings_drafts)
         dirty = _speech_snapshot_dirty(owner._speech_tts_draft_snapshot) or dirty
+        dirty = _settings_panels_dirty(owner) or dirty
         if not dirty:
             dirty = not _clean_settings_form(owner)
     elif _exact(owner, "UI.Screens.personas_screen", "PersonasScreen"):

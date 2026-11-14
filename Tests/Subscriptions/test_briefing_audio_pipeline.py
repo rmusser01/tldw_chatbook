@@ -241,7 +241,9 @@ async def test_happy_path_produces_a_complete_row_with_a_working_wav_file(
     assert row["duration_seconds"] == pytest.approx(expected_ms / 1000.0, abs=0.06)
 
 
-async def test_the_audio_file_lands_under_the_private_data_dir(tmp_path, monkeypatch) -> None:
+async def test_the_audio_file_lands_under_the_private_data_dir(
+    tmp_path, monkeypatch
+) -> None:
     _patch_user_data_dir(monkeypatch, tmp_path)
     db = _db(tmp_path)
     roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
@@ -266,7 +268,9 @@ async def test_the_audio_file_lands_under_the_private_data_dir(tmp_path, monkeyp
 # --- Pre-flight refusals: no row ever written ---------------------------------
 
 
-async def test_script_not_complete_is_refused_with_no_audio_row(tmp_path, monkeypatch) -> None:
+async def test_script_not_complete_is_refused_with_no_audio_row(
+    tmp_path, monkeypatch
+) -> None:
     _patch_user_data_dir(monkeypatch, tmp_path)
     db = _db(tmp_path)
     roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
@@ -284,7 +288,9 @@ async def test_script_not_complete_is_refused_with_no_audio_row(tmp_path, monkey
     assert db.list_briefing_audio(script_id) == []
 
 
-async def test_script_with_no_turns_is_refused_with_no_row(tmp_path, monkeypatch) -> None:
+async def test_script_with_no_turns_is_refused_with_no_row(
+    tmp_path, monkeypatch
+) -> None:
     _patch_user_data_dir(monkeypatch, tmp_path)
     db = _db(tmp_path)
     roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
@@ -309,7 +315,9 @@ async def test_script_with_unparsable_turns_json_is_refused_with_no_row(
     db = _db(tmp_path)
     roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
     script_id = _script_id(db, roster=roster, turns=None, status="generating")
-    db.update_briefing_script(script_id, status="complete", turns_json="not json at all")
+    db.update_briefing_script(
+        script_id, status="complete", turns_json="not json at all"
+    )
 
     with pytest.raises(AudioGenerationError):
         await generate_script_audio(
@@ -369,7 +377,9 @@ async def test_pydub_unavailable_is_a_failed_row_and_synthesize_is_never_called(
     ]
 
 
-async def test_pydub_unavailable_never_touches_the_script(tmp_path, monkeypatch) -> None:
+async def test_pydub_unavailable_never_touches_the_script(
+    tmp_path, monkeypatch
+) -> None:
     """Mirrors `test_a_failed_synthesis_never_touches_the_script`: the
     parent `briefing_scripts` row must be untouched by this failure too."""
     _patch_user_data_dir(monkeypatch, tmp_path)
@@ -431,7 +441,9 @@ async def test_a_turn_raising_turn_synthesis_error_is_a_failed_row_naming_speake
     assert list(briefing_audio_dir().glob("*.wav")) == []
 
 
-async def test_a_failed_synthesis_never_touches_the_script(tmp_path, monkeypatch) -> None:
+async def test_a_failed_synthesis_never_touches_the_script(
+    tmp_path, monkeypatch
+) -> None:
     """THE named invariant (spec §Error handling ethos): a failed audio
     render must leave the parent `briefing_scripts` row byte-identical."""
     _patch_user_data_dir(monkeypatch, tmp_path)
@@ -441,7 +453,8 @@ async def test_a_failed_synthesis_never_touches_the_script(tmp_path, monkeypatch
     script_id = _script_id(db, roster=roster, turns=turns)
     profile_service = _FakeProfileService({_HOST_PROFILE_ID: _profile()})
     synth = _RecordingSynthesize(
-        fail_at=0, fail_exc=TurnSynthesisError("speaker 'Host' turn 0: provider exploded")
+        fail_at=0,
+        fail_exc=TurnSynthesisError("speaker 'Host' turn 0: provider exploded"),
     )
 
     before = db.get_briefing_script(script_id)
@@ -506,7 +519,9 @@ async def test_voice_resolution_failure_for_a_deleted_profile_is_a_failed_row(
     assert row["file_path"] is None
     # Exactly one row -- created directly, never a "generating" row a
     # caller could see.
-    assert [audio_row["id"] for audio_row in db.list_briefing_audio(script_id)] == [row["id"]]
+    assert [audio_row["id"] for audio_row in db.list_briefing_audio(script_id)] == [
+        row["id"]
+    ]
 
 
 async def test_a_voice_resolution_failure_never_touches_the_script(
@@ -659,7 +674,9 @@ def test_fail_interrupted_audio_flips_orphaned_generating_rows_and_returns_the_c
 # --- DB error propagation + off-loop threading (binding rules) -----------------
 
 
-async def test_generate_script_audio_propagates_a_real_db_error(tmp_path, monkeypatch) -> None:
+async def test_generate_script_audio_propagates_a_real_db_error(
+    tmp_path, monkeypatch
+) -> None:
     """A genuine DB failure at the pre-flight load must propagate, never
     degrade into a row -- mirrors `test_generate_script_propagates_a_real_db_error`.
     """
@@ -817,7 +834,9 @@ async def test_generate_script_audio_logs_no_turn_content_on_failure(
     )
 
     captured: list[str] = []
-    handler = logger.add(captured.append, level="DEBUG", diagnose=True, backtrace=True, catch=False)
+    handler = logger.add(
+        captured.append, level="DEBUG", diagnose=True, backtrace=True, catch=False
+    )
     try:
         row = await generate_script_audio(
             db,
@@ -1101,8 +1120,7 @@ async def test_row_scoped_exclude_sweeps_a_same_script_zombie_while_sparing_the_
     assert db.get_briefing_audio(zombie_id)["error"] == "interrupted"
     live_id = next(iter(live_ids))
     assert db.get_briefing_audio(live_id)["status"] == "generating", (
-        "row-scoped exclude must not falsify the row a live claim is "
-        "actually writing"
+        "row-scoped exclude must not falsify the row a live claim is actually writing"
     )
 
     release.set()
@@ -1233,7 +1251,9 @@ async def test_row_scoped_exclude_still_sweeps_a_same_script_zombie_once_the_id_
 
     row_ids = active_audio_claim_row_ids()
     pending = pending_audio_claim_script_ids()
-    assert row_ids, "the live claim's row id must be recorded by the time synthesis runs"
+    assert row_ids, (
+        "the live claim's row id must be recorded by the time synthesis runs"
+    )
     assert script_id not in pending, (
         "once the row id lands, the script is no longer 'pending'"
     )

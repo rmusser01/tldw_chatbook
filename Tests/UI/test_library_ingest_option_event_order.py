@@ -1,16 +1,81 @@
 """Retained import options reject events superseded by reset or replacement."""
 
 import pytest
+from textual import events
 from textual.widgets import Button, Checkbox, Input, Select, TextArea
 
 from Tests.private_profile import private_profile_test
-from Tests.UI.test_library_ingest_canvas import _CanvasHost, _MessageRecordingHost
+from Tests.UI.test_library_ingest_canvas import (
+    _CanvasHost,
+    _MessageRecordingHost,
+    _import_behavior_state,
+)
 from Tests.UI.test_library_shell import _wait_for_condition
 from tldw_chatbook.Library.library_ingest_state import (
     LibraryIngestFormState,
     build_library_ingest_state,
 )
 from tldw_chatbook.Widgets.Library.library_ingest_canvas import LibraryIngestCanvas
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", ["custom_prompt", "system_prompt"])
+async def test_mouse_move_over_removed_ingest_prompt_keeps_replacement_editable(name):
+    """A stale compositor hit must not render a detached editor's cleared CSS."""
+    state = _import_behavior_state(backend="local", analyze=True)
+    state.form.type_options["generic"][name] = "First line\nSecond line"
+    host = _MessageRecordingHost(state)
+    selector = f"#opt-generic-{name}"
+
+    async with host.run_test(size=(120, 60)) as pilot:
+        await pilot.pause()
+        canvas = host.query_one(LibraryIngestCanvas)
+        editor = canvas.query_one(selector, TextArea)
+        assert editor.text == "First line\nSecond line"
+        assert not editor.disabled
+        editor.scroll_visible(animate=False, immediate=True)
+        await pilot.pause()
+        x, y = editor.content_region.offset
+        assert host.screen.get_widget_at(x, y)[0] is editor
+
+        # Removal clears component styles before the next compositor reflow.
+        # Do not pause here: the reported MouseMove lands in this exact window.
+        await editor.remove()
+        assert not editor.is_attached
+        assert host.screen.get_widget_at(x, y)[0] is editor
+        # A pending repaint invalidates Rich styles; a warm cache would mask
+        # the cleared component styles and let the stock TextArea pass.
+        editor.refresh()
+        await host.on_event(
+            events.MouseMove(
+                widget=None,
+                x=x,
+                y=y,
+                delta_x=3,
+                delta_y=2,
+                button=0,
+                shift=False,
+                meta=False,
+                ctrl=False,
+            )
+        )
+
+        canvas.sync_state(state)
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(canvas.query(selector)),
+            message="Replacement ingestion prompt did not mount",
+        )
+        await pilot.pause()
+        replacement = canvas.query_one(selector, TextArea)
+        assert replacement is not editor
+        assert replacement.text == "First line\nSecond line"
+        host.option_changes.clear()
+        replacement.load_text("Replacement\nPrompt")
+        await pilot.pause()
+        assert [
+            (event.group, event.name, event.value) for event in host.option_changes
+        ] == [("generic", name, "Replacement\nPrompt")]
 
 
 @pytest.mark.asyncio

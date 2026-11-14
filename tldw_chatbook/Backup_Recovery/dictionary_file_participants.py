@@ -145,7 +145,7 @@ def pin_inputs(state):
             descriptor, _ = _open_verified_parent(
                 path,
                 missing_leaf_allowed=False,
-                _close=lambda fd: raw._close_descriptor(state, fd),
+                _close=lambda fd: raw.close_descriptor(state, fd),
             )
             state.pins[path.parent] = descriptor
         if not state.pinned:
@@ -169,7 +169,7 @@ def _current():
     if plan is None or plan.token is None:
         return None
     _check_selection(plan)
-    raw._check(plan.token)
+    raw.check(plan.token)
     if plan.core is not None:
         storage._check_operation(plan.core, plan.db.db_path)
     return plan
@@ -190,7 +190,7 @@ def _operation(
     from .. import config as current_config
     from ..DB.ChaChaNotes_DB import CharactersRAGDB
     from . import raw_participants as raw
-    from .participants import _core_operation
+    from .participants import core_operation
 
     previous_plan = getattr(_local, "plan", None)
     previous_raw = getattr(raw._local, "operation", None)
@@ -241,15 +241,15 @@ def _operation(
             _local.plan = plan
             with ExitStack() as scopes:
                 if isinstance(db, CharactersRAGDB):
-                    scopes.enter_context(_core_operation(db))
+                    scopes.enter_context(core_operation(db))
                     plan.core = getattr(storage._operation_local, "operation", None)
                 token = scopes.enter_context(
-                    raw._scope(plan.module, ROUTE, writing=output is not None)
+                    raw.scope(plan.module, ROUTE, writing=output is not None)
                 )
                 plan.token = token
                 attempt.check()
                 _check_selection(plan)
-                raw._check(token)
+                raw.check(token)
                 qualified = (
                     plan.installed
                     and all(raw._states[token].holds)
@@ -280,7 +280,7 @@ def _operation(
         raw._local.operation = previous_raw
         storage._operation_local.operation = previous_core
         if previous_raw is not None:
-            raw._check(previous_raw)
+            raw.check(previous_raw)
         if previous_core is not None:
             storage._check_operation(previous_core, previous_core.path)
 
@@ -297,7 +297,7 @@ def folder():
     with config_participants.operation(
         config, route="config_chat_dicts", target=selected
     ) as token:
-        raw._mkdirs(token)
+        raw.mkdirs(token)
     return selected
 
 
@@ -412,11 +412,11 @@ def exporting(function):
 
         from .. import config
         from ..DB.ChaChaNotes_DB import CharactersRAGDB
-        from .participants import _core_operation
+        from .participants import core_operation
 
         with closing(storage._Acquisition()) as attempt:
             with (
-                _core_operation(db)
+                core_operation(db)
                 if isinstance(db, CharactersRAGDB)
                 else nullcontext()
             ):
@@ -463,7 +463,7 @@ def opened(path, mode, *, encoding="utf-8"):
     if mode == "r":
         if path not in plan.inputs:
             raise bootstrap.RecoveryRequired("dictionary_input_outside_operation")
-        with raw._file(plan.token, path, "r") as stream:
+        with raw.file(plan.token, path, "r") as stream:
             before = _stamp(os.fstat(stream.fileno()))
             if before != plan.input_stats[path]:
                 raise bootstrap.RecoveryRequired("dictionary_input_changed")
@@ -478,17 +478,17 @@ def opened(path, mode, *, encoding="utf-8"):
         raise bootstrap.RecoveryRequired("dictionary_output_outside_operation")
     temporary = path.with_suffix(path.suffix + ".tmp")
     if plan.create_parent:
-        raw._mkdirs(plan.token)
+        raw.mkdirs(plan.token)
     try:
-        with raw._file(plan.token, temporary, "w") as stream:
+        with raw.file(plan.token, temporary, "w") as stream:
             yield stream
         check_destination(plan)
-        raw._replace(plan.token, temporary, path)
+        raw.replace(plan.token, temporary, path)
         plan.published = True
     finally:
         state = raw._states[plan.token]
         if temporary in state.created_files and not state.uncertain:
-            raw._remove_temporary(plan.token, temporary)
+            raw.remove_temporary(plan.token, temporary)
 
 
 def copy_file(source, destination):
@@ -501,7 +501,7 @@ def copy_file(source, destination):
             if _current().token is not None:
                 from . import raw_participants as raw
 
-                state = raw._check(_current().token)
+                state = raw.check(_current().token)
                 if state.pinned and _current().metadata_supported:
                     os.utime(outgoing.fileno(), ns=(info.st_atime_ns, info.st_mtime_ns))
                     shutil._copyxattr(incoming.fileno(), outgoing.fileno())

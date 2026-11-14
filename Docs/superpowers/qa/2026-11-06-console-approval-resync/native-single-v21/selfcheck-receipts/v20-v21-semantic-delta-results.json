@@ -1,0 +1,30 @@
+{
+  "status": "GREEN",
+  "scope": "Only diagnostic default/flag binding changes. References, guard/spool, pixel classifiers, capture/41loop/accounting/clock code and original debug class remain unchanged.",
+  "checks": {
+    "StageWatchdog_unchanged_AST": true,
+    "run_round_unchanged_AST": true,
+    "capture_unchanged_AST": true,
+    "persist_image_unchanged_AST": true,
+    "classify_feedback_unchanged_AST": true,
+    "classify_terminal_unchanged_AST": true,
+    "qpc_perf_interval_unchanged_AST": true,
+    "input_components_unchanged_AST": true,
+    "planned_outcomes_unchanged_AST": true,
+    "nearest_rank_p95_unchanged_AST": true,
+    "authorized_round_limit_unchanged_AST": true,
+    "all_reference_bytes_unchanged": true,
+    "guard_bytes_unchanged": true,
+    "spool_bytes_unchanged": true
+  },
+  "changed_runtime_files": [
+    "native_product_child.py",
+    "native_product_observer.py",
+    "native_series_method.py",
+    "prepare_native_run.py"
+  ],
+  "qualified": false,
+  "product_samples": 0,
+  "GUI_launched": false,
+  "run_seeded": false
+}

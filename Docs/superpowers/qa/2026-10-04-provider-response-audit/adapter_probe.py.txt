@@ -1,0 +1,41 @@
+"""Temporary actual-adapter probes; expected successes expose known contract gaps."""
+import json
+from unittest.mock import patch
+import pytest
+from Tests.LLM_Calls.test_groq_openrouter_migration_characterization import _nonstreaming_ok_response, _sse_stream_response
+from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+pytestmark = pytest.mark.bootstrap_profile
+
+@pytest.mark.parametrize("provider,model,extra,choice_extra", [
+    ("groq", "llama-3.3-70b-versatile", {"x_groq": {"id":"fixture"}}, {"logprobs":None}),
+    ("openrouter", "openai/gpt-4o", {}, {"native_finish_reason":"stop"}),
+    ("together", "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo", {}, {"logprobs":None}),
+    ("fireworks", "accounts/fireworks/models/llama-v3p1-8b-instruct", {}, {"logprobs":None}),
+    ("cerebras", "llama3.1-8b", {"time_info":{"total_time":0.1}}, {"logprobs":None}),
+    ("moonshot", "moonshot-v1-8k", {}, {}),
+    ("mistral", "mistral-small-latest", {}, {}),
+    ("zai", "glm-4.5", {}, {}),
+])
+@pytest.mark.parametrize("streaming", [False, True])
+def test_actual_provider_documented_response(provider, model, extra, choice_extra, streaming):
+    common={"id":"fixture", "created":1, "model":model, **extra}
+    choice={"index":0,"finish_reason":"stop", **choice_extra}
+    usage={"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}
+    if streaming:
+        events=[{**common,"object":"chat.completion.chunk","choices":[{**choice,"finish_reason":None,"delta":{"role":"assistant","content":"hi"}}]}, {**common,"object":"chat.completion.chunk","choices":[{**choice,"delta":{}}],"usage":usage}]
+        body=''.join('data: '+json.dumps(e)+'\n\n' for e in events)+'data: [DONE]\n\n'
+        response=_sse_stream_response(body.encode())
+    else:
+        response=_nonstreaming_ok_response({**common,"object":"chat.completion","choices":[{**choice,"message":{"role":"assistant","content":"hi"}}],"usage":usage})
+    with patch("requests.Session.post",return_value=response):
+        result=chat_api_call(provider,messages_payload=[{"role":"user","content":"hello"}],api_key="fixture-key",model=model,streaming=streaming)
+        if streaming:
+            events=[]
+            for item in result:
+                if isinstance(item,dict): events.append(item)
+                elif item.startswith('data: ') and '[DONE]' not in item: events.append(json.loads(item[6:]))
+            assert ''.join(c.get('delta',{}).get('content','') for e in events for c in e.get('choices',[]))=='hi'
+            assert any(e.get('usage',{}).get('total_tokens')==4 for e in events)
+        else:
+            assert result['choices'][0]['message']['content']=='hi'
+            assert result['usage']['total_tokens']==4

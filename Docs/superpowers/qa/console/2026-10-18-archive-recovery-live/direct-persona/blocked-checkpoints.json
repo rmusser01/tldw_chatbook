@@ -1,0 +1,21 @@
+[
+  {
+    "assistant_message_id": "543c829d-b9a2-483a-bec5-ba7e6aed2700",
+    "user_message_id": "e3aac440-13c3-499e-b99a-fc085608b5d7",
+    "conversation_id": "5b3aafea-0ff2-4202-8956-4f3400e2856c",
+    "schema_version": 1,
+    "preparation_id": "c19f8d9e-a4cf-4203-9d76-9114edf21a4d",
+    "attempt_id": "579ad0cc-dd8e-403a-a98a-cb76f4f80c98",
+    "state": "accepted",
+    "checkpoint_revision": 1,
+    "user_message_version": 1,
+    "assistant_message_version": 1,
+    "origin": "manual",
+    "queue_entry_id": null,
+    "frozen_authority_json": "{\"policy\":{\"auto_retrieve\":\"never\",\"assistant_access\":\"allowed\",\"policy_revision\":null,\"source\":\"new_session\",\"error_code\":null},\"direct_library_tools\":true,\"source_types\":[\"notes\",\"media\",\"conversations\"],\"scope_snapshot\":{\"note_ids\":[],\"media_ids\":[],\"conversations_allowed\":true},\"provider_intent\":{\"provider\":\"llama_cpp\",\"model\":\"unsloth/Qwen3.8-27B-GGUF:Q8_0\",\"endpoint\":\"http://127.0.0.1:8010\"},\"attempt_id\":\"579ad0cc-dd8e-403a-a98a-cb76f4f80c98\"}",
+    "resolved_destination_json": "{\"provider\":\"llama_cpp\",\"model\":\"unsloth/Qwen3.8-27B-GGUF:Q8_0\",\"endpoint_identity\":\"http://127.0.0.1:8010\",\"egress_class\":\"on_device\"}",
+    "reconstructability_json": "{\"attachments_reconstructable\":true,\"evidence_reconstructable\":true,\"prefill_reconstructable\":true,\"opaque_reference\":\"opaque:c19f8d9e-a4cf-4203-9d76-9114edf21a4d\"}",
+    "created_at": "2026-10-18 15:35:12",
+    "updated_at": "2026-10-18 15:35:12"
+  }
+]

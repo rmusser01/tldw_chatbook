@@ -1,0 +1,167 @@
+{
+  "version": "BrowserConsoleSINGLE-source-v1",
+  "status": "COMPLETE_PRIVATE_SOURCE_READY_FOR_WHOLE_REVIEW_NOT_LAUNCHED",
+  "source_manifest_sha256": "dd4db2a974bbb9d60bbef250445cda242d4f2e2705296ca390dcf0fc4fde7c43",
+  "source_manifest_files": 33,
+  "runtime_files": 19,
+  "scope": "CURRENTfeature SINGLE actual120x40 Inspectclosed textual-dark only; validationhard1 thenexplicitfreeze-bound41=cold1+warm40. No baseline/four-shape/matrix claim.",
+  "qualified": false,
+  "product_samples": 0,
+  "private_prepare_App_browser_server_venv_launches": 0,
+  "shared_workload": {
+    "sha256": "ef0b030865070035a0e32258c72adfc5f471646ef76feebe393e4d68e707067b",
+    "source": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\console-approval-pr\\tldw_tui\\Docs\\superpowers\\qa\\2026-11-06-console-approval-resync\\native-single-v21\\approval_fixture_workload_v7.py",
+    "byte_identical": true,
+    "route": "Genuine stock settings/switch/bind/load/capture/receive andactualcustody.task; no directsubmitfallback"
+  },
+  "guards": "ExistingV18sourcefirst/MainCoreTests/originalHome/admission/exactloopback/denyproxy/ownedHWNDprofileforegroundgeometrynonocclusion/pagevisibility retained; privateoutput underselectedsource/.superpowers;manifest/runtime/sourcefreeze mandatory. No CachedReadyStubs/Cdiagnostics/modelcalls/install/publicHEADedits.",
+  "changes": "Per-owned-WebDriver observationalprequeue once/failureisolated; exactV21EventSink/CardEvents andpassiveEventReaderreadiness; actualterminalowner/widgetsread-only; fixed1/41 attemptlimit; validation-only45sRootbarriers; qualificationallframecontentspendingoffline; no glyphatlas/nonceinferencefrommodel.",
+  "clock": "AtomicAPI default20 unchanged; exactint1/20. Ordered2validation OR82qualificationsegments;20firstbefore/20lastafter and1actualmark+ownedHTTPotherendpoints; everyendpoint/segment mapping checkedagainstanchors/stablePID. No assumedtraceorigin/overheadsubtraction.",
+  "trace_categories": ["benchmark", "blink.user_timing", "disabled-by-default-devtools.screenshot"],
+  "bounds": {
+    "Chrome_ring_KiB_segment": 8192,
+    "Chrome_screenshots_segment": 50,
+    "screenshots_round": 64,
+    "screenshots_process": 2624,
+    "JSON_bytes_segment": 67108864,
+    "JSON_bytes_process_max": 5502926848,
+    "raw_rows_segment": 131072,
+    "raw_rows_process_max": 10747904,
+    "JPEG_bytes": 1048576,
+    "stage_rows_round": 64,
+    "stage_rows_process": 2624,
+    "control_spans_round": 32,
+    "control_spans_setup": 16,
+    "control_spans_process": 1328,
+    "review_seconds_validation": 45,
+    "preflight_phase_seconds": 60,
+    "preflight_total_seconds": 300,
+    "sampling_safety_seconds": 600,
+    "cleanup_seconds": 60
+  },
+  "failure_evidence": "Originalerror recordedbeforecleanup; failedinflightTracing.end usesnochildclockprobe, explicitlypartial/uncalibratedraw retained; partialclocksegments persist. Missingclosure/counters/worker/effect staysmissing, notzero/pass. Overflowretainedinvalid; no invalidroundreplacement.",
+  "metric_method": "EarliestactualindependentlyclassifieduniquePresented nonce/action andtruthfulfeedback; ALLearliereligibleframes classified orboundarymissing. LocalearliestDown->feedback,localchecks->actionable,transporttrustedDOMpointerdown->feedback; retainDownUp andUp->cardhelper. Twoactualterminalpresentations aftergenuineowner/UIReady beforeadvancing. Realmodel/prior-output boundariesexplicitlymissing.",
+  "controls": {
+    "check_segment_capture.py": {
+      "exit_code": 0,
+      "receipt": "check_segment_capture-v3.exit.json",
+      "receipt_sha256": "124fd50cb6d223cdd18fedc166d00af7254199b6e6dedf9be82f71db87af6d01"
+    },
+    "check_browser_reviews.py": {
+      "exit_code": 0,
+      "receipt": "check_browser_reviews-v3.exit.json",
+      "receipt_sha256": "124fd50cb6d223cdd18fedc166d00af7254199b6e6dedf9be82f71db87af6d01"
+    },
+    "check_owned_input.py": {
+      "exit_code": 0,
+      "receipt": "check_owned_input-v3.exit.json",
+      "receipt_sha256": "124fd50cb6d223cdd18fedc166d00af7254199b6e6dedf9be82f71db87af6d01"
+    },
+    "check_method_gates.py": {
+      "exit_code": 0,
+      "receipt": "check_method_gates-v3.exit.json",
+      "receipt_sha256": "124fd50cb6d223cdd18fedc166d00af7254199b6e6dedf9be82f71db87af6d01"
+    },
+    "check_transport_fences.py": {
+      "exit_code": 0,
+      "receipt": "check_transport_fences-v3.exit.json",
+      "receipt_sha256": "124fd50cb6d223cdd18fedc166d00af7254199b6e6dedf9be82f71db87af6d01"
+    },
+    "check_git_argv.py": {
+      "exit_code": 0,
+      "receipt": "check_git_argv-v3.exit.json",
+      "receipt_sha256": "124fd50cb6d223cdd18fedc166d00af7254199b6e6dedf9be82f71db87af6d01"
+    },
+    "check_sampling_deadline.py": {
+      "exit_code": 0,
+      "receipt": "check_sampling_deadline-v3.exit.json",
+      "receipt_sha256": "124fd50cb6d223cdd18fedc166d00af7254199b6e6dedf9be82f71db87af6d01"
+    }
+  },
+  "atomic_review": "Only traceAPI/clock/budget successor505441d2 previouslyCLEAR; WHOLErunner/collector requiresfreshindependentreview.",
+  "evidence": {
+    "segment-api-red.stderr.txt": "a34d93b9bbc3e848fdf19002c7f74311b3fc83a9e8c20dc65d61786163f7cc61",
+    "segment-endpoint-red.stderr.txt": "ea1fc76c620b31fc77abf57e0f199a9bf038be3d4d33eb548da4623fe69f20fd",
+    "segment-endpoint-green.stdout.txt": "23c8c776b78e234077f36d03be285969cecbb0b021fda4b81b29d8bfaa63c475",
+    "check_segment_capture-portable.stdout.txt": "41a40d43fb2c301148cd8296f29d543049dd512df21401402480584b391ec210",
+    "check_browser_reviews-portable.stdout.txt": "e836bd4a7561f5d755935f7e223f4773c6c85be057138faf8434ce6dc46938ab",
+    "check_owned_input-portable.stdout.txt": "9ad39690e4e7935e1175c90e89f758bfb169988739e0b9bc8011f46f430a8b57",
+    "check_method_gates-portable.stdout.txt": "63f24dbf75902e044569ef432fdcef6cfda751fef6f0efb8b93b1eb3274f10dd",
+    "check_transport_fences-portable.stdout.txt": "83f2c1796e945adc03669afed1a5956b0fa4756fbc82d0f8952e8207847e3544",
+    "sampling-deadline-red.stdout.txt": "aecd795f65c2ee37988bde3b4686f6cd55ec26a9b9764f95201139d4bc8a7be3",
+    "sampling-deadline-green.stdout.txt": "688aadcb6bc00fda6a0d1a1d04d64e87ae95a059e10e603d52deff21d52cb8f8"
+  },
+  "launch_gates": [
+    "Root+independentWHOLEsourceclear",
+    "Publish/commitimmutablewholepacket BEFOREvalidation",
+    "Rootnewactualproductfreeze inclcurrentRAGmetadatafix; exactsourceMainCore/workerclosure",
+    "Dedicatedactualstocktracenegativeprocess beforepositives; typedrefusalsALLPOST/turn0",
+    "Nativeleasefree andexplicitexclusiveBrowserSTART",
+    "ActualfirstRootaction/feedback/twoReadyvalidationviews beforequalificationauthorization",
+    "RootactualqualificationTruefreeze+runtime/reference/capability/version/loadbindings before41"
+  ],
+  "next_prepare_template": [
+    "<existing-python>",
+    "-I",
+    "<published-code>/prepare_browser_run.py",
+    "--source-root",
+    "<current-feature>",
+    "--freeze",
+    "<Root-new-freeze>",
+    "--shared-dependencies",
+    "<existing-deps>",
+    "--original-home",
+    "<original-home>",
+    "--output-root",
+    "<feature>/.superpowers/<unique-owned-output>",
+    "--shape",
+    "single",
+    "--method-mode",
+    "validation"
+  ],
+  "predecessor_protocol_sha256": "1503546138a9d1c5056665f84142f91d125731f7e03f707840370fedb9e88f02",
+  "git_path_successor": "ONLY seeder/guard safe.directory values now actualPath.as_posix; original-C path/check/capture/text/frozenHEAD/hash behavior preserved. No product/Git/App execution in actualAST once/return controls.",
+  "deadline_successor": "ONLY whole positive sampling enclosed in asyncio.timeout(600) with postreply actualelapsed refusal before accepting success; failedTracing.end send+complete enclosed TOGETHER in original30s budget. Original600/30 caps, cleanupoutside, allsource/OS/15heartbeat/60phase300total/tracecaps unchanged. Reverse-onlytransform byteequalsv2 parent.",
+  "terminal_observation_correction": {
+    "plan": "Docs/superpowers/plans/2026-11-07-console-approval-terminal-observation.md",
+    "scope": "QA observations only; no product or live-run change",
+    "header_exact_builtin_labels": [
+      "Ready",
+      "Ready · not tested"
+    ],
+    "provider": "Unique actual provider span at zero scroll, wholly contained in actual content/widget/compositor clip; other three ROI whole-visibility requirements retained",
+    "old_source_controls": {
+      "passed": 39,
+      "failed": 3,
+      "receipt": "selfcheck-receipts/terminal-semantics-RED.json",
+      "receipt_sha256": "9ac9e7335fb152f77385b3de40c2861988212ff73d461bd196ee906224d448a2"
+    },
+    "corrected_source_controls": {
+      "passed": 42,
+      "failed": 0,
+      "receipt": "selfcheck-receipts/terminal-semantics-GREEN.json",
+      "receipt_sha256": "1cd316e91563a41a0a71f148dcc1a858a43b15b4d38c9c3559da58b0f8f6cf63"
+    },
+    "control_sha256": "8fa775c83359fee58b543cf38733c5a84ad1411032a85fcbeeb9f620532dd134",
+    "runtime_child_sha256": "36a0c821fb7f9ec20e820777942daff21e43a35fc9c8dd2821290c8ddfa3f633",
+    "source_equivalence_receipt": "selfcheck-receipts/terminal-observation-source-equivalence.json",
+    "source_equivalence_sha256": "c5d461bd5db4c25455581bab48cc27c524a0c6e27949af03fcb168e35d958627",
+    "all_other_capture_authority_caps_clocks_deadlines_AST_preserved": true,
+    "validation17_remains_invalid": true,
+    "new_live_run_authorized": false,
+    "qualified": false,
+    "product_samples": 0
+  },
+  "rail_worker_setup": {
+    "state": "SOURCE_REVIEWED_VALIDATION_PENDING",
+    "predecessor_revision": "bf2de0a34758dd10d0e0a837da3fe563598fead6",
+    "predecessor_manifest_sha256": "12d8716c64a37d7bffbb01573f8fc38f972c7cae7d95d91dc627946f37ec6610",
+    "predecessor_protocol_sha256": "23070879aca1b75956fb52b311db92ba3e0c9ebb56bbede39b6d4c0fd8c5ae61",
+    "previous_child_sha256": "36a0c821fb7f9ec20e820777942daff21e43a35fc9c8dd2821290c8ddfa3f633",
+    "child_sha256": "7f22b5ff61dbca535e4cc5b87ba4971189bd2578279a5b5eb588a9155314a5aa",
+    "private_lineage_sha256": "4aa3a73023d0a291517714ffbfb23925ab7dea4e91f757c83b594c48c82a457a",
+    "source_controls": "Both extracted predecessors crossed setup with an active matching writer. Both successors completed matching workers before readiness/reply, excluded unrelated workers, propagated wait errors, and allowed an empty snapshot.",
+    "scope": "QA setup only, before sampling. No product guard, setup or sampling deadline, capture, authority, or qualification change.",
+    "qualification": "Pending fresh actual validation; headless comparison was startup-censored. Zero qualified samples."
+  }
+}

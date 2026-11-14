@@ -1,0 +1,10 @@
+[
+  {
+    "name": "image_backend_configured",
+    "exact_arguments_defaults_and_return_annotation": true
+  },
+  {
+    "name": "resolve_avatar",
+    "exact_arguments_defaults_and_return_annotation": true
+  }
+]

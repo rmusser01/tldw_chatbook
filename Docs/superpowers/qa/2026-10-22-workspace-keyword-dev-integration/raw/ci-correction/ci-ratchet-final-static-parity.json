@@ -1,0 +1,85 @@
+{
+  "rows": [
+    {
+      "path": "tldw_chatbook/Chat/answer_citations.py",
+      "lint_current_exit": 0,
+      "lint_new": [],
+      "lint_inherited_count": 0,
+      "format_current_exit": 0,
+      "format_head_exit": 0
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_chat_controller.py",
+      "lint_current_exit": 1,
+      "lint_new": [],
+      "lint_inherited_count": 60,
+      "format_current_exit": 1,
+      "format_head_exit": 1
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_interrupt_rounds.py",
+      "lint_current_exit": 0,
+      "lint_new": [],
+      "lint_inherited_count": 0,
+      "format_current_exit": 0,
+      "format_head_exit": 0
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_settings_durability.py",
+      "lint_current_exit": 0,
+      "lint_new": [],
+      "lint_inherited_count": 0,
+      "format_current_exit": 0,
+      "format_head_exit": 0
+    },
+    {
+      "path": "tldw_chatbook/app_lifecycle.py",
+      "lint_current_exit": 0,
+      "lint_new": [],
+      "lint_inherited_count": 0,
+      "format_current_exit": 1,
+      "format_head_exit": 1
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/settings_screen.py",
+      "lint_current_exit": 1,
+      "lint_new": [],
+      "lint_inherited_count": 13,
+      "format_current_exit": 1,
+      "format_head_exit": 1
+    },
+    {
+      "path": "Tests/Architecture/test_module_size_ratchet.py",
+      "lint_current_exit": 0,
+      "lint_new": [],
+      "lint_inherited_count": 0,
+      "format_current_exit": 0,
+      "format_head_exit": 0
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_local_review_hook.py",
+      "lint_current_exit": 0,
+      "lint_new": [],
+      "lint_inherited_count": 0,
+      "format_current_exit": 0,
+      "format_head_exit": null
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_project_index_preparation.py",
+      "lint_current_exit": 0,
+      "lint_new": [],
+      "lint_inherited_count": 0,
+      "format_current_exit": 0,
+      "format_head_exit": null
+    },
+    {
+      "path": "tldw_chatbook/UI/Settings_Modules/workspace_folder_bindings.py",
+      "lint_current_exit": 0,
+      "lint_new": [],
+      "lint_inherited_count": 0,
+      "format_current_exit": 0,
+      "format_head_exit": null
+    }
+  ],
+  "all_no_new_lint": true
+}

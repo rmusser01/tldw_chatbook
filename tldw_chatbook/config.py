@@ -13,7 +13,9 @@ admit_startup()
 import copy
 import difflib
 import hashlib
+import importlib.resources
 import importlib.util
+import itertools
 import json
 import re
 import shutil
@@ -50,14 +52,6 @@ from typing import (
 #
 # Third-Party Imports
 from loguru import logger
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    TypeAdapter,
-    ValidationError,
-    ValidationInfo,
-    field_validator,
-)
 
 
 #
@@ -66,16 +60,13 @@ from tldw_chatbook.Backup_Recovery import profile_paths
 from tldw_chatbook.Backup_Recovery import config_participants as _config_participants
 from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 from tldw_chatbook.Constants import DEFAULT_SPLASH_DURATION_SECONDS
-from tldw_chatbook.Canvas.limits import CanvasLimits
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
-from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
-if TYPE_CHECKING:
-    from tldw_chatbook.Canvas.web_auth import WebAuthPolicy
-    from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
-    from tldw_chatbook.Chat.console_trace_maintenance import TraceCompactionPolicy
-    from tldw_chatbook.Chat.console_trace_custom_pii import CustomPIIRuleset
-from tldw_chatbook.provider_registry import ALL_RECORDS, CLOUD_PROVIDER_CONFIG_KEYS
+
+from tldw_chatbook.provider_registry import (  # noqa: F401 - normalize_provider_config_key is re-exported
+    ALL_RECORDS,
+    CLOUD_PROVIDER_CONFIG_KEYS,
+    _ENGINE_CONFIG_KEY_ALIASES,
+    normalize_provider_config_key,
+)
 from tldw_chatbook.Utils.adaptive_reader_state import (
     ITEMS_MAX_WIDTH,
     ITEMS_MIN_WIDTH,
@@ -85,6 +76,7 @@ from tldw_chatbook.Utils.adaptive_reader_state import (
 from tldw_chatbook.Utils.console_background_effects import (
     normalize_console_background_effects,
 )
+from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
 from tldw_chatbook.Utils.path_validation import validate_path_simple
 from tldw_chatbook.Utils.startup_errors import private_path_repair_hint
 from tldw_chatbook.Utils.private_paths import (
@@ -101,315 +93,68 @@ from tldw_chatbook.Utils.private_paths import (
 )
 from tldw_chatbook.Utils.sensitive_config_keys import (
     is_sensitive_config_key,
-    validate_trace_privacy_config,
 )
 
 if TYPE_CHECKING:
-    from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryMigrationSeed
+    from tldw_chatbook.DB.ChaChaNotes_DB import (
+        CharactersRAGDB,
+        ConsoleLibraryMigrationSeed,
+    )
 #
 #######################################################################################################################
 #
 # Functions:
 
-logger.debug("CRITICAL DEBUG: config.py module is being imported/executed NOW.")
-# --- Constants ---
-# Client ID used by the Server API itself when writing to sync logs
-
-
-CanvasRemoteAccessStatus = Literal[
-    "loopback",
-    "authenticated_tls",
-    "refused",
-    "misconfigured",
-    "insecure_development",
-]
-
-
-@dataclass(frozen=True, slots=True)
-class CanvasConfigPolicy:
-    """Effective Canvas execution and delivery policy without credentials."""
-
-    enabled: bool
-    auto_open_on_create: bool
-    limits: CanvasLimits
-    remote_access_status: CanvasRemoteAccessStatus
-    remote_access_summary: str
-    diagnostics: tuple[str, ...] = ()
-
-
-_CANVAS_CONFIG_KEYS = frozenset({"enabled", "auto_open_on_create"})
-_CANVAS_ENABLED_ENV = "TLDW_CANVAS_ENABLED"
-_CANVAS_AUTO_OPEN_ENV = "TLDW_CANVAS_AUTO_OPEN_ON_CREATE"
-
-
-def _strict_canvas_bool(
-    section: Mapping[str, Any],
-    key: str,
-    *,
-    default: bool,
-    invalid_diagnostic: str,
-    diagnostics: list[str],
-) -> bool:
-    """Read one exact Canvas boolean, failing closed on malformed values."""
-
-    if key not in section:
-        return default
-    value = section.get(key)
-    if type(value) is bool:
-        return value
-    diagnostics.append(invalid_diagnostic)
+def _contains_literal_backslash_x(value: Any) -> bool:
+    pending = [value]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if type(current) is str:  # Inspect builtin values without custom coercion.
+            if "\\x" in current:
+                return True
+        elif type(current) in (dict, list, tuple):
+            identity = id(current)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            # Only builtin containers enter this branch; custom mappings keep the legacy route.
+            pending.extend(current.values() if type(current) is dict else current)
     return False
 
 
-def _resolve_canvas_bool(
-    section: Mapping[str, Any],
-    key: str,
-    *,
-    environment_name: str,
-    environ: Mapping[str, str],
-    default: bool,
-    invalid_config_diagnostic: str,
-    invalid_environment_diagnostic: str,
-    diagnostics: list[str],
-) -> bool:
-    """Resolve one strict environment-over-config Canvas preference."""
+def dumps_cli_config(config_data: Mapping[str, Any]) -> str:
+    """Retain the original codec and defer the exceptional literal encoder.
 
-    raw_environment = environ.get(environment_name)
-    if raw_environment is not None:
-        if type(raw_environment) is not str:
-            diagnostics.append(invalid_environment_diagnostic)
-            return False
-        normalized = raw_environment.strip().lower()
-        if normalized:
-            if normalized == "true":
-                return True
-            if normalized == "false":
-                return False
-            diagnostics.append(invalid_environment_diagnostic)
-            return False
-    return _strict_canvas_bool(
-        section,
-        key,
-        default=default,
-        invalid_diagnostic=invalid_config_diagnostic,
-        diagnostics=diagnostics,
-    )
+    KNOWN TRADE-OFF (2026-11-02 audit, TASK-38613): this serialization is
+    comment-hostile. Every settings save round-trips through here into
+    ``toml.dumps``, which emits values only -- ALL user comments in
+    config.toml (e.g. the ~500-line commented first-run template) are
+    stripped by the first save that rewrites the file. The surrounding write
+    path (``_write_raw_cli_config_unlocked``) is otherwise exemplary --
+    atomic rename, parse-back verification, snapshots, locking -- and that
+    decision is ACCEPTED for now: a tomlkit round-trip was evaluated on
+    2026-11-02 and deferred as a follow-up, because swapping the encoder
+    risks subtle semantic drift versus ``toml.dumps`` and would force
+    re-qualification of the parse-back-verification guarantee the writer is
+    built on. Do not assume comments survive a save.
+
+    Args:
+        config_data: Original configuration mapping passed to the writer.
+
+    Returns:
+        TOML text using the existing ordinary or literal-backslash-x codec.
+    """
+    if not _contains_literal_backslash_x(config_data):
+        return toml.dumps(config_data)
+    from tldw_chatbook.Utils.toml_serialization import dumps_cli_config as special
+
+    return special(config_data)
 
 
-def _normalize_canvas_execution(
-    config: Mapping[str, Any] | None,
-    *,
-    environ: Mapping[str, str],
-    diagnostics: list[str],
-) -> tuple[Mapping[str, Any], bool, bool]:
-    """Return the Canvas section, strict execution gate, and table validity."""
-
-    values = config if isinstance(config, Mapping) else {}
-    raw_canvas = values.get("canvas")
-    if raw_canvas is None:
-        canvas: Mapping[str, Any] = {}
-        valid_table = True
-    elif isinstance(raw_canvas, Mapping):
-        canvas = raw_canvas
-        valid_table = True
-    else:
-        canvas = {}
-        valid_table = False
-        diagnostics.append("canvas must be a table; Canvas is disabled")
-
-    if not valid_table:
-        return canvas, False, False
-    enabled = _resolve_canvas_bool(
-        canvas,
-        "enabled",
-        environment_name=_CANVAS_ENABLED_ENV,
-        environ=environ,
-        default=True,
-        invalid_config_diagnostic=(
-            "canvas.enabled must be a boolean; Canvas is disabled"
-        ),
-        invalid_environment_diagnostic=(
-            "TLDW_CANVAS_ENABLED must be true or false; Canvas is disabled"
-        ),
-        diagnostics=diagnostics,
-    )
-    return canvas, enabled, True
-
-
-def _summarize_canvas_web_auth_policy(
-    policy: "WebAuthPolicy",
-) -> tuple[CanvasRemoteAccessStatus, str]:
-    """Return credential-free copy for one already-validated web policy."""
-
-    if policy.automatic_local_login:
-        return (
-            "loopback",
-            "Loopback only — browsers on this Chatbook host enter locally.",
-        )
-    if policy.insecure_remote_http:
-        return (
-            "insecure_development",
-            "Insecure development mode — authenticated remote HTTP can be observed on the network.",
-        )
-    return (
-        "authenticated_tls",
-        "Authenticated TLS/proxy — dedicated browser admission is configured.",
-    )
-
-
-def _canvas_remote_access_status(
-    web: Mapping[str, Any],
-    *,
-    environ: Mapping[str, str],
-    keyring_get: Callable[[str, str], str | None] | None,
-    web_auth_policy: "WebAuthPolicy | None",
-) -> tuple[CanvasRemoteAccessStatus, str]:
-    """Validate configured or effective served auth and return redacted copy."""
-
-    from tldw_chatbook.Canvas.web_auth import (
-        BindPolicyError,
-        ResolvedCredential,
-        build_web_auth_policy,
-        is_loopback_host,
-        resolve_web_access_token,
-    )
-
-    if web_auth_policy is not None:
-        return _summarize_canvas_web_auth_policy(web_auth_policy)
-
-    host = str(web.get("host") or "localhost").strip()
-    public_url = str(web.get("public_url") or "").strip() or None
-    port = web.get("port", 8000)
-    if type(port) is not int or not 0 <= port <= 65535:
-        return (
-            "misconfigured",
-            "Remote access misconfigured — review the configured served bind, origin, TLS, and proxy settings.",
-        )
-    certificate = web.get("tls_certificate")
-    private_key = web.get("tls_private_key")
-    if bool(certificate) != bool(private_key):
-        return (
-            "misconfigured",
-            "Remote access misconfigured — review the configured served bind, origin, TLS, and proxy settings.",
-        )
-
-    remote_candidate = not is_loopback_host(host) or public_url is not None
-    credential = (
-        resolve_web_access_token(
-            web.get("access_token"),
-            environ=environ,
-            keyring_get=keyring_get,
-        )
-        if remote_candidate
-        else ResolvedCredential(None, "not_required")
-    )
-    proxies = web.get("trusted_proxy_addresses", ())
-    if not isinstance(proxies, (list, tuple)):
-        proxies = ("invalid-proxy-configuration",)
-    try:
-        policy = build_web_auth_policy(
-            host=host,
-            port=port,
-            access_token=credential,
-            public_url=public_url,
-            allow_insecure_remote_http=(
-                web.get("allow_insecure_remote_http") is True
-            ),
-            trusted_proxy_addresses=tuple(str(value) for value in proxies),
-            direct_tls=bool(certificate and private_key),
-        )
-    except BindPolicyError as exc:
-        if credential.reveal() is None and "token" in str(exc).lower():
-            return (
-                "refused",
-                "Remote access refused — configure the dedicated Chatbook web access token.",
-            )
-        return (
-            "misconfigured",
-            "Remote access misconfigured — review the configured served bind, origin, TLS, and proxy settings.",
-        )
-    return _summarize_canvas_web_auth_policy(policy)
-
-
-def build_canvas_config_policy(
-    config: Mapping[str, Any] | None,
-    *,
-    environ: Mapping[str, str] | None = None,
-    keyring_get: Callable[[str, str], str | None] | None = None,
-    web_auth_policy: "WebAuthPolicy | None" = None,
-) -> CanvasConfigPolicy:
-    """Build the sole normalized Canvas policy from untrusted configuration."""
-
-    values = config if isinstance(config, Mapping) else {}
-    diagnostics: list[str] = []
-    effective_environment = os.environ if environ is None else environ
-    canvas, enabled, valid_canvas_table = _normalize_canvas_execution(
-        values,
-        environ=effective_environment,
-        diagnostics=diagnostics,
-    )
-    auto_open = (
-        _resolve_canvas_bool(
-            canvas,
-            "auto_open_on_create",
-            environment_name=_CANVAS_AUTO_OPEN_ENV,
-            environ=effective_environment,
-            default=True,
-            invalid_config_diagnostic=(
-                "canvas.auto_open_on_create must be a boolean; auto-open is disabled"
-            ),
-            invalid_environment_diagnostic=(
-                "TLDW_CANVAS_AUTO_OPEN_ON_CREATE must be true or false; auto-open is disabled"
-            ),
-            diagnostics=diagnostics,
-        )
-        if valid_canvas_table
-        else False
-    )
-    if any(key not in _CANVAS_CONFIG_KEYS for key in canvas):
-        diagnostics.append(
-            "Canvas quota overrides are unsupported; hard limits remain fixed"
-        )
-
-    raw_web = values.get("web_server")
-    web = raw_web if isinstance(raw_web, Mapping) else {}
-    remote_status, remote_summary = _canvas_remote_access_status(
-        web,
-        environ=effective_environment,
-        keyring_get=keyring_get,
-        web_auth_policy=web_auth_policy,
-    )
-    return CanvasConfigPolicy(
-        enabled=enabled,
-        auto_open_on_create=auto_open,
-        limits=CanvasLimits(),
-        remote_access_status=remote_status,
-        remote_access_summary=remote_summary,
-        diagnostics=tuple(diagnostics),
-    )
-
-
-def get_canvas_config_policy(
-    *, web_auth_policy: "WebAuthPolicy | None" = None
-) -> CanvasConfigPolicy:
-    """Return the current effective Canvas policy from the shared config cache."""
-
-    return build_canvas_config_policy(
-        load_cli_config_and_ensure_existence(),
-        web_auth_policy=web_auth_policy,
-    )
-
-
-def get_canvas_execution_enabled() -> bool:
-    """Read only the global execution gate without resolving web credentials."""
-
-    config = load_cli_config_and_ensure_existence()
-    _canvas, enabled, _valid_table = _normalize_canvas_execution(
-        config,
-        environ=os.environ,
-        diagnostics=[],
-    )
-    return enabled
+logger.debug("CRITICAL DEBUG: config.py module is being imported/executed NOW.")
+# --- Constants ---
+# Client ID used by the Server API itself when writing to sync logs
 
 
 # --- [console_ssh]: SSH ControlMaster lifecycle for remote bindings -------
@@ -503,7 +248,9 @@ def get_console_ssh_settings() -> ConsoleSshSettings:
         enable_multiplexing=enable_multiplexing,
         connect_timeout_s=coerce_int_setting(
             get_cli_setting(
-                "console_ssh", "connect_timeout_s", DEFAULT_CONSOLE_SSH_CONNECT_TIMEOUT_S
+                "console_ssh",
+                "connect_timeout_s",
+                DEFAULT_CONSOLE_SSH_CONNECT_TIMEOUT_S,
             ),
             DEFAULT_CONSOLE_SSH_CONNECT_TIMEOUT_S,
             minimum=1,
@@ -518,6 +265,8 @@ def get_console_ssh_settings() -> ConsoleSshSettings:
             minimum=1,
         ),
     )
+
+
 SERVER_CLIENT_ID = "SERVER_API_V1"
 # Client ID for the CLI application instance for its local databases
 from tldw_chatbook.Backup_Recovery.isolated_restore import installation_client_id
@@ -598,7 +347,9 @@ def _default_stt_provider_for_platform() -> str:
 def application_owned_config_directory(config_path: Path) -> Path | None:
     """Return the app-owned default config parent, never a custom parent."""
 
-    if _config_participants.verified_companion_parent(sys.modules[__name__], config_path):
+    if _config_participants.verified_companion_parent(
+        sys.modules[__name__], config_path
+    ):
         return None
     if os.environ.get("TLDW_CONFIG_PATH"):
         return None
@@ -622,10 +373,39 @@ def _report_config_path_posture(
 
 
 # --- Encryption support ---
-_ENCRYPTION_PASSWORD = None  # Cached password for the session
+
+
+def _take_startup_unlock() -> tuple[Optional[str], bool]:
+    """The startup unlock's outcome, if it is running (TASK-34100.4 round 2).
+
+    `Backup_Recovery.launcher.startup_unlock` imports this module only after
+    the master password was typed; taking it here, before the module-level
+    load below, means that load decrypts instead of warning "no password is
+    set" right after the right password. Read through ``sys.modules`` so
+    config never imports the launcher itself.
+
+    Returns:
+        ``(password, pending)`` from ``launcher.take_startup_unlock()``, or
+        ``(None, False)`` when no startup unlock is in progress.
+    """
+    launcher = sys.modules.get("tldw_chatbook.Backup_Recovery.launcher")
+    take = getattr(launcher, "take_startup_unlock", None)
+    if not callable(take):
+        return None, False
+    return take()
+
+
+# Cached password for the session; True while a startup reset or re-key is
+# about to finish the unlock (the locked import-time load is then expected).
+_ENCRYPTION_PASSWORD, _STARTUP_UNLOCK_PENDING = _take_startup_unlock()
 _ENCRYPTION_MODULE = None  # Lazily loaded encryption module
 _CONFIG_GENERATION = 0
 _CONFIG_PERSISTENCE_ERROR = None
+#: TASK-38949: a fresh number for each successful config or settings cache
+#: install (a failed load takes none); ``next`` on one count is atomic, so two
+#: installs under different locks never share a number.
+_CONFIG_CACHE_INSTALL_NUMBERS = itertools.count(1)
+_CONFIG_CACHE_INSTALLS = 0
 
 #: Permission mode used the first time an encryption-related rewrite of the
 #: config file creates it from scratch (no pre-existing file whose mode can
@@ -774,8 +554,6 @@ DEFAULT_RAG_SEARCH_CONFIG = {
 }
 
 DEFAULT_MEDIA_INGESTION_CONFIG = {
-    # UI Configuration for all media types
-    "ui_style": "default",  # Options: "default", "redesigned", "new", "grid", "wizard", "split"
     "pdf": {
         "chunk_method": "semantic",
         "chunk_size": 500,
@@ -1013,9 +791,12 @@ def set_encryption_password(password: str):
     re-decrypted on the next load.
     """
     global _ENCRYPTION_PASSWORD, _SETTINGS_CACHE, _CONFIG_CACHE
+    global _STARTUP_UNLOCK_PENDING
     _ENCRYPTION_PASSWORD = password
+    _STARTUP_UNLOCK_PENDING = False
     _SETTINGS_CACHE = None
     _CONFIG_CACHE = None
+    get_encryption_module().clear_derived_key_cache()
     logger.info("Encryption password set for current session")
 
 
@@ -1026,8 +807,10 @@ def get_encryption_password() -> Optional[str]:
 
 def clear_encryption_password():
     """Clear the encryption password from memory."""
-    global _ENCRYPTION_PASSWORD
+    global _ENCRYPTION_PASSWORD, _STARTUP_UNLOCK_PENDING
     _ENCRYPTION_PASSWORD = None
+    _STARTUP_UNLOCK_PENDING = False
+    get_encryption_module().clear_derived_key_cache()
     logger.info("Encryption password cleared from memory")
 
 
@@ -1047,9 +830,15 @@ def _decrypt_config_section_with_status(
 
     password = get_encryption_password()
     if not password:
-        logger.warning(
-            "Encryption is enabled but no password is set. Cannot decrypt config."
-        )
+        if _STARTUP_UNLOCK_PENDING:
+            # A startup reset or re-key installs its outcome right after this
+            # import; a locked load now is expected, not a problem to report
+            # under the prompt (TASK-34100.4 review round 2).
+            logger.debug("Encrypted config loaded before the startup unlock finished.")
+        else:
+            logger.warning(
+                "Encryption is enabled but no password is set. Cannot decrypt config."
+            )
         return _ConfigDecryptionResult(config_data, True)
 
     try:
@@ -1522,7 +1311,7 @@ TLDW_API_PLACEHOLDER_AUTH_TOKEN = "default-secret-key-for-single-user"
 #: even though the shipped app and the full-suite alphabetical collect
 #: order happened to hide it. `config.py` is the dependency ROOT nearly
 #: everything else in this app already imports directly (verified: none of
-#: this module's own top-level imports -- the `DB.*`/`Utils.*` modules --
+#: this module's own top-level imports -- the `Utils.*` modules and the rest --
 #: reach back into `Chat` or `runtime_policy`), so the shared definition
 #: belongs here, with `Chat/provider_readiness.py` importing it -- not the
 #: reverse. This keeps the actual property Task 7 exists for -- exactly
@@ -1539,13 +1328,53 @@ PROVIDER_API_KEY_PLACEHOLDERS = frozenset(
 )
 
 
+#: The prefix `Utils/config_encryption.ConfigEncryption` writes on every
+#: encrypted config value (pinned equal by
+#: Tests/test_config_encryption_lifecycle.py). Kept as a literal here so the
+#: key resolver below never imports the encryption engine.
+ENCRYPTED_CONFIG_VALUE_PREFIX = "enc:"
+
+
+def is_encrypted_config_value(value: object) -> bool:
+    """Whether ``value`` is still-encrypted ``enc:`` config ciphertext.
+
+    TASK-34100.4 (new-protect-summary-03): ciphertext is never a credential.
+    A locked session (encryption on, no password) or a value that did not
+    decrypt keeps its ``enc:`` form in the loaded config, so every code path
+    that reads a key straight from config must treat it as unusable.
+    """
+    return isinstance(value, str) and value.strip().startswith(
+        ENCRYPTED_CONFIG_VALUE_PREFIX
+    )
+
+
+def without_ciphertext(value: Any, absent: Any = None) -> Any:
+    """Return ``value`` unchanged, or ``absent`` when it is ``enc:`` ciphertext.
+
+    For key reads that must keep their own blank/placeholder semantics (the
+    summarizers distinguish a configured-blank key from a missing one) but
+    must never send ciphertext. Provider handlers use
+    `resolve_provider_api_key` instead.
+    """
+    return absent if is_encrypted_config_value(value) else value
+
+
 def resolve_provider_api_key(value: object) -> Optional[str]:
     """Return `value` stripped, or `None` if it is not a usable provider API
-    key (not a string, blank, or one of `PROVIDER_API_KEY_PLACEHOLDERS`)."""
+    key (not a string, blank, one of `PROVIDER_API_KEY_PLACEHOLDERS`, or
+    still-encrypted `enc:` ciphertext).
+
+    TASK-34100.4 (new-protect-summary-03): ciphertext reads as ABSENT. A
+    locked session (encryption on, no password) or a value that did not
+    decrypt keeps its `enc:` form in the loaded config; accepting it made
+    readiness report Ready and sent the ciphertext as a bearer token.
+    """
     if not isinstance(value, str):
         return None
     stripped = value.strip()
     if stripped in PROVIDER_API_KEY_PLACEHOLDERS:
+        return None
+    if is_encrypted_config_value(stripped):
         return None
     return stripped or None
 
@@ -1575,33 +1404,6 @@ def resolve_tldw_api_auth_token(value: object) -> Optional[str]:
     if resolved is None or resolved == TLDW_API_PLACEHOLDER_AUTH_TOKEN:
         return None
     return resolved
-
-
-def normalize_provider_config_key(provider: object) -> str:
-    """Return the canonical lookup form used for provider config tables.
-
-    Args:
-        provider: Provider label or key to normalize.
-
-    Returns:
-        A stripped, lowercase provider key with spaces and hyphens replaced by
-        underscores.
-    """
-    normalized = str(provider or "").strip().lower().replace(" ", "_").replace("-", "_")
-    if normalized == "z.ai":
-        return "zai"
-    return _ENGINE_CONFIG_KEY_ALIASES.get(normalized, normalized)
-
-
-#: An engine preset's display config key may not normalize to its registry
-#: key ("OllamaCloud" -> "ollamacloud", not "ollama_cloud"), which made
-#: readiness answer "Unknown provider" (TASK-33511). Derived from the
-#: registry; identity for every other preset.
-_ENGINE_CONFIG_KEY_ALIASES = {
-    record.config_key.lower(): record.key
-    for record in ALL_RECORDS
-    if record.engine_driven and record.key != "custom-hosted"
-}
 
 
 class ProviderSettingsError(ValueError):
@@ -1732,6 +1534,7 @@ def _normalize_legacy_provider_api_key(
     raw_api_section: Dict[str, Any],
     toml_key: str,
     env_var: str,
+    bridged_from_legacy: set[str] | None = None,
 ) -> Optional[str]:
     """One normalized credential for `provider_key` -- PR-T2 Task 7.
 
@@ -1769,8 +1572,8 @@ def _normalize_legacy_provider_api_key(
     (it has its own env fallback), this bridge deliberately does not write
     env-sourced values into `api_settings` (see the paragraph above on
     `api_key_source` and prefill safety -- that behavior is pinned and
-    correct), google's legacy dict is `google_generative_api` which the
-    handler no longer reads, and `chat_with_google` has no env fallback of
+    correct), google's legacy top-level dict was removed as dead code
+    (nothing read it), and `chat_with_google` has no env fallback of
     its own. A caller that passes no explicit `api_key` -- the Library RAG
     path among them -- is therefore gated OPEN and fails at the wire. Any
     claim that google is fully closed must say "config-sourced" or name
@@ -1856,6 +1659,8 @@ def _normalize_legacy_provider_api_key(
             `"anthropic_api_key"`.
         env_var: The conventional environment variable, e.g.
             `"ANTHROPIC_API_KEY"`.
+        bridged_from_legacy: When given, `provider_key` is added to it if
+            the TOML-sourced fallback filled the table (TASK-33001.15).
 
     Returns:
         The normalized credential (feeds the legacy `<provider>_api` dict
@@ -1878,13 +1683,28 @@ def _normalize_legacy_provider_api_key(
     #   * The modern/legacy branches validated the STRIPPED form but
     #     returned the raw one, so `api_key = " sk-xyz "` showed
     #     `sk-xyz` in readiness and spent ` sk-xyz ` (a 401).
-    modern_value = resolve_provider_api_key(
-        provider_table.get("api_key") if isinstance(provider_table, dict) else None
-    )
+    table = provider_table if isinstance(provider_table, dict) else {}
+    # TASK-33641.11 (ADR-012): a recorded `credential_source` decides as it
+    # does for `provider_readiness.resolve_provider_credential` (not imported:
+    # that is a cycle). "none" uses no key; "stored" the table's key or the
+    # legacy one copied below, never the variable; "environment" only the
+    # variable the table names. No source keeps the order below.
+    source = table.get("credential_source")
+    source = source.strip().lower() if type(source) is str else None
+    if source == "none":
+        return None
+    if source == "environment":
+        named = table.get("api_key_env_var")
+        named = named.strip() if isinstance(named, str) else ""
+        return resolve_provider_api_key(os.getenv(named)) if named else None
+
+    modern_value = resolve_provider_api_key(table.get("api_key"))
     if modern_value:
         return modern_value  # explicit modern config always wins
 
-    env_value = resolve_provider_api_key(os.getenv(env_var))
+    env_value = (
+        None if source == "stored" else resolve_provider_api_key(os.getenv(env_var))
+    )
     if env_value:
         return env_value
 
@@ -1894,6 +1714,8 @@ def _normalize_legacy_provider_api_key(
             provider_table = {}
             api_settings_section[provider_key] = provider_table
         provider_table["api_key"] = legacy_value
+        if bridged_from_legacy is not None:
+            bridged_from_legacy.add(provider_key)
         return legacy_value
 
     return None
@@ -1982,9 +1804,63 @@ def _settings_cache_hit(active_config_path: Path) -> dict | None:
         posture = _SETTINGS_CACHE_POSTURE
     if cached is None or source != active_config_path:
         return None
-    if _config_file_posture(active_config_path) != posture:
+    if not _posture_unchanged(active_config_path, cached, posture):
         return None
     return cached
+
+
+#: Per-thread record of the last UI-loop stretch that re-checked the posture.
+_POSTURE_STRETCH = None
+
+
+def _posture_unchanged(active_config_path: Path, cached: dict, posture: tuple) -> bool:
+    """Whether the config path still has ``posture``; one check per loop stretch.
+
+    TASK-33620.15: a warm hit ``lstat``s every path component, and one Console
+    send made 114-243 warm hits on the UI loop (53-251 ms in the mounted
+    harness; a 294 ms live stall in the 0.2 s sync tick, where each ``lstat``
+    gives up the GIL to busy workers). On the thread running an event loop,
+    one check now covers the callbacks the loop runs before its next batch,
+    which no other code on that thread can interleave with; a rebuild or a
+    write installs a new settings object, which is never matched. Every
+    caller off a loop -- workers, tests, scripts -- still checks every hit.
+
+    Args:
+        active_config_path: The config path the warm hit is for.
+        cached: The installed settings object that hit.
+        posture: The identity stamped when ``cached`` was read.
+
+    Returns:
+        True while the path's identity is the stamped one.
+    """
+    global _POSTURE_STRETCH
+    import asyncio
+
+    loop = asyncio._get_running_loop()
+    if loop is None:
+        return _config_file_posture(active_config_path) == posture
+    if _POSTURE_STRETCH is None:
+        _POSTURE_STRETCH = _threading.local()
+    stretch = _POSTURE_STRETCH
+    seen = getattr(stretch, "seen", None)
+    if (
+        seen is not None
+        and seen[0] is loop
+        and seen[1] is cached
+        and seen[2] is posture
+        and seen[3] == active_config_path
+    ):
+        return True
+    if _config_file_posture(active_config_path) != posture:
+        return False
+    stretch.seen = (loop, cached, posture, active_config_path)
+    loop.call_soon(_end_posture_stretch, stretch)
+    return True
+
+
+def _end_posture_stretch(stretch: Any) -> None:
+    """Make the next loop batch re-check the config path's identity."""
+    stretch.seen = None
 
 
 def load_settings(
@@ -2102,7 +1978,7 @@ def _load_settings_uncached(
         Dictionary containing all configuration settings.
     """
     global _SETTINGS_CACHE, _SETTINGS_CACHE_SOURCE, _SETTINGS_CACHE_LOCK
-    global _SETTINGS_CACHE_POSTURE
+    global _SETTINGS_CACHE_POSTURE, _CONFIG_CACHE_INSTALLS
     active_config_path = _get_effective_config_path()
     # Stamped before anything is read: a file swapped mid-read leaves a stale
     # stamp, so the next warm read misses rather than trusting it.
@@ -2206,6 +2082,9 @@ def _load_settings_uncached(
     # the ingest template resolution order (``[chunking] default_template``).
     # Distinct from the legacy CamelCase "Chunking" server section above.
     final_chunking_settings_cli = get_toml_section("chunking")
+    # (task-34389, ADR-229) The [sync] table -- the sync-journal retention
+    # window the startup maintenance pass reads.
+    final_sync_settings_cli = get_toml_section("sync")
     final_image_generation_settings_cli = get_toml_section("image_generation")
     final_video_generation_settings_cli = get_toml_section("video_generation")
     # F-E fix: the first-run wizard's own state (setup_started/setup_completed)
@@ -2238,9 +2117,7 @@ def _load_settings_uncached(
     )
     from tldw_chatbook.Utils.reasoning_config import resolve_console_reasoning_config
 
-    reasoning_resolution = resolve_console_reasoning_config(
-        final_console_settings_cli
-    )
+    reasoning_resolution = resolve_console_reasoning_config(final_console_settings_cli)
     for diagnostic in reasoning_resolution.diagnostics:
         logger.warning("Invalid Console reasoning configuration: {}", diagnostic)
     final_console_settings_cli.update(reasoning_resolution.settings.model_dump())
@@ -2263,10 +2140,6 @@ def _load_settings_uncached(
     else:
         _status_chips_position = _status_chips_position.strip().lower()
     final_console_settings_cli["status_chips_position"] = _status_chips_position
-    final_console_settings_cli["status_chips_collapsed"] = coerce_bool_setting(
-        final_console_settings_cli.get("status_chips_collapsed", False),
-        False,
-    )
     final_console_settings_cli["paste_collapse_threshold"] = coerce_int_setting(
         final_console_settings_cli.get(
             "paste_collapse_threshold",
@@ -2455,6 +2328,7 @@ def _load_settings_uncached(
     # never disagree about the same config. `elevenlabs` is untouched: it
     # is a TTS credential, not a Chat provider `get_provider_readiness`
     # resolves.
+    _legacy_api_key_providers: set[str] = set()
     _bridged_provider_api_keys = {
         provider_key: _normalize_legacy_provider_api_key(
             final_api_settings,
@@ -2462,6 +2336,7 @@ def _load_settings_uncached(
             raw_api_section=api_section_legacy,
             toml_key=toml_key,
             env_var=env_var,
+            bridged_from_legacy=_legacy_api_key_providers,
         )
         for provider_key, toml_key, env_var in _LEGACY_PROVIDER_API_KEY_BRIDGE
     }
@@ -2472,7 +2347,6 @@ def _load_settings_uncached(
     huggingface_api_key = _bridged_provider_api_keys["huggingface"]
     openrouter_api_key = _bridged_provider_api_keys["openrouter"]
     deepseek_api_key = _bridged_provider_api_keys["deepseek"]
-    google_api_key = _bridged_provider_api_keys["google"]
     mistral_api_key = _bridged_provider_api_keys["mistral"]
     elevenlabs_api_key = get_api_key("elevenlabs_api_key", "ELEVENLABS_API_KEY")
 
@@ -2599,6 +2473,11 @@ def _load_settings_uncached(
         "logging": final_logging_settings,  # For TUI log settings like log_max_bytes
         "database": final_database_settings_cli,  # For TUI DB paths
         "api_settings": final_api_settings,  # CRUCIAL for local API calls
+        # TASK-33001.15: provider tables whose `api_key` above is not in the
+        # table on disk -- the loader copied it from legacy `[API]`. Names
+        # only, always present; a Settings save that records "stored" for one
+        # of them writes the key into the table (provider_setup_persistence).
+        "legacy_api_key_providers": tuple(sorted(_legacy_api_key_providers)),
         "providers": final_providers_settings,  # For UI dropdowns
         "model_catalog": final_model_catalog_settings_cli,
         "chat_defaults": final_chat_defaults_cli,
@@ -2606,6 +2485,7 @@ def _load_settings_uncached(
         "appearance": copy.deepcopy(toml_config_data.get("appearance", {})),
         "notes": final_notes_settings_cli,  # For notes auto-save settings
         "chunking": final_chunking_settings_cli,  # Template default for ingest (§9.1)
+        "sync": final_sync_settings_cli,  # Sync-journal retention (task-34389, ADR-229)
         "console": final_console_settings_cli,  # For Console behavior settings
         "first_run": final_first_run_settings_cli,  # Wizard setup_started/setup_completed flags
         "hooks": final_hooks_settings_cli,  # Raw [hooks] table for Agents/run_hooks.py (Console run hooks)
@@ -2613,9 +2493,27 @@ def _load_settings_uncached(
         "video_generation": final_video_generation_settings_cli,  # For Video_Generation/config.py loader
         "mcp": final_mcp_settings_cli,  # For MCP server settings
         "persona_buddy": copy.deepcopy(toml_config_data.get("persona_buddy", {})),
+        **(
+            {"buddy_interaction": copy.deepcopy(toml_config_data["buddy_interaction"])}
+            if "buddy_interaction" in toml_config_data
+            else {}
+        ),
         # [skills] disabled_builtins is read from app_config on every skills
         # read (TASK-32954); without this a disabled built-in returned on restart.
         "skills": copy.deepcopy(toml_config_data.get("skills", {})),
+        "agents": copy.deepcopy(toml_config_data.get("agents", {})),
+        "tools": copy.deepcopy(toml_config_data.get("tools", {})),
+        # [analysis_defaults] is the Library's analysis provider/model/call
+        # shape: the Media reader's Generate, bulk Analyze and
+        # Analyze-after-import all resolve it from app_config through
+        # Library/ingest_analysis.py, and the Media viewer's analysis panel
+        # seeds its inputs from it. It was never carried over, so analysis
+        # reported "no provider configured" for every user (TASK-34000.5,
+        # review finding L-02). Tests/test_config_load_settings_table_guard.py
+        # fails on the next table a reader needs that this dict drops.
+        "analysis_defaults": copy.deepcopy(
+            toml_config_data.get("analysis_defaults", {})
+        ),
         # Single User
         "SINGLE_USER_FIXED_ID": single_user_fixed_id,
         # Auth
@@ -2671,20 +2569,6 @@ def _load_settings_uncached(
             "api_timeout": api_section_legacy.get("deepseek_api_timeout", 90),
             "api_retries": api_section_legacy.get("deepseek_api_retry", 3),
             "api_retry_delay": api_section_legacy.get("deepseek_api_retry_delay", 5),
-        },
-        "google_generative_api": {  # Renamed to avoid confusion with Google Search API
-            "api_key": google_api_key,
-            "model": api_section_legacy.get("google_model", "gemini-2.5-flash"),
-            "streaming": api_section_legacy.get("google_streaming", False),
-            "temperature": api_section_legacy.get("google_temperature", 0.7),
-            "top_p": api_section_legacy.get("google_top_p", 0.95),
-            "min_p": api_section_legacy.get(
-                "google_min_p", 0.05
-            ),  # Check if 'min_p' is valid for Gemini
-            "max_tokens": api_section_legacy.get("google_max_tokens", 4096),
-            "api_timeout": api_section_legacy.get("google_api_timeout", 90),
-            "api_retries": api_section_legacy.get("google_api_retry", 3),
-            "api_retry_delay": api_section_legacy.get("google_api_retry_delay", 5),
         },
         "groq_api": {
             "api_key": groq_api_key,
@@ -2772,10 +2656,6 @@ def _load_settings_uncached(
             ),
             "api_key": api_section_legacy.get("kobold_api_key", ""),
             "streaming": api_section_legacy.get("kobold_streaming", False),
-            "temperature": api_section_legacy.get("kobold_temperature", 0.7),
-            "top_p": api_section_legacy.get("kobold_top_p", 0.95),
-            "top_k": api_section_legacy.get("kobold_top_k", 100),
-            "max_tokens": api_section_legacy.get("kobold_max_tokens", 4096),
             "api_timeout": api_section_legacy.get("kobold_api_timeout", 90),
             "api_retries": api_section_legacy.get("kobold_api_retry", 3),
             "api_retry_delay": api_section_legacy.get("kobold_api_retry_delay", 5),
@@ -3479,7 +3359,10 @@ def _load_settings_uncached(
             ),
             "bing_search_api_key": _get_typed_value(
                 search_engines_section, "bing_search_api_key", ""
-            ) or _get_typed_value(search_engines_section, "search_engine_api_key_bing", ""),
+            )
+            or _get_typed_value(
+                search_engines_section, "search_engine_api_key_bing", ""
+            ),
             "brave_search_api_key": _get_typed_value(
                 search_engines_section, "brave_search_api_key", ""
             ),
@@ -3497,7 +3380,8 @@ def _load_settings_uncached(
             ),
             "searx_search_api_url": _get_typed_value(
                 search_engines_section, "searx_search_api_url", ""
-            ) or _get_typed_value(search_engines_section, "search_engine_searx_api", ""),
+            )
+            or _get_typed_value(search_engines_section, "search_engine_searx_api", ""),
             "tavily_search_api_key": _get_typed_value(
                 search_engines_section, "tavily_search_api_key", ""
             ),
@@ -3694,7 +3578,8 @@ def _load_settings_uncached(
     from .Utils.paths import get_user_data_dir
 
     chat_dicts_folder = (
-        get_user_data_dir() if bootstrap.succeeded
+        get_user_data_dir()
+        if bootstrap.succeeded
         else profile_paths.user_data_dir(toml_config_data)
     ) / "chat_dicts"
     config_dict["chat_dictionaries"]["chat_dicts_folder"] = str(chat_dicts_folder)
@@ -3705,7 +3590,11 @@ def _load_settings_uncached(
     # 0700 and hardens an existing 0775 instance in place.
     try:
         if bootstrap.succeeded:
-            with _config_participants.operation(sys.modules[__name__], route="config_chat_dicts", target=chat_dicts_folder):
+            with _config_participants.operation(
+                sys.modules[__name__],
+                route="config_chat_dicts",
+                target=chat_dicts_folder,
+            ):
                 secure_private_directory(
                     chat_dicts_folder, create=True, application_owned=True
                 )
@@ -3740,6 +3629,7 @@ def _load_settings_uncached(
             _SETTINGS_CACHE = config_dict
             _SETTINGS_CACHE_SOURCE = active_config_path
             _SETTINGS_CACHE_POSTURE = posture
+            _CONFIG_CACHE_INSTALLS = next(_CONFIG_CACHE_INSTALL_NUMBERS)
             logger.debug("load_settings: Configuration cached for future use")
 
     return config_dict
@@ -3847,2579 +3737,20 @@ API_MODELS_BY_PROVIDER = {
         "google/gemini-2.5-flash-preview-05-20",
     ],
 }
-LOCAL_PROVIDERS = {
-    "llama_cpp": ["None"],
-    "Oobabooga": ["None"],
-    "koboldcpp": ["None"],
-    "Ollama": [
-        "gemma3:12b",
-        "gemma3:4b",
-        "gemma3:27b",
-        "qwen3:4b",
-        "qwen3:8b",
-        "qwen3:14b",
-        "qwen3:30b",
-        "qwen3:32b",
-        "qwen3:235b",
-        "devstral:24b",
-        "deepseek-r1:671b",
-    ],
-    "vLLM": ["vllm-model-z", "vllm-model-x", "vllm-model-y", "vllm-model-a"],
-    "TabbyAPI": ["tabby-model", "tabby-model-2", "tabby-model-3"],
-    "Aphrodite": ["aphrodite-engine", "aphrodite-engine-2"],
-    "Custom": ["custom-model-alpha", "custom-model-beta"],
-    "Custom-2": ["custom-model-gamma", "custom-model-delta"],
-}
 
 #######################################################################################################################
 # --- CLI User Configuration Section ---
 #######################################################################################################################
 
 # --- Configuration File Content (for reference or auto-creation for the CLI) ---
-CONFIG_TOML_CONTENT = """
-# Configuration for tldw-chatbook TUI App
-# Located at: ~/.config/tldw_cli/config.toml
-config_schema_version = 1  # TASK-26040: config schema version; migrated forward on load
-[general]
-default_tab = "chat"  # "chat", "character", "logs", "media", "search", "ingest", "stats"
-focus_mode = false  # Start the Console chrome-free (no nav bar / workbench header; one-line status bar kept)
-default_theme = "textual-dark"  # Default theme on startup ("textual-dark", "textual-light", or any theme name from themes.py)
-palette_theme_limit = 1  # Maximum number of themes to show in command palette (0 = show all)
-log_level = "INFO" # TUI Log Level: DEBUG, INFO, WARNING, ERROR, CRITICAL
-users_name = "default_user" # Default user name for the TUI
-# How long shutdown may take (Textual unmount + interpreter teardown) before a
-# hard exit is forced. Clamped to 1-300 seconds. A quiet exit measures ~0.6s,
-# so this deadline is never reached by a normal quit.
-# NOTE: it is enforced against healthy work too. A background job still
-# running when you quit -- media ingest, notes/character export, library
-# export, an embedding batch -- runs on a thread that cannot be interrupted.
-# If it is still going 120 seconds after you quit, the process is killed and
-# that job's database write is abandoned (not rolled back to a clean earlier
-# state -- simply lost). Raise this if you routinely quit while long jobs are
-# running; lower it only if you would rather lose such a write than wait.
-shutdown_grace_seconds = 120.0
-
-[console]
-collapse_large_pastes = true  # Display large pasted chunks compactly in Console composer
-# Custom endpoints (ADR-146): execute the openai_compatible family through
-# the strict hosted engine (custom-hosted execution key) instead of the
-# legacy custom handlers. Set false to roll back to the legacy path
-# (ADR-179 Phase 2 kill switch); identity, readiness, saved sessions, and
-# the [api_settings.custom] fallbacks are identical either way.
-custom_endpoints_use_engine = true
-show_model_thinking = true  # Presentation only; capture and replay are unchanged
-thinking_history_policy_default = "auto"  # auto, include, exclude for new conversations
-# Environment overrides: TLDW_CONSOLE_REASONING_HISTORY (mode), and JSON maps in
-# TLDW_CONSOLE_REASONING_HISTORY_OVERRIDES / TLDW_CONSOLE_REASONING_NATIVE_TOOL_OVERRIDES.
-reasoning_history = "auto"  # local replay when a conversation uses Auto: auto, current, all, off
-reasoning_history_overrides = {}  # normalized endpoint/model digest -> replay mode
-reasoning_native_tool_overrides = {}  # normalized endpoint/model digest -> true
-stack_collapsed_rail_labels = false  # Use compact stacked labels on collapsed Console rails
-rail_layout_scope = "global"  # Share Console rail disclosure across workspaces; use "workspace" for per-workspace layouts
-assistant_library_access_default = false  # New Console sessions block assistant Library access
-paste_collapse_threshold = 50  # Collapse pasted/inserted chunks only when longer than this many characters
-local_tools_enabled = true      # workspace, web, and Watchlists agent tools; every call still uses MCP Ask/Allow/Off permissions
-interrupt_bell = true           # Ring the terminal bell when an agent blocks on you (approval, confirm, question) while Console is not the visible screen; the Console nav badge shows regardless. Environment override: TLDW_CONSOLE_INTERRUPT_BELL
-# ask_user_timeout_seconds = 0  # ask_user question card auto-continue: 0 (default) waits for an answer indefinitely; e.g. 120 continues the run without an answer after 120s. Environment override: TLDW_CONSOLE_ASK_USER_TIMEOUT_SECONDS
-raw_cli_permitted = false       # Persisted unlock only; every app launch still starts unarmed
-# Root-source byte limit; allowed range is 1-1048576 (1 MiB).
-project_instructions_startup_max_bytes = 32768
-# Cumulative nested-source byte limit per dispatch; allowed range is 1-1048576 (1 MiB).
-project_instructions_nested_max_bytes = 32768
-# Conversation-memory defaults (ADR-052). Model capacity remains capability data,
-# not a persisted policy value.
-conversation_budget_mode = "automatic"  # automatic, custom
-# conversation_budget_tokens = 32000     # required only when mode = custom
-compaction_mode = "ask"                  # ask, automatic, off
-compaction_representation = "text_summary"  # text_summary, visual_transcript, hybrid
-compaction_trigger_ratio = 0.80
-compaction_target_ratio = 0.55
-compaction_summary_max_tokens = 1024
-compaction_auxiliary_timeout_seconds = 120  # wall-clock bound on the summarizer call; invalid/<=0 falls back to 120
-compaction_native_delegation = false     # TASK-26021: delegate compaction to a provider's server-side compact where the gateway advertises it (no bridged provider does yet); any failure falls back to the local summarizer call
-micro_compaction_every_turns = 0         # TASK-25910: in AUTOMATIC mode, fold the oldest exchange into memory every N completed turns (0 = off; bounds prompt-cache breaks to 1/N of turns)
-compaction_failure_behavior = "stop_and_ask"  # stop_and_ask, omit_older_context
-compaction_carry_forward_mode = "memory_with_recent_turns"  # memory_with_recent_turns, memory_with_latest_exchange
-# Root for local MCP serving and operator Hub tool tests. Blank uses that
-# serving process's current working directory. This is NOT Console file
-# authority: Console uses Chat scratch and admitted Workspace folders
-# (ADR-082/102). Existing sensitive-path and permission checks still apply.
-# workspace_root = ""
-
-# Agent run budget (Settings > Console Behavior > Agent run budget).
-# Applies to ONE run = one user message; sub-agents inherit turns/steps/tokens
-# unchanged (their wall comes from [agents] child_max_wall_seconds instead).
-# agent_max_total_tokens is the limit that actually stops a long run: the whole
-# conversation is re-sent every turn, so spend grows quadratically and 25M is
-# typically reached around turn 250. The turn and step caps are backstops.
-agent_max_model_turns = 2000        # Provider turns (tool-calling rounds) per message
-agent_max_steps = 25000             # Step backstop; a fence tool round costs 3 steps
-agent_max_wall_seconds = 86400.0    # 24h ceiling on one run; Stop always works
-agent_max_total_tokens = 25000000   # Per-run prompt+completion spend ceiling; 0 = unlimited
-agent_max_tool_call_seconds = 3600.0  # Ceiling on ONE tool call; 0 = unlimited
-# Ephemeral side chat (selection menu) — empty model = session model
-sidechat_model = ""  # e.g. "openai/gpt-5-mini"; empty = follow the current session's model
-sidechat_prompt_template = "Give me more details about: {selection}"  # {selection} = the quoted text
-# Conversation Inspector: capture each provider exchange (request/response)
-# locally per turn. Local-only; never synced. Set false to disable.
-exchange_capture = true
-# Independent rollout/rollback gates for the normalized semantic trace ledger.
-# Environment overrides use TLDW_CONSOLE_TRACE_NORMALIZED_WRITES,
-# TLDW_CONSOLE_TRACE_NORMALIZED_READS, and TLDW_CONSOLE_TRACE_LEGACY_WRITES.
-trace_normalized_writes = true
-trace_normalized_reads = true
-trace_legacy_writes = false
-# Same-file VACUUM is admitted only after successful trace GC and every gate.
-trace_compaction_min_database_bytes = 67108864
-trace_compaction_min_freelist_bytes = 16777216
-trace_compaction_min_freelist_ratio = 0.20
-trace_compaction_min_idle_seconds = 30.0
-trace_compaction_retry_initial_seconds = 300.0
-trace_compaction_retry_max_seconds = 3600.0
-trace_compaction_quiesce_timeout_seconds = 5.0
-trace_compaction_disk_safety_margin_bytes = 67108864
-# Retired future-write detail retained only for legacy provenance/migration.
-exchange_capture_detail = "safe"
-# Optional capture-time PII masking is independent of capture and defaults Off.
-exchange_capture_pii_redaction = false
-# Safe/Full is a viewer disclosure choice over one trace, never storage detail.
-trace_viewer_profile = "safe"
-trace_viewer_profile_version = 1
-
-[console.background_effects]
-enabled = false  # Optional Console ambience. Off by default for readability.
-effect = "none"  # none, snow, rain, matrix
-scope = "transcript"  # transcript, workbench
-intensity = "low"  # low, medium, high
-fps = 6  # 1-12
-
-[console_ssh]
-# SSH ControlMaster lifecycle for remote workspace bindings (spec
-# 2026-09-24-ssh-remote-workspace-bindings). `control_persist` rides the
-# `ssh -MNf` master command verbatim (OpenSSH duration like "10m"/"45s"/"4h";
-# it is the crash backstop that self-expires an orphaned master).
-control_persist = "10m"
-# Kill switch for connection multiplexing: false = per-call direct
-# connections, no master, no ControlPath (also the Windows posture, where
-# ssh.exe lacks ControlMaster).
-enable_multiplexing = true
-# Bounds both the master spawn handshake and per-call connects, in seconds.
-connect_timeout_s = 3
-# Cap on in-flight per-binding ssh calls (consumed by the transport executor).
-max_concurrent_calls = 8
-# Per-run SSH session worker: one long-lived channel per binding per Console
-# run instead of one ssh exchange per call. false = pure one-shot.
-session_worker = true
-# Seconds a session worker may sit idle before it closes (both sides).
-session_idle_s = 60
-# Let the host cache the worker bundle in $XDG_RUNTIME_DIR (tmpfs, 0700,
-# sha256-verified on every load; skipped when that directory is absent).
-bundle_cache = true
-
-[hooks]
-enabled = true  # master switch for Console run hooks (external commands on session/run lifecycle events)
-# [[hooks.hook]] entries: event / matcher / command / timeout_s
-# event: UserPromptSubmit | PreToolUse | PostToolUse | ApprovalRequested | Stop | SubagentStop
-# matcher: tool-name glob, valid only on PreToolUse/PostToolUse
-# command: argv list, no shell — e.g. ["/usr/local/bin/guard.sh", "--strict"]
-# timeout_s: per-hook ceiling in seconds (default 10); PreToolUse fails closed on timeout
-
-# [[hooks.handler]] entries are explicit v2 declarations, independently validated.
-# id/event/type/effects are required; command type uses argv, env and optional cwd.
-# MCP type uses server, tool and optional typed input template. See ADR-163.
-
-[skills]
-# project_skills_prompt_enabled = true  # offer .SKILLS/ import at startup; spec 2026-08-17
-# disabled_builtins = []  # built-in skills to hide, e.g. ["character-creator"]
-
-[tamagotchi]
-enabled = false  # opt-in virtual pet in the footer status bar; off unless you ask for it
-# Write a TOML boolean. The gate is fail-closed: anything it cannot read as
-# true/yes/1 (or their negatives) -- including "on" -- leaves the pet off.
-# name = "Bit"  # 1-20 chars, letters/digits/space/-/_ only
-# personality = "balanced"  # balanced, energetic, lazy, needy, independent, playful
-# State lives in ~/.config/tldw_chatbook/tamagotchi_pets.json (backed up by the
-# "tamagotchi.config" backup/recovery owner). Nothing is created while disabled.
-
-[appearance]
-character_expression_mode = "dynamic"  # Dynamic animates character expressions; Static changes poses without motion
-density = "normal"  # compact, normal, or comfortable default control density
-animations_enabled = true  # Enable optional UI animations where supported
-smooth_scrolling = true  # Enable smooth scrolling where supported
-reduce_motion = false  # Render animations as static frames (splash screen, Console setup backdrop)
-ascii_glyphs = false  # Substitute ASCII status markers for unicode glyphs (narrow-font terminals)
-console_transcript_style = "role_accents"  # neutral, role_accents, or immersive_rp
-
-[acp.runtime]
-# ACP owns runtime launch/setup. Leave command empty to keep ACP honestly blocked.
-command = ""
-args = []
-cwd = ""
-runtime_id = "local-acp-runtime"
-runtime_label = "Local ACP Runtime"
-runtime_version = ""
-startup_timeout_seconds = 2.0
-
-[tldw_api]
-base_url = "http://127.0.0.1:8000" # Or your actual default remote endpoint
-# Default auth token can be stored here, or leave empty if user must always provide
-auth_token = "default-secret-key-for-single-user"
-
-[library]
-# Maximum files scanned when analysing a directory for Library ingestion.
-ingest_directory_scan_limit = 1000
-# Check a staged ingest URL by fetching its headers before the import runs.
-# OFF by default (TASK-19556). A link check is not free: it contacts the host
-# before you have asked for anything to be imported, and it used to run from
-# the ingest field's typing debounce, which turned a pasted link into a probe
-# of whatever the address pointed at -- including hosts on your own network.
-# With this on, the check runs only from the deliberate triggers (leaving the
-# field, pressing Enter, Browse..., the retry button), never while you type;
-# it is routed through the [web_security] egress policy, follows no
-# redirects, and reports one identical "could not be checked" note for every
-# address the policy declines. A link that cannot actually be fetched is
-# still reported by the import job itself, with a real reason.
-ingest_url_preflight_probe = false
-# Parallel ingest parse workers. Default: min(3, cpu-1). Uncomment to override.
-# ingest_parse_workers = 3
-# Max concurrent heavy (audio/video transcription) parses; document parses fan
-# out past this cap to fill the remaining pool workers. Default: 1.
-# ingest_heavy_lane_max_workers = 1
-
-[library.reader]
-# Shared Library-pane visibility and width are written here by Settings and
-# Library pane toggles. Older configs may omit these keys; each missing key
-# independently falls back to its legacy value under [library.media_reader].
-# Environment overrides use TLDW_LIBRARY_READER_<KEY>.
-
-[library.media_reader]
-# Destination Items-pane preferences. The three shared keys below remain as
-# read-only compatibility fallbacks for older config files.
-# Items environment overrides use TLDW_LIBRARY_MEDIA_READER_<KEY>.
-library_open = true
-items_open = true
-custom_widths_enabled = false
-# Compatibility fallback for fresh profiles; matches LIBRARY_REFERENCE_WIDTH.
-library_width = 36
-items_width = 50
-
-[library.collections_reader]
-# Environment overrides use TLDW_LIBRARY_COLLECTIONS_READER_<KEY>.
-items_open = true
-items_width = 50
-
-[library.conversations_reader]
-# Environment overrides use TLDW_LIBRARY_CONVERSATIONS_READER_<KEY>.
-items_open = true
-items_width = 50
-
-[library.notes_reader]
-# Items environment overrides use TLDW_LIBRARY_NOTES_READER_ITEMS_<KEY>.
-# Folder-tree overrides use TLDW_LIBRARY_NOTES_READER_FILES_TREE_<KEY>.
-items_open = true
-items_width = 50
-files_tree_open = true
-files_tree_width = 50
-
-[library.prompts_reader]
-# Environment overrides use TLDW_LIBRARY_PROMPTS_READER_<KEY>.
-items_open = true
-items_width = 50
-
-[library.skills_reader]
-# Environment overrides use TLDW_LIBRARY_SKILLS_READER_<KEY>.
-items_open = true
-items_width = 50
-
-[library.artifacts_reader]
-# Local artifacts share Library visibility; Items preferences belong here.
-# Environment overrides use TLDW_LIBRARY_ARTIFACTS_READER_<KEY>.
-items_open = true
-items_width = 50
-
-# Per-type ingestion options are persisted here by the Library ingest canvas.
-[library.ingest_options]
-
-[caching]
-# Anthropic prompt caching (cache_control breakpoints on the system prompt and
-# the tool list for every Anthropic call; plus one on the latest message for
-# Console sends only, which are the multi-turn ones). Cache writes bill at
-# 1.25x input and reads at ~0.1x, so multi-turn chat wins after two sends
-# inside the 5-minute TTL.
-# The loss condition: sends more than ~5 minutes apart never hit a live cache,
-# so every send re-pays the 1.25x write premium on the conversation prefix
-# with no reads at all -- the cost ticker will show it (writes in the
-# breakdown, no cache-read line). Set false if that is your usage pattern.
-# Set false to disable the cache_control breakpoints this client adds;
-# caller-supplied native Anthropic tool dicts already carrying cache_control
-# still pass through verbatim.
-anthropic_enabled = true
-# TASK-26014: cache TTL tier -- "5m" (default) or "1h". 1h keeps the prefix
-# cached across a coffee break so a returning conversation is not re-billed
-# the 1.25x write premium, but a 1h write bills ~2x vs 5m's 1.25x, so it
-# wins only when gaps routinely exceed 5 minutes. Unsupported models and any
-# unrecognized value fall back to 5m silently; the kill switch above
-# disables this along with everything else.
-cache_ttl = "5m"
-# TASK-26015: send OpenAI/Codex a stable prompt_cache_key derived from the
-# conversation's stable prefix (system prompt + tools) so the provider can
-# route repeated prefixes to the same implicit-cache node. It is a digest,
-# never content; unknown to providers that ignore it (harmless). OFF by
-# default = today's request shape exactly.
-openai_cache_key = false
-
-[agents]
-# Sub-agent fleet knobs. Every key here is COMMENTED OUT on purpose: the
-# authoritative defaults live in `Agents/agent_service.py`
-# (DEFAULT_MAX_LIVE_SUBAGENTS / DEFAULT_CHILD_MAX_WALL_SECONDS /
-# DEFAULT_SUBAGENTS_OUTLIVE_TURN / DEFAULT_AUTOWAKE_ENABLED), and shipping a live copy here would give
-# the same value two homes that can silently drift apart. Uncomment a line
-# to override. See Docs/User_Guide/console/agent-runs-and-tools.md.
-#
-# How many sub-agents of ONE conversation may run at once, counting any
-# still working from an earlier message. 1 disables the fleet (sub-agents
-# run inline, one at a time). The conversation cap is also subject to the
-# shared runtime cap below.
-# max_live_subagents = 3
-#
-# Shared child execution slots across this Console runtime, including inline
-# children and cleanup still running after a child is marked terminal.
-# Automatic work may occupy four of six; manual/queued work can use all six.
-# max_runtime_subagents = 6
-# reserved_manual_subagents = 2
-#
-# Local tool workers shared across all conversations in this Console runtime.
-# A timed-out worker keeps its slot until it really exits. Automatic wakes
-# may occupy six of the default eight slots; two remain for manual work.
-# Defaults are owned by Agents/execution_capacity.py. Read before admission;
-# lowering a limit does not cancel already admitted work.
-# max_runtime_tool_workers = 8
-# reserved_manual_tool_workers = 2
-#
-# Whether a sub-agent may keep working after the reply that spawned it has
-# finished. false settles every sub-agent at the end of its own turn.
-# subagents_outlive_turn = true
-#
-# How long ONE background sub-agent may keep working, in seconds. Checked
-# between the child's own steps, so it does not interrupt a provider call
-# already in flight.
-# child_max_wall_seconds = 1800.0
-#
-# Stop one run after a fully settled batch leaves this many consecutive
-# authoritative tool denials. The default is 3; 0 disables the breaker.
-# denial_circuit_breaker_limit = 3  # Consecutive denied calls; 0 disables.
-# TLDW_AGENTS_DENIAL_CIRCUIT_BREAKER_LIMIT overrides this value for Console runs.
-#
-# TASK-25911: deterministic stale tool-result pruning on the agent send
-# payload -- big old tool outputs shrink to a bounded head plus a note,
-# with no LLM call. OFF by default; the thresholds below are the shipped
-# defaults when enabled. min_reclaim keeps prompt-cache breaks episodic.
-# prune_stale_tool_results = false
-# prune_keep_recent_turns = 4   # counts ROUNDS at the agent seam (one model call + its results), not conversational turns
-# prune_min_result_chars = 4000
-# prune_head_chars = 1000
-# prune_min_reclaim_chars = 8000
-#
-# TASK-25912: replace image payloads in OLDER turns of the agent send
-# payload with text placeholders (~1600 tokens back per image). The
-# stored conversation is untouched. OFF by default.
-# retire_stale_images = false
-# retire_images_keep_recent_turns = 4
-#
-# Whether a background sub-agent finishing after its turn WAKES its
-# supervisor so it can act on the result (an injected, clearly machine-
-# marked notice -- never user input, never approval). false still records
-# every completion (toast, badge, durable mark); the wake turn just never
-# fires.
-# autowake_enabled = true
-#
-# --- Sub-agent routing (ADR-147) ---
-# Default provider/model for spawned sub-agents when neither the spawn call
-# nor the named agent preset routes them. Empty = inherit the parent's.
-# subagent_default_provider = ""
-# subagent_default_model = ""
-#
-# Let the supervisor model pass ad-hoc provider/model args to
-# spawn_subagent. Off by default: routing then comes only from presets and
-# the default above. Ad-hoc args never carry URLs or sampling params.
-# spawn_override_enabled = false
-#
-# Ad-hoc targets the supervisor may pick. One entry per list item: a
-# provider id ("llama_cpp", "custom-ep:qwen-local") or "provider/model-glob"
-# ("llama_cpp/qwen3.8-*"). Presets are user-authored and never gated.
-# spawn_override_allowlist = []
-
-[splash_screen]
-# Splash screen configuration for startup animations
-# See Docs/Examples/SPLASH_SCREENS_CATALOG.md for all available splash screens
-enabled = true  # Enable/disable splash screen
-duration = __DEFAULT_SPLASH_DURATION__  # Duration in seconds to display splash screen
-skip_on_keypress = true  # Allow users to skip with any keypress
-
-# Card selection mode:
-# - "random": Randomly selects from active_cards list (default)
-# - "sequential": Cycles through active_cards in order (not yet implemented)
-# - "<card_name>": Always use a specific card (e.g., "matrix", "glitch", etc.)
-card_selection = "random"
-
-show_progress = true  # Show initialization progress bar
-
-# List of splash cards to use when card_selection is "random"
-# Full catalog of 40+ cards available - see documentation for descriptions
-# Categories:
-#   Static: default, classic, compact, minimal, blueprint
-#   Classic Animated: matrix, glitch, retro, typewriter
-#   Visual Effects: tech_pulse, code_scroll, arcade_high_score, digital_rain, loading_bar, starfield
-#   Interactive: terminal_boot, glitch_reveal, ascii_morph, game_of_life, scrolling_credits, spotlight_reveal
-#   Creative: sound_bars, raindrops_pond, pixel_zoom, text_explosion, old_film, maze_generator, dwarf_fortress
-#   Tech-Themed: neural_network, quantum_particles, ascii_wave, binary_matrix, constellation_map, circuit_trace
-#   More: typewriter_news, dna_sequence, plasma_field, ascii_fire, rubiks_cube, data_stream, fractal_zoom, 
-#         ascii_spinner, hacker_terminal
-active_cards = [
-    "default", "matrix", "glitch", "retro", "classic", "compact", "minimal",
-    "tech_pulse", "code_scroll", "minimal_fade", "blueprint", "arcade_high_score",
-    "digital_rain", "loading_bar", "starfield", "terminal_boot", "glitch_reveal",
-    "ascii_morph", "game_of_life", "scrolling_credits", "spotlight_reveal", "sound_bars",
-    "spy_vs_spy", "phonebooths", "emoji_face",
-    "ascii_aquarium", "bookshelf_browser", "train_journey", "clock_mechanism",
-    "weather_system", "music_visualizer", "origami_folding", "ant_colony",
-    "neon_sign_flicker", "zen_garden"
-    # Note: "custom_image" is not included by default as it requires user configuration
-]
-
-[splash_screen.effects]
-# Animation effect settings
-fade_in_duration = 0.3  # Fade in time in seconds
-fade_out_duration = 0.2  # Fade out time in seconds
-animation_speed = 1.0  # Animation playback speed multiplier
-
-custom_image_path = ""  # Set path to your image file for custom_image splash screen
-
-[logging]
-# Log file will be placed in the same directory as the chachanotes_db_path below.
-log_filename = "tldw_cli_app.log"
-file_log_level = "INFO" # File Log Level: DEBUG, INFO, WARNING, ERROR, CRITICAL
-log_max_bytes = 10485760 # 10 MB
-log_backup_count = 5
-
-[metrics]
-# Prometheus metrics listener. OFF by default: having the optional
-# `prometheus_client` dependency installed (the `dev` and `debugging` extras
-# both pull it in) is not consent to open a network socket.
-# Metric collection itself is unaffected by this setting -- it only controls
-# whether an HTTP endpoint is exposed for scraping.
-enabled = false
-# Bind address. Loopback by default; prometheus_client's own default is
-# 0.0.0.0, which would expose the endpoint to your whole network.
-bind_address = "127.0.0.1"
-# 9090 is the Prometheus convention. 8000 is already taken by [web_server].
-port = 9090
-
-[database]
-# scheduled_tasks_db_path = "/custom/path.db"  # optional override
-# tts_profiles_db_path = "/custom/path.db"  # optional override
-# Path to the ChaChaNotes (Character, Chat, Notes) database.
-chachanotes_db_path = "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db"
-# Path to the Prompts database.
-prompts_db_path = "~/.local/share/tldw_cli/tldw_cli_prompts.db"
-# Path to the Media V2 database.
-media_db_path = "~/.local/share/tldw_cli/tldw_cli_media_v2.db"
-# Path to the local research sessions/runs database.
-research_db_path = "~/.local/share/tldw_cli/tldw_chatbook_research.db"
-# Path to the local writing suite database.
-writing_db_path = "~/.local/share/tldw_cli/tldw_chatbook_writing.db"
-# Path to the local Library Collections database.
-library_collections_db_path = "~/.local/share/tldw_cli/tldw_chatbook_library_collections.db"
-# Path to the local Workspaces database.
-workspaces_db_path = "~/.local/share/tldw_cli/tldw_chatbook_workspaces.db"
-# Path to the Evals database.
-evals_db_path = "~/.local/share/tldw_cli/evals.db"
-# Path to the RAG indexing-state database (rag_indexing.db; tracks
-# incremental RAG indexing state -- it is not a vector store).
-rag_indexing_db_path = "~/.local/share/tldw_cli/rag_indexing.db"
-# Path to the Subscriptions database.
-subscriptions_db_path = "~/.local/share/tldw_cli/tldw_chatbook_subscriptions.db"
-USER_DB_BASE_DIR = "~/.local/share/tldw_cli/"
-
-# Database integrity checking
-check_integrity_on_startup = false  # Enable/disable automatic integrity checks on startup
-integrity_check_timeout = 30  # Maximum seconds to wait for integrity check
-
-[webhooks]
-# TASK-26031: outbound signed webhooks for agent run lifecycle events. OFF by
-# default -- with no url configured, no request is ever made. Payloads carry
-# identifiers + an outcome category only (never message content, tool args, or
-# credentials) and are signed X-Tldw-Signature: sha256=HMAC-SHA256(secret,body).
-# The destination is subject to the SSRF egress policy ([web_security]): a
-# localhost/LAN url (e.g. a local dashboard) is blocked by default and needs
-# its host added to [web_security] allowed_hosts to be delivered to.
-enabled = false
-url = ""            # e.g. "https://your-dashboard.example/hooks/tldw"
-secret = ""         # shared secret the receiver uses to verify the signature
-# Which lifecycle events to POST. Omit to subscribe to all supported events.
-events = ["completed", "failed"]
-timeout_seconds = 5.0   # bounded; a slow/dead endpoint never delays the run
-
-[scheduling]
-# Background sync and scheduler defaults for the scheduling module.
-sync_interval_seconds = 300
-sync_retry_max_attempts = 10
-sync_retry_max_delay_seconds = 300
-sync_retry_jitter = true
-scheduler_poll_interval_seconds = 30
-# A dispatch more than this many seconds after its scheduled time counts as
-# late and is recorded on the task (missed_at/missed_count, task-18937).
-# Default is 2x the poll interval: an idle scheduler dispatches within one
-# poll. Beyond 2x has several possible causes and the row cannot tell them
-# apart (task-19562): the scheduler was not running at the scheduled time
-# (app closed), the machine slept or the loop was starved while the app
-# stayed open, or the scheduler was busy -- tick awaits every due handler
-# serially, so a slow handler holds the loop and pushes the NEXT poll past
-# the grace. The loop logs which it was and counts it as
-# scheduler_dispatch_late with a cause label (away / stalled / busy). A
-# task created mid-session reloads the queue immediately, so that case does
-# not false-positive here.
-missed_fire_grace_seconds = 60
-# Handler execution timeout (task-18939): a scheduled-task handler still
-# running after this many seconds is cancelled and its dispatch records
-# "timed_out" -- the schedule advances, so a wedged handler (e.g. a hung
-# watchlist URL check) can never wedge the whole scheduler. 0 or negative
-# disables the bound; a reminder's own timeout_seconds column overrides
-# this per task (same semantics: <=0 disables for that task).
-handler_timeout_seconds = 300
-reminder_catchup_hours = 24
-# Feature flags for the watchlist-to-unified-scheduler migration (ADR-019).
-# Both were staged for a shadow-mode dual-run against the legacy SubscriptionScheduler.
-# That scheduler is gone, so shadow mode has nothing to compare against and leaving
-# these at their staging values meant nothing ever checked a watchlist (TASK-1210).
-watchlist_checks_enabled = true   # Run watchlist checks on their configured cadence
-# Diagnostics only: fetch but DISCARD results, ignoring cadence. Shadow mode probes
-# feed and url/url_list sources directly; it CANNOT probe sitemap or api sources,
-# which need the execution path it exists to avoid, and reports those as
-# "shadow_unsupported" rather than pretending they were checked (TASK-1383).
-watchlist_checks_shadow = false
-# Run each watchlist's own briefing on its configured cadence
-# (`watchlists.briefing_cadence_seconds`, opt-in per watchlist, NULL/unset
-# means never -- briefings phase 4, Locked Decision 4). Only fires while
-# the app is open; a schedule spends the user's own LLM tokens unattended,
-# so this is the one flag that turns that on at all.
-briefing_schedules_enabled = true
-# Dismiss the Watchlists "daily brief demo" banner permanently.
-daily_report_demo_banner_dismissed = false
-
-[media_cleanup]
-# Media cleanup settings for automatic hard deletion of soft-deleted items
-enabled = true  # Enable/disable automatic cleanup
-cleanup_days = 30  # Number of days after soft deletion before hard deletion
-cleanup_interval_hours = 24  # How often to run cleanup (in hours)
-cleanup_on_startup = true  # Run cleanup check on application startup
-max_items_per_cleanup = 100  # Maximum items to delete in one cleanup run
-notify_before_cleanup = true  # Show notification before performing cleanup
-
-[api_endpoints]
-# Optional: Specify URLs for local/custom endpoints if they differ from library defaults
-# These keys should match the provider names used in the app (adjust if needed)
-llama_cpp = "http://localhost:8080" # Check if your API provider uses this address
-koboldcpp = "http://localhost:5001/api" # Check if your API provider uses this address
-Oobabooga = "http://localhost:5000/api" # Check if your API provider uses this address
-Ollama = "http://localhost:11434"
-vLLM = "http://localhost:8000" # Check if your API provider uses this address
-Custom = "http://localhost:1234/v1"
-Custom_2 = "http://localhost:5678/v1"
-Custom_3 = "http://localhost:5678/v1"
-Custom_4 = "http://localhost:5678/v1"
-Custom_5 = "http://localhost:5678/v1"
-Custom_6 = "http://localhost:5678/v1"
-
-# Add other local URLs if needed
-
-[providers]
-# This section primarily lists providers and their *available* models for the UI dropdown.
-# Actual default model/settings used for calls are defined in [api_settings.*] or [chat_defaults]/[character_defaults].
-OpenAI = ["gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-4.1-2025-04-14", "o4-mini-2025-04-16", "o3-2025-04-16", "o3-mini-2025-01-31", "o1-2024-12-17", "chatgpt-4o-latest", "gpt-4o-2024-11-20", "gpt-4o-2024-08-06", "gpt-4.1-mini-2025-04-14", "gpt-4.1-nano-2025-04-14", "gpt-4o-mini-2024-07-18", ]
-Anthropic = ["claude-sonnet-5", "claude-opus-5", "claude-fable-5", "claude-haiku-4-5", "claude-opus-4-20250514", "claude-sonnet-4-20250514", "claude-3-7-sonnet-20250219", "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022", "claude-3-5-sonnet-20240620", "claude-3-haiku-20240307", "claude-3-opus-20240229", "claude-3-sonnet-20240229", "claude-2.1", "claude-2.0"]
-Cohere = ["command-a-03-2025", "command-r7b-12-2024", "command-r-plus-04-2024", "command-r-plus", "command-r-08-2024", "command-r-03-2024", "command", "command-nightly", "command-light", "command-light-nightly"]
-DeepSeek = ["deepseek-v4-flash", "deepseek-v4-pro"]
-Groq = ["gemma2-9b-it", "mmeta-llama/Llama-Guard-4-12B", "llama-3.3-70b-versatile", "llama-3.1-8b-instant", "llama3-70b-8192", "llama3-70b-8192", "llama3-8b-8192",]
-Google = ["gemini-2.5-flash", "gemini-2.5-flash-preview-05-20", "gemini-2.5-pro-preview-05-06", "gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro", ]
-HuggingFace = ["openai/gpt-oss-120b", "meta-llama/Meta-Llama-3.1-8B-Instruct", "meta-llama/Meta-Llama-3.1-70B-Instruct",]
-MistralAI = ["open-mistral-nemo", "mistral-medium-2505", "codestral-2501", "mistral-saba-2502", "mistral-large-2411", "ministral-3b-2410", "ministral-8b-2410", "mistral-moderation-2411", "devstral-small-2505", "mistral-small-2503", ]
-Moonshot = ["kimi-k3", "kimi-latest", "kimi-thinking-preview", "moonshot-v1-auto", "moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k", "moonshot-v1-8k-vision-preview", "moonshot-v1-32k-vision-preview", "moonshot-v1-128k-vision-preview", "kimi-k2-0711-preview"]
-OpenRouter = ["openai/gpt-4o-mini", "anthropic/claude-3.7-sonnet", "google/gemini-2.0-flash-001", "google/gemini-2.5-pro-preview", "google/gemini-2.5-flash-preview", "deepseek/deepseek-chat-v3-0324:free", "deepseek/deepseek-chat-v3-0324", "openai/gpt-4.1", "anthropic/claude-sonnet-4", "deepseek/deepseek-r1:free", "anthropic/claude-3.7-sonnet:thinking", "google/gemini-flash-1.5-8b", "mistralai/mistral-nemo", "google/gemini-2.5-flash-preview-05-20", ]
-QwenCloud = ["qwen3.8-max"]
-ZAI = ["glm-5.2", "glm-4.6", "glm-4.5", "glm-4.5-air", "glm-4.5-flash", "glm-4.5v", "glm-4-32b-0414-128k"]
-Databricks = [] # Empty: model availability is workspace-dependent; fills via discovery or manual seeding
-# Inference clouds (ADR-179 Phase 2): engine presets with no per-provider
-# module; empty model lists fill via discovery or manual seeding.
-Together = [] # Inference cloud: fills via /v1/models discovery or manual seeding
-Fireworks = [] # Inference cloud: fills via /inference/v1/models discovery or manual seeding
-Cerebras = [] # Inference cloud: fills via /v1/models discovery or manual seeding
-# Doc-derived inference clouds (TASK-33201); empty lists fill via discovery.
-SambaNova = [] # fills via /v1/models discovery or manual seeding
-NVIDIA = [] # fills via /v1/models discovery or manual seeding
-DeepInfra = [] # fills via /v1/openai/models discovery or manual seeding
-Nebius = [] # fills via /v1/models discovery or manual seeding
-Novita = [] # fills via /openai/v1/models discovery or manual seeding
-# MiniMax documents no /models route: seeded from the `model` enum at
-# platform.minimax.io/docs/api-reference/text-chat-openai (2026-09-27).
-MiniMax = ["MiniMax-M3", "MiniMax-M3.1-Flash-Preview", "MiniMax-M2.7", "MiniMax-M2.7-highspeed", "MiniMax-M2.5", "MiniMax-M2.5-highspeed", "MiniMax-M2.1", "MiniMax-M2.1-highspeed", "MiniMax-M2"]
-# Top-15 OpenRouter model makers (TASK-33350). MiMo and BytePlus document no
-# usable models route, so they ship seeded from their documented model IDs
-# (any other ID can be entered as a custom model); the rest fill via discovery.
-MiMo = ["mimo-v2.6-flash", "mimo-v2.6-pro", "mimo-v2.6-pro-ultraspeed", "mimo-v2.5-pro", "mimo-v2.5"]
-TokenHub = [] # Tencent TokenHub: fills via /v1/models discovery (Hy4 is hy4-preview)
-BytePlus = ["seed-2-0-lite-260228", "seed-1-8-251228"] # also accepts your own ep-... endpoint IDs
-StepFun = [] # fills via /v1/models discovery or manual seeding
-# Gateway/host presets from the Hermes / oh-my-pi comparison (TASK-33351).
-# Upstage and Qianfan document no models route and ship seeded from their API
-# references; the rest fill via discovery. Any other ID can be entered as a
-# custom model.
-Vercel = []
-ZenMux = []
-Kilo = []
-SiliconFlow = []
-Baseten = []
-GMI = []
-OllamaCloud = []
-Upstage = ["solar-pro4", "solar-mini4", "solar-pro3", "solar-pro2", "solar-mini", "syn-pro"]
-Arcee = []
-Qianfan = ["ernie-5.1", "ernie-5.0", "ernie-5.0-thinking-latest", "ernie-4.5-turbo-128k", "ernie-4.5-turbo-32k", "ernie-3.5-8k"]
-Nous = []
-Venice = []
-Meta = []
-# Follow-up presets (TASK-33505..33509). Azure lists your DEPLOYMENT names
-# (add them as custom models); W&B fills via discovery. Cloudflare has no
-# models route, and OpenCode Zen / Command Code list models on several
-# protocols, so they ship seeded with their Chat Completions models (read
-# from each provider's model pages, 2026-09-29).
-Azure = []
-WandB = []
-Cloudflare = ["@cf/moonshotai/kimi-k2.6", "@cf/zai-org/glm-5.3", "@cf/zai-org/glm-5.3-flash", "@cf/deepseek-ai/deepseek-v4-pro-0813", "@cf/deepseek-ai/deepseek-v4-flash-0731", "@cf/openai/gpt-oss-120b", "@cf/qwen/qwen3.8-27b", "@cf/google/gemma-4-26b-a4b-it", "@cf/meta/llama-4-scout-17b-16e-instruct", "@cf/meta/llama-3.3-70b-instruct-fp8-fast"]
-OpenCodeZen = ["qwen3.8-max", "deepseek-v4.1-flash", "deepseek-v4-pro", "deepseek-v4-flash", "minimax-m3", "minimax-m2.7", "glm-5.3", "glm-5.3-flash", "glm-5.2", "kimi-k3", "kimi-k2.7-code", "kimi-k2.6", "big-pickle", "mimo-v2.6-flash-free", "nemotron-3-ultra-free"]
-CommandCode = ["gpt-5.5", "deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-flash", "deepseek/deepseek-v4.1-flash", "Qwen/Qwen3.7-Max", "Qwen/Qwen3.6-Plus", "moonshotai/Kimi-K3", "moonshotai/Kimi-K2.6", "zai-org/GLM-5.3", "zai-org/GLM-5.1", "MiniMaxAI/MiniMax-M3", "MiniMaxAI/MiniMax-M2.7", "stepfun/Step-3.5-Flash", "xiaomi/mimo-v2.5-pro", "google/gemini-3.5-flash"]
-# Local Providers
-Llama_cpp = ["None"]
-koboldcpp = ["None"]
-Oobabooga = ["None"]
-Ollama = ["gemma3:12b", "gemma3:4b", "gemma3:27b", "qwen3:4b", "qwen3:8b", "qwen3:14b", "qwen3:30b", "qwen3:32b", "qwen3:235b", "devstral:24b", "deepseek-r1:671b"]
-vLLM = ["vllm-model-z", "vllm-model-x", "vllm-model-y", "vllm-model-a"]
-Custom = ["custom-model-alpha", "custom-model-beta"]
-Custom_2 = ["custom-model-gamma", "custom-model-delta"]
-TabbyAPI = ["tabby-model", "tabby-model-2", "tabby-model-3"]
-Aphrodite = ["aphrodite-engine", "aphrodite-engine-2"]
-local-llm = ["None"] # Add if you have a specific local-llm provider entry
-local_llamacpp = ["None"]
-local_llamafile = ["None"]
-local_ollama = ["None"]
-local_vllm = ["None"]
-local_onnx = ["None"]
-local_transformers = ["None"]
-local_mlx_lm = ["None"]
-
-[model_catalog]
-# TASK-26023: use the upstream models.dev catalog as a LOWER-priority
-# gap-fill for model context windows, vision flags, and pricing -- BENEATH
-# your hand-maintained entries, so a local override always wins. Off by
-# default (offline/today unchanged, no fabricated prices). When on, the
-# lookup path never touches the network: fetching is explicit/background and
-# disk-cached with a conditional (ETag) GET. A displayed models.dev figure
-# is labeled with source "models.dev" so it is traceable.
-use_models_dev = false
-# Automatic model-list refresh for cloud providers (ADR-020).
-auto_refresh_enabled = true
-# The startup check is confirm-first: nothing is contacted online until the
-# user answers the one-time consent dialog (which sets this to true).
-refresh_consent_recorded = false
-stale_after_hours = 24 # 0 = refetch every launch
-auto_refresh_disabled = [] # exact [providers] keys to opt out, e.g. ["ZAI"]
-write_to_config = [] # exact [providers] keys whose new models append to this file
-
-[api_settings] # Parent section for all API provider specific settings
-
-    # --- Cloud Providers ---
-    [api_settings.openai]
-    api_key_env_var = "OPENAI_API_KEY"
-    # api_key = "" # Less secure fallback - use env var instead
-    model = "gpt-5.6-terra" # Default model for direct calls (if not overridden)
-    temperature = 0.7
-    top_p = 1.0 # OpenAI uses top_p (represented as maxp sometimes in UI)
-    max_tokens = 4096
-    timeout = 60 # seconds
-    retries = 3
-    retry_delay = 5 # seconds (backoff factor)
-    streaming = false
-
-    [api_settings.anthropic]
-    api_key_env_var = "ANTHROPIC_API_KEY"
-    # api_key = "" # Less secure fallback - use env var instead
-    # TASK-26022: how requests authenticate. "api_key" (default) uses the key
-    # above. "claude_subscription" borrows the OAuth credential Claude Code
-    # minted (~/.claude/.credentials.json) READ-ONLY, billing your Pro/Max
-    # subscription instead of API rates. Explicit opt-in: a credential on disk
-    # never changes billing by itself. Chatbook never refreshes the token --
-    # when it expires, log in with Claude Code again. Whether subscription use
-    # from a third-party client fits Anthropic's terms is YOUR call.
-    # auth_source = "api_key"
-    model = "claude-sonnet-5"
-    temperature = 0.7
-    top_p = 1.0 # Anthropic uses top_p (represented as topp in UI)
-    top_k = 0 # Anthropic specific, 0 or -1 usually disables it
-    max_tokens = 4096
-    timeout = 90
-    retries = 3
-    retry_delay = 5
-    streaming = false
-
-    [api_settings.cohere]
-    api_key_env_var = "COHERE_API_KEY"
-    # api_key = "" # Less secure fallback - use env var instead
-    model = "command-a-03-2025"
-    temperature = 0.3
-    top_p = 0.75 # Cohere uses 'p' (represented as topp in UI)
-    top_k = 0 # Cohere uses 'k'
-    max_tokens = 4096 # Cohere uses max_tokens
-    timeout = 90
-    retries = 3
-    retry_delay = 5
-    streaming = false
-
-    [api_settings.deepseek]
-    api_key_env_var = "DEEPSEEK_API_KEY"
-    # api_key = "" # Less secure fallback - use env var instead
-    model = "deepseek-v4-flash"
-    temperature = 0.7
-    top_p = 1.0 # Deepseek uses top_p (represented as topp in UI)
-    max_tokens = 4096
-    timeout = 60
-    retries = 3
-    retry_delay = 5
-    streaming = false
-
-    [api_settings.groq]
-    api_key_env_var = "GROQ_API_KEY"
-    # api_key = "" # Less secure fallback - use env var instead
-    model = "llama-3.3-70b-versatile"
-    temperature = 0.7
-    top_p = 1.0 # Groq uses top_p (represented as maxp in UI)
-    max_tokens = 8192
-    timeout = 60
-    retries = 3
-    retry_delay = 5
-    streaming = false
-
-    [api_settings.google]
-    api_key_env_var = "GOOGLE_API_KEY"
-    api_key = "<API_KEY_HERE>"
-    model = "gemini-2.5-flash"
-    temperature = 0.7
-    top_p = 0.9 # Google uses topP (represented as topp in UI)
-    top_k = 100 # Google uses topK
-    max_tokens = 8192 # Google uses maxOutputTokens
-    timeout = 120
-    retries = 3
-    retry_delay = 5
-    streaming = false
-
-    [api_settings.huggingface]
-    api_key_env_var = "HUGGINGFACE_API_KEY"
-    # api_key = "" # Less secure fallback - use env var instead
-    model = "openai/gpt-oss-120b"
-    api_base_url = "https://router.huggingface.co/v1"
-    api_chat_path = "chat/completions"
-    temperature = 0.7
-    top_p = 1.0 # HF Inference API uses top_p
-    top_k = 50  # HF Inference API uses top_k
-    max_tokens = 4096 # HF Inf API uses max_tokens / max_new_tokens
-    timeout = 60
-    retries = 3
-    retry_delay = 5
-    streaming = false
-
-    [api_settings.mistralai] # Matches key in [providers]
-    api_key_env_var = "MISTRAL_API_KEY"
-    # api_key = "" # Less secure fallback - use env var instead
-    model = "mistral-large-latest"
-    temperature = 0.7
-    top_p = 1.0 # Mistral uses top_p (represented as topp in UI)
-    max_tokens = 4096
-    timeout = 60
-    retries = 3
-    retry_delay = 5
-    streaming = false
-
-    [api_settings.openrouter]
-    api_key_env_var = "OPENROUTER_API_KEY"
-    # api_key = "" # Less secure fallback - use env var instead
-    model = "meta-llama/Llama-3.1-8B-Instruct"
-    temperature = 0.7
-    top_p = 1.0 # OpenRouter uses top_p
-    top_k = 0   # OpenRouter uses top_k
-    min_p = 0.0 # OpenRouter uses min_p
-    max_tokens = 4096
-    timeout = 120
-    retries = 3
-    retry_delay = 5
-    streaming = false
-
-    [api_settings.moonshot]
-    api_key_env_var = "MOONSHOT_API_KEY"
-    # api_key = "" # Less secure fallback - use env var instead
-    model = "kimi-k3"
-    temperature = 0.7
-    top_p = 0.95 # Moonshot uses top_p (OpenAI compatible)
-    max_tokens = 4096
-    api_region = "international" # "international" or "china"
-    api_base_url = "https://api.moonshot.ai/v1" # Default for international; use https://api.moonshot.cn/v1 for China
-    timeout = 90
-    retries = 3
-    retry_delay = 1.0
-    streaming = true
-
-    [api_settings.qwencloud]
-    api_mode = "responses"
-    api_key_env_var = "DASHSCOPE_API_KEY"
-    api_base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
-    model = "qwen3.8-max"
-    timeout = 120
-    retries = 3
-    retry_delay = 1
-    streaming = true
-
-    [api_settings.zai] # Matches key in [providers]
-    api_key_env_var = "ZAI_API_KEY"
-    # api_key = "" # Less secure fallback - use env var instead
-    model = "glm-5.2"
-    temperature = 0.7
-    top_p = 0.95
-    max_tokens = 4096
-    api_base_url = "https://api.z.ai/api/paas/v4"
-    timeout = 90
-    retries = 3
-    retry_delay = 5
-    streaming = true
-
-    [api_settings.databricks] # Matches key in [providers]; values mirror provider_registry.DATABRICKS.settings_defaults (ADR-179)
-    # Databricks Model Serving / AI Gateway. The workspace host is
-    # per-account, so NO api_base_url ships here: the user configures their
-    # workspace URL (the engine appends the /openai/v1 suffix). No `model`
-    # key ships either: served models are workspace-configured and fill via
-    # discovery/seeding — a PRESENT-but-blank value would be rejected by the
-    # engine resolver (present-but-blank settings fail closed; only the
-    # UNSET key resolves to the payload-gated ""), so the key stays absent.
-    api_key_env_var = "DATABRICKS_TOKEN"
-    timeout = 90
-    retries = 3
-    retry_delay = 5.0
-    streaming = true
-
-    # --- Inference clouds (ADR-179 Phase 2) ---
-    # Engine presets (provider_registry.TOGETHER/FIREWORKS/CEREBRAS): no
-    # per-provider handler module exists. Each table mirrors its record's
-    # settings_defaults plus the default api_base_url (the record's
-    # default_base_url). No `model` key ships (same blank-model lesson as
-    # databricks): models fill via discovery or manual seeding, and the
-    # UNSET key resolves to the payload-gated "".
-    [api_settings.together] # Matches key in [providers]
-    api_key_env_var = "TOGETHER_API_KEY"
-    # api_key = "" # Less secure fallback - use env var instead
-    api_base_url = "https://api.together.xyz/v1"
-    timeout = 90
-    retries = 3
-    retry_delay = 5.0
-    streaming = true
-
-    [api_settings.fireworks] # Matches key in [providers]
-    api_key_env_var = "FIREWORKS_API_KEY"
-    # api_key = "" # Less secure fallback - use env var instead
-    api_base_url = "https://api.fireworks.ai/inference/v1"
-    timeout = 90
-    retries = 3
-    retry_delay = 5.0
-    streaming = true
-
-    [api_settings.cerebras] # Matches key in [providers]
-    api_key_env_var = "CEREBRAS_API_KEY"
-    # api_key = "" # Less secure fallback - use env var instead
-    api_base_url = "https://api.cerebras.ai/v1"
-    timeout = 90
-    retries = 3
-    retry_delay = 5.0
-    streaming = true
-
-    # Doc-derived inference clouds (TASK-33201): same shape as above.
-    [api_settings.sambanova] # Matches key in [providers]
-    api_key_env_var = "SAMBANOVA_API_KEY"
-    # api_key = "" # Less secure fallback - use env var instead
-    api_base_url = "https://api.sambanova.ai/v1"
-    timeout = 90
-    retries = 3
-    retry_delay = 5.0
-    streaming = true
-
-    [api_settings.nvidia] # Matches key in [providers]
-    api_key_env_var = "NVIDIA_API_KEY"
-    # api_key = "" # Less secure fallback - use env var instead
-    api_base_url = "https://integrate.api.nvidia.com/v1"
-    timeout = 90
-    retries = 3
-    retry_delay = 5.0
-    streaming = true
-
-    [api_settings.deepinfra] # Matches key in [providers]
-    api_key_env_var = "DEEPINFRA_API_KEY"
-    # api_key = "" # Less secure fallback - use env var instead
-    api_base_url = "https://api.deepinfra.com/v1/openai"
-    timeout = 90
-    retries = 3
-    retry_delay = 5.0
-    streaming = true
-
-    [api_settings.nebius] # Matches key in [providers]
-    api_key_env_var = "NEBIUS_API_KEY"
-    # api_key = "" # Less secure fallback - use env var instead
-    api_base_url = "https://api.tokenfactory.nebius.com/v1"
-    timeout = 90
-    retries = 3
-    retry_delay = 5.0
-    streaming = true
-
-    [api_settings.novita] # Matches key in [providers]
-    api_key_env_var = "NOVITA_API_KEY"
-    # api_key = "" # Less secure fallback - use env var instead
-    api_base_url = "https://api.novita.ai/openai/v1"
-    timeout = 90
-    retries = 3
-    retry_delay = 5.0
-    streaming = true
-
-    [api_settings.minimax] # Matches key in [providers]
-    api_key_env_var = "MINIMAX_API_KEY"
-    # api_key = "" # Less secure fallback - use env var instead
-    api_base_url = "https://api.minimax.io/v1"
-    timeout = 90
-    retries = 3
-    retry_delay = 5.0
-    streaming = true
-
-    # Top-15 OpenRouter model makers (TASK-33350): same shape as above.
-    [api_settings.mimo] # Matches key in [providers]
-    api_key_env_var = "MIMO_API_KEY"
-    # api_key = "" # Less secure fallback - use env var instead
-    api_base_url = "https://api.xiaomimimo.com/v1" # sent as an api-key header, not Bearer
-    timeout = 300 # MiMo can take minutes to send its first token
-    retries = 3
-    retry_delay = 5.0
-    streaming = true
-
-    [api_settings.tokenhub] # Matches key in [providers]
-    api_key_env_var = "TOKENHUB_API_KEY"
-    # api_key = "" # Less secure fallback - use env var instead
-    api_base_url = "https://tokenhub-intl.tencentcloudmaas.com/v1" # US: tokenhub-us..., China: tokenhub.tencentcloudmaas.com
-    timeout = 90
-    retries = 3
-    retry_delay = 5.0
-    streaming = true
-
-    [api_settings.byteplus] # Matches key in [providers]
-    api_key_env_var = "ARK_API_KEY"
-    # api_key = "" # Less secure fallback - use env var instead
-    api_base_url = "https://ark.ap-southeast.bytepluses.com/api/v3" # China (Volcengine): https://ark.cn-beijing.volces.com/api/v3
-    timeout = 90
-    retries = 3
-    retry_delay = 5.0
-    streaming = true
-
-    [api_settings.stepfun] # Matches key in [providers]
-    api_key_env_var = "STEPFUN_API_KEY" # or "STEP_API_KEY", the name StepFun's own samples use
-    # api_key = "" # Less secure fallback - use env var instead
-    api_base_url = "https://api.stepfun.ai/v1" # China: https://api.stepfun.com/v1
-    timeout = 90
-    retries = 3
-    retry_delay = 5.0
-    streaming = true
-
-    # Gateway/host presets (TASK-33351): same shape as above.
-    [api_settings.vercel] # Matches key in [providers]
-    api_key_env_var = "AI_GATEWAY_API_KEY"
-    # api_key = "" # Less secure fallback - use env var instead
-    api_base_url = "https://ai-gateway.vercel.sh/v1"
-    timeout = 90
-    retries = 3
-    retry_delay = 5.0
-    streaming = true
-
-    [api_settings.zenmux] # Matches key in [providers]
-    api_key_env_var = "ZENMUX_API_KEY"
-    # api_key = "" # Less secure fallback - use env var instead
-    api_base_url = "https://zenmux.ai/api/v1"
-    timeout = 90
-    retries = 3
-    retry_delay = 5.0
-    streaming = true
-
-    [api_settings.kilo] # Matches key in [providers]
-    api_key_env_var = "KILO_API_KEY"
-    # api_key = "" # Less secure fallback - use env var instead
-    api_base_url = "https://api.kilo.ai/api/gateway"
-    timeout = 90
-    retries = 3
-    retry_delay = 5.0
-    streaming = true
-
-    [api_settings.siliconflow] # Matches key in [providers]
-    api_key_env_var = "SILICONFLOW_API_KEY"
-    # api_key = "" # Less secure fallback - use env var instead
-    api_base_url = "https://api.siliconflow.com/v1" # China: https://api.siliconflow.cn/v1
-    timeout = 90
-    retries = 3
-    retry_delay = 5.0
-    streaming = true
-
-    [api_settings.baseten] # Matches key in [providers]
-    api_key_env_var = "BASETEN_API_KEY"
-    # api_key = "" # Less secure fallback - use env var instead
-    api_base_url = "https://inference.baseten.co/v1"
-    timeout = 90
-    retries = 3
-    retry_delay = 5.0
-    streaming = true
-
-    [api_settings.gmi] # Matches key in [providers]
-    api_key_env_var = "GMI_API_KEY"
-    # api_key = "" # Less secure fallback - use env var instead
-    api_base_url = "https://api.gmi-serving.com/v1"
-    timeout = 90
-    retries = 3
-    retry_delay = 5.0
-    streaming = true
-
-    [api_settings.ollama_cloud] # Matches key in [providers]
-    api_key_env_var = "OLLAMA_API_KEY"
-    # api_key = "" # Less secure fallback - use env var instead
-    api_base_url = "https://ollama.com/v1"
-    timeout = 90
-    retries = 3
-    retry_delay = 5.0
-    streaming = true
-
-    [api_settings.upstage] # Matches key in [providers]
-    api_key_env_var = "UPSTAGE_API_KEY"
-    # api_key = "" # Less secure fallback - use env var instead
-    api_base_url = "https://api.upstage.ai/v1"
-    timeout = 90
-    retries = 3
-    retry_delay = 5.0
-    streaming = true
-
-    [api_settings.arcee] # Matches key in [providers]
-    api_key_env_var = "ARCEE_API_KEY"
-    # api_key = "" # Less secure fallback - use env var instead
-    api_base_url = "https://api.arcee.ai/api/v1"
-    timeout = 90
-    retries = 3
-    retry_delay = 5.0
-    streaming = true
-
-    [api_settings.qianfan] # Matches key in [providers]
-    api_key_env_var = "QIANFAN_API_KEY"
-    # api_key = "" # Less secure fallback - use env var instead
-    api_base_url = "https://qianfan.baidubce.com/v2" # key is the whole bce-v3/ALTAK-... string
-    timeout = 90
-    retries = 3
-    retry_delay = 5.0
-    streaming = true
-
-    [api_settings.nous] # Matches key in [providers]
-    api_key_env_var = "NOUS_API_KEY"
-    # api_key = "" # Less secure fallback - use env var instead
-    api_base_url = "https://inference-api.nousresearch.com/v1"
-    timeout = 90
-    retries = 3
-    retry_delay = 5.0
-    streaming = true
-
-    [api_settings.venice] # Matches key in [providers]
-    api_key_env_var = "VENICE_API_KEY"
-    # api_key = "" # Less secure fallback - use env var instead
-    api_base_url = "https://api.venice.ai/api/v1"
-    timeout = 90
-    retries = 3
-    retry_delay = 5.0
-    streaming = true
-
-    [api_settings.meta] # Matches key in [providers]
-    api_key_env_var = "META_API_KEY" # or "MODEL_API_KEY", the name Meta's SDKs read
-    # api_key = "" # Less secure fallback - use env var instead
-    api_base_url = "https://api.meta.ai/v1"
-    timeout = 90
-    retries = 3
-    retry_delay = 5.0
-    streaming = true
-
-    # Follow-up presets (TASK-33505..33509): same shape as above.
-    [api_settings.azure] # Matches key in [providers]
-    # Azure OpenAI v1 API. The resource host is per-account, so NO
-    # api_base_url ships: set yours (e.g. "https://my-resource.openai.azure.com");
-    # the /openai/v1 path is appended. Models are your deployment names.
-    api_key_env_var = "AZURE_OPENAI_API_KEY"
-    # api_key = "" # Less secure fallback - use env var instead
-    timeout = 90
-    retries = 3
-    retry_delay = 5.0
-    streaming = true
-
-    [api_settings.wandb] # Matches key in [providers]
-    api_key_env_var = "WANDB_API_KEY"
-    # api_key = "" # Less secure fallback - use env var instead
-    api_base_url = "https://api.inference.wandb.ai/v1"
-    # project = "my-team/my-project" # optional: sent as the OpenAI-Project header
-    timeout = 90
-    retries = 3
-    retry_delay = 5.0
-    streaming = true
-
-    [api_settings.cloudflare] # Matches key in [providers]
-    # Workers AI REST API. The account id is part of the URL, so NO
-    # api_base_url ships: set
-    # "https://api.cloudflare.com/client/v4/accounts/<account-id>/ai/v1".
-    api_key_env_var = "CLOUDFLARE_API_TOKEN"
-    # api_key = "" # Less secure fallback - use env var instead
-    # gateway_id = "my-gateway" # optional: sent as the cf-aig-gateway-id header
-    timeout = 90
-    retries = 3
-    retry_delay = 5.0
-    streaming = true
-
-    [api_settings.opencode_zen] # Matches key in [providers]
-    api_key_env_var = "OPENCODE_API_KEY"
-    # api_key = "" # Less secure fallback - use env var instead
-    api_base_url = "https://opencode.ai/zen/v1"
-    timeout = 90
-    retries = 3
-    retry_delay = 5.0
-    streaming = true
-
-    [api_settings.commandcode] # Matches key in [providers]
-    api_key_env_var = "COMMANDCODE_API_KEY"
-    # api_key = "" # Less secure fallback - use env var instead
-    api_base_url = "https://api.commandcode.ai/provider/v1"
-    timeout = 90
-    retries = 3
-    retry_delay = 5.0
-    streaming = true
-
-    # --- Local Providers ---
-    # Local providers default to streaming = true so slow generations render
-    # incrementally instead of timing out on one long blocking completion.
-    [api_settings.llama_cpp] # Matches key in [providers]
-    api_key_env_var = "LLAMA_CPP_API_KEY" # If you set one on the server
-    # api_key = ""
-    api_url = "http://localhost:8080" # llama.cpp server root; the OpenAI-compatible /v1/chat/completions path is appended automatically
-    model = "" # Often not needed if server serves one model
-    temperature = 0.7
-    top_p = 0.95
-    top_k = 40
-    min_p = 0.05
-    max_tokens = 4096 # llama.cpp uses n_predict
-    timeout = 300
-    retries = 1
-    retry_delay = 2
-    streaming = true
-    system_prompt = "You are a helpful AI assistant"
-
-    [api_settings.oobabooga] # Matches key in [providers]
-    api_key_env_var = "OOBABOOGA_API_KEY" # If API extension needs one
-    api_url = "http://localhost:5000/v1/chat/completions" # Ooba OpenAI compatible endpoint
-    model = "" # Model loaded in Ooba UI
-    temperature = 0.7
-    top_p = 0.9
-    # top_k = 50 # Check Ooba endpoint docs for OpenAI compatibility params
-    # min_p = 0.0
-    max_tokens = 4096
-    timeout = 300
-    retries = 1
-    retry_delay = 2
-    streaming = true
-    system_prompt = "You are a helpful AI assistant"
-
-    [api_settings.koboldcpp] # Matches key in [providers]
-    # api_key = "" # Kobold doesn't use keys
-    api_url = "http://localhost:5001/api/v1/generate" # Kobold non-streaming API
-    # api_streaming_url = "http://localhost:5001/api/v1/stream" # Kobold streaming API (different format)
-    model = "" # Model loaded in Kobold UI
-    temperature = 0.7
-    top_p = 0.9
-    top_k = 50
-    max_tokens = 4096 # Kobold uses max_context_length / max_length
-    timeout = 300
-    retries = 1
-    retry_delay = 2
-    streaming = true # Kobold streaming is non-standard, handle carefully
-    system_prompt = "You are a helpful AI assistant"
-
-    [api_settings.ollama]
-    # No API Key usually needed
-    api_url = "http://localhost:11434/v1/chat/completions" # Default Ollama OpenAI endpoint
-    model = "llama3:latest"
-    temperature = 0.7
-    top_p = 0.9
-    top_k = 40 # Ollama supports top_k via OpenAI endpoint
-    # min_p = 0.05 # Ollama OpenAI endpoint doesn't support min_p directly
-    max_tokens = 4096
-    timeout = 300 # Longer timeout for local models
-    retries = 1
-    retry_delay = 2
-    streaming = true
-    system_prompt = "You are a helpful AI assistant"
-
-    [api_settings.vllm] # Matches key in [providers]
-    api_key_env_var = "VLLM_API_KEY" # If served behind auth
-    api_url = "http://localhost:8000/v1/chat/completions" # vLLM OpenAI compatible endpoint
-    model = "" # Model specified when starting vLLM server
-    temperature = 0.7
-    top_p = 0.95
-    top_k = 50
-    min_p = 0.05
-    max_tokens = 4096
-    timeout = 300
-    retries = 1
-    retry_delay = 2
-    streaming = true
-    system_prompt = "You are a helpful AI assistant"
-
-    [api_settings.aphrodite] # Matches key in [providers]
-    api_key_env_var = "APHRODITE_API_KEY" # If served behind auth
-    api_url = "http://localhost:2242/v1/chat/completions" # Default Aphrodite port
-    model = "aphrodite-engine" # Model loaded in Aphrodite
-    temperature = 0.7
-    top_p = 0.95
-    top_k = 50
-    min_p = 0.05
-    max_tokens = 4096
-    timeout = 300
-    retries = 1
-    retry_delay = 2
-    streaming = true
-    system_prompt = "You are a helpful AI assistant"
-
-    [api_settings.tabbyapi] # Matches key in [providers]
-    api_key_env_var = "TABBYAPI_API_KEY"
-    api_url = "http://localhost:8080/v1/chat/completions" # Check TabbyAPI docs for exact URL
-    model = "tabby-model" # Model configured in TabbyAPI
-    temperature = 0.7
-    top_p = 0.95
-    top_k = 50
-    min_p = 0.05
-    max_tokens = 4096
-    timeout = 120
-    retries = 2
-    retry_delay = 3
-    streaming = true
-    system_prompt = "You are a helpful AI assistant"
-
-    [api_settings.custom] # Matches key in [providers]
-    api_key_env_var = "CUSTOM_API_KEY"
-    api_url = "http://localhost:1234/v1/chat/completions"
-    model = "custom-model-alpha"
-    temperature = 0.7
-    top_p = 1.0
-    top_k = 0
-    min_p = 0.0
-    max_tokens = 4096
-    timeout = 120
-    retries = 2
-    retry_delay = 5
-    streaming = false
-    system_prompt = "You are a helpful AI assistant"
-
-    [api_settings.custom_2] # Matches key in [providers]
-    api_key_env_var = "CUSTOM_2_API_KEY"
-    api_url = "http://localhost:5678/v1/chat/completions"
-    model = "custom-model-gamma"
-    temperature = 0.7
-    top_p = 1.0
-    top_k = 0
-    min_p = 0.0
-    max_tokens = 4096
-    timeout = 120
-    retries = 2
-    retry_delay = 5
-    streaming = false
-    system_prompt = "You are a helpful AI assistant"
-
-    [api_settings.local-llm] # Matches key in [providers]
-    api_url = "http://localhost:8000/v1/chat/completions"
-    model = ""
-    temperature = 0.7
-    top_p = 1.0
-    top_k = 0
-    min_p = 0.0
-    max_tokens = 4096
-    timeout = 120
-    retries = 2
-    retry_delay = 5
-    streaming = true
-    system_prompt = "You are a helpful AI assistant"
-
-    [api_settings.local_llamafile] # Matches key in [providers]
-    api_url = "http://localhost:8001/v1/chat/completions"
-    model = ""
-    temperature = 0.7
-    top_p = 1.0
-    top_k = 0
-    min_p = 0.0
-    max_tokens = 4096
-    timeout = 120
-    retries = 2
-    retry_delay = 5
-    streaming = true
-    system_prompt = "You are a helpful AI assistant"
-
-    [api_settings.local_llamacpp] # Matches key in [providers]
-    #api_key_env_var = "local_llamacpp_API_KEY"
-    api_url = "http://localhost:8001/v1/chat/completions"
-    model = "custom-model-gamma"
-    temperature = 0.7
-    top_p = 1.0
-    top_k = 0
-    min_p = 0.0
-    max_tokens = 4096
-    timeout = 120
-    retries = 2
-    retry_delay = 5
-    streaming = true
-    system_prompt = "You are a helpful AI assistant"
-
-    [api_settings.local_vllm] # Matches key in [providers]
-    #api_key_env_var = "local_vllm_API_KEY" # If served behind auth
-    api_url = "http://localhost:8008/v1/chat/completions"
-    model = "custom-model-gamma"
-    temperature = 0.7
-    top_p = 1.0
-    top_k = 0
-    min_p = 0.0
-    max_tokens = 4096
-    timeout = 120
-    retries = 2
-    retry_delay = 5
-    streaming = true
-    system_prompt = "You are a helpful AI assistant"
-
-    [api_settings.local_ollama] # Matches key in [providers]
-    api_key_env_var = "local_ollama_API_KEY" # If served behind auth
-    api_url = "http://localhost:5678/v1/chat/completions"
-    model = "custom-model-gamma"
-    temperature = 0.7
-    top_p = 1.0
-    top_k = 0
-    min_p = 0.0
-    max_tokens = 4096
-    timeout = 120
-    retries = 2
-    retry_delay = 5
-    streaming = true
-    system_prompt = "You are a helpful AI assistant"
-
-    [api_settings.local_onnx] # Matches key in [providers]
-    api_url = "http://localhost:8000/v1/chat/completions"
-    model = ""
-    temperature = 0.7
-    top_p = 1.0
-    top_k = 0
-    min_p = 0.0
-    max_tokens = 4096
-    timeout = 120
-    retries = 2
-    retry_delay = 5
-    streaming = true
-    system_prompt = "You are a helpful AI assistant"
-
-    [api_settings.local_transformers] # Matches key in [providers]
-    api_url = "http://localhost:8000/v1/chat/completions"
-    model = ""
-    temperature = 0.7
-    top_p = 1.0
-    top_k = 0
-    min_p = 0.0
-    max_tokens = 4096
-    timeout = 120
-    retries = 2
-    retry_delay = 5
-    streaming = true
-    system_prompt = "You are a helpful AI assistant"
-
-    [api_settings.local_mlx_lm] # Matches key in [providers]
-    api_url = "http://localhost:5678/v1/chat/completions"
-    model = "custom-model-gamma"
-    temperature = 0.7
-    top_p = 1.0
-    top_k = 0
-    min_p = 0.0
-    max_tokens = 4096
-    timeout = 120
-    retries = 2
-    retry_delay = 5
-    streaming = true
-    system_prompt = "You are a helpful AI assistant"
-    # ... etc ...
-
-[chat_defaults]
-rag_auto_retrieve_on_send = false  # New Console chats do not search Library automatically
-# TASK-26024: route Console SIDE tasks (compaction/summarization -- titling
-# here is deterministic, no model) to a cheaper auxiliary model. Both keys
-# empty = today's behavior (side tasks use the main chat model). Model-only
-# keeps the main provider; a cross-provider auxiliary must resolve ready or
-# the side task silently falls back to the main model. The auxiliary NEVER
-# handles a user-visible chat turn. (The auto-on-send compaction stays on
-# the main model; this routes manual /rewind summarize, "compact now", and
-# per-turn micro-compaction.)
-# auxiliary_provider = ""
-# auxiliary_model = ""
-# TASK-26003: stream stall watchdog. A streamed turn producing no NEW content
-# for this many seconds is terminated even while keep-alive/heartbeat bytes keep
-# arriving (the transport read timeout never fires in that case). Keep-alives do
-# not reset the clock; normal slow generation keeps emitting content and does
-# not trip. Non-positive disables the watchdog. Default 90s. Env override:
-# TLDW_STREAM_STALL_TIMEOUT_SECONDS (precedence: env -> this key -> default).
-# stream_stall_timeout_seconds = 90
-# Default settings specifically for the 'Chat' tab
-user_display_name = "User"
-provider = "OpenAI"
-model = "gpt-5.6-terra"
-system_prompt = "You are a helpful AI assistant."
-temperature = 0.6
-top_p = 0.95
-min_p = 0.05
-top_k = 50
-strip_thinking_tags = true
-
-# Console transcript view pruning: when the transcript's virtual height (in
-# terminal rows) exceeds prune_high_watermark, the oldest message rows are
-# dropped from the view until the remaining height fits under
-# prune_low_watermark. Scroll position is preserved, the in-progress
-# streaming row is never pruned, and the store keeps the full history
-# (pruning is view-only). Set prune_high_watermark <= 0 to disable pruning.
-prune_high_watermark = 20000
-prune_low_watermark = 12000
-
-# Console transcript load window: opening or switching to a conversation
-# mounts only a tail of it, and scrolling to the top of that tail prepends
-# more. Both values are FLOORS in terminal rows -- the effective budget is the
-# larger of the floor and the mounted viewport (6x for the initial window, 4x
-# per scrollback step). Set transcript_window_lines <= 0 to mount the whole
-# history at load, as before. With windowing on and sane watermarks the
-# window is two-sided (TASK-15777): sustained scroll-back keeps loading older
-# history while trimming the newest end back out of the view (never a
-# selected message, which pauses the sliding while pinned at that end), so
-# the session stays reachable by scrolling at a bounded mounted size, and a
-# jump to a far-away message mounts a fresh window around it instead of
-# everything between it and the tail.
-transcript_window_lines = 144
-transcript_scrollback_lines = 96
-
-# Render assistant replies as full markdown (code blocks, tables, lists,
-# links) in the Console transcript. Set false to restore the lightweight
-# span renderer, which keeps roleplay speech/action flavor colors.
-assistant_markdown = true
-
-# Image attachment settings for chat
-[chat.images]
-enabled = true
-show_attach_button = true  # Show/hide the attach file button in chat
-# show_character_avatar = true  # show the active character image; Character navigation remains available
-# react_character_expressions = true  # swap the Console character avatar among idle/thinking/speaking/error as it generates a reply (requires per-state images on the character); set false to keep a static avatar
-default_render_mode = "auto"  # auto, pixels, regular
-max_size_mb = 10.0
-auto_resize = true
-resize_max_dimension = 2048
-save_location = "~/Downloads"
-supported_formats = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".tif", ".svg"]
-
-[chat.images.terminal_overrides]
-kitty = "regular"
-wezterm = "regular"
-iterm2 = "regular"
-default = "pixels"
-
-[web_security]
-# Egress guard (SSRF protection) for web scraping / ingestion / subscription
-# fetches. When enabled, content-derived URLs (redirects, sitemap/crawl
-# discoveries, feed items) must resolve to public IPs; URLs you explicitly
-# configure (feed sources, Confluence base_url, ingest URLs) may be private.
-# Cloud metadata endpoints (169.254.169.254 etc.) are always blocked unless
-# the exact host is listed in allowed_hosts.
-enabled = true
-allowed_hosts = []
-# Default (connect, read) timeout applied by `Utils/egress.py`'s
-# `create_default_session()` to any request through that session which does
-# not pass its own `timeout=` (task-19830). Per-provider `api_timeout`
-# settings under [api_settings.<provider>] still take precedence wherever
-# they're read explicitly -- these are only the floor for call sites that
-# don't set one.
-# request_connect_timeout_seconds = 10
-# request_read_timeout_seconds = 30
-
-[network]
-# TLS trust for outbound HTTP/HTTPS/WebSocket (LLM providers, content fetching).
-#   true                verify against the default bundle (default)
-#   false               DISABLE verification (insecure; only for TLS-inspecting
-#                       corporate networks where you cannot obtain the CA)
-#   "/path/to/ca.pem"   ALSO trust this CA bundle (corporate root CA) — additive.
-# Windows paths: use a literal single-quoted string ('C:\\certs\\corp.pem').
-ssl_verify = true
-
-[image_generation]
-# Backend-specific fields (model, base_url, timeout_seconds, api_key, ...) go
-# ONLY under the matching [image_generation.<backend>] table below -- e.g.
-# [image_generation.openrouter] default_model = "...". A flat key such as
-# `openrouter_image_default_model` written directly in THIS [image_generation]
-# table is NOT read; it logs a startup warning and is ignored (task-621).
-default_backend = "swarmui"          # local SwarmUI instance is the friendliest zero-key default
-enabled_backends = ["swarmui"]
-max_width = 1024
-max_height = 1024
-max_pixels = 1048576
-max_steps = 50
-max_prompt_length = 1000
-inline_max_bytes = 4000000
-default_batch = 1
-max_variants_per_message = 8
-
-# `/generate-image` with no prompt text composes from conversation context.
-# When context_llm_enabled, an LLM call (the session's active provider+
-# model, same as a normal Console send) composes a richer prompt from the
-# last context_llm_turns messages; ANY failure (kill-switch off, no ready
-# provider, error, timeout, empty response) falls back to the built-in
-# keyword extractor -- generation is never blocked by this.
-context_llm_enabled = true
-context_llm_turns = 10
-context_llm_timeout_seconds = 15
-
-[image_generation.stable_diffusion_cpp]
-binary_path = ""                      # local `sd` CLI; empty = backend unusable
-diffusion_model_path = ""             # OR model_path
-model_path = ""
-llm_path = ""
-vae_path = ""
-lora_paths = []
-device = "auto"
-default_steps = 25
-default_cfg_scale = 7.5
-default_sampler = "euler_a"
-timeout_seconds = 120
-allowed_extra_params = []
-
-[image_generation.swarmui]
-base_url = "http://127.0.0.1:7801"
-default_model = ""
-timeout_seconds = 120
-allowed_extra_params = []
-# swarm_token: secret, resolved via env/keyring precedence, not stored plaintext here
-
-# ComfyUI H3 image editing is explicit opt-in: add "comfyui" to
-# enabled_backends above after reviewing this server boundary. Saving a base_url
-# in F4 Settings consents to sending the source image and instruction to that
-# exact origin. ComfyUI retains uploaded inputs and saved outputs according to
-# the server operator's policy.
-# [image_generation.comfyui]
-# base_url = "http://127.0.0.1:8188"
-# request_timeout_seconds = 30
-# connect_timeout_seconds = 5
-# poll_interval_seconds = 1
-# total_deadline_seconds = 1800
-# default_seed = -1                # omit to use packaged workflow
-# default_steps = 28               # omit to use packaged workflow
-# default_sampler = "euler"        # omit to use packaged workflow
-
-[image_generation.openrouter]
-base_url = "https://openrouter.ai/api/v1"
-default_model = "google/gemini-2.5-flash-image"  # task-620: "openai/gpt-image-1" was retired upstream and 404s
-timeout_seconds = 120
-allowed_extra_params = []
-api_key = "<API_KEY_HERE>"
-
-[image_generation.novita]
-base_url = "https://api.novita.ai"
-default_model = "sd_xl_base_1.0.safetensors"
-timeout_seconds = 180
-poll_interval_seconds = 2
-allowed_extra_params = []
-api_key = "<API_KEY_HERE>"
-
-[image_generation.together]
-base_url = "https://api.together.xyz/v1"
-default_model = "black-forest-labs/FLUX.1-schnell-Free"
-timeout_seconds = 120
-allowed_extra_params = []
-api_key = "<API_KEY_HERE>"
-
-[image_generation.modelstudio]
-base_url = ""                         # region-derived if empty
-default_model = "qwen-image"
-region = "sg"                         # sg|cn|us
-mode = "auto"                         # sync|async|auto
-poll_interval_seconds = 2
-timeout_seconds = 180
-allowed_extra_params = []
-api_key = "<API_KEY_HERE>"
-
-# fal.ai and Gemini backends -- uncomment and add enabled_backends/
-# default_backend above to use.
-# [image_generation.fal]
-# base_url = "https://queue.fal.run"
-# default_model = "fal-ai/flux/schnell"
-# poll_interval_seconds = 2
-# timeout_seconds = 120
-# api_key = "<API_KEY_HERE>"          # or set FAL_KEY in the environment
-
-# [image_generation.gemini]
-# base_url = "https://generativelanguage.googleapis.com/v1beta"
-# default_model = "gemini-2.5-flash-image"
-# timeout_seconds = 120
-# api_key = "<API_KEY_HERE>"          # or set GEMINI_API_KEY / GOOGLE_API_KEY
-
-# User-defined `/generate-image` @style templates, layered over the 13
-# built-ins (Media_Creation/generation_templates.py). A user template with
-# the same id as a builtin overrides it; new ids extend the set. Fields
-# mirror a builtin's shape: name/category/base_prompt are required,
-# everything else optional. Uncomment and edit to add your own, or drop
-# one *.toml file per template (same fields, no [image_generation.styles.*]
-# wrapper) under <user data dir>/image_generation_styles/ instead -- see
-# that module's docstring for the full precedence rule.
-# [image_generation.styles.my_glow]
-# name = "My Glow"
-# category = "Custom"
-# description = "Soft dreamy glow"
-# base_prompt = "{{subject}}, soft glow lighting, dreamy atmosphere"
-# negative_prompt = "harsh lighting, low quality"
-# tags = ["custom", "glow"]
-# [image_generation.styles.my_glow.default_params]
-# width = 768
-# height = 768
-# steps = 28
-# cfg_scale = 7.5
-# [image_generation.styles.my_glow.context_mappings]
-# subject = "last_message"
-
-[character_defaults]
-# Default settings specifically for the 'Character' tab
-provider = "Anthropic"
-model = "claude-haiku-4-5" # Make sure this exists in [providers.Anthropic]
-system_prompt = "You are roleplaying as a witty pirate captain."
-temperature = 0.8
-top_p = 0.9
-min_p = 0.0 # Check if API supports this
-top_k = 100 # Check if API supports this
-
-[analysis_defaults]
-# Default settings specifically for the Media Analysis feature
-provider = "OpenAI"
-model = "gpt-4o"
-temperature = 0.7
-top_p = 0.95
-min_p = 0.05
-top_k = 50
-system_prompt = "You are an AI assistant specialized in analyzing and summarizing media content. Provide comprehensive, insightful analysis with clear structure and key takeaways."
-max_tokens = 4096
-# Prompt search/filter defaults
-default_prompt_search = ""
-default_keyword_filter = ""
-# Auto-save analysis after generation
-auto_save = false
-# Show analysis button in media viewer by default
-show_analysis_button = true
-
-[permission_summary]
-# ADR-090: advisory summaries on Console approval cards.
-# mode: off (default) | fallback (only when the model gave no rationale)
-# | always (every approval round). Enabling sends a bounded tail of the
-# conversation (user/assistant text only) to this provider.
-mode = "off"
-provider = ""
-model = ""
-# api_key = ""           # optional; else the provider's configured key
-timeout_seconds = 4
-max_tokens = 120
-tail_max_chars = 4000
-# system_prompt = ""     # optional override of the built-in neutral prompt
-
-[llm_management]
-# LLM Management settings
-model_download_dir = "~/Downloads/tldw_models"  # Legacy read-only scan root for Installed models
-
-[llamacpp_snapshots]
-enabled = false
-keep_count = 10
-
-[notes]
-# Device-private lasting-sync settings. Legacy sync keys are intentionally not
-# emitted for fresh profiles; already-present keys remain migration input only.
-recovery_capacity_bytes = 268435456  # Device-private lasting-sync recovery capacity (256 MiB)
-# Lasting-sync change watcher: base poll interval, and the cap it backs off to
-# while roots are quiet (backed-off sleeps are jittered by up to +/-50%).
-sync_watcher_interval_seconds = 1.0
-sync_watcher_max_interval_seconds = 10.0
-
-# Auto-save settings
-auto_save_enabled = true             # Enable auto-save feature
-auto_save_delay_ms = 3000           # Delay in milliseconds before auto-saving (3 seconds)
-auto_save_on_every_key = false      # If true, saves on every keystroke; if false, uses delay
-
-
-# ==========================================================
-# Default/Template Prompts
-# ==========================================================
-[Prompts]
-# Default prompts used by various functions. These can be overridden by user settings.
-sub_question_generation_prompt = "Based on the user query and chat history, generate up to 3 sub-questions to gather more specific information. Format as a numbered list."
-search_result_relevance_eval_prompt = "Evaluate the relevance of the following search result snippet to the query. Score from 1 (not relevant) to 5 (highly relevant)."
-analyze_search_results_prompt = "Analyze the provided search results and synthesize a comprehensive answer to the original query."
-situate_chunk_context_prompt = "You are an AI assistant. Please follow the instructions provided in the input text carefully and accurately."
-
-[prompts.document_generation.timeline]
-prompt = "Create a detailed text-based timeline based on our conversation/materials being referenced. Include key dates, events, and their relationships in chronological order."
-temperature = 0.3
-max_tokens = 2000
-
-[prompts.document_generation.study_guide]
-prompt = "Create a detailed and well produced study guide based on the current focus of our conversation/materials in reference. Include key concepts, definitions, learning objectives, and potential exam questions."
-temperature = 0.5
-max_tokens = 3000
-
-[prompts.document_generation.briefing]
-prompt = "Create a detailed and well produced executive briefing document regarding this conversation and the subject material. Include key points, actionable insights, strategic implications, and recommendations."
-temperature = 0.4
-max_tokens = 2500
-
-
-# ==========================================================
-# Embedding Configuration
-# ==========================================================
-[embedding_config]
-default_model_id = "e5-small-v2"
-default_llm_for_contextualization = "gpt-3.5-turbo"
-model_cache_dir = "~/.local/share/tldw_cli/models/embeddings"
-auto_download = true
-cache_size_limit_gb = 10.0
-
-    # --- HuggingFace Models ---
-    [embedding_config.models.e5-small-v2]
-    provider = "huggingface"
-    model_name_or_path = "intfloat/e5-small-v2"
-    dimension = 384
-    trust_remote_code = false
-    max_length = 512
-
-    [embedding_config.models.multilingual-e5-large-instruct]
-    provider = "huggingface"
-    model_name_or_path = "intfloat/multilingual-e5-large-instruct"
-    dimension = 1024
-    trust_remote_code = false
-    max_length = 512
-
-    [embedding_config.models.e5-base-v2]
-    provider = "huggingface"
-    model_name_or_path = "intfloat/e5-base-v2"
-    dimension = 768
-    trust_remote_code = false
-    max_length = 512
-
-    [embedding_config.models.e5-large-v2]
-    provider = "huggingface"
-    model_name_or_path = "intfloat/e5-large-v2"
-    dimension = 1024
-    trust_remote_code = false
-    max_length = 512
-
-    [embedding_config.models.all-MiniLM-L6-v2]
-    provider = "huggingface"
-    model_name_or_path = "sentence-transformers/all-MiniLM-L6-v2"
-    dimension = 384
-    trust_remote_code = false
-    max_length = 256
-
-    [embedding_config.models.all-mpnet-base-v2]
-    provider = "huggingface"
-    model_name_or_path = "sentence-transformers/all-mpnet-base-v2"
-    dimension = 768
-    trust_remote_code = false
-    max_length = 384
-
-    [embedding_config.models.bge-small-en-v1.5]
-    provider = "huggingface"
-    model_name_or_path = "BAAI/bge-small-en-v1.5"
-    dimension = 384
-    trust_remote_code = false
-    max_length = 512
-
-    [embedding_config.models.bge-base-en-v1.5]
-    provider = "huggingface"
-    model_name_or_path = "BAAI/bge-base-en-v1.5"
-    dimension = 768
-    trust_remote_code = false
-    max_length = 512
-
-    [embedding_config.models.gte-small]
-    provider = "huggingface"
-    model_name_or_path = "thenlper/gte-small"
-    dimension = 384
-    trust_remote_code = false
-    max_length = 512
-
-    # --- Official OpenAI Models ---
-    [embedding_config.models.openai-ada-002]
-    provider = "openai"
-    model_name_or_path = "text-embedding-ada-002"
-    dimension = 1536
-    api_key = "YOUR_OPENAI_API_KEY_OR_LEAVE_BLANK_IF_ENV_VAR_SET" # User fills this or sets ENV
-
-    [embedding_config.models.openai-text-embedding-3-small]
-    provider = "openai"
-    model_name_or_path = "text-embedding-3-small" # Common model name
-    dimension = 3072 # Or 256,, 1536, 2048 3072 depending on how you use it
-    api_key = "YOUR_OPENAI_API_KEY_OR_LEAVE_BLANK_IF_ENV_VAR_SET"
-
-    [embedding_config.models.openai-text-embedding-3-large]
-    provider = "openai"
-    model_name_or_path = "text-embedding-3-large" # Common model name
-    dimension = 1536 # Or 512, 1536 depending on how you use it
-    api_key = "YOUR_OPENAI_API_KEY_OR_LEAVE_BLANK_IF_ENV_VAR_SET"
-
-    # --- Placeholder for a Local OpenAI-Compatible Server ---
-    # The user needs to edit this section for their specific local setup.
-    # The 'key' (e.g., "my-local-nomic-model") is what will appear in the UI's model dropdown
-    # when "Local OpenAI-Compliant Server" provider is selected.
-    [embedding_config.models.my-local-nomic-model]
-    provider = "openai" # CRITICAL: This tells EmbeddingFactory to use OpenAICfg
-    model_name_or_path = "nomic-ai/nomic-embed-text-v1" # The actual model name the LOCAL SERVER uses/expects
-    base_url = "http://localhost:8080/v1" # The base URL of THE LOCAL SERVER's OpenAI-compatible API
-    dimension = 768 # CRITICAL: User MUST provide the correct dimension for this model
-    # api_key can be omitted if the local server doesn't require one, or set to a dummy value.
-    # api_key = "not-needed-for-local"
-
-    # --- Another Local Example (e.g., for a Llama.cpp server with embeddings) ---
-    [embedding_config.models.local-llama-cpp-embeddings]
-    provider = "openai"
-    model_name_or_path = "llama-2-7b-chat.Q4_K_M.gguf" # Or whatever model name the server endpoint expects
-    base_url = "http://localhost:8000/v1" # Common port for Llama.cpp server's OpenAI API
-    dimension = 4096 # Example dimension for Llama-2 base models
-    # api_key = "sk-xxxxxxxxxxxxxxxxx" # If your Llama.cpp server is configured with an API key
-
-# You can add more local model configurations following the pattern above.
-# The key part is `provider = "openai"` and providing the correct `base_url` and `dimension`.
-
-
-# ==========================================================
-# RAG (Retrieval-Augmented Generation) Configuration
-# ==========================================================
-[rag_citations]
-canonical_writes_enabled = false
-
-[rag]
-# Comprehensive configuration for the RAG system
-
-    # --- Retrieval Settings ---
-    [rag.retriever]
-    fts_top_k = 10              # Number of results from full-text search
-    vector_top_k = 10           # Number of results from vector search
-    hybrid_alpha = 0.7          # Hybrid RRF fusion: vector-leg weight (0=FTS only, 1=vector only); 0.7 = tldw_server default
-    chunk_size = 512            # Size of text chunks for indexing
-    chunk_overlap = 128         # Overlap between chunks
-    
-    # Collection names for different data types
-    media_collection = "media_embeddings"
-    chat_collection = "chat_embeddings"
-    notes_collection = "notes_embeddings"
-    character_collection = "character_embeddings"
-    
-    # --- Processing Settings ---
-    [rag.processor]
-    enable_reranking = true         # Enable result reranking
-    reranker_model = "cohere"       # Reranker model: "cohere", "flashrank", or null
-    reranker_top_k = 5             # Number of results to rerank
-    deduplication_threshold = 0.85  # Similarity threshold for deduplication
-    max_context_length = 4096      # Maximum context length for LLM
-    combination_method = "weighted" # "weighted", "round_robin", "score_based"
-    
-    # --- Generation Settings ---
-    [rag.generator]
-    default_model = ""             # Default LLM model (empty = use chat defaults)
-    default_temperature = 0.7      # Default temperature for RAG responses
-    max_tokens = 1024              # Maximum tokens for RAG responses
-    enable_streaming = true        # Enable streaming responses
-    stream_chunk_size = 10         # Tokens per stream chunk
-    
-    # --- ChromaDB Settings ---
-    [rag.chroma]
-    persist_directory = ""         # Directory for ChromaDB (empty = auto)
-    collection_prefix = "tldw_rag" # Prefix for collection names
-    embedding_model = "all-MiniLM-L6-v2"  # Default embedding model
-    embedding_dimension = 384      # Embedding dimension
-    distance_metric = "cosine"     # "cosine", "euclidean", "ip"
-    
-    # --- Caching Settings ---
-    [rag.cache]
-    enable_cache = true            # Enable result caching
-    cache_ttl = 3600              # Cache TTL in seconds (1 hour)
-    max_cache_size = 1000         # Maximum cached items
-    cache_embedding_results = true # Cache embedding results
-    cache_search_results = true   # Cache search results
-    cache_llm_responses = false   # Cache LLM responses (usually want fresh)
-    
-    # --- Memory Management Settings ---
-    [rag.memory_management]
-    max_total_size_mb = 1024.0         # Maximum total ChromaDB size (MB)
-    max_collection_size_mb = 512.0     # Maximum size per collection (MB)
-    max_documents_per_collection = 100000  # Maximum documents per collection
-    max_age_days = 90                  # Maximum age of documents (days)
-    inactive_collection_days = 30      # Days before cleaning inactive collections
-    enable_automatic_cleanup = true    # Enable automatic cleanup
-    cleanup_interval_hours = 24        # Hours between cleanup runs
-    cleanup_batch_size = 1000         # Documents to delete per batch
-    enable_lru_cache = true           # Enable ChromaDB LRU cache
-    memory_limit_bytes = 2147483648   # Memory limit for ChromaDB (2GB)
-    min_documents_to_keep = 100       # Minimum documents to always keep
-    cleanup_confirmation_required = false  # Require confirmation for cleanup
-    
-    # --- Performance Settings ---
-    [rag.performance]
-    lazy_load_embeddings = true        # Defer loading embeddings models until first use
-    preload_models = false             # Preload embedding models on startup
-    unload_models_after_idle = true    # Unload models after idle timeout
-    model_idle_timeout_seconds = 900   # Idle timeout before unloading (15 minutes)
-    eager_dependency_check = false     # Check all dependencies on startup
-
-# Legacy RAG settings (for backwards compatibility)
-[rag_search]
-fts_top_k = 10
-vector_top_k = 10
-web_vector_top_k = 10
-llm_context_document_limit = 10
-
-# ==========================================================
-# Chunking Template Configuration
-# ==========================================================
-[chunking]
-# Default chunking template for imports that did not pick one in the
-# Library ingest form. Empty (the default) means plain chunk options
-# (method/size/overlap) -- exactly today's behavior. The name must match
-# a live template row in the media DB (RAG Admin: chunking templates);
-# an unresolvable name fails the import with a named error rather than
-# silently falling back to different chunking.
-default_template = ""
-
-
-# --- Model Capabilities Configuration ---
-[model_capabilities]
-# This section defines which models have specific capabilities like vision support.
-# Users can override or extend these patterns in their config file.
-
-# Direct model-to-capability mappings (highest priority)
-[model_capabilities.models]
-# OpenAI models
-"gpt-4-vision-preview" = { vision = true, max_images = 1 }
-"gpt-4-turbo" = { vision = true, max_images = 10 }
-"gpt-4-turbo-2024-04-09" = { vision = true, max_images = 10 }
-"gpt-4o" = { vision = true, max_images = 10 }
-"gpt-4o-mini" = { vision = true, max_images = 10 }
-"gpt-5.6-terra" = { vision = true, max_images = 10 }
-
-# Anthropic models
-"claude-3-opus-20240229" = { vision = true, max_images = 5 }
-"claude-3-sonnet-20240229" = { vision = true, max_images = 5 }
-"claude-3-haiku-20240307" = { vision = true, max_images = 5 }
-"claude-3-5-sonnet-20240620" = { vision = true, max_images = 5 }
-"claude-3-5-sonnet-20241022" = { vision = true, max_images = 5 }
-"claude-sonnet-5" = { vision = true, max_images = 5 }
-
-# Google models
-"gemini-pro-vision" = { vision = true, max_images = 1 }
-"gemini-1.5-pro" = { vision = true, max_images = 10 }
-"gemini-1.5-flash" = { vision = true, max_images = 10 }
-"gemini-2.0-flash" = { vision = true, max_images = 10 }
-
-# Pattern-based matching for model families (fallback if not in direct mappings)
-[model_capabilities.patterns]
-# OpenAI patterns
-OpenAI = [
-    { pattern = "^gpt-4.*vision", vision = true },
-    { pattern = "^gpt-4[o0](?:-mini)?", vision = true },  # gpt-4o, gpt-40, gpt-4o-mini
-    { pattern = "^gpt-4.*turbo", vision = true }
-]
-
-# Anthropic patterns
-Anthropic = [
-    { pattern = "^claude-3", vision = true },             # All Claude 3 models have vision
-    { pattern = "^claude.*opus-4", vision = true },      # Claude Opus 4 series
-    { pattern = "^claude.*sonnet-4", vision = true }     # Claude Sonnet 4 series
-]
-
-# Google patterns
-Google = [
-    { pattern = "gemini.*vision", vision = true },
-    { pattern = "gemini-[0-9.]+-(pro|flash)", vision = true },  # Modern Gemini models
-    { pattern = "gemini-2\\\\.", vision = true }                 # Gemini 2.x series
-]
-
-# OpenRouter patterns (uses provider/model format)
-OpenRouter = [
-    { pattern = "openai/gpt-4.*vision", vision = true },
-    { pattern = "openai/gpt-4[o0]", vision = true },
-    { pattern = "anthropic/claude-3", vision = true },
-    { pattern = "google/gemini.*vision", vision = true },
-    { pattern = "google/gemini-[0-9.]+-(pro|flash)", vision = true }
-]
-
-# Default behavior for unknown models
-[model_capabilities.defaults]
-unknown_models_vision = false  # Whether to assume unknown models have vision capabilities
-log_unknown_models = true      # Whether to log when an unknown model is queried
-
-# --- Sections below are placeholders based on config.txt, integrate as needed ---
-# [tts_settings]
-# default_provider = "kokoro"
-# ...
-
-# ==========================================================
-# Deep-Search Configuration
-# ==========================================================
-[tools]
-# web_deep_search_enabled = false    # Opt-in deep-search tool; the Console picks this up on its next agent run (each run rebuilds its tool catalog fresh, no app restart needed); external MCP clients only see it on their next client launch, and only when [mcp] expose_local_tools = true; each call makes ~2x-results+3 LLM calls plus page fetches (real money on paid providers)
-
-[SearchSettings]
-# Default search backend shared by basic web_search and web_deep_search.
-# A per-call engine overrides this preference without changing it. Preference
-# saves apply on the next call. If absent, DuckDuckGo is used (no API key;
-# web-search dependencies and network access are still required).
-# search_provider_default = "duckduckgo"
-# Deep-search-only defaults below. Enable the deep-search tool with
-# [tools] web_deep_search_enabled = true -- the Console picks this up on its
-# next agent run (no app restart needed); external MCP clients only see it on
-# their next client launch, and only when [mcp] expose_local_tools = true.
-# Each call makes ~2x-results+3 LLM calls plus page fetches -- real money on
-# paid providers.
-# relevance_analysis_llm = "openai"
-# final_answer_llm = "openai"
-# search_enable_subquery = false   # generate sub-questions from the query and
-#   search those too. Costs one LLM call plus up to search_default_max_queries-1
-#   extra searches, each carrying its own per-result relevance calls. Qodo
-#   (PR 1772): with BOTH lanes active each generated facet costs TWO provider
-#   calls, not one -- a web search and an academic-provider search -- so the
-#   worst case is 2 x (search_default_max_queries - 1) extra calls per round,
-#   plus the per-result relevance and summarization calls each returned source
-#   then needs. Since task-17372 the facets ALSO drive academic-provider
-#   searches, so enabling this changes both what evidence is retrieved and how
-#   it is judged
-#   (the facets reach the relevance prompt either way). Before that fix it
-#   changed only the judging, which is why the recorded gate measurement for
-#   fan-out says nothing about retrieval -- see
-#   Docs/Development/research-report-eval-baseline.md.
-# search_default_max_queries = 5
-# search_result_max = 10
-# relevance_llm_timeout_s = 30   # per relevance/summarization LLM call. Measured
-#   (task-17370): per-result summarization against a local 27B took 42-131s, so
-#   30 guarantees the fallback-to-source-text path on local models. Raise it if
-#   you want summarized evidence rather than raw page text.
-# relevance_scrape_timeout_s = 30
-# research_max_iterations = 2   # rounds a local research RUN performs when it
-#   does not set its own limit: round 1 researches the question, later rounds
-#   research the gaps the previous synthesis left open (task-16324). 2 is the
-#   shipped default because a second round measurably improved evidence --
-#   resolved citation markers 24 -> 39, citation density 0.77 -> 0.95
-#   (task-17370). It costs one extra search per gap, each with its own
-#   per-result relevance and summarization calls, plus another synthesis and gap
-#   analysis per round: the measured arm went from 3 to 12 search calls across
-#   three questions and roughly tripled wall-clock. Set to 1 for single-pass
-#   runs; a run's own limits always override this.
-# deep_search_timeout_s = 240   # the agent runtime automatically allots this tool its own per-call timeout of this value plus ~50s slack (wait_for grace + thread-join + scheduling jitter), via LocalToolProvider.timeout_for -- independent of max_tool_call_seconds, any value here is safe
-
-[webfetch]
-# Governs the web_fetch and web_crawl tools (task-2833). When true (the
-# default), every hop -- web_fetch redirects, web_crawl pages, and sitemap
-# fetches -- is checked against its host's robots.txt before being
-# fetched; a disallowed web_fetch hop is refused, a disallowed web_crawl
-# page/sitemap is skipped and counted, not fatal. A robots.txt that can't
-# be fetched or parsed fails OPEN (no restrictions applied), so a robots
-# outage never bricks fetching. Set to false to disable enforcement
-# entirely (no robots.txt fetches are made).
-# respect_robots_txt = true
-
-# ==========================================================
-# Search Engines Configuration
-# ==========================================================
-[SearchEngines]
-# API Keys for various search engines
-bing_search_api_key = ""
-google_search_api_key = ""
-brave_search_api_key = ""
-brave_search_ai_api_key = ""
-kagi_search_api_key = ""
-tavily_search_api_key = ""
-# Serper (google.serper.dev) API key
-serper_search_api_key = ""
-# Exa (exa.ai) API key
-exa_search_api_key = ""
-# Yandex Cloud Search API key
-yandex_search_api_key = ""
-# Yandex Cloud folder id for Search API v2
-yandex_search_folder_id = ""
-
-# API URLs
-bing_search_api_url = "https://api.bing.microsoft.com/v7.0/search"
-google_search_api_url = "https://www.googleapis.com/customsearch/v1"
-# Set your own SearX / SearXNG instance; it must allow JSON output.
-searx_search_api_url = ""
-
-# General search settings
-search_result_max = 10
-
-# Country and language settings
-bing_country_code = "US"
-search_engine_country_code_brave = "US"
-google_search_country = "US"
-google_search_engine_id = ""
-
-# Google-specific settings
-google_simp_trad_chinese = false
-limit_google_search_to_country = false
-google_safe_search = false
-
-# ============================================================================
-# Media Processing Configuration
-# ============================================================================
-
-[media_processing]
-# Maximum file sizes for processing
-max_audio_file_size_mb = 500
-max_video_file_size_mb = 2000
-# Whole-file read ceiling for text-shaped sources (plaintext, HTML, and the
-# MOBI basic-text fallback), which are read entirely into memory.
-max_text_file_size_mb = 50
-
-# FFmpeg path (optional - will try to find automatically if not set)
-# ffmpeg_path = "/usr/bin/ffmpeg"
-
-# Temporary file cleanup
-cleanup_temp_files = true
-temp_dir = ""  # Empty means use system temp
-
-[meetings]
-# Meetings screen: record a call (mic + system audio) or a room (mic only).
-# STT provider for the live transcript; "auto" = the Console dictation choice.
-provider = "auto"
-# Model override for that provider; empty = the provider's default.
-model = ""
-# "auto" = native system audio (macOS 14.2+ tap, Linux parec/pw-record,
-# Windows WASAPI loopback). Or name an input device such as "BlackHole 2ch".
-system_source = "auto"
-# Input device name for the mic; empty = system default.
-mic_device = ""
-# Where meeting folders go; empty = <data_dir>/meetings.
-recordings_dir = ""
-# Keep you.wav / others.wav after the Library ingest finishes (mixed.wav is always kept).
-keep_raw_tracks = true
-# Re-transcribe mixed.wav offline after the meeting (needed for speaker labels).
-post_transcribe = true
-# Ask that offline pass for speaker diarization (needs torch + speechbrain).
-post_diarize = true
-# Assign speaker ids while recording instead of only in the offline pass
-# (feeds the live Speakers legend). Needs a diarizer engine -- the base
-# install ships one; see diarizer_backend below for the choice.
-live_diarization = false
-# Which engine assigns the live speaker ids when live_diarization is on:
-#   "auto"        - the first engine whose packages are installed, ONNX before
-#                   SpeechBrain (default; "local" is the old name for it).
-#                   ONNX ships with the base install, so "auto" means ONNX
-#                   unless that package is broken.
-#   "onnx"        - sherpa-onnx; ships with the base install, no torch needed
-#   "speechbrain" - needs the "diarization" extra (torch, torchaudio,
-#                   speechbrain, scikit-learn)
-#   "server"      - reserved; not available yet
-# ONNX measures better on accuracy, live purity and speed; SpeechBrain keeps a
-# wider margin between one enrolled voice and everyone else's
-# (Docs/STT_Evaluation/task-31827/report.md). The two produce different kinds
-# of voiceprint vector, so switching engines means enrolling your voice again
-# -- an existing SpeechBrain voiceprint reads "needs re-enrollment" until you do.
-diarizer_backend = "auto"
-# Which speaker embedder the "onnx" engine uses: titanet_small,
-# wespeaker_resnet34, eres2net_en or campplus_en. Also part of the voiceprint
-# identity -- changing it means enrolling again.
-onnx_embedder = "titanet_small"
-# Where the ONNX model files live; empty = <data_dir>/models/diarization/onnx,
-# fetched from the sherpa-onnx GitHub releases on the first Start (~47 MB for
-# titanet_small). Point it at a directory of pre-placed files for an
-# air-gapped install: the files already there are hash-verified and never
-# re-fetched, and only missing ones are downloaded.
-onnx_models_dir = ""
-# Upper bound the local live diarizer uses when clustering voices into
-# speaker ids.
-max_speakers = 8
-# Hybrid rooms (a call where more than one person shares the mic): also
-# diarize the mic ("you") and overlap ("both") channels in call mode instead
-# of always pre-naming them as you. Off by default -- turning it on means a
-# mic segment may render as a diarized speaker instead of your own name.
-diarize_mic_channel = false
-# Tag your own speech with your display name using an enrolled voiceprint
-# ("Enroll my voice" on the Meetings screen). No effect until you enroll one,
-# and never used in a plain call, where the mic channel is already you.
-voice_match = true
-# Cosine-distance ceiling for calling a cluster you. Lower = stricter. A
-# starting value: raise it if you are never matched, lower it if someone else
-# is matched as you.
-voice_match_threshold = 0.2
-# Seconds of your speech a cluster must accumulate before it can be matched
-# at all, so one short window can never claim to be you.
-voice_match_min_seconds = 4
-# After a meeting that matched you cleanly, offer to learn from it and
-# improve the stored voiceprint (at most one offer per meeting).
-voice_learn_offer = true
-
-[dictation]
-# Speculative pipeline only. Safe range: 500-3000 milliseconds.
-response_eagerness_ms = 700
-# Troubleshooting-only false forces half duplex. Realtime voice is unaffected.
-pipeline_aec_enabled = true
-
-[transcription]
-# Default transcription provider
-# Options: "faster-whisper", "parakeet-onnx", "qwen2audio", "parakeet", "canary", "parakeet-mlx", "lightning-whisper-mlx", "remote-whisper"
-# Resolved for this install when this file was first created: parakeet-mlx or
-# lightning-whisper-mlx on macOS when installed, otherwise faster-whisper.
-# Edit this line to pin a different provider yourself -- your choice always
-# wins over the platform preference.
-default_provider = "__DEFAULT_TRANSCRIPTION_PROVIDER__"
-
-# Default model for transcription
-# For faster-whisper: large-v1, large-v2, large-v3, large, distil-large-v2, distil-large-v3,
-#                     distil-medium.en, distil-small.en, deepdml/faster-distil-whisper-large-v3.5,
-#                     deepdml/faster-whisper-large-v3-turbo-ct2, nyrahealth/faster_CrisperWhisper
-#   Note: faster-whisper supports translation to English for non-English audio
-# For qwen2audio: Qwen2-Audio-7B-Instruct
-# For parakeet: nvidia/parakeet-tdt-1.1b, nvidia/parakeet-rnnt-1.1b, nvidia/parakeet-ctc-1.1b,
-#               nvidia/parakeet-tdt-0.6b, nvidia/parakeet-rnnt-0.6b, nvidia/parakeet-ctc-0.6b,
-#               nvidia/parakeet-tdt-0.6b-v2
-# For canary: nvidia/canary-1b-flash, nvidia/canary-1b
-#   Note: Canary supports multilingual ASR and translation between en, de, es, fr
-# For remote-whisper: Depends on your server (e.g., "whisper-1" for OpenAI)
-default_model = "distil-large-v3"
-
-# Default language for transcription (use "auto" for automatic detection)
-# For source language in transcription
-default_language = "en"
-
-# Default source language (overrides default_language if specified)
-# Used for explicitly setting the audio's language
-default_source_language = ""
-
-# Default target language for translation (leave empty for no translation)
-# Supported by:
-#   - faster-whisper: Only supports translation to English ("en")
-#   - canary: Supports translation between en, de, es, fr
-default_target_language = ""
-
-# Device to use for transcription
-# Options: "cpu", "cuda", "mps" (Apple Silicon)
-device = "cpu"
-
-# Compute type for faster-whisper
-# Options: "int8", "float16", "float32"
-compute_type = "int8"
-
-# Explicit local directory containing the Parakeet v2 INT8 ONNX bundle.
-# parakeet-onnx never downloads model files implicitly.
-parakeet_onnx_model_dir = ""
-
-# Exact v2/v3 × INT8/F32 external-source records. External files remain
-# user-owned and are never copied or managed implicitly.
-parakeet_external_sources = {}
-
-# Voice Activity Detection
-use_vad_by_default = false
-
-# Speaker diarization (not yet fully implemented)
-use_diarization_by_default = false
-
-# Chunk length for long audio processing (in seconds)
-# Used by Canary model for efficient processing of long audio files
-chunk_length_seconds = 40.0
-
-[diarization]
-# Speaker diarization configuration
-enabled = false  # Enable/disable diarization by default
-
-# Voice Activity Detection (VAD) settings
-vad_threshold = 0.5  # Sensitivity for speech detection (0.0-1.0)
-vad_min_speech_duration = 0.25  # Minimum speech duration in seconds
-vad_min_silence_duration = 0.25  # Minimum silence duration in seconds
-
-# Segmentation settings for speaker analysis
-segment_duration = 2.0  # Duration of analysis segments in seconds
-segment_overlap = 0.5  # Overlap between segments in seconds
-min_segment_duration = 1.0  # Minimum segment duration
-max_segment_duration = 3.0  # Maximum segment duration
-
-# Speaker embedding model
-embedding_model = "speechbrain/spkrec-ecapa-voxceleb"  # Model for speaker embeddings
-embedding_device = "auto"  # Device: "auto", "cuda", "cpu"
-
-# Clustering settings
-clustering_method = "spectral"  # Method: "spectral" or "agglomerative"
-similarity_threshold = 0.85  # Threshold for speaker similarity (0.0-1.0)
-min_speakers = 1  # Minimum expected speakers
-max_speakers = 10  # Maximum expected speakers
-
-# Post-processing
-merge_threshold = 0.5  # Time gap in seconds to merge same-speaker segments
-min_speaker_duration = 3.0  # Minimum total duration per speaker in seconds
-
-[transcription.remote_whisper]
-# Remote Whisper OpenAI API compatible transcription backend
-# Enable this to use a custom transcription server instead of local models
-enabled = false
-
-# API endpoint URL
-# Examples:
-#   - OpenAI: "https://api.openai.com/v1/audio/transcriptions"
-#   - Local server: "http://localhost:8000/v1/audio/transcriptions"
-#   - Custom endpoint: "https://your-whisper-server.com/transcribe"
-api_endpoint = "http://localhost:8000/v1/audio/transcriptions"
-
-# API authentication (leave empty if not required)
-api_key_env_var = "REMOTE_WHISPER_API_KEY"  # Environment variable name
-# api_key = ""  # Direct API key (less secure - use env var instead)
-
-# Model to use (e.g., "whisper-1" for OpenAI, or your custom model name)
-model = "whisper-1"
-
-# Request timeout in seconds
-timeout = 300
-
-# Response format: "json", "text", "srt", "verbose_json", "vtt"
-response_format = "json"
-
-# Optional parameters
-temperature = 0.0  # Sampling temperature (0-1)
-# prompt = ""  # Optional prompt to guide transcription style
-
-# Additional custom parameters (will be passed as-is to the API)
-# Format: key = "value"
-# Example:
-# [transcription.remote_whisper.additional_params]
-# custom_param = "custom_value"
-
-[local_ingestion]
-# YouTube/URL download settings
-enable_url_downloads = true
-use_cookies_for_downloads = false
-cookie_file_path = ""
-
-# Audio extraction settings for videos
-extract_audio_format = "mp3"
-audio_bitrate = "192k"
-audio_sample_rate = 44100
-
-# Processing defaults
-keep_original_files = false
-auto_analyze_transcripts = true
-
-# Parallel processing
-max_concurrent_processes = 2
-
-[mcp]
-# Model Context Protocol (MCP) settings
-enabled = false  # Enable MCP server functionality
-server_name = "tldw_chatbook"
-server_version = "0.1.0"
-transport = "stdio"  # "stdio" for Claude Desktop, "http" for web-based clients
-http_port = 3000  # Port for HTTP transport
-allowed_clients = ["claude-desktop", "localhost"]  # List of allowed client identifiers
-
-# Feature toggles
-expose_tools = true  # Expose tools (chat, search, etc.)
-expose_resources = true  # Expose resources (conversations, notes, etc.)
-expose_prompts = true  # Expose prompt templates
-
-# Security settings
-require_auth = false  # Require authentication (not implemented yet)
-rate_limit = 100  # Max requests per minute per client
-max_concurrent_requests = 10  # Max concurrent requests
-# approval_timeout_seconds = 0  # Console approval-card auto-deny ceiling: 0 (default) waits indefinitely; e.g. 120 auto-denies undecided calls after 120s
-
-# expose_local_tools = false   # expose workspace, web, and Watchlists agent tools (fs_*/git_*/web_*/watchlists_*) to external MCP clients; each tool remains permission-gated
-# expose_character_tools = false   # expose character_search and character_get to external MCP clients (independent of expose_local_tools and [tools] character_tools_enabled); each tool remains permission-gated
-
-# Tool-specific settings
-[mcp.tools]
-chat_default_provider = "openai"
-chat_default_temperature = 0.7
-chat_default_max_tokens = 4096
-search_default_limit = 10
-enable_media_ingestion = true  # Allow media ingestion via MCP
-
-# Resource-specific settings
-[mcp.resources]
-max_list_limit = 100  # Maximum items to return in list operations
-default_list_limit = 10  # Default items to return in list operations
-enable_binary_resources = false  # Allow serving binary resources (images, etc.)
-
-# Prompt-specific settings
-[mcp.prompts]
-enable_custom_prompts = true  # Allow custom prompt creation
-max_prompt_length = 10000  # Maximum prompt length in characters
-
-# Subscription system configuration
-[subscriptions]
-enabled = true
-default_check_interval = 3600  # 1 hour in seconds
-max_concurrent_checks = 10
-check_timeout_seconds = 30
-auto_pause_after_failures = 10  # Seeds auto_pause_threshold for NEW subscriptions only (task-1410); an explicit per-subscription value always overrides, and existing subscriptions keep their stored value
-enable_background_checking = true
-default_priority = 3  # 1-5, higher is more important
-
-# Rate limiting
-[subscriptions.rate_limiting]
-global_requests_per_minute = 60
-per_domain_requests_per_minute = 10
-retry_after_rate_limit = true
-
-# Performance settings
-[subscriptions.performance]
-use_connection_pooling = true
-enable_response_caching = true
-cache_ttl_seconds = 300
-use_http2 = true
-enable_compression = true
-
-# Content processing
-[subscriptions.content_processing]
-default_analysis_prompt = "Summarize the key points and provide actionable insights."
-auto_analyze_new_items = false
-save_analysis_only = false
-extract_keywords = true
-max_keywords = 15
-
-# Briefing/newsletter generation
-[subscriptions.briefings]
-enabled = true
-default_format = "markdown"  # markdown, html, pdf
-save_to_notes = true
-email_notifications = false
-morning_digest_time = "06:00"  # 24-hour format
-
-# Default templates for common subscription types
-[subscriptions.templates.tech_news]
-name = "Tech News Feed"
-type = "rss"
-check_frequency = 1800  # 30 minutes
-priority = 4
-extraction_method = "auto"
-auto_ingest = true
-tags = ["tech", "news"]
-
-[subscriptions.templates.documentation]
-name = "Documentation Monitor"
-type = "url"
-check_frequency = 86400  # Daily
-change_threshold = 0.05  # 5% change threshold
-priority = 3
-tags = ["docs", "reference"]
-
-# GitHub configuration for repository browsing
-[github]
-# Personal access token for accessing private repositories
-# Create a token at: https://github.com/settings/tokens
-# Required scopes: repo (for private repos), public_repo (for public only)
-api_token = ""  # Leave empty to only access public repositories
-api_token_env_var = "GITHUB_API_TOKEN"  # Environment variable to check first
-
-# Rate limiting settings
-enable_rate_limit_handling = true  # Automatically handle rate limit responses
-cache_ttl_seconds = 300  # Cache API responses for 5 minutes
-max_retries = 3  # Maximum retries for failed requests
-
-# Default behavior
-default_branch = "main"  # Default branch to use if not specified
-show_hidden_files = false  # Show files starting with . (except .gitignore)
-respect_gitignore = true  # Respect .gitignore rules when displaying files
-
-# Performance settings
-lazy_load_tree = true  # Load repository tree on-demand
-max_tree_depth = 10  # Maximum depth for recursive tree loading
-batch_file_requests = true  # Batch multiple file content requests
-max_concurrent_requests = 5  # Maximum concurrent API requests
-
-# UI preferences
-auto_expand_small_folders = true  # Auto-expand folders with < 5 items
-highlight_binary_files = true  # Visually distinguish binary files
-show_file_sizes = true  # Display file sizes in the tree
-default_preview_language = "auto"  # Language for syntax highlighting
-
-# Export settings
-default_export_format = "compilation"  # Default format: compilation, zip, markdown
-include_file_metadata = false  # Include metadata in exports
-max_export_size_mb = 100  # Maximum size for exports in MB
-
-# Selection profiles directory
-profiles_directory = "~/.config/tldw_cli/github_profiles"  # Where to store selection profiles
-
-[briefings_feed_server]
-# Opt-in, session-only static file server for ONE exported briefings podcast
-# feed directory at a time (task-1760). This is its own section on purpose --
-# it is unrelated to [web_server] below: that runs the whole chatbook UI in a
-# browser instead of a terminal (a separate, mutually exclusive process mode)
-# and has no route that serves a directory you choose. Nothing here ever
-# auto-starts anything -- these are only the defaults the Watchlists
-# Artifacts pane's Serve action uses when you press it; serving always
-# requires that explicit action. See Docs/User_Guide/watchlists.md's
-# "Serving an exported feed" section for the full security posture
-# (no authentication, localhost-only unless you widen bind, recursive
-# file serving with directory listings disabled, so point this at a
-# dedicated export folder rather than a general-purpose one like $HOME).
-# A blank/invalid bind value here falls back to loopback rather than
-# silently widening exposure.
-bind = "127.0.0.1"  # Loopback only. Widen only if you understand the exposure -- there is no authentication.
-port = 0  # 0 = pick any free port each time; set a fixed port to reuse the same URL
-
-[canvas]
-# Effective preference order is a non-empty environment override, then this
-# saved TOML value, then the default. TLDW_CANVAS_ENABLED and
-# TLDW_CANVAS_AUTO_OPEN_ON_CREATE accept only true or false (case-insensitive);
-# malformed non-empty values fail closed. Hard quotas have no env overrides.
-# One global execution/delivery/tool-advertisement kill switch. Turning this
-# off preserves stored Canvas revisions and Chatbook export/import data.
-enabled = true
-# Successful assistant canvas_create operations open the preview automatically.
-# Updates hot-reload an already-open preview but never force a new browser open.
-auto_open_on_create = true
-
-[web_server]
-# Web server configuration for running tldw_chatbook in a browser
-enabled = true  # Enable web server functionality
-host = "localhost"  # Host address to bind to
-port = 8000  # Port to bind to
-title = "tldw chatbook"  # Title for the web page
-font_size = 12  # Browser terminal font size; 12 keeps Textual Web close to native terminal density
-debug = false  # Enable debug mode for development
-# Remote access is denied unless a dedicated credential resolves in this order:
-# TLDW_CHATBOOK_WEB_ACCESS_TOKEN, this access_token field, then the OS keyring
-# service "tldw_chatbook_web" / account "access_token". Do not reuse an LLM,
-# MCP, or tldw_api credential. Prefer environment or keyring over plaintext TOML.
-access_token = ""
-# Wildcard binds require the exact browser-facing origin. Use https:// here for
-# either direct TLS or an explicitly trusted TLS-terminating reverse proxy.
-public_url = ""
-# Direct TLS: set both files or neither. The private key remains host-local.
-tls_certificate = ""
-tls_private_key = ""
-# Reverse-proxy headers are ignored unless the immediate peer is one of these
-# literal IP addresses. The proxy must terminate HTTPS and overwrite forwarded
-# host, scheme, and client headers rather than appending untrusted values.
-trusted_proxy_addresses = []
-# Emergency development escape hatch only. This exposes terminal/chat/Canvas
-# content and credentials to network observers and emits a prominent warning.
-allow_insecure_remote_http = false
-"""
+# Packaged data file (Config_Files/default_config.toml); the two placeholders in it
+# are resolved just below. Read as bytes so no newline translation can alter it.
+CONFIG_TOML_CONTENT = (
+    importlib.resources.files("tldw_chatbook.Config_Files")
+    .joinpath("default_config.toml")
+    .read_bytes()
+    .decode("utf-8")
+)
 
 # Resolve the `[transcription] default_provider` placeholder to this platform's
 # preferred engine before the template is parsed or ever written to disk
@@ -6446,6 +3777,38 @@ except tomllib.TOMLDecodeError as e:
         f"FATAL: Could not parse internal DEFAULT_CONFIG_TOML_CONTENT: {e}. Application cannot start correctly."
     )
     DEFAULT_CONFIG_FROM_TOML = {}  # Should not happen with valid TOML string
+
+
+def _merge_user_config_over_shipped_defaults(
+    user_config: Mapping[str, Any],
+) -> Dict[str, Any]:
+    """Deep-merge one raw user config over the shipped template.
+
+    Every published view of the config (bootstrap load, post-write install,
+    atomic snapshot) is built here, so they agree. TASK-33620.10: the
+    template's ``[chat_defaults] streaming = true`` must not shadow a user's
+    legacy ``enable_streaming``, which is read only when the user's file has no
+    ``streaming``. When the file holds the legacy key alone, the template's
+    ``streaming`` is left out of the merged view and readers bridge the legacy
+    value as before.
+
+    Args:
+        user_config: The user's raw (parsed, migrated) config file.
+
+    Returns:
+        A new merged mapping; neither input is modified.
+    """
+    merged = deep_merge_dicts(DEFAULT_CONFIG_FROM_TOML, dict(user_config))
+    user_chat_defaults = user_config.get("chat_defaults")
+    if (
+        isinstance(user_chat_defaults, Mapping)
+        and "enable_streaming" in user_chat_defaults
+        and "streaming" not in user_chat_defaults
+    ):
+        merged_chat_defaults = merged.get("chat_defaults")
+        if isinstance(merged_chat_defaults, dict):
+            merged_chat_defaults.pop("streaming", None)
+    return merged
 
 
 # --- Primary Configuration Loading Logic for the CLI ---
@@ -6483,19 +3846,19 @@ def first_profile_created_this_session() -> bool:
 #: -- only genuinely dynamic-keyed sections -- so real typos elsewhere still
 #: surface. Each entry is a tuple path prefix.
 _FREEFORM_CONFIG_PREFIXES: tuple[tuple[str, ...], ...] = (
-    ("agents",),                # deliberately EMPTY in the default shape: the
-                                # authoritative defaults live in
-                                # Agents/agent_service.py (two-homes drift),
-                                # so documented overrides here would all flag
-                                # as unknown (Qodo #13, PR #2301)
+    ("agents",),  # deliberately EMPTY in the default shape: the
+    # authoritative defaults live in
+    # Agents/agent_service.py (two-homes drift),
+    # so documented overrides here would all flag
+    # as unknown (Qodo #13, PR #2301)
     ("console", "reasoning_history_overrides"),
     ("console", "reasoning_native_tool_overrides"),
-    ("api_settings",),          # provider configs incl. user-added custom providers
-    ("providers",),             # provider display sections + model lists
-    ("model_capabilities", "models"),    # arbitrary model names
+    ("api_settings",),  # provider configs incl. user-added custom providers
+    ("providers",),  # provider display sections + model lists
+    ("model_capabilities", "models"),  # arbitrary model names
     ("model_capabilities", "patterns"),  # arbitrary model-name patterns
-    ("SearchEngines",),         # per-engine configs
-    ("Prompts",),               # user prompt content
+    ("SearchEngines",),  # per-engine configs
+    ("Prompts",),  # user prompt content
     ("prompts",),
 )
 
@@ -6514,8 +3877,8 @@ _DEPRECATED_CONFIG_KEYS: Dict[str, str] = {
 class ConfigKeyFinding:
     """One advisory config-key finding."""
 
-    path: str                       # dotted path, e.g. "general.focus_mdoe"
-    kind: str                       # "unknown" | "deprecated"
+    path: str  # dotted path, e.g. "general.focus_mdoe"
+    kind: str  # "unknown" | "deprecated"
     suggestion: Optional[str] = None  # near-miss key or replacement path
 
 
@@ -6558,7 +3921,9 @@ def validate_config_keys(
             here = (*path, key)
             replacement = _deprecated_config_replacement(here)
             if replacement is not None:
-                findings.append(ConfigKeyFinding(".".join(here), "deprecated", replacement))
+                findings.append(
+                    ConfigKeyFinding(".".join(here), "deprecated", replacement)
+                )
                 continue
             if key in ref:
                 ref_value = ref[key]
@@ -6709,7 +4074,9 @@ def migrate_config_file_if_needed() -> Optional[Path]:
         )
         persisted = _config_data_for_persistence(migrated)
         raw_written = _write_raw_cli_config_unlocked(config_path, persisted)
-        _publish_runtime_config_unlocked(raw_config=raw_written)
+        _publish_runtime_config_unlocked(
+                raw_config=raw_written, config_path=config_path
+            )
         return backup_path
 
 
@@ -6748,9 +4115,7 @@ def _preserve_corrupt_config_aside(config_path: Path) -> Optional[Path]:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
         aside = source.with_name(f"{source.name}.corrupt-{stamp}")
         shutil.copy2(source, aside)
-        logger.warning(
-            f"Preserved unparseable config {source} at {aside}"
-        )
+        logger.warning(f"Preserved unparseable config {source} at {aside}")
         _LAST_PRESERVED_CORRUPT_KEY = key
         _LAST_PRESERVED_CORRUPT_ASIDE = aside
         return aside
@@ -6810,7 +4175,7 @@ def _load_cli_config_bootstrap_unlocked(
     global _CONFIG_CACHE, _CONFIG_CACHE_SOURCE, _LAST_CONFIG_LOAD_FAILURE
     global _FIRST_PROFILE_CREATED_THIS_SESSION
     global _CONFIG_FILE_STAMP, _CONFIG_STAT_CHECKED_MONOTONIC
-    global _CONFIG_SCHEMA_CONFLICT
+    global _CONFIG_SCHEMA_CONFLICT, _CONFIG_CACHE_INSTALLS
     config_path = _get_effective_config_path()
     if (
         _CONFIG_CACHE is not None
@@ -6864,7 +4229,7 @@ def _load_cli_config_bootstrap_unlocked(
         _CONFIG_SCHEMA_CONFLICT = _schema_conflict
         if _schema_conflict is not None:
             logger.warning(_schema_conflict)
-        loaded_config = deep_merge_dicts(loaded_config, user_config_from_file)
+        loaded_config = _merge_user_config_over_shipped_defaults(user_config_from_file)
         logger.info(f"Successfully loaded and merged CLI config from {config_path}")
         decryption = _decrypt_config_section_with_status(loaded_config, strict=True)
         if decryption.succeeded:
@@ -6941,6 +4306,7 @@ def _load_cli_config_bootstrap_unlocked(
     if bootstrap_succeeded:
         _CONFIG_CACHE = loaded_config
         _CONFIG_CACHE_SOURCE = config_path
+        _CONFIG_CACHE_INSTALLS = next(_CONFIG_CACHE_INSTALL_NUMBERS)
         # TASK-26038: stamp the file we just loaded so a later external edit
         # is detected, and reset the throttle so the next read re-checks.
         _CONFIG_FILE_STAMP = _current_config_file_stamp(config_path)
@@ -6996,6 +4362,27 @@ def _warm_config_cache_hit() -> Optional[Dict[str, Any]]:
     ):
         return cached_config
     return None
+
+
+def config_read_would_wait() -> bool:
+    """Whether a config read on this thread would wait for another thread.
+
+    TASK-35645: warm settings and CLI config caches never wait; a cold one
+    waits while another thread holds the config locks (a rebuild or a write),
+    so they are probed without blocking, in their usual order. A storage
+    pause makes a cold read raise rather than wait, as it always has.
+    """
+    if (
+        _warm_config_cache_hit() is not None
+        and _settings_cache_hit(_get_effective_config_path()) is not None
+    ):
+        return False
+    with ExitStack() as acquired:
+        for lock in (_settings_rebuild_lock(), _config_file_lock()):
+            if not lock.acquire(blocking=False):
+                return True
+            acquired.callback(lock.release)
+    return False
 
 
 def load_cli_config_and_ensure_existence(
@@ -7080,6 +4467,19 @@ def _target_config_section(config_data: Dict[str, Any], section: str) -> Dict[st
 # separate lock and defeat serialization on the first write.
 import threading as _threading  # noqa: E402
 
+from tldw_chatbook.Utils.private_paths import (
+    _lock_stream_for_callbacks,
+    open_private_lock_stream,
+)
+
+_LOCK_STREAM_SELECTOR_BINDING = (
+    _lock_stream_for_callbacks,
+    _lock_stream_for_callbacks.__code__,
+    _lock_stream_for_callbacks.__globals__,
+    tuple(cell.cell_contents for cell in _lock_stream_for_callbacks.__closure__),
+)
+
+
 _CONFIG_FILE_LOCK = _threading.RLock()
 
 
@@ -7093,68 +4493,149 @@ def _config_file_lock():
     return _CONFIG_FILE_LOCK
 
 
-@contextmanager
-def _config_interprocess_lock(config_path: Path) -> Iterator[None]:
-    """Hold one OS-backed lock across a whole-file config transaction."""
+def _bind_config_interprocess_lock(definition):
+    """Capture the original optional selector before caller-marker lookup."""
+    @contextmanager
+    def _config_interprocess_lock(config_path: Path) -> Iterator[None]:
+        """Hold one OS-backed lock across a whole-file config transaction."""
 
-    with _config_participants.operation(sys.modules[__name__], target=config_path):
-        lock_path = config_path.with_name(f"{config_path.name}.lock")
-        application_directory = application_owned_config_directory(config_path)
-        try:
-            create_private_text(
-                lock_path,
-                "",
-                application_owned_directory=application_directory,
-            )
-        except FileExistsError:
-            pass
-        stream = open_private_text_append_stream(
-            lock_path,
-            application_owned_directory=application_directory,
-        )
-        locked = False
-        try:
-            from tldw_chatbook.Backup_Recovery import raw_participants
-            operation = raw_participants._runtime_operation(config_path)
-            while True:
+        with _config_participants.operation(sys.modules[__name__], target=config_path):
+            lock_path = config_path.with_name(f"{config_path.name}.lock")
+            application_directory = application_owned_config_directory(config_path)
+            lock_opener = None
+            binding = globals().get("_LOCK_STREAM_SELECTOR_BINDING")
+            if binding is definition:
+                selector, selector_code, selector_globals, selector_closure = definition
+                if (
+                    globals().get("_lock_stream_for_callbacks") is selector
+                    and selector.__code__ is selector_code
+                    and selector.__globals__ is selector_globals
+                    and selector.__defaults__ is None
+                    and selector.__kwdefaults__ is None
+                    and selector.__closure__ is not None
+                    and len(selector.__closure__) == len(selector_closure)
+                    and all(cell.cell_contents is value for cell, value in zip(selector.__closure__, selector_closure, strict=True))
+                ):
+                    lock_opener = selector(
+                        create_private_text, open_private_text_append_stream, open_private_lock_stream, globals()
+                    )
+            if lock_opener is None:
+                try:
+                    create_private_text(
+                        lock_path,
+                        "",
+                        application_owned_directory=application_directory,
+                    )
+                except FileExistsError:
+                    pass
+                stream = open_private_text_append_stream(
+                    lock_path,
+                    application_owned_directory=application_directory,
+                )
+            else:
+                stream = lock_opener(
+                    lock_path, application_owned_directory=application_directory
+                )
+            locked = False
+            try:
+                from tldw_chatbook.Backup_Recovery import raw_participants
+
+                operation = raw_participants.runtime_operation(config_path)
+                while True:
+                    _config_participants.check_lock_wait(sys.modules[__name__], operation)
+                    try:
+                        portalocker.lock(
+                            stream,
+                            portalocker.LockFlags.EXCLUSIVE
+                            | portalocker.LockFlags.NON_BLOCKING,
+                        )
+                        locked = True
+                        break
+                    except portalocker.exceptions.AlreadyLocked:
+                        # TASK-38987: never wait on another process at a write's
+                        # short switch interval.
+                        from tldw_chatbook.Utils.switch_interval import (
+                            switch_interval_released,
+                        )
+
+                        with switch_interval_released():
+                            _threading.Event().wait(0.05)
                 _config_participants.check_lock_wait(sys.modules[__name__], operation)
+                yield
+            finally:
+                if locked:
+                    try:
+                        portalocker.unlock(stream)
+                    except Exception as error:
+                        logger.error(
+                            "Configuration write lock release failed (error_type={}).",
+                            type(error).__name__,
+                        )
                 try:
-                    portalocker.lock(stream, portalocker.LockFlags.EXCLUSIVE | portalocker.LockFlags.NON_BLOCKING)
-                    locked = True
-                    break
-                except portalocker.exceptions.AlreadyLocked:
-                    _threading.Event().wait(0.05)
-            _config_participants.check_lock_wait(sys.modules[__name__], operation)
-            yield
-        finally:
-            if locked:
-                try:
-                    portalocker.unlock(stream)
+                    stream.close()
                 except Exception as error:
                     logger.error(
-                        "Configuration write lock release failed (error_type={}).",
+                        "Configuration write lock close failed (error_type={}).",
                         type(error).__name__,
                     )
-            try:
-                stream.close()
-            except Exception as error:
-                logger.error(
-                    "Configuration write lock close failed (error_type={}).",
-                    type(error).__name__,
-                )
+
+    return _config_interprocess_lock
+
+_config_interprocess_lock = _bind_config_interprocess_lock(_LOCK_STREAM_SELECTOR_BINDING)
+del _bind_config_interprocess_lock
+
+
+# The thread inside each config file's write transaction. The OS lock is taken
+# on a fresh descriptor every time, so unlike the RLocks beside it, it is not
+# reentrant: the holding thread can never get it a second time.
+_CONFIG_WRITE_LOCK_HOLDERS: dict[Path, _threading.Thread] = {}
+
+
+def _refuse_config_write_lock_reentry(config_path: Path) -> Path:
+    """Refuse the calling thread a write transaction it is already inside.
+
+    A caller that opens an operation of its own around the write lock calls
+    this first: a refusal raised inside an entered operation is recorded as a
+    failed config operation, which keeps the config participant from draining
+    until the next write that succeeds.
+
+    Returns:
+        The key the write lock records its holder under.
+
+    Raises:
+        RecoveryRequired: The calling thread is already inside this file's
+            write transaction, in an outer frame or in another asyncio task.
+            Waiting would block the holder for good (TASK-33641.6).
+    """
+
+    # Keyed as the operation compares its target with the selection.
+    holder_key = profile_paths.lexical_path(config_path)
+    if _CONFIG_WRITE_LOCK_HOLDERS.get(holder_key) is _threading.current_thread():
+        raise RecoveryRequired("raw_operation_provenance_invalid")
+    return holder_key
 
 
 @contextmanager
 def _config_write_lock(config_path: Path) -> Iterator[None]:
-    """Serialize one config write transaction within and across processes."""
+    """Serialize one config write transaction within and across processes.
 
+    Raises:
+        RecoveryRequired: The calling thread is already inside this file's
+            write transaction; refused before anything is entered.
+    """
+
+    holder_key = _refuse_config_write_lock_reentry(config_path)
     with _config_participants.operation(sys.modules[__name__], target=config_path):
         with (
             _settings_rebuild_lock(),
             _config_file_lock(),
             _config_interprocess_lock(config_path),
         ):
-            yield
+            _CONFIG_WRITE_LOCK_HOLDERS[holder_key] = _threading.current_thread()
+            try:
+                yield
+            finally:
+                _CONFIG_WRITE_LOCK_HOLDERS.pop(holder_key, None)
 
 
 def _current_config_file_stamp(config_path: Path) -> Optional[tuple[int, int]]:
@@ -7347,9 +4828,9 @@ def _write_raw_cli_config_unlocked(
         the post-round-trip view the next boot would see).
 
     TASK-13157: every config-rewrite pass (settings-screen edits, the
-    first-run wizard, and -- notably -- the full default+user re-merge every
-    process shutdown persists via ``persist_cli_config_for_shutdown``) ends
-    up here. The in-memory ``config_data`` is always a plain ``dict`` with
+    first-run wizard, and the quit's encryption pass in
+    ``persist_cli_config_for_shutdown``) ends up here. The in-memory
+    ``config_data`` is always a plain ``dict`` with
     inherently unique keys, so it cannot itself carry a duplicate key -- but
     ``toml.dumps`` (the third-party encoder) and ``tomllib`` (the stdlib
     reader the NEXT boot uses) are two independent implementations with no
@@ -7373,7 +4854,7 @@ def _write_raw_cli_config_unlocked(
     """
 
     application_directory = _prepare_config_parent(config_path)
-    serialized = toml.dumps(dict(config_data))
+    serialized = dumps_cli_config(dict(config_data))
     try:
         parsed_back = tomllib.loads(serialized)
     except tomllib.TOMLDecodeError as exc:
@@ -7386,9 +4867,31 @@ def _write_raw_cli_config_unlocked(
             f"Refusing to write {config_path}: the serialized configuration "
             f"does not parse back as valid TOML ({exc})"
         ) from exc
+    _commit_serialized_cli_config_unlocked(
+        config_path, serialized, application_directory
+    )
+    return parsed_back
+
+
+def _commit_serialized_cli_config_unlocked(
+    config_path: Path,
+    serialized: str,
+    application_directory: Path | None,
+) -> None:
+    """Atomically commit exact serialized config text while the lock is held.
+
+    Shared by `_write_raw_cli_config_unlocked` and the encryption lifecycle's
+    byte-exact rollback (TASK-34100.4), so a restore advances an owned
+    recovery binding exactly like an ordinary write does. Not itself
+    `_config_participants.guarded` (that allowlist is closed): every caller
+    already runs inside `_config_write_lock`'s participant operation.
+    """
+
     from .Backup_Recovery.config_binding import preserve_owned_binding
 
-    with preserve_owned_binding(sys.modules[__name__], config_path, serialized) as precondition:
+    with preserve_owned_binding(
+        sys.modules[__name__], config_path, serialized
+    ) as precondition:
         result = atomic_private_write_text(
             config_path,
             serialized,
@@ -7397,11 +4900,11 @@ def _write_raw_cli_config_unlocked(
         )
     _report_config_path_posture(result)
     _invalidate_config_caches()
-    return parsed_back
 
 
 def _install_bootstrap_cache_from_raw(
     raw_config: Mapping[str, Any],
+    config_path: Optional[Path] = None,
 ) -> Optional[Dict[str, Any]]:
     """Install the bootstrap cache from an already-parsed raw config mapping.
 
@@ -7412,6 +4915,14 @@ def _install_bootstrap_cache_from_raw(
     `_publish_runtime_config_unlocked` with the verify parse-back a write
     just produced. Must be called with `_config_file_lock` held.
 
+    TASK-21235: ``config_path`` is the path the CALLER's read/write used.
+    It used to be recomputed here via `_get_effective_config_path()` at
+    publish time, so a ``TLDW_CONFIG_PATH`` flip between the caller's read
+    and this publish would label path-A data as the path-B cache
+    (``_CONFIG_CACHE_SOURCE`` is exactly what the fast path's cache
+    identity re-check compares against). Callers that hold a path pass it;
+    the fallback recompute covers only callers with no path of their own.
+
     Returns:
         The installed merged+decrypted config, or ``None`` when strict
         decryption failed -- the caller then falls back to the full locked
@@ -7420,10 +4931,11 @@ def _install_bootstrap_cache_from_raw(
     """
 
     global _CONFIG_CACHE, _CONFIG_CACHE_SOURCE, _LAST_CONFIG_LOAD_FAILURE
-    global _CONFIG_FILE_STAMP, _CONFIG_STAT_CHECKED_MONOTONIC
+    global _CONFIG_FILE_STAMP, _CONFIG_STAT_CHECKED_MONOTONIC, _CONFIG_CACHE_INSTALLS
 
-    config_path = _get_effective_config_path()
-    merged = deep_merge_dicts(DEFAULT_CONFIG_FROM_TOML, dict(raw_config))
+    if config_path is None:
+        config_path = _get_effective_config_path()
+    merged = _merge_user_config_over_shipped_defaults(raw_config)
     decryption = _decrypt_config_section_with_status(merged, strict=True)
     if not decryption.succeeded:
         return None
@@ -7439,6 +4951,7 @@ def _install_bootstrap_cache_from_raw(
     # preserve that ordering.
     _CONFIG_CACHE = loaded_config
     _CONFIG_CACHE_SOURCE = config_path
+    _CONFIG_CACHE_INSTALLS = next(_CONFIG_CACHE_INSTALL_NUMBERS)
     _LAST_CONFIG_LOAD_FAILURE = None
     # TASK-26038 (lane-7 review Important #1): stamp the file WE just wrote so a
     # read after the stat-throttle window does not mistake our own write for an
@@ -7454,6 +4967,7 @@ def _install_bootstrap_cache_from_raw(
 @_config_participants.guarded
 def _publish_runtime_config_unlocked(
     raw_config: Mapping[str, Any] | None = None,
+    config_path: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Reload caches and publish one complete in-process config generation.
 
@@ -7465,6 +4979,11 @@ def _publish_runtime_config_unlocked(
             that just-primed cache (`reload_bootstrap=False`) -- TASK-21124
             takes one write from four TOML parses to two (the inherent
             read-modify-write read plus the TASK-13157 verify parse).
+        config_path: TASK-21235: the path the caller's read/write used, so
+            the bootstrap cache is published under the path its data was
+            actually read from even if ``TLDW_CONFIG_PATH`` flips mid-write.
+            Omitted by callers with no path of their own (the raw-less
+            reload path recomputes it under the same lock).
 
     The `_CONFIG_GENERATION` bump is kept last for consistency, but the
     ordering is not load-bearing: the fast path's soundness rests on its
@@ -7478,7 +4997,9 @@ def _publish_runtime_config_unlocked(
 
     loaded: Optional[Dict[str, Any]] = None
     if raw_config is not None:
-        loaded = _install_bootstrap_cache_from_raw(raw_config)
+        loaded = _install_bootstrap_cache_from_raw(
+            raw_config, config_path=config_path
+        )
     if loaded is None:
         bootstrap = _load_cli_config_bootstrap_unlocked(force_reload=True)
         if not bootstrap.succeeded:
@@ -7632,7 +5153,7 @@ def _atomic_config_values_from_raw(
 ) -> Dict[str, Any]:
     """Merge and decrypt the exact raw mapping already read under the write lock."""
 
-    merged = deep_merge_dicts(DEFAULT_CONFIG_FROM_TOML, dict(config_data))
+    merged = _merge_user_config_over_shipped_defaults(config_data)
     decryption = _decrypt_config_section_with_status(merged, strict=True)
     if not decryption.succeeded:
         raise ValueError("Authoritative configuration could not be decrypted")
@@ -7863,6 +5384,7 @@ class ConfigPostCommitError(RuntimeError):
 def read_cli_config_snapshot() -> ConfigFileSnapshot:
     """Read exact serialized config without parsing or creating a missing file."""
 
+    _refuse_config_write_lock_reentry(get_cli_config_path())
     with _config_participants.operation(sys.modules[__name__]):
         config_path = get_cli_config_path()
         with _config_write_lock(config_path):
@@ -7885,12 +5407,18 @@ def _write_serialized_config_artifact_unlocked(
         route, target = "config", config_path
     else:
         prefix, suffix = "config_backup_", ".toml"
-        if path.parent != config_path.parent or not path.name.startswith(prefix) or not path.name.endswith(suffix):
+        if (
+            path.parent != config_path.parent
+            or not path.name.startswith(prefix)
+            or not path.name.endswith(suffix)
+        ):
             raise ValueError("invalid_config_snapshot_target")
-        route, target = "config_snapshot", path.name[len(prefix):-len(suffix)]
+        route, target = "config_snapshot", path.name[len(prefix) : -len(suffix)]
         if _config_snapshot_path(config_path, target) != path:
             raise ValueError("invalid_config_snapshot_target")
-    with _config_participants.operation(sys.modules[__name__], route=route, target=target):
+    with _config_participants.operation(
+        sys.modules[__name__], route=route, target=target
+    ):
         application_directory = _prepare_config_parent(config_path)
         result = atomic_private_write_text(
             path,
@@ -7913,7 +5441,6 @@ def read_cli_config_backup_serialized() -> str:
             return opened.stream.read().decode("utf-8")
 
 
-@_config_participants.guarded
 def replace_cli_config_serialized(
     serialized: str,
     *,
@@ -7923,7 +5450,23 @@ def replace_cli_config_serialized(
 
     Raises:
         ConfigPostCommitError: Replacement succeeded but post-save refresh failed.
+        RecoveryRequired: The calling thread is already inside this file's
+            write transaction; refused before the guarded body opens.
     """
+
+    _refuse_config_write_lock_reentry(get_cli_config_path())
+    return _replace_cli_config_serialized_guarded(
+        serialized, create_backup=create_backup
+    )
+
+
+@_config_participants.guarded
+def _replace_cli_config_serialized_guarded(
+    serialized: str,
+    *,
+    create_backup: bool,
+) -> tuple[dict[str, Any], Path | None]:
+    """Guarded body of :func:`replace_cli_config_serialized`."""
 
     loaded, backup_path, _ = _replace_cli_config_serialized(
         serialized, create_backup=create_backup
@@ -8007,22 +5550,69 @@ def _replace_cli_config_serialized(
             if saved_serialized is None:
                 raise OSError("The committed config snapshot is unavailable.")
             saved_snapshot = ConfigFileSnapshot(config_path, saved_serialized)
-            loaded = _publish_runtime_config_unlocked(raw_config=raw_written)
+            loaded = _publish_runtime_config_unlocked(
+                raw_config=raw_written, config_path=config_path
+            )
         except Exception:  # Post-commit errors must retain the successful disk outcome.
             raise ConfigPostCommitError(saved_snapshot, backup_path) from None
         return loaded, backup_path, saved_snapshot
 
 
+def _upgrade_legacy_ciphertext(
+    table: Mapping[str, Any], password: str
+) -> tuple[Dict[str, Any], bool]:
+    """Re-encrypt every v1 ``enc:`` value in place under ``password``.
+
+    Walks tables as decryption does (it never reads arrays). A value stays
+    encrypted whatever its key, so nothing is written back in plaintext.
+
+    Returns:
+        The upgraded copy, and whether any value changed.
+    """
+
+    enc_module = get_encryption_module()
+    upgraded = False
+    result: Dict[str, Any] = {}
+    for key, value in table.items():
+        if isinstance(value, Mapping):
+            result[key], nested = _upgrade_legacy_ciphertext(value, password)
+            upgraded = upgraded or nested
+        elif enc_module.is_legacy(value):
+            plaintext = enc_module.decrypt_value(value, password)
+            result[key] = enc_module.encrypt_value(plaintext, password)
+            upgraded = True
+        else:
+            result[key] = value
+    return result, upgraded
+
+
 def persist_cli_config_for_shutdown() -> bool:
-    """Re-persist the effective config through the normal encrypted owner."""
+    """Finish encryption at rest for an unlocked encrypted config at quit.
+
+    Every save has already written the file, and every load merges the
+    shipped template under it. Writing that merge back re-inserted template
+    keys a save had deleted, reordered the file and stripped its comments
+    (TASK-35835). What a quit still carries is encryption work that only an
+    unlocked session can do, on the file's own contents:
+
+    * a secret added in plaintext (a hand edit) is encrypted;
+    * values and the password check still in the v1 format are re-encrypted
+      as v2. A v1 value costs a 2^20 scrypt derivation (about 1 GiB, 3 s) at
+      every launch, and short of a password change nothing else upgrades it.
+
+    With neither, or with the session locked, nothing is written.
+
+    Returns:
+        False when the file cannot be loaded safely or the write fails.
+    """
 
     try:
         config_path = get_cli_config_path()
         with _config_write_lock(config_path):
             from .Backup_Recovery.profile_open import unchanged_selected_config
 
-            # Settings writes already persist. A defaults-only rewrite would
-            # invalidate the selected recovery generation's config fingerprint.
+            # Settings writes already persist. A rewrite would invalidate the
+            # selected recovery generation's config fingerprint.
             if unchanged_selected_config(config_path):
                 return True
             bootstrap = _load_cli_config_bootstrap_unlocked(force_reload=True)
@@ -8032,10 +5622,28 @@ def persist_cli_config_for_shutdown() -> bool:
                     "file could not be loaded safely."
                 )
                 return False
-            current = bootstrap.config
-            persisted = _config_data_for_persistence(current)
+            serialized = _try_read_cli_config_serialized_unlocked(config_path)
+            current = tomllib.loads(serialized) if serialized is not None else {}
+            encryption = current.get("encryption", {})
+            password = get_encryption_password()
+            if not (
+                isinstance(encryption, Mapping)
+                and encryption.get("enabled", False)
+                and password
+            ):
+                return True
+            persisted, upgraded = _upgrade_legacy_ciphertext(current, password)
+            if _contains_unencrypted_sensitive_value(persisted):
+                persisted = _config_data_for_persistence(persisted)
+            elif not upgraded:
+                return True
+            # The file may have changed since the load above; check the exact
+            # document, so a value under another password is never stranded.
+            _validate_encrypted_document(persisted, password)
             raw_written = _write_raw_cli_config_unlocked(config_path, persisted)
-            _publish_runtime_config_unlocked(raw_config=raw_written)
+            _publish_runtime_config_unlocked(
+                raw_config=raw_written, config_path=config_path
+            )
         return True
     except (OSError, TypeError, ValueError, toml.TomlDecodeError) as exc:
         logger.warning(
@@ -8097,12 +5705,18 @@ def replace_cli_config(config_data: Mapping[str, Any]) -> Dict[str, Any]:
         _enforce_existing_encryption(current, replacement)
         persisted = _config_data_for_persistence(replacement)
         raw_written = _write_raw_cli_config_unlocked(config_path, persisted)
-        return _publish_runtime_config_unlocked(raw_config=raw_written)
+        return _publish_runtime_config_unlocked(
+                raw_config=raw_written, config_path=config_path
+            )
 
 
 def _config_snapshot_path(config_path: Path, timestamp: str) -> Path:
     """Select one config-owned snapshot basename before any filesystem effect."""
-    if not isinstance(timestamp, str) or not timestamp or any(char in timestamp for char in ("/", "\\", "\x00")):
+    if (
+        not isinstance(timestamp, str)
+        or not timestamp
+        or any(char in timestamp for char in ("/", "\\", "\x00"))
+    ):
         raise ValueError("invalid_config_snapshot_target")
     return config_path.parent / f"config_backup_{timestamp}.toml"
 
@@ -8115,14 +5729,19 @@ def export_cli_config_snapshot(
     """Create an owner-only snapshot beside the effective config file."""
 
     snapshot_timestamp = timestamp or datetime.now().strftime("%Y%m%d_%H%M%S")
-    with _config_participants.operation(sys.modules[__name__], route="config_snapshot", target=snapshot_timestamp), _config_file_lock():
+    with (
+        _config_participants.operation(
+            sys.modules[__name__], route="config_snapshot", target=snapshot_timestamp
+        ),
+        _config_file_lock(),
+    ):
         config_path = get_cli_config_path()
         snapshot_path = _config_snapshot_path(config_path, snapshot_timestamp)
         serialized = _try_read_cli_config_serialized_unlocked(config_path)
         if serialized is None:
             if config_data is None:
                 raise FileNotFoundError(config_path)
-            serialized = toml.dumps(_config_data_for_persistence(config_data))
+            serialized = dumps_cli_config(_config_data_for_persistence(config_data))
         result_path = _write_serialized_config_artifact_unlocked(
             snapshot_path,
             serialized,
@@ -8283,7 +5902,9 @@ def replace_revisioned_settings_section_to_cli_config(
             return ConfigMutationResult(False, False, "before_replace")
 
         try:
-            _publish_runtime_config_unlocked(raw_config=raw_written)
+            _publish_runtime_config_unlocked(
+                raw_config=raw_written, config_path=config_path
+            )
         except Exception as error:
             logger.error(
                 "Revisioned configuration replacement failed "
@@ -8420,7 +6041,9 @@ def _validate_literal_config_mutation_targets(
             raise TypeError("Literal configuration delete keys must be collections")
         for key in keys:
             if type(key) is not str or not key:
-                raise TypeError("Literal configuration delete keys must be non-empty strings")
+                raise TypeError(
+                    "Literal configuration delete keys must be non-empty strings"
+                )
             delete_targets.add((path, key))
 
     if set_targets.intersection(delete_targets):
@@ -8515,6 +6138,12 @@ def _apply_literal_mutation_unlocked(
     return set_any or deleted_any
 
 
+#: TASK-38987: a write makes ~10,000 GIL-releasing syscalls (storage admission
+#: and private-path checks), and beside a thread running Python each one waited
+#: out that thread's 5 ms switch interval (a 0.09 s save took 5.7-6.4 s).
+_CONFIG_WRITE_SWITCH_INTERVAL = 0.0001
+
+
 def _apply_literal_settings_transaction_locked(
     mutation_builder: Callable[
         [AtomicLiteralMutationSnapshot], LiteralSettingsMutation
@@ -8551,6 +6180,13 @@ def _apply_literal_settings_transaction_locked(
         return LiteralConfigMutationResult(False, False, None, "before_replace")
 
     with ExitStack() as locks:
+        # TASK-38987: the whole write, its lock's admission checks included,
+        # runs at a short switch interval; the wait for another process's
+        # lock lifts it (_config_interprocess_lock). Imported here: no config
+        # write runs at boot.
+        from tldw_chatbook.Utils.switch_interval import switch_interval_at_most
+
+        locks.enter_context(switch_interval_at_most(_CONFIG_WRITE_SWITCH_INTERVAL))
         try:
             locks.enter_context(_config_write_lock(config_path))
         except Exception as error:
@@ -8584,9 +6220,7 @@ def _apply_literal_settings_transaction_locked(
                     "(phase=precondition, error_type={}).",
                     type(error).__name__,
                 )
-                return LiteralConfigMutationResult(
-                    False, False, None, "before_replace"
-                )
+                return LiteralConfigMutationResult(False, False, None, "before_replace")
 
         try:
             effective_values = _atomic_config_values_from_raw(config_data)
@@ -8610,8 +6244,7 @@ def _apply_literal_settings_transaction_locked(
                 _validate_literal_config_mutation_targets(mutation)
             logged_sets, logged_deletes = _literal_mutation_log_shape(mutation)
             logger.info(
-                "Attempting to apply literal settings mutation: "
-                "sets={}, deletes={}",
+                "Attempting to apply literal settings mutation: sets={}, deletes={}",
                 logged_sets,
                 logged_deletes,
             )
@@ -8636,7 +6269,7 @@ def _apply_literal_settings_transaction_locked(
             expected_raw: Mapping[str, Any] | None = None
             try:
                 persisted = _config_data_for_persistence(config_data)
-                expected_raw = tomllib.loads(toml.dumps(dict(persisted)))
+                expected_raw = tomllib.loads(dumps_cli_config(dict(persisted)))
                 raw_written = _write_raw_cli_config_unlocked(config_path, persisted)
             except Exception as error:
                 committed_content_visible = False
@@ -8664,9 +6297,7 @@ def _apply_literal_settings_transaction_locked(
                     config_path,
                     type(error).__name__,
                 )
-                return LiteralConfigMutationResult(
-                    False, False, None, "before_replace"
-                )
+                return LiteralConfigMutationResult(False, False, None, "before_replace")
             logger.success(f"Successfully replaced settings file at {config_path}")
         else:
             _invalidate_config_caches()
@@ -8684,7 +6315,9 @@ def _apply_literal_settings_transaction_locked(
                 return LiteralConfigMutationResult(changed, False, None, "cache_reload")
 
         try:
-            _publish_runtime_config_unlocked(raw_config=raw_written)
+            _publish_runtime_config_unlocked(
+                raw_config=raw_written, config_path=config_path
+            )
             settings_view = _current_settings_view()
         except Exception as error:
             logger.error(
@@ -8732,7 +6365,7 @@ def refresh_runtime_config_from_cli_config() -> LiteralConfigMutationResult:
         with _config_write_lock(config_path):
             raw = _read_raw_cli_config_unlocked(config_path)
             _invalidate_config_caches()
-            _publish_runtime_config_unlocked(raw_config=raw)
+            _publish_runtime_config_unlocked(raw_config=raw, config_path=config_path)
             return LiteralConfigMutationResult(
                 False,
                 True,
@@ -8819,434 +6452,6 @@ def apply_settings_mutation_to_cli_config(
         result.caches_reloaded,
         result.failure_phase,
     )
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeCapturePolicy:
-    """Canonical process projection for future Console capture admission.
-
-    Attributes:
-        enabled: Whether future Console calls require durable trace capture.
-        detail: Admission-frozen trace capture detail.
-        generation: Monotonic policy publication generation.
-        pii_redaction_enabled: Whether configured PII masking is active.
-        viewer_profile: Default redacted viewer profile.
-        normalized_writes_enabled: Whether new normalized calls may be written.
-        normalized_reads_enabled: Whether normalized calls participate in reads.
-        legacy_writes_enabled: Whether compatibility snapshots are also written.
-    """
-
-    enabled: bool
-    detail: CaptureDetail
-    generation: int
-    pii_redaction_enabled: bool = False
-    viewer_profile: str = "safe"
-    normalized_writes_enabled: bool = True
-    normalized_reads_enabled: bool = True
-    legacy_writes_enabled: bool = False
-    custom_pii_ruleset: CustomPIIRuleset | None = field(default=None, repr=False)
-
-
-_TRACE_ROLLOUT_BOOLEAN_ADAPTER = TypeAdapter(bool)
-
-
-class TraceRolloutSettings(BaseModel):
-    """Validated effective gates for the semantic trace rollout.
-
-    Attributes:
-        normalized_writes_enabled: Whether normalized calls may be written.
-        normalized_reads_enabled: Whether normalized calls participate in reads.
-        legacy_writes_enabled: Whether compatibility snapshots are also written.
-    """
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-    normalized_writes_enabled: bool = True
-    normalized_reads_enabled: bool = True
-    legacy_writes_enabled: bool = False
-
-    @field_validator(
-        "normalized_writes_enabled",
-        "normalized_reads_enabled",
-        "legacy_writes_enabled",
-        mode="before",
-    )
-    @classmethod
-    def _coerce_boolean(cls, value: object, info: ValidationInfo) -> bool:
-        defaults = {
-            "normalized_writes_enabled": True,
-            "normalized_reads_enabled": True,
-            "legacy_writes_enabled": False,
-        }
-        try:
-            return _TRACE_ROLLOUT_BOOLEAN_ADAPTER.validate_python(value)
-        except ValidationError:
-            return defaults[info.field_name]
-
-
-_RUNTIME_CAPTURE_POLICY_LOCK = _threading.RLock()
-_RUNTIME_CAPTURE_POLICY: RuntimeCapturePolicy | None = None
-_TRACE_ROLLOUT_ENV_NAMES = (
-    "TLDW_CONSOLE_TRACE_NORMALIZED_WRITES",
-    "TLDW_CONSOLE_TRACE_NORMALIZED_READS",
-    "TLDW_CONSOLE_TRACE_LEGACY_WRITES",
-)
-_RUNTIME_CAPTURE_POLICY_ENV: tuple[str | None, ...] | None = None
-
-
-def _trace_rollout_environment() -> tuple[str | None, ...]:
-    """Return the three rollout overrides as one cache identity.
-
-    Returns:
-        Environment values aligned with ``_TRACE_ROLLOUT_ENV_NAMES``.
-    """
-
-    return tuple(os.environ.get(name) for name in _TRACE_ROLLOUT_ENV_NAMES)
-
-
-def _trace_rollout_environment_mapping(
-    values: tuple[str | None, ...],
-) -> dict[str, str]:
-    """Map one captured rollout environment identity back to present values."""
-
-    return {
-        name: value
-        for name, value in zip(_TRACE_ROLLOUT_ENV_NAMES, values, strict=True)
-        if value is not None
-    }
-
-
-def resolve_trace_rollout_settings(
-    console: object,
-    *,
-    environ: Mapping[str, str] | None = None,
-) -> TraceRolloutSettings:
-    """Validate rollout gates with environment-first precedence.
-
-    Args:
-        console: Raw Console configuration mapping.
-        environ: Optional environment mapping. Defaults to ``os.environ``.
-
-    Returns:
-        The validated effective rollout settings.
-    """
-
-    values = console if isinstance(console, Mapping) else {}
-    environment = os.environ if environ is None else environ
-
-    def selected(environment_name: str, config_name: str, default: bool) -> object:
-        override = environment.get(environment_name)
-        return values.get(config_name, default) if override in (None, "") else override
-
-    return TraceRolloutSettings.model_validate(
-        {
-            "normalized_writes_enabled": selected(
-                _TRACE_ROLLOUT_ENV_NAMES[0],
-                "trace_normalized_writes",
-                True,
-            ),
-            "normalized_reads_enabled": selected(
-                _TRACE_ROLLOUT_ENV_NAMES[1],
-                "trace_normalized_reads",
-                True,
-            ),
-            "legacy_writes_enabled": selected(
-                _TRACE_ROLLOUT_ENV_NAMES[2],
-                "trace_legacy_writes",
-                False,
-            ),
-        }
-    )
-
-
-def resolve_trace_compaction_policy(console: object) -> "TraceCompactionPolicy":
-    """Resolve bounded physical trace-maintenance thresholds from Console config."""
-
-    from tldw_chatbook.Chat.console_trace_maintenance import TraceCompactionPolicy
-
-    values = console if isinstance(console, Mapping) else {}
-    retry_initial = coerce_float_setting(
-        values.get("trace_compaction_retry_initial_seconds"),
-        300.0,
-        minimum=0.0,
-        maximum=3600.0,
-    )
-    retry_max = coerce_float_setting(
-        values.get("trace_compaction_retry_max_seconds"),
-        3600.0,
-        minimum=retry_initial,
-        maximum=86400.0,
-    )
-    return TraceCompactionPolicy(
-        min_database_bytes=coerce_int_setting(
-            values.get("trace_compaction_min_database_bytes"),
-            64 * 1024 * 1024,
-            minimum=0,
-        ),
-        min_freelist_bytes=coerce_int_setting(
-            values.get("trace_compaction_min_freelist_bytes"),
-            16 * 1024 * 1024,
-            minimum=0,
-        ),
-        min_freelist_ratio=coerce_float_setting(
-            values.get("trace_compaction_min_freelist_ratio"),
-            0.20,
-            minimum=0.0,
-            maximum=1.0,
-        ),
-        min_idle_seconds=coerce_float_setting(
-            values.get("trace_compaction_min_idle_seconds"),
-            30.0,
-            minimum=0.0,
-            maximum=86400.0,
-        ),
-        retry_initial_seconds=retry_initial,
-        retry_max_seconds=retry_max,
-        quiesce_timeout_seconds=coerce_float_setting(
-            values.get("trace_compaction_quiesce_timeout_seconds"),
-            5.0,
-            minimum=0.0,
-            maximum=60.0,
-        ),
-        disk_safety_margin_bytes=coerce_int_setting(
-            values.get("trace_compaction_disk_safety_margin_bytes"),
-            64 * 1024 * 1024,
-            minimum=0,
-        ),
-    )
-
-
-def _register_runtime_custom_pii_ruleset(
-    ruleset: CustomPIIRuleset | None,
-) -> CustomPIIRuleset | None:
-    """Register valid rules for future masks or disable a reused revision."""
-
-    if ruleset is None or not ruleset.runnable_rules:
-        return ruleset
-    from tldw_chatbook.Chat.console_trace_custom_pii import (
-        register_custom_pii_ruleset,
-    )
-
-    if register_custom_pii_ruleset(ruleset):
-        return ruleset
-    logger.warning("custom_pii_ruleset_revision_conflict")
-    return None
-
-
-def _publish_runtime_capture_policy(
-    enabled: bool,
-    detail: CaptureDetail,
-    generation: int,
-    pii_redaction_enabled: bool = False,
-    viewer_profile: str = "safe",
-    normalized_writes_enabled: bool = True,
-    normalized_reads_enabled: bool = True,
-    legacy_writes_enabled: bool = False,
-    custom_pii_ruleset: CustomPIIRuleset | None = None,
-) -> RuntimeCapturePolicy:
-    """Publish one validated capture policy without touching general caches."""
-    from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
-    from tldw_chatbook.Chat.console_trace_custom_pii import CustomPIIRuleset
-
-    if not isinstance(detail, CaptureDetail):
-        raise TypeError("detail must be CaptureDetail")
-    if viewer_profile not in {"safe", "full"}:
-        raise ValueError("viewer_profile")
-    if custom_pii_ruleset is not None and not isinstance(
-        custom_pii_ruleset, CustomPIIRuleset
-    ):
-        raise TypeError("custom_pii_ruleset")
-    custom_pii_ruleset = _register_runtime_custom_pii_ruleset(custom_pii_ruleset)
-    rollout_environment = _trace_rollout_environment()
-    rollout = resolve_trace_rollout_settings(
-        {
-            "trace_normalized_writes": normalized_writes_enabled,
-            "trace_normalized_reads": normalized_reads_enabled,
-            "trace_legacy_writes": legacy_writes_enabled,
-        },
-        environ=_trace_rollout_environment_mapping(rollout_environment),
-    )
-    policy = RuntimeCapturePolicy(
-        bool(enabled),
-        detail,
-        generation,
-        bool(pii_redaction_enabled),
-        viewer_profile,
-        rollout.normalized_writes_enabled,
-        rollout.normalized_reads_enabled,
-        rollout.legacy_writes_enabled,
-        custom_pii_ruleset,
-    )
-    global _RUNTIME_CAPTURE_POLICY, _RUNTIME_CAPTURE_POLICY_ENV
-    with _RUNTIME_CAPTURE_POLICY_LOCK:
-        _RUNTIME_CAPTURE_POLICY = policy
-        _RUNTIME_CAPTURE_POLICY_ENV = rollout_environment
-    return policy
-
-
-def runtime_capture_policy() -> RuntimeCapturePolicy:
-    """Return the shared runtime capture policy, resolving invalid detail Safe.
-
-    Returns:
-        The canonical enabled/detail projection and its config generation.
-    """
-    from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
-
-    rollout_environment = _trace_rollout_environment()
-    global _RUNTIME_CAPTURE_POLICY, _RUNTIME_CAPTURE_POLICY_ENV
-    with _RUNTIME_CAPTURE_POLICY_LOCK:
-        current = _RUNTIME_CAPTURE_POLICY
-        if (
-            current is not None
-            and current.generation == _CONFIG_GENERATION
-            and _RUNTIME_CAPTURE_POLICY_ENV == rollout_environment
-        ):
-            return current
-    snapshot = _published_runtime_config_snapshot()
-    with _RUNTIME_CAPTURE_POLICY_LOCK:
-        current = _RUNTIME_CAPTURE_POLICY
-        if (
-            current is not None
-            and current.generation == snapshot.generation
-            and _RUNTIME_CAPTURE_POLICY_ENV == rollout_environment
-        ):
-            return current
-        console = snapshot.values.get("console", {})
-        if not isinstance(console, Mapping):
-            console = {}
-        try:
-            detail = CaptureDetail(console.get("exchange_capture_detail", "safe"))
-        except (TypeError, ValueError):
-            detail = CaptureDetail.SAFE
-        privacy = validate_trace_privacy_config(console)
-        pii_redaction_enabled = privacy.exchange_capture_pii_redaction
-        viewer_profile = privacy.effective_viewer_profile
-        from tldw_chatbook.Chat.console_trace_custom_pii import (
-            validate_custom_pii_rules_config,
-        )
-
-        custom_pii_ruleset = validate_custom_pii_rules_config(
-            console.get("trace_custom_pii_rules")
-        ).ruleset
-        custom_pii_ruleset = _register_runtime_custom_pii_ruleset(custom_pii_ruleset)
-        rollout = resolve_trace_rollout_settings(
-            console,
-            environ=_trace_rollout_environment_mapping(rollout_environment),
-        )
-        current = RuntimeCapturePolicy(
-            coerce_bool_setting(console.get("exchange_capture", True), True),
-            detail,
-            snapshot.generation,
-            pii_redaction_enabled,
-            viewer_profile,
-            rollout.normalized_writes_enabled,
-            rollout.normalized_reads_enabled,
-            rollout.legacy_writes_enabled,
-            custom_pii_ruleset,
-        )
-        _RUNTIME_CAPTURE_POLICY = current
-        _RUNTIME_CAPTURE_POLICY_ENV = rollout_environment
-        return current
-
-
-def apply_console_capture_settings(
-    *,
-    enabled: bool,
-    detail: CaptureDetail,
-    expected_generation: int,
-    pii_redaction_enabled: bool | None = None,
-    viewer_profile: str | None = None,
-) -> ConfigMutationResult:
-    """Apply the kill switch/detail with privacy-safe publication ordering.
-
-    Args:
-        enabled: Future-capture kill-switch state.
-        detail: Safe or Full global capture detail.
-        expected_generation: Config generation observed by the caller.
-
-    Returns:
-        Structured replacement/cache-publication status, including conflicts
-        and partial post-replacement cache failures.
-    """
-    from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
-
-    if (
-        type(enabled) is not bool
-        or not isinstance(detail, CaptureDetail)
-        or (
-            pii_redaction_enabled is not None
-            and type(pii_redaction_enabled) is not bool
-        )
-        or (viewer_profile is not None and viewer_profile not in {"safe", "full"})
-    ):
-        return ConfigMutationResult(False, False, "before_replace")
-    current = runtime_capture_policy()
-    resolved_pii = (
-        current.pii_redaction_enabled
-        if pii_redaction_enabled is None
-        else pii_redaction_enabled
-    )
-    resolved_viewer = current.viewer_profile if viewer_profile is None else viewer_profile
-
-    def generation_is_current(snapshot: AtomicConfigSnapshot) -> bool:
-        return snapshot.generation == expected_generation
-
-    def publish_before_replace() -> None:
-        _publish_runtime_capture_policy(
-            enabled,
-            detail,
-            expected_generation,
-            resolved_pii,
-            resolved_viewer,
-            current.normalized_writes_enabled,
-            current.normalized_reads_enabled,
-            current.legacy_writes_enabled,
-            current.custom_pii_ruleset,
-        )
-
-    def publish_after_replace() -> None:
-        # The general config generation advances only after cache publication
-        # succeeds. Publishing the committed capture owner at the still-current
-        # generation keeps it authoritative if that later step fails; on
-        # success, the generation bump makes the next read rebuild from the new
-        # canonical snapshot. This callback runs while the config write lock is
-        # still held, so a newer writer cannot be overwritten afterward.
-        _publish_runtime_capture_policy(
-            enabled,
-            detail,
-            expected_generation,
-            resolved_pii,
-            resolved_viewer,
-            current.normalized_writes_enabled,
-            current.normalized_reads_enabled,
-            current.legacy_writes_enabled,
-            current.custom_pii_ruleset,
-        )
-
-    more_revealing = (
-        (enabled and not current.enabled)
-        or (
-            detail is CaptureDetail.FULL
-            and current.detail is CaptureDetail.SAFE
-        )
-        or (not resolved_pii and current.pii_redaction_enabled)
-        or (resolved_viewer == "full" and current.viewer_profile == "safe")
-    )
-    privacy_safe = not more_revealing
-    result = apply_settings_mutation_to_cli_config(
-        {
-            "console": {
-                "exchange_capture": enabled,
-                "exchange_capture_detail": detail.value,
-                "exchange_capture_pii_redaction": resolved_pii,
-                "trace_viewer_profile": resolved_viewer,
-                "trace_viewer_profile_version": 1,
-            }
-        },
-        locked_snapshot_precondition=generation_is_current,
-        before_replace=publish_before_replace if privacy_safe else None,
-        after_replace=None if privacy_safe else publish_after_replace,
-    )
-    return result
 
 
 def save_settings_to_cli_config(
@@ -9481,51 +6686,26 @@ def get_chat_defaults_streaming(default: bool = True) -> bool:
 
 
 def get_chat_defaults_user_display_name(default: str = "User") -> str:
-    """Return the validated global human-facing Console chat name.
-
-    Args:
-        default: Fallback used when ``chat_defaults.user_display_name`` is
-            absent.
-
-    Returns:
-        The configured validated name, or the neutral ``"User"`` fallback
-        when the configured/default value is invalid.
-    """
-    # Import lazily because ``tldw_chatbook.Chat.__init__`` reaches runtime
-    # policy modules that import this configuration module during startup.
+    """Return the validated global human-facing Console chat name."""
     from tldw_chatbook.Chat.console_roleplay_identity import (
-        ChatDisplayNameError,
-        normalize_chat_display_name,
+        configured_chat_display_name,
     )
 
-    config = load_cli_config_and_ensure_existence()
-    chat_defaults = config.get("chat_defaults")
-    raw_value = (
-        chat_defaults.get("user_display_name", default)
-        if isinstance(chat_defaults, dict)
-        else default
-    )
-    try:
-        return normalize_chat_display_name(raw_value, blank_means_none=False) or "User"
-    except ChatDisplayNameError:
-        logger.warning(
-            "Invalid chat display name in [chat_defaults]; using the neutral default."
-        )
-        return "User"
+    return configured_chat_display_name(load_cli_config_and_ensure_existence(), default)
 
 
 def get_rag_citation_canonical_writes_enabled() -> bool:
-    """Return the typed, fail-closed canonical citation write switch.
+    """Return the canonical citation write switch (on by default, TASK-33620.8).
 
     Returns:
-        ``True`` when canonical citation writes are explicitly enabled.
+        ``True`` unless turned off; a malformed value fails closed (off).
     """
 
-    config = load_cli_config_and_ensure_existence()
-    section = config.get("rag_citations")
+    section = load_cli_config_and_ensure_existence().get("rag_citations")
     if not isinstance(section, dict):
         return False
-    return coerce_bool_setting(section.get("canonical_writes_enabled"), False)
+    value = section.get("canonical_writes_enabled", True)  # shipped default: on
+    return coerce_bool_setting(value, False)
 
 
 def get_media_ingestion_defaults(media_type: str) -> Dict[str, Any]:
@@ -9566,32 +6746,6 @@ def get_media_ingestion_defaults(media_type: str) -> Dict[str, Any]:
     )
 
 
-def get_ingest_ui_style() -> str:
-    """
-    Get the configured UI style for media ingestion.
-
-    Returns:
-        UI style string: "simplified", "grid", "wizard", or "split"
-    """
-    config = load_cli_config_and_ensure_existence()
-    media_ingestion_config = config.get("media_ingestion", {})
-
-    # Get UI style from config, fall back to default
-    ui_style = media_ingestion_config.get(
-        "ui_style", DEFAULT_MEDIA_INGESTION_CONFIG.get("ui_style", "default")
-    )
-
-    # Validate the UI style
-    valid_styles = ["default", "redesigned", "new", "grid", "wizard", "split"]
-    if ui_style not in valid_styles:
-        logger.warning(
-            f"Invalid ingest UI style '{ui_style}', falling back to 'default'"
-        )
-        return "default"
-
-    return ui_style
-
-
 def get_ocr_backend_config(backend_name: str) -> Dict[str, Any]:
     """
     Get configuration for a specific OCR backend.
@@ -9621,7 +6775,31 @@ def get_ocr_backend_config(backend_name: str) -> Dict[str, Any]:
 
 
 # --- CLI Providers and Models Getter ---
+#: TASK-35010 (OD-1 (a)): the sample ids older templates wrote into the vLLM,
+#: TabbyAPI, Aphrodite, Custom and Custom 2 lists. No server serves them, so
+#: the saved-list loader and Settings' default choice ignore them, and a
+#: Settings write drops them from the list it rewrites; nothing rewrites the
+#: file at startup. Frozen: the template no longer ships them.
+# ponytail: matched by value, so a server that really serves one of these
+# exact ids cannot have it listed; a template marker cannot reach files that
+# older versions wrote without one.
+SHIPPED_SAMPLE_MODEL_IDS: frozenset[str] = frozenset(
+    {
+        *("vllm-model-z", "vllm-model-x", "vllm-model-y", "vllm-model-a"),
+        *("tabby-model", "tabby-model-2", "tabby-model-3"),
+        *("aphrodite-engine", "aphrodite-engine-2"),
+        *("custom-model-alpha", "custom-model-beta"),
+        *("custom-model-gamma", "custom-model-delta"),
+    }
+)
+
+
 def get_cli_providers_and_models() -> Dict[str, List[str]]:
+    """Return each ``[providers]`` list, minus ``SHIPPED_SAMPLE_MODEL_IDS``.
+
+    Every key stays, an emptied list included, so discovery and list-key
+    resolution see the same keys as before.
+    """
     config = load_settings()
     providers_data = config.get(
         "providers", {}
@@ -9630,7 +6808,9 @@ def get_cli_providers_and_models() -> Dict[str, List[str]]:
     if isinstance(providers_data, dict):
         for provider, models in providers_data.items():
             if isinstance(models, list) and all(isinstance(m, str) for m in models):
-                valid_providers[provider] = models
+                valid_providers[provider] = [
+                    model for model in models if model not in SHIPPED_SAMPLE_MODEL_IDS
+                ]
             else:
                 logger.warning(
                     f"Invalid model list for provider '{provider}' in CLI config [providers]. Models: {models}. Skipping."
@@ -9715,36 +6895,424 @@ def get_detected_api_providers() -> List[str]:
     return providers
 
 
+# --- Config key-encryption lifecycle (TASK-34100.4) ---------------------------
+#
+# One owner for the four states (off / on / locked / unlocked). Every change
+# below follows the same contract, because a mistake here locks people out of
+# their own app (first-run review 2026-10-02, protect-summary-04):
+#
+# * validate BEFORE writing -- the replacement document must strict-decrypt
+#   with the password the session will hold afterwards, and must not leave a
+#   plaintext secret behind in an encrypted file;
+# * if anything fails after the write (the runtime publish, a binding check),
+#   restore the previous file bytes -- or remove a file this call created --
+#   and the previous in-process password, so a failure never leaves the disk
+#   changed while the caller is told nothing happened;
+# * never decrypt non-strictly: a file whose keys do not match its verifier is
+#   refused untouched instead of having its ciphertext written back as values.
+
+
+def _set_session_encryption_password(password: Optional[str]) -> None:
+    """Install (or clear) the in-process password and drop stale caches."""
+
+    global _SETTINGS_CACHE, _CONFIG_CACHE
+    if password is None:
+        clear_encryption_password()
+        _SETTINGS_CACHE = None
+        _CONFIG_CACHE = None
+        return
+    set_encryption_password(password)
+
+
+def _parse_raw_cli_config_text(serialized: Optional[str]) -> Dict[str, Any]:
+    if serialized is None:
+        return {}
+    loaded = tomllib.loads(serialized)
+    if not isinstance(loaded, dict):
+        raise TypeError("The CLI config must contain a top-level table")
+    return loaded
+
+
+def _password_verifier(config_data: Mapping[str, Any]) -> Optional[str]:
+    encryption = config_data.get("encryption", {})
+    if not isinstance(encryption, Mapping):
+        return None
+    verifier = encryption.get("password_verifier")
+    return verifier if isinstance(verifier, str) and verifier else None
+
+
+def _validate_encrypted_document(
+    document: Mapping[str, Any],
+    password: str,
+) -> None:
+    """Raise unless ``document`` is a safe encrypted config for ``password``.
+
+    The check mirrors what the next publish and the next startup do: the
+    merged view must strict-decrypt, and no sensitive value may stay plain.
+    """
+
+    merged = deep_merge_dicts(DEFAULT_CONFIG_FROM_TOML, dict(document))
+    get_encryption_module().decrypt_config_strict(merged, password)
+    if _contains_unencrypted_sensitive_value(document):
+        raise ValueError("An encrypted config would keep a plaintext secret")
+
+
+def _strip_encrypted_values(config_data: Mapping[str, Any]) -> Dict[str, Any]:
+    """Return a copy with every ``enc:`` string value removed, in every table.
+
+    Arrays are walked too (Qodo round, PR #3000): an ``enc:`` element is
+    dropped from its array and a table inside an array is stripped like any
+    other, so a reset never leaves ciphertext behind in a TOML array.
+    """
+
+    stripped: Dict[str, Any] = {}
+    for key, value in config_data.items():
+        if is_encrypted_config_value(value):
+            continue
+        stripped[key] = _strip_encrypted_item(value)
+    return stripped
+
+
+def _strip_encrypted_item(value: Any) -> Any:
+    """Strip ``enc:`` strings from one table or array value (copied)."""
+
+    if isinstance(value, Mapping):
+        return _strip_encrypted_values(value)
+    if isinstance(value, list):
+        return [
+            _strip_encrypted_item(item)
+            for item in value
+            if not is_encrypted_config_value(item)
+        ]
+    return copy.deepcopy(value)
+
+
+def _encrypted_value_paths(
+    config_data: Mapping[str, Any], prefix: tuple[str, ...] = ()
+) -> list[str]:
+    """Dotted paths of every ``enc:`` value outside the ``[encryption]`` table."""
+
+    paths: list[str] = []
+    for key, value in config_data.items():
+        if not prefix and key == "encryption":
+            continue
+        if isinstance(value, Mapping):
+            paths.extend(_encrypted_value_paths(value, prefix + (str(key),)))
+        elif is_encrypted_config_value(value):
+            paths.append(".".join(prefix + (str(key),)))
+    return paths
+
+
+def _contains_encrypted_value(config_data: Mapping[str, Any]) -> bool:
+    return bool(_encrypted_value_paths(config_data))
+
+
+def _already_encrypted_with(config_data: Mapping[str, Any], password: str) -> bool:
+    """Whether an encryption-on file is already exactly what enabling with
+    ``password`` would produce: the verifier accepts it, every saved value
+    strict-decrypts with it, and no sensitive value is left in plain text."""
+
+    verifier = _password_verifier(config_data)
+    if verifier is None:
+        return False
+    if not get_encryption_module().verify_password(password, verifier):
+        return False
+    try:
+        _validate_encrypted_document(config_data, password)
+    except ValueError:
+        return False
+    return True
+
+
+def _restore_previous_config_unlocked(
+    config_path: Path,
+    previous_serialized: Optional[str],
+) -> None:
+    """Put the exact previous bytes back (or remove a file this call created).
+
+    Args:
+        config_path: The selected config file the failed change wrote.
+        previous_serialized: The file's exact text before the change, or
+            None when the change created the file.
+
+    Raises:
+        ValueError: The path fails ``validate_path_simple``; nothing is
+            removed.
+        OSError: Reading, removing or rewriting the file failed.
+    """
+
+    current = _try_read_cli_config_serialized_unlocked(config_path)
+    if current == previous_serialized:
+        return
+    if previous_serialized is None:
+        # The only raw filesystem call here; the restore write below goes
+        # through the private atomic writer. Same validation as the hooks
+        # snapshot's lock target: the path only reaches unlink(), never a
+        # shell, and unlink() removes a link itself, not what it points to.
+        removable = validate_path_simple(
+            config_path,
+            require_exists=False,
+            probe_existing=False,
+            reject_shell_metacharacters=False,
+        )
+        removable.unlink(missing_ok=True)
+        _invalidate_config_caches()
+        return
+    _commit_serialized_cli_config_unlocked(
+        config_path,
+        previous_serialized,
+        _prepare_config_parent(config_path),
+    )
+
+
+def _unlock_session_with_password_unlocked(config_path: Path, password: str) -> bool:
+    """Install ``password`` for an unchanged file and republish settings.
+
+    The same-password enable writes nothing, but a session that loaded the
+    file without the password published its ciphertext in ``settings``;
+    installing the password alone left every reader of that global on the
+    locked view (Qodo round, PR #3000). Callers hold the write lock and have
+    already checked that ``password`` reads the file.
+
+    Args:
+        config_path: The selected config file (used for log context only).
+        password: The master password the file is encrypted under.
+
+    Returns:
+        True when the session holds ``password`` and the published settings
+        are decrypted with it; False when the publish failed, in which case
+        the previous session password is put back.
+    """
+
+    previous_password = get_encryption_password()
+    _set_session_encryption_password(password)
+    try:
+        _publish_runtime_config_unlocked()
+        return True
+    except Exception as error:
+        logger.error(
+            "Publishing the unlocked config failed; the session was left as "
+            "it was (action=enable, config_path={}, error_type={}).",
+            redact_user_paths(str(config_path)),
+            type(error).__name__,
+        )
+    _set_session_encryption_password(previous_password)
+    return False
+
+
+def _session_password_for_file(
+    config_path: Path,
+    previous_serialized: Optional[str],
+    *,
+    previous_password: Optional[str],
+    written_password: Optional[str],
+) -> Optional[str]:
+    """The password that reads the file as it is after a rollback attempt."""
+
+    try:
+        current = _try_read_cli_config_serialized_unlocked(config_path)
+    except Exception:
+        return None
+    if current == previous_serialized:
+        return previous_password
+    return written_password
+
+
+def _commit_encryption_change_unlocked(
+    config_path: Path,
+    document: Mapping[str, Any],
+    previous_serialized: Optional[str],
+    *,
+    session_password: Optional[str],
+    action: str,
+) -> bool:
+    """Write ``document``, install ``session_password`` and publish -- or roll back.
+
+    Callers hold the write lock and have already validated ``document``.
+    """
+
+    previous_password = get_encryption_password()
+    try:
+        raw_written = _write_raw_cli_config_unlocked(config_path, document)
+        _set_session_encryption_password(session_password)
+        _publish_runtime_config_unlocked(
+                raw_config=raw_written, config_path=config_path
+            )
+        return True
+    except Exception as error:
+        logger.error(
+            "Config encryption change failed; restoring the previous config "
+            "(action={}, error_type={}).",
+            action,
+            type(error).__name__,
+        )
+    try:
+        _restore_previous_config_unlocked(config_path, previous_serialized)
+    except Exception as restore_error:
+        logger.error(
+            "Restoring the previous config after a failed encryption change "
+            "failed (action={}, error_type={}).",
+            action,
+            type(restore_error).__name__,
+        )
+    # The session password must match what the file holds NOW (review round
+    # 1, F7): the previous one after a restore, the new one when the restore
+    # failed and the new document stayed. Reverting it then would encrypt the
+    # next save under the old password beside the new verifier -- the
+    # stranded state. An unreadable file locks the session rather than guess.
+    _set_session_encryption_password(
+        _session_password_for_file(
+            config_path,
+            previous_serialized,
+            previous_password=previous_password,
+            written_password=session_password,
+        )
+    )
+    try:
+        _publish_runtime_config_unlocked()
+    except Exception as publish_error:
+        logger.warning(
+            "Republishing the restored config failed (action={}, error_type={}).",
+            action,
+            type(publish_error).__name__,
+        )
+    return False
+
+
+def config_encryption_enabled_on_disk() -> Optional[bool]:
+    """Whether the selected config file currently has encryption turned on.
+
+    Returns:
+        True or False from the file, or None when it could not be read (the
+        caller keeps whatever state it already showed).
+    """
+
+    try:
+        config_path = get_cli_config_path()
+        with _config_write_lock(config_path):
+            serialized = _try_read_cli_config_serialized_unlocked(config_path)
+        return _encryption_enabled(_parse_raw_cli_config_text(serialized))
+    except Exception as error:
+        logger.warning(
+            "Reading the config encryption state failed (error_type={}).",
+            type(error).__name__,
+        )
+        return None
+
+
+def encrypted_value_paths_on_disk() -> list[str]:
+    """Dotted paths of the ``enc:`` values in the selected config file.
+
+    Used to name a value that is still encrypted under an earlier password
+    when encrypting is refused over it. Empty when there are none or the file
+    cannot be read.
+    """
+
+    try:
+        config_path = get_cli_config_path()
+        with _config_write_lock(config_path):
+            serialized = _try_read_cli_config_serialized_unlocked(config_path)
+        return _encrypted_value_paths(_parse_raw_cli_config_text(serialized))
+    except Exception as error:
+        logger.warning(
+            "Listing encrypted config values failed (error_type={}).",
+            type(error).__name__,
+        )
+        return []
+
+
+def verify_config_encryption_password(password: str) -> bool:
+    """Whether ``password`` matches the saved master-password verifier.
+
+    Returns False when encryption is off or the verifier is missing. Runs
+    scrypt, so call it off the UI thread.
+    """
+
+    try:
+        config_path = get_cli_config_path()
+        with _config_write_lock(config_path):
+            serialized = _try_read_cli_config_serialized_unlocked(config_path)
+        config_data = _parse_raw_cli_config_text(serialized)
+        verifier = _password_verifier(config_data)
+        if not _encryption_enabled(config_data) or verifier is None:
+            return False
+        return bool(get_encryption_module().verify_password(password, verifier))
+    except Exception as error:
+        logger.warning(
+            "Checking the master password failed (error_type={}).",
+            type(error).__name__,
+        )
+        return False
+
+
 def enable_config_encryption(password: str) -> bool:
     """
     Enable encryption for the config file and encrypt existing API keys.
+
+    Refuses (returns False without writing) when encryption is already on
+    with a different password: re-running enable used to rewrite the
+    verifier over keys still encrypted under the first password. Use
+    `change_encryption_password` to rotate. Enabling again with the SAME
+    password, on a file that is already fully encrypted under it, writes
+    nothing and returns True (review round 2, R2-F4); when this session did
+    not hold that password it is installed and the runtime settings are
+    republished, so a locked session is fully unlocked (Qodo round).
 
     Args:
         password: The master password to use for encryption
 
     Returns:
-        True if encryption was enabled successfully
+        True if encryption was enabled successfully, or already was with
+        this password
     """
     try:
         config_path = get_cli_config_path()
         with _config_write_lock(config_path):
-            config_data = _read_raw_cli_config_unlocked(config_path)
+            previous = _try_read_cli_config_serialized_unlocked(config_path)
+            config_data = _parse_raw_cli_config_text(previous)
+            if _encryption_enabled(config_data):
+                if _already_encrypted_with(config_data, password):
+                    if get_encryption_password() != password and not (
+                        _unlock_session_with_password_unlocked(config_path, password)
+                    ):
+                        return False
+                    logger.info(
+                        "Config encryption is already enabled with this "
+                        "password; nothing was changed."
+                    )
+                    return True
+                logger.warning(
+                    "Config encryption is already enabled; refusing to enable "
+                    "it again. Change the master password instead."
+                )
+                return False
             encrypted_config = encrypt_api_keys_in_config(config_data, password)
-            raw_written = _write_raw_cli_config_unlocked(config_path, encrypted_config)
-            set_encryption_password(password)
-            _publish_runtime_config_unlocked(raw_config=raw_written)
+            _validate_encrypted_document(encrypted_config, password)
+            if not _commit_encryption_change_unlocked(
+                config_path,
+                encrypted_config,
+                previous,
+                session_password=password,
+                action="enable",
+            ):
+                return False
 
         logger.success("Config encryption enabled successfully")
         return True
 
     except Exception as e:
-        logger.error(f"Failed to enable config encryption: {e}")
+        logger.error(
+            "Failed to enable config encryption (error_type={}).", type(e).__name__
+        )
         return False
 
 
 def disable_config_encryption(password: str) -> bool:
     """
     Disable encryption for the config file and decrypt all values.
+
+    Every saved value must decrypt with ``password`` (strict); otherwise the
+    file is left untouched and False is returned.
 
     Args:
         password: The master password to verify before disabling
@@ -9755,36 +7323,68 @@ def disable_config_encryption(password: str) -> bool:
     try:
         config_path = get_cli_config_path()
         with _config_write_lock(config_path):
-            config_data = _read_raw_cli_config_unlocked(config_path)
-            encryption_config = config_data.get("encryption", {})
-            if encryption_config.get("enabled", False):
-                enc_module = get_encryption_module()
-                password_verifier = encryption_config.get("password_verifier", "")
-                if not password_verifier:
+            previous = _try_read_cli_config_serialized_unlocked(config_path)
+            config_data = _parse_raw_cli_config_text(previous)
+            if _encryption_enabled(config_data):
+                verifier = _password_verifier(config_data)
+                if verifier is None:
                     logger.error("No password verifier found in encryption config")
                     return False
-                if not enc_module.verify_password(password, password_verifier):
+                enc_module = get_encryption_module()
+                if not enc_module.verify_password(password, verifier):
                     logger.error("Invalid password provided")
                     return False
-
-            set_encryption_password(password)
-            decrypted_config = decrypt_config_section(config_data)
+                try:
+                    decrypted_config = enc_module.decrypt_config_strict(
+                        config_data, password
+                    )
+                except ValueError:
+                    logger.error(
+                        "Some saved values do not decrypt with this password; "
+                        "encryption was left on (action=disable, config_path={}).",
+                        redact_user_paths(str(config_path)),
+                    )
+                    return False
+            elif "encryption" in config_data:
+                decrypted_config = copy.deepcopy(config_data)
+            else:
+                _set_session_encryption_password(None)
+                logger.info("Config encryption is already disabled")
+                return True
             decrypted_config.pop("encryption", None)
-            raw_written = _write_raw_cli_config_unlocked(config_path, decrypted_config)
-            clear_encryption_password()
-            _publish_runtime_config_unlocked(raw_config=raw_written)
+            if _contains_encrypted_value(decrypted_config):
+                logger.error(
+                    "Encrypted values would remain after disabling encryption; "
+                    "encryption was left on (action=disable, config_path={}).",
+                    redact_user_paths(str(config_path)),
+                )
+                return False
+            if not _commit_encryption_change_unlocked(
+                config_path,
+                decrypted_config,
+                previous,
+                session_password=None,
+                action="disable",
+            ):
+                return False
 
         logger.success("Config encryption disabled successfully")
         return True
 
     except Exception as e:
-        logger.error(f"Failed to disable config encryption: {e}")
+        logger.error(
+            "Failed to disable config encryption (error_type={}).", type(e).__name__
+        )
         return False
 
 
 def change_encryption_password(old_password: str, new_password: str) -> bool:
     """
     Change the encryption password.
+
+    Every saved value must decrypt with ``old_password`` (strict), and the
+    re-encrypted document must decrypt with ``new_password`` before it is
+    written; otherwise the file is left untouched.
 
     Args:
         old_password: The current password
@@ -9796,36 +7396,155 @@ def change_encryption_password(old_password: str, new_password: str) -> bool:
     try:
         config_path = get_cli_config_path()
         with _config_write_lock(config_path):
-            config_data = _read_raw_cli_config_unlocked(config_path)
-            encryption_config = config_data.get("encryption", {})
-            if not encryption_config.get("enabled", False):
+            previous = _try_read_cli_config_serialized_unlocked(config_path)
+            config_data = _parse_raw_cli_config_text(previous)
+            if not _encryption_enabled(config_data):
                 logger.error("Encryption is not enabled")
                 return False
 
             enc_module = get_encryption_module()
-            password_verifier = encryption_config.get("password_verifier", "")
-            if not password_verifier:
+            verifier = _password_verifier(config_data)
+            if verifier is None:
                 logger.error("No password verifier found in encryption config")
                 return False
-            if not enc_module.verify_password(old_password, password_verifier):
+            if not enc_module.verify_password(old_password, verifier):
                 logger.error("Invalid current password provided")
                 return False
-
-            set_encryption_password(old_password)
-            decrypted_config = decrypt_config_section(config_data)
+            try:
+                decrypted_config = enc_module.decrypt_config_strict(
+                    config_data, old_password
+                )
+            except ValueError:
+                logger.error(
+                    "Some saved values do not decrypt with the current password; "
+                    "the password was not changed (action=change, config_path={}).",
+                    redact_user_paths(str(config_path)),
+                )
+                return False
             encrypted_config = encrypt_api_keys_in_config(
                 decrypted_config,
                 new_password,
             )
-            raw_written = _write_raw_cli_config_unlocked(config_path, encrypted_config)
-            set_encryption_password(new_password)
-            _publish_runtime_config_unlocked(raw_config=raw_written)
+            _validate_encrypted_document(encrypted_config, new_password)
+            if not _commit_encryption_change_unlocked(
+                config_path,
+                encrypted_config,
+                previous,
+                session_password=new_password,
+                action="change",
+            ):
+                return False
 
         logger.success("Encryption password changed successfully")
         return True
 
     except Exception as e:
-        logger.error(f"Failed to change encryption password: {e}")
+        logger.error(
+            "Failed to change encryption password (error_type={}).",
+            type(e).__name__,
+        )
+        return False
+
+
+def rekey_encryption_verifier(password: str) -> bool:
+    """Make ``password`` the master password again when it reads every key.
+
+    For an encryption-on file whose verifier is missing, or was rewritten
+    for another password while the keys stayed under this one (the stranded
+    state an old second enable left behind). Without this the only way past
+    either was a reset that deleted keys this password still reads (TASK-
+    34100.4 review round 2, R2-F5). Every ``enc:`` value outside
+    ``[encryption]`` must strict-decrypt with ``password``, and there must be
+    at least one -- with none, any guess would "read every key". The file is
+    re-encrypted under ``password`` with a new verifier, through the same
+    validate-then-write and rollback as `change_encryption_password`.
+
+    Args:
+        password: The password the user typed at the startup prompt.
+
+    Returns:
+        True when the file now answers to ``password`` and the session holds
+        it; False (file untouched) otherwise.
+    """
+    try:
+        config_path = get_cli_config_path()
+        with _config_write_lock(config_path):
+            previous = _try_read_cli_config_serialized_unlocked(config_path)
+            config_data = _parse_raw_cli_config_text(previous)
+            if not _encryption_enabled(config_data):
+                return False
+            values = {
+                key: value for key, value in config_data.items() if key != "encryption"
+            }
+            if not _contains_encrypted_value(values):
+                return False
+            try:
+                decrypted_config = get_encryption_module().decrypt_config_strict(
+                    values, password, log_failure=False
+                )
+            except ValueError:
+                return False
+            decrypted_config["encryption"] = copy.deepcopy(config_data["encryption"])
+            encrypted_config = encrypt_api_keys_in_config(decrypted_config, password)
+            _validate_encrypted_document(encrypted_config, password)
+            if not _commit_encryption_change_unlocked(
+                config_path,
+                encrypted_config,
+                previous,
+                session_password=password,
+                action="rekey",
+            ):
+                return False
+
+        logger.success("The master-password check was repaired")
+        return True
+
+    except Exception as e:
+        logger.error(
+            "Repairing the master-password check failed (error_type={}).",
+            type(e).__name__,
+        )
+        return False
+
+
+def reset_encrypted_config_values() -> bool:
+    """Forgot-password reset: drop every encrypted value and turn encryption off.
+
+    Strips every ``enc:`` value from every table and array (sensitive or
+    not -- none of them can be read without the password) and removes
+    ``[encryption]``. Chats, notes, documents and every plain setting are
+    untouched; the user re-enters API keys afterwards.
+
+    Returns:
+        True when the file now holds no encrypted value and encryption is off.
+    """
+    try:
+        config_path = get_cli_config_path()
+        with _config_write_lock(config_path):
+            previous = _try_read_cli_config_serialized_unlocked(config_path)
+            if previous is None:
+                _set_session_encryption_password(None)
+                return True
+            config_data = _parse_raw_cli_config_text(previous)
+            stripped = _strip_encrypted_values(config_data)
+            stripped.pop("encryption", None)
+            if not _commit_encryption_change_unlocked(
+                config_path,
+                stripped,
+                previous,
+                session_password=None,
+                action="reset",
+            ):
+                return False
+
+        logger.success("Encrypted config values were reset")
+        return True
+
+    except Exception as e:
+        logger.error(
+            "Resetting encrypted config values failed (error_type={}).",
+            type(e).__name__,
+        )
         return False
 
 
@@ -9902,7 +7621,9 @@ def _default_data_root_lock() -> Iterator[None]:
                 _config_participants.check_lock_wait(sys.modules[__name__], operation)
                 try:
                     portalocker.lock(
-                        stream, portalocker.LockFlags.EXCLUSIVE | portalocker.LockFlags.NON_BLOCKING
+                        stream,
+                        portalocker.LockFlags.EXCLUSIVE
+                        | portalocker.LockFlags.NON_BLOCKING,
                     )
                     break
                 except portalocker.exceptions.AlreadyLocked:
@@ -10104,19 +7825,172 @@ def _user_data_dir_inputs() -> tuple[tuple, tuple[Path, ...]]:
     return key, tuple(dict.fromkeys(paths))
 
 
-def _user_data_dir_stamps(paths: tuple[Path, ...]) -> tuple | None:
-    """Posture-stamp every path, or None if one cannot be observed.
+def _bind_user_data_dir_stamps():
+    """Keep one finite optional Windows source capture; acquire no native state."""
+    close_errors = ()
+    batch = source_current = None
+    if os.name == "nt":
+        import inspect
+        import stat
+        from pathlib import WindowsPath
+        from types import FunctionType, MethodType, ModuleType
 
-    A path that is not a directory, or sits under one the user cannot search,
-    raises here; the memo then steps aside so the resolution reports it as it
-    always has (``PrivatePathError``), rather than a raw ``OSError`` escaping.
-    """
-    from tldw_chatbook.Backup_Recovery.storage_admission import _posture
+        from tldw_chatbook.Backup_Recovery import storage_admission as storage
+        from tldw_chatbook.Utils import platform_files, windows_files
 
-    try:
-        return tuple(_posture(path) for path in paths)
-    except OSError:
-        return None
+        facade, owner = platform_files.os, windows_files.WindowsOS
+        native = windows_files._Native
+        close_error = windows_files._AdmissionMetadataCloseError
+        close_errors = (close_error,)
+        original_posture = storage._posture
+        projection = (stat.S_IFMT, stat.S_IMODE)
+        modules = tuple(
+            (module, vars(module), module.__file__, module.__spec__, module.__spec__.origin)
+            for module in (storage, platform_files, windows_files)
+        )
+        bindings = (
+            (vars(storage), "_posture", original_posture),
+            (vars(storage), "os", facade),
+            (vars(storage), "stat", stat),
+            (vars(platform_files), "os", facade),
+            (vars(platform_files), "WindowsOS", owner),
+            (vars(windows_files), "WindowsOS", owner),
+            (vars(windows_files), "_Native", native),
+            (vars(windows_files), "_AdmissionMetadataCloseError", close_error),
+            *((vars(stat), name, value) for name, value in zip(("S_IFMT", "S_IMODE"), projection)),
+            *((vars(windows_files), name, vars(windows_files)[name]) for name in (
+                "_os", "_stat", "Path", "ntpath", "contextlib", "functools",
+                "_parent", "_component", "_native", "_acl_mode", "_AdmissionMetadataHandle",
+            )),
+            *((vars(owner), name, vars(owner)[name]) for name in (
+                "__getattr__", "stat", "_stat_handle", "stat_many_for_admission",
+            )),
+            *((vars(native), name, vars(native)[name]) for name in (
+                "__init__", "_user_sid", "reopen", "open_handle", "info", "ntfs",
+                "security", "_decoded_security", "_decode_security", "sid_string", "check", "ntcheck",
+            )),
+            (vars(close_error), "__init__", close_error.__init__),
+            (vars(windows_files._AdmissionMetadataHandle), "__init__", windows_files._AdmissionMetadataHandle.__init__),
+        )
+        wrappers = (
+            windows_files._parent, windows_files._native,
+            native.reopen, native._decoded_security,
+        )
+        functions = (
+            original_posture, owner.__getattr__, owner.stat, owner._stat_handle,
+            owner.stat_many_for_admission, windows_files._component, windows_files._acl_mode,
+            native.__init__, native._user_sid, native.open_handle, native.info, native.ntfs,
+            native.security, native._decode_security, native.sid_string, native.check, native.ntcheck,
+            close_error.__init__, windows_files._AdmissionMetadataHandle.__init__,
+            windows_files._parent, windows_files._parent.__wrapped__,
+            windows_files._native.__wrapped__, native.reopen, native.reopen.__wrapped__,
+            native._decoded_security.__wrapped__,
+        )
+        records = tuple(
+            (function, function.__code__, function.__globals__, function.__defaults__,
+             function.__kwdefaults__, tuple((function.__kwdefaults__ or {}).items()),
+             function.__closure__, tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+             vars(function).get("__wrapped__"))
+            for function in functions
+        )
+        wrapped = tuple((wrapper, vars(wrapper).get("__wrapped__")) for wrapper in wrappers)
+        lookup = tuple((cls, name, inspect.getattr_static(cls, name, None))
+                       for cls in (owner, native) for name in ("__getattribute__", "__getattr__", "__dict__"))
+        cached = tuple((name, vars(facade).get(name), vars(owner)[name])
+                       for name in ("stat", "_stat_handle", "stat_many_for_admission"))
+        batch = cached[-1][1]
+
+        def source_current(posture):
+            # Direct custom slots decline before any facade lookup or producer.
+            if posture is not original_posture or storage.os is not facade or storage.stat is not stat:
+                return False
+            if any(namespace.get(name) is not value for namespace, name, value in bindings):
+                return False
+            if (
+                type(facade) is not owner or type(owner) is not type or type(native) is not type
+                or owner.__bases__ != (object,) or native.__bases__ != (object,)
+                or inspect.getattr_static(owner, "__getattribute__") is not object.__getattribute__
+                or inspect.getattr_static(native, "__getattribute__") is not object.__getattribute__
+                or any(inspect.getattr_static(cls, name, None) is not value for cls, name, value in lookup)
+            ):
+                return False
+            for module, namespace, path, spec, origin in modules:
+                if (type(module) is not ModuleType or sys.modules.get(namespace["__name__"]) is not module
+                    or vars(module) is not namespace or namespace.get("__file__") != path
+                    or namespace.get("__spec__") is not spec or spec.origin != origin):
+                    return False
+            fields = vars(facade)
+            if any(type(bound) is not MethodType or fields.get(name) is not bound
+                   or bound.__self__ is not facade or bound.__func__ is not function
+                   for name, bound, function in cached):
+                return False
+            for function, code, namespace, defaults, keywords, items, closure, cells, body in records:
+                if (type(function) is not FunctionType or function.__code__ is not code
+                    or function.__globals__ is not namespace or function.__defaults__ is not defaults
+                    or function.__kwdefaults__ is not keywords
+                    or len(function.__kwdefaults__ or {}) != len(items)
+                    or any((function.__kwdefaults__ or {}).get(key) is not value for key, value in items)
+                    or function.__closure__ is not closure
+                    or vars(function).get("__wrapped__") is not body):
+                    return False
+                try:
+                    if any(cell.cell_contents is not value for cell, value in cells):
+                        return False
+                except ValueError:  # An emptied captured cell is nonstock too.
+                    return False
+            return all(vars(wrapper).get("__wrapped__") is body for wrapper, body in wrapped)
+
+    def _user_data_dir_stamps(paths: tuple[Path, ...]) -> tuple | None:
+        """Observe ordered five-field postures; preserve retained-close custody.
+
+        The stock Windows route performs one fresh metadata batch. Customized
+        sources retain the original scalar calls, and ordinary OSError leaves
+        resolution to report the original private-path error.
+        """
+        from tldw_chatbook.Backup_Recovery.storage_admission import _posture
+
+        try:
+            if type(paths) is tuple and not paths:
+                return ()
+            if (source_current is not None and source_current(_posture)
+                and type(paths) is tuple and all(type(path) is WindowsPath and path.is_absolute()
+                    and len(path.drive) == 2 and path.drive[1] == ":" and path.drive[0].isalpha()
+                    for path in paths) and source_current(_posture)):
+                try:
+                    observed = batch(paths)
+                except close_errors:
+                    raise
+                except OSError as error:
+                    # The call has unwound its native finally before selection.
+                    current = source_current(_posture)
+                    if not current or type(error) is not PermissionError or error.errno != 13 or error.strerror != "windows_admission_descriptor_unavailable":
+                        return None
+                else:
+                    # Any observed drift discards the whole sample permanently.
+                    current = source_current(_posture)
+                    if not current or type(observed) is not dict:
+                        return None
+                    result = []
+                    for path in paths:
+                        value = observed[path]
+                        if value is None:
+                            result.append(None)
+                        else:
+                            info = value[0]
+                            result.append((info.st_dev, info.st_ino, projection[0](info.st_mode),
+                                           projection[1](info.st_mode), info.st_uid))
+                    return tuple(result) if source_current(_posture) else None
+            return tuple(_posture(path) for path in paths)
+        except close_errors:
+            raise
+        except OSError:
+            return None
+
+    return _user_data_dir_stamps
+
+
+_user_data_dir_stamps = _bind_user_data_dir_stamps()
+del _bind_user_data_dir_stamps
 
 
 @_config_participants.guarded
@@ -10163,10 +8037,15 @@ def get_user_data_dir() -> Path:
     walked = set(_chain(result))
     # The result must be one of the stamped candidates: a working directory
     # changed mid-resolution makes a relative data dir resolve elsewhere.
-    if before is not None and before == after and walked <= set(stamped) and all(
-        stamp is not None and not stat.S_ISLNK(stamp[2])
-        for path, stamp in zip(stamped, after)
-        if path in walked
+    if (
+        before is not None
+        and before == after
+        and walked <= set(stamped)
+        and all(
+            stamp is not None and not stat.S_ISLNK(stamp[2])
+            for path, stamp in zip(stamped, after)
+            if path in walked
+        )
     ):
         with _USER_DATA_DIR_MEMO_LOCK:
             _USER_DATA_DIR_MEMO = (key, after, result)
@@ -10192,7 +8071,9 @@ def _resolve_user_data_dir() -> Path:
             if configured_data_dir:
                 verify_trusted_directory(base_data_dir, allow_shared_sticky=False)
             return secure_private_directory(
-                user_dir, create=True, application_owned=True,
+                user_dir,
+                create=True,
+                application_owned=True,
             ).lexical_path
 
 
@@ -10242,10 +8123,9 @@ def get_chachanotes_db_path(*, ignore_override: bool = False) -> Path:
     """
     if ignore_override:
         return get_user_data_dir() / profile_paths.database_leaf("chachanotes_db_path")
-    return (
-        _get_custom_database_path("chachanotes_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("chachanotes_db_path")
-    )
+    return _get_custom_database_path(
+        "chachanotes_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf("chachanotes_db_path")
 
 
 def get_tts_profiles_db_path() -> Path:
@@ -10308,7 +8188,7 @@ def get_notes_sync_recovery_capacity_bytes(
 
 
 NOTES_SYNC_WATCHER_INTERVAL_SECONDS_DEFAULT = 1.0
-NOTES_SYNC_WATCHER_MAX_INTERVAL_SECONDS_DEFAULT = 10.0
+NOTES_SYNC_WATCHER_MAX_INTERVAL_SECONDS_DEFAULT = 30.0
 _NOTES_SYNC_WATCHER_INTERVAL_CEILING_SECONDS = 3600.0
 
 
@@ -10320,7 +8200,7 @@ def get_notes_sync_watcher_intervals(
     TASK-21112: the lasting-sync watcher polls at the base interval and backs
     off toward the max while roots are quiet. Read from
     ``[notes] sync_watcher_interval_seconds`` (default 1.0) and
-    ``[notes] sync_watcher_max_interval_seconds`` (default 10.0; backed-off
+    ``[notes] sync_watcher_max_interval_seconds`` (default 30.0; backed-off
     sleeps are jittered by up to +/-50 percent around it).
 
     Args:
@@ -10372,7 +8252,7 @@ def load_console_library_migration_seed(
     Returns:
         The strict typed seed required by a legacy database migration.
     """
-    from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryMigrationSeed
+    from tldw_chatbook.DB.ChaChaNotes_DB import ConsoleLibraryMigrationSeed
 
     selected = (
         load_cli_config_and_ensure_existence() if app_config is None else app_config
@@ -10406,10 +8286,9 @@ def get_prompts_db_path(*, ignore_override: bool = False) -> Path:
     """
     if ignore_override:
         return get_user_data_dir() / profile_paths.database_leaf("prompts_db_path")
-    return (
-        _get_custom_database_path("prompts_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("prompts_db_path")
-    )
+    return _get_custom_database_path(
+        "prompts_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf("prompts_db_path")
 
 
 def get_media_db_path(*, ignore_override: bool = False) -> Path:
@@ -10428,16 +8307,16 @@ def get_media_db_path(*, ignore_override: bool = False) -> Path:
     """
     if ignore_override:
         return get_user_data_dir() / profile_paths.database_leaf("media_db_path")
-    return (
-        _get_custom_database_path("media_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("media_db_path")
-    )
+    return _get_custom_database_path(
+        "media_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf("media_db_path")
 
 
 def get_library_collections_db_path() -> Path:
-    return (
-        _get_custom_database_path("library_collections_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("library_collections_db_path")
+    return _get_custom_database_path(
+        "library_collections_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf(
+        "library_collections_db_path"
     )
 
 
@@ -10450,54 +8329,49 @@ def get_dreams_db_path() -> Path:
 
 
 def get_library_ingest_jobs_db_path() -> Path:
-    return (
-        _get_custom_database_path("library_ingest_jobs_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("library_ingest_jobs_db_path")
+    return _get_custom_database_path(
+        "library_ingest_jobs_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf(
+        "library_ingest_jobs_db_path"
     )
 
 
 def get_workspaces_db_path() -> Path:
-    return (
-        _get_custom_database_path("workspaces_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("workspaces_db_path")
-    )
+    return _get_custom_database_path(
+        "workspaces_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf("workspaces_db_path")
 
 
 def get_subscriptions_db_path() -> Path:
-    return (
-        _get_custom_database_path("subscriptions_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("subscriptions_db_path")
-    )
+    return _get_custom_database_path(
+        "subscriptions_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf("subscriptions_db_path")
 
 
 def get_evals_db_path() -> Path:
     """Return the canonical path for the Evals database."""
-    return (
-        _get_custom_database_path("evals_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("evals_db_path")
-    )
+    return _get_custom_database_path(
+        "evals_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf("evals_db_path")
 
 
 def get_rag_indexing_db_path() -> Path:
     """Return the canonical path for the RAG indexing-state database."""
-    return (
-        _get_custom_database_path("rag_indexing_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("rag_indexing_db_path")
-    )
+    return _get_custom_database_path(
+        "rag_indexing_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf("rag_indexing_db_path")
 
 
 def get_notifications_db_path() -> Path:
-    return (
-        _get_custom_database_path("notifications_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("notifications_db_path")
-    )
+    return _get_custom_database_path(
+        "notifications_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf("notifications_db_path")
 
 
 def get_research_db_path() -> Path:
-    return (
-        _get_custom_database_path("research_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("research_db_path")
-    )
+    return _get_custom_database_path(
+        "research_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf("research_db_path")
 
 
 def get_workflows_db_path() -> Path:
@@ -10509,20 +8383,16 @@ def get_workflows_db_path() -> Path:
 
 
 def get_writing_db_path() -> Path:
-    return (
-        _get_custom_database_path("writing_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("writing_db_path")
-    )
+    return _get_custom_database_path(
+        "writing_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf("writing_db_path")
 
 
 def get_scheduled_tasks_db_path() -> Path:
-    return (
-        _get_custom_database_path(
-            "scheduled_tasks_db_path",
-            expand_before_validation=False,
-        )
-        or get_user_data_dir() / profile_paths.database_leaf("scheduled_tasks_db_path")
-    )
+    return _get_custom_database_path(
+        "scheduled_tasks_db_path",
+        expand_before_validation=False,
+    ) or get_user_data_dir() / profile_paths.database_leaf("scheduled_tasks_db_path")
 
 
 def get_cli_log_file_path() -> Path:
@@ -10592,7 +8462,9 @@ def get_model_cache_dir() -> Path:
     # an explicitly configured custom directory stays under the user's
     # ownership policy, so only the creation mode is pinned there.
     try:
-        with _config_participants.operation(sys.modules[__name__], route="config_models", target=cache_path):
+        with _config_participants.operation(
+            sys.modules[__name__], route="config_models", target=cache_path
+        ):
             if custom_cache_dir and custom_cache_dir != default_cache_dir:
                 cache_path.mkdir(parents=True, exist_ok=True, mode=0o700)
             else:
@@ -10611,12 +8483,6 @@ def get_model_cache_dir() -> Path:
         )
 
     return cache_path
-
-
-# --- Global CLI Database Instances ---
-chachanotes_db: Optional[CharactersRAGDB] = None
-prompts_db: Optional[PromptsDatabase] = None
-media_db: Optional[MediaDatabase] = None
 
 
 def seed_builtin_content(db: CharactersRAGDB) -> CharactersRAGDB:
@@ -10643,134 +8509,6 @@ def seed_builtin_content(db: CharactersRAGDB) -> CharactersRAGDB:
     except Exception as exc:  # noqa: BLE001 - bundled content cannot prevent boot
         logger.warning("pixel_migu_profile_seed_failed category={}", type(exc).__name__)
     return db
-
-
-# --- Database Initialization Function (remains largely the same) ---
-def initialize_all_databases():
-    global chachanotes_db, prompts_db, media_db
-    logger.debug("CRITICAL DEBUG: INSIDE initialize_all_databases() NOW.")
-    logger.info("Initializing CLI databases...")
-    # ChaChaNotes DB
-    chachanotes_path = get_chachanotes_db_path()
-    logger.info(f"Attempting to initialize ChaChaNotes_DB at: {chachanotes_path}")
-    try:
-        chachanotes_db = CharactersRAGDB(
-            db_path=chachanotes_path,
-            client_id=CLI_APP_CLIENT_ID,
-            console_library_migration_seed=load_console_library_migration_seed(),
-        )
-        seed_builtin_content(chachanotes_db)
-        logger.success(f"ChaChaNotes_DB initialized successfully at {chachanotes_path}")
-    except Exception as e:
-        logger.opt(exception=True).error(
-            f"Failed to initialize ChaChaNotes_DB at {chachanotes_path}: {e}"
-        )
-        chachanotes_db = None
-    # Prompts DB
-    prompts_path = get_prompts_db_path()
-    logger.info(f"Attempting to initialize Prompts_DB at: {prompts_path}")
-    try:
-        prompts_db = PromptsDatabase(db_path=prompts_path, client_id=CLI_APP_CLIENT_ID)
-        logger.success(f"Prompts_DB initialized successfully at {prompts_path}")
-    except Exception as e:
-        logger.opt(exception=True).error(
-            f"Failed to initialize Prompts_DB at {prompts_path}: {e}"
-        )
-        prompts_db = None
-    # Media DB
-    media_path = get_media_db_path()
-    logger.info(f"Attempting to initialize Media_DB_v2 at: {media_path}")
-    try:
-        media_db = MediaDatabase(db_path=media_path, client_id=CLI_APP_CLIENT_ID)
-        logger.success(f"Media_DB_v2 initialized successfully at {media_path}")
-    except Exception as e:
-        logger.opt(exception=True).error(
-            f"Failed to initialize Media_DB_v2 at {media_path}: {e}"
-        )
-        media_db = None
-    logger.info("CLI database initialization complete.")
-
-
-# --- Lazy Database Getters ---
-def get_chachanotes_db_lazy() -> Optional[CharactersRAGDB]:
-    """Get the ChaChaNotes database instance, initializing it lazily if needed."""
-    global chachanotes_db
-    if chachanotes_db is None:
-        chachanotes_path = get_chachanotes_db_path()
-        logger.info(f"Lazy-initializing ChaChaNotes_DB at: {chachanotes_path}")
-        try:
-            # Get integrity check configuration
-            config = load_settings()
-            check_integrity = config.get("database", {}).get(
-                "check_integrity_on_startup", False
-            )
-
-            chachanotes_db = CharactersRAGDB(
-                db_path=chachanotes_path,
-                client_id=CLI_APP_CLIENT_ID,
-                check_integrity_on_startup=check_integrity,
-                console_library_migration_seed=load_console_library_migration_seed(),
-            )
-            seed_builtin_content(chachanotes_db)
-            logger.success(
-                f"ChaChaNotes_DB lazy-initialized successfully at {chachanotes_path}"
-            )
-        except Exception as e:
-            logger.opt(exception=True).error(
-                f"Failed to lazy-initialize ChaChaNotes_DB at {chachanotes_path}: {e}"
-            )
-            if chachanotes_db is not None:
-                # Seeding can fail after construction has acquired this worker's
-                # connection. Retire it before discarding the lazy owner.
-                chachanotes_db.close_connection()
-            chachanotes_db = None
-    return chachanotes_db
-
-
-def get_prompts_db_lazy() -> Optional[PromptsDatabase]:
-    """Get the Prompts database instance, initializing it lazily if needed."""
-    global prompts_db
-    if prompts_db is None:
-        prompts_path = get_prompts_db_path()
-        logger.info(f"Lazy-initializing Prompts_DB at: {prompts_path}")
-        try:
-            # Get integrity check configuration
-            config = load_settings()
-            check_integrity = config.get("database", {}).get(
-                "check_integrity_on_startup", False
-            )
-
-            prompts_db = PromptsDatabase(
-                db_path=prompts_path,
-                client_id=CLI_APP_CLIENT_ID,
-                check_integrity_on_startup=check_integrity,
-            )
-            logger.success(
-                f"Prompts_DB lazy-initialized successfully at {prompts_path}"
-            )
-        except Exception as e:
-            logger.opt(exception=True).error(
-                f"Failed to lazy-initialize Prompts_DB at {prompts_path}: {e}"
-            )
-            prompts_db = None
-    return prompts_db
-
-
-def get_media_db_lazy() -> Optional[MediaDatabase]:
-    """Get the Media database instance, initializing it lazily if needed."""
-    global media_db
-    if media_db is None:
-        media_path = get_media_db_path()
-        logger.info(f"Lazy-initializing Media_DB_v2 at: {media_path}")
-        try:
-            media_db = MediaDatabase(db_path=media_path, client_id=CLI_APP_CLIENT_ID)
-            logger.success(f"Media_DB_v2 lazy-initialized successfully at {media_path}")
-        except Exception as e:
-            logger.opt(exception=True).error(
-                f"Failed to lazy-initialize Media_DB_v2 at {media_path}: {e}"
-            )
-            media_db = None
-    return media_db
 
 
 # --- API Models (should be defined based on CONFIG_TOML_CONTENT or loaded from it) ---
@@ -10858,14 +8596,9 @@ APP_CONFIG = settings.get(
 DATABASE_CONFIG = settings.get("APP_DATABASE_CONFIG", DEFAULT_DATABASE_CONFIG)
 RAG_SEARCH_CONFIG = settings.get("APP_RAG_SEARCH_CONFIG", DEFAULT_RAG_SEARCH_CONFIG)
 
-# --- Load CLI Config and Initialize Databases on module import ---
+# --- Load CLI Config on module import ---
 # The `settings` global variable is now the result of the unified load_settings()
-logger.debug(
-    "CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access"
-)
-
-# Databases will be initialized lazily on first access
-# This significantly improves startup time by deferring expensive DB operations
+# Databases are opened by the entry points through app_services, never here.
 
 # Make APP_CONFIG available globally if needed by other modules that import from config.py
 # This will be the same as `settings` if `load_settings` is the sole config loader.
@@ -10890,3 +8623,215 @@ def create_mcp_credential_service(data_root: Path | None = None):
     return CredentialBindingService(
         KeyringCredentialBackend(data_root or get_user_data_dir())
     )
+
+
+# Definition-time originals for the finite stock run-log availability read.
+_RUN_LOG_PROBE_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    (
+        *(
+            (globals(), name, globals()[name])
+            for name in (
+                "get_workspaces_db_path",
+                "_get_custom_database_path",
+                "get_user_data_dir",
+                "get_cli_setting",
+            )
+        ),
+    ),
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for _owner, _name, descriptor in (
+            *(
+                (globals(), name, globals()[name])
+                for name in (
+                    "get_workspaces_db_path",
+                        "_get_custom_database_path",
+                    "get_user_data_dir",
+                    "get_cli_setting",
+                )
+            ),
+        )
+        if callable(descriptor) or isinstance(descriptor, (staticmethod, classmethod))
+        for outer in (
+            descriptor.__func__
+            if isinstance(descriptor, (staticmethod, classmethod))
+            else descriptor,
+        )
+        if hasattr(outer, "__code__")
+        for function in (
+            outer,
+            *((outer.__wrapped__,) if hasattr(outer, "__wrapped__") else ()),
+            *(
+                (outer.__wrapped__.__wrapped__,)
+                if hasattr(outer, "__wrapped__")
+                and hasattr(outer.__wrapped__, "__wrapped__")
+                else ()
+            ),
+        )
+    ),
+)
+
+
+# Defining callbacks for checked stock Console preparation; no IO.
+_COMPACT_MODEL_CONFIG_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    tuple(
+        (globals(), name, globals()[name])
+        for name in (
+            "get_cli_providers_and_models",
+            "load_settings",
+            "_load_settings_guarded",
+            "_load_settings_uncached",
+            "_settings_cache_hit",
+            "_get_effective_config_path",
+            "current_config_identity",
+            "resolve_provider_name",
+            "_normalize_provider_lookup_key",
+            "normalize_provider_config_key",
+            "_config_participants",
+        )
+    )
+    + tuple(
+        (vars(_config_participants), name, vars(_config_participants)[name])
+        for name in ("operation",)
+    )
+    + ((sys.modules, _config_participants.__name__, _config_participants),),
+    tuple(
+        (
+            namespace,
+            name,
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for namespace, name, function in (
+            *(
+                (globals(), name, globals()[name])
+                for name in (
+                    "get_cli_providers_and_models",
+                    "load_settings",
+                    "_load_settings_guarded",
+                    "_load_settings_uncached",
+                    "_settings_cache_hit",
+                    "_get_effective_config_path",
+                    "current_config_identity",
+                    "resolve_provider_name",
+                    "_normalize_provider_lookup_key",
+                    "normalize_provider_config_key",
+                )
+            ),
+            *(
+                (vars(function), "__wrapped__", function.__wrapped__)
+                for function in (_load_settings_guarded, _load_settings_uncached)
+            ),
+            (vars(_config_participants), "operation", _config_participants.operation),
+            (
+                vars(_config_participants.operation),
+                "__wrapped__",
+                _config_participants.operation.__wrapped__,
+            ),
+        )
+    ),
+)
+
+
+# Definition-time inputs for optional in-memory pending display.
+_CONSOLE_PENDING_FACTS_IDENTITY_SOURCE = (
+    current_config_identity,
+    current_config_identity.__code__,
+    current_config_identity.__globals__,
+    current_config_identity.__defaults__,
+    current_config_identity.__kwdefaults__,
+    current_config_identity.__closure__,
+)
+
+
+# Capture original config producers for deferred Collections and first Send.
+_COLLECTIONS_SETUP_SOURCE = _config_participants.record_config_sources(
+    globals(),
+    (
+        (globals(), "current_config_identity"),
+        (globals(), "get_library_collections_db_path"),
+        (globals(), "get_user_data_dir"),
+        (globals(), "_get_custom_database_path"),
+        (globals(), "_get_effective_config_path"),
+    )
+)
+_FIRST_SEND_PERSISTENCE_SOURCE = _config_participants.record_first_send_sources(globals())
+
+
+first_send_persistence_source_current = _config_participants.first_send_persistence_source_current
+
+
+# --- Moved policy (TASK-36945.2): old import paths resolve lazily ----------
+# Canvas policy lives in Canvas/config_policy.py and Console capture/trace
+# policy in Chat/console_capture_policy.py. Both import this module, so the
+# re-export is lazy; it also keeps this module from loading Chat at import.
+_MOVED_POLICY_MODULES = {
+    "tldw_chatbook.Canvas.config_policy": (
+        "CanvasRemoteAccessStatus",
+        "CanvasConfigPolicy",
+        "_CANVAS_CONFIG_KEYS",
+        "_CANVAS_ENABLED_ENV",
+        "_CANVAS_AUTO_OPEN_ENV",
+        "_strict_canvas_bool",
+        "_resolve_canvas_bool",
+        "_normalize_canvas_execution",
+        "_summarize_canvas_web_auth_policy",
+        "_canvas_remote_access_status",
+        "build_canvas_config_policy",
+        "get_canvas_config_policy",
+        "get_canvas_execution_enabled",
+    ),
+    "tldw_chatbook.Chat.console_capture_policy": (
+        "RuntimeCapturePolicy",
+        "TraceRolloutSettings",
+        "resolve_trace_rollout_settings",
+        "resolve_trace_compaction_policy",
+        "runtime_capture_policy",
+        "apply_console_capture_settings",
+        "_publish_runtime_capture_policy",
+        "_register_runtime_custom_pii_ruleset",
+        "_trace_rollout_environment",
+        "_trace_rollout_environment_mapping",
+        "_TRACE_ROLLOUT_ENV_NAMES",
+        "_TRACE_ROLLOUT_BOOLEAN_ADAPTER",
+    ),
+}
+_MOVED_POLICY_NAMES = {
+    name: module for module, names in _MOVED_POLICY_MODULES.items() for name in names
+}
+
+
+def __getattr__(name: str) -> Any:
+    module_name = _MOVED_POLICY_NAMES.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    return getattr(importlib.import_module(module_name), name)
+
+
+def __dir__() -> list[str]:
+    return sorted({*globals(), *_MOVED_POLICY_NAMES})

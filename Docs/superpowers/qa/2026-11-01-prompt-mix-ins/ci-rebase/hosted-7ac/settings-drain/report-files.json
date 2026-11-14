@@ -1,0 +1,66 @@
+[
+  {
+    "path": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-7ac-ui24-3o9r7m46/baseline-format.txt",
+    "sha256": "c15292d7efa7094130328b2a82868b0ddefcdc61daf194f747137e2d7090315b"
+  },
+  {
+    "path": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-7ac-ui24-3o9r7m46/baseline.py",
+    "sha256": "651052050987e7b0130f7b4c5a8673e655fbf66e276da75303f96c3a7c548b3d"
+  },
+  {
+    "path": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-7ac-ui24-3o9r7m46/current-format.txt",
+    "sha256": "884304e1a71e070078da99810f14f587271e3cc4c70789de6b6ac28e3494de2f"
+  },
+  {
+    "path": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-7ac-ui24-3o9r7m46/diff-check.txt",
+    "sha256": "5ad216f8080400df036996258494bb0d3b5a489affb3d8c0a2bcc5f2cf4c0c99"
+  },
+  {
+    "path": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-7ac-ui24-3o9r7m46/final-diff.patch",
+    "sha256": "605e8b45fa681b66d50c042189f5d0815c939dd839f14e1c1ba359cfa7d9bdad"
+  },
+  {
+    "path": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-7ac-ui24-3o9r7m46/final.py",
+    "sha256": "dab7f701fc1162c1b169c56c2376b59a764efd5097136e17101c42850726808c"
+  },
+  {
+    "path": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-7ac-ui24-3o9r7m46/green.json",
+    "sha256": "58f8b02bcc34571fd24007efc7849ef7e709bff9d972806204b02c15df5e2540"
+  },
+  {
+    "path": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-7ac-ui24-3o9r7m46/green.log",
+    "sha256": "7a5d9c68d7347763f770c5562fa125b6ed3794013332baa9ad2d805d4a25cc6f"
+  },
+  {
+    "path": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-7ac-ui24-3o9r7m46/green.xml",
+    "sha256": "e1581e3304ecad227da31cc719fcf3c77a639718d135ba2ead37c48fd39174d4"
+  },
+  {
+    "path": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-7ac-ui24-3o9r7m46/hosted-red.log",
+    "sha256": "229ec6153eaf6fca1d3533d033b3e4975d4ab0363b4427443d2f7dcb4eeef59e"
+  },
+  {
+    "path": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-7ac-ui24-3o9r7m46/red.json",
+    "sha256": "af35ffa9417d338b29eec0d72fe25dd9474bc9ebb43123d6865700c622f455b6"
+  },
+  {
+    "path": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-7ac-ui24-3o9r7m46/red.log",
+    "sha256": "29a4495955fb7ba1fe44567542f12ffc1871bbbca49dedcce5315b5f5d04e767"
+  },
+  {
+    "path": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-7ac-ui24-3o9r7m46/red.xml",
+    "sha256": "75c51e73256e98c9af03952c45f295dbe3bf313d90dde4ed124369a58228cfd0"
+  },
+  {
+    "path": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-7ac-ui24-3o9r7m46/report.md",
+    "sha256": "ec8092617c7428856692781b722c6c32aa4c4d614884a9e557eb82888c8a3c20"
+  },
+  {
+    "path": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-7ac-ui24-3o9r7m46/run.py",
+    "sha256": "a1ebf1ccda51ec772231020b7b1f347174703eaf501ca5378976eb72a7007a20"
+  },
+  {
+    "path": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-7ac-ui24-3o9r7m46/static-proof.json",
+    "sha256": "0381bb82b4a44c8119778b9eefb8503dbbe5d0f76d75751389f5e6868a1608cc"
+  }
+]

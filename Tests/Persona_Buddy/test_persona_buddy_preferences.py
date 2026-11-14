@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import tomllib
 from dataclasses import FrozenInstanceError
-from pathlib import Path
 
 import pytest
 from loguru import logger
 
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.Persona_Buddy.preferences import (
     PersonaBuddyGeometry,
     PersonaBuddyPreferences,
@@ -241,13 +241,14 @@ def test_never_positioned_geometry_is_distinct_from_persisted_top_left() -> None
     )
 
 
-def test_preferences_persist_through_real_incumbent_config_writer(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.asyncio
+@private_profile_test
+async def test_preferences_persist_through_real_incumbent_config_writer(
+    request: pytest.FixtureRequest,
 ) -> None:
-    config_path = tmp_path / "isolated" / "config.toml"
-    config_path.parent.mkdir(mode=0o700)
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    from tldw_chatbook.config import get_cli_config_path
+
+    config_path = get_cli_config_path()
     preferences = parse_persona_buddy_preferences(
         {
             "enabled": True,

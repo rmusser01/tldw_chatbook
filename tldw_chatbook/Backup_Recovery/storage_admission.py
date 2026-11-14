@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import copy
 import sqlite3
 import stat
+import sys
 import threading
 import time
 from collections import OrderedDict
@@ -20,7 +22,7 @@ from pathlib import Path
 
 from tldw_chatbook.Utils.platform_files import os
 
-from . import bootstrap
+from . import bootstrap, control_records
 from .admission import Admission, AdmissionCancelled, _local
 from .control_records import UNBOUND_NAMESPACE, admission_authority
 from .profile_paths import effective_config_path, lexical_path
@@ -53,6 +55,81 @@ def _task_identity():
         return None
 
 
+def _nofollow_any_flag() -> int:
+    """``O_NOFOLLOW_ANY`` where the running kernel is known to honour it, else 0.
+
+    macOS 11 (Darwin 20) refuses a symbolic link in any component of an open
+    with this flag. The constant comes from the build SDK, and an older kernel
+    may ignore an open flag it does not know, which would follow links.
+    """
+    if sys.platform != "darwin":
+        return 0
+    flag = getattr(os, "O_NOFOLLOW_ANY", 0)
+    if not flag:
+        return 0
+    try:
+        major = int(os.uname().release.split(".", 1)[0])
+    except (AttributeError, ValueError):
+        return 0
+    return flag if major >= 20 else 0
+
+
+_NOFOLLOW_ANY = _nofollow_any_flag()
+
+
+def _resolved(path: Path) -> Path:
+    """Return exactly ``path.resolve()``, in one kernel walk when no link is in it.
+
+    TASK-33620.15.47: ``Path.resolve`` lstat()s one component per call, and each
+    call releases the GIL. Every transaction entry resolves the participant path,
+    the config selector and the acquired source several times, so a UI-loop entry
+    waited for the scheduler dozens of times per resolution at high host load.
+
+    An absolute, normalized path that has no link in any component resolves to
+    itself. One ``O_NOFOLLOW_ANY`` open of its parent (the kernel refuses a link
+    anywhere on the way) and an lstat of its leaf prove that. A link, any error,
+    another path shape or a kernel without the flag runs ``path.resolve()``
+    unchanged, so the result, links and refusals included, never differs.
+
+    Only the parent directory is opened, never the leaf: the leaf is often a
+    SQLite database, and closing any descriptor of it would drop every POSIX
+    lock this process holds on that file.
+    """
+    if _NOFOLLOW_ANY:
+        text = str(path)
+        if (
+            text.startswith("/")
+            and not text.startswith("//")
+            and text != "/"
+            and os.path.normpath(text) == text
+        ):
+            parent, name = os.path.split(text)
+            try:
+                descriptor = os.open(
+                    parent,
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | _NOFOLLOW_ANY,
+                )
+            except (OSError, ValueError):
+                descriptor = -1
+            if descriptor >= 0:
+                try:
+                    leaf = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+                except FileNotFoundError:
+                    leaf = None  # resolve() keeps an absent leaf as written
+                except (OSError, ValueError):
+                    leaf = False
+                finally:
+                    try:
+                        os.close(descriptor)
+                    except OSError:
+                        pass  # a read-only directory descriptor holds nothing
+                if leaf is None or (
+                    leaf is not False and not stat.S_ISLNK(leaf.st_mode)
+                ):
+                    return path
+    return path.resolve()
+
+
 class _Operation:
     """Live installed producer lifetime with an exact bounded descendant scope."""
 
@@ -82,7 +159,7 @@ class _Operation:
             parent = os.stat(self.path.parent)
             if (
                 selected != self.path
-                or selected.resolve() != self.resolved_path
+                or _resolved(selected) != self.resolved_path
                 or (parent.st_dev, parent.st_ino) != self.parent_identity
                 or self.participant.repository().db_path != self.path
             ):
@@ -144,7 +221,7 @@ def _repository_operation(participant):
         # descendant authority on this new acquisition (ruling55).
         _operation_local.operation = None
         operation.path = participant.path
-        operation.resolved_path = participant.path.resolve()
+        operation.resolved_path = _resolved(participant.path)
         try:
             parent = os.stat(participant.path.parent)
         except FileNotFoundError:
@@ -243,7 +320,10 @@ class _Acquisition:
                     raise bootstrap.RecoveryRequired(
                         "recursive_authority_initialization"
                     )
-                _changed.wait(0.01)
+                # Leader retirement and local pause both notify this condition.
+                # Recheck fresh authority on wake, not every 10 ms under the
+                # shared lock while another initializer still owns the turn.
+                _changed.wait()
         try:
             yield
         finally:
@@ -394,6 +474,14 @@ class _LocalPause:
             _changed.notify_all()
 
 
+def local_pause_active() -> bool:
+    """Whether this process holds a local storage pause (lock-free read).
+
+    Read-only; a pause requested by another process is not seen here.
+    """
+    return _pause is not None
+
+
 def _begin_local_pause() -> _LocalPause:
     global _pause
     with _changed:
@@ -500,7 +588,8 @@ class _Hold:
         # PERF-07/08 (ADR-126 amendment 2026-09-29): process-local admission
         # evidence, discarded with this hold. Guarded by _lock.
         self.evidence: dict[str, _Evidence] = {}
-        self.path_evidence: OrderedDict[tuple[str, str], _Evidence] = OrderedDict()
+        self.path_evidence: OrderedDict[tuple, _Evidence] = OrderedDict()
+        self.derived_evidence: OrderedDict[tuple, tuple[_Evidence, object]] = OrderedDict()
         self.thread = threading.Thread(
             target=self._run,
             args=(authority,),
@@ -529,9 +618,9 @@ def _execution_selection_for(path):
         os.getpid(),
         root,
         selector,
-        selector.resolve(),
+        _resolved(selector),
         source,
-        source.resolve() if source is not None else None,
+        _resolved(source) if source is not None else None,
     )
 
 
@@ -717,9 +806,9 @@ def _config_capture_sources(root, selectors, bindings):
                     or info.st_mode & 0o077
                 ):
                     raise bootstrap.RecoveryRequired("capture_config_source_unsafe")
-                tokens.add(f"inode:{info.st_dev}:{info.st_ino}")
+                tokens.add(bootstrap.inode_token(info))
             if any(bootstrap._overlap(path, control) for control in controls) or any(
-                tokens.intersection(entry["historical"])
+                tokens.intersection(bootstrap.identity_view(entry["historical"]))
                 or any(bootstrap._overlap(path, Path(p)) for p in entry["roots"])
                 or any(
                     bootstrap._overlap(path, Path(token[5:]))
@@ -879,6 +968,13 @@ def _selector_evidence(root, selector, names, roots) -> _Evidence | None:
     if any(n.startswith(("pending-", "activation-update-")) for n in entries):
         return None
     admission = root / "admission"
+    # TASK34408 checks this fixed intent in each parent, including absence.
+    # Permission/identity stamps alone do not notice a new sibling marker.
+    ancestor_intents = {
+        child.parent / control_records._DIRECTORY_CREATION_INTENT
+        for child in (root, *root.parents)
+        if child != Path(root.anchor)
+    }
     content = [
         root,
         admission,
@@ -886,6 +982,7 @@ def _selector_evidence(root, selector, names, roots) -> _Evidence | None:
         admission / "registry.lock",
         root / "unbound-owner",
         _QUALIFICATION_FILE,
+        *sorted(ancestor_intents),
         *sorted(root / n for n in entries if n not in _NOT_BOOTSTRAP_RECORDS),
     ]
     # The selector is an input even when unbound: a profile whose fingerprint
@@ -901,7 +998,10 @@ def _selector_evidence(root, selector, names, roots) -> _Evidence | None:
         s is not None and not stat.S_ISLNK(s[2]) for _, s in evidence.posture
     )
     # An absent selector is observed as absent; its appearance is a mismatch.
-    content_ok = all(s is not None for p, s in evidence.content if p != selector)
+    content_ok = all(
+        s is None if p in ancestor_intents else s is not None or p == selector
+        for p, s in evidence.content
+    )
     return evidence if posture_ok and content_ok else None
 
 
@@ -939,6 +1039,185 @@ def _selected_paths(path, related_paths) -> tuple[Path, ...]:
     )
 
 
+def _ordinary_hold(authority=None, lease=None):
+    """Select only an actual serving ordinary owner; never create authority."""
+    with _lock:
+        if (
+            not _EVIDENCE_REUSE
+            or os.name == "nt"
+            or _pause is not None
+            or getattr(_local, "admitted", False)
+        ):
+            return None
+        if lease is not None:
+            if lease not in _live_leases:
+                return None
+            hold = _holds.get(lease._key)
+        else:
+            hold = next((h for h in _holds.values() if h.authority is authority), None)
+        return hold if _hold_serving(hold) and hold.key[0] == os.getpid() else None
+
+
+def _derived_before(hold, key):
+    """Observe existing complete inputs before their next original derivation."""
+    epoch = bootstrap._admission_epoch
+    with _lock:
+        item = hold.derived_evidence.get(key) if hold is not None else None
+    if item is None:
+        return epoch, None
+    entry, _ = item
+    try:
+        return epoch, (entry, entry.observe(), time.time_ns())
+    except OSError:
+        return epoch, None
+
+
+def _derived_reuse(hold, key, before):
+    """Borrow a defensive copy only after current full stamps and owner checks."""
+    epoch, observed = before
+    if hold is None or observed is None or _mount_read_only(Path(hold.key[1]).parent):
+        return False, None
+    entry, stamps, _ = observed
+    with _lock:
+        item = hold.derived_evidence.get(key)
+        if (
+            item is None
+            or item[0] is not entry
+            or not entry.confirmed
+            or entry.names != hold.names
+            or stamps != entry.stamps()
+            or epoch != entry.epoch
+            or epoch != bootstrap._admission_epoch
+            or _ordinary_hold(hold.authority) is not hold
+        ):
+            return False, None
+        hold.derived_evidence.move_to_end(key)
+        return True, copy.deepcopy(item[1])
+
+
+def _note_derived(hold, key, entry, value, before):
+    """Keep existing evidence bounded and confirm two bracketed positive reads."""
+    if hold is None:
+        return
+    epoch, observed = before
+    with _lock:
+        if _ordinary_hold(hold.authority) is not hold:
+            return
+        if entry is None:
+            hold.derived_evidence.pop(key, None)
+            return
+        current = hold.derived_evidence.get(key)
+        if (
+            current is not None
+            and current[0].confirmed
+            and current[0].epoch == entry.epoch
+            and current[0].names == entry.names
+            and current[0].dependencies() == entry.dependencies()
+            and current[0].stamps() == entry.stamps()
+        ):
+            # A concurrent cold reader cannot demote already-confirmed inputs.
+            hold.derived_evidence.move_to_end(key)
+            return
+        previous, stamps, when = observed or (None, None, 0)
+        entry.confirmed = (
+            previous is not None
+            and previous.epoch == entry.epoch
+            and previous.names == entry.names
+            and previous.dependencies() == entry.dependencies()
+            and previous.stamps() == stamps == entry.stamps()
+            and epoch == entry.epoch == bootstrap._admission_epoch
+            and entry.settled_before(when)
+        )
+        hold.derived_evidence[key] = entry, copy.deepcopy(value)
+        hold.derived_evidence.move_to_end(key)
+        while len(hold.derived_evidence) > _EVIDENCE_PATHS_MAX:
+            hold.derived_evidence.popitem(last=False)
+
+
+def _metadata_evidence(hold, paths=(), *, registry=None, records=None):
+    """Complete ordinary metadata inputs, including foreign and historical roots.
+
+    Unknown/absent/aliased dependencies deliberately keep the original path fresh.
+    This collector never proves admission: callers supply a positive derivation.
+    """
+    if hold is None:
+        return None
+    root, selector = Path(hold.key[1]), effective_config_path()
+    try:
+        registry = bootstrap._registry(root) if registry is None else registry
+        pending, profiles, associations = (
+            bootstrap._control_records(root) if records is None else records
+        )
+        if (
+            pending
+            or registry is None
+            or any(
+                row.get("pending") or row.get("proposed") for row in registry.values()
+            )
+        ):
+            return None
+        roots = {Path(p) for row in registry.values() for p in row["roots"]}
+        roots.update(
+            Path(p) for row in profiles + associations for p in row.get("roots", ())
+        )
+        historical = {
+            Path(token[5:])
+            for row in registry.values()
+            for token in row.get("historical", ())
+            if token.startswith("path:")
+        }
+        # Resolution is consulted by source-scope admission even with unchanged
+        # registry bytes. Complete no-link chains, or no reusable evidence.
+        walked = roots | historical | {Path(p) for p in paths}
+        content = []
+        for row in profiles + associations:
+            witness = row.get("activation")
+            if witness:
+                from .activation import ActivationStore
+
+                store = ActivationStore(Path(witness["store_root"]))
+                generation = store._generation(witness["generation"])
+                walked.update((store.root, generation))
+                content.append(generation / "required.json")
+        if not all(os.path.lexists(p) for p in roots | historical):
+            return None
+        base = _selector_evidence(root, selector, hold.names, tuple(roots))
+        if base is None:
+            return None
+        posture = sorted(
+            {p for target in walked for p in _chain(target)}
+            | {p for p, _ in base.posture}
+        )
+        evidence = _Evidence(
+            hold.names, posture, tuple(p for p, _ in base.content) + tuple(content)
+        )
+        # A selected source can have an absent leaf, but no missing ancestor or
+        # historical chain may be silently omitted from the complete inputs.
+        optional = {Path(p) for p in paths}
+        if any(
+            s is None and p not in optional or s is not None and stat.S_ISLNK(s[2])
+            for p, s in evidence.posture
+        ):
+            return None
+        # Only the fixed creation-intent absences validated by the selector
+        # may be missing. Re-observation must still find each marker absent.
+        ancestor_intents = {
+            child.parent / control_records._DIRECTORY_CREATION_INTENT
+            for child in (root, *root.parents)
+            if child != Path(root.anchor)
+        }
+        if any(
+            stamp is not None
+            if dependency in ancestor_intents
+            else stamp is None and dependency != selector
+            for dependency, stamp in evidence.content
+        ):
+            return None
+        return evidence
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
 def _reuse_evidence(root, selector, path, related_paths, check, execution_selection):
     """Return a lease from confirmed evidence, or None to run the derivation.
 
@@ -962,6 +1241,7 @@ def _reuse_evidence(root, selector, path, related_paths, check, execution_select
             return None
         bound = evidence.names != (UNBOUND_NAMESPACE,)
         per_path = []
+        fresh_children = []
         for item in selected if bound else ():
             entry = hold.path_evidence.get((str(selector), str(item)))
             if (
@@ -969,9 +1249,30 @@ def _reuse_evidence(root, selector, path, related_paths, check, execution_select
                 or not entry.confirmed
                 or entry.epoch != bootstrap._admission_epoch
             ):
-                return None
-            hold.path_evidence.move_to_end((str(selector), str(item)))
-            per_path.append(entry)
+                # A new history temporary (or another fresh child) may borrow
+                # ONLY a twice-derived directory containment proof. Its own
+                # full current chain/leaf is observed again after counting.
+                directory_key = ("directory", str(selector), str(item.parent))
+                directory = hold.path_evidence.get(directory_key)
+                if (
+                    directory is None
+                    or not directory.confirmed
+                    or directory.epoch != bootstrap._admission_epoch
+                ):
+                    return None
+                hold.path_evidence.move_to_end(directory_key)
+                per_path.append(directory)
+                fresh_children.append(item)
+            else:
+                hold.path_evidence.move_to_end((str(selector), str(item)))
+                per_path.append(entry)
+    # Snapshot only under _lock. New child stamps, like final observations,
+    # perform filesystem work outside the coordinator lock.
+    for item in fresh_children:
+        entry = _path_evidence(hold.names, item)
+        if entry is None:
+            return None
+        per_path.append(entry)
     if _mount_read_only(root.parent):
         return None
     with _lock:
@@ -1019,6 +1320,8 @@ def _observe_candidates(root, selector, path, related_paths):
             wanted[(str(selector), str(item))] = hold.path_evidence.get(
                 (str(selector), str(item))
             )
+            directory_key = ("directory", str(selector), str(item.parent))
+            wanted[directory_key] = hold.path_evidence.get(directory_key)
     now = time.time_ns()
     return epoch, {
         name: (entry, entry.observe(), now)
@@ -1032,8 +1335,17 @@ def _note_evidence(hold, root, selector, path, related_paths, names, roots, befo
     epoch_before, observations = before
     fresh = {str(selector): _selector_evidence(root, selector, names, roots)}
     if names != (UNBOUND_NAMESPACE,):
-        for item in _selected_paths(path, related_paths):
+        items = _selected_paths(path, related_paths)
+        for item in items:
             fresh[(str(selector), str(item))] = _path_evidence(names, item)
+        if roots is not None:
+            for parent in {item.parent for item in items}:
+                # This is a separate original containment derivation for the
+                # directory itself, never inference from a file-only root.
+                if _contains_capture_path((*roots, selector), parent):
+                    fresh[("directory", str(selector), str(parent))] = _path_evidence(
+                        names, parent
+                    )
     with _lock:
         if _holds.get(hold.key) is not hold or hold.names != names:
             return
@@ -2393,11 +2705,13 @@ _RAW_RECOVERY_LIMITS = {
     "rag.definitions": 16 * 1024**2,
     "rag.projections": 256 * 1024**3,
     "recovered.media": 512 * 1024**2,
+    "plugins": 256 * 1024**3,
     "generation.assets": 256 * 1024**3,
     "diagnostics.logs": 256 * 1024**3,
     "tokenizers.custom": 256 * 1024**3,
     "skills": 256 * 1024**3,
     "persona.assets": 256 * 1024**3,
+    "persona.actor_packs": 256 * 1024**3,
     "persona.visual_identity": 256 * 1024**3,
     "persona.visual_identity_builtin": 256 * 1024**3,
     "tts.voices": 256 * 1024**3,

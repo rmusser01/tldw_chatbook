@@ -1,0 +1,900 @@
+FFF..................................................................... [ 56%]
+........................................................                 [100%]
+=================================== FAILURES ===================================
+__________ test_redirect_fit_boundary_keeps_run_controls_in_place[-1] __________
+
+self = <Coroutine test_redirect_fit_boundary_keeps_run_controls_in_place[-1]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_redirect_fit_boundary_keeps_run_controls_in_place[-1]>>, 'threshold_offset': -1}
+request = <FixtureRequest for <Coroutine test_redirect_fit_boundary_keeps_run_controls_in_place[-1]>>
+work = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-p...review-and-merge/task-3-focused-green-profile-55cy4mjc/pytest/test_redirect_fit_boundary_kee0/private-profile-process')
+profile = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-p...nd-merge/task-3-focused-green-profile-55cy4mjc/pytest/test_redirect_fit_boundary_kee0/private-profile-process/profile')
+environment = {'BROWSER_USE_ACCESS_VERIFYING_IDENTITY': 'MCowBQYDK2VwAyEANwqxwYsEWxgwX0aksJ1Npcf7iOTqoO8TY5PAXiLXDFA=', 'BUN_INSTALL... 'CODEX_APP_TOOLS_PIPE_PATH': '/tmp/codex-browser-use/11cdc099-f81d-4638-b70f-10e4b19d551f.sock', 'CODEX_CI': '1', ...}
+name = 'PYTEST_ADDOPTS', marker = None, timeout = 300.0
+report = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-p...merge/task-3-focused-green-profile-55cy4mjc/pytest/test_redirect_fit_boundary_kee0/private-profile-process/pytest.xml')
+log = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-p...merge/task-3-focused-green-profile-55cy4mjc/pytest/test_redirect_fit_boundary_kee0/private-profile-process/pytest.log')
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER",
+            "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT",
+            "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        coverage_plugin = request.config.pluginmanager.getplugin("_cov")
+        coverage_controller = getattr(coverage_plugin, "cov_controller", None)
+        coverage_args = []
+        coverage_file = work / ".coverage"
+        if coverage_controller is not None:
+            # Keep each child's data private; the parent retains its report gate.
+            environment["COVERAGE_FILE"] = str(coverage_file)
+            for name in tuple(environment):
+                if name.startswith("COV_CORE_"):
+                    environment.pop(name)
+            coverage_args = [
+                "-p",
+                "pytest_cov.plugin",
+                "--cov-report=",
+                "--cov-fail-under=0",
+            ]
+            sources = coverage_controller.cov_source
+            coverage_args += (
+                [f"--cov={source}" for source in sources] if sources else ["--cov"]
+            )
+            config_file = coverage_controller.cov.config.config_file
+            if config_file:
+                coverage_args += [f"--cov-config={config_file}"]
+            if coverage_controller.cov.config.branch:
+                coverage_args += ["--cov-branch"]
+            if coverage_plugin.options.cov_context:
+                coverage_args += [
+                    f"--cov-context={coverage_plugin.options.cov_context}"
+                ]
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable,
+                "-m",
+                "pytest",
+                request.node.nodeid,
+                "-p",
+                "pytest_asyncio.plugin",
+                "-p",
+                "pytest_timeout",
+                "-q",
+                f"--timeout={timeout}",
+                f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                *coverage_args,
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if coverage_controller is not None and coverage_file.is_file():
+            # pytest-cov combines parallel files for serial and xdist reports.
+            parent_file = Path(
+                coverage_controller.topdir, coverage_controller.cov.config.data_file
+            ).resolve()
+            with NamedTemporaryFile(
+                prefix=parent_file.name + ".", dir=parent_file.parent, delete=False
+            ) as output:
+                output.write(coverage_file.read_bytes())
+        if process.returncode:
+>           pytest.fail(
+                f"{log}\n{_child_failure_report(report)}\n"
+                f"--- child log tail ---\n{log.read_text()[-16000:]}"
+            )
+E           Failed: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-3-focused-green-profile-55cy4mjc/pytest/test_redirect_fit_boundary_kee0/private-profile-process/pytest.log
+E           --- child failure: AssertionError: run activation shifted controls or the draft
+E           assert (Region(x=115...78, height=1)) == (Region(x=115...62, height=1))
+E             
+E             At index 3 diff: Region(x=20, y=49, width=78, height=1) != Region(x=20, y=49, width=62, height=1)
+E             Use -v to get more diff
+E           threshold_offset = -1
+E           request = <FixtureRequest for <Coroutine test_redirect_fit_boundary_keeps_run_controls_in_place[-1]>>
+E           
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("threshold_offset", [-1, 0, 1])
+E               @private_profile_test
+E               async def test_redirect_fit_boundary_keeps_run_controls_in_place(threshold_offset, request):
+E                   """Fit comes from the visible control cells and draft/reason floors."""
+E                   gateway, host = _held_run_host()
+E                   async with host.run_test(size=(235, 52)) as pilot:
+E                       console, composer = await _mounted(host, pilot)
+E                       await pilot.pause(0.2)
+E                       row = composer.query_one("#console-composer-expanded")
+E                       chrome = host.size.width - row.content_size.width
+E                       # Independent geometry: left Menu/collapse 12+6; Send reserves 14
+E                       # for its longest label (Preparing... plus padding),
+E                       # gap 2, Dictate 11, Stop 6, Redirect 10; margin 2; draft floor
+E                       # 32; widest reason 52. No production budget method supplies this.
+E                       threshold = chrome + 12 + 6 + 14 + 2 + 11 + 6 + 10 + 2 + 32 + 52
+E                       await pilot.resize_terminal(threshold + threshold_offset, 52)
+E                       await pilot.pause(0.3)
+E                       actions = composer.query_one("#console-composer-actions")
+E                       send = composer.query_one("#console-send-message", Button)
+E                       dictate = composer.query_one("#console-dictation", Button)
+E                       redirect = composer.query_one("#console-redirect-generation", Button)
+E                       draft = composer.query_one("#console-command-visible-text", Static)
+E               
+E                       def geometry():
+E                           return (actions.region, send.region, dictate.region, draft.region)
+E               
+E                       resting = geometry()
+E                       expected_fit = threshold_offset >= 0
+E                       assert composer._redirect_budgeted is expected_fit
+E                       try:
+E                           await _start_held_run(console, composer, pilot)
+E                           await pilot.pause(0.2)
+E                           assert redirect.display is expected_fit
+E           >               assert geometry() == resting, "run activation shifted controls or the draft"
+E           E               AssertionError: run activation shifted controls or the draft
+E           E               assert (Region(x=115...78, height=1)) == (Region(x=115...62, height=1))
+E           E                 
+E           E                 At index 3 diff: Region(x=20, y=49, width=78, height=1) != Region(x=20, y=49, width=62, height=1)
+E           E                 Use -v to get more diff
+E           
+E           Tests/UI/test_console_composer_run_controls.py:1541: AssertionError
+E           --- child log tail ---
+E           89 - Started outermost transaction on thread 6214397952.
+E           2026-10-03 20:40:49.757 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6214397952.
+E           2026-10-03 20:40:49.766 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4046 - Executing SQL (script=False): SELECT id, version FROM messages WHERE id IN (?, ?) AND deleted = 0... Params: (451cb503-45c8-45f2-82b5-79769163223e, 2efbe66d-c82b-48dc-9a3a-d97c1477241d)
+E           2026-10-03 20:40:49.766 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:40:49.767 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:40:49.819 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4046 - Executing SQL (script=False): SELECT id, version FROM messages WHERE id IN (?, ?) AND deleted = 0... Params: (451cb503-45c8-45f2-82b5-79769163223e, 2efbe66d-c82b-48dc-9a3a-d97c1477241d)
+E           2026-10-03 20:40:49.819 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:40:49.819 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:40:49.829 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6197571584.
+E           2026-10-03 20:40:49.846 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6197571584.
+E           2026-10-03 20:40:49.863 | WARNING  | tldw_chatbook.UI.Console_Modules.review_selection:_load_console_annotation_previews:414 - Console annotations: load failed for '28e1a0a4-6d6c-4bb5-8cf8-b15edc61150c'
+E           2026-10-03 20:40:49.908 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6214397952.
+E           2026-10-03 20:40:49.908 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6214397952.
+E           2026-10-03 20:40:49.911 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6197571584.
+E           2026-10-03 20:40:49.913 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6197571584.
+E           2026-10-03 20:40:49.922 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4046 - Executing SQL (script=False): SELECT id, version FROM messages WHERE id IN (?, ?) AND deleted = 0... Params: (451cb503-45c8-45f2-82b5-79769163223e, 2efbe66d-c82b-48dc-9a3a-d97c1477241d)
+E           2026-10-03 20:40:49.922 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:40:49.922 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:40:49.965 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4046 - Executing SQL (script=False): SELECT id, version FROM messages WHERE id IN (?, ?) AND deleted = 0... Params: (451cb503-45c8-45f2-82b5-79769163223e, 2efbe66d-c82b-48dc-9a3a-d97c1477241d)
+E           2026-10-03 20:40:49.965 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:40:49.966 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:40:50.031 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6214397952.
+E           2026-10-03 20:40:50.031 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6214397952.
+E           2026-10-03 20:40:50.036 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6231224320.
+E           2026-10-03 20:40:50.037 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6231224320.
+E           2026-10-03 20:40:50.046 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4046 - Executing SQL (script=False): SELECT id, version FROM messages WHERE id IN (?, ?) AND deleted = 0... Params: (451cb503-45c8-45f2-82b5-79769163223e, 2efbe66d-c82b-48dc-9a3a-d97c1477241d)
+E           2026-10-03 20:40:50.047 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:40:50.047 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:40:50.091 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4046 - Executing SQL (script=False): SELECT id, version FROM messages WHERE id IN (?, ?) AND deleted = 0... Params: (451cb503-45c8-45f2-82b5-79769163223e, 2efbe66d-c82b-48dc-9a3a-d97c1477241d)
+E           2026-10-03 20:40:50.092 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:40:50.092 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:40:50.214 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6197571584.
+E           2026-10-03 20:40:50.214 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6197571584.
+E           2026-10-03 20:40:50.217 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6214397952.
+E           2026-10-03 20:40:50.218 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6214397952.
+E           2026-10-03 20:40:50.227 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4046 - Executing SQL (script=False): SELECT id, version FROM messages WHERE id IN (?, ?) AND deleted = 0... Params: (451cb503-45c8-45f2-82b5-79769163223e, 2efbe66d-c82b-48dc-9a3a-d97c1477241d)
+E           2026-10-03 20:40:50.228 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:40:50.228 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:40:50.267 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4046 - Executing SQL (script=False): SELECT id, version FROM messages WHERE id IN (?, ?) AND deleted = 0... Params: (451cb503-45c8-45f2-82b5-79769163223e, 2efbe66d-c82b-48dc-9a3a-d97c1477241d)
+E           2026-10-03 20:40:50.267 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:40:50.267 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:40:50.272 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:40:50.272 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:40:50.272 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4046 - Executing SQL (script=False): SELECT id, conversation_id, parent_message_id, sender, role, content, image_data, image_mime_type, timestamp, ranking, last_modified, version, client_id, deleted, feedback, usage_json, metadata_json, provider_continuation_json, thinking_blocks_json, assistant_generation_state FROM messages WHERE id ... Params: (2efbe66d-c82b-48dc-9a3a-d97c1477241d)
+E           2026-10-03 20:40:50.273 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:40:50.273 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+E           2026-10-03 20:40:50.274 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:40:50.275 | INFO     | tldw_chatbook.config:save_setting_to_cli_config:9309 - Attempting to save setting: [console.onboarding].first_send_completed = True
+E           2026-10-03 20:40:50.300 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:40:50.300 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:40:50.301 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:40:50.301 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:40:50.302 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen chat unmounted
+E           ------------------------------ Captured log call -------------------------------
+E           INFO     root:app.py:1385 App __init__: Determined initial tab value: chat
+E           WARNING  root:app.py:1492 Prompts service not initialized, self.prompts_db set to None.
+E           ERROR    root:app.py:1513 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E           INFO     tldw_chatbook.model_capabilities:model_capabilities.py:1046 No capability information found for llama_cpp/test-model, using defaults
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage app_version=0.2.3 attempt_id=7ac45e678b98436ebc06bc3370f60185 component=console duration_ms=0 phase=ui_action python_version=3.12.11 sqlite_version=3.49.1 status=entered
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=7ac45e678b98436ebc06bc3370f60185 component=console duration_ms=8 phase=ui_dispatch status=entered
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=7ac45e678b98436ebc06bc3370f60185 component=console duration_ms=88 phase=ui_submit status=entered
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=7ac45e678b98436ebc06bc3370f60185 component=console duration_ms=258 phase=ui_submit status=accepted
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=7ac45e678b98436ebc06bc3370f60185 component=console duration_ms=278 phase=ui_dispatch status=sent
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=7ac45e678b98436ebc06bc3370f60185 component=console duration_ms=278 phase=ui_action status=dispatched
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=7ac45e678b98436ebc06bc3370f60185 component=console duration_ms=279 phase=controller_submit status=entered
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=7ac45e678b98436ebc06bc3370f60185 component=console duration_ms=467 phase=provider_resolution status=entered
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=7ac45e678b98436ebc06bc3370f60185 capture_enabled=false component=console duration_ms=469 phase=capture_policy status=entered
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=7ac45e678b98436ebc06bc3370f60185 component=console duration_ms=593 phase=durable_commit status=entered
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=7ac45e678b98436ebc06bc3370f60185 component=console duration_ms=600 phase=durable_commit status=succeeded
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=7ac45e678b98436ebc06bc3370f60185 component=console duration_ms=1741 phase=controller_submit status=completed
+E           --------------------------- Captured stderr teardown ---------------------------
+E           2026-10-03 20:40:50.332 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8612 - Attempting to apply literal settings mutation: sets={"('console', 'onboarding')": ['first_send_completed']}, deletes={}
+E           2026-10-03 20:40:50.352 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8670 - Successfully replaced settings file at /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-3-focused-green-profile-55cy4mjc/pytest/test_redirect_fit_boundary_kee0/private-profile-process/profile/config/config.toml
+E           2026-10-03 20:40:50.355 | INFO     | tldw_chatbook.config:_load_settings_uncached:2134 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E           2026-10-03 20:40:50.355 | INFO     | tldw_chatbook.config:_load_settings_uncached:2137 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E           2026-10-03 20:40:50.356 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2160 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E           2026-10-03 20:40:50.357 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2482 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E           2026-10-03 20:40:50.489 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3712 - Ensured chat dictionaries folder exists: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-3-focused-green-profile-55cy4mjc/pytest/test_redirect_fit_boundary_kee0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E           2026-10-03 20:40:50.490 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3743 - load_settings: Configuration cached for future use
+E           2026-10-03 20:40:50.492 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8698 - Global configuration caches invalidated and reloaded.
+E           2026-10-03 20:40:50.584 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:40:50.584 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           - generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-3-focused-green-profile-55cy4mjc/pytest/test_redirect_fit_boundary_kee0/private-profile-process/pytest.xml -
+E           ============================= slowest 25 durations =============================
+E           7.49s call     Tests/UI/test_console_composer_run_controls.py::test_redirect_fit_boundary_keeps_run_controls_in_place[-1]
+E           
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_console_composer_run_controls.py::test_redirect_fit_boundary_keeps_run_controls_in_place[-1]
+E           1 failed in 9.91s
+
+Tests/private_profile.py:158: Failed
+---------------------------- Captured stderr setup -----------------------------
+2026-10-03 20:40:39.798 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-10-03 20:40:39.812 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-10-03 20:40:39.877 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-10-03 20:40:39.880 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+__________ test_redirect_fit_boundary_keeps_run_controls_in_place[0] ___________
+
+self = <Coroutine test_redirect_fit_boundary_keeps_run_controls_in_place[0]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_redirect_fit_boundary_keeps_run_controls_in_place[0]>>, 'threshold_offset': 0}
+request = <FixtureRequest for <Coroutine test_redirect_fit_boundary_keeps_run_controls_in_place[0]>>
+work = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-p...review-and-merge/task-3-focused-green-profile-55cy4mjc/pytest/test_redirect_fit_boundary_kee1/private-profile-process')
+profile = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-p...nd-merge/task-3-focused-green-profile-55cy4mjc/pytest/test_redirect_fit_boundary_kee1/private-profile-process/profile')
+environment = {'BROWSER_USE_ACCESS_VERIFYING_IDENTITY': 'MCowBQYDK2VwAyEANwqxwYsEWxgwX0aksJ1Npcf7iOTqoO8TY5PAXiLXDFA=', 'BUN_INSTALL... 'CODEX_APP_TOOLS_PIPE_PATH': '/tmp/codex-browser-use/11cdc099-f81d-4638-b70f-10e4b19d551f.sock', 'CODEX_CI': '1', ...}
+name = 'PYTEST_ADDOPTS', marker = None, timeout = 300.0
+report = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-p...merge/task-3-focused-green-profile-55cy4mjc/pytest/test_redirect_fit_boundary_kee1/private-profile-process/pytest.xml')
+log = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-p...merge/task-3-focused-green-profile-55cy4mjc/pytest/test_redirect_fit_boundary_kee1/private-profile-process/pytest.log')
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER",
+            "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT",
+            "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        coverage_plugin = request.config.pluginmanager.getplugin("_cov")
+        coverage_controller = getattr(coverage_plugin, "cov_controller", None)
+        coverage_args = []
+        coverage_file = work / ".coverage"
+        if coverage_controller is not None:
+            # Keep each child's data private; the parent retains its report gate.
+            environment["COVERAGE_FILE"] = str(coverage_file)
+            for name in tuple(environment):
+                if name.startswith("COV_CORE_"):
+                    environment.pop(name)
+            coverage_args = [
+                "-p",
+                "pytest_cov.plugin",
+                "--cov-report=",
+                "--cov-fail-under=0",
+            ]
+            sources = coverage_controller.cov_source
+            coverage_args += (
+                [f"--cov={source}" for source in sources] if sources else ["--cov"]
+            )
+            config_file = coverage_controller.cov.config.config_file
+            if config_file:
+                coverage_args += [f"--cov-config={config_file}"]
+            if coverage_controller.cov.config.branch:
+                coverage_args += ["--cov-branch"]
+            if coverage_plugin.options.cov_context:
+                coverage_args += [
+                    f"--cov-context={coverage_plugin.options.cov_context}"
+                ]
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable,
+                "-m",
+                "pytest",
+                request.node.nodeid,
+                "-p",
+                "pytest_asyncio.plugin",
+                "-p",
+                "pytest_timeout",
+                "-q",
+                f"--timeout={timeout}",
+                f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                *coverage_args,
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if coverage_controller is not None and coverage_file.is_file():
+            # pytest-cov combines parallel files for serial and xdist reports.
+            parent_file = Path(
+                coverage_controller.topdir, coverage_controller.cov.config.data_file
+            ).resolve()
+            with NamedTemporaryFile(
+                prefix=parent_file.name + ".", dir=parent_file.parent, delete=False
+            ) as output:
+                output.write(coverage_file.read_bytes())
+        if process.returncode:
+>           pytest.fail(
+                f"{log}\n{_child_failure_report(report)}\n"
+                f"--- child log tail ---\n{log.read_text()[-16000:]}"
+            )
+E           Failed: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-3-focused-green-profile-55cy4mjc/pytest/test_redirect_fit_boundary_kee1/private-profile-process/pytest.log
+E           --- child failure: AssertionError: run activation shifted controls or the draft
+E           assert (Region(x=106...69, height=1)) == (Region(x=106...53, height=1))
+E             
+E             At index 3 diff: Region(x=20, y=49, width=69, height=1) != Region(x=20, y=49, width=53, height=1)
+E             Use -v to get more diff
+E           threshold_offset = 0
+E           request = <FixtureRequest for <Coroutine test_redirect_fit_boundary_keeps_run_controls_in_place[0]>>
+E           
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("threshold_offset", [-1, 0, 1])
+E               @private_profile_test
+E               async def test_redirect_fit_boundary_keeps_run_controls_in_place(threshold_offset, request):
+E                   """Fit comes from the visible control cells and draft/reason floors."""
+E                   gateway, host = _held_run_host()
+E                   async with host.run_test(size=(235, 52)) as pilot:
+E                       console, composer = await _mounted(host, pilot)
+E                       await pilot.pause(0.2)
+E                       row = composer.query_one("#console-composer-expanded")
+E                       chrome = host.size.width - row.content_size.width
+E                       # Independent geometry: left Menu/collapse 12+6; Send reserves 14
+E                       # for its longest label (Preparing... plus padding),
+E                       # gap 2, Dictate 11, Stop 6, Redirect 10; margin 2; draft floor
+E                       # 32; widest reason 52. No production budget method supplies this.
+E                       threshold = chrome + 12 + 6 + 14 + 2 + 11 + 6 + 10 + 2 + 32 + 52
+E                       await pilot.resize_terminal(threshold + threshold_offset, 52)
+E                       await pilot.pause(0.3)
+E                       actions = composer.query_one("#console-composer-actions")
+E                       send = composer.query_one("#console-send-message", Button)
+E                       dictate = composer.query_one("#console-dictation", Button)
+E                       redirect = composer.query_one("#console-redirect-generation", Button)
+E                       draft = composer.query_one("#console-command-visible-text", Static)
+E               
+E                       def geometry():
+E                           return (actions.region, send.region, dictate.region, draft.region)
+E               
+E                       resting = geometry()
+E                       expected_fit = threshold_offset >= 0
+E                       assert composer._redirect_budgeted is expected_fit
+E                       try:
+E                           await _start_held_run(console, composer, pilot)
+E                           await pilot.pause(0.2)
+E                           assert redirect.display is expected_fit
+E           >               assert geometry() == resting, "run activation shifted controls or the draft"
+E           E               AssertionError: run activation shifted controls or the draft
+E           E               assert (Region(x=106...69, height=1)) == (Region(x=106...53, height=1))
+E           E                 
+E           E                 At index 3 diff: Region(x=20, y=49, width=69, height=1) != Region(x=20, y=49, width=53, height=1)
+E           E                 Use -v to get more diff
+E           
+E           Tests/UI/test_console_composer_run_controls.py:1541: AssertionError
+E           --- child log tail ---
+E           489 - Started outermost transaction on thread 6186971136.
+E           2026-10-03 20:41:03.499 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6186971136.
+E           2026-10-03 20:41:03.545 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4046 - Executing SQL (script=False): SELECT id, version FROM messages WHERE id IN (?, ?) AND deleted = 0... Params: (3070e78f-9e61-4480-8e6e-a23d145c5fc1, c731f436-f330-4fbc-a47b-c6c23f1cc8f0)
+E           2026-10-03 20:41:03.546 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:41:03.546 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:41:03.590 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4046 - Executing SQL (script=False): SELECT id, version FROM messages WHERE id IN (?, ?) AND deleted = 0... Params: (3070e78f-9e61-4480-8e6e-a23d145c5fc1, c731f436-f330-4fbc-a47b-c6c23f1cc8f0)
+E           2026-10-03 20:41:03.591 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:41:03.591 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:41:03.603 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6153318400.
+E           2026-10-03 20:41:03.622 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6153318400.
+E           2026-10-03 20:41:03.629 | WARNING  | tldw_chatbook.UI.Console_Modules.review_selection:_load_console_annotation_previews:414 - Console annotations: load failed for 'c6a787d0-ed0a-41c9-a504-b537b5574802'
+E           2026-10-03 20:41:03.684 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6170144768.
+E           2026-10-03 20:41:03.684 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6170144768.
+E           2026-10-03 20:41:03.687 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6186971136.
+E           2026-10-03 20:41:03.688 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6186971136.
+E           2026-10-03 20:41:03.696 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4046 - Executing SQL (script=False): SELECT id, version FROM messages WHERE id IN (?, ?) AND deleted = 0... Params: (3070e78f-9e61-4480-8e6e-a23d145c5fc1, c731f436-f330-4fbc-a47b-c6c23f1cc8f0)
+E           2026-10-03 20:41:03.697 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:41:03.697 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:41:03.739 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4046 - Executing SQL (script=False): SELECT id, version FROM messages WHERE id IN (?, ?) AND deleted = 0... Params: (3070e78f-9e61-4480-8e6e-a23d145c5fc1, c731f436-f330-4fbc-a47b-c6c23f1cc8f0)
+E           2026-10-03 20:41:03.740 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:41:03.740 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:41:03.762 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6136492032.
+E           2026-10-03 20:41:03.762 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6136492032.
+E           2026-10-03 20:41:03.765 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6170144768.
+E           2026-10-03 20:41:03.765 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6170144768.
+E           2026-10-03 20:41:03.776 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4046 - Executing SQL (script=False): SELECT id, version FROM messages WHERE id IN (?, ?) AND deleted = 0... Params: (3070e78f-9e61-4480-8e6e-a23d145c5fc1, c731f436-f330-4fbc-a47b-c6c23f1cc8f0)
+E           2026-10-03 20:41:03.776 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:41:03.776 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:41:03.824 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4046 - Executing SQL (script=False): SELECT id, version FROM messages WHERE id IN (?, ?) AND deleted = 0... Params: (3070e78f-9e61-4480-8e6e-a23d145c5fc1, c731f436-f330-4fbc-a47b-c6c23f1cc8f0)
+E           2026-10-03 20:41:03.826 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:41:03.826 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:41:03.962 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6136492032.
+E           2026-10-03 20:41:03.962 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6136492032.
+E           2026-10-03 20:41:03.965 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6170144768.
+E           2026-10-03 20:41:03.966 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6170144768.
+E           2026-10-03 20:41:03.975 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4046 - Executing SQL (script=False): SELECT id, version FROM messages WHERE id IN (?, ?) AND deleted = 0... Params: (3070e78f-9e61-4480-8e6e-a23d145c5fc1, c731f436-f330-4fbc-a47b-c6c23f1cc8f0)
+E           2026-10-03 20:41:03.975 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:41:03.975 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:41:04.013 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4046 - Executing SQL (script=False): SELECT id, version FROM messages WHERE id IN (?, ?) AND deleted = 0... Params: (3070e78f-9e61-4480-8e6e-a23d145c5fc1, c731f436-f330-4fbc-a47b-c6c23f1cc8f0)
+E           2026-10-03 20:41:04.014 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:41:04.014 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:41:04.048 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:41:04.048 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:41:04.049 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4046 - Executing SQL (script=False): SELECT id, conversation_id, parent_message_id, sender, role, content, image_data, image_mime_type, timestamp, ranking, last_modified, version, client_id, deleted, feedback, usage_json, metadata_json, provider_continuation_json, thinking_blocks_json, assistant_generation_state FROM messages WHERE id ... Params: (c731f436-f330-4fbc-a47b-c6c23f1cc8f0)
+E           2026-10-03 20:41:04.049 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:41:04.049 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+E           2026-10-03 20:41:04.050 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:41:04.052 | INFO     | tldw_chatbook.config:save_setting_to_cli_config:9309 - Attempting to save setting: [console.onboarding].first_send_completed = True
+E           2026-10-03 20:41:04.072 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:41:04.073 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:41:04.073 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:41:04.073 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:41:04.074 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen chat unmounted
+E           ------------------------------ Captured log call -------------------------------
+E           INFO     root:app.py:1385 App __init__: Determined initial tab value: chat
+E           WARNING  root:app.py:1492 Prompts service not initialized, self.prompts_db set to None.
+E           ERROR    root:app.py:1513 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E           INFO     tldw_chatbook.model_capabilities:model_capabilities.py:1046 No capability information found for llama_cpp/test-model, using defaults
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage app_version=0.2.3 attempt_id=b83a124398a34443acb2083947d32b77 component=console duration_ms=0 phase=ui_action python_version=3.12.11 sqlite_version=3.49.1 status=entered
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=b83a124398a34443acb2083947d32b77 component=console duration_ms=8 phase=ui_dispatch status=entered
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=b83a124398a34443acb2083947d32b77 component=console duration_ms=87 phase=ui_submit status=entered
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=b83a124398a34443acb2083947d32b77 component=console duration_ms=254 phase=ui_submit status=accepted
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=b83a124398a34443acb2083947d32b77 component=console duration_ms=272 phase=ui_dispatch status=sent
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=b83a124398a34443acb2083947d32b77 component=console duration_ms=272 phase=ui_action status=dispatched
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=b83a124398a34443acb2083947d32b77 component=console duration_ms=273 phase=controller_submit status=entered
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=b83a124398a34443acb2083947d32b77 component=console duration_ms=464 phase=provider_resolution status=entered
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=b83a124398a34443acb2083947d32b77 capture_enabled=false component=console duration_ms=466 phase=capture_policy status=entered
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=b83a124398a34443acb2083947d32b77 component=console duration_ms=626 phase=durable_commit status=entered
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=b83a124398a34443acb2083947d32b77 component=console duration_ms=635 phase=durable_commit status=succeeded
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=b83a124398a34443acb2083947d32b77 component=console duration_ms=1763 phase=controller_submit status=completed
+E           --------------------------- Captured stderr teardown ---------------------------
+E           2026-10-03 20:41:04.100 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8612 - Attempting to apply literal settings mutation: sets={"('console', 'onboarding')": ['first_send_completed']}, deletes={}
+E           2026-10-03 20:41:04.119 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8670 - Successfully replaced settings file at /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-3-focused-green-profile-55cy4mjc/pytest/test_redirect_fit_boundary_kee1/private-profile-process/profile/config/config.toml
+E           2026-10-03 20:41:04.122 | INFO     | tldw_chatbook.config:_load_settings_uncached:2134 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E           2026-10-03 20:41:04.122 | INFO     | tldw_chatbook.config:_load_settings_uncached:2137 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E           2026-10-03 20:41:04.123 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2160 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E           2026-10-03 20:41:04.124 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2482 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E           2026-10-03 20:41:04.212 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3712 - Ensured chat dictionaries folder exists: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-3-focused-green-profile-55cy4mjc/pytest/test_redirect_fit_boundary_kee1/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E           2026-10-03 20:41:04.212 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3743 - load_settings: Configuration cached for future use
+E           2026-10-03 20:41:04.213 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8698 - Global configuration caches invalidated and reloaded.
+E           2026-10-03 20:41:04.298 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:41:04.298 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           - generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-3-focused-green-profile-55cy4mjc/pytest/test_redirect_fit_boundary_kee1/private-profile-process/pytest.xml -
+E           ============================= slowest 25 durations =============================
+E           8.07s call     Tests/UI/test_console_composer_run_controls.py::test_redirect_fit_boundary_keeps_run_controls_in_place[0]
+E           
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_console_composer_run_controls.py::test_redirect_fit_boundary_keeps_run_controls_in_place[0]
+E           1 failed in 10.69s
+
+Tests/private_profile.py:158: Failed
+__________ test_redirect_fit_boundary_keeps_run_controls_in_place[1] ___________
+
+self = <Coroutine test_redirect_fit_boundary_keeps_run_controls_in_place[1]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_redirect_fit_boundary_keeps_run_controls_in_place[1]>>, 'threshold_offset': 1}
+request = <FixtureRequest for <Coroutine test_redirect_fit_boundary_keeps_run_controls_in_place[1]>>
+work = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-p...review-and-merge/task-3-focused-green-profile-55cy4mjc/pytest/test_redirect_fit_boundary_kee2/private-profile-process')
+profile = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-p...nd-merge/task-3-focused-green-profile-55cy4mjc/pytest/test_redirect_fit_boundary_kee2/private-profile-process/profile')
+environment = {'BROWSER_USE_ACCESS_VERIFYING_IDENTITY': 'MCowBQYDK2VwAyEANwqxwYsEWxgwX0aksJ1Npcf7iOTqoO8TY5PAXiLXDFA=', 'BUN_INSTALL... 'CODEX_APP_TOOLS_PIPE_PATH': '/tmp/codex-browser-use/11cdc099-f81d-4638-b70f-10e4b19d551f.sock', 'CODEX_CI': '1', ...}
+name = 'PYTEST_ADDOPTS', marker = None, timeout = 300.0
+report = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-p...merge/task-3-focused-green-profile-55cy4mjc/pytest/test_redirect_fit_boundary_kee2/private-profile-process/pytest.xml')
+log = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-p...merge/task-3-focused-green-profile-55cy4mjc/pytest/test_redirect_fit_boundary_kee2/private-profile-process/pytest.log')
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER",
+            "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT",
+            "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        coverage_plugin = request.config.pluginmanager.getplugin("_cov")
+        coverage_controller = getattr(coverage_plugin, "cov_controller", None)
+        coverage_args = []
+        coverage_file = work / ".coverage"
+        if coverage_controller is not None:
+            # Keep each child's data private; the parent retains its report gate.
+            environment["COVERAGE_FILE"] = str(coverage_file)
+            for name in tuple(environment):
+                if name.startswith("COV_CORE_"):
+                    environment.pop(name)
+            coverage_args = [
+                "-p",
+                "pytest_cov.plugin",
+                "--cov-report=",
+                "--cov-fail-under=0",
+            ]
+            sources = coverage_controller.cov_source
+            coverage_args += (
+                [f"--cov={source}" for source in sources] if sources else ["--cov"]
+            )
+            config_file = coverage_controller.cov.config.config_file
+            if config_file:
+                coverage_args += [f"--cov-config={config_file}"]
+            if coverage_controller.cov.config.branch:
+                coverage_args += ["--cov-branch"]
+            if coverage_plugin.options.cov_context:
+                coverage_args += [
+                    f"--cov-context={coverage_plugin.options.cov_context}"
+                ]
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable,
+                "-m",
+                "pytest",
+                request.node.nodeid,
+                "-p",
+                "pytest_asyncio.plugin",
+                "-p",
+                "pytest_timeout",
+                "-q",
+                f"--timeout={timeout}",
+                f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                *coverage_args,
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if coverage_controller is not None and coverage_file.is_file():
+            # pytest-cov combines parallel files for serial and xdist reports.
+            parent_file = Path(
+                coverage_controller.topdir, coverage_controller.cov.config.data_file
+            ).resolve()
+            with NamedTemporaryFile(
+                prefix=parent_file.name + ".", dir=parent_file.parent, delete=False
+            ) as output:
+                output.write(coverage_file.read_bytes())
+        if process.returncode:
+>           pytest.fail(
+                f"{log}\n{_child_failure_report(report)}\n"
+                f"--- child log tail ---\n{log.read_text()[-16000:]}"
+            )
+E           Failed: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-3-focused-green-profile-55cy4mjc/pytest/test_redirect_fit_boundary_kee2/private-profile-process/pytest.log
+E           --- child failure: AssertionError: run activation shifted controls or the draft
+E           assert (Region(x=107...70, height=1)) == (Region(x=107...54, height=1))
+E             
+E             At index 3 diff: Region(x=20, y=49, width=70, height=1) != Region(x=20, y=49, width=54, height=1)
+E             Use -v to get more diff
+E           threshold_offset = 1
+E           request = <FixtureRequest for <Coroutine test_redirect_fit_boundary_keeps_run_controls_in_place[1]>>
+E           
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("threshold_offset", [-1, 0, 1])
+E               @private_profile_test
+E               async def test_redirect_fit_boundary_keeps_run_controls_in_place(threshold_offset, request):
+E                   """Fit comes from the visible control cells and draft/reason floors."""
+E                   gateway, host = _held_run_host()
+E                   async with host.run_test(size=(235, 52)) as pilot:
+E                       console, composer = await _mounted(host, pilot)
+E                       await pilot.pause(0.2)
+E                       row = composer.query_one("#console-composer-expanded")
+E                       chrome = host.size.width - row.content_size.width
+E                       # Independent geometry: left Menu/collapse 12+6; Send reserves 14
+E                       # for its longest label (Preparing... plus padding),
+E                       # gap 2, Dictate 11, Stop 6, Redirect 10; margin 2; draft floor
+E                       # 32; widest reason 52. No production budget method supplies this.
+E                       threshold = chrome + 12 + 6 + 14 + 2 + 11 + 6 + 10 + 2 + 32 + 52
+E                       await pilot.resize_terminal(threshold + threshold_offset, 52)
+E                       await pilot.pause(0.3)
+E                       actions = composer.query_one("#console-composer-actions")
+E                       send = composer.query_one("#console-send-message", Button)
+E                       dictate = composer.query_one("#console-dictation", Button)
+E                       redirect = composer.query_one("#console-redirect-generation", Button)
+E                       draft = composer.query_one("#console-command-visible-text", Static)
+E               
+E                       def geometry():
+E                           return (actions.region, send.region, dictate.region, draft.region)
+E               
+E                       resting = geometry()
+E                       expected_fit = threshold_offset >= 0
+E                       assert composer._redirect_budgeted is expected_fit
+E                       try:
+E                           await _start_held_run(console, composer, pilot)
+E                           await pilot.pause(0.2)
+E                           assert redirect.display is expected_fit
+E           >               assert geometry() == resting, "run activation shifted controls or the draft"
+E           E               AssertionError: run activation shifted controls or the draft
+E           E               assert (Region(x=107...70, height=1)) == (Region(x=107...54, height=1))
+E           E                 
+E           E                 At index 3 diff: Region(x=20, y=49, width=70, height=1) != Region(x=20, y=49, width=54, height=1)
+E           E                 Use -v to get more diff
+E           
+E           Tests/UI/test_console_composer_run_controls.py:1541: AssertionError
+E           --- child log tail ---
+E           -macos-aarch64-none/lib/python3.12/concurrent/futures/thread.py", line 59, in run
+E               result = self.fn(*self.args, **self.kwargs)
+E           > File "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Character_Chat/world_info_resolver.py", line 187, in summarize_active_world_books
+E               books = WorldBookManager(db).get_world_books_for_conversation(
+E             File "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Character_Chat/world_book_manager.py", line 734, in get_world_books_for_conversation
+E               cursor.execute(query, (conversation_id,))
+E             File "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/DB/base_db.py", line 596, in execute
+E               return self._tracked(
+E             File "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/DB/base_db.py", line 579, in _tracked
+E               result = run(*args)
+E           sqlite3.OperationalError: no such table: world_books
+E           2026-10-03 20:41:17.282 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:41:17.282 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+E           2026-10-03 20:41:17.284 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:41:17.360 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6188544000.
+E           2026-10-03 20:41:17.360 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6188544000.
+E           2026-10-03 20:41:17.364 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6222196736.
+E           2026-10-03 20:41:17.364 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6222196736.
+E           2026-10-03 20:41:17.393 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4046 - Executing SQL (script=False): SELECT id, version FROM messages WHERE id IN (?, ?) AND deleted = 0... Params: (7be91f5a-fa94-4cc2-ae20-6c50e98ebc3f, bdaa2188-3963-42c5-8ac3-4793a6146d5d)
+E           2026-10-03 20:41:17.394 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:41:17.394 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:41:17.472 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4046 - Executing SQL (script=False): SELECT id, version FROM messages WHERE id IN (?, ?) AND deleted = 0... Params: (7be91f5a-fa94-4cc2-ae20-6c50e98ebc3f, bdaa2188-3963-42c5-8ac3-4793a6146d5d)
+E           2026-10-03 20:41:17.472 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:41:17.472 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:41:17.483 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6171717632.
+E           2026-10-03 20:41:17.483 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6171717632.
+E           2026-10-03 20:41:17.508 | WARNING  | tldw_chatbook.UI.Console_Modules.review_selection:_load_console_annotation_previews:414 - Console annotations: load failed for '06996572-f8a8-4e07-a3be-47b5e257c06f'
+E           2026-10-03 20:41:17.600 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6222196736.
+E           2026-10-03 20:41:17.600 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6222196736.
+E           2026-10-03 20:41:17.603 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6171717632.
+E           2026-10-03 20:41:17.603 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6171717632.
+E           2026-10-03 20:41:17.617 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4046 - Executing SQL (script=False): SELECT id, version FROM messages WHERE id IN (?, ?) AND deleted = 0... Params: (7be91f5a-fa94-4cc2-ae20-6c50e98ebc3f, bdaa2188-3963-42c5-8ac3-4793a6146d5d)
+E           2026-10-03 20:41:17.617 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:41:17.617 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:41:17.666 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4046 - Executing SQL (script=False): SELECT id, version FROM messages WHERE id IN (?, ?) AND deleted = 0... Params: (7be91f5a-fa94-4cc2-ae20-6c50e98ebc3f, bdaa2188-3963-42c5-8ac3-4793a6146d5d)
+E           2026-10-03 20:41:17.667 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:41:17.667 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:41:17.763 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6205370368.
+E           2026-10-03 20:41:17.763 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6205370368.
+E           2026-10-03 20:41:17.766 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6222196736.
+E           2026-10-03 20:41:17.769 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6222196736.
+E           2026-10-03 20:41:17.783 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4046 - Executing SQL (script=False): SELECT id, version FROM messages WHERE id IN (?, ?) AND deleted = 0... Params: (7be91f5a-fa94-4cc2-ae20-6c50e98ebc3f, bdaa2188-3963-42c5-8ac3-4793a6146d5d)
+E           2026-10-03 20:41:17.785 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:41:17.788 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:41:17.840 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4046 - Executing SQL (script=False): SELECT id, version FROM messages WHERE id IN (?, ?) AND deleted = 0... Params: (7be91f5a-fa94-4cc2-ae20-6c50e98ebc3f, bdaa2188-3963-42c5-8ac3-4793a6146d5d)
+E           2026-10-03 20:41:17.850 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:41:17.854 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:41:17.939 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:41:17.940 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:41:17.940 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4046 - Executing SQL (script=False): SELECT id, conversation_id, parent_message_id, sender, role, content, image_data, image_mime_type, timestamp, ranking, last_modified, version, client_id, deleted, feedback, usage_json, metadata_json, provider_continuation_json, thinking_blocks_json, assistant_generation_state FROM messages WHERE id ... Params: (bdaa2188-3963-42c5-8ac3-4793a6146d5d)
+E           2026-10-03 20:41:17.941 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:41:17.942 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+E           2026-10-03 20:41:17.944 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:41:17.946 | INFO     | tldw_chatbook.config:save_setting_to_cli_config:9309 - Attempting to save setting: [console.onboarding].first_send_completed = True
+E           2026-10-03 20:41:17.971 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:41:17.971 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:41:17.972 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:41:17.972 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:41:17.973 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen chat unmounted
+E           ------------------------------ Captured log call -------------------------------
+E           INFO     root:app.py:1385 App __init__: Determined initial tab value: chat
+E           WARNING  root:app.py:1492 Prompts service not initialized, self.prompts_db set to None.
+E           ERROR    root:app.py:1513 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E           INFO     tldw_chatbook.model_capabilities:model_capabilities.py:1046 No capability information found for llama_cpp/test-model, using defaults
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage app_version=0.2.3 attempt_id=59da1a863e0a4380b87934020c8cd269 component=console duration_ms=0 phase=ui_action python_version=3.12.11 sqlite_version=3.49.1 status=entered
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=59da1a863e0a4380b87934020c8cd269 component=console duration_ms=10 phase=ui_dispatch status=entered
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=59da1a863e0a4380b87934020c8cd269 component=console duration_ms=109 phase=ui_submit status=entered
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=59da1a863e0a4380b87934020c8cd269 component=console duration_ms=365 phase=ui_submit status=accepted
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=59da1a863e0a4380b87934020c8cd269 component=console duration_ms=382 phase=ui_dispatch status=sent
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=59da1a863e0a4380b87934020c8cd269 component=console duration_ms=382 phase=ui_action status=dispatched
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=59da1a863e0a4380b87934020c8cd269 component=console duration_ms=384 phase=controller_submit status=entered
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=59da1a863e0a4380b87934020c8cd269 component=console duration_ms=731 phase=provider_resolution status=entered
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=59da1a863e0a4380b87934020c8cd269 capture_enabled=false component=console duration_ms=733 phase=capture_policy status=entered
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=59da1a863e0a4380b87934020c8cd269 component=console duration_ms=927 phase=durable_commit status=entered
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=59da1a863e0a4380b87934020c8cd269 component=console duration_ms=946 phase=durable_commit status=succeeded
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=59da1a863e0a4380b87934020c8cd269 component=console duration_ms=2367 phase=controller_submit status=completed
+E           --------------------------- Captured stderr teardown ---------------------------
+E           2026-10-03 20:41:18.013 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8612 - Attempting to apply literal settings mutation: sets={"('console', 'onboarding')": ['first_send_completed']}, deletes={}
+E           2026-10-03 20:41:18.066 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8670 - Successfully replaced settings file at /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-3-focused-green-profile-55cy4mjc/pytest/test_redirect_fit_boundary_kee2/private-profile-process/profile/config/config.toml
+E           2026-10-03 20:41:18.071 | INFO     | tldw_chatbook.config:_load_settings_uncached:2134 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E           2026-10-03 20:41:18.075 | INFO     | tldw_chatbook.config:_load_settings_uncached:2137 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E           2026-10-03 20:41:18.080 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2160 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E           2026-10-03 20:41:18.083 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2482 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E           2026-10-03 20:41:18.242 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3712 - Ensured chat dictionaries folder exists: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-3-focused-green-profile-55cy4mjc/pytest/test_redirect_fit_boundary_kee2/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E           2026-10-03 20:41:18.242 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3743 - load_settings: Configuration cached for future use
+E           2026-10-03 20:41:18.244 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8698 - Global configuration caches invalidated and reloaded.
+E           2026-10-03 20:41:18.283 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:41:18.283 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           - generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-3-focused-green-profile-55cy4mjc/pytest/test_redirect_fit_boundary_kee2/private-profile-process/pytest.xml -
+E           ============================= slowest 25 durations =============================
+E           8.32s call     Tests/UI/test_console_composer_run_controls.py::test_redirect_fit_boundary_keeps_run_controls_in_place[1]
+E           
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_console_composer_run_controls.py::test_redirect_fit_boundary_keeps_run_controls_in_place[1]
+E           1 failed in 11.02s
+
+Tests/private_profile.py:158: Failed
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-3-focused-green.xml -
+============================= slowest 25 durations =============================
+13.99s call     Tests/UI/test_console_composer_run_controls.py::test_redirect_fit_boundary_keeps_run_controls_in_place[1]
+13.48s call     Tests/UI/test_console_composer_run_controls.py::test_redirect_fit_boundary_keeps_run_controls_in_place[0]
+12.77s call     Tests/UI/test_console_composer_run_controls.py::test_redirect_fit_boundary_keeps_run_controls_in_place[-1]
+5.26s call     Tests/Chat/test_console_note_span_actions.py::test_note_actions_persist_through_notes_service[agent_chat_start-Agent handoff-save-transcript-note]
+5.12s call     Tests/Chat/test_console_note_span_actions.py::test_note_actions_persist_through_notes_service[agent_chat_start-Agent handoff-summarize-note]
+5.11s call     Tests/Chat/test_console_note_span_actions.py::test_note_actions_persist_through_notes_service[untrusted-Unverified handoff-summarize-note]
+5.10s call     Tests/Chat/test_console_note_span_actions.py::test_note_actions_persist_through_notes_service[-User-summarize-note]
+5.05s call     Tests/Chat/test_console_note_span_actions.py::test_note_actions_persist_through_notes_service[untrusted-Unverified handoff-save-transcript-note]
+4.55s call     Tests/Chat/test_console_note_span_actions.py::test_note_actions_persist_through_notes_service[-User-save-transcript-note]
+1.03s setup    Tests/Chat/test_console_chat_create_integration.py::test_new_chat_tool_and_controller_reject_before_authority_or_execution[arguments0-payload_too_large]
+
+(15 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_console_composer_run_controls.py::test_redirect_fit_boundary_keeps_run_controls_in_place[-1]
+FAILED Tests/UI/test_console_composer_run_controls.py::test_redirect_fit_boundary_keeps_run_controls_in_place[0]
+FAILED Tests/UI/test_console_composer_run_controls.py::test_redirect_fit_boundary_keeps_run_controls_in_place[1]
+3 failed, 125 passed in 81.22s (0:01:21)

@@ -1,7 +1,7 @@
 ---
 id: TASK-32892
 title: "Work stream: crashes and process safety"
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-21 23:05'
 labels:
@@ -91,3 +91,16 @@ Deliberately **not** shipped: the `kwargs.update` at ~`:3661` is a second, disti
 pinned as deliberate by `_VIEW_HOOK_OWNERSHIP` ("app-owned-domain"), so `setdefault` would be wrong; its real
 consequence is that Console Library-activity capture records nothing in production. Filed as **TASK-32909**.
 <!-- SECTION:NOTES:END -->
+
+## Closeout audit 2026-10-11
+
+Board audit (branch `chore/board-prune-prune-d`, dev at a3c47c6c72): this task's work is
+landed on `origin/dev` but the status field was never flipped. Verdict: **Done**.
+
+Implemented on `fix/tier2-crashes` (6ee291ee8c) and merged to dev via PR #2799
+(a1b10aceee, 2026-09-23): "fix(crashes): the three tier-2 P0s and four Textual crash sites
+(TASK-32892)". The task file's Implementation Notes record all seven findings fixed with 27
+born-red tests and "Gates: preflight GREEN; size ratchet exactly the 5 baseline reds by name"
+(AC#4). Follow-up TASK-32909 was filed for the one deliberately-excluded defect.
+
+AC checkboxes are left as found; this section is the audit's evidence record.

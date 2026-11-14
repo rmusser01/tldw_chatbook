@@ -1091,7 +1091,7 @@ async def test_console_undo_redo_re_collapses_over_threshold_restored_segment():
         # literal payload -- painting the literal is exactly what froze
         # the UI thread.
         painted = visible_draft.render_line(0).text.rstrip()
-        assert f"Pasted text | {len(big_text)} characters | Expand" in painted
+        assert f"Pasted text | {len(big_text)} characters | Ctrl+E expand" in painted
         assert big_text not in painted
 
         # Sanity: canonical text still round-trips the FULL content --
@@ -1133,7 +1133,7 @@ def test_composer_undo_redo_does_not_double_collapse_already_collapsed_snapshot(
     assert composer.draft_text() == big_text
     assert [segment.collapse_state for segment in composer._segments] == ["collapsed"]
     # The segment's real text is the raw payload, never the display string
-    # ("Pasted text | N characters | Expand") -- a token-of-a-token would fail this.
+    # ("Pasted text | N characters | Ctrl+E expand") -- a token-of-a-token would fail this.
     assert composer._segments[0].text == big_text
 
     assert composer.undo() is True
@@ -1202,7 +1202,7 @@ async def test_console_undo_of_ordinary_typed_text_stays_literal_not_a_paste_tok
     """W-1 (HIGH): the NEW-2 re-collapse fix reused `paste_collapse_
     threshold` (shipped default 50 chars) as the undo-restore gate, so
     undo of ordinary TYPED draft text over 50 characters repainted as an
-    opaque "Pasted text | N characters | Expand" token -- `has_paste_segments()`
+    opaque "Pasted text | N characters | Ctrl+E expand" token -- `has_paste_segments()`
     became True for text that was never pasted, and one Backspace then
     deleted the WHOLE restored draft in a single step (a collapsed token
     deletes as one unit). This lands squarely on the AC's own flagship
@@ -1386,6 +1386,6 @@ async def test_console_undo_recollapses_regardless_of_collapse_large_pastes_sett
         assert composer.undo() is True
 
         painted = visible_draft.render_line(0).text.rstrip()
-        assert f"Pasted text | {len(big_text)} characters | Expand" in painted
+        assert f"Pasted text | {len(big_text)} characters | Ctrl+E expand" in painted
         assert big_text not in painted
         assert composer.draft_text() == big_text

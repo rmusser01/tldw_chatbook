@@ -25,7 +25,7 @@ pytestmark = pytest.mark.usefixtures("stub_characters")
 @pytest.fixture
 def handoff_app(mock_app_instance, monkeypatch):
     monkeypatch.setattr(
-        character_handler_module, "_default_character_db", lambda: object()
+        "tldw_chatbook.UI.Screens.personas_screen.PersonasScreen._character_db", lambda _self: object()
     )
     _install_conversation_db(monkeypatch, [])
     mock_app_instance.chat_dictionary_scope_service = None
@@ -192,12 +192,12 @@ async def test_completion_between_header_and_inspector_reads_refreshes_both_surf
         # Finish after the header read but before the inspector read in this
         # synchronous render. No further edit should be needed to reconcile it.
         screen._sync_title_and_console_actions()
-        header_status = screen.query_one(
-            "#personas-header #workbench-header-status", Static
-        )
+        # Roleplay frame B1: the header's destination block chip (no longer a
+        # "Ready" badge) is the header surface that must catch up.
+        blocked = screen.query_one("#personas-header-blocked")
         assert len(reads) >= 2
         async with asyncio.timeout(3):
-            while str(header_status.renderable) != "Ready":
+            while blocked.display:
                 await asyncio.sleep(0.01)
         assert "Ready to chat" in _readiness_text(screen)
         assert not screen.query_one("#personas-start-chat", Button).disabled
@@ -222,13 +222,20 @@ async def test_handoff_readiness_refreshes_expiry_and_stale_snapshot_without_edi
         assert credential_io.cache.revision == completed_revision
 
         # An idle mounted screen starts and observes the next bounded refresh.
+        # TASK-38948 (owner ruling 2026-11-10): the lapsed snapshot is re-read
+        # while the handoff keeps its last state; it never flickers back to
+        # "Checking Claude" for a credential that was already read.
         credential_io.release.clear()
-        credential_io.entered.clear()
         credential_io.expires_at_ms = 2000000
         credential_io.monotonic = subscription._KEYCHAIN_TTL_S + 1
-        await _wait_for_text(screen, "Checking Claude")
-        assert credential_io.entered.is_set()
-        assert len(credential_io.readers) == 2
+        async with asyncio.timeout(3):
+            while len(credential_io.readers) < 2:
+                await asyncio.sleep(0.01)
+        await asyncio.sleep(0.3)  # More than one 0.25 s readiness poll.
+        text = _readiness_text(screen)
+        assert "credential is expired" in text and "Checking Claude" not in text, text
+        assert screen.query_one("#personas-start-chat", Button).disabled
+        assert len(credential_io.readers) == 2 and not credential_io.release.is_set()
         credential_io.release.set()
         await _wait_for_text(screen, "Ready to chat")
         assert not screen.query_one("#personas-start-chat", Button).disabled
@@ -246,7 +253,9 @@ async def test_credential_completion_uses_current_provider_and_selection(
             "provider": "openai",
             "model": "gpt-4o",
         }
-        await pilot.click("#personas-library-row-character-2")
+        from Tests.UI.roleplay_frame_harness import select_roleplay_item
+
+        await select_roleplay_item(pilot, screen, "character:2", via="click")
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
         assert screen.state.selected_entity_id == "2"

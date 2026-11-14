@@ -196,7 +196,10 @@ def test_non_string_fields_are_coerced():
 def test_character_book_numeric_position_and_defaults_preserved():
     book = {
         "entries": [
-            {"keys": ["dragon"], "content": "Dragons are real."},  # missing enabled/insertion_order
+            {
+                "keys": ["dragon"],
+                "content": "Dragons are real.",
+            },  # missing enabled/insertion_order
             {
                 "keys": ["castle"],
                 "content": "A castle nearby.",
@@ -234,9 +237,7 @@ def test_extract_ccv3_metadata_from_png(tmp_path):
     card = _v2_card()
     card["spec"] = "chara_card_v3"
     card["spec_version"] = "3.0"
-    png_path = _write_png_with_metadata(
-        tmp_path / "v3.png", {"ccv3": _b64_json(card)}
-    )
+    png_path = _write_png_with_metadata(tmp_path / "v3.png", {"ccv3": _b64_json(card)})
 
     extracted = extract_json_from_image_file(str(png_path), str(tmp_path))
 
@@ -248,9 +249,7 @@ def test_load_v3_png_card_end_to_end(tmp_path):
     card = _v2_card()
     card["spec"] = "chara_card_v3"
     card["spec_version"] = "3.0"
-    png_path = _write_png_with_metadata(
-        tmp_path / "v3.png", {"ccv3": _b64_json(card)}
-    )
+    png_path = _write_png_with_metadata(tmp_path / "v3.png", {"ccv3": _b64_json(card)})
 
     parsed = load_character_card_from_file(png_path)
 
@@ -265,10 +264,14 @@ def test_load_v3_png_card_end_to_end(tmp_path):
 
 def test_nameless_v2_card_is_rejected_not_named_unknown():
     # A V2 card with no name anywhere must NOT import as placeholder "Unknown".
-    card = {"spec": "chara_card_v2", "spec_version": "2.0", "data": {
-        "description": "No name here.",
-        "first_mes": "Hello?",
-    }}
+    card = {
+        "spec": "chara_card_v2",
+        "spec_version": "2.0",
+        "data": {
+            "description": "No name here.",
+            "first_mes": "Hello?",
+        },
+    }
     assert import_character_card_from_json_string(json.dumps(card)) is None
 
 
@@ -302,10 +305,26 @@ def test_two_nameless_cards_do_not_merge_into_one_character(tmp_path):
     db = CharactersRAGDB(tmp_path / "nameless.db", "test-client")
     card_a = tmp_path / "a.json"
     card_b = tmp_path / "b.json"
-    card_a.write_text(json.dumps({"spec": "chara_card_v2", "spec_version": "2.0",
-                                  "data": {"description": "Card A"}}), encoding="utf-8")
-    card_b.write_text(json.dumps({"spec": "chara_card_v2", "spec_version": "2.0",
-                                  "data": {"description": "Card B"}}), encoding="utf-8")
+    card_a.write_text(
+        json.dumps(
+            {
+                "spec": "chara_card_v2",
+                "spec_version": "2.0",
+                "data": {"description": "Card A"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    card_b.write_text(
+        json.dumps(
+            {
+                "spec": "chara_card_v2",
+                "spec_version": "2.0",
+                "data": {"description": "Card B"},
+            }
+        ),
+        encoding="utf-8",
+    )
 
     id_a = import_and_save_character_from_file(db, str(card_a))
     id_b = import_and_save_character_from_file(db, str(card_b))
@@ -376,9 +395,19 @@ def test_character_book_string_booleans_parse_by_value():
     book = {
         "entries": [
             {"keys": ["a"], "content": "x", "enabled": "false", "case_sensitive": "0"},
-            {"keys": ["b"], "content": "y", "enabled": "true", "selective": "no", "constant": 0},
+            {
+                "keys": ["b"],
+                "content": "y",
+                "enabled": "true",
+                "selective": "no",
+                "constant": 0,
+            },
             {"keys": ["c"], "content": "z", "enabled": "yes", "constant": "on"},
-            {"keys": ["d"], "content": "w", "enabled": "maybe"},  # unknown -> default True
+            {
+                "keys": ["d"],
+                "content": "w",
+                "enabled": "maybe",
+            },  # unknown -> default True
             {"keys": ["e"], "content": "v", "enabled": 1, "case_sensitive": 0},
         ]
     }
@@ -475,15 +504,13 @@ def test_oversized_png_skips_trailing_chunk_probe(tmp_path, monkeypatch):
     # The project logs via loguru, so capture with a temporary sink rather
     # than stdlib caplog.
     warnings = []
-    sink_id = cc_lib.logger.add(
-        lambda msg: warnings.append(str(msg)), level="WARNING"
-    )
+    sink_id = cc_lib.logger.add(lambda msg: warnings.append(str(msg)), level="WARNING")
     try:
         extracted = extract_json_from_image_file(str(png_path), str(tmp_path))
     finally:
         cc_lib.logger.remove(sink_id)
 
     assert extracted is None
-    assert any(
-        "oversized" in message for message in warnings
-    ), "expected a warning that the oversized PNG decode was skipped"
+    assert any("oversized" in message for message in warnings), (
+        "expected a warning that the oversized PNG decode was skipped"
+    )

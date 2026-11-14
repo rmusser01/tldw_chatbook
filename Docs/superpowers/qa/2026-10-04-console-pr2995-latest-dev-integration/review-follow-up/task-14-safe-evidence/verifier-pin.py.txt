@@ -1,0 +1,16 @@
+from common import *
+assert git('rev-parse','HEAD').decode().strip()==BASE
+assert not git('status','--porcelain')
+O.mkdir()
+dump('initial-tree-map.json',{'base':BASE,'trees':{r:tree(r) for r in (BASE,OLD,NEW)}})
+pins={str(p.relative_to(S)):sha(p.read_bytes()) for p in S.rglob('*') if p.is_file() and O not in p.parents}
+dump('initial-safe-artifact-pins.json',pins)
+q={p:b for p,b in tree(BASE).items() if p.startswith(('Docs/QA/','Docs/superpowers/qa/'))};dump('initial-qa-pins.json',q)
+ref='refs/heads/codex/pr2995-task14-recovery-f932709de8'
+git('update-ref',ref,BASE)
+bundle='/private/tmp/pr2995-task14/metadata-recovery.bundle'
+r=subprocess.run(['git','bundle','create',bundle,ref,'^'+PUB],cwd=W,capture_output=True);assert r.returncode==0,r.stderr
+v=subprocess.run(['git','bundle','verify',bundle],cwd=W,capture_output=True);assert v.returncode==0
+(O/'recovery-verify.log').write_bytes(v.stdout+v.stderr)
+dump('recovery.json',{'base':BASE,'recovery_ref':ref,'bundle':bundle,'bundle_sha256':sha(pathlib.Path(bundle).read_bytes()),'bundle_bytes':pathlib.Path(bundle).stat().st_size,'published_prerequisite':PUB,'verify_exit':v.returncode})
+print('Pinned clean BASE, recovery ref and prerequisite metadata-only bundle.')

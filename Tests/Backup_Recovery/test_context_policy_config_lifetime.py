@@ -18,7 +18,7 @@ owners=[];keys=[];pauses=[]
 failure=ValueError('synthetic parser failure')
 def observed(section,key,default=None):
  value=getter(section,key,default)
- owners.append(raw._runtime_operation());keys.append(key)
+ owners.append(raw.runtime_operation());keys.append(key)
  if len(owners)==1:
   if case=='pause_inside':
    pauses.append(storage._begin_local_pause())
@@ -26,7 +26,7 @@ def observed(section,key,default=None):
   elif case=='selector':os.environ['TLDW_CONFIG_PATH']=str(home/'other.toml')
  return value
 def parsed(values):
- assert raw._runtime_operation() is None,'parser retained config admission'
+ assert raw.runtime_operation() is None,'parser retained config admission'
  if case=='parser_error':raise failure
  return parser(values)
 controller.get_cli_setting=observed
@@ -55,7 +55,7 @@ finally:
  for pause in reversed(pauses):pause.resume()
  os.environ['TLDW_CONFIG_PATH']=str(selected)
  controller.context_policy_overrides_from_console_config=parser
-assert not storage._raw_operations and raw._runtime_operation() is None
+assert not storage._raw_operations and raw.runtime_operation() is None
 assert all(owner not in raw._states for owner in owners if owner is not None)
 if case!='selector':
  previous=owners[0] if owners else None
@@ -63,7 +63,7 @@ if case!='selector':
  assert config.save_setting_to_cli_config('console','conversation_budget_tokens',4321)
  assert read(None).custom_budget_tokens==4321
  assert owners[0] is not previous
- assert not storage._raw_operations and raw._runtime_operation() is None
+ assert not storage._raw_operations and raw.runtime_operation() is None
 print('retired and reopened')
 '''
 
@@ -91,7 +91,7 @@ error=ValueError('synthetic parser failure')
 def fail_write():
  original=private_paths.os.write
  def reject(fd,payload):
-  if raw._runtime_operation() is not None:raise OSError('synthetic native write failure')
+  if raw.runtime_operation() is not None:raise OSError('synthetic native write failure')
   return original(fd,payload)
  private_paths.os.write=reject
  try:assert not config.save_setting_to_cli_config('console','conversation_budget_tokens',9999)
@@ -102,13 +102,13 @@ if case=='preexisting_failure':fail_write()
 initial_error=config._CONFIG_PERSISTENCE_ERROR
 def observed(section,key,default=None):
  value=getter(section,key,default)
- owner=raw._runtime_operation();assert owner is not None
+ owner=raw.runtime_operation();assert owner is not None
  owners.append(owner)
  assert storage._operation_local.operation is None
  if case=='nested_failure' and len(owners)==1:fail_write()
  return value
 def parsed_policy(values):
- assert raw._runtime_operation() is outside_raw
+ assert raw.runtime_operation() is outside_raw
  assert getattr(storage._operation_local,'operation',None) is outside_core
  parsed.append(True)
  if case.endswith('_parser'):raise error
@@ -124,20 +124,20 @@ elif case.startswith('raw_'):scope=config_participants.operation(config)
 else:scope=nullcontext()
 try:
  with scope:
-  outside_raw=raw._runtime_operation()
+  outside_raw=raw.runtime_operation()
   outside_core=getattr(storage._operation_local,'operation',None)
   try:result=read(None)
   except ValueError as caught:assert case.endswith('_parser') and caught is error
   else:assert not case.endswith('_parser') and result.custom_budget_tokens==1234
   assert len(owners)==9 and all(owner is owners[0] for owner in owners)
   assert parsed==[True]
-  assert raw._runtime_operation() is outside_raw
+  assert raw.runtime_operation() is outside_raw
   assert getattr(storage._operation_local,'operation',None) is outside_core
   if outside_core is not None:
    storage._check_operation(outside_core,outside_core.path)
    assert db.get_note_by_title('Preserved core')['content']=='Native readback'
   if outside_raw is not None:assert owners[0] is outside_raw
- assert raw._runtime_operation() is None
+ assert raw.runtime_operation() is None
  assert getattr(storage._operation_local,'operation',None) is None
  assert not storage._raw_operations and not storage._pending_acquisitions
  assert all(owner not in raw._states for owner in owners)
@@ -158,3 +158,77 @@ print('retired and reopened')
 @pytest.mark.parametrize('case', ['nested_failure','preexisting_failure','raw_success','raw_parser','core_success','core_parser'])
 def test_context_policy_preserves_enclosing_owners_and_native_failures(tmp_path,case):
     _run(tmp_path,case,'policy-review',script=_ENCLOSING,timeout=30)
+
+
+_WARM = _SCRIPT.split("assert config.get_cli_setting")[0] + r'''
+from tldw_chatbook.Backup_Recovery import raw_participants as raw,storage_admission as storage
+from tldw_chatbook.Chat import console_chat_controller as controller
+assert config.save_setting_to_cli_config('console','conversation_budget_tokens',1234)
+read=controller.ConsoleChatController._global_context_policy_overrides
+getter=controller.get_cli_setting
+owners=[]
+def observed(section,key,default=None):
+ owners.append(raw.runtime_operation())
+ return getter(section,key,default)
+controller.get_cli_setting=observed
+first=read(None)
+assert first.custom_budget_tokens==1234 and len(owners)==9 and owners[0] is not None
+assert read(None)==first
+assert len(owners)==9,'a warm read reopened the checked config operation'
+pause=storage._begin_local_pause()
+try:
+ try:read(None)
+ except bootstrap.RecoveryRequired as error:assert error.args==('storage_locally_paused',)
+ else:raise AssertionError('a local pause must still refuse after a warm read')
+finally:pause.resume()
+assert config.save_setting_to_cli_config('console','conversation_budget_tokens',4321)
+assert read(None).custom_budget_tokens==4321
+assert len(owners)==18 and owners[9] is not None and owners[9] is not owners[0]
+assert not storage._raw_operations and raw.runtime_operation() is None
+print('retired and reopened')
+'''
+
+
+def test_a_warm_context_policy_read_reuses_the_installed_config(tmp_path):
+    """TASK-33620.15.1: the Console sync reads these nine keys every tick.
+
+    Each read opened a full checked config operation (storage admission,
+    pause probes, pinned-directory opens) to read an unchanged in-memory
+    config: about half of the transcript sync's main-thread time, live. A
+    read of the same installed config now reuses the result; a local pause
+    still refuses, and a save is read through a fresh checked operation.
+    """
+    _run(tmp_path, "warm", "context-policy-warm", script=_WARM, timeout=30)
+
+
+_RELOADED = _SCRIPT.split("assert config.get_cli_setting")[0] + r'''
+from tldw_chatbook.Chat import console_chat_controller as controller
+assert config.save_setting_to_cli_config('console','conversation_budget_tokens',1234)
+read=controller.ConsoleChatController._global_context_policy_overrides
+getter=controller.get_cli_setting
+keys=[]
+def reloading(section,key,default=None):
+ keys.append(key)
+ if len(keys)==2:
+  fresh={**config._CONFIG_CACHE}
+  fresh['console']={**fresh['console'],'conversation_budget_tokens':4321}
+  config._CONFIG_CACHE=fresh
+ return getter(section,key,default)
+controller.get_cli_setting=reloading
+mixed=read(None)
+assert len(keys)==9 and mixed.custom_budget_tokens==4321
+assert read(None).custom_budget_tokens==4321
+assert len(keys)==18,'a read that straddled a reload was reused'
+assert read(None).custom_budget_tokens==4321
+assert len(keys)==18,'a read of one installed config was not reused'
+print('retired and reopened')
+'''
+
+
+def test_a_read_straddling_a_reload_is_not_reused(tmp_path):
+    """TASK-33620.15.1 review: only a read of one installed config is memoized.
+
+    A reload installed between the nine reads left a result mixing two
+    configs; keyed by the new dict, every later warm read would reuse it.
+    """
+    _run(tmp_path, "reloaded", "context-policy-reloaded", script=_RELOADED, timeout=30)

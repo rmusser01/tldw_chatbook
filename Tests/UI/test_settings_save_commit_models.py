@@ -9,11 +9,15 @@ save" — the user cannot answer "did that save?".
 These tests pin:
 * staged stays the default model for the guided categories;
 * every intentional instant-apply control is labeled inline
-  ("applies immediately - no Save needed") and visually separated from
-  staged fields (its own bordered group);
+  ("applies immediately · no Save needed") and visually separated from
+  staged fields (its own instant-apply group; TASK-33007.6 dropped that
+  group's border, as the pane border is the card's only frame);
 * the focused-field inspector documents the per-field save behavior
-  ("Save: staged - press s to save, r to revert" vs
-  "Save: applies immediately - no Save needed").
+  ("Save: edits save with s · r reverts" vs
+  "Save: applies immediately · no Save needed"). #3057 capture round 2,
+  finding 3: the staged row read "Save: staged - press s to save, r to
+  revert", which claimed an edit was waiting when none was; it is rewritten
+  on purpose in the State line's words.
 """
 
 import pytest
@@ -23,6 +27,7 @@ from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
+    _console_config_key_saved_as,
     _visible_text,
 )
 from Tests.UI.test_screen_navigation import _build_test_app
@@ -32,15 +37,17 @@ from tldw_chatbook.UI.Screens.settings_screen import (
     SettingsScreen,
 )
 
-INSTANT_APPLY_LABEL = "applies immediately - no Save needed"
-STAGED_SAVE_ROW = "Save: staged - press s to save, r to revert"
+INSTANT_APPLY_LABEL = "applies immediately · no Save needed"
+STAGED_SAVE_ROW = "Save: edits save with s · r reverts"
 INSTANT_SAVE_ROW = f"Save: {INSTANT_APPLY_LABEL}"
 
 
 @pytest.mark.asyncio
-async def test_model_catalog_controls_are_labeled_and_visually_separated():
+@private_profile_test
+async def test_model_catalog_controls_are_labeled_and_visually_separated(request):
     """Providers pane: the auto-refresh block carries the inline instant-apply
-    label and lives in its own bordered group, distinct from staged fields."""
+    label and lives in its own instant-apply group, distinct from staged
+    fields (TASK-33007.6: the group keeps its class, not its border)."""
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -62,7 +69,8 @@ async def test_model_catalog_controls_are_labeled_and_visually_separated():
 
 
 @pytest.mark.asyncio
-async def test_staged_fields_document_staged_save_in_the_inspector():
+@private_profile_test
+async def test_staged_fields_document_staged_save_in_the_inspector(request):
     """AC3: every staged field's inspector rows name the staged model."""
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
@@ -91,6 +99,27 @@ async def test_staged_fields_document_staged_save_in_the_inspector():
 
 
 @pytest.mark.asyncio
+@private_profile_test
+async def test_the_save_row_claims_no_staged_edit_when_none_is_staged(request):
+    """#3057 capture round 2, finding 3 (01, 05a, 09c, 10a-10c): with nothing
+    staged the Inspector said "Save: staged - press s to save, r to revert"
+    under "No unsaved changes". The row says how this field's edits save, in
+    the State line's words ("edits save with s"), not that one is waiting."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(160, 50)) as pilot:
+        await _click_settings_category(pilot, "providers-models")
+        screen = _active_destination_screen(host)
+        await pilot.pause()
+
+        text = _visible_text(screen)
+        assert "No unsaved changes" in text
+        assert STAGED_SAVE_ROW in text
+        assert "staged" not in text
+
+
+@pytest.mark.asyncio
 async def test_console_display_name_documents_staged_save_in_the_inspector():
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
@@ -98,20 +127,24 @@ async def test_console_display_name_documents_staged_save_in_the_inspector():
     async with host.run_test(size=(160, 50)) as pilot:
         await _click_settings_category(pilot, "console-behavior")
         screen = _active_destination_screen(host)
-        screen.query_one(
-            "#settings-console-default-user-display-name", Input
-        ).focus()
+        screen.query_one("#settings-console-default-user-display-name", Input).focus()
         await pilot.pause()
 
         text = _visible_text(screen)
-        assert "Purpose: Default speaker label for chats without a per-chat override." in text
-        assert "Saved as: chat_defaults." in text
-        assert "user_display_name" in text
+        assert (
+            "Purpose: Default speaker label for chats without a per-chat override."
+            in text
+        )
+        # TASK-33007.7: the key sits in the closed config key disclosure.
+        saved_as = _console_config_key_saved_as(screen)
+        assert "Saved as: chat_defaults." in saved_as
+        assert "user_display_name" in saved_as
         assert STAGED_SAVE_ROW in text
 
 
 @pytest.mark.asyncio
-async def test_model_catalog_fields_document_instant_apply_in_the_inspector():
+@private_profile_test
+async def test_model_catalog_fields_document_instant_apply_in_the_inspector(request):
     """AC3: focusing an auto-refresh toggle says it applies immediately."""
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
@@ -160,7 +193,9 @@ async def test_theme_category_documents_its_editor_owned_save_model(request):
         assert "Apply" not in text
 
 
-def test_guidance_row_builders_keep_a_uniform_row_count():
+@pytest.mark.asyncio
+@private_profile_test  # TASK-35011: rewritten, so it must run (not at setup)
+async def test_guidance_row_builders_keep_a_uniform_row_count(request):
     """Every guidance branch returns the same row count per category.
 
     The inspector composes one Static per row index and later refreshes
@@ -191,6 +226,11 @@ def test_guidance_row_builders_keep_a_uniform_row_count():
         "settings-model-profile-thinking-effort",
         "settings-model-profile-thinking-budget-tokens",
         "settings-model-profile-streaming",
+        # TASK-35011 (B19): the Saved model list's controls have guides too.
+        "settings-discover-provider-models",
+        "settings-discovered-models-list",
+        "settings-save-discovered-provider-models",
+        "settings-clear-discovered-provider-models",
     )
     appearance_field_ids = (
         "settings-appearance-open-theme",

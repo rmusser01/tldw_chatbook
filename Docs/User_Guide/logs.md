@@ -16,6 +16,46 @@ Logs shows application logs and diagnostics (on-screen subtitle:
 
 ## Sharing logs safely
 
+### Report a bug
+
+Choose **Report a bug…** in **Ctrl+P**, the Logs action bar, or **Settings →
+About**. Describe the problem, optionally add reproduction steps and expected/
+actual behavior, then **Generate** an editable Markdown report. Review and remove
+anything private before **Copy report**. Share the text manually in a GitHub
+issue, message, or paste site; the app does not upload it.
+
+Application-wide session logs and Console events, timing, and errors are included
+by default when retained. The dialog names the selected local Console
+conversation; open another conversation in Console before starting reporting to
+change it. Its title is shown locally and omitted from automatic report output.
+Logs include background activity across the application, including other
+workspaces; they are not proof of a connection to that conversation. Either
+evidence source can be unchecked. Reporting also works without Console history.
+
+**Include redacted tool inputs/results** starts off. These fields use the stored
+source privacy decisions, followed by diagnostic redaction. Tool results may
+themselves contain file, document, or other-conversation excerpts. Message bodies,
+reasoning, and provider exchanges are excluded from this trace projection;
+ordinary retained logs can contain diagnostic prose. Redaction can miss private
+details, so review the entire report before sharing.
+
+Evidence is frozen when collected: at most 500 retained log entries and 500
+Console facts, with explicit missing/truncated-source notices. Tool opt-in uses
+that same excerpt. A source's five-second presentation deadline leaves available
+evidence usable. Only current-session logs are available; previous-session crash
+recovery is not included. Existing 2,000-character log-entry limits cannot be
+undone. Exception traces appear only when present in retained logs. Source clocks
+and unknown timing stay labelled as such.
+
+The complete report, including edits, must fit **60,000 UTF-8 bytes**. Oversized
+edits stay visible and block copying. If final redaction changes edited text,
+review it and press Copy again. **Copy requested** means the app asked your client
+clipboard to copy; paste into your destination to verify delivery. If clipboard
+delivery is unavailable, the review text remains selectable. Closing asks before
+discarding your memory-only description or review edits.
+
+### Existing log copy actions
+
 Both copy actions preserve diagnostic text, with credentials and recognizable
 personally identifiable information (PII) masked:
 
@@ -57,6 +97,32 @@ prose, so review what you copied before posting a bug report.
 The rotating application log file uses the same credential/PII redaction policy
 under [ADR-029](../../backlog/decisions/029-local-private-data-boundary.md).
 Existing retention limits and private-file permission checks still apply.
+
+## Console sends that stop blocked
+
+A Console send that stops before the provider replies shows its cause in the
+transcript, for example the **Trace capture blocked** callout with **Retry
+capture**, **Send without capture** and **Cancel send**. The log names the same
+cause. Look for `Console submit requires attention` in Logs. Its `blocker=`
+field holds a fixed code:
+
+| `blocker=` | What stopped the send |
+|---|---|
+| `trace_provenance` | The send's trace record could not be saved |
+| `trace_call` | Trace capture for the provider call could not start |
+| `delivery_unknown` | A retry could not confirm whether the provider already received the send |
+| `dispatch_settlement` | A saved chat's send was refused before dispatch (for example by a hook, or because no project folder was chosen) and kept for Retry or Discard |
+| `settlement_failed` | Saving the send's outcome failed; it is kept for Retry or Discard |
+| `owner_changed` | Another action took over the saved send; it is kept for recovery |
+| `prerequisites_only` | The send was saved but deliberately not sent, so Discard or recovery can settle it |
+| `project_setup` | A temporary chat's send needed a project folder and none was chosen, or project instructions were turned off from the folder picker |
+| `turn_refused` | Another check stopped the send, for example a hook, the private scratch space or the context check; the run chip states the reason |
+
+The rotating application log's `phase=controller_submit status=blocked` line
+carries the same code as `error_category=`. Every blocked send logs a code.
+Sends refused before they were accepted (`status=refused`) and failed sends log
+`blocker=-`; the transcript or the unsent-turn shelf states their reason.
+Include the line in a bug report. It contains no message text.
 
 ## Local transcription failures
 

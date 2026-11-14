@@ -32,7 +32,11 @@ def test_collections_route_has_no_generic_container_controller_or_panel() -> Non
     (
         ("create_collection", ("Old container",), {}),
         ("rename_collection", ("legacy-1", "Renamed"), {}),
-        ("add_item_to_collection", ("legacy-1",), {"source_type": "note", "source_id": "1"}),
+        (
+            "add_item_to_collection",
+            ("legacy-1",),
+            {"source_type": "note", "source_id": "1"},
+        ),
         ("delete_collection", ("legacy-1",), {}),
         ("restore_collection", ("legacy-1",), {}),
     ),

@@ -91,7 +91,6 @@ class ProcessDocumentRequest(BaseMediaRequest):
     chunk_size: int = 1000
 
 
-
 class ProcessEmailRequest(BaseMediaRequest):
     media_type: Literal["email"] = "email"
     keep_original_file: bool = False

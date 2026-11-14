@@ -1,0 +1,157 @@
+{
+  "audited_dev": "7a5e2513c5d7e00ef57f3d19cd8e81a01e006d05",
+  "full_suite_run": false,
+  "scope": "Nine current-behavior observations, including one intended Study retention assertion failure; not repair acceptance tests.",
+  "domains": {
+    "study": {
+      "exit_code": 1,
+      "reports": [
+        {
+          "path": "study/result.xml",
+          "sha256": "8c218fcff4cb58850e02243624580ae4d6a9ca8b65237536f6ba35a25b1746a6",
+          "tests": 2,
+          "failures": 1,
+          "errors": 0,
+          "skipped": 0,
+          "seconds": 59.756,
+          "intended_study_failure": true
+        },
+        {
+          "path": "study/pytest/test_pending_submit_observatio0/private-profile-process/pytest.xml",
+          "sha256": "7883fb37a2613d2e22b24af4d7763261874b9e89d29f1daa9265dd2f59aad28d",
+          "tests": 1,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0,
+          "seconds": 14.23,
+          "intended_study_failure": false
+        },
+        {
+          "path": "study/pytest/test_pending_submit_observatio1/private-profile-process/pytest.xml",
+          "sha256": "6f74014a7fd9f8dab588ba50112f6770d889e8312fc941ae424753126eca539a",
+          "tests": 1,
+          "failures": 1,
+          "errors": 0,
+          "skipped": 0,
+          "seconds": 11.585,
+          "intended_study_failure": true
+        }
+      ]
+    },
+    "watchlists": {
+      "exit_code": 0,
+      "reports": [
+        {
+          "path": "watchlists/result.xml",
+          "sha256": "21d8eb140b430a5f2ee8eba215cbd3b70390d6b5fe410c4c17b4934f7307055c",
+          "tests": 3,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0,
+          "seconds": 285.599,
+          "intended_study_failure": false
+        },
+        {
+          "path": "watchlists/pytest/test_notifications_keyboard0/private-profile-process/pytest.xml",
+          "sha256": "470387ba9637cd34fbc86d111ebca35bfed3aba6e37cd74f3b7bac7009acf18a",
+          "tests": 1,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0,
+          "seconds": 69.492,
+          "intended_study_failure": false
+        },
+        {
+          "path": "watchlists/pytest/test_notification_write_conten0/private-profile-process/pytest.xml",
+          "sha256": "047f763c54be22b6f9ecb48c715f43982b96a1c95724d119e47fdd1430e8ed62",
+          "tests": 1,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0,
+          "seconds": 74.11,
+          "intended_study_failure": false
+        },
+        {
+          "path": "watchlists/pytest/test_notification_write_conten1/private-profile-process/pytest.xml",
+          "sha256": "32f5d8c4544654cbf956acd37444e4dbbb83315aa46ae31cca7d9473cbf79195",
+          "tests": 1,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0,
+          "seconds": 79.89,
+          "intended_study_failure": false
+        }
+      ]
+    },
+    "personas": {
+      "exit_code": 0,
+      "reports": [
+        {
+          "path": "personas/result.xml",
+          "sha256": "8ed66f3d9affce366fcba51a1241252a81db309f3e4ce0e4125578176f228ec8",
+          "tests": 2,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0,
+          "seconds": 97.733,
+          "intended_study_failure": false
+        },
+        {
+          "path": "personas/pytest/test_lore_save_queue_held_serv0/private-profile-process/pytest.xml",
+          "sha256": "90b870678d9213a3d418ab44c933616a15bd0cf350f8dd383019ac8d9aca4ad5",
+          "tests": 1,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0,
+          "seconds": 37.787,
+          "intended_study_failure": false
+        },
+        {
+          "path": "personas/pytest/test_lore_save_queue_ordinary_0/private-profile-process/pytest.xml",
+          "sha256": "dd64da262d3a70b28a61949cf58fabd81f5051bbd70e7a61adb3c13142c90f61",
+          "tests": 1,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0,
+          "seconds": 38.204,
+          "intended_study_failure": false
+        }
+      ]
+    },
+    "research": {
+      "exit_code": 0,
+      "reports": [
+        {
+          "path": "research/result.xml",
+          "sha256": "9d63d1300c4f78861a38252e06670d954cc2ab6f84e26a4e0ba21bd158e6b952",
+          "tests": 2,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0,
+          "seconds": 51.781,
+          "intended_study_failure": false
+        },
+        {
+          "path": "research/pytest/test_followup_message_queue_Fa0/private-profile-process/pytest.xml",
+          "sha256": "cb3c84803183e77cf7ff390a2b52b18cb5c9cad9b2535f15af8651ac2441020a",
+          "tests": 1,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0,
+          "seconds": 16.744,
+          "intended_study_failure": false
+        },
+        {
+          "path": "research/pytest/test_followup_message_queue_Tr0/private-profile-process/pytest.xml",
+          "sha256": "42f5ec441a0ad5467f1f83a725b74a22129c0df3c832509d6d34044896f814ed",
+          "tests": 1,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0,
+          "seconds": 16.299,
+          "intended_study_failure": false
+        }
+      ]
+    }
+  }
+}

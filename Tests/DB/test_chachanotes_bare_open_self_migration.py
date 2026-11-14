@@ -19,6 +19,17 @@ the guard that a future step cannot quietly reintroduce the requirement:
 ``test_a_bare_open_migrates...`` fails the moment any step in the chain needs
 something the constructor did not get.
 
+One documented exception (TASK-36949.6): the v52->v53 step rewrites stored
+Safe exchange captures with the Console capture codec, which is Chat semantics
+(about 1.5k lines) that the DB layer may not import, so it reaches the codec
+through a DB-layer port that every composition root installs (app_entry,
+tldw-serve, the mobile service, the MCP server, the RAG backfill CLI; a library
+consumer imports ``tldw_chatbook.Chat.console_exchange_capture``). Only a
+database that holds a Safe capture needs it. Without the port that open fails
+closed: SchemaError, the upgrade rolls back, and the database stays at v52,
+unharmed. ``test_a_bare_open_of_a_v52_safe_capture_fails_closed...`` pins that
+outcome in a fresh, uncomposed interpreter.
+
 Evidence style follows ``test_chachanotes_v47_messages_fts_backfill.py``: the
 interrupt is a real SIGKILL inside the migration transaction, the equivalence
 claims are content HASHES over every table rather than row counts, and the
@@ -42,18 +53,34 @@ from unittest.mock import patch
 import pytest
 
 from Tests.ChaChaNotesDB.historical_bootstrap import chachanotes_db_at_version
-from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryMigrationSeed
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, SchemaError
+from tldw_chatbook.DB.ChaChaNotes_DB import (
+    CharactersRAGDB,
+    ConsoleLibraryMigrationSeed,
+    SchemaError,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_NAME = CharactersRAGDB._SCHEMA_NAME
 CURRENT = CharactersRAGDB._CURRENT_SCHEMA_VERSION
 
-#: The only value the v47->v48 step generates that two identical runs cannot
+#: The values migration-chain steps generate that two identical runs cannot
 #: agree on: `console_conversation_library_policy.updated_at` defaults to
-#: CURRENT_TIMESTAMP. Masked in the content hash, and separately asserted to be
-#: a real timestamp so masking cannot hide an empty column.
-_VOLATILE = {("console_conversation_library_policy", "updated_at")}
+#: CURRENT_TIMESTAMP (v47->v48), and every console-trace / character-search
+#: singleton state table stamps `updated_at` with CURRENT_TIMESTAMP during
+#: its own chain step. Masked in the content hash, and separately asserted
+#: to be a real timestamp so masking cannot hide an empty column.
+#: (ADR-224 note: the v79 step was the first change slow enough to push two
+#: consecutive opens across a second boundary reliably, exposing these
+#: singletons as a content-hash flap.)
+_VOLATILE = {
+    ("console_conversation_library_policy", "updated_at"),
+    ("console_trace_compaction_state", "updated_at"),
+    ("console_trace_migration_state", "updated_at"),
+    ("console_trace_maintenance_state", "updated_at"),
+    ("console_trace_graph_epoch", "updated_at"),
+    ("character_conversation_search_revision", "updated_at"),
+    ("character_conversation_search_state", "updated_at"),
+}
 
 
 def _raw_version(db_path: Path) -> int:
@@ -98,9 +125,7 @@ def _content_hash(db_path: Path) -> str:
             )
         )
         for table in tables:
-            columns = [
-                row[1] for row in probe.execute(f'PRAGMA table_info("{table}")')
-            ]
+            columns = [row[1] for row in probe.execute(f'PRAGMA table_info("{table}")')]
             rows = probe.execute(f'SELECT * FROM "{table}"').fetchall()
             masked = sorted(
                 repr(
@@ -143,8 +168,7 @@ def _seed_historical(db_path: Path, version: int, titles: list[str]) -> list[str
     """Build a genuine ``version``-shaped database with ``titles`` conversations."""
     with chachanotes_db_at_version(db_path, version, client_id="t21441-seed") as db:
         conversation_ids = [
-            db.add_conversation({"title": title, "character_id": 1})
-            for title in titles
+            db.add_conversation({"title": title, "character_id": 1}) for title in titles
         ]
         for index, conversation_id in enumerate(conversation_ids):
             db.add_message(
@@ -187,6 +211,109 @@ def test_a_bare_open_migrates_an_existing_database_to_current(
     # Never / Allowed, the fail-safe default: no automatic retrieval.
     assert {(row[1], row[2], row[3]) for row in _policy_rows(db_path)} == {(0, 1, 1)}
     assert all(row[4] for row in _policy_rows(db_path))
+
+
+_UNCOMPOSED_CHILD = """
+import sys
+sys.path.insert(0, {repo!r})
+from tldw_chatbook.DB import transaction_observer
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, SchemaError
+
+assert transaction_observer._safe_capture_trimmer is None
+chat = [m for m in sys.modules if m == "tldw_chatbook.Chat" or m.startswith("tldw_chatbook.Chat.")]
+assert not chat, chat
+for _attempt in range(2):
+    try:
+        CharactersRAGDB({path!r}, client_id="t36949-bare").close_connection()
+    except SchemaError as exc:
+        assert "SafeCaptureTrimmingNotInstalledError" in str(exc), exc
+    else:
+        raise SystemExit("a bare open upgraded a database holding a Safe capture")
+print("fail-closed")
+"""
+
+
+def test_a_bare_open_of_a_v52_safe_capture_fails_closed_and_stays_v52(
+    tmp_path: Path,
+):
+    """The documented exception (TASK-36949.6), in a truly uncomposed process.
+
+    The suite's conftest installs every DB-layer port, so the bare open runs in
+    a fresh interpreter that imports only the DB layer. It must refuse twice and
+    leave the file exactly as it was; a composed open then trims the capture.
+    """
+    from tldw_chatbook.Chat.console_exchange_capture import (
+        CaptureDetail,
+        ExchangeCapture,
+        capture_to_blob,
+    )
+
+    db_path = tmp_path / "chachanotes.db"
+    history = [
+        {"role": "user" if i % 2 == 0 else "assistant", "content": f"turn-{i:03d}"}
+        for i in range(24)
+    ]
+    safe_blob = capture_to_blob(
+        ExchangeCapture(
+            run_tag="legacy-safe",
+            seq=0,
+            created_at="2026-08-01T00:00:00Z",
+            provider="openai",
+            model="m",
+            endpoint=None,
+            request={"messages_payload": history},
+            response={"content": "pong"},
+            status="complete",
+            usage_json=None,
+            omitted_keys=(),
+            capture_detail=CaptureDetail.SAFE,
+        )
+    )
+    with chachanotes_db_at_version(db_path, 52, client_id="t36949-seed") as db:
+        conversation_id = db.add_conversation({"title": "t", "character_id": 1})
+        message_id = db.add_message(
+            {"conversation_id": conversation_id, "sender": "user", "content": "hi"}
+        )
+        db.append_message_exchanges_local(
+            message_id,
+            [
+                {
+                    "run_tag": "legacy-safe",
+                    "seq": 0,
+                    "status": "complete",
+                    "abandoned": False,
+                    "capture_detail": "safe",
+                    "capture_blob": safe_blob,
+                    "created_at": "2026-08-01T00:00:00Z",
+                }
+            ],
+        )
+    before = _content_hash(db_path)
+
+    child = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            _UNCOMPOSED_CHILD.format(repo=str(REPO_ROOT), path=str(db_path)),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    assert child.returncode == 0, child.stdout + child.stderr[-4000:]
+    assert "fail-closed" in child.stdout
+    assert _raw_version(db_path) == 52
+    assert _integrity_is_clean(db_path)
+    assert _content_hash(db_path) == before
+
+    CharactersRAGDB(db_path, client_id="t36949-composed").close_connection()
+    assert _raw_version(db_path) == CURRENT
+    with closing(sqlite3.connect(db_path)) as probe:
+        (stored,) = probe.execute(
+            "SELECT capture_blob FROM message_exchanges"
+        ).fetchone()
+    assert bytes(stored) != safe_blob
 
 
 def test_the_v47_and_v48_index_guarantees_survive_an_unseeded_upgrade(
@@ -379,7 +506,9 @@ def test_a_sigkill_inside_the_v48_transaction_cannot_brick_the_database(
         # and already rolled back: no second writer can take the lock. Without
         # this witness the assertions below would also pass against a child
         # that never started the step.
-        with closing(sqlite3.connect(killed, timeout=0.2, isolation_level=None)) as other:
+        with closing(
+            sqlite3.connect(killed, timeout=0.2, isolation_level=None)
+        ) as other:
             with pytest.raises(sqlite3.OperationalError, match="locked"):
                 other.execute("BEGIN IMMEDIATE")
         # Uncommitted work must be invisible to every other reader.

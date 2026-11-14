@@ -13,12 +13,13 @@ from typing import Any, Iterable, Iterator
 
 from loguru import logger
 
+from tldw_chatbook.DB import declare_store
 from tldw_chatbook.Backup_Recovery.participants import (
-    _core_access,
-    _core_cached_connection,
-    _core_getter,
-    _core_transaction,
-    _register_core_connection,
+    core_access,
+    core_cached_connection,
+    core_getter,
+    core_transaction,
+    register_core_connection,
 )
 
 from tldw_chatbook.Utils.private_paths import lexical_path
@@ -77,6 +78,13 @@ class LeaseBudgetExhausted(Exception):
         self.max_attempts = max_attempts
 
 
+def _thread_cache(store):
+    """This thread's cached connection, which backup retirement may close."""
+    with store._lifecycle:
+        return store._connections.get(threading.get_ident())
+
+
+@declare_store("research.local", thread_cache=_thread_cache)
 class LocalResearchService:
     """Local-first persistence for research sessions, runs, events, and artifacts."""
 
@@ -161,7 +169,7 @@ class LocalResearchService:
             self._init_schema()
             self._schema_ready = True
 
-    @_core_getter
+    @core_getter
     def _connect(self) -> sqlite3.Connection:
         """Return this thread's held connection, opening it on first use.
 
@@ -174,7 +182,7 @@ class LocalResearchService:
         """
         if self.db_path is None:
             raise RuntimeError("Path-backed research database is not configured.")
-        _core_access(self)
+        core_access(self)
         self._ensure_schema()
         if self._is_memory:
             # close() drops the connection AND clears _schema_ready, so the
@@ -188,7 +196,7 @@ class LocalResearchService:
         ident = threading.get_ident()
         with self._lifecycle:
             held = self._connections.get(ident)
-            if held is not None and _core_cached_connection(self, held) is None:
+            if held is not None and core_cached_connection(self, held) is None:
                 self._connections.pop(ident, None)
                 held = None
             if held is not None:
@@ -242,16 +250,16 @@ class LocalResearchService:
                 # branch below (task-15465).
                 self._memory_conn.execute("PRAGMA synchronous = NORMAL")
             return self._memory_conn
-        _core_access(self)
+        core_access(self)
         conn = connect_private_sqlite(
             "research.local",
             self.db_path,
             check_same_thread=False,
             isolation_level=None,
         )
-        _register_core_connection(self, conn)
+        register_core_connection(self, conn)
         try:
-            _core_access(self)
+            core_access(self)
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA journal_mode = WAL")
             # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
@@ -260,13 +268,13 @@ class LocalResearchService:
             # connection is now HELD, so this runs once per thread rather than once
             # per operation.
             conn.execute("PRAGMA synchronous = NORMAL")
-            _core_access(self)
+            core_access(self)
         except BaseException:
             conn.close()
             raise
         return conn
 
-    @_core_transaction
+    @core_transaction
     @contextmanager
     def _transaction(self, *, immediate: bool = False) -> Iterator[sqlite3.Connection]:
         """Run one explicit transaction on this thread's held connection.
@@ -583,27 +591,37 @@ class LocalResearchService:
             severity = "error"
         elif status == "cancelled":
             severity = "warning"
-        dispatch(
-            app=self.notification_app,
-            category="research",
-            title=f"Local research session {event}",
-            message=str(
-                run.get("query")
-                or run.get("progress_message")
-                or run.get("id")
-                or "Research session updated"
-            ),
-            severity=severity,
-            source_backend="local",
-            source_entity_kind="research_run",
-            source_entity_id=str(run.get("id")),
-            payload={
-                "run_id": run.get("id"),
-                "status": run.get("status"),
-                "control_state": run.get("control_state"),
-                "query": run.get("query"),
-            },
-        )
+        # TASK-21238: a failing/unopenable notifications store must not fail
+        # the research session this notification reports on (the store went
+        # lazy in TASK-21105, so store failures surface at dispatch time).
+        # Same shape as the study/quiz/evals trio: skip the notification,
+        # complete the flow.
+        try:
+            dispatch(
+                app=self.notification_app,
+                category="research",
+                title=f"Local research session {event}",
+                message=str(
+                    run.get("query")
+                    or run.get("progress_message")
+                    or run.get("id")
+                    or "Research session updated"
+                ),
+                severity=severity,
+                source_backend="local",
+                source_entity_kind="research_run",
+                source_entity_id=str(run.get("id")),
+                payload={
+                    "run_id": run.get("id"),
+                    "status": run.get("status"),
+                    "control_state": run.get("control_state"),
+                    "query": run.get("query"),
+                },
+            )
+        except Exception:  # noqa: BLE001 - notification must never fail the run
+            logger.opt(exception=True).debug(
+                "Skipping research session notification: dispatch failed."
+            )
 
     @staticmethod
     def _check_version(row: dict[str, Any], expected_version: int | None) -> None:
@@ -734,9 +752,7 @@ class LocalResearchService:
             RuntimeError: If the database's schema version is newer than
                 this code knows about.
         """
-        current = int(
-            conn.execute("PRAGMA user_version").fetchone()[0] or 0
-        )
+        current = int(conn.execute("PRAGMA user_version").fetchone()[0] or 0)
         newest = MIGRATIONS[-1][0] if MIGRATIONS else current
         if current > newest:
             raise RuntimeError(
@@ -1304,7 +1320,9 @@ class LocalResearchService:
             # abandoned, just finished).
             return None
         previous = row["leased_until"] if "leased_until" in row.keys() else None
-        attempts = int(row["lease_attempts"] or 0) if "lease_attempts" in row.keys() else 0
+        attempts = (
+            int(row["lease_attempts"] or 0) if "lease_attempts" in row.keys() else 0
+        )
         now = self._now()
         reclaiming = previous is not None and str(previous) <= now
         if reclaiming and attempts >= int(max_attempts):
@@ -1379,9 +1397,7 @@ class LocalResearchService:
         }
         return lease_id
 
-    def renew_lease(
-        self, run_id: str, *, lease_id: str, lease_seconds: float
-    ) -> bool:
+    def renew_lease(self, run_id: str, *, lease_id: str, lease_seconds: float) -> bool:
         """Extend a lease the caller still holds.
 
         The lease id is a fencing token: a worker that stalled past its lease
@@ -1607,9 +1623,7 @@ class LocalResearchService:
         }
         if progress_message is not None:
             fields["progress_message"] = progress_message
-        return self._update_run_state(
-            run_id, "completed", lease_id=lease_id, **fields
-        )
+        return self._update_run_state(run_id, "completed", lease_id=lease_id, **fields)
 
     def fail_run(
         self,
@@ -1807,9 +1821,7 @@ class LocalResearchService:
                     f"patch references ids not in the proposed inventory: {sorted(unknown)}"
                 )
             if pinned & dropped:
-                raise ValueError(
-                    "pinned and dropped source ids must be disjoint"
-                )
+                raise ValueError("pinned and dropped source ids must be disjoint")
             recollect = patch.get("recollect")
             if recollect is not None and not isinstance(recollect, dict):
                 raise ValueError("recollect patch must be an object")
@@ -1847,12 +1859,12 @@ class LocalResearchService:
         data: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Engine-facing non-terminal transition (task-16322): update phase/
-       progress (and optionally status/control when a draft is started)
-        while recording an event with the same data the UI will stream.
+        progress (and optionally status/control when a draft is started)
+         while recording an event with the same data the UI will stream.
 
-        Terminal and control transitions (pause/resume/cancel/complete/fail)
-        stay on their dedicated methods; this one never dispatches terminal
-        notifications because it never sets a terminal status.
+         Terminal and control transitions (pause/resume/cancel/complete/fail)
+         stay on their dedicated methods; this one never dispatches terminal
+         notifications because it never sets a terminal status.
         """
         if self._uses_external_db:
             # delete_run's precedent (task-16814): raw statement inside the
@@ -1934,28 +1946,36 @@ class LocalResearchService:
             severity = "error"
         elif status == "cancelled":
             severity = "warning"
-        dispatch(
-            app=self.notification_app,
-            category="research",
-            title=f"Research run {status}",
-            message=str(
-                run.get("query")
-                or run.get("progress_message")
-                or run.get("id")
-                or "Research run updated"
-            ),
-            severity=severity,
-            source_backend="local",
-            source_entity_kind="research_run",
-            source_entity_id=str(run.get("id")),
-            payload={
-                "run_id": run.get("id"),
-                "session_id": run.get("session_id"),
-                "status": run.get("status"),
-                "control_state": run.get("control_state"),
-                "query": run.get("query"),
-            },
-        )
+        # TASK-21238: same guard as `_dispatch_external_run_notification` --
+        # a notifications-store failure must skip the notification, not fail
+        # the run whose terminal state this reports.
+        try:
+            dispatch(
+                app=self.notification_app,
+                category="research",
+                title=f"Research run {status}",
+                message=str(
+                    run.get("query")
+                    or run.get("progress_message")
+                    or run.get("id")
+                    or "Research run updated"
+                ),
+                severity=severity,
+                source_backend="local",
+                source_entity_kind="research_run",
+                source_entity_id=str(run.get("id")),
+                payload={
+                    "run_id": run.get("id"),
+                    "session_id": run.get("session_id"),
+                    "status": run.get("status"),
+                    "control_state": run.get("control_state"),
+                    "query": run.get("query"),
+                },
+            )
+        except Exception:  # noqa: BLE001 - notification must never fail the run
+            logger.opt(exception=True).debug(
+                "Skipping research run notification: dispatch failed."
+            )
 
     def save_artifact(
         self,

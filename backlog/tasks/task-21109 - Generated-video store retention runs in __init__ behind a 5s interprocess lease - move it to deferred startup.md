@@ -2,7 +2,7 @@
 id: TASK-21109
 title: >-
   Generated-video store retention runs in __init__ behind a 5s interprocess lease - move it to deferred startup
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-22'
 labels:
@@ -65,3 +65,40 @@ evidence above is what a re-verification pass measured against dev before dispat
 accepted, close this as "retired on evidence" rather than "won't fix", because the mechanism was
 real and only the cost or the prescribed fix was wrong.
 
+
+## Implementation Plan (2026-10-11 dispatch)
+
+The 2026-08-24 re-verification stands: the prescribed deferral past first
+paint is UNSAFE (default retention mode "session" deletes everything, so a
+deferred sweep can wipe a video published this session before the sweep's
+process-start notion exists), and the billed 5 s stall needs a second
+instance mid-save -- boot already catches VideoStoreBusyError. The board
+kept the task LIVE past that recommendation, so what ships is the
+re-verification's own "smaller honest win":
+
+1. `enforce_retention` returns an empty report BEFORE taking the
+   interprocess lease when the store root has never existed -- no
+   `.generated_videos.capacity.lock` created in every profile's data dir
+   at every boot for never-video users, no lease cycle, no dir creation.
+2. Retention semantics for any profile that HAS a store are unchanged
+   (boot still calls the pass; existing suite green).
+3. Test: never-used store -> empty report, no lock file, no root dir.
+
+## Implementation Notes (2026-10-11, dev `a3c47c6c72`)
+
+- **Fix**: `Video_Generation/video_store.py` `enforce_retention` early-outs
+  on `_ensure_safe_root() is None` (root absent). Safe by construction:
+  orphan staging files live INSIDE the root (`_cleanup_orphan_stages_
+  unlocked` already returns when the root is absent), `_snapshot` returns
+  `()` for an absent root, and the save path `mkdir`s on demand -- nothing
+  downstream depends on the boot pass creating anything.
+- **Evidence**: `Tests/Video_Generation/test_video_store.py` (110 passed,
+  2 skipped) including the new
+  `test_boot_retention_creates_no_lock_file_for_a_never_used_store`.
+  AC1/AC2 as originally written (deferral past first paint; probe-held
+  lease) are deliberately NOT implemented -- the re-verification's
+  data-loss race against session-mode retention stands, and this dispatch
+  records that ruling in the task file rather than shipping the unsafe
+  shape. If the owner wants full deferral later, it must carry a
+  process-start timestamp guard or run before the video adapter can
+  publish.

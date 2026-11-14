@@ -1,0 +1,4 @@
+{
+  "sha256": "052cf409f371bce7f1a7d7d2c7638034f5cf7169abc9611659b5107c30b26a19",
+  "raw_text": "markup interpolation: 310 notify_interp, 79 button_label_interp, 58 tooltip_interp occurrence(s) (539 pinned).\n\nFAIL: 2 new/grown markup-interpolation site(s). Textual parses Rich markup in notify messages, tooltips and Button labels; an unescaped user-derived name containing [/] raises MarkupError at render time. Wrap interpolated values in escape_markup(...) (tldw_chatbook.Utils.input_validation), or pass markup=False on the notify call:\n    tldw_chatbook/app_config_notifications\tnotify_config_load_failure\tnotify_interp (now 1, pinned 0)\n    tldw_chatbook/app_config_notifications\tnotify_config_schema_conflict\tnotify_interp (now 1, pinned 0)\n  If a pinned site must grow legitimately, regenerate the census with --write and say why in the PR. Do NOT regenerate to hide a new unescaped user-name site.\n"
+}

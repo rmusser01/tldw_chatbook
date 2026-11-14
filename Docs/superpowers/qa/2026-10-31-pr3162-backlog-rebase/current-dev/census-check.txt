@@ -1,0 +1,1 @@
+OK: 1175 Tests/UI entries in the PR gate (floor 1175); every listed path exists.

@@ -1,0 +1,23 @@
+....F......F                                                             [100%]
+=================================== FAILURES ===================================
+__________ test_durable_fork_immediate_publication_and_original_retry __________
+Tests/Chat/test_console_prompt_mixin_forks.py:91: in test_durable_fork_immediate_publication_and_original_retry
+    destination = h.store.register_fork_snapshot(snapshot)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_chat_store.py:8267: in register_fork_snapshot
+    raise ValueError("Fork ownership ids must be disjoint.")
+E   ValueError: Fork ownership ids must be disjoint.
+_____ test_ordinary_browse_mixin_capability_refusal_and_local_open[local] ______
+Tests/UI/test_console_prompt_mixins.py:802: in test_ordinary_browse_mixin_capability_refusal_and_local_open
+    assert app.modal.state.mode == "mixins"
+E   AssertionError: assert 'browse' == 'mixins'
+E     
+E     - mixins
+E     + browse
+============================= slowest 25 durations =============================
+
+(25 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Chat/test_console_prompt_mixin_forks.py::test_durable_fork_immediate_publication_and_original_retry
+FAILED Tests/UI/test_console_prompt_mixins.py::test_ordinary_browse_mixin_capability_refusal_and_local_open[local]
+2 failed, 10 passed in 7.04s

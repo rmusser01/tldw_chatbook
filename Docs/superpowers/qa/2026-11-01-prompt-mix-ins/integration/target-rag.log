@@ -1,0 +1,23 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+__ test_native_rag_indexing_schema_zero_survives_restricted_validation[False] __
+Tests/Backup_Recovery/test_sqlite_validation.py:918: in test_native_rag_indexing_schema_zero_survives_restricted_validation
+    assert validate_candidate(owner, path, Event(), migrate=migrate) == ()
+E   AssertionError: assert ('unsupported_schema',) == ()
+E     
+E     Left contains one more item: 'unsupported_schema'
+E     Use -v to get more diff
+__ test_native_rag_indexing_schema_zero_survives_restricted_validation[True] ___
+Tests/Backup_Recovery/test_sqlite_validation.py:918: in test_native_rag_indexing_schema_zero_survives_restricted_validation
+    assert validate_candidate(owner, path, Event(), migrate=migrate) == ()
+E   AssertionError: assert ('unsupported_schema',) == ()
+E     
+E     Left contains one more item: 'unsupported_schema'
+E     Use -v to get more diff
+============================= slowest 25 durations =============================
+
+(6 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Backup_Recovery/test_sqlite_validation.py::test_native_rag_indexing_schema_zero_survives_restricted_validation[False]
+FAILED Tests/Backup_Recovery/test_sqlite_validation.py::test_native_rag_indexing_schema_zero_survives_restricted_validation[True]
+2 failed in 1.49s

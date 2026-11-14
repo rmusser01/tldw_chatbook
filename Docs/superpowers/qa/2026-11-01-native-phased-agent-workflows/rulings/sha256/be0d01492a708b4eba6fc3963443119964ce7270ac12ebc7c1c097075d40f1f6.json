@@ -1,0 +1,24 @@
+{
+  "captured_utc": "2026-11-05T06:01:36.396698+00:00",
+  "head": "1b5db03c8eee8903cf4fb0e109bade41f49c0b4f",
+  "protected279_verified": true,
+  "cached61_sha256": "c5fcb00eab4ea09c49d1797567cbd4cc9f0eb9bb8d99cc2355f764638aaa7248",
+  "review_full_read": true,
+  "review_bytes": 35474,
+  "review_sha256": "6f52ed9950645f358e682e56ff1cea8f15821028704be2dc4c7ac79365536d18",
+  "review_read_slices": [
+    [
+      0,
+      13000
+    ],
+    [
+      13000,
+      24000
+    ],
+    [
+      24000,
+      null
+    ]
+  ],
+  "final_fix_wave": "one combined writer then one scoped rereview/adjudication; no provider replay/full suite"
+}

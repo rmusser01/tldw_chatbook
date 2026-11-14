@@ -1,0 +1,9 @@
+{
+  "app_log_sha256": "3dcf23f27abfda189c915c17ac022bdf4cbb4fa8b16f09f7daad6c8708fb4bf5",
+  "selected_log_rule": "exact whole lines containing console_send_stage, capture_provider_failure or agent step error",
+  "source_commit": "f9b8746a2ccd35a389923c4e89ee1c009bb224e4",
+  "phase_head": "ec68d8f1752fcd33b64d8e0b287dd5d0b071e4d2",
+  "no_source_change_during_phase": true,
+  "native_server_panes": "160x48; all three exited0; no physical-client screenshot",
+  "excluded": "raw DB/config/HTTP bodies/hidden reasoning and full terminal stream remain private"
+}

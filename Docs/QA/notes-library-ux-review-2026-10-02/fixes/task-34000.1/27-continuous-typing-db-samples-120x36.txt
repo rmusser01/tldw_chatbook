@@ -1,0 +1,21 @@
+# one key every 1.2 s into 'Gardening log' (120x36); DB sampled read-only after each key; hard kill-server at the end (no Ctrl+Q)
+# t(s)  key  db_version  db_content_tail
+1  a  1  - 09-28: mulched beds | 
+2  b  1  - 09-28: mulched beds | 
+3  c  1  - 09-28: mulched beds | 
+5  d  1  - 09-28: mulched beds | 
+6  e  1  - 09-28: mulched beds | 
+7  f  1  - 09-28: mulched beds | 
+8  g  1  - 09-28: mulched beds | 
+10  h  2  lched beds |  | abcdefgh
+11  i  2  lched beds |  | abcdefgh
+12  j  2  lched beds |  | abcdefgh
+13  k  2  lched beds |  | abcdefgh
+15  l  2  lched beds |  | abcdefgh
+16  m  2  lched beds |  | abcdefgh
+17  n  2  lched beds |  | abcdefgh
+18  o  2  lched beds |  | abcdefgh
+20  p  2  lched beds |  | abcdefgh
+21  q  3  s |  | abcdefghijklmnopq
+22  r  3  s |  | abcdefghijklmnopq
+killed (no Ctrl+Q) at 22s

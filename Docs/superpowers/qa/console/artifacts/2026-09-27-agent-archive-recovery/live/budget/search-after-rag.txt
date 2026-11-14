@@ -1,0 +1,48 @@
+         ╭──────────────╮
+ ⌃1 2026-09-27 17:09:35 [WARNING ] huggingface_hub.utils._http:904 - Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to .
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                               Speak replies   ▌   Hands-free   ▌     Running
+   New tab     Settings     Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                             │ Conversation | Find my archived Cedar budg...                                                                         │
+                  Context ◂  │  ● Find my archived C… ✕        Chat 2         ✕    New tab     Temporary                                             │
+   Terminal                  │                                                                                                                       │
+ ──────────────────────────  │ Each tab runs its own agent — up to 3 in parallel (change in Settings > Console Behavior).                         ✕  │
+ Workspaces             ▸    │                                                                                                                       │
+ ──────────────────────────  │                                                                                                                       │
+ Conversations          ▾    │                                                                                                                       │
+   New conversation          │                                                                                                                       │
+     Archive this chat       │                                                                                                                       │
+      Archived chats         │                                                                                                                       │
+     Search all chats…       │                                                                                                                       │
+   Find my archived Cedar    │                                                                                                                       │
+   budg...                   │                                                                                                                       │
+                             │                                                                                                                       │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+  ▊  Filter      ▎           │   User                                                                                                                │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │   Find my archived Cedar budget archival notes.                                                                       │
+                             │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │◂ Inspect
+  Chats                 ▾    │  ▊ Assistant  Thinking… · 2s                                                                                          │
+         ● Find my    *      │  ▊   ▸ Thinking                                                                                            · done     │
+   ▢     archived            │  ▊   ▸ Thinking                                                                                            · done     │
+         C…                  │  ▊   ▸ Thinking                                                                                            · done     │
+                             │  ▊   ▸ search_library_rag                                                                               · success     │
+   ▢     Chat 2       *      │  ▊   ▸ Thinking                                                                                            · done     │
+         open                │  ▊   ▸ Thinking                                                                                            · done     │
+                             │  ▊   ▸ Thinking                                                                                            · done     │
+                          ▇  │  ▊   ▾ Thinking                                                                                            · live     │
+ ▼ more — scroll             │  ▊   ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────┐     │
+ ──────────────────────────  │  ▊   │ I will load `archive_recovery:search_archived_conversations` and try to search for "Cedar budget".       │     │
+ Character · No chats   ▸    │  ▊   │                                                                                                          │     │
+ ──────────────────────────  │  ▊   └──────────────────────────────────────────────────────────────────────────────────────────────────────────┘     │
+ Model                  ▸    │  ▊                                                                                                                    │
+ ──────────────────────────▇ │  ▊                                                                                                                    │
+ Agent                  ▸    │  ▊                                                                                                                    │
+ ▼ Details                   │  ▊                                                                                                                    │
+                             │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │  setup
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▴ Status hidden
+
+█  Composer ▾  Menu  ▌Ask, command, or paste task...                                           Send disabled: type a message      Queue         Dictate   Redir
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+P · Ctrl+Q

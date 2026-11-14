@@ -75,6 +75,7 @@ def test_reset_deletes_customized_legacy_key(scratch_config):
     assert authoring.override_state(pid).customized is True
     assert authoring.reset_override(pid) is True
     from tldw_chatbook.Internal_Prompts import get_internal_prompt
+
     assert get_internal_prompt(pid) == CATALOG[pid].default
 
 
@@ -82,13 +83,18 @@ def test_reset_leaves_uncustomized_shipped_legacy_key(scratch_config):
     # A doc-gen user prompt whose legacy [prompts.document_generation.*].prompt
     # equals the shipped default must NOT have that key deleted on reset.
     from tldw_chatbook import config as config_mod
+
     pid = "document_generation.timeline_user"
-    shipped = config_mod.DEFAULT_CONFIG_FROM_TOML["prompts"]["document_generation"]["timeline"]["prompt"]
+    shipped = config_mod.DEFAULT_CONFIG_FROM_TOML["prompts"]["document_generation"][
+        "timeline"
+    ]["prompt"]
     scratch_config(
         "[prompts.document_generation.timeline]\n"
-        f'prompt = {shipped!r}\ntemperature = 0.3\n'
+        f"prompt = {shipped!r}\ntemperature = 0.3\n"
     )
-    assert authoring.override_state(pid).customized is False  # equals shipped -> not customized
+    assert (
+        authoring.override_state(pid).customized is False
+    )  # equals shipped -> not customized
     assert authoring.reset_override(pid) is True
     # the legacy key survives (temperature sibling proves the table is intact)
     tbl = config_mod.get_cli_setting("prompts.document_generation", "timeline", None)

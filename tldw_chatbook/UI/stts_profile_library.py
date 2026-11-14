@@ -2244,9 +2244,7 @@ class STTSProfileLibrary(Widget):
         )
         focused = self.app.focused
         focused_id = None if focused is None else focused.id
-        focus_target = (
-            focused_id if focused_id in _PROFILE_FOCUS_TARGETS else None
-        )
+        focus_target = focused_id if focused_id in _PROFILE_FOCUS_TARGETS else None
         return ProfileLibraryContinuity(
             selected_profile_id=selected_id,
             cursor_row=max(0, min(table.cursor_row, PROFILE_PAGE_SIZE - 1)),

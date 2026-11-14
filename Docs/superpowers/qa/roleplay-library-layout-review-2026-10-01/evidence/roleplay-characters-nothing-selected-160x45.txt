@@ -1,0 +1,45 @@
+                                   ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library │ ⌃4 Roleplay │ ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Roleplay                                                                                                                                                     │
+│ Author the pieces that shape a chat                                                                                                                          │
+│  Ready                                                                                                                                                       │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+Characters — who the AI plays · 28
+ Modes:    Characters    Personas    Dictionaries    Lore
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                                                                                              │
+│ ╭─────────────────────────────────────╮╭────────────────────────────────────────────────────────────────────────────╮┌─────────────────────────────────────┐ │
+│ │  Library                         <  ││                     ▸ Try a test chat (nothing saved)                      ││                                     │ │
+│ │  Search...                          ││                                                                            ││  Inspector                       >  │ │
+│ │                 New                 ││   Pick a character from the list to see it here.                           ││ Selected: none                      │ │
+│ │           New Actor Pack            ││                                                                            ││ Type: -                             │ │
+│ │               Import                ││                                                                            ││ Pick a character or persona to      │ │
+│ │          Import Actor Pack          ││                                                                            ││ start chatting.                     │ │
+│ │              Duplicate              ││                                                                            ││            Manage Buddy             │ │
+│ │             Sort: Name              ││                                                                            ││             Show Buddy              │ │
+│ │              Tag: All               ││                                                                            ││             Close Buddy             │ │
+│ │  Ada (Debugging Partner)            ││                                                                            ││            Disable Buddy            │ │
+│ │  A patient senior engineer who h…   ││                                                                            ││                                     │ │
+│ │  ARIA-7                             ││                                                                            ││                                     │ │
+│ │  A ship AI that has quietly beco…   ││                                                                            ││                                     │ │
+│ │  Brother Anselm                     ││                                                                            ││                                     │ │
+│ │  A monastery brewer with strong … ▁ ││                                                                            ││                                     │ │
+│ │  Captain Isolde Varga               ││                                                                            ││                                     │ │
+│ │  Captain Isolde Varga commands t…   ││                                                                            ││                                     │ │
+│ │  Chef Auguste                       ││                                                                            ││                                     │ │
+│ │  A temperamental Parisian chef w…   ││                                                                            ││                                     │ │
+│ │  Coach Pemberton                    ││                                                                            ││                                     │ │
+│ │  A relentlessly upbeat running c…   ││                                                                            ││                                     │ │
+│ │  Default Assistant                  ││                                                                            ││                                     │ │
+│ │  The built-in Default Assistant …   ││                                                                            ││                                     │ │
+│ │  Detective Rosa Calderón            ││                                                                            ││                                     │ │
+│ │  A sharp, sardonic homicide dete…   ││                                                                            ││                                     │ │
+│ │  Dungeon Master Vex                 ││                                                                            ││                                     │ │
+│ │  A theatrical game master who ru…   ││                                                                            ││                                     │ │
+│ │                                     ││                                                                            ││                                     │ │
+│ ╰─────────────────────────────────────╯╰────────────────────────────────────────────────────────────────────────────╯└─────────────────────────────────────┘ │
+│                                                                                                                                                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  ctrl+n new | ctrl+f search | f6 pane | c/p/d/l mode | [ ] mode | s sort | F1 help · Ctrl+P palette · Ctrl+Q quit

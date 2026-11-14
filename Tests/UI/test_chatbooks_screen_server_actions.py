@@ -267,6 +267,91 @@ async def test_server_import_action_uses_server_mode(monkeypatch):
         assert recorded["mode"] == "server"
 
 
+@pytest.mark.asyncio
+async def test_import_action_opens_the_wizard_without_crashing_the_app(monkeypatch):
+    """TASK-34000.19 fix round 1 (found live, 2026-10-22): pressing ``i`` on
+    the Chatbooks screen -- the user's only route to the import wizard --
+    ended the app with ``NoActiveWorker``. ``action_import_chatbook`` awaited
+    ``push_screen(wizard, wait_for_dismiss=True)`` from a plain action, and
+    Textual 8 pushes the screen first and then refuses the wait outside a
+    worker, so the wizard appeared for one frame and the app exited. The
+    action must push the wizard and return; the result reaches the window
+    through the push callback."""
+    from tldw_chatbook.UI.Wizards.ChatbookImportWizard import ChatbookImportWizard
+
+    async def no_refresh(self):
+        self.chatbooks = []
+
+    monkeypatch.setattr(ChatbooksWindowImproved, "_refresh_chatbooks", no_refresh)
+
+    class ChatbooksWindowApp(ConsolidatedCSSApp):
+        def compose(self) -> ComposeResult:
+            yield ChatbooksWindowImproved(self)
+
+    app = ChatbooksWindowApp()
+    async with app.run_test() as pilot:
+        window = app.query_one(ChatbooksWindowImproved)
+        await window.action_import_chatbook()
+        await pilot.pause()
+        assert isinstance(app.screen, ChatbookImportWizard), type(app.screen)
+        assert app.is_running
+        app.screen.dismiss(None)
+        await pilot.pause()
+        assert not isinstance(app.screen, ChatbookImportWizard)
+        assert app.is_running
+
+
+@pytest.mark.asyncio
+async def test_browse_for_chatbook_hands_the_chosen_file_to_the_step(
+    monkeypatch, tmp_path
+):
+    """TASK-34000.19 fix round 1 (found live, 2026-10-22): the wizard's
+    "Browse for Chatbook" step awaited ``push_screen(dialog,
+    wait_for_dismiss=True)`` from a button handler. Textual 8 raised
+    ``NoActiveWorker`` after pushing the dialog; the step's own ``except``
+    turned that into an "Error selecting file" toast, so the dialog showed,
+    the user picked a file, and nothing was selected -- Next stayed
+    disabled and the import could never start. The chosen path must reach
+    ``selected_file`` through the push callback."""
+    from textual.screen import Screen
+
+    from tldw_chatbook.UI.Wizards import ChatbookImportWizard as wizard_module
+    from tldw_chatbook.UI.Wizards.ChatbookImportWizard import FileSelectionStep
+
+    chosen = tmp_path / "bundle.zip"
+    chosen.write_bytes(b"PK\x05\x06" + b"\x00" * 18)  # an empty zip is enough
+
+    class FakeFileOpen(Screen):
+        def __init__(self, *args, **kwargs):
+            super().__init__()
+
+        def on_mount(self) -> None:
+            self.dismiss(str(chosen))
+
+    monkeypatch.setattr(wizard_module, "EnhancedFileOpen", FakeFileOpen)
+
+    async def no_refresh(self):
+        self.chatbooks = []
+
+    monkeypatch.setattr(ChatbooksWindowImproved, "_refresh_chatbooks", no_refresh)
+
+    class ChatbooksWindowApp(ConsolidatedCSSApp):
+        def compose(self) -> ComposeResult:
+            yield ChatbooksWindowImproved(self)
+
+    app = ChatbooksWindowApp()
+    async with app.run_test() as pilot:
+        window = app.query_one(ChatbooksWindowImproved)
+        await window.action_import_chatbook()
+        await pilot.pause()
+        step = app.screen.query_one(FileSelectionStep)
+        await step._browse_for_file()
+        await pilot.pause()
+        await pilot.pause()
+        assert step.selected_file == chosen, step.selected_file
+        assert app.is_running
+
+
 # -- task-637: mouse-capture guard for widget-level (non-screen) recompose --
 # `chatbooks` was a `reactive([], recompose=True)` field when this guard
 # landed; task-671 dropped the recompose flag (the deferred recompose wiped

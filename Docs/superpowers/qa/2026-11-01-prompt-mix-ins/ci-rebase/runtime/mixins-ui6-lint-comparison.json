@@ -1,0 +1,12 @@
+{
+  "Tests/Chat/test_console_prompt_mixin_admission.py": {
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  "tldw_chatbook/Chat/console_prompt_mixin_service.py": {
+    "before": 0,
+    "after": 0,
+    "added": []
+  }
+}

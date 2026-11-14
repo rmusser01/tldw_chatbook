@@ -242,9 +242,7 @@ def test_revoking_an_unheld_session_approval_reports_false(tmp_path):
     # "nothing to revoke here", not a silent success.
     assert service.revoke_session_approval("local:docs", "fetch") is False
     assert service.revoke_session_approval("local:docs", "search") is False
-    assert service.is_session_approved(
-        "local:docs", "search", profile_id="research"
-    )
+    assert service.is_session_approved("local:docs", "search", profile_id="research")
 
 
 def test_session_approval_revalidates_profile_digest_under_fence(tmp_path):
@@ -767,6 +765,7 @@ def test_gate_tool_test_by_key_does_not_emit_audit_record(tmp_path):
 # -- task-2838: local agent tools resolve through the SAME shared store -------
 
 
+@pytest.mark.bootstrap_profile
 def test_local_agent_tool_allow_round_trips_between_console_and_hub(tmp_path):
     """A Console "Always allow" write resolves identically hub-side.
 
@@ -798,6 +797,7 @@ def test_local_agent_tool_allow_round_trips_between_console_and_hub(tmp_path):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_local_agent_server_default_allow_is_risk_floored_for_mutates_tools(
     tmp_path,
 ):
@@ -830,6 +830,7 @@ def test_local_agent_server_default_allow_is_risk_floored_for_mutates_tools(
     assert explicit.risk_floored is False
 
 
+@pytest.mark.bootstrap_profile
 def test_obsolete_todo_write_allow_does_not_authorize_replacement_tools(tmp_path):
     """The retired broad grant is inert; only inherited read tools stay allowed."""
     service, _store = _service(tmp_path)
@@ -874,6 +875,7 @@ def test_obsolete_todo_write_allow_does_not_authorize_replacement_tools(tmp_path
         assert state.risk_floored is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("tool_name", _TODO_TOOL_NAMES)
 def test_todo_replacement_tool_allow_requires_current_definition_hash(
     tmp_path, tool_name
@@ -1323,7 +1325,13 @@ async def test_prepared_local_directory_chain_identity_change_is_stale(
     monkeypatch.setattr(
         local_server_tools, "resolve_server_workspace_root", lambda: tmp_path
     )
-    monkeypatch.setattr(service_module, "get_cli_setting", lambda *a, **k: True)
+    monkeypatch.setattr(
+        service_module,
+        "get_cli_setting",
+        lambda section, key, default=None: (
+            True if (section, key) == ("console", "local_tools_enabled") else default
+        ),
+    )
     service.set_tool_state(tool.server_key, tool.name, "allow", tool=tool)
     local_handler = AsyncMock(return_value={"should": "not run"})
     nonlocal_handler = AsyncMock(return_value={"should": "not run"})
@@ -1607,3 +1615,175 @@ async def test_definition_change_downgrades_stored_allow_without_dispatch(tmp_pa
     assert result.refreshed_preview is not None
     assert result.refreshed_preview.rendered_gate == "ask"
     service.test_hub_tool.assert_not_awaited()
+
+
+# -- exact-input grant renewal and owner-confirmed feedback (TASK-34569 AC13) --
+def _remembering_observations(seen):
+    from tldw_chatbook.Agents.approval_observation import (
+        ApprovalObservationIdentity,
+        approval_observation_scope,
+    )
+
+    return approval_observation_scope(
+        ApprovalObservationIdentity("session", "run", "round", 1, "call"), seen.append
+    )
+
+
+@pytest.mark.parametrize("profile_id", ["default", "Writer"])
+def test_remember_exact_inputs_renews_same_args_for_changed_definition(
+    tmp_path, profile_id
+):
+    service, _local_store = _service(tmp_path)
+    old_tool = _tool(description="Search docs before definition change")
+    current_tool = _tool(description="Search docs after definition change")
+    args = {"query": "original needle", "limit": 3}
+    store = service.permission_store
+    assert store is not None
+    assert (
+        store.add_tool_arg_rule(
+            old_tool.server_key,
+            old_tool.name,
+            args=args,
+            definition_hash=definition_hash(
+                old_tool.description, old_tool.input_schema
+            ),
+            profile_id=profile_id,
+        )
+        is None
+    )
+    assert not service.arg_rule_allows_call(current_tool, args, profile_id=profile_id)
+    seen = []
+    with _remembering_observations(seen):
+        assert (
+            service.add_tool_arg_rule(
+                current_tool.server_key,
+                current_tool.name,
+                args=args,
+                tool=current_tool,
+                profile_id=profile_id,
+            )
+            is None
+        )
+    assert service.arg_rule_allows_call(current_tool, args, profile_id=profile_id)
+    assert not service.arg_rule_allows_call(old_tool, args, profile_id=profile_id)
+    rules = store.load()["profiles"][profile_id]["servers"][current_tool.server_key][
+        "tools"
+    ][current_tool.name]["arg_rules"]
+    assert len(rules) == 1
+    assert rules[0]["definition_hash"] == definition_hash(
+        current_tool.description, current_tool.input_schema
+    )
+    assert args == {"query": "original needle", "limit": 3}
+    assert [(event.outcome, event.actual_scope) for event in seen] == [
+        ("applied", "allow_matching")
+    ]
+
+
+@pytest.mark.parametrize("server_key", ["local:demo", BUILTIN_TOOL_SERVER_KEY])
+def test_remember_exact_inputs_valid_rule_is_truthful_noop(
+    tmp_path, monkeypatch, server_key
+):
+    service, _local_store = _service(tmp_path)
+    tool = _tool(server_key=server_key)
+    args = {"query": "same exact input"}
+    service.add_tool_arg_rule(server_key, tool.name, args=args, tool=tool)
+    store = service.permission_store
+    assert store is not None
+    before = store.path.read_bytes()
+
+    def unexpected_write(_payload):
+        raise AssertionError("valid current exact rule must remain a no-op")
+
+    monkeypatch.setattr(store, "_save_locked", unexpected_write)
+    seen = []
+    with _remembering_observations(seen):
+        assert (
+            service.add_tool_arg_rule(server_key, tool.name, args=args, tool=tool)
+            is None
+        )
+    assert store.path.read_bytes() == before
+    assert service.arg_rule_allows_call(tool, args)
+    assert [(event.outcome, event.actual_scope) for event in seen] == [
+        ("applied", "allow_matching")
+    ]
+
+
+@pytest.mark.parametrize("other_allow", ["glob", "parent"])
+def test_remember_exact_inputs_requires_requested_profile_exact_confirmation(
+    tmp_path, monkeypatch, other_allow
+):
+    service, _local_store = _service(tmp_path)
+    tool = _tool(description="Current definition")
+    args = {"query": "needle"}
+    store = service.permission_store
+    assert store is not None
+    if other_allow == "parent":
+        service.add_tool_arg_rule(tool.server_key, tool.name, args=args, tool=tool)
+        store.ensure_profile("Writer")
+    else:
+        store.add_tool_arg_rule(
+            tool.server_key,
+            tool.name,
+            args=args,
+            definition_hash=definition_hash("Previous definition", tool.input_schema),
+            profile_id="Writer",
+        )
+        payload = store.load()
+        rules = payload["profiles"]["Writer"]["servers"][tool.server_key]["tools"][
+            tool.name
+        ]["arg_rules"]
+        rules.append(
+            {
+                "field": "query",
+                "pattern": "need*",
+                "definition_hash": definition_hash(tool.description, tool.input_schema),
+            }
+        )
+        store.save(payload)
+    assert service.arg_rule_allows_call(tool, args, profile_id="Writer")
+    # An old/custom void no-op is not a receipt for the requested exact write.
+    monkeypatch.setattr(store, "add_tool_arg_rule", lambda *_args, **_kwargs: None)
+    seen = []
+    with _remembering_observations(seen):
+        assert (
+            service.add_tool_arg_rule(
+                tool.server_key, tool.name, args=args, tool=tool, profile_id="Writer"
+            )
+            is None
+        )
+    assert [
+        (event.outcome, event.error_code, event.actual_scope) for event in seen
+    ] == [("not_applied", "authority_unavailable", None)]
+
+
+def test_remember_exact_inputs_writer_failure_preserves_error_and_stale_rule(
+    tmp_path, monkeypatch
+):
+    service, _local_store = _service(tmp_path)
+    old_tool = _tool(description="Previous definition")
+    current_tool = _tool(description="Current definition")
+    args = {"query": "same original input"}
+    service.add_tool_arg_rule(
+        old_tool.server_key, old_tool.name, args=args, tool=old_tool
+    )
+    store = service.permission_store
+    assert store is not None
+    before = store.path.read_bytes()
+    original_error = OSError("synthetic durable writer refusal")
+
+    def refuse_write(_payload):
+        raise original_error
+
+    monkeypatch.setattr(store, "_save_locked", refuse_write)
+    seen = []
+    with _remembering_observations(seen), pytest.raises(OSError) as caught:
+        service.add_tool_arg_rule(
+            current_tool.server_key, current_tool.name, args=args, tool=current_tool
+        )
+    assert caught.value is original_error
+    assert store.path.read_bytes() == before
+    assert service.arg_rule_allows_call(old_tool, args)
+    assert not service.arg_rule_allows_call(current_tool, args)
+    assert [(event.outcome, event.error_code) for event in seen] == [
+        ("failed", "writer_failed")
+    ]

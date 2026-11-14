@@ -1,0 +1,82 @@
+{
+  "production_source_commit": "2a1711ea602500a19a0bbf74bc9f2ce206a0dfa9",
+  "dev_base": "139333920d2a87cb011e4f3aa5f8319b59c44a5c",
+  "matched_production_files_both_wheels": 54,
+  "pocket_tts_version": "3.3.0",
+  "voice": "alba",
+  "language": "english_2026-09",
+  "endpoint": "http://127.0.0.1:18765/tts",
+  "output_device": "MacBook Pro Speakers",
+  "duration_seconds": 5.4,
+  "sample_rate": 24000,
+  "source_and_device_wav_identical": true,
+  "source_wav_sha256": "4f9772104c9b387deb7e854dd852150a10c2f8ccdbbfb5a5124553d4245ace64",
+  "pcm_sha256": "79dd5895e0d51d028c9a326a95a3197cd176bbab02d285a6f12dea9ebf9e0510",
+  "natural_completion_after_source_dac_ms": 25.194,
+  "observed_mouth_states": [
+    "open",
+    "rest",
+    "small"
+  ],
+  "http_stream_chunks": 39,
+  "app_adapter_streaming": false,
+  "controls": {
+    "stop_ack": true,
+    "stop_pending_tail_seconds_approx": 0.4,
+    "stop_at": 1172538.99254325,
+    "replacement_retired_old": true,
+    "conversation_switch_retired_voice": true
+  },
+  "hands_free": {
+    "utterances": 2,
+    "failures": 0,
+    "next_sentence_after_previous_tail": true,
+    "listening_intent_after_final_tail": true,
+    "microphone_hardware_exercised": false,
+    "events": [
+      {
+        "type": "ModeChanged",
+        "state": "listening",
+        "at": 1172540.43541575
+      },
+      {
+        "type": "RequestStopAndSend",
+        "state": null,
+        "at": 1172540.4354215
+      },
+      {
+        "type": "ModeChanged",
+        "state": "awaiting_reply",
+        "at": 1172540.435422875
+      },
+      {
+        "type": "ModeChanged",
+        "state": "speaking",
+        "at": 1172540.435483041
+      },
+      {
+        "type": "OpenCapture",
+        "state": null,
+        "at": 1172546.180976208
+      },
+      {
+        "type": "ModeChanged",
+        "state": "listening",
+        "at": 1172546.18098075
+      }
+    ]
+  },
+  "guarded_sample": {
+    "live_pocket": true,
+    "disclosure": "Send the fixed preview text to OpenAI (http://127.0.0.1:18765) using this character's voice. This sample creates no message or automatic speech preference.",
+    "ready_after_playback": true
+  },
+  "live_image_qualified": false,
+  "live_image_requests": 0,
+  "physical_acoustic_loopback": false,
+  "microphone_stt_hardware_exercised": false,
+  "independent_human_audition": false,
+  "automated_speech_content_verification": "Offline faster-whisper tiny.en, source and device transcripts exact including final word; see pocket-transcripts.json",
+  "patch_execution": "Apply pocket-probe.patch in a temporary copy, then execute with __file__ set to the original Pocket probe path so runpy resolves its adjacent helper. Absolute UAT output/installed paths are intentional. Preserve original historical evidence.",
+  "raw_local_artifacts": "/private/tmp/portrait-3244-live-pocket-release"
+}

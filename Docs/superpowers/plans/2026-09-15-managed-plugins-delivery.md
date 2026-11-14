@@ -42,7 +42,9 @@ Reason: Existing accepted ADRs govern this implementation; no additional archite
 Recommended serial order is the table below. Tasks on separate branches may run
 independently only when their declared dependencies and file ownership permit it;
 parallel task execution is an execution choice, not part of this planning run.
-All implementation tasks remain **To Do**. This commit implements no runtime feature.
+The original planning commit left all implementation tasks **To Do**. Current
+status lives in Backlog. The portable-parser follow-up below runs after H5 and
+before M1.
 
 ## Atomic Backlog tasks
 
@@ -61,6 +63,7 @@ All implementation tasks remain **To Do**. This commit implements no runtime fea
 | H3 | [TASK-32678](../../../backlog/tasks/task-32678%20-%20Integrate-hook-input-transformations-and-post-event-barriers.md) — Integrate hook input transformations and post-event barriers | H2 |
 | H4 | [TASK-32679](../../../backlog/tasks/task-32679%20-%20Wire-session-child-and-compaction-hook-boundaries.md) — Wire session child and compaction hook boundaries | H3 |
 | H5 | [TASK-32680](../../../backlog/tasks/task-32680%20-%20Schedule-bounded-Stop-continuations-and-teardown.md) — Schedule bounded Stop continuations and teardown | H4 |
+| P1 | [TASK-32747](../../../backlog/tasks/task-32747%20-%20Validate-portable-MCP-headers-and-URL-delimiters.md) — Validate portable MCP headers and URL delimiters | F1, H5 |
 | M1 | [TASK-32681](../../../backlog/tasks/task-32681%20-%20Preserve-typed-MCP-tool-results-through-client-services.md) — Preserve typed MCP tool results through client services | Approved design |
 | M2 | [TASK-32682](../../../backlog/tasks/task-32682%20-%20Add-qualified-direct-Streamable-HTTP-MCP-transport.md) — Add qualified direct Streamable HTTP MCP transport | M1 |
 | M3 | [TASK-32683](../../../backlog/tasks/task-32683%20-%20Bind-MCP-credentials-to-stable-reviewed-authority.md) — Bind MCP credentials to stable reviewed authority | M2, F3 |
@@ -151,8 +154,8 @@ claim a check passed. No full-suite run is authorized by this plan.
 
 The user accepted the amended written design by asking to continue. ADR-162 and
 ADR-163 now record accepted implementation direction; implementation still needs
-the evidence above. The design task closes when the plans/task graph and document
-checks pass; the 25 implementation tasks stay open.
+the evidence above. At planning handoff, the design task covered the plans/task graph and document
+checks; implementation completion is tracked separately in Backlog.
 
 Task IDs were allocated through Backlog CLI after fresh origin refs plus a scan
 of reachable task paths and all available worktrees. The CLI's lower local offer
@@ -167,3 +170,41 @@ Execution may use a fresh subagent per task with review gates or inline task-by-
 execution. Both start with F1, preserve dependency order and use isolated worktrees
 at execution time. No extra feature-design approval is needed for these accepted
 contracts; material departures require updating the affected specification/ADR.
+
+## Task 26: P1 — Correct portable MCP header and URL validation
+
+**Execution order:** after H5 / Task13 closes and before M1 / Task14. The original25 task numbers and extracted briefs remain unchanged.
+
+**Backlog:** TASK-32747. **Requires:** F1's native inspector; use the completed H5 commit as the execution BASE. Do not add a forward-ID dependency to existing lower-ID tasks.
+
+**Deliverable:** enforce the confirmed Agent Plugins1.0.0 remote-MCP syntax requirements during package inspection, while preserving valid siblings and explicitly documenting the difference between parser compatibility and runtime qualification.
+
+**ADR required:** no.
+**ADR path:** backlog/decisions/162-managed-agent-plugins.md.
+**Reason:** a routine validation correction implementing the accepted portable-core contract; no new storage, runtime, credential, permission or ownership decision.
+
+**Files:**
+
+- Modify: `tldw_chatbook/Plugins/schemas.py`.
+- Modify: `Tests/Plugins/test_native_inspection.py`.
+- Modify: `tldw_chatbook/Plugins/README.md`.
+- Optional factual provenance amendment only: `Tests/Plugins/fixtures/PROVENANCE.md`.
+- Read-only regression: `Tests/Plugins/test_package_files.py`.
+
+**Binding behavior:**
+
+1. Reject case-insensitive duplicate header names and values containing forbidden ASCII control characters, DEL or leading/trailing SP/HTAB. Empty values and values with interior SP/HTAB remain valid and unchanged.
+2. Reject userinfo and fragment components by presence, including empty delimiters. Preserve valid literal `@` in the URL path and encoded `#` in path/query.
+3. Each invalid remote server remains isolated; actual `inspect_package` tests must retain a valid remote sibling and a portable skill. Preserve discovery locations, unknown-field behavior, dependency blockers and materialization safety.
+4. Do not trim, expand, truncate or re-encode header values. RFC9110 obs-text defines octets and does not determine arbitrary JSON Unicode's wire encoding. Actual transport/configuration owners settle that policy before runtime qualification.
+5. Document existing stricter acquisition and HTTP-loopback host policies, optional unsupported legacy SSE versus Streamable HTTP SSE responses, and the actual evidence boundary. Do not claim complete conformance from parser tests.
+
+**Steps:**
+
+1. Put the freshly filed Backlog task In Progress and record its implementation plan through CLI before source changes. Read the accepted native spec/ADR and `agent-plugins-standard-reconciliation.md`; the primary-source comparison is complete and needs no duplicate research.
+2. Establish behavioral RED through `inspect_package` using the invalid classes and same-entry valid controls above. Resolve fixture/import problems before production edits. The controller supplies exact BASE snapshots and authorized paths.
+3. Make the smallest validation correction and update authoring/qualification documentation. Any additional source path or runtime-contract change must be recorded before implementation.
+4. Run exactly `Tests/Plugins/test_native_inspection.py` and `Tests/Plugins/test_package_files.py` with worktree/private-profile/network-refusal/null-keyring provenance. No full suite or external-server execution. Apply formatter changes before final qualification, retain outputs and frozen hashes, and run changed-file static/whitespace checks.
+5. Controller verifies the report and commits exact files, obtains independent spec/quality review, resolves the task gate, then checks all ACs and records Done/notes through CLI. Continue original Task14 afterward.
+
+Primary sources: [Agent Plugins1.0.0 specification](https://agent-plugins.org/specification), [versioned MCP schema](https://agent-plugins.org/schemas/1.0.0/mcp.schema.json), and [RFC9110 field values](https://www.rfc-editor.org/rfc/rfc9110.html#section-5.5).

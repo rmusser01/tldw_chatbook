@@ -345,6 +345,13 @@ def test_every_durable_installed_adapter_has_a_named_selectable_group():
         "runtime.scheduler_heartbeat",
         "notes.sync_state",
         "diagnostics.logs",
+        # TASK-39110: the project-index cache is an installed exclusion (this
+        # set missed it on dev, so the loop stopped there); local-only drafts
+        # are excluded; the repository has no capture yet, so it stays an
+        # explicit unsupported row with no group.
+        "db.workspace_project_index",
+        "personal_context.interview_drafts",
+        "personal_context.repository",
     }
     for adapter in install_adapters():
         group_id = _api().group_for_owner(adapter.owner_id)

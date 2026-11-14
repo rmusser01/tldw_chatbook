@@ -87,8 +87,17 @@ def core_store(request, tmp_path):
         library_ingest_jobs=LibraryIngestJobsDB,
     )
     name = request.param
+    historical_prompt = name == "prompts-v5"
+    if historical_prompt:
+        name = "prompts"
     path = tmp_path / (name + ".db")
-    owner = classes[name](path, "recovery-fixture")
+    if historical_prompt:
+        from unittest.mock import patch
+
+        with patch.object(PromptsDatabase, "_CURRENT_SCHEMA_VERSION", 5):
+            owner = classes[name](path, "recovery-fixture")
+    else:
+        owner = classes[name](path, "recovery-fixture")
     conn = (
         owner.get_connection()
         if name in ("chachanotes", "media", "prompts")
@@ -125,13 +134,59 @@ def test_schema_policy_matches_installed_store(core_store):
     policy = adapter.schema_policy()
     assert policy is not None
     assert policy.versions == (
-        (owner._CURRENT_SCHEMA_VERSION, 4)
+        (owner._CURRENT_SCHEMA_VERSION, 4, 5)
         if name == "prompts"
+        else (owner._CURRENT_SCHEMA_VERSION, 85, 84, 83, 82, 81, 80, 79, 78, 77, 76, 75)
+        if name == "chachanotes"
+        else (5, 4)
+        if name == "library_collections"
         else (owner._CURRENT_SCHEMA_VERSION,)
     )
     assert policy.schema_sql[0] == (owner._CURRENT_SCHEMA_VERSION, actual)
-    assert len(policy.schema_sql) == (2 if name in {"chachanotes", "prompts"} else 1)
-    if name != "prompts":
+    assert len(policy.schema_sql) == (
+        46
+        if name == "chachanotes"
+        else 3
+        if name == "prompts"
+        else 3
+        if name == "library_collections"
+        else 1
+    )
+    if name == "chachanotes":
+        from tldw_chatbook.DB.recovery_core_schema import (
+            CHACHANOTES_BROWSE_V79_TO_V80_SQL,
+            CHACHANOTES_CANVAS_V81_TO_V82_SQL,
+            CHACHANOTES_FLEET_V77_TO_V78_SQL,
+            CHACHANOTES_NATIVE_V76_TO_V77_SQL,
+            CHACHANOTES_PORTRAIT_V82_TO_V83_SQL,
+            CHACHANOTES_REGIONS_V83_TO_V84_SQL,
+            CHACHANOTES_RULES_V80_TO_V81_SQL,
+            CHACHANOTES_SARGABLE_V78_TO_V79_SQL,
+            CHACHANOTES_V86_SCHEMAS,
+            CHACHANOTES_ARCHIVE_V84_TO_V85_SQL,
+            CHACHANOTES_MIXINS_V85_TO_V86_SQL,
+        )
+
+        assert policy.schema_sql[-2:] == tuple(
+            (86, schema) for schema in CHACHANOTES_V86_SCHEMAS[2:]
+        )
+        assert policy.migration_steps == (
+            (76, 77, CHACHANOTES_NATIVE_V76_TO_V77_SQL),
+            (77, 78, CHACHANOTES_FLEET_V77_TO_V78_SQL),
+            (78, 79, CHACHANOTES_SARGABLE_V78_TO_V79_SQL),
+            (79, 80, CHACHANOTES_BROWSE_V79_TO_V80_SQL),
+            (80, 81, CHACHANOTES_RULES_V80_TO_V81_SQL),
+            (81, 82, CHACHANOTES_CANVAS_V81_TO_V82_SQL),
+            (82, 83, CHACHANOTES_PORTRAIT_V82_TO_V83_SQL),
+            (83, 84, CHACHANOTES_REGIONS_V83_TO_V84_SQL),
+            (84, 85, CHACHANOTES_ARCHIVE_V84_TO_V85_SQL),
+            (85, 86, CHACHANOTES_MIXINS_V85_TO_V86_SQL),
+        )
+    elif name == "library_collections":
+        from tldw_chatbook.DB.recovery_core_schema import COLLECTIONS_V4_TO_V5_SQL
+
+        assert policy.migration_steps == ((4, 5, COLLECTIONS_V4_TO_V5_SQL),)
+    elif name != "prompts":
         assert policy.migration_steps == ()
 
 
@@ -159,7 +214,7 @@ def adapter_for(name):
     )
 
 
-@pytest.mark.parametrize("core_store", ["prompts"], indirect=True)
+@pytest.mark.parametrize("core_store", ["prompts-v5"], indirect=True)
 @pytest.mark.parametrize("version", [4, 5])
 def test_prompt_reader_accepts_current_and_retained_schema(core_store, version):
     from threading import Event
@@ -189,7 +244,7 @@ def test_prompt_reader_accepts_current_and_retained_schema(core_store, version):
     assert source.read_bytes() == before
 
 
-@pytest.mark.parametrize("core_store", ["prompts"], indirect=True)
+@pytest.mark.parametrize("core_store", ["prompts-v5"], indirect=True)
 @pytest.mark.parametrize("version,stamp", [(4, 5), (5, 4)])
 def test_prompt_schema_rejects_other_supported_version_stamp(
     core_store, version, stamp
@@ -283,7 +338,7 @@ def seed_domain(name, owner):
         )
         note = owner.add_note("nebula note", "Soft deleted durable note")
         owner.soft_delete_note(note, 1)
-        owner.create_flashcard_asset(
+        owner.learning.create_flashcard_asset(
             original_filename="asset.bin",
             mime_type="application/octet-stream",
             content=b"\x00asset\xff",
@@ -699,7 +754,9 @@ def test_discovery_custom_paths_and_explicit_core_dependencies(tmp_path):
         assert item.path == Path(config["database"][adapter.setting_name])
         assert item.logical_id == "profile:selected:" + adapter.owner_id
         assert item.status == (
-            "unavailable" if adapter.owner_id == "db.chachanotes.primary" else "included"
+            "unavailable"
+            if adapter.owner_id == "db.chachanotes.primary"
+            else "included"
         )
         assert "profile:selected:config" in item.dependencies
         assert not classify_entries((item,)).complete
@@ -1092,11 +1149,12 @@ def test_dependency_validation_scans_each_real_peer_once_per_invocation(tmp_path
     import sys
     from collections import Counter
     from contextlib import closing
-    from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
-    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
-    from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
+
     from tldw_chatbook.Backup_Recovery.models import StorageItem
     from tldw_chatbook.DB import private_sqlite
+    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+    from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
+    from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
 
     stores = {
         "db.library_collections": LibraryCollectionsDB(tmp_path / "collections.db"),

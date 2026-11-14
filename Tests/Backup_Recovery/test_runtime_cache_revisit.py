@@ -9,7 +9,7 @@ import asyncio,sys,threading,time
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Backup_Recovery import runtime_maintenance as maintenance
 from tldw_chatbook.Backup_Recovery import storage_admission as storage
-from tldw_chatbook.Backup_Recovery.participants import _core_operation
+from tldw_chatbook.Backup_Recovery.participants import core_operation
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from pathlib import Path
 
@@ -19,7 +19,7 @@ participant=db._maintenance_participant
 ready=threading.Event();release=threading.Event();finished=threading.Event();errors=[]
 def worker():
  try:
-  with _core_operation(db):
+  with core_operation(db):
    foreign=db.get_connection()
    ready.set()
    assert release.wait(5)

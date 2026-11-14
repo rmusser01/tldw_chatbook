@@ -1,0 +1,59 @@
+{
+  "head": "96cae7eec00473bbfb5687ccfd0685eba2785add",
+  "qualified_observation": "real accepted key and canonical sample witnessed before release; old file completion overwrites both",
+  "cases": [
+    {
+      "later": false,
+      "before_release": "seed",
+      "visible": "selected file content",
+      "canonical": "selected file content",
+      "source": {
+        "kind": "file",
+        "name": "selected.txt"
+      },
+      "child_junit": {
+        "tests": 1,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      "xml": ".test-tmp\\task-36360-36363\\post3228-chunking-merged-02-isolated\\pytest\\test_pending_sample_file_keeps0\\private-profile-process\\pytest.xml"
+    },
+    {
+      "later": true,
+      "before_release": "xseed",
+      "visible": "selected file content",
+      "canonical": "selected file content",
+      "source": {
+        "kind": "file",
+        "name": "selected.txt"
+      },
+      "child_junit": {
+        "tests": 1,
+        "errors": 1,
+        "failures": 1,
+        "skipped": 0
+      },
+      "xml": ".test-tmp\\task-36360-36363\\post3228-chunking-merged-02-isolated\\pytest\\test_pending_sample_file_keeps1\\private-profile-process\\pytest.xml"
+    }
+  ],
+  "limits": [
+    "Ordinary control passes with clean child teardown. Later-edit assertion fails at the product oracle and also reports native-worker teardown uncertainty. Do not claim a clean all-green/expected-red-only batch.",
+    "Actual file_operation after explicit private fixture path choice; native picker gesture and natural race frequency were not measured.",
+    "Factory-hosted real route/coordinator/SQLite; unrelated service seams remain bounded by the existing app factory."
+  ],
+  "additional_runs": [
+    {
+      "run": "post3228-chunking-merged-01",
+      "disposition": "ordinary control teardown error; retained, not qualified as clean control"
+    },
+    {
+      "run": "post3228-chunking-merged-03-observation",
+      "disposition": "current-outcome body assertions pass; later-edit child still has teardown error; not a clean observation pass"
+    },
+    {
+      "run": "post3228-chunking-merged-04-settled",
+      "disposition": "attempted all-worker drain raises WorkerCancelled and masks the intended final exception; excluded from product verdict"
+    }
+  ]
+}

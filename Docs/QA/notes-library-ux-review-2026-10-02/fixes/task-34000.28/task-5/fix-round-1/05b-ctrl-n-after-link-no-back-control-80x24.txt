@@ -1,0 +1,24 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 S  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+  N    N   Empty note — type to keep it · Next: Start typing.
+  a    o
+  v    t    ‹ Back to list    Untitled                        Library notes
+       e   In the Library database only — no file on disk
+       s   Empty note — type to keep it
+              Edit     Preview     Info
+--->          Save     Use in Console     Discard
+           Title     Untitled
+     --->  Keywords  Comma-separated keywords
+           Body
+          ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+--->      ▊                                                                    ▎
+          ▊                                                                    ▎
+          ▊                                                                    ▎
+          ▊                                                                    ▎
+          ▊                                                                    ▎
+          ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+                                                                  0 words · 1:1
+  typing in field | esc notes | F1 · F6 · Ctrl+P · Ctrl+Q

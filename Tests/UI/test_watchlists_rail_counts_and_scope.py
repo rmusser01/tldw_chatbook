@@ -91,9 +91,10 @@ async def test_the_rail_says_what_its_numbers_count():
         assert "unread" in str(legend.renderable).lower(), (
             "the rail must say what the number after each node counts"
         )
-        assert "unread" in str(
-            screen.query_one("#wl-tree-node-all", Button).tooltip
-        ).lower()
+        assert (
+            "unread"
+            in str(screen.query_one("#wl-tree-node-all", Button).tooltip).lower()
+        )
 
 
 def test_the_unread_phrase_covers_zero_one_and_many():
@@ -165,9 +166,9 @@ async def test_a_check_that_produces_items_updates_the_rail_counts():
                 "2"
             ):
                 break
-        assert _rail_label(
-            screen, f"wl-tree-node-watchlist-{watchlist_id}"
-        ).endswith("2"), "the rail node itself must show the new count"
+        assert _rail_label(screen, f"wl-tree-node-watchlist-{watchlist_id}").endswith(
+            "2"
+        ), "the rail node itself must show the new count"
 
 
 @pytest.mark.asyncio
@@ -240,9 +241,7 @@ async def test_selecting_a_watchlist_scope_narrows_the_sources_table():
             unassigned_id,
         }, "precondition: the default 'all' scope shows both"
 
-        screen._apply_tree_scope(
-            TreeScope(kind="watchlist", watchlist_id=watchlist_id)
-        )
+        screen._apply_tree_scope(TreeScope(kind="watchlist", watchlist_id=watchlist_id))
         await pilot.pause()
         await pilot.pause()
 
@@ -294,9 +293,7 @@ async def test_a_source_reload_under_a_scope_stays_scoped():
         screen = await _mounted(host, pilot)
         screen.active_section = "sources"
         await pilot.pause(0.3)
-        screen._apply_tree_scope(
-            TreeScope(kind="watchlist", watchlist_id=watchlist_id)
-        )
+        screen._apply_tree_scope(TreeScope(kind="watchlist", watchlist_id=watchlist_id))
         await pilot.pause()
 
         await screen._load_sources()
@@ -328,9 +325,7 @@ async def test_assigning_a_source_fills_the_scoped_table_it_now_belongs_to():
         screen = await _mounted(host, pilot)
         screen.active_section = "sources"
         await pilot.pause(0.3)
-        screen._apply_tree_scope(
-            TreeScope(kind="watchlist", watchlist_id=watchlist_id)
-        )
+        screen._apply_tree_scope(TreeScope(kind="watchlist", watchlist_id=watchlist_id))
         await pilot.pause()
         pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
         assert unassigned_id not in {row["source_id"] for row in pane.sources}
@@ -365,9 +360,7 @@ async def test_a_workbench_rebuild_under_a_scope_stays_scoped():
         screen = await _mounted(host, pilot)
         screen.active_section = "sources"
         await pilot.pause(0.3)
-        screen._apply_tree_scope(
-            TreeScope(kind="watchlist", watchlist_id=watchlist_id)
-        )
+        screen._apply_tree_scope(TreeScope(kind="watchlist", watchlist_id=watchlist_id))
         await pilot.pause()
 
         # `[` toggles the left rail, which recomposes the whole workbench and
@@ -468,9 +461,7 @@ async def test_a_source_scope_shows_exactly_that_source():
         await pilot.pause(0.3)
 
         screen._apply_tree_scope(
-            TreeScope(
-                kind="source", watchlist_id=watchlist_id, source_id=assigned_id
-            )
+            TreeScope(kind="source", watchlist_id=watchlist_id, source_id=assigned_id)
         )
         await pilot.pause()
         await pilot.pause()

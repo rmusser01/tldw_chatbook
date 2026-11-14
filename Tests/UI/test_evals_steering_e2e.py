@@ -38,7 +38,12 @@ import pytest
 from textual.widgets import DataTable, Input, Select
 
 from tldw_chatbook.DB.Evals_DB import EvalsDB
-from tldw_chatbook.Evals.word_bench.models import CellCapture, PreflightResult, Target, TokenProb
+from tldw_chatbook.Evals.word_bench.models import (
+    CellCapture,
+    PreflightResult,
+    Target,
+    TokenProb,
+)
 from tldw_chatbook.UI.Evals.library_rail import LibraryRail
 from tldw_chatbook.UI.Evals.results_grid import FAILED_MARK, ResultsGrid
 from tldw_chatbook.UI.Evals.snippet_editor import dataset_snippets
@@ -122,7 +127,9 @@ def steering_app(evals_db: EvalsDB) -> EvalsHarness:
     return EvalsHarness(_FakeAppInstance(evals_db, app_config=app_config))
 
 
-async def _wait_until(pilot, predicate, *, tries: int = 300, interval: float = 0.02) -> None:
+async def _wait_until(
+    pilot, predicate, *, tries: int = 300, interval: float = 0.02
+) -> None:
     """Mirrors ``test_evals_screen.py``'s own helper -- polls until a
     background worker's completion becomes visible (a selection change),
     since ``run_worker`` schedules real async work that does not finish
@@ -153,8 +160,7 @@ async def test_two_ui_authored_targets_one_steered_light_up_column_mode_delta(
     """
     import_path = tmp_path / "imported.txt"
     import_path.write_text(
-        "The weather today is\n"
-        "The election results were\n",
+        "The weather today is\nThe election results were\n",
         encoding="utf-8",
     )
 
@@ -165,7 +171,9 @@ async def test_two_ui_authored_targets_one_steered_light_up_column_mode_delta(
         # evals_screen.py's own field docstring) -- this loop only ever
         # exercises the bench-run path below, but the seam is the same
         # one either worker reads.
-        screen._sample_bench_client_factory = lambda t: _SteeringAwareFakeCaptureClient(t)
+        screen._sample_bench_client_factory = lambda t: _SteeringAwareFakeCaptureClient(
+            t
+        )
 
         # -- Import a 2-snippet dataset via the rail's own Import flow
         # (bypasses the FileOpen modal -- established convention, see
@@ -215,7 +223,9 @@ async def test_two_ui_authored_targets_one_steered_light_up_column_mode_delta(
         await pilot.click("#evals-bench-create-target")
         await pilot.pause()
         created_after_second = evals_db.list_models(provider="llama_cpp")
-        assert len(created_after_second) == 2, "second Create must mint an ADDITIONAL row"
+        assert len(created_after_second) == 2, (
+            "second Create must mint an ADDITIONAL row"
+        )
         second_target_id = next(
             row["id"] for row in created_after_second if row["id"] != first_target_id
         )
@@ -232,7 +242,10 @@ async def test_two_ui_authored_targets_one_steered_light_up_column_mode_delta(
         assert not screen.query_one("#evals-bench-form-error").display
         bench_row = screen._view_model.bench_by_id(bench_id)
         config_data = bench_row.get("config_data") or {}
-        assert set(config_data.get("target_ids") or ()) == {first_target_id, second_target_id}
+        assert set(config_data.get("target_ids") or ()) == {
+            first_target_id,
+            second_target_id,
+        }
 
         # -- Run.
         await pilot.click("#evals-primary-action")
@@ -285,7 +298,10 @@ async def test_two_ui_authored_targets_one_steered_light_up_column_mode_delta(
         # target to pick as a non-baseline column at all.
         grid.query_one("#evals-lens-selector", Select).value = "delta"
         await pilot.pause()
-        grid.query_one("#evals-baseline-selector", Select).value = ("column", first_target_id)
+        grid.query_one("#evals-baseline-selector", Select).value = (
+            "column",
+            first_target_id,
+        )
         await pilot.pause()
 
         labels = [str(col.label) for col in table.columns.values()]

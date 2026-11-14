@@ -44,12 +44,13 @@ async def _highlight_current(modal, pilot) -> None:
 
 def _flip_streaming(modal, surface) -> None:
     """Edit Streaming: Switch model's On/Off Select (TASK-33004.5), else the
-    full modal's toggle Button."""
+    full modal's On/Off Select (TASK-33006.1)."""
     if surface == "quick":
         streaming = modal.query_one("#console-popover-streaming", Select)
         streaming.value = not streaming.value
     else:
-        modal.query_one("#console-settings-streaming", Button).press()
+        streaming = modal.query_one("#console-settings-streaming", Select)
+        streaming.value = "off" if streaming.value == "on" else "on"
 
 
 async def _submit_settings(modal, console, harness, pilot, surface, action):

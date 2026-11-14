@@ -1,4 +1,5 @@
 """TLDWAPIClient forwards its ssl_verify param into the underlying httpx client."""
+
 import ssl
 
 from tldw_chatbook.tldw_api.client import TLDWAPIClient

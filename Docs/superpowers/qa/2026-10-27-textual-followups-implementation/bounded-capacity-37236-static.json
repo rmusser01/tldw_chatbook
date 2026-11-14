@@ -1,0 +1,132 @@
+{
+  "source_proof": {
+    "base": "012ca47c39a16c10aa9b9b0a2298287945e22a89",
+    "workflow_structural_change_only": {
+      "matrix_shards28": true,
+      "max_parallel17": true
+    },
+    "all_other_workflow_data_exact": true,
+    "all1140entries_once": true,
+    "production_diff_empty": true,
+    "formatter_debt": [
+      {
+        "path": "Tests/CI/test_ci_queue_pressure_contract.py",
+        "regions": 14,
+        "exact_baseline_regions_retained": true
+      },
+      {
+        "path": "Tests/CI/test_derived_artifacts_workflow.py",
+        "regions": 10,
+        "exact_baseline_regions_retained": true
+      }
+    ],
+    "current_source_sha256": {
+      ".github/workflows/derived-artifacts.yml": "83f55523f6b6b362b9df88527bfdafdc66981a5ad3bdbb770b4f2628ff8ce375",
+      "scripts/ui_pr_gate_census.txt": "8c79b79b6a6b31d9ce7b47eed163dec7ba40f0c69d5e893f4ac461031b467a8e",
+      "scripts/check_ui_pr_gate_census.py": "5c8924df5d1052cbb905d779b072451d9ecb1a17e0ccbaafdd9ec657c51548fc",
+      "scripts/ui_lane_shard_replay.py": "ee1e5f247e7d62f3393b42d20c91380983c6d744b98ace9b76ab5e54be5c9330",
+      "Tests/CI/test_ci_queue_pressure_contract.py": "3e88c34d6156747fec9aad61f32a19ccf6c4a9b27778fd88d617e2fed101f354",
+      "Tests/CI/test_derived_artifacts_workflow.py": "47de98d874546c4ad6c4dd5346e43e395082ce3021f7a958b1909abb9963897a",
+      "Tests/CI/test_ui_lane_shard_count_statements.py": "4c6351cfe89f1d0b1137e67c73149b01bc1645a213afd8bd3ad273ca271dbb80",
+      "Tests/CI/test_ui_lane_shard_replay.py": "51a9b51d2161d41d3392085ef8be431afd7cb52770140163a304c586c37f4686",
+      "backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md": "f10a8ae6fed7b1205b2a9402b780331d48f9f1147e5cdd103b48a9c8fbf5ecb5"
+    }
+  },
+  "ruff_baseline": [
+    {
+      "file": "Tests/CI/test_ui_lane_shard_count_statements.py",
+      "checks": {
+        "baseline": {
+          "lint": [],
+          "format_exit": 0,
+          "format_stderr": ""
+        },
+        "current": {
+          "lint": [],
+          "format_exit": 0,
+          "format_stderr": ""
+        }
+      }
+    },
+    {
+      "file": "Tests/CI/test_ci_queue_pressure_contract.py",
+      "checks": {
+        "baseline": {
+          "lint": [],
+          "format_exit": 1,
+          "format_stderr": ""
+        },
+        "current": {
+          "lint": [],
+          "format_exit": 1,
+          "format_stderr": ""
+        }
+      }
+    },
+    {
+      "file": "Tests/CI/test_ui_lane_shard_replay.py",
+      "checks": {
+        "baseline": {
+          "lint": [],
+          "format_exit": 0,
+          "format_stderr": ""
+        },
+        "current": {
+          "lint": [],
+          "format_exit": 0,
+          "format_stderr": ""
+        }
+      }
+    },
+    {
+      "file": "Tests/CI/test_derived_artifacts_workflow.py",
+      "checks": {
+        "baseline": {
+          "lint": [],
+          "format_exit": 1,
+          "format_stderr": ""
+        },
+        "current": {
+          "lint": [],
+          "format_exit": 1,
+          "format_stderr": ""
+        }
+      }
+    },
+    {
+      "file": "scripts/check_ui_pr_gate_census.py",
+      "checks": {
+        "baseline": {
+          "lint": [],
+          "format_exit": 0,
+          "format_stderr": ""
+        },
+        "current": {
+          "lint": [],
+          "format_exit": 0,
+          "format_stderr": ""
+        }
+      }
+    },
+    {
+      "file": "scripts/ui_lane_shard_replay.py",
+      "checks": {
+        "baseline": {
+          "lint": [],
+          "format_exit": 0,
+          "format_stderr": ""
+        },
+        "current": {
+          "lint": [],
+          "format_exit": 0,
+          "format_stderr": ""
+        }
+      }
+    }
+  ],
+  "format_equivalence": {
+    "new_guard_block_ast_preserved": true,
+    "count_file_ast_preserved": true,
+    "format_only_after_green204": true
+  }
+}

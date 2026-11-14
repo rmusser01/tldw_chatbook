@@ -3,7 +3,7 @@
 Status: Accepted
 Date: 2026-09-08
 Amends: the Persona-required Buddy selection/seeding in ADR-074 and ADR-122,
-and ADR-079 §5 automatic provisioning when the user explicitly selects None.
+and ADR-325 §5 automatic provisioning when the user explicitly selects None.
 
 ## Decision
 
@@ -22,7 +22,7 @@ Switching the active Console tab, workspace, modal or screen does not retarget a
 or terminate a run. Normal navigation uses the existing reusable Console route from
 TASK-31520; this feature does not replace application navigation or add a job service.
 
-Workspace Persona defaults use the existing ADR-079 reference-backed setting. Resolve
+Workspace Persona defaults use the existing ADR-325 reference-backed setting. Resolve
 it only for newly created conversations. Explicit None is distinct from unspecified;
 existing/copy/move flows retain assignments. An explicitly absent workspace default
 must remain absent through provisioning/backfill; omission can retain the existing
@@ -45,7 +45,7 @@ session object and binding revision. This amends the existing no-view question p
 only for explicitly opened Buddy targets: their questions, approvals and confirmations
 remain parked and recoverable after the modal closes. Wake-only questions with no
 Console view or retained Buddy interaction keep their existing immediate refusal.
-ADR-094's approval/install/script decisions instead remain pending under their
+ADR-336's approval/install/script decisions instead remain pending under their
 app-owned domain routers, without hidden-time consumption or execution authority;
 the absence of a view is not an implicit approval or a reason to drop those rounds.
 This capability neither supplies fake UI setters nor approves actions. Existing
@@ -84,8 +84,8 @@ validation; no cross-product storage coupling is introduced.
 
 - [Approved design](../../Docs/superpowers/specs/2026-09-08-console-buddy-management-design.md)
 - [ADR-074](074-portable-actor-packs-and-local-persona-visual-runtime.md)
-- [ADR-079](079-workspace-assistant-defaults.md)
-- [ADR-094 lifecycle objective](094-console-turn-lifetime-and-navigation-boundary.md)
+- [ADR-325](325-workspace-assistant-defaults.md)
+- [ADR-336 lifecycle objective](336-console-turn-lifetime-and-navigation-boundary.md)
 
 ## Chatbook artwork implementation (TASK-32079)
 
@@ -111,5 +111,5 @@ against that same active-time allowance; hiding either view cannot pause a head
 still answerable in the other. Resolve only the current typed kind/ID through
 the existing strict resolver after validating the live Buddy binding. Questions
 and worktree reviews retain their host path; a review link is not answerability.
-This composes existing ADR-094/139 owners without another ledger or expiry clock,
+This composes existing ADR-336/139 owners without another ledger or expiry clock,
 changing active Console selection, or weakening ordinary visible-owner guards.

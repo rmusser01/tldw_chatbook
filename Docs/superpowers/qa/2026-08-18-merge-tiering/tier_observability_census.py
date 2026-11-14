@@ -3,6 +3,7 @@ without any CUT. So the real question is not "is the window full" but:
 is there a query whose merged list has >=2 rows AND a relevant document
 whose RANK a reordering could move?
 """
+
 import tempfile
 import pathlib
 from Tests.RAG_Eval.harness.goldenset import load_fixtures
@@ -19,11 +20,15 @@ try:
         multi = [q for q in qs if q.rows_returned > 1]
         # A reordering can only move a SCORE if the query has ground truth.
         scorable = [q for q in multi if q.relevant_slugs]
-        print(f"k={k}: >1 row: {len(multi)}   of those WITH ground truth: {len(scorable)}")
+        print(
+            f"k={k}: >1 row: {len(multi)}   of those WITH ground truth: {len(scorable)}"
+        )
         for q in multi:
             rel = set(q.relevant_slugs or ())
             hits = [i for i, d in enumerate(q.retrieved_doc_ids, 1) if d in rel]
-            print(f"   {q.query_id:26s} rows={q.rows_returned} relevant={len(rel)} "
-                  f"relevant_at_ranks={hits or 'NONE'}")
+            print(
+                f"   {q.query_id:26s} rows={q.rows_returned} relevant={len(rel)} "
+                f"relevant_at_ranks={hits or 'NONE'}"
+            )
 finally:
     runtime.close()

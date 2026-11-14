@@ -149,7 +149,10 @@ def test_truncation_trailer_names_the_tool_result_record_not_the_tool_call_recor
         budget=RunBudget(max_tool_result_chars=100),
     )
     deps = make_deps(
-        [ModelTurn(text=fence("calculator", {"expression": "1"})), ModelTurn(text="done")],
+        [
+            ModelTurn(text=fence("calculator", {"expression": "1"})),
+            ModelTurn(text="done"),
+        ],
         invoke=lambda c: ToolResult(ok=True, content=huge),
     )
     deps.on_record = on_record

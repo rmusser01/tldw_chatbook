@@ -34,16 +34,16 @@ from tldw_chatbook.DB.ChaChaNotes_DB import (  # noqa: E402
     ConflictError,
     InputError,
 )
-from tldw_chatbook.Chat.provider_continuation import (  # noqa: E402
+from tldw_chatbook.Provider_Contract.provider_continuation import (  # noqa: E402
     dump_provider_continuation_json,
     read_provider_continuation_json,
 )
-from tldw_chatbook.Chat.assistant_generation_state import (  # noqa: E402
+from tldw_chatbook.DB.assistant_generation_state import (  # noqa: E402
     assistant_state_allows_provider_history,
     normalize_assistant_generation_state,
     render_exported_assistant_content,
 )
-from tldw_chatbook.Chat.thinking_blocks import (  # noqa: E402
+from tldw_chatbook.Provider_Contract.thinking_blocks import (  # noqa: E402
     preflight_thinking_history_policy,
     thinking_exchange_to_json,
 )
@@ -129,6 +129,7 @@ class CharacterCardTTSInspection:
     portable_profile: PortableTTSProfile | None = None
     warning_code: PortableProfileWarningCode | None = None
 
+
 # Image metadata keys that carry embedded character-card JSON:
 # 'chara' holds V1/V2 cards, 'ccv3' holds V3 cards (PNG tEXt/zTXt/iTXt chunks).
 _CARD_IMAGE_METADATA_KEYS = ("chara", "ccv3")
@@ -140,6 +141,7 @@ def _bounded_card_source_type(source: object) -> str:
 
     suffix = Path(str(source)).suffix.lower()
     return suffix if suffix in _CARD_SOURCE_TYPES else "other"
+
 
 # Upper bound on image dimensions for the full decode used to reveal trailing
 # (post-IDAT) PNG metadata chunks. Character card images are typically well
@@ -577,8 +579,8 @@ def replace_placeholders(
         "{{random_user}}": user_name_actual,  # As per original logic
         "<USER>": user_name_actual,  # Common alternative
         "<CHAR>": char_name_actual,  # Common alternative
-        "{{character}}": char_name_actual,   # task-442 alias: the AI character's name
-        "{{persona}}": char_name_actual,     # task-442 alias: the AI character's name (NEVER the user)
+        "{{character}}": char_name_actual,  # task-442 alias: the AI character's name
+        "{{persona}}": char_name_actual,  # task-442 alias: the AI character's name (NEVER the user)
     }
 
     processed_text = text
@@ -799,8 +801,11 @@ def get_character_page_for_ui(
     """
     try:
         rows = db.list_character_cards_page(
-            limit=limit, offset=offset, order_by=order_by,
-            search_term=search_term, tag=tag,
+            limit=limit,
+            offset=offset,
+            order_by=order_by,
+            search_term=search_term,
+            tag=tag,
         )
     except Exception as exc:
         logger.opt(exception=True).error(f"Character page fetch failed: {exc}")
@@ -841,21 +846,8 @@ def list_character_tags(db: CharactersRAGDB) -> List[str]:
         return []
 
 
-def _get_default_chachanotes_db() -> Optional[CharactersRAGDB]:
-    """Return the app's default character DB when legacy callers omit one."""
-    try:
-        from tldw_chatbook.config import get_chachanotes_db_lazy
-
-        return get_chachanotes_db_lazy()
-    except Exception as exc:
-        logger.opt(exception=True).error(
-            f"Unable to resolve default character database: {exc}"
-        )
-        return None
-
-
 def fetch_character_names(
-    db: Optional[CharactersRAGDB] = None, limit: int = 1000
+    db: Optional[CharactersRAGDB], limit: int = 1000
 ) -> List[Dict[str, Any]]:
     """Compatibility wrapper used by older CCP handlers.
 
@@ -863,18 +855,16 @@ def fetch_character_names(
     the full library (e.g. paged/search-backed listings) should pass an
     explicit ``limit``.
     """
-    target_db = db or _get_default_chachanotes_db()
-    if target_db is None:
+    if db is None:
         return []
-    return get_character_list_for_ui(target_db, limit=limit)
+    return get_character_list_for_ui(db, limit=limit)
 
 
 def fetch_all_dictionaries(
-    db: Optional[CharactersRAGDB] = None, limit: int = 1000
+    db: Optional[CharactersRAGDB], limit: int = 1000
 ) -> List[Dict[str, Any]]:
     """Compatibility wrapper used by older CCP dictionary handlers."""
-    target_db = db or _get_default_chachanotes_db()
-    if target_db is None:
+    if db is None:
         return []
 
     try:
@@ -882,7 +872,7 @@ def fetch_all_dictionaries(
             list_chat_dictionaries,
         )
 
-        return list_chat_dictionaries(target_db, limit=limit)
+        return list_chat_dictionaries(db, limit=limit)
     except Exception as exc:
         logger.opt(exception=True).error(f"Unable to fetch chat dictionaries: {exc}")
         return []
@@ -1515,7 +1505,9 @@ def extract_json_from_image_file(
 
         # Primarily for PNG cards (TavernAI, SillyTavern convention)
         if img_obj.format != "PNG":
-            logger.warning("Character-card image is not PNG; probing alternate metadata.")
+            logger.warning(
+                "Character-card image is not PNG; probing alternate metadata."
+            )
 
         # 'text' attribute in Pillow Image objects holds metadata chunks.
         # For PNGs, these are tEXt, zTXt, or iTXt chunks.
@@ -1537,9 +1529,7 @@ def extract_json_from_image_file(
         if metadata_key is None and img_obj.format == "PNG":
             width, height = img_obj.size
             if width * height > _MAX_CARD_DECODE_PIXELS:
-                logger.warning(
-                    "Skipping full decode of oversized character-card PNG."
-                )
+                logger.warning("Skipping full decode of oversized character-card PNG.")
             else:
                 try:
                     img_obj.load()
@@ -1589,9 +1579,7 @@ def extract_json_from_image_file(
                     "utf-8"
                 )
                 json.loads(decoded_chara_json_str)  # Validate it's JSON
-                logger.info(
-                    "Character-card image metadata decoded successfully."
-                )
+                logger.info("Character-card image metadata decoded successfully.")
                 return decoded_chara_json_str
             except (
                 binascii.Error,
@@ -1765,9 +1753,7 @@ def parse_v2_card(card_data_json: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             ),
             "tags": _coerce_card_str_list(data_node.get("tags")),
             "creator": _coerce_card_text(data_node.get("creator")),
-            "character_version": _coerce_card_text(
-                data_node.get("character_version")
-            ),
+            "character_version": _coerce_card_text(data_node.get("character_version")),
             # Shallow copy so the character_book insertion below can never
             # mutate the caller's original card dict.
             "extensions": dict(data_node["extensions"])
@@ -2284,13 +2270,10 @@ def validate_v2_card(card_data: Dict[str, Any]) -> Tuple[bool, List[str]]:
     if "data" not in card_data or not isinstance(card_data.get("data"), dict):
         # Fatal only when the card *claims* to be V2/V3; a flat card without a
         # 'data' node may be a V1 card and is handled by the V1 parser.
-        claims_v2 = (
-            card_data.get("spec") in ("chara_card_v2", "chara_card_v3")
-            or str(card_data.get("spec_version", "")).startswith(("2.", "3."))
-        )
-        msg = (
-            "Missing 'data' field, or it's not a dictionary. V2 spec requires character data under a 'data' key."
-        )
+        claims_v2 = card_data.get("spec") in ("chara_card_v2", "chara_card_v3") or str(
+            card_data.get("spec_version", "")
+        ).startswith(("2.", "3."))
+        msg = "Missing 'data' field, or it's not a dictionary. V2 spec requires character data under a 'data' key."
         if claims_v2:
             errors.append(f"ERROR: {msg}")
         else:
@@ -2606,17 +2589,19 @@ def load_character_card_from_string_content(
         logger.debug("Attempting to load character card string content.")
 
         json_card_data_str: Optional[str] = None
+        # Both Markdown forms are found by linear scans (TASK-38226). They
+        # replace dev's two regexes, which backtracked: cubic on a crafted
+        # frontmatter, quadratic on repeated fences. Imported here, not at
+        # module level, so the screen pre-import's module set is unchanged.
+        from tldw_chatbook.Character_Chat import card_markdown_scan
 
         if content.startswith("{"):  # Likely direct JSON
             json_card_data_str = content
         elif content.startswith("---"):  # Likely Markdown with YAML frontmatter
             try:
-                # Regex to match YAML front matter strictly at the start, allowing for optional whitespace before ---
-                yaml_match = re.match(
-                    r"^\s*---\s*\n(.*?)\n\s*---\s*", content, re.DOTALL
-                )
-                if yaml_match:
-                    yaml_content = yaml_match.group(1).strip()
+                yaml_body = card_markdown_scan.frontmatter_body(content)
+                if yaml_body is not None:
+                    yaml_content = yaml_body.strip()
                     # Convert YAML to JSON string for consistent parsing by import_character_card_from_json_string
                     card_dict_from_yaml = yaml.safe_load(yaml_content)
                     if isinstance(card_dict_from_yaml, dict):
@@ -2641,14 +2626,10 @@ def load_character_card_from_string_content(
         if (
             not json_card_data_str
         ):  # If not direct JSON or YAML processed, look for JSON code block
-            # Regex to find a JSON code block (```json ... ``` or ``` ... ```)
-            # DOTALL allows . to match newlines, IGNORECASE for 'json' tag
-            pattern = re.compile(
-                r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL | re.IGNORECASE
-            )
-            match = pattern.search(content)
-            if match:
-                json_card_data_str = match.group(1).strip()
+            # A JSON code block (```json ... ``` or ``` ... ```)
+            json_block = card_markdown_scan.fenced_json_object(content)
+            if json_block is not None:
+                json_card_data_str = json_block.strip()
                 logger.debug("Extracted JSON from code block.")
             else:
                 if not content.startswith(
@@ -2697,8 +2678,7 @@ def inspect_character_card_tts_attachment(
                 )
             except ValueError:
                 logger.error(
-                    "Character inspection source path was rejected "
-                    "(source_type={}).",
+                    "Character inspection source path was rejected (source_type={}).",
                     source_kind,
                 )
                 return None
@@ -2927,8 +2907,7 @@ def import_and_save_character_from_file_with_outcome(
                     card_json_str = stream_bytes.decode("utf-8")
                 except UnicodeDecodeError:
                     logger.error(
-                        "Character import stream is not UTF-8 text "
-                        "(source_type={}).",
+                        "Character import stream is not UTF-8 text (source_type={}).",
                         source_kind,
                     )
                     return None
@@ -2950,8 +2929,7 @@ def import_and_save_character_from_file_with_outcome(
         parsed_card_dict = load_character_card_from_string_content(card_json_str)
         if not parsed_card_dict:  # This means parsing or validation failed.
             logger.error(
-                "Character import failed parsing or validation "
-                "(source_type={}).",
+                "Character import failed parsing or validation (source_type={}).",
                 source_kind,
             )
             return None
@@ -2997,8 +2975,7 @@ def import_and_save_character_from_file_with_outcome(
                 logger.debug("Decoded base64 image from card JSON.")
             except Exception as e_b64:
                 logger.warning(
-                    "Character card image payload could not be decoded "
-                    "(category={}).",
+                    "Character card image payload could not be decoded (category={}).",
                     type(e_b64).__name__,
                 )
                 # Keep image_bytes_for_db as None
@@ -3036,9 +3013,7 @@ def import_and_save_character_from_file_with_outcome(
         if char_id:
             logger.info("Character import persisted (disposition=created).")
         else:
-            logger.error(
-                "Character import persistence returned no identifier."
-            )
+            logger.error("Character import persistence returned no identifier.")
         if char_id is None:
             return None
         return CharacterCardImportOutcome(
@@ -3065,8 +3040,7 @@ def import_and_save_character_from_file_with_outcome(
         return None
     except (CharactersRAGDBError, InputError) as db_e:
         logger.error(
-            "Character import database/input failure "
-            "(source_type={}, category={}).",
+            "Character import database/input failure (source_type={}, category={}).",
             source_kind,
             type(db_e).__name__,
         )
@@ -3078,8 +3052,7 @@ def import_and_save_character_from_file_with_outcome(
         raise
     except Exception as e:
         logger.error(
-            "Unexpected character import failure "
-            "(source_type={}, category={}).",
+            "Unexpected character import failure (source_type={}, category={}).",
             source_kind,
             type(e).__name__,
         )
@@ -3220,9 +3193,7 @@ def load_chat_history_from_file_and_save_to_db(
                 or not isinstance(projected_history, list)
                 or not projected_history
                 or len(projected_history) > _MAX_EXPORTED_HISTORY_MESSAGES
-                or not all(
-                    isinstance(message, dict) for message in projected_history
-                )
+                or not all(isinstance(message, dict) for message in projected_history)
             ):
                 raise ValueError("Invalid exported chat history.")
             staged_messages: list[dict[str, Any]] = []
@@ -3261,13 +3232,8 @@ def load_chat_history_from_file_and_save_to_db(
                     if role != "assistant":
                         raise ValueError("Invalid exported chat history.")
                     canonical_thinking = thinking_exchange_to_json(thinking_value)
-                    total_thinking_bytes += len(
-                        canonical_thinking.encode("utf-8")
-                    )
-                    if (
-                        total_thinking_bytes
-                        > _MAX_EXPORTED_HISTORY_THINKING_BYTES
-                    ):
+                    total_thinking_bytes += len(canonical_thinking.encode("utf-8"))
+                    if total_thinking_bytes > _MAX_EXPORTED_HISTORY_THINKING_BYTES:
                         raise ValueError("Invalid exported chat history.")
                     staged["thinking_blocks_json"] = canonical_thinking
                 private = message.get("_private")
@@ -3287,9 +3253,7 @@ def load_chat_history_from_file_and_save_to_db(
                     if (
                         checkpoint is not None
                         and checkpoint.provider == "moonshot"
-                        and moonshot_model_returns_reasoning_content(
-                            checkpoint.model
-                        )
+                        and moonshot_model_returns_reasoning_content(checkpoint.model)
                         and checkpoint.state == "complete"
                         and not checkpoint.rounds[-1].calls
                         and checkpoint.rounds[-1].assistant_content != content
@@ -3330,9 +3294,7 @@ def load_chat_history_from_file_and_save_to_db(
                 except ValueError:
                     raise ValueError("Invalid exported chat history.") from None
                 staged["assistant_generation_state"] = (
-                    generation_state.value
-                    if generation_state is not None
-                    else None
+                    generation_state.value if generation_state is not None else None
                 )
                 staged_messages.append(staged)
 
@@ -3353,14 +3315,17 @@ def load_chat_history_from_file_and_save_to_db(
                 )
                 if not new_conv_id:
                     raise CharactersRAGDBError("Failed to import chat history.")
-                parent_id = None
+                # Bulk path (review-B B25): one batched import instead of the
+                # per-message add_message replay. The batch chains parents in
+                # order and produces byte-identical rows; validation runs
+                # before any write, so a malformed message fails the import
+                # exactly as before (the outer transaction rolls back).
                 for staged in staged_messages:
                     staged["conversation_id"] = new_conv_id
-                    staged["parent_message_id"] = parent_id
-                    new_message_id = db.add_message(staged)
-                    if not new_message_id:
-                        raise CharactersRAGDBError("Failed to import chat history.")
-                    parent_id = str(new_message_id)
+                message_ids = db.add_message_import_batch(staged_messages)
+                if not message_ids or any(not mid for mid in message_ids):
+                    raise CharactersRAGDBError("Failed to import chat history.")
+                parent_id = message_ids[-1]
                 db.set_conversation_active_leaf(new_conv_id, parent_id)
             return str(new_conv_id), None
 
@@ -3461,7 +3426,16 @@ def load_chat_history_from_file_and_save_to_db(
             f"Created new conversation (ID: {new_conv_id}) for imported chat with '{actual_char_name_from_db}'."
         )
 
-        with db.transaction():
+        # IMMEDIATE (task-22501): this outer unit's first statement is
+        # add_message's conversation-existence SELECT, and the manager only
+        # honours `immediate` at depth 0 -- a DEFERRED begin here silently
+        # neutralizes every inner writer's IMMEDIATE and re-opens the exact
+        # snapshot-upgrade window task-21100 closed: one backfill chunk (or
+        # any concurrent committer) landing between the read and the first
+        # INSERT kills the whole user-facing import with an instant,
+        # busy-handler-bypassing `database is locked`. See
+        # Tests/DB/test_chachanotes_conversation_writer_collision.py.
+        with db.transaction(immediate=True):
             for user_msg_str, char_msg_str in history_pairs:
                 log_user_name = (
                     chat_data_dict.get("user_name") or user_name_for_placeholders
@@ -4281,7 +4255,12 @@ def find_messages_in_conversation(
     """
     try:
         found_messages = db.search_messages_by_content(
-            content_query=search_query, conversation_id=conversation_id, limit=limit
+            content_query=search_query,
+            conversation_id=conversation_id,
+            limit=limit,
+            # task-34399: placeholder substitution below consumes text only,
+            # so skip transferring image BLOBs (task-260 pattern).
+            include_image_data=False,
         )
 
         processed_results = []
@@ -4368,9 +4347,7 @@ def export_character_card_to_json(
         if portable_tts_profile is not None:
             if extensions is not None and type(extensions) is not dict:
                 raise ValueError("invalid_extensions")
-            export_extensions = (
-                {} if extensions is None else copy.deepcopy(extensions)
-            )
+            export_extensions = {} if extensions is None else copy.deepcopy(extensions)
             if CHARACTER_CARD_TTS_EXTENSION_KEY in export_extensions:
                 raise ValueError("reserved_extension_occupied")
             export_extensions[CHARACTER_CARD_TTS_EXTENSION_KEY] = (

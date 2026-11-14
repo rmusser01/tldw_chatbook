@@ -226,7 +226,9 @@ def _selection(path, auth_source=None, *, resolve=False):
             or not value.strip()
             or value.strip()
             in {"<API_KEY_HERE>", "YOUR_KEY", "your_key", "your-api-key"}
-            or value.startswith(("ENC:", "encrypted:", "recovery:"))
+            # TASK-34100.4: the encryption engine writes a lowercase "enc:"
+            # prefix; only "ENC:" was refused, so ciphertext became a key.
+            or value.strip().lower().startswith(("enc:", "encrypted:", "recovery:"))
         ):
             raise ProviderReconnectRequired()
         secret = value.strip()
@@ -287,6 +289,35 @@ def prepare_openai_reconnect(*, auth_source=None):
             tuple(sorted({row["generation"] for row in history})),
             str(path),
         )
+
+
+def openai_reconnect_pending() -> bool | None:
+    """Whether a restored OpenAI connection awaits its review.
+
+    Restored generations exist (the history ``prepare_openai_reconnect``
+    reads) and no recorded review matches the current selection, so
+    ``openai_call`` would refuse a request.
+
+    Returns:
+        True only then; False when nothing was restored or a review matches.
+        None when it cannot tell (the history cannot be read, the storage
+        lease is refused): a caller must not keep that as "not pending".
+    """
+    path = bootstrap.effective_config_path()
+    try:
+        with acquire_storage(path) as lease:
+            restored = bool(_history(path, lease))
+    except (OSError, ValueError, RuntimeError):  # ProviderReconnectRequired too
+        return None
+    if not restored:
+        return False
+    try:
+        _Operation(path).close()
+    except ProviderReconnectRequired:
+        return True
+    except (OSError, ValueError, RuntimeError):
+        return None
+    return False
 
 
 def confirm_openai_reconnect(review):

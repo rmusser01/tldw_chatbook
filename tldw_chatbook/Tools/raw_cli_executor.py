@@ -5,6 +5,8 @@ from __future__ import annotations
 import codecs
 from collections.abc import Callable, Mapping
 import contextlib
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
 import math
 import multiprocessing
@@ -20,6 +22,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+from threading import Event
 import time
 from typing import Any, BinaryIO, Literal, TypeAlias
 
@@ -141,6 +144,27 @@ class RawCliResult:
     terminal_state: RawCliTerminalState
     truncated: bool
     cleanup_proven: bool
+
+
+class RequiredCliOutput:
+    """Bounded sanitized native output, independent of optional previews/logs."""
+
+    def __init__(self, *, max_bytes: int = 96 * 1024) -> None:
+        self.max_bytes = min(96 * 1024, max(0, max_bytes))
+        self.stdout = ""
+        self.stderr = ""
+        self.bytes = 0
+        self.overflow = False
+        self.sealed = False
+
+    def append(self, stream: RawCliStream, text: str) -> None:
+        size = len(text.encode("utf-8"))
+        if self.bytes + size > self.max_bytes:
+            self.overflow = True
+            return
+        if not self.overflow:
+            self.bytes += size
+            setattr(self, stream, getattr(self, stream) + text)
 
 
 # ---------------------------------------------------------------------------
@@ -646,7 +670,12 @@ def _utf8_prefix(text: str, byte_limit: int) -> tuple[str, bool]:
 class _OutputAccumulator:
     """Own bounded sanitized previews and the private record spool."""
 
-    def __init__(self, spool: BinaryIO, max_record_bytes: int) -> None:
+    def __init__(
+        self,
+        spool: BinaryIO,
+        max_record_bytes: int,
+        required_output: RequiredCliOutput | None = None,
+    ) -> None:
         self._spool = spool
         self._max_record_bytes = max_record_bytes
         self._record_bytes = 0
@@ -666,6 +695,7 @@ class _OutputAccumulator:
         self._finished: set[RawCliStream] = set()
         self._reported_truncation: set[RawCliStream] = set()
         self.truncated = False
+        self._required_output = required_output
 
     def consume(
         self,
@@ -718,6 +748,8 @@ class _OutputAccumulator:
     ) -> None:
         if not text:
             return
+        if self._required_output is not None:
+            self._required_output.append(stream, text)
         preview_text, preview_truncated = _utf8_prefix(
             text,
             MAX_RAW_PREVIEW_BYTES - self._preview_bytes,
@@ -759,8 +791,13 @@ class _OutputAccumulator:
 
 def _launch_shell(argv: tuple[str, ...], request: RawCliRequest) -> Any:
     """Launch the fixed outer shell as a non-interactive ordinary process."""
+    command_line = (
+        f'{subprocess.list2cmdline(list(argv[:-1]))} "{argv[-1]}"'
+        if os.name == "nt" and ntpath.basename(argv[0]).lower() == "cmd.exe"
+        else argv
+    )
     return subprocess.Popen(
-        argv,
+        command_line,
         shell=False,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
@@ -1125,6 +1162,114 @@ def _cleanup_tree(tree: ExecutorProcessTree, *, terminate: bool) -> bool:
         return False
 
 
+_current_call = ContextVar("native_raw_cli_call", default=None)
+
+
+def current_raw_cli_call(runtime, request):
+    call = _current_call.get()
+    if call is not None:
+        if call.raw is not runtime or call.request is not request:
+            raise RuntimeError("original RawCLI invocation changed")
+        call.check()
+    return call
+
+
+class _ModelRawCliCall:
+    def __init__(self, registry, name, selection):
+        self.registry, self.name, self.selection = registry, name, selection
+        self.provider, self.raw = selection[1], selection[1]._runtime
+        self.generation = registry._catalog_generation
+        self.catalog = registry._catalog_snapshot
+        self.operation = self.request = None
+        self.physical_proven = True
+
+    def check_memory(self):
+        if (
+            self.provider._runtime is not self.raw
+            or self.registry._catalog_generation != self.generation
+            or self.registry._catalog_snapshot is not self.catalog
+        ):
+            raise RuntimeError("original RawCLI provider changed")
+
+    def check(self):
+        self.check_memory()
+        if self.registry.resolve_owner_for_name(self.name) != self.selection:
+            raise RuntimeError("original RawCLI catalog selection changed")
+
+    @contextmanager
+    def activate(self, operation):
+        if operation is None:
+            yield
+            return
+        self.check()
+        self.operation = operation
+        token = _current_call.set(self)
+        try:
+            yield
+        finally:
+            if not self.physical_proven:
+                operation.mark_stopping()
+                operation.owner.mark_cleanup_unproven()
+                Event().wait()
+            _current_call.reset(token)
+            self.operation = None
+
+
+def ordinary_raw_shell_metadata(tree):
+    """Read the actual runtime and primitive app policy without invoking callbacks."""
+    from inspect import getattr_static
+
+    from ..Chat.console_raw_cli import RawCliRuntime
+
+    raw = getattr_static(tree.app, "raw_cli_runtime", None)
+    if raw is None:
+        return None, False, ()
+    if not isinstance(raw, RawCliRuntime):
+        return raw, True, ("unknown",)
+    app_config = getattr_static(tree.app, "app_config", None)
+    console = app_config.get("console", {}) if type(app_config) is dict else {}
+    if type(console) is not dict:
+        return raw, True, ("unknown",)
+    permitted = console.get("raw_cli_permitted") is True
+    armed = getattr_static(raw, "_armed") is True
+    return raw, permitted and armed, (id(app_config), id(console))
+
+
+def is_native_raw_cli_runtime(runtime: object) -> bool:
+    """Check the exact Raw CLI runtime class used by native execution."""
+    from ..Chat.console_raw_cli import RawCliRuntime
+
+    return type(runtime) is RawCliRuntime
+
+
+def capture_model_raw_cli(registry, name):
+    from ..Agents.raw_shell_tool_provider import RawShellToolProvider
+    from tldw_chatbook.Utils.platform_files import supports_native_process_groups
+
+    selection = registry.resolve_owner_for_name(name)
+    if (
+        not supports_native_process_groups()
+        or selection is None
+        or type(selection[1]) is not RawShellToolProvider
+        or not is_native_raw_cli_runtime(selection[1]._runtime)
+    ):
+        return None
+    if type(selection[1]._runtime._executor_or_default()) is not RawShellExecutor:
+        # Additional process custody belongs only to the stock executor.
+        return None
+    return _ModelRawCliCall(registry, name, selection)
+
+
+def bind_model_raw_cli(provider, request):
+    call = _current_call.get()
+    if call is None:
+        return
+    if type(call) is not _ModelRawCliCall or call.provider is not provider:
+        raise RuntimeError("original RawCLI caller changed")
+    call.check()
+    call.request = request
+
+
 class RawShellExecutor:
     """Synchronously execute one admitted, bounded raw shell request."""
 
@@ -1138,7 +1283,41 @@ class RawShellExecutor:
         cancel_event: Any,
         on_event: Callable[[RawCliStreamEvent], None],
         admit_worker: RawCliAdmissionCallback,
+        required_output: RequiredCliOutput | None = None,
+        _join_helpers: bool = False,
     ) -> RawCliResult:
+        """Retain native callers through the actual returns of existing helpers."""
+        helpers: list[threading.Thread] = []
+        try:
+            result, output_complete = self._execute(
+                request,
+                cancel_event=cancel_event,
+                on_event=on_event,
+                admit_worker=admit_worker,
+                required_output=required_output,
+                _helpers=helpers,
+            )
+        finally:
+            for helper in helpers:
+                if helper.ident is not None:
+                    helper.join(None if _join_helpers else _RAW_QUEUE_POLL_SECONDS * 2)
+        proven = result.cleanup_proven and all(
+            not helper.is_alive() for helper in helpers
+        )
+        if required_output is not None:
+            required_output.sealed = output_complete and proven
+        return replace(result, cleanup_proven=proven)
+
+    def _execute(
+        self,
+        request: RawCliRequest,
+        *,
+        cancel_event: Any,
+        on_event: Callable[[RawCliStreamEvent], None],
+        admit_worker: RawCliAdmissionCallback,
+        required_output: RequiredCliOutput | None = None,
+        _helpers: list[threading.Thread],
+    ) -> tuple[RawCliResult, bool]:
         """Execute once; ``admit_worker``'s return value is ignored.
 
         The callback must call ``tree.admit()`` and then ``commit_launch()`` while
@@ -1150,7 +1329,9 @@ class RawShellExecutor:
 
         record_limit = configured_max_record_bytes()
         spool_owner = _open_spool(record_limit)
-        accumulator = _OutputAccumulator(spool_owner.file, record_limit)
+        accumulator = _OutputAccumulator(
+            spool_owner.file, record_limit, required_output
+        )
         process: Any | None = None
         tree: ExecutorProcessTree | None = None
         identity_receive: Any | None = None
@@ -1208,7 +1389,7 @@ class RawShellExecutor:
                             exit_code,
                             terminal_state,
                             cleanup_proven,
-                        )
+                        ), False
             _safe_close(identity_send)
             identity_send = None
 
@@ -1230,7 +1411,7 @@ class RawShellExecutor:
                     exit_code,
                     terminal_state,
                     cleanup_proven,
-                )
+                ), False
 
             tree = ExecutorProcessTree(process, admission_event, identity)
             launch_commit = _LaunchCommit(tree, launch_event, cancel_event)
@@ -1244,11 +1425,13 @@ class RawShellExecutor:
                 finally:
                     admission_done.set()
 
-            threading.Thread(
+            admission_thread = threading.Thread(
                 target=run_admission,
                 name=f"raw-cli-admission-{request.invocation_id}",
                 daemon=True,
-            ).start()
+            )
+            _helpers.append(admission_thread)
+            admission_thread.start()
             admission_deadline = time.monotonic() + _RAW_STARTUP_TIMEOUT_SECONDS
             while not launch_commit.wait(_RAW_QUEUE_POLL_SECONDS):
                 if cancel_event.is_set():
@@ -1278,9 +1461,10 @@ class RawShellExecutor:
                     exit_code,
                     terminal_state,
                     cleanup_proven,
-                )
+                ), False
 
             output_relay = _QueueRelay(output_queue)
+            _helpers.append(output_relay._thread)
             output_relay.start()
             terminal_state, exit_code, resolved_shell, triggered = self._consume(
                 request,
@@ -1301,7 +1485,14 @@ class RawShellExecutor:
                 process.join(_RAW_QUEUE_POLL_SECONDS * 4)
                 _request_relay_stop(output_relay)
                 cleanup_proven = _cleanup_tree(tree, terminate=False)
+            streams_complete = accumulator._finished == {"stdout", "stderr"}
             accumulator.finish_all(on_event)
+            output_complete = (
+                terminal_state == "exited"
+                and cleanup_proven
+                and not triggered
+                and streams_complete
+            )
             return self._result(
                 request,
                 accumulator,
@@ -1310,11 +1501,13 @@ class RawShellExecutor:
                 exit_code,
                 terminal_state,
                 cleanup_proven,
-            )
+            ), output_complete
         finally:
             if launch_commit is not None:
                 launch_commit.close()
-            if abort_event is not None:
+            # Termination can strand a multiprocessing Event lock in its owner.
+            # A settled worker cannot observe abort and must not be signaled.
+            if abort_event is not None and _process_is_alive(process):
                 abort_event.set()
             _request_relay_stop(output_relay)
             if tree is not None:

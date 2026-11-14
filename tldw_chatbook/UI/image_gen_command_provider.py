@@ -5,6 +5,7 @@ imported by ``app.py`` at module scope, and a module-level screen import
 dragged ``Image_Generation.worker`` -> ``request_validation`` -> PIL onto
 the app boot path.
 """
+
 from __future__ import annotations
 
 from textual.command import Hit, Hits, Provider

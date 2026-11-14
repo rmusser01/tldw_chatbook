@@ -1,0 +1,45 @@
+{
+  "head": "139333920d2a87cb011e4f3aa5f8319b59c44a5c",
+  "paths": {
+    "tldw_chatbook/UI/Screens/study_screen.py": {
+      "blob": "eb59b3b302ddc3931c9c50f06c11fd052b9143a7",
+      "working_sha256": "d7098ff6c6e6cab7d01b10ed61cec2046ea0db967e2f61fa893b3a98ee2b5e2a"
+    },
+    "tldw_chatbook/UI/Study_Window.py": {
+      "blob": "be48e8ca2b1fa154def3d19fc30f9e582f18f116",
+      "working_sha256": "572babbe5399f7539df34e5e4014c28e6b742b37bb652b02b92c480068ea49d1"
+    },
+    "tldw_chatbook/UI/Study_Modules/quizzes_handler.py": {
+      "blob": "0195396d472c742f5e92d190bb6df07c337bda52",
+      "working_sha256": "2d06adfa2fcc37a0c003f6ef7c1f249e74d72c389f756ae8b91d2eee5add5f49"
+    },
+    "tldw_chatbook/Study_Interop/quiz_scope_service.py": {
+      "blob": "cbb969cba0f9bf6d99a46742919205a2b807b687",
+      "working_sha256": "3332a64046415a1a1a7e3a4321ff1c82c19e643faa5b04fa83a9622a289c98c5"
+    },
+    "tldw_chatbook/Study_Interop/server_quiz_service.py": {
+      "blob": "c2f8a73721c46e4a6f184ced734a3a08c2d59378",
+      "working_sha256": "7369a0159d610c626a72de411ea039884123ab8d1944e11801c91583a38ec7b2"
+    },
+    "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py": {
+      "blob": "1d044739abd2d551cb53bae347cc4637ffc1e9fd",
+      "working_sha256": "e686cf976c97bf8174e7619bc181fb74f4c11f7c0c0c25defd75e39c839c399a"
+    },
+    "tldw_chatbook/UI/Screens/scheduling/task_detail.py": {
+      "blob": "827cbc9f83206d5faf6546430fe43ed6051083a8",
+      "working_sha256": "80795be768a84a29f0c844764c9ea7bf1e4e3ddd20f149986d7d75e3c2c0d07b"
+    },
+    "tldw_chatbook/Scheduling/services/scheduling_service.py": {
+      "blob": "32e2cac85083d26481fd2e334d2d7dbe15f46f79",
+      "working_sha256": "b8b9c3dff1aeb6c47cf5d9eccc8d042732cd4f91424573e59a4b8d08431a331c"
+    },
+    "tldw_chatbook/UI/Wizards/ChatbookImportWizard.py": {
+      "blob": "c764dbf77f1e10b862f29f90ddd586e2eb1a98ba",
+      "working_sha256": "a9c5c27223b18135fcdd23826ada99d821eb2fb116b4616616913733ba6d4a6d"
+    },
+    "tldw_chatbook/Chatbooks/chatbook_importer.py": {
+      "blob": "70e44486a27716e49a37c3f76c324d5d804dcb3f",
+      "working_sha256": "f14bda5d62425ce7074ced1df4dfa5f8a1928f9002b6ee33565f01c20e6a9688"
+    }
+  }
+}

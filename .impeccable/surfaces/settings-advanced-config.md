@@ -6,7 +6,7 @@ Mode: Operate. Disposition: ship for the reviewed draft-recovery scope.
 
 This hardens the incumbent Textual Settings editor. The main project's
 PRODUCT.md and DESIGN.md remain the product and visual authority; no new visual
-system is introduced. ADR-033 owns the guarded raw-TOML commit model, and ADR-031
+system is introduced. ADR-303 owns the guarded raw-TOML commit model, and ADR-299
 owns shortcut honesty and discard confirmation.
 
 The controller in `UI/Screens/settings_advanced_config.py` owns the live draft,

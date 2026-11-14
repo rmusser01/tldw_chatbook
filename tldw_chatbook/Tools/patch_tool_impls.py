@@ -9,7 +9,7 @@ tldw_Server_API/app/core/MCP_unified/modules/implementations/filesystem_diff.py
 kept exactly so error handling stays in lockstep with the reference.
 
 The workspace wrapper (``patch_files``) is written fresh for tldw_chatbook:
-it enforces ADR-032 confinement via resolve_workspace_path and phase-2
+it enforces ADR-300 confinement via resolve_workspace_path and phase-2
 write discipline (encode-before-write, newline-preserving reads), and
 translates FilesystemPatchError into the shared LocalToolError.
 
@@ -48,8 +48,13 @@ from pathlib import Path
 from typing import Literal
 
 from tldw_chatbook.Tools.local_tool_impls import (
+    HINT_LABEL,
     LocalToolError,
     _atomic_write_target,
+    _bound_hint,
+    _closest_lines,
+    _MAX_HINT_LINE_CHARS,
+    _visualize_whitespace,
     resolve_workspace_path,
 )
 from tldw_chatbook.Tools.workspace_root_pin import (
@@ -75,11 +80,17 @@ _HEADER_TIMESTAMP_METADATA = re.compile(
 
 
 class FilesystemPatchError(ValueError):
-    """Raised when a unified diff cannot be parsed or applied safely."""
+    """Raised when a unified diff cannot be parsed or applied safely.
 
-    def __init__(self, reason_code: str) -> None:
+    ``reason_code`` is kept in lockstep with the tldw_server reference.
+    ``detail`` (TASK-18927) is an optional bounded, tool-generated recovery
+    hint carried alongside the code — never a change to the code contract.
+    """
+
+    def __init__(self, reason_code: str, detail: str | None = None) -> None:
         super().__init__(reason_code)
         self.reason_code = reason_code
+        self.detail = detail
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,7 +188,11 @@ def parse_unified_diff(
 
         if not hunks:
             raise FilesystemPatchError("invalid_diff")
-        files.append(PatchFile(old_path=old_path, new_path=new_path, action=action, hunks=tuple(hunks)))
+        files.append(
+            PatchFile(
+                old_path=old_path, new_path=new_path, action=action, hunks=tuple(hunks)
+            )
+        )
         if len(files) > max(1, int(max_files)):
             raise FilesystemPatchError("diff_file_limit_exceeded")
 
@@ -194,6 +209,54 @@ def parse_patch_targets(diff_text: str) -> tuple[PatchFile, ...]:
         max_hunks=PATCH_MAX_HUNKS,
         max_bytes=PATCH_MAX_BYTES,
     )
+
+
+def _patch_mismatch_detail(
+    original_lines: list[str],
+    hunk: "PatchHunk",
+    expected_text: str | None,
+    cursor: int,
+) -> str | None:
+    """Name the nearest candidate location for a context mismatch (18927).
+
+    Pure text diagnosis, bounded to the shared hint budget: first where the
+    expected line actually sits in the file (exact body match), then the
+    closest similar lines. Returns ``None`` whenever there is nothing
+    useful to say — the bare reason code survives unchanged.
+    """
+    try:
+        needle = expected_text
+        if needle is None:
+            needle = next(
+                (
+                    line.text
+                    for line in hunk.lines
+                    if line.kind in ("context", "remove") and line.text.strip()
+                ),
+                None,
+            )
+        if not needle or not needle.strip():
+            return None
+        near = _closest_lines(needle, original_lines)
+        if not near:
+            return None
+        index, line = near[0]
+        if line.strip() == needle.strip():
+            where = f"the expected text is at line {index + 1}"
+        else:
+            where = (
+                "closest candidate lines (whitespace shown as · for space, "
+                "\\t for tab): "
+                + "; ".join(
+                    f"line {i + 1}: {_visualize_whitespace(l.strip())[:_MAX_HINT_LINE_CHARS]}"
+                    for i, l in near
+                )
+            )
+        return _bound_hint(
+            f"patch context mismatched at line {cursor + 1}; {where}"
+        )
+    except Exception:
+        return None
 
 
 def apply_patch_to_text(original: str, patch_file: PatchFile) -> str:
@@ -213,7 +276,12 @@ def apply_patch_to_text(original: str, patch_file: PatchFile) -> str:
             hunk_start = hunk.old_start - 1
         hunk_start = max(0, hunk_start)
         if hunk_start < cursor or hunk_start > len(original_lines):
-            raise FilesystemPatchError("patch_context_mismatch")
+            raise FilesystemPatchError(
+                "patch_context_mismatch",
+                detail=_patch_mismatch_detail(
+                    original_lines, hunk, None, hunk_start
+                ),
+            )
         output.extend(original_lines[cursor:hunk_start])
         cursor = hunk_start
 
@@ -225,11 +293,30 @@ def apply_patch_to_text(original: str, patch_file: PatchFile) -> str:
                 continue
 
             if cursor >= len(original_lines):
-                raise FilesystemPatchError("patch_context_mismatch")
+                raise FilesystemPatchError(
+                    "patch_context_mismatch",
+                    detail=_patch_mismatch_detail(
+                        original_lines, hunk, hunk_line.text, cursor
+                    ),
+                )
             if _line_body(original_lines[cursor]) != hunk_line.text:
-                raise FilesystemPatchError("patch_context_mismatch")
-            if _line_has_trailing_newline(original_lines[cursor]) != hunk_line.has_trailing_newline:
-                raise FilesystemPatchError("patch_context_mismatch")
+                raise FilesystemPatchError(
+                    "patch_context_mismatch",
+                    detail=_patch_mismatch_detail(
+                        original_lines, hunk, hunk_line.text, cursor
+                    ),
+                )
+            if (
+                _line_has_trailing_newline(original_lines[cursor])
+                != hunk_line.has_trailing_newline
+            ):
+                raise FilesystemPatchError(
+                    "patch_context_mismatch",
+                    detail=_bound_hint(
+                        f"line {cursor + 1} matches but its line ending "
+                        "differs from the patch's (CRLF vs LF)"
+                    ),
+                )
             if hunk_line.kind == "context":
                 output.append(original_lines[cursor])
             cursor += 1
@@ -432,12 +519,19 @@ def patch_files(diff_text: str, *, workspace_root: Path, dry_run: bool = False) 
                 dry_run=dry_run,
             )
         except FilesystemPatchError as exc:
-            raise LocalToolError(
-                f"fs_patch failed [{exc.reason_code}]: {rel_path}"
-            ) from exc
-        summaries.append(
-            f"{'would patch' if dry_run else 'patched'} {rel_path}"
-        )
+            message = f"fs_patch failed [{exc.reason_code}]: {rel_path}"
+            if getattr(exc, "detail", None):
+                message += f" — {HINT_LABEL}: {exc.detail}"
+            if summaries and not dry_run:
+                message += f"; earlier effects retained: {'; '.join(summaries)}"
+            raise LocalToolError(message) from exc
+        except (LocalToolError, OSError) as exc:
+            prior = "; ".join(summaries)
+            message = f"fs_patch failed: {rel_path}: {exc}"
+            if prior and not dry_run:
+                message += f"; earlier effects retained: {prior}"
+            raise LocalToolError(message) from exc
+        summaries.append(f"{'would patch' if dry_run else 'patched'} {rel_path}")
     return "\n".join(summaries)
 
 
@@ -448,20 +542,14 @@ def patch_validated_files(
     dry_run: bool = False,
     content_stamps: bool = False,
 ) -> str:
-    """Apply parent-admitted plans through one retained workspace root pin.
+    """Apply ordered parent-admitted patches through one retained root pin.
 
     Args:
-        plans: Parent-admitted patch plans, in order.
-        root: The retained workspace root pin every target resolves through.
-        dry_run: Preview only; nothing is written and no stamp lines are
-            appended.
-        content_stamps: Append one worker-reported CAS stamp line per
-            written target (``sha256 <relpath>: <64 hex> size: <n>``,
-            Task 16 write-path parity with fs_read/fs_write/fs_edit).
-            A patch may touch MANY targets, so unlike the single-path
-            tools each stamp line names its target; the digest is the
-            exact in-memory ``data`` each target's atomic write received,
-            never a post-write re-read.
+        plans: Admitted patch plans in application order.
+        root: Retained workspace root pin for every target.
+        dry_run: Preview without writes or stamp lines.
+        content_stamps: Append each written path's sha256 and byte count from
+            its exact atomic-write input, never a post-write reread.
     """
     summaries: list[str] = []
     stamp_lines: list[str] = []
@@ -480,9 +568,18 @@ def patch_validated_files(
         except WorkspaceRootPinError as exc:
             raise LocalToolError("fs_patch failed [invalid_patch_path]") from exc
         except FilesystemPatchError as exc:
-            raise LocalToolError(
-                f"fs_patch failed [{exc.reason_code}]: {rel_path}"
-            ) from exc
+            message = f"fs_patch failed [{exc.reason_code}]: {rel_path}"
+            if getattr(exc, "detail", None):
+                message += f" — {HINT_LABEL}: {exc.detail}"
+            if summaries and not dry_run:
+                message += f"; earlier effects retained: {'; '.join(summaries)}"
+            raise LocalToolError(message) from exc
+        except (LocalToolError, OSError) as exc:
+            prior = "; ".join(summaries)
+            message = f"fs_patch failed: {rel_path}: {exc}"
+            if prior and not dry_run:
+                message += f"; earlier effects retained: {prior}"
+            raise LocalToolError(message) from exc
         summaries.append(f"{'would patch' if dry_run else 'patched'} {rel_path}")
         if content_stamps and not dry_run:
             stamp_lines.append(
@@ -541,7 +638,11 @@ def _patch_relative_file(
             target,
             data,
             shown=str(rel_path),
-            expected_sha256=None,
+            expected_sha256=(
+                hashlib.sha256(original.encode("utf-8")).hexdigest()
+                if patch_file.action == "modify"
+                else None
+            ),
             expected_absent=patch_file.action != "modify",
         )
     return hashlib.sha256(data).hexdigest(), len(data)

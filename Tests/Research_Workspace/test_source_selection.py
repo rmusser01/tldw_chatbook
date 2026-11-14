@@ -112,9 +112,7 @@ def test_truncated_workspace_scope_fails_closed_after_restart(tmp_path) -> None:
 
     stored = _registry(tmp_path).get_workspace_scope("workspace-1")
 
-    assert stored == RagScope(
-        items=(), updated_at="t-corrupt", empty_is_scoped=True
-    )
+    assert stored == RagScope(items=(), updated_at="t-corrupt", empty_is_scoped=True)
     assert (
         resolve_effective_scope(None, stored, lambda _kind, ids: ids).state == "empty"
     )
@@ -146,7 +144,9 @@ def test_unlink_last_research_source_preserves_explicit_empty_scope(tmp_path) ->
     )
 
 
-def test_reconcile_selected_source_preserves_absent_implicit_selection(tmp_path) -> None:
+def test_reconcile_selected_source_preserves_absent_implicit_selection(
+    tmp_path,
+) -> None:
     """Dropping the missing row would deselect older implicitly selected sources."""
 
     registry = _registry(tmp_path)
@@ -276,7 +276,9 @@ def test_reconcile_malformed_scope_fails_closed_before_target_change(tmp_path) -
     assert selected.empty_is_scoped is True
 
 
-def test_concurrent_reconcile_serializes_read_modify_write_without_loss(tmp_path) -> None:
+def test_concurrent_reconcile_serializes_read_modify_write_without_loss(
+    tmp_path,
+) -> None:
     path = tmp_path / "workspaces.sqlite"
     setup = LocalWorkspaceRegistryService(WorkspaceDB(path, client_id="setup"))
     setup.create_workspace(workspace_id="workspace-1", name="Research")

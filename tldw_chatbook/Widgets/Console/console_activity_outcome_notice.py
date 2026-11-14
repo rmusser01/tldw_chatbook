@@ -14,7 +14,7 @@ from textual.containers import Horizontal
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_switcher_state import CapturedReceipt
-from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
+from tldw_chatbook.Utils.character_display_text import sanitize_character_display_label
 
 MarkSeenHandler = Callable[
     ["ConsoleActivityOutcomePresentation", int], bool | Awaitable[bool]

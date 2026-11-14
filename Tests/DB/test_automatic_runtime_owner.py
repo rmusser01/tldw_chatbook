@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from Tests.Chat.test_automatic_provider_budget import context_for
+from Tests.DB.test_agent_orchestration_dev_migration import _drop_workflow_schema
 from Tests.DB.test_automatic_wake_attempts import claim, survivor
 from Tests.DB.test_automatic_work_budget import _automatic_work_db, chain  # noqa: F401
 from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
@@ -108,6 +109,7 @@ def test_v17_to_v18_migration_preserves_history_and_does_not_recover(
     context = context_for(db)
     assert db.automatic_work.complete_wake("attempt", owner_id="owner")
     with db.transaction() as conn:
+        _drop_workflow_schema(conn)
         conn.execute("DROP TABLE agent_worktrees")
         conn.execute("ALTER TABLE agent_definitions DROP COLUMN max_wall_seconds")
         conn.execute("DROP TABLE IF EXISTS automatic_work_runtime_owner")

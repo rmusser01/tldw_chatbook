@@ -22,43 +22,60 @@ from pathlib import Path
 
 import pytest
 
-from tldw_chatbook.UI.Wizards import FirstRunSetupWizard as wizard_module
+# TASK-34100.1: the two steps moved to their own modules.
+from tldw_chatbook.UI.Wizards import first_run_protect_step, first_run_summary_step
 from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import ProtectKeysStep, SummaryStep
 
-#: The two coroutine workers this task hardened, by the name `run_worker`
-#: is handed. Located by AST rather than by line, so the pin survives edits
-#: above them.
+#: The two coroutine workers this task hardened, by the name the worker
+#: launcher is handed. Located by AST rather than by line, so the pin survives
+#: edits above them.
 _HARDENED_WORKERS = {"_apply_password_worker", "_render_rows"}
 
 
-def _run_worker_flags() -> dict[str, dict[str, bool]]:
-    tree = ast.parse(Path(wizard_module.__file__).read_text(encoding="utf-8"))
-    found: dict[str, dict[str, bool]] = {}
-    for node in ast.walk(tree):
+def _hardened_worker_launchers() -> dict[str, str]:
+    """Map each hardened worker to the function that launches it.
+
+    TASK-34100.1 moved every first-run worker onto
+    ``first_run_step_guard.run_wizard_worker``. That launcher always passes
+    ``exit_on_error=False``, which
+    ``Tests/Architecture/test_wizard_lifecycle_guards.py`` pins at its one
+    call site. So this pin now checks that these two still go through it,
+    rather than checking a keyword at each site.
+    """
+    found: dict[str, str] = {}
+    nodes = [
+        node
+        for module in (first_run_protect_step, first_run_summary_step)
+        for node in ast.walk(
+            ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
+        )
+    ]
+    for node in nodes:
         if not isinstance(node, ast.Call):
             continue
-        if not (isinstance(node.func, ast.Attribute) and node.func.attr == "run_worker"):
-            continue
-        if not node.args or not isinstance(node.args[0], ast.Call):
-            continue
-        inner = node.args[0].func
-        name = inner.attr if isinstance(inner, ast.Attribute) else None
-        if name in _HARDENED_WORKERS:
-            found[name] = {
-                kw.arg: getattr(kw.value, "value", None)
-                for kw in node.keywords
-                if kw.arg
-            }
+        launcher = node.func
+        launcher_name = (
+            launcher.attr
+            if isinstance(launcher, ast.Attribute)
+            else getattr(launcher, "id", "")
+        )
+        for arg in node.args:
+            if not isinstance(arg, ast.Call):
+                continue
+            inner = arg.func
+            name = inner.attr if isinstance(inner, ast.Attribute) else None
+            if name in _HARDENED_WORKERS:
+                found[name] = launcher_name
     return found
 
 
 def test_both_workers_refuse_to_exit_the_app_on_error():
-    flags = _run_worker_flags()
+    launchers = _hardened_worker_launchers()
 
-    assert set(flags) == _HARDENED_WORKERS, f"worker call sites moved: {flags}"
-    for name, kwargs in flags.items():
-        assert kwargs.get("exit_on_error") is False, (
-            f"{name} still runs with exit_on_error defaulting to True"
+    assert set(launchers) == _HARDENED_WORKERS, f"worker call sites moved: {launchers}"
+    for name, launcher in launchers.items():
+        assert launcher == "run_wizard_worker", (
+            f"{name} is started by {launcher}, which may exit the app on error"
         )
 
 

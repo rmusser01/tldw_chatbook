@@ -86,7 +86,7 @@ BACKUP_GROUPS = (
     BackupGroup(
         "tools",
         "Tools and skills",
-        "MCP definitions, context, retained permission history, execution history, and installed skills.",
+        "MCP definitions, context, retained permission history, execution history, installed skills, and plugins.",
     ),
     BackupGroup(
         "retrieval",
@@ -133,6 +133,8 @@ _GROUP_OWNERS = {
         "tamagotchi.config",
     ),
     "conversations": (
+        "db.guardian",
+        "db.dreams",
         "db.chachanotes.primary",
         "study.local",
         "quiz.local",
@@ -142,6 +144,7 @@ _GROUP_OWNERS = {
         "chat.attachments",
         "personas",
         "persona.assets",
+        "persona.actor_packs",
         "persona.visual_identity",
         "persona.visual_identity_builtin",
         "chat.dictionaries",
@@ -180,6 +183,7 @@ _GROUP_OWNERS = {
         "mcp.permissions",
         "mcp.history",
         "skills",
+        "plugins",
     ),
     "retrieval": (
         "rag.definitions",

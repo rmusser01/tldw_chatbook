@@ -185,5 +185,7 @@ async def test_configuration_is_recorded_in_the_persistent_log(monkeypatch):
     events = [r for r in recorded if r["event"] == "scheduler_configured"]
     assert events, f"no scheduler_configured recorded, got {recorded}"
     assert events[-1]["component"] == "scheduling"
-    assert events[-1]["item_count"] == 2  # handlers, not queue depth (1) or orphaned (1)
+    assert (
+        events[-1]["item_count"] == 2
+    )  # handlers, not queue depth (1) or orphaned (1)
     assert events[-1]["status"] == "unhandled_types"

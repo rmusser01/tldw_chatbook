@@ -1,0 +1,67 @@
+{
+  "root-direct-native-launch-return-ruling.md": {
+    "sha256": "267163ae7913875bd9322ee2edf57340d1934da1fac57fc100d27afc625bf077",
+    "frozen": "root-direct-native-launch-return-ruling.frozen-267163ae7913875bd9322ee2edf57340d1934da1fac57fc100d27afc625bf077.md",
+    "bytes": 8517
+  },
+  "root-direct-native-terminal-return-ruling.md": {
+    "sha256": "ffcd413191f7a6e548683a2ba270880b6f8c6da89ea97d5735d6707613d0e5a0",
+    "frozen": "root-direct-native-terminal-return-ruling.frozen-ffcd413191f7a6e548683a2ba270880b6f8c6da89ea97d5735d6707613d0e5a0.md",
+    "bytes": 9533
+  },
+  "root-direct-nonwait-transport-review.md": {
+    "sha256": "67af7cfbaeeea34a14a0def60007bf5600bc1b7fe2a01413e577fa0eb5a10afa",
+    "frozen": "root-direct-nonwait-transport-review.frozen-67af7cfbaeeea34a14a0def60007bf5600bc1b7fe2a01413e577fa0eb5a10afa.md",
+    "bytes": 7690
+  },
+  "root-direct-original-storage-admission-ruling.md": {
+    "sha256": "6971ebf76297e28f665408609a54933968796b6de646c79ec368ebd46ee923c6",
+    "frozen": "root-direct-original-storage-admission-ruling.frozen-6971ebf76297e28f665408609a54933968796b6de646c79ec368ebd46ee923c6.md",
+    "bytes": 7327
+  },
+  "root-direct-start-ambiguity-ruling.md": {
+    "sha256": "13fc6c079141728dcedfedecbf4c7772fc5601dd494829ced8fb3c0c214d1ebc",
+    "frozen": "root-direct-start-ambiguity-ruling.frozen-13fc6c079141728dcedfedecbf4c7772fc5601dd494829ced8fb3c0c214d1ebc.md",
+    "bytes": 6226
+  },
+  "root-external-preentry-cleanup-review.md": {
+    "sha256": "2bbbdecc4c013939dc53a4cbbf68a4e5dd1b71bb268ac094486f21da0580d0bd",
+    "frozen": "root-external-preentry-cleanup-review.frozen-2bbbdecc4c013939dc53a4cbbf68a4e5dd1b71bb268ac094486f21da0580d0bd.md",
+    "bytes": 5870
+  },
+  "root-freshness-refusal-boundary-ruling.md": {
+    "sha256": "4d297377a5aefe924ab2d9382b0d6a1128955ba0aefc2d8c014fa60972b66063",
+    "frozen": "root-freshness-refusal-boundary-ruling.frozen-4d297377a5aefe924ab2d9382b0d6a1128955ba0aefc2d8c014fa60972b66063.md",
+    "bytes": 6930
+  },
+  "root-i2-accounting-ruling.md": {
+    "sha256": "20050c57490d3865c47bf9488ffc01f059232a61f517dc7a932ce59807d226d6",
+    "frozen": "root-i2-accounting-ruling.frozen-20050c57490d3865c47bf9488ffc01f059232a61f517dc7a932ce59807d226d6.md",
+    "bytes": 6774
+  },
+  "root-i2-cleanup-accounting-ruling.md": {
+    "sha256": "d2b6bdef04ffb09ace3c41277fe62444daaa6278b2827e3262ee13186001912d",
+    "frozen": "root-i2-cleanup-accounting-ruling.frozen-d2b6bdef04ffb09ace3c41277fe62444daaa6278b2827e3262ee13186001912d.md",
+    "bytes": 4416
+  },
+  "root-i2-open-cleanup-accounting-ruling.md": {
+    "sha256": "4ca12699b91a525293d9544519bbf5b10a7435c67f08146419b4f833df39b167",
+    "frozen": "root-i2-open-cleanup-accounting-ruling.frozen-4ca12699b91a525293d9544519bbf5b10a7435c67f08146419b4f833df39b167.md",
+    "bytes": 5015
+  },
+  "root-queued-wake-release-ruling.md": {
+    "sha256": "94540bf33567a4f590ca42516cda7ec5c001fc0ff5240d449d7eda922e98e5f3",
+    "frozen": "root-queued-wake-release-ruling.frozen-94540bf33567a4f590ca42516cda7ec5c001fc0ff5240d449d7eda922e98e5f3.md",
+    "bytes": 8308
+  },
+  "root-queued-wake-source-v2-review.md": {
+    "sha256": "9fdc1c692aaf9a39b096690c3e683fc352c410923a0cbbc9c1d350d19d42d614",
+    "frozen": "root-queued-wake-source-v2-review.frozen-9fdc1c692aaf9a39b096690c3e683fc352c410923a0cbbc9c1d350d19d42d614.md",
+    "bytes": 6951
+  },
+  "root-fix2-source-review.md": {
+    "sha256": "140bee71744bd92c78c5c517ffe615a73ea5002b316af35d8ea28f6027fbc562",
+    "frozen": "root-fix2-source-review.frozen-140bee71744bd92c78c5c517ffe615a73ea5002b316af35d8ea28f6027fbc562.md",
+    "bytes": 4049
+  }
+}

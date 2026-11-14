@@ -21,10 +21,13 @@ from tldw_chatbook.Backup_Recovery import recovered_media as owner
 from tldw_chatbook.Backup_Recovery.chat_source_participants import build_persona_service
 from tldw_chatbook.Character_Chat.Character_Chat_Lib import remove_message_from_conversation
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+from tldw_chatbook.Chat.console_semantic_revision import install_semantic_coordination;install_semantic_coordination()
+from tldw_chatbook.Sync_Interop.chat_sync_source import install_chat_sync_hashing;install_chat_sync_hashing()
 from tldw_chatbook.DB.ChaChaNotes_DB import ConflictError
 from loguru import logger
 root=Path(os.environ['FIXTURE_ROOT'])
-db=config.get_chachanotes_db_lazy()
+from tldw_chatbook.app_services import open_chachanotes_db
+db=open_chachanotes_db(config.get_chachanotes_db_path(), client_id=config.CLI_APP_CLIENT_ID, seed_builtin_content=True)
 character=db.add_character_card({'name':'Direct references'})
 conversation=ChatConversationService(db).create_conversation(title='Direct references',character_id=character,assistant_kind='character',discovery_owner='ccp_character')
 first=db.add_message({'conversation_id':conversation,'sender':'User','content':'first'})

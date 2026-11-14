@@ -46,7 +46,7 @@ these helpers only need to be async because the mutation itself is.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any, ClassVar
 
@@ -398,9 +398,7 @@ class ResultsTab(Vertical):
                 # so no escape is needed at all.
                 Text(
                     str(
-                        result.get("title")
-                        or result.get("definition_id")
-                        or "Untitled"
+                        result.get("title") or result.get("definition_id") or "Untitled"
                     )
                     + _result_owner_suffix(result)
                 ),
@@ -516,9 +514,7 @@ class ResultsTab(Vertical):
         if result.get("kind") == "finding":
             eligible, reason = solved_eligibility(result, self._definitions_by_id)
             lines.append(
-                "Solve: eligible"
-                if eligible
-                else f"Solve: not eligible — {reason}"
+                "Solve: eligible" if eligible else f"Solve: not eligible — {reason}"
             )
 
         self.query_one("#scheduling-results-detail", Static).update("\n".join(lines))
@@ -538,11 +534,11 @@ class ResultsTab(Vertical):
 
 async def review_selected_result(
     service: Any,
-    results_tab: ResultsTab,
+    result: dict[str, Any],
     review_state: str,
     notify: Callable[[str, str], None],
 ) -> None:
-    """Read/dismiss the result under `results_tab`'s cursor.
+    """Read/dismiss the result captured when the action was admitted.
 
     `SchedulingService.review_automation_result` writes the local row
     and, for a server mirror, queues the sync pushback mutation in the
@@ -551,16 +547,11 @@ async def review_selected_result(
     Args:
         service: The `SchedulingService` whose `review_automation_result`
             performs the write.
-        results_tab: The `ResultsTab` instance whose cursor selects the
-            result to review.
+        result: The result row captured by the caller before worker dispatch.
         review_state: `"read"` or `"dismissed"` (the two states the `r`/
             `d` actions drive).
         notify: The caller's notification sink, `(message, severity)`.
     """
-    result = results_tab.selected_result()
-    if result is None:
-        notify("Select a result first.", "warning")
-        return
     updated = await service.review_automation_result(result["id"], review_state)
     if not updated:
         notify("Could not update this result — see the log.", "error")
@@ -666,7 +657,9 @@ class ResultsHostScreen(WorkbenchHostScreen):
         *,
         title: str,
         service: Any,
-        query: Callable[[], tuple[list[dict[str, Any]], dict[str, dict[str, Any]], int]],
+        query: Callable[
+            [], tuple[list[dict[str, Any]], dict[str, dict[str, Any]], int]
+        ],
         unread_ids: Callable[[], list[str]],
         dismissed: Callable[[], None] | None = None,
     ) -> None:
@@ -689,6 +682,7 @@ class ResultsHostScreen(WorkbenchHostScreen):
         self._service = service
         self._query = query
         self._unread_ids = unread_ids
+        self._mutation_pending = False
 
     def _results_tab(self) -> ResultsTab:
         return self.query_one(ResultsTab)
@@ -700,6 +694,31 @@ class ResultsHostScreen(WorkbenchHostScreen):
         results, definitions_by_id, total = self._query()
         self._results_tab().populate(results, definitions_by_id, total=total)
 
+    def _can_mutate(self) -> bool:
+        if self._mutation_pending:
+            self._notify(
+                "Results are busy — wait for the current action to finish.", "warning"
+            )
+            return False
+        return True
+
+    def _run_mutation(self, mutation: Callable[[], Awaitable[None]]) -> None:
+        """Retain admission from dispatch through mutation and repaint settlement."""
+        self._mutation_pending = True
+
+        async def _do() -> None:
+            try:
+                await mutation()
+                self._repaint()
+            finally:
+                self._mutation_pending = False
+
+        try:
+            self.run_worker(_do, group="schedules-results-host")
+        except Exception:
+            self._mutation_pending = False
+            raise
+
     def action_review_read(self) -> None:
         """`r`: mark the result under the cursor read."""
         self._run_review("read")
@@ -709,15 +728,20 @@ class ResultsHostScreen(WorkbenchHostScreen):
         self._run_review("dismissed")
 
     def _run_review(self, review_state: str) -> None:
-        results_tab = self._results_tab()
+        if not self._can_mutate():
+            return
+        selected = self._results_tab().selected_result()
+        if selected is None:
+            self._notify("Select a result first.", "warning")
+            return
+        result = dict(selected)
 
         async def _do() -> None:
             await review_selected_result(
-                self._service, results_tab, review_state, self._notify
+                self._service, result, review_state, self._notify
             )
-            self._repaint()
 
-        self.run_worker(_do, exclusive=True, group="schedules-results-host")
+        self._run_mutation(_do)
 
     def action_mark_solved(self) -> None:
         """`o`: mark the result under the cursor's definition solved.
@@ -726,6 +750,8 @@ class ResultsHostScreen(WorkbenchHostScreen):
         before the worker -- a refusal notifies without a worker round-
         trip.
         """
+        if not self._can_mutate():
+            return
         results_tab = self._results_tab()
         result = results_tab.selected_result()
         if result is None:
@@ -736,13 +762,18 @@ class ResultsHostScreen(WorkbenchHostScreen):
             self._notify(reason or "This result cannot be marked solved.", "warning")
             return
 
+        result = dict(result)
+        definitions_by_id = {
+            key: dict(definition)
+            for key, definition in results_tab.definitions_by_id.items()
+        }
+
         async def _do() -> None:
             await mark_selected_result_solved(
-                self._service, result, results_tab.definitions_by_id, self._notify
+                self._service, result, definitions_by_id, self._notify
             )
-            self._repaint()
 
-        self.run_worker(_do, exclusive=True, group="schedules-results-host")
+        self._run_mutation(_do)
 
     def action_mark_all_read(self) -> None:
         """`a`: mark every unread result in this screen's scope read.
@@ -750,13 +781,14 @@ class ResultsHostScreen(WorkbenchHostScreen):
         Scope is whatever `unread_ids` (constructor arg) was built to
         return -- the global inbox, or one definition's results.
         """
-        unread_ids = self._unread_ids()
+        if not self._can_mutate():
+            return
+        unread_ids = list(self._unread_ids())
         if not unread_ids:
             self._notify("Nothing unread.", "information")
             return
 
         async def _do() -> None:
             await mark_results_read(self._service, unread_ids, self._notify)
-            self._repaint()
 
-        self.run_worker(_do, exclusive=True, group="schedules-results-host")
+        self._run_mutation(_do)

@@ -43,7 +43,9 @@ async def test_raw_mode_posts_to_completions_with_neutral_sampler():
         return httpx.Response(200, json=RAW)
 
     target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
-    result = await _client(handler).capture("The protestors were met with", target, "raw", 5)
+    result = await _client(handler).capture(
+        "The protestors were met with", target, "raw", 5
+    )
 
     assert seen["url"].endswith("/v1/completions")
     assert seen["body"]["max_tokens"] == 1
@@ -66,7 +68,9 @@ async def test_raw_mode_prepends_target_prefix_to_the_snippet():
         seen["body"] = json.loads(request.content)
         return httpx.Response(200, json=RAW)
 
-    target = Target(id="t", name="n", provider="llama_cpp", model_id="m", prefix="Note: ")
+    target = Target(
+        id="t", name="n", provider="llama_cpp", model_id="m", prefix="Note: "
+    )
     await _client(handler).capture("the snippet", target, "raw", 5)
     assert seen["body"]["prompt"] == "Note: the snippet"
 
@@ -80,8 +84,13 @@ async def test_chat_mode_sends_system_prompt_as_a_message():
         seen["body"] = json.loads(request.content)
         return httpx.Response(200, json=RAW)
 
-    target = Target(id="t", name="n", provider="llama_cpp", model_id="m",
-                    system_prompt="Be careful.")
+    target = Target(
+        id="t",
+        name="n",
+        provider="llama_cpp",
+        model_id="m",
+        system_prompt="Be careful.",
+    )
     await _client(handler).capture("the snippet", target, "chat", 5)
 
     assert seen["url"].endswith("/v1/chat/completions")
@@ -162,6 +171,7 @@ async def test_preflight_marks_a_degenerate_canary_without_blocking():
     """A model that continues the canary with nonsense is still runnable --
     it may be exactly what the user wants to study -- but the whole column
     must carry the warning."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=RAW)  # " a", not " Paris"
 
@@ -175,10 +185,28 @@ async def test_preflight_marks_a_degenerate_canary_without_blocking():
 @pytest.mark.asyncio
 async def test_preflight_passes_canary_when_expected_token_is_present():
     payload = {
-        "choices": [{"logprobs": {"content": [{
-            "id": 1, "token": " Paris", "bytes": [], "logprob": -0.2,
-            "top_logprobs": [{"id": 1, "token": " Paris", "bytes": [], "logprob": -0.2}],
-        }]}}]
+        "choices": [
+            {
+                "logprobs": {
+                    "content": [
+                        {
+                            "id": 1,
+                            "token": " Paris",
+                            "bytes": [],
+                            "logprob": -0.2,
+                            "top_logprobs": [
+                                {
+                                    "id": 1,
+                                    "token": " Paris",
+                                    "bytes": [],
+                                    "logprob": -0.2,
+                                }
+                            ],
+                        }
+                    ]
+                }
+            }
+        ]
     }
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -197,13 +225,29 @@ async def test_preflight_passes_canary_when_expected_token_is_present_at_rank_2(
     check would be flaky in exactly this situation. Here the top-1 token is
     NOT the expected one; the expected token is present but ranked second."""
     payload = {
-        "choices": [{"logprobs": {"content": [{
-            "id": 2, "token": " a", "bytes": [], "logprob": -0.1,
-            "top_logprobs": [
-                {"id": 2, "token": " a", "bytes": [], "logprob": -0.1},
-                {"id": 1, "token": " Paris", "bytes": [], "logprob": -0.5},
-            ],
-        }]}}]
+        "choices": [
+            {
+                "logprobs": {
+                    "content": [
+                        {
+                            "id": 2,
+                            "token": " a",
+                            "bytes": [],
+                            "logprob": -0.1,
+                            "top_logprobs": [
+                                {"id": 2, "token": " a", "bytes": [], "logprob": -0.1},
+                                {
+                                    "id": 1,
+                                    "token": " Paris",
+                                    "bytes": [],
+                                    "logprob": -0.5,
+                                },
+                            ],
+                        }
+                    ]
+                }
+            }
+        ]
     }
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -246,10 +290,21 @@ async def test_preflight_reports_no_logprobs_as_blocked_when_top_logprobs_is_emp
     read as state='ok' / 'Ready', letting a run proceed and produce an
     all-zero-divergence grid."""
     payload = {
-        "choices": [{"logprobs": {"content": [{
-            "id": 1, "token": " a", "bytes": [32, 97], "logprob": -0.5,
-            "top_logprobs": [],
-        }]}}]
+        "choices": [
+            {
+                "logprobs": {
+                    "content": [
+                        {
+                            "id": 1,
+                            "token": " a",
+                            "bytes": [32, 97],
+                            "logprob": -0.5,
+                            "top_logprobs": [],
+                        }
+                    ]
+                }
+            }
+        ]
     }
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -267,6 +322,7 @@ async def test_html_200_response_becomes_a_cell_error_not_an_exception():
     200 status. response.json() raises json.JSONDecodeError (a ValueError,
     not an httpx.HTTPError) in that case -- it must not abort an entire
     multi-hundred-cell run."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, text="<html><body>Bad Gateway</body></html>")
 
@@ -281,10 +337,23 @@ async def test_malformed_top_logprobs_entry_becomes_a_cell_error_not_an_exceptio
     """A top_logprobs entry missing "token" or "logprob" raises KeyError
     inside _to_token_probs -- that must not escape capture() either."""
     payload = {
-        "choices": [{"logprobs": {"content": [{
-            "id": 1, "token": " a", "bytes": [32, 97], "logprob": -0.5,
-            "top_logprobs": [{"id": 1, "bytes": [32, 97]}],  # missing "token"/"logprob"
-        }]}}]
+        "choices": [
+            {
+                "logprobs": {
+                    "content": [
+                        {
+                            "id": 1,
+                            "token": " a",
+                            "bytes": [32, 97],
+                            "logprob": -0.5,
+                            "top_logprobs": [
+                                {"id": 1, "bytes": [32, 97]}
+                            ],  # missing "token"/"logprob"
+                        }
+                    ]
+                }
+            }
+        ]
     }
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -308,6 +377,7 @@ async def test_raw_capture_pins_the_unchecked_canary_contract_for_all_call_shape
     computed one (RAW's top token is " a", not " Paris"), so a regression
     that started computing a real verdict here would flip this to
     "degenerate" or "pass", not just silently keep "unchecked" by luck."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=RAW)
 
@@ -322,6 +392,7 @@ async def test_raw_capture_pins_the_unchecked_canary_contract_for_all_call_shape
 async def test_preflight_reports_a_4xx_as_blocked_not_unavailable():
     """A 4xx means the server was reachable and rejected the request (e.g.
     "logprobs not supported") -- that is Blocked, not Unavailable."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(422, json={"error": "logprobs not supported"})
 
@@ -337,6 +408,7 @@ async def test_preflight_reports_a_404_specifically_as_mode_unsupported():
     """_build_request always posts to a fixed, mode-selected path, so a 404
     reliably means that path does not exist on this server -- the design
     spec's "raw mode unsupported by endpoint" row."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(404, text="not found")
 
@@ -351,6 +423,7 @@ async def test_preflight_reports_a_404_specifically_as_mode_unsupported():
 async def test_preflight_reports_a_5xx_as_unavailable_not_blocked():
     """A 5xx means the server itself failed -- still Unavailable, the same
     as a transport-level failure, not Blocked."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(503, text="service unavailable")
 
@@ -430,14 +503,18 @@ async def test_preflight_captures_a_continuation_in_raw_mode():
         calls.append(json.loads(request.content))
         if len(calls) == 1:
             return httpx.Response(200, json=RAW)  # the canary capture
-        return httpx.Response(200, json={"choices": [{"text": " blue skies ahead", "index": 0}]})
+        return httpx.Response(
+            200, json={"choices": [{"text": " blue skies ahead", "index": 0}]}
+        )
 
     target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
     result = await _client(handler).preflight(target, "raw", 5)
 
     assert len(calls) == 2, "one canary request, one separate continuation request"
     assert calls[0]["max_tokens"] == 1, "the canary request itself must stay untouched"
-    assert calls[1]["max_tokens"] > 1, "the continuation request must ask for more than one token"
+    assert calls[1]["max_tokens"] > 1, (
+        "the continuation request must ask for more than one token"
+    )
     assert result.continuation == " blue skies ahead"
 
 
@@ -449,15 +526,46 @@ async def test_preflight_captures_a_continuation_in_chat_mode_without_a_second_r
     cost a second request."""
     calls = []
     payload = {
-        "choices": [{
-            "message": {"role": "assistant", "content": "<|channel>thought The sky is blue"},
-            "logprobs": {"content": [
-                {"id": 1, "token": "<|channel>", "bytes": [], "logprob": -0.01,
-                 "top_logprobs": [{"id": 1, "token": "<|channel>", "bytes": [], "logprob": -0.01}]},
-                {"id": 2, "token": " Paris", "bytes": [], "logprob": -0.2,
-                 "top_logprobs": [{"id": 2, "token": " Paris", "bytes": [], "logprob": -0.2}]},
-            ]},
-        }]
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "<|channel>thought The sky is blue",
+                },
+                "logprobs": {
+                    "content": [
+                        {
+                            "id": 1,
+                            "token": "<|channel>",
+                            "bytes": [],
+                            "logprob": -0.01,
+                            "top_logprobs": [
+                                {
+                                    "id": 1,
+                                    "token": "<|channel>",
+                                    "bytes": [],
+                                    "logprob": -0.01,
+                                }
+                            ],
+                        },
+                        {
+                            "id": 2,
+                            "token": " Paris",
+                            "bytes": [],
+                            "logprob": -0.2,
+                            "top_logprobs": [
+                                {
+                                    "id": 2,
+                                    "token": " Paris",
+                                    "bytes": [],
+                                    "logprob": -0.2,
+                                }
+                            ],
+                        },
+                    ]
+                },
+            }
+        ]
     }
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -488,9 +596,13 @@ async def test_preflight_continuation_request_in_raw_mode_carries_the_target_pre
         seen.append(body)
         if len(seen) == 1:
             return httpx.Response(200, json=RAW)
-        return httpx.Response(200, json={"choices": [{"text": " continues", "index": 0}]})
+        return httpx.Response(
+            200, json={"choices": [{"text": " continues", "index": 0}]}
+        )
 
-    target = Target(id="t", name="n", provider="llama_cpp", model_id="m", prefix="Note: ")
+    target = Target(
+        id="t", name="n", provider="llama_cpp", model_id="m", prefix="Note: "
+    )
     result = await _client(handler).preflight(target, "raw", 5)
 
     assert seen[1]["prompt"] == f"Note: {CANARY_PROMPT}"
@@ -501,21 +613,42 @@ async def test_preflight_continuation_request_in_raw_mode_carries_the_target_pre
 async def test_preflight_continuation_in_chat_mode_reflects_system_prompt_steering():
     seen = []
     payload = {
-        "choices": [{
-            "message": {"role": "assistant", "content": "steered output"},
-            "logprobs": {"content": [
-                {"id": 2, "token": " Paris", "bytes": [], "logprob": -0.2,
-                 "top_logprobs": [{"id": 2, "token": " Paris", "bytes": [], "logprob": -0.2}]},
-            ]},
-        }]
+        "choices": [
+            {
+                "message": {"role": "assistant", "content": "steered output"},
+                "logprobs": {
+                    "content": [
+                        {
+                            "id": 2,
+                            "token": " Paris",
+                            "bytes": [],
+                            "logprob": -0.2,
+                            "top_logprobs": [
+                                {
+                                    "id": 2,
+                                    "token": " Paris",
+                                    "bytes": [],
+                                    "logprob": -0.2,
+                                }
+                            ],
+                        },
+                    ]
+                },
+            }
+        ]
     }
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(json.loads(request.content))
         return httpx.Response(200, json=payload)
 
-    target = Target(id="t", name="n", provider="llama_cpp", model_id="m",
-                     system_prompt="Be careful.")
+    target = Target(
+        id="t",
+        name="n",
+        provider="llama_cpp",
+        model_id="m",
+        system_prompt="Be careful.",
+    )
     result = await _client(handler).preflight(target, "chat", 5)
 
     assert seen[0]["messages"][0] == {"role": "system", "content": "Be careful."}
@@ -557,13 +690,29 @@ async def test_preflight_continuation_degrades_to_empty_string_when_the_continua
 @pytest.mark.asyncio
 async def test_preflight_continuation_is_empty_string_when_chat_response_has_no_message_content():
     payload = {
-        "choices": [{
-            "logprobs": {"content": [
-                {"id": 2, "token": " Paris", "bytes": [], "logprob": -0.2,
-                 "top_logprobs": [{"id": 2, "token": " Paris", "bytes": [], "logprob": -0.2}]},
-            ]},
-            # no "message" key at all
-        }]
+        "choices": [
+            {
+                "logprobs": {
+                    "content": [
+                        {
+                            "id": 2,
+                            "token": " Paris",
+                            "bytes": [],
+                            "logprob": -0.2,
+                            "top_logprobs": [
+                                {
+                                    "id": 2,
+                                    "token": " Paris",
+                                    "bytes": [],
+                                    "logprob": -0.2,
+                                }
+                            ],
+                        },
+                    ]
+                },
+                # no "message" key at all
+            }
+        ]
     }
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -646,7 +795,9 @@ async def test_preflight_continuation_degrades_to_empty_string_on_a_timeout():
 
     assert len(calls) == 2
     assert result.state == "ok"
-    assert result.canary == "degenerate", "the canary verdict must be untouched by the timeout"
+    assert result.canary == "degenerate", (
+        "the canary verdict must be untouched by the timeout"
+    )
     assert result.continuation == ""
 
 
@@ -667,7 +818,9 @@ async def test_capture_with_continuation_raw_mode_issues_one_extra_request():
         calls.append(json.loads(request.content))
         if len(calls) == 1:
             return httpx.Response(200, json=RAW)  # the measured capture
-        return httpx.Response(200, json={"choices": [{"text": " blue skies ahead", "index": 0}]})
+        return httpx.Response(
+            200, json={"choices": [{"text": " blue skies ahead", "index": 0}]}
+        )
 
     target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
     result, continuation = await _client(handler).capture_with_continuation(
@@ -676,8 +829,12 @@ async def test_capture_with_continuation_raw_mode_issues_one_extra_request():
 
     assert len(calls) == 2, "one measurement request, one separate continuation request"
     assert calls[0]["prompt"] == "The sky is"
-    assert calls[0]["max_tokens"] == 1, "the measured request itself must stay untouched"
-    assert "logprobs" not in calls[1], "the continuation request must never ask for logprobs"
+    assert calls[0]["max_tokens"] == 1, (
+        "the measured request itself must stay untouched"
+    )
+    assert "logprobs" not in calls[1], (
+        "the continuation request must never ask for logprobs"
+    )
     assert calls[1]["max_tokens"] > 1
     assert isinstance(result, CellCapture)
     assert continuation == " blue skies ahead"
@@ -691,15 +848,46 @@ async def test_capture_with_continuation_chat_mode_costs_zero_extra_requests():
     not cost a second request."""
     calls = []
     payload = {
-        "choices": [{
-            "message": {"role": "assistant", "content": "**blue, the color of the sky"},
-            "logprobs": {"content": [
-                {"id": 1, "token": "<|channel>", "bytes": [], "logprob": -0.01,
-                 "top_logprobs": [{"id": 1, "token": "<|channel>", "bytes": [], "logprob": -0.01}]},
-                {"id": 2, "token": " Paris", "bytes": [], "logprob": -0.2,
-                 "top_logprobs": [{"id": 2, "token": " Paris", "bytes": [], "logprob": -0.2}]},
-            ]},
-        }]
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "**blue, the color of the sky",
+                },
+                "logprobs": {
+                    "content": [
+                        {
+                            "id": 1,
+                            "token": "<|channel>",
+                            "bytes": [],
+                            "logprob": -0.01,
+                            "top_logprobs": [
+                                {
+                                    "id": 1,
+                                    "token": "<|channel>",
+                                    "bytes": [],
+                                    "logprob": -0.01,
+                                }
+                            ],
+                        },
+                        {
+                            "id": 2,
+                            "token": " Paris",
+                            "bytes": [],
+                            "logprob": -0.2,
+                            "top_logprobs": [
+                                {
+                                    "id": 2,
+                                    "token": " Paris",
+                                    "bytes": [],
+                                    "logprob": -0.2,
+                                }
+                            ],
+                        },
+                    ]
+                },
+            }
+        ]
     }
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -711,7 +899,9 @@ async def test_capture_with_continuation_chat_mode_costs_zero_extra_requests():
         "The sky is", target, "chat", 5
     )
 
-    assert len(calls) == 1, "chat mode's continuation must be salvaged, never a second request"
+    assert len(calls) == 1, (
+        "chat mode's continuation must be salvaged, never a second request"
+    )
     assert isinstance(result, CellCapture)
     assert continuation == "**blue, the color of the sky"
 
@@ -728,28 +918,50 @@ async def test_capture_with_continuation_raw_mode_carries_the_target_prefix():
         seen.append(body)
         if len(seen) == 1:
             return httpx.Response(200, json=RAW)
-        return httpx.Response(200, json={"choices": [{"text": " continues", "index": 0}]})
+        return httpx.Response(
+            200, json={"choices": [{"text": " continues", "index": 0}]}
+        )
 
-    target = Target(id="t", name="n", provider="llama_cpp", model_id="m", prefix="Note: ")
+    target = Target(
+        id="t", name="n", provider="llama_cpp", model_id="m", prefix="Note: "
+    )
     _result, continuation = await _client(handler).capture_with_continuation(
         "the snippet", target, "raw", 5
     )
 
     assert seen[0]["prompt"] == "Note: the snippet", "the measured request is steered"
-    assert seen[1]["prompt"] == "Note: the snippet", "the continuation request must match"
+    assert seen[1]["prompt"] == "Note: the snippet", (
+        "the continuation request must match"
+    )
     assert continuation == " continues"
 
 
 @pytest.mark.asyncio
 async def test_capture_with_continuation_chat_mode_reflects_system_prompt_steering():
     payload = {
-        "choices": [{
-            "message": {"role": "assistant", "content": "steered continuation"},
-            "logprobs": {"content": [
-                {"id": 2, "token": " Paris", "bytes": [], "logprob": -0.2,
-                 "top_logprobs": [{"id": 2, "token": " Paris", "bytes": [], "logprob": -0.2}]},
-            ]},
-        }]
+        "choices": [
+            {
+                "message": {"role": "assistant", "content": "steered continuation"},
+                "logprobs": {
+                    "content": [
+                        {
+                            "id": 2,
+                            "token": " Paris",
+                            "bytes": [],
+                            "logprob": -0.2,
+                            "top_logprobs": [
+                                {
+                                    "id": 2,
+                                    "token": " Paris",
+                                    "bytes": [],
+                                    "logprob": -0.2,
+                                }
+                            ],
+                        },
+                    ]
+                },
+            }
+        ]
     }
     seen = []
 
@@ -757,8 +969,13 @@ async def test_capture_with_continuation_chat_mode_reflects_system_prompt_steeri
         seen.append(json.loads(request.content))
         return httpx.Response(200, json=payload)
 
-    target = Target(id="t", name="n", provider="llama_cpp", model_id="m",
-                     system_prompt="Be careful.")
+    target = Target(
+        id="t",
+        name="n",
+        provider="llama_cpp",
+        model_id="m",
+        system_prompt="Be careful.",
+    )
     _result, continuation = await _client(handler).capture_with_continuation(
         "the snippet", target, "chat", 5
     )
@@ -783,7 +1000,9 @@ async def test_capture_with_continuation_skips_the_continuation_when_the_cell_it
         "s", target, "raw", 5
     )
 
-    assert len(calls) == 1, "no continuation request must be attempted for a failed cell"
+    assert len(calls) == 1, (
+        "no continuation request must be attempted for a failed cell"
+    )
     assert isinstance(result, CellError)
     assert continuation == ""
 
@@ -881,7 +1100,9 @@ async def test_capture_with_continuation_preserves_whitespace():
         calls.append(1)
         if len(calls) == 1:
             return httpx.Response(200, json=RAW)
-        return httpx.Response(200, json={"choices": [{"text": "  leading and trailing  "}]})
+        return httpx.Response(
+            200, json={"choices": [{"text": "  leading and trailing  "}]}
+        )
 
     target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
     _result, continuation = await _client(handler).capture_with_continuation(
@@ -900,11 +1121,14 @@ async def test_measured_distribution_is_identical_whether_or_not_a_continuation_
     have received. Mirrors task-1691's own
     test_preflight_canary_verdict_is_unaffected_by_the_continuation_capture,
     one level down (per-cell instead of per-target)."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
         if body.get("max_tokens") == 1:
             return httpx.Response(200, json=RAW)  # the measured request, either path
-        return httpx.Response(200, json={"choices": [{"text": " a continuation", "index": 0}]})
+        return httpx.Response(
+            200, json={"choices": [{"text": " a continuation", "index": 0}]}
+        )
 
     target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
 

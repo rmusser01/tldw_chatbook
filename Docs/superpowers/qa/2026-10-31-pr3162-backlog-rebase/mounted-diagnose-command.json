@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-X",
+    "utf8",
+    "-c",
+    "import pytest,traceback,time,sys\nclass Diagnostic:\n @pytest.fixture(autouse=True)\n def observe(self,monkeypatch):\n  from tldw_chatbook.Chat.console_runtime import ConsoleRuntime\n  original=ConsoleRuntime.prepare_hooks_v2\n  async def wrapped(self,*args,**kwargs):\n   start=time.monotonic();print('HOOK_PREP_START',flush=True)\n   try:return await original(self,*args,**kwargs)\n   except BaseException:\n    traceback.print_exc();raise\n   finally:print('HOOK_PREP_FINISH',time.monotonic()-start,flush=True)\n  monkeypatch.setattr(ConsoleRuntime,'prepare_hooks_v2',wrapped)\nsys.exit(pytest.main(sys.argv[1:],plugins=[Diagnostic()]))\n",
+    "Tests/UI/test_console_archive_recovery_flow.py::test_production_recovery_keeps_exact_history_and_active_draft[button-size0]",
+    "-q",
+    "--tb=short",
+    "--show-capture=all",
+    "--maxfail=1",
+    "--junitxml=Docs\\superpowers\\qa\\2026-10-31-pr3162-backlog-rebase\\mounted-diagnose.xml"
+  ],
+  "profile": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3162-resync\\test-runtime\\mounted-diagnose-723030b2f2584f47a4932450f597fb31"
+}

@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐  N  ┌──────────────────────────────────────────────────────────────┐  N  Select a note to edit it here.                   │
+│ │ Navigation                     │  a  │ Library notes · Ready · Next: Create a note or add from      │  o                                                   │
+│ │     Import…                    │  v  │ files.                                                       │  t                                                   │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  │     │ Notes (125)                                                  │  e                                                   │
+│ │ ▊ Search Library…        ▎▊x▎  │     │ These notes live in the Library's own database — for notes   │  s                                                   │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  │     │ that live in a folder on disk, switch to Folder files. To    │                                                      │
+│ │                                │     │ copy or keep a folder synced, choose Add from files.         │                                                      │
+│ │ ─────────────────────────────  │     │                                                              │                                                      │
+│ │ Browse                    ▾    │     │ Filter                                                       │                                                      │
+│ │    Media (23) — your files     │     │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │                                                      │
+│ │    Conversations (0)           │     │ ▊ meet                                                     ▎ │                                                      │
+│ │  ▸ Notes (125)                 │     │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │                                                      │
+│ │    Prompts (0) — reuse         │     │                                                              │                                                      │
+│ │    Skills (1) — AI add-ons     │<--- │    New     ○ Sort: Newest     Select                         │                                                      │
+│ │    Collections (0)             │     │    Add from files…     Export                                │                                                      │
+│ │    Search / RAG — find all     │     │ Folders & placement                                          │                                                      │
+│ │ ─────────────────────────────  │     │    New folder     ○ Add to folder     ○ Move note            │                                                      │
+│ │ Artifacts                 ▾    │     │    ○ Remove placement                                        │                                                      │
+│ │    All artifacts               │     │ Note actions unavailable — select a note in the list         │<---                                                  │
+│ │    Chatbooks                   │     │ Sort unavailable — clear the filter                          │                                                      │
+│ │    Reports                     │     │ filter: meet · 8 results                                     │                                                      │
+│ │    Dreams                      │     │                                                              │                                                      │
+│ │ ─────────────────────────────  │     │   Clear filter                                               │                                                      │
+│ │ Create                    ▾    │<--- │  ▾ Meetings                                                  │                                                      │
+│ │    New note                    │     │    Advisor meeting 2026-09-10 · Meetings · 1m                │                                                      │
+│ │    New prompt                  │     │    Advisor meeting 2026-09-24 · Meetings · 1m                │                                                      │
+│ │    New skill                   │     │    Meeting notes 2026-09-30 · Meetings · 1m                  │                                                      │
+│ │ ─────────────────────────────  │     │    Meeting: design critique — Library rail · Meetings · 1m   │                                                      │
+│ │ Study                     ▾    │     │    Standup 2026-09-29 · Meetings · 1m                        │                                                      │
+│ │    Study decks (0)             │     │    ملاحظات الاجتماع — مراجعة المشروع · Meetings · 1m         │                                                      │
+│ │    Flashcards due: 0           │     │  ▾ Projects                                                  │                                                      │
+│ │    Quizzes (0)                 │     │    ▾ Thesis                                                  │                                                      │
+│ │ ─────────────────────────────  │     │      Thesis outline — retrieval-augmented tutoring · Proje…  │                                                      │
+│ │ Import / Export           ▾  ▆ │     │  ▾ Unfiled                                                   │                                                      │
+│ │    Import…                     │     │    Meeting Notes 2026-09-30 · Unfiled · 1m                   │                                                      │
+│ │  ▾ scroll for more             │     │                                                              │                                                      │
+│ └────────────────────────────────┘     └──────────────────────────────────────────────────────────────┘                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  esc focus rail | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

@@ -61,6 +61,6 @@ def test_build_sections_round_trip(tmp_path):
     assert build_network_save_sections(SettingsNetworkTLS("verify")) == {
         "network": {"ssl_verify": True}
     }
-    assert build_network_save_sections(
-        SettingsNetworkTLS("custom-ca", str(ca))
-    ) == {"network": {"ssl_verify": str(ca)}}
+    assert build_network_save_sections(SettingsNetworkTLS("custom-ca", str(ca))) == {
+        "network": {"ssl_verify": str(ca)}
+    }

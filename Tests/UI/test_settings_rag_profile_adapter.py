@@ -9,12 +9,18 @@ from tldw_chatbook.RAG_Search.reranker import RerankingConfig
 def wired(tmp_path, monkeypatch):
     mgr = ConfigProfileManager(profiles_dir=tmp_path / "profiles")
     import tldw_chatbook.RAG_Search.simplified.active_config as ac
+
     monkeypatch.setattr(ac, "_manager", lambda: mgr, raising=False)
     state = {"active": "hybrid_basic"}
-    monkeypatch.setattr(ac, "_active_profile_id", lambda: state["active"], raising=False)
+    monkeypatch.setattr(
+        ac, "_active_profile_id", lambda: state["active"], raising=False
+    )
     import tldw_chatbook.UI.Screens.settings_rag_profile_adapter as ad
+
     monkeypatch.setattr(ad, "_manager", lambda: mgr, raising=False)
-    monkeypatch.setattr(ad, "_active_profile_id", lambda: state["active"], raising=False)
+    monkeypatch.setattr(
+        ad, "_active_profile_id", lambda: state["active"], raising=False
+    )
     return mgr, state
 
 
@@ -28,7 +34,10 @@ def _user_profile(mgr, state, **search_over):
 
 
 def test_load_reads_the_active_profile(wired):
-    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import load_rag_defaults_from_active_profile
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        load_rag_defaults_from_active_profile,
+    )
+
     mgr, state = wired
     _user_profile(mgr, state, default_top_k=42, hybrid_alpha=0.25)
     d = load_rag_defaults_from_active_profile()
@@ -38,7 +47,10 @@ def test_load_reads_the_active_profile(wired):
 
 def test_save_writes_the_active_profile_file_not_config(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
-        load_rag_defaults_from_active_profile, save_rag_defaults_to_active_profile)
+        load_rag_defaults_from_active_profile,
+        save_rag_defaults_to_active_profile,
+    )
+
     mgr, state = wired
     p = _user_profile(mgr, state)
     d = load_rag_defaults_from_active_profile()
@@ -55,15 +67,21 @@ def test_save_writes_the_active_profile_file_not_config(wired):
 
 def test_save_refuses_builtin_active(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
-        load_rag_defaults_from_active_profile, save_rag_defaults_to_active_profile)
-    mgr, state = wired      # active = hybrid_basic (builtin)
+        load_rag_defaults_from_active_profile,
+        save_rag_defaults_to_active_profile,
+    )
+
+    mgr, state = wired  # active = hybrid_basic (builtin)
     d = load_rag_defaults_from_active_profile()
     ok, reason = save_rag_defaults_to_active_profile(d)
     assert not ok and reason == "builtin"
 
 
 def test_active_profile_info(wired):
-    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import active_profile_info
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        active_profile_info,
+    )
+
     mgr, state = wired
     info = active_profile_info()
     assert info == {
@@ -80,20 +98,29 @@ def test_active_profile_info_includes_a_cloned_profiles_description(wired):
     """A user clone inherits its source's description verbatim (clone_profile
     copies the whole dict) -- the sub-line must show it too, not just for
     builtins."""
-    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import active_profile_info
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        active_profile_info,
+    )
+
     mgr, state = wired
     _user_profile(mgr, state)
 
     info = active_profile_info()
 
-    assert info["description"] == "Combined keyword and semantic search without enhancements"
+    assert (
+        info["description"]
+        == "Combined keyword and semantic search without enhancements"
+    )
 
 
 def test_active_profile_info_description_empty_string_when_blank(wired):
     """An explicitly blank description (e.g. a hand-crafted/imported profile
     with none) must report "" rather than "None" or raise -- the screen uses
     this to decide whether to render the sub-line at all."""
-    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import active_profile_info
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        active_profile_info,
+    )
+
     mgr, state = wired
     user = _user_profile(mgr, state)
     user.description = ""
@@ -105,7 +132,10 @@ def test_active_profile_info_description_empty_string_when_blank(wired):
 
 
 def test_list_profiles_grouped_separates_builtin_and_user_name_sorted(wired):
-    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import list_profiles_grouped
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        list_profiles_grouped,
+    )
+
     mgr, state = wired
     user = _user_profile(mgr, state)  # clones hybrid_basic -> "My RAG", sets it active
     state["active"] = user.id
@@ -130,6 +160,7 @@ def test_list_profiles_grouped_separates_builtin_and_user_name_sorted(wired):
 
 def test_activate_profile_rejects_unsafe_id_without_raising(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import activate_profile
+
     ok, reason = activate_profile("../evil")
     assert ok is False
     assert reason
@@ -137,6 +168,7 @@ def test_activate_profile_rejects_unsafe_id_without_raising(wired):
 
 def test_activate_profile_flips_the_pointer_on_a_valid_user_id(wired, monkeypatch):
     import tldw_chatbook.UI.Screens.settings_rag_profile_adapter as ad
+
     mgr, state = wired
     user = _user_profile(mgr, state)
     state["active"] = "hybrid_basic"  # something else is active right now
@@ -156,14 +188,20 @@ def test_activate_profile_flips_the_pointer_on_a_valid_user_id(wired, monkeypatc
 
 
 def test_delete_user_profile_refuses_builtin_without_raising(wired):
-    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import delete_user_profile
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        delete_user_profile,
+    )
+
     ok, reason = delete_user_profile("hybrid_basic")
     assert ok is False
     assert reason
 
 
 def test_delete_user_profile_removes_a_user_profile(wired):
-    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import delete_user_profile
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        delete_user_profile,
+    )
+
     mgr, state = wired
     user = _user_profile(mgr, state)  # _user_profile also sets it active
     # Not the case under test here (that's covered by the two I1 tests
@@ -188,8 +226,11 @@ def test_delete_user_profile_removes_a_user_profile(wired):
 def test_delete_user_profile_of_the_active_profile_falls_back_to_hybrid_basic(
     wired, monkeypatch
 ):
-    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import delete_user_profile
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        delete_user_profile,
+    )
     import tldw_chatbook.UI.Screens.settings_rag_profile_adapter as ad
+
     mgr, state = wired
     user = _user_profile(mgr, state)  # clones + sets active = user.id
     monkeypatch.setattr(
@@ -206,8 +247,11 @@ def test_delete_user_profile_of_the_active_profile_falls_back_to_hybrid_basic(
 def test_delete_user_profile_of_a_non_active_profile_leaves_the_pointer_untouched(
     wired, monkeypatch
 ):
-    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import delete_user_profile
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        delete_user_profile,
+    )
     import tldw_chatbook.UI.Screens.settings_rag_profile_adapter as ad
+
     mgr, state = wired
     user = _user_profile(mgr, state)
     other = mgr.clone_profile("hybrid_basic", "Other RAG")
@@ -228,6 +272,7 @@ def test_delete_user_profile_of_a_non_active_profile_leaves_the_pointer_untouche
 
 def test_clone_profile_as_creates_a_new_writable_profile(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import clone_profile_as
+
     mgr, state = wired
 
     ok, new_id = clone_profile_as("hybrid_basic", "My Copy")
@@ -243,13 +288,17 @@ def test_clone_profile_as_creates_a_new_writable_profile(wired):
 
 def test_clone_profile_as_reports_unknown_source_without_raising(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import clone_profile_as
+
     ok, reason = clone_profile_as("does-not-exist", "Copy")
     assert ok is False
     assert reason
 
 
 def test_rename_user_profile_updates_the_display_name(wired):
-    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import rename_user_profile
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        rename_user_profile,
+    )
+
     mgr, state = wired
     user = _user_profile(mgr, state)
 
@@ -261,7 +310,10 @@ def test_rename_user_profile_updates_the_display_name(wired):
 
 
 def test_rename_user_profile_refuses_builtin_without_raising(wired):
-    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import rename_user_profile
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        rename_user_profile,
+    )
+
     ok, reason = rename_user_profile("hybrid_basic", "Nope")
     assert ok is False
     assert reason
@@ -275,6 +327,7 @@ def test_rename_user_profile_refuses_builtin_without_raising(wired):
 
 def test_clone_profile_as_converts_os_error_without_raising(wired, monkeypatch):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import clone_profile_as
+
     mgr, state = wired
 
     def _raise(*args, **kwargs):
@@ -289,7 +342,10 @@ def test_clone_profile_as_converts_os_error_without_raising(wired, monkeypatch):
 
 
 def test_rename_user_profile_converts_os_error_without_raising(wired, monkeypatch):
-    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import rename_user_profile
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        rename_user_profile,
+    )
+
     mgr, state = wired
     user = _user_profile(mgr, state)
 
@@ -305,7 +361,10 @@ def test_rename_user_profile_converts_os_error_without_raising(wired, monkeypatc
 
 
 def test_delete_user_profile_converts_os_error_without_raising(wired, monkeypatch):
-    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import delete_user_profile
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        delete_user_profile,
+    )
+
     mgr, state = wired
     user = _user_profile(mgr, state)
 
@@ -328,6 +387,7 @@ def test_load_round_trips_the_extended_fields_from_a_distinctive_profile(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
         load_rag_defaults_from_active_profile,
     )
+
     mgr, state = wired
     p = _user_profile(mgr, state)
     p.rag_config.embedding.model = "BAAI/bge-large-en-v1.5"
@@ -361,6 +421,7 @@ def test_load_reports_reranking_disabled_when_reranking_config_is_none(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
         load_rag_defaults_from_active_profile,
     )
+
     mgr, state = wired
     p = _user_profile(mgr, state)
     assert p.reranking_config is None
@@ -380,6 +441,7 @@ def test_save_with_reranking_enabled_creates_a_reranking_config_on_reload(wired)
         load_rag_defaults_from_active_profile,
         save_rag_defaults_to_active_profile,
     )
+
     mgr, state = wired
     p = _user_profile(mgr, state)
     assert p.reranking_config is None
@@ -404,6 +466,7 @@ def test_save_with_reranking_disabled_clears_an_existing_reranking_config(wired)
         load_rag_defaults_from_active_profile,
         save_rag_defaults_to_active_profile,
     )
+
     mgr, state = wired
     p = _user_profile(mgr, state)
     p.reranking_config = RerankingConfig(model_name="existing", top_k_to_rerank=9)
@@ -432,6 +495,7 @@ def test_save_with_reranking_enabled_and_blank_model_leaves_the_default_model_na
         load_rag_defaults_from_active_profile,
         save_rag_defaults_to_active_profile,
     )
+
     mgr, state = wired
     p = _user_profile(mgr, state)
 
@@ -456,6 +520,7 @@ def test_rerank_toggle_reaches_the_real_service_enable_reranking_flag(
         load_rag_defaults_from_active_profile,
         save_rag_defaults_to_active_profile,
     )
+
     mgr, state = wired
     p = _user_profile(mgr, state)
 
@@ -487,6 +552,7 @@ def test_rerank_toggle_off_reaches_the_real_service_enable_reranking_flag(
         load_rag_defaults_from_active_profile,
         save_rag_defaults_to_active_profile,
     )
+
     mgr, state = wired
     p = _user_profile(mgr, state)
     p.reranking_config = RerankingConfig()
@@ -527,6 +593,7 @@ def test_hard_config_errors_reports_a_real_ragconfig_violation(wired):
         hard_config_errors,
         load_rag_defaults_from_active_profile,
     )
+
     mgr, state = wired
     _user_profile(mgr, state)
     d = load_rag_defaults_from_active_profile()
@@ -543,6 +610,7 @@ def test_hard_config_errors_and_soft_config_warnings_empty_for_a_valid_config(wi
         load_rag_defaults_from_active_profile,
         soft_config_warnings,
     )
+
     mgr, state = wired
     _user_profile(mgr, state)
     d = load_rag_defaults_from_active_profile()
@@ -556,6 +624,7 @@ def test_hard_config_errors_flags_reranker_top_k_below_one_when_enabled(wired):
         hard_config_errors,
         load_rag_defaults_from_active_profile,
     )
+
     mgr, state = wired
     _user_profile(mgr, state)
     d = load_rag_defaults_from_active_profile()
@@ -566,7 +635,9 @@ def test_hard_config_errors_flags_reranker_top_k_below_one_when_enabled(wired):
     # UX review item 4 (terminology unification): the user-facing label is
     # "Rerank results" (not "Reranker top-k"); the field key stays
     # reranker_top_k.
-    assert any("rerank results" in e.lower() and "at least 1" in e.lower() for e in errors)
+    assert any(
+        "rerank results" in e.lower() and "at least 1" in e.lower() for e in errors
+    )
 
 
 def test_hard_config_errors_ignores_reranker_top_k_when_reranking_disabled(wired):
@@ -578,6 +649,7 @@ def test_hard_config_errors_ignores_reranker_top_k_when_reranking_disabled(wired
         hard_config_errors,
         load_rag_defaults_from_active_profile,
     )
+
     mgr, state = wired
     _user_profile(mgr, state)
     d = load_rag_defaults_from_active_profile()
@@ -591,6 +663,7 @@ def test_soft_config_warnings_flags_reranker_top_k_exceeding_default_top_k(wired
         load_rag_defaults_from_active_profile,
         soft_config_warnings,
     )
+
     mgr, state = wired
     _user_profile(mgr, state)
     d = load_rag_defaults_from_active_profile()
@@ -602,7 +675,9 @@ def test_soft_config_warnings_flags_reranker_top_k_exceeding_default_top_k(wired
 
     # UX review item 4 (terminology unification): "Rerank results", not
     # "Reranker top-k".
-    assert any("rerank results" in w.lower() and "exceed" in w.lower() for w in warnings)
+    assert any(
+        "rerank results" in w.lower() and "exceed" in w.lower() for w in warnings
+    )
 
 
 def test_soft_config_warnings_empty_when_reranking_disabled(wired):
@@ -612,6 +687,7 @@ def test_soft_config_warnings_empty_when_reranking_disabled(wired):
         load_rag_defaults_from_active_profile,
         soft_config_warnings,
     )
+
     mgr, state = wired
     _user_profile(mgr, state)
     d = load_rag_defaults_from_active_profile()
@@ -630,6 +706,7 @@ def test_hard_config_errors_never_mutates_the_cached_active_profile(wired):
         hard_config_errors,
         load_rag_defaults_from_active_profile,
     )
+
     mgr, state = wired
     p = _user_profile(mgr, state)
     assert p.reranking_config is None
@@ -655,6 +732,7 @@ def test_hard_config_errors_filters_out_unexposed_field_violations(wired):
         hard_config_errors,
         load_rag_defaults_from_active_profile,
     )
+
     mgr, state = wired
     p = _user_profile(mgr, state)
     # Mutate the already-registered, in-memory active profile directly
@@ -670,6 +748,7 @@ def test_hard_config_errors_filters_out_unexposed_field_violations(wired):
     d = load_rag_defaults_from_active_profile()
     # Sanity: RAGConfig.validate() itself DOES flag this on the scratch copy.
     import copy as _copy
+
     scratch = _copy.deepcopy(p)
     assert any("vector store type" in e.lower() for e in scratch.rag_config.validate())
 
@@ -688,6 +767,7 @@ def test_hard_config_errors_tolerates_float_like_numeric_strings(wired):
         hard_config_errors,
         load_rag_defaults_from_active_profile,
     )
+
     mgr, state = wired
     _user_profile(mgr, state)
     d = load_rag_defaults_from_active_profile()
@@ -703,6 +783,7 @@ def test_hard_config_errors_reports_instead_of_crashing_on_unparseable_numeric_v
         hard_config_errors,
         load_rag_defaults_from_active_profile,
     )
+
     mgr, state = wired
     _user_profile(mgr, state)
     d = load_rag_defaults_from_active_profile()
@@ -725,6 +806,7 @@ def test_validate_library_rag_defaults_blocks_save_with_ragconfigs_own_wording(w
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
         load_rag_defaults_from_active_profile,
     )
+
     mgr, state = wired
     _user_profile(mgr, state)
     d = load_rag_defaults_from_active_profile()
@@ -746,6 +828,7 @@ def test_validate_library_rag_defaults_does_not_gate_on_an_unexposed_field_viola
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
         load_rag_defaults_from_active_profile,
     )
+
     mgr, state = wired
     p = _user_profile(mgr, state)
     # See the identical comment in
@@ -772,7 +855,9 @@ def test_reranker_top_k_dataclass_default_matches_rerankingconfig_default():
         SettingsLibraryRagDefaults,
     )
 
-    assert SettingsLibraryRagDefaults().reranker_top_k == RerankingConfig().top_k_to_rerank
+    assert (
+        SettingsLibraryRagDefaults().reranker_top_k == RerankingConfig().top_k_to_rerank
+    )
 
 
 def test_load_defaults_reranker_top_k_falls_back_to_rerankingconfig_default(wired):
@@ -783,6 +868,7 @@ def test_load_defaults_reranker_top_k_falls_back_to_rerankingconfig_default(wire
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
         load_rag_defaults_from_active_profile,
     )
+
     mgr, state = wired
     p = _user_profile(mgr, state)
     assert p.reranking_config is None
@@ -800,6 +886,7 @@ def test_enabling_rerank_without_touching_top_k_persists_the_rerankingconfig_def
         load_rag_defaults_from_active_profile,
         save_rag_defaults_to_active_profile,
     )
+
     mgr, state = wired
     p = _user_profile(mgr, state)
 
@@ -825,6 +912,7 @@ def test_apply_defaults_with_blank_embedding_device_leaves_profile_device_unchan
         apply_defaults_to_profile,
         load_rag_defaults_from_active_profile,
     )
+
     mgr, state = wired
     p = _user_profile(mgr, state)
     p.rag_config.embedding.device = "cuda"
@@ -848,6 +936,7 @@ def test_index_change_pending_false_for_a_query_time_only_change(wired):
         index_change_pending,
         load_rag_defaults_from_active_profile,
     )
+
     mgr, state = wired
     _user_profile(mgr, state)
     d = load_rag_defaults_from_active_profile()
@@ -861,6 +950,7 @@ def test_index_change_pending_true_for_a_chunk_size_change(wired):
         index_change_pending,
         load_rag_defaults_from_active_profile,
     )
+
     mgr, state = wired
     _user_profile(mgr, state)
     d = load_rag_defaults_from_active_profile()
@@ -874,6 +964,7 @@ def test_index_change_pending_true_for_an_embedding_model_change(wired):
         index_change_pending,
         load_rag_defaults_from_active_profile,
     )
+
     mgr, state = wired
     _user_profile(mgr, state)
     d = load_rag_defaults_from_active_profile()
@@ -887,6 +978,7 @@ def test_index_change_pending_true_for_a_distance_metric_change(wired):
         index_change_pending,
         load_rag_defaults_from_active_profile,
     )
+
     mgr, state = wired
     _user_profile(mgr, state)
     d = load_rag_defaults_from_active_profile()
@@ -904,6 +996,7 @@ def test_index_change_pending_never_mutates_the_cached_active_profile(wired):
         index_change_pending,
         load_rag_defaults_from_active_profile,
     )
+
     mgr, state = wired
     p = _user_profile(mgr, state)
     original_chunk_size = p.rag_config.chunking.chunk_size
@@ -923,6 +1016,7 @@ def test_index_change_pending_returns_false_without_raising_when_manager_raises(
         index_change_pending,
         load_rag_defaults_from_active_profile,
     )
+
     mgr, state = wired
     _user_profile(mgr, state)
     d = load_rag_defaults_from_active_profile()
@@ -942,6 +1036,7 @@ def test_fetch_index_status_absent_for_a_memory_store_active_profile(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
         fetch_index_status,
     )
+
     mgr, state = wired
     p = _user_profile(mgr, state)
     p.rag_config.vector_store.type = "memory"
@@ -956,6 +1051,7 @@ def test_fetch_index_status_returns_unknown_without_raising_on_error(
     wired, monkeypatch
 ):
     import tldw_chatbook.UI.Screens.settings_rag_profile_adapter as ad
+
     mgr, state = wired
     _user_profile(mgr, state)
 
@@ -981,12 +1077,17 @@ def test_fetch_index_status_returns_unknown_without_raising_on_error(
 
 def test_save_resets_the_shared_rag_service_on_success(wired, monkeypatch):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
-        load_rag_defaults_from_active_profile, save_rag_defaults_to_active_profile)
+        load_rag_defaults_from_active_profile,
+        save_rag_defaults_to_active_profile,
+    )
     import tldw_chatbook.UI.Screens.settings_rag_profile_adapter as ad
+
     mgr, state = wired
     _user_profile(mgr, state)
     reset_calls: list[None] = []
-    monkeypatch.setattr(ad, "reset_shared_rag_service", lambda: reset_calls.append(None))
+    monkeypatch.setattr(
+        ad, "reset_shared_rag_service", lambda: reset_calls.append(None)
+    )
 
     d = load_rag_defaults_from_active_profile()
     d = dataclasses.replace(d, default_top_k=d.default_top_k + 1)
@@ -1000,11 +1101,16 @@ def test_save_refused_for_a_builtin_does_not_reset_the_shared_rag_service(
     wired, monkeypatch
 ):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
-        load_rag_defaults_from_active_profile, save_rag_defaults_to_active_profile)
+        load_rag_defaults_from_active_profile,
+        save_rag_defaults_to_active_profile,
+    )
     import tldw_chatbook.UI.Screens.settings_rag_profile_adapter as ad
+
     mgr, state = wired  # active = hybrid_basic (builtin)
     reset_calls: list[None] = []
-    monkeypatch.setattr(ad, "reset_shared_rag_service", lambda: reset_calls.append(None))
+    monkeypatch.setattr(
+        ad, "reset_shared_rag_service", lambda: reset_calls.append(None)
+    )
 
     d = load_rag_defaults_from_active_profile()
     ok, reason = save_rag_defaults_to_active_profile(d)
@@ -1015,12 +1121,17 @@ def test_save_refused_for_a_builtin_does_not_reset_the_shared_rag_service(
 
 def test_save_failure_does_not_reset_the_shared_rag_service(wired, monkeypatch):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
-        load_rag_defaults_from_active_profile, save_rag_defaults_to_active_profile)
+        load_rag_defaults_from_active_profile,
+        save_rag_defaults_to_active_profile,
+    )
     import tldw_chatbook.UI.Screens.settings_rag_profile_adapter as ad
+
     mgr, state = wired
     _user_profile(mgr, state)
     reset_calls: list[None] = []
-    monkeypatch.setattr(ad, "reset_shared_rag_service", lambda: reset_calls.append(None))
+    monkeypatch.setattr(
+        ad, "reset_shared_rag_service", lambda: reset_calls.append(None)
+    )
     monkeypatch.setattr(
         mgr, "save_profile", lambda *a, **k: (_ for _ in ()).throw(OSError("disk full"))
     )
@@ -1047,7 +1158,10 @@ def test_save_failure_leaves_the_cached_active_profile_at_its_original_values(
     wired, monkeypatch
 ):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
-        load_rag_defaults_from_active_profile, save_rag_defaults_to_active_profile)
+        load_rag_defaults_from_active_profile,
+        save_rag_defaults_to_active_profile,
+    )
+
     mgr, state = wired
     p = _user_profile(mgr, state, default_top_k=42)
     original_top_k = p.rag_config.search.default_top_k
@@ -1077,6 +1191,7 @@ def test_get_profile_defaults_reads_a_non_active_profile_by_id(wired):
         get_profile_defaults,
         load_rag_defaults_from_active_profile,
     )
+
     mgr, state = wired
     # `_user_profile` sets `state["active"]` to the NEW profile -- clone a
     # SECOND, distinctive profile and re-point active back at the first so
@@ -1106,6 +1221,7 @@ def test_get_profile_defaults_round_trips_distinctive_values(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
         get_profile_defaults,
     )
+
     mgr, state = wired
     p = mgr.clone_profile("hybrid_basic", "Distinctive RAG")
     p.rag_config.embedding.model = "BAAI/bge-large-en-v1.5"
@@ -1143,6 +1259,7 @@ def test_get_profile_defaults_reads_a_builtin_profile(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
         get_profile_defaults,
     )
+
     d = get_profile_defaults("hybrid_basic")
     assert d is not None
     assert d.default_search_mode == "hybrid"
@@ -1152,6 +1269,7 @@ def test_get_profile_defaults_unknown_id_returns_none(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
         get_profile_defaults,
     )
+
     assert get_profile_defaults("does-not-exist") is None
 
 
@@ -1162,6 +1280,7 @@ def test_get_profile_defaults_never_mutates_the_managers_cached_profile(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
         get_profile_defaults,
     )
+
     mgr, state = wired
     other = mgr.clone_profile("hybrid_basic", "Other RAG")
     mgr.save_profile(other)
@@ -1183,17 +1302,28 @@ def test_get_profile_defaults_never_mutates_the_managers_cached_profile(wired):
 
 
 def _info(*, read_only: bool) -> dict:
-    return {"id": "hybrid_basic", "name": "Hybrid Basic", "read_only": read_only, "description": ""}
+    return {
+        "id": "hybrid_basic",
+        "name": "Hybrid Basic",
+        "read_only": read_only,
+        "description": "",
+    }
 
 
 def _grouped(*, user: list) -> dict:
-    return {"builtin": [{"id": "hybrid_basic", "name": "Hybrid Basic"}], "user": user, "active_id": "hybrid_basic"}
+    return {
+        "builtin": [{"id": "hybrid_basic", "name": "Hybrid Basic"}],
+        "user": user,
+        "active_id": "hybrid_basic",
+    }
 
 
 def test_is_first_run_state_true_when_builtin_no_users_and_index_absent():
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import is_first_run_state
 
-    assert is_first_run_state(_info(read_only=True), _grouped(user=[]), "absent") is True
+    assert (
+        is_first_run_state(_info(read_only=True), _grouped(user=[]), "absent") is True
+    )
 
 
 def test_is_first_run_state_false_when_active_is_not_read_only():
@@ -1202,7 +1332,9 @@ def test_is_first_run_state_false_when_active_is_not_read_only():
     a writable profile to edit directly."""
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import is_first_run_state
 
-    assert is_first_run_state(_info(read_only=False), _grouped(user=[]), "absent") is False
+    assert (
+        is_first_run_state(_info(read_only=False), _grouped(user=[]), "absent") is False
+    )
 
 
 def test_is_first_run_state_false_when_a_user_profile_already_exists():
@@ -1219,7 +1351,9 @@ def test_is_first_run_state_false_when_index_is_not_absent():
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import is_first_run_state
 
     for state in ("built", "empty", "unknown"):
-        assert is_first_run_state(_info(read_only=True), _grouped(user=[]), state) is False, state
+        assert (
+            is_first_run_state(_info(read_only=True), _grouped(user=[]), state) is False
+        ), state
 
 
 # --- TASK-3502 AC#1: reranker PROVIDER selection. Enabling reranking used to
@@ -1232,6 +1366,7 @@ def test_load_reads_the_profiles_reranker_provider(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
         load_rag_defaults_from_active_profile,
     )
+
     mgr, state = wired
     p = _user_profile(mgr, state)
     p.reranking_config = RerankingConfig(model_provider="anthropic")
@@ -1250,6 +1385,7 @@ def test_load_reports_blank_reranker_provider_when_reranking_config_is_none(wire
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
         load_rag_defaults_from_active_profile,
     )
+
     mgr, state = wired
     p = _user_profile(mgr, state)
     assert p.reranking_config is None
@@ -1264,6 +1400,7 @@ def test_save_with_a_reranker_provider_writes_model_provider(wired):
         load_rag_defaults_from_active_profile,
         save_rag_defaults_to_active_profile,
     )
+
     mgr, state = wired
     p = _user_profile(mgr, state)
 
@@ -1287,6 +1424,7 @@ def test_save_with_reranking_enabled_and_blank_provider_leaves_the_default(wired
         load_rag_defaults_from_active_profile,
         save_rag_defaults_to_active_profile,
     )
+
     mgr, state = wired
     p = _user_profile(mgr, state)
 
@@ -1311,6 +1449,7 @@ def test_save_preserves_an_existing_provider_when_the_field_is_blank(wired):
     from tldw_chatbook.UI.Screens.settings_library_rag_defaults import (
         SettingsLibraryRagDefaults,
     )
+
     mgr, state = wired
     p = _user_profile(mgr, state)
     p.reranking_config = RerankingConfig(model_provider="anthropic")

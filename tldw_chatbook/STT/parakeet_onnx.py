@@ -39,6 +39,12 @@ from .persistence import (
     dump_failed_transcription_attempt,
     load_failed_transcription_attempt,
 )
+from .failure_diagnostics import (
+    STTDiagnosticFailure,
+    STTFailureDiagnostic,
+    STTFailureStage,
+    diagnostic_from_exception,
+)
 
 LONG_FORM_SECONDS = 30.0
 
@@ -73,7 +79,9 @@ class ParakeetOnnxFailure(RuntimeError):
         requested_language: str,
         effective_language: str,
         effective_device: ExecutionDevice | None = ExecutionDevice.CPU,
+        diagnostic: STTFailureDiagnostic | None = None,
     ) -> None:
+        self.stt_diagnostic = diagnostic
         self.error_detail = {
             "category": "stt_failure",
             "code": code.value,
@@ -103,6 +111,30 @@ class ParakeetOnnxFailure(RuntimeError):
         super().__init__(message)
 
 
+@contextmanager
+def _stage(stage: STTFailureStage) -> Iterator[None]:
+    """Capture only finite metadata before discarding native exception text."""
+    try:
+        yield
+    except (ParakeetOnnxCancelled, ParakeetOnnxFailure, STTDiagnosticFailure):
+        raise
+    except Exception as error:
+        raise STTDiagnosticFailure(diagnostic_from_exception(stage, error)) from None
+
+
+def _stage_values(stage: STTFailureStage, values: Any) -> Iterator[Any]:
+    """Classify deferred native generator errors without changing their order."""
+    with _stage(stage):
+        iterator = iter(values)
+    while True:
+        with _stage(stage):
+            try:
+                value = next(iterator)
+            except StopIteration:
+                return
+        yield value
+
+
 def _onnx_asr_api() -> tuple[Any, Callable[..., Any], Callable[..., Any]]:
     """Import the native runtime only when a resident is actually loaded."""
     from tldw_chatbook.Utils.optional_deps import parakeet_onnx_deps_installed
@@ -117,9 +149,10 @@ def _onnx_asr_api() -> tuple[Any, Callable[..., Any], Callable[..., Any]]:
 
 
 def _wav_duration(path: Path) -> float:
-    with wave.open(str(path), "rb") as audio:
-        rate = audio.getframerate()
-        return audio.getnframes() / rate if rate else 0.0
+    with _stage(STTFailureStage.AUDIO_DECODE):
+        with wave.open(str(path), "rb") as audio:
+            rate = audio.getframerate()
+            return audio.getnframes() / rate if rate else 0.0
 
 
 @contextmanager
@@ -128,43 +161,46 @@ def _prepared_wav(path: Path, ffmpeg_path: str | None) -> Iterator[Path]:
     if path.suffix.lower() == ".wav":
         yield path
         return
-    executable = ffmpeg_path or shutil.which("ffmpeg")
-    if not executable:
-        raise RuntimeError("ffmpeg is required to transcribe non-WAV media")
-    temporary = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-    output = Path(temporary.name)
-    temporary.close()
+    with _stage(STTFailureStage.MEDIA_PREPARATION):
+        executable = ffmpeg_path or shutil.which("ffmpeg")
+        if not executable:
+            raise RuntimeError("ffmpeg is required to transcribe non-WAV media")
+        temporary = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        output = Path(temporary.name)
+        temporary.close()
     try:
-        subprocess.run(
-            [
-                executable,
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-y",
-                "-i",
-                str(path),
-                "-ar",
-                "16000",
-                "-ac",
-                "1",
-                "-c:a",
-                "pcm_s16le",
-                str(output),
-            ],
-            check=True,
-            capture_output=True,
-            # ffmpeg reads stdin by default; the input here is always a file
-            # path, so inheriting the parent's stdin only lets a stuck ffmpeg
-            # consume it.
-            stdin=subprocess.DEVNULL,
-            # A malformed or adversarial container can park ffmpeg
-            # indefinitely; bound it rather than wedge the worker.
-            timeout=FFMPEG_DECODE_TIMEOUT_SECONDS,
-        )
+        with _stage(STTFailureStage.MEDIA_PREPARATION):
+            subprocess.run(
+                [
+                    executable,
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-y",
+                    "-i",
+                    str(path),
+                    "-ar",
+                    "16000",
+                    "-ac",
+                    "1",
+                    "-c:a",
+                    "pcm_s16le",
+                    str(output),
+                ],
+                check=True,
+                capture_output=True,
+                # ffmpeg reads stdin by default; the input here is always a file
+                # path, so inheriting the parent's stdin only lets a stuck ffmpeg
+                # consume it.
+                stdin=subprocess.DEVNULL,
+                # A malformed or adversarial container can park ffmpeg
+                # indefinitely; bound it rather than wedge the worker.
+                timeout=FFMPEG_DECODE_TIMEOUT_SECONDS,
+            )
         yield output
     finally:
-        output.unlink(missing_ok=True)
+        with _stage(STTFailureStage.MEDIA_PREPARATION):
+            output.unlink(missing_ok=True)
 
 
 class ParakeetOnnxRuntime:
@@ -227,27 +263,30 @@ class ParakeetOnnxRuntime:
             ModuleNotFoundError: If the optional ``onnx-asr`` runtime is absent.
             ValueError: If the model or precision is unsupported.
         """
-        api, audio_reader, pad_list = _onnx_asr_api()
+        with _stage(STTFailureStage.MODEL_LOAD):
+            api, audio_reader, pad_list = _onnx_asr_api()
         started = time.monotonic()
-        model = api.load_model(
-            model_id,
-            path=model_root,
-            quantization="int8" if precision == "int8" else None,
-            providers=["CPUExecutionProvider"],
-            preprocessor_config={
-                "use_numpy_preprocessors": True,
-                "max_concurrent_workers": 1,
-            },
-        )
-        vad = (
-            api.load_vad(
-                "silero",
-                path=vad_root,
+        with _stage(STTFailureStage.MODEL_LOAD):
+            model = api.load_model(
+                model_id,
+                path=model_root,
+                quantization="int8" if precision == "int8" else None,
                 providers=["CPUExecutionProvider"],
+                preprocessor_config={
+                    "use_numpy_preprocessors": True,
+                    "max_concurrent_workers": 1,
+                },
             )
-            if vad_root is not None
-            else None
-        )
+        with _stage(STTFailureStage.MODEL_LOAD):
+            vad = (
+                api.load_vad(
+                    "silero",
+                    path=vad_root,
+                    providers=["CPUExecutionProvider"],
+                )
+                if vad_root is not None
+                else None
+            )
         return cls(
             model=model,
             vad=vad,
@@ -300,11 +339,10 @@ class ParakeetOnnxRuntime:
         started = time.monotonic()
         model_load_seconds = self._take_model_load_seconds()
         normalized_language = (language or "en").strip().lower()
-        effective_language = (
-            "auto" if self.model_id == PARAKEET_V3_MODEL else "en"
-        )
+        effective_language = "auto" if self.model_id == PARAKEET_V3_MODEL else "en"
         with _prepared_wav(Path(audio_path), ffmpeg_path) as wav_path:
-            duration = self._duration_reader(wav_path)
+            with _stage(STTFailureStage.AUDIO_DECODE):
+                duration = self._duration_reader(wav_path)
             use_vad = vad or duration > LONG_FORM_SECONDS
             if use_vad:
                 if self._vad is None:
@@ -328,23 +366,28 @@ class ParakeetOnnxRuntime:
                 )
             else:
                 self._check_cancelled(is_cancelled)
-                text = str(self._model.recognize(wav_path)).strip()
+                # onnx-asr owns any decoding/preprocessing inside this native call.
+                with _stage(STTFailureStage.INFERENCE):
+                    recognized = self._model.recognize(wav_path)
+                with _stage(STTFailureStage.NORMALIZATION):
+                    text = str(recognized).strip()
                 raw_segments = ((0.0, duration, text),) if text else ()
-        return self._build_result(
-            text=text,
-            raw_segments=raw_segments,
-            duration=duration,
-            attempt_id=attempt_id,
-            batch_id=batch_id,
-            job_id=job_id,
-            retry_of_attempt_id=retry_of_attempt_id,
-            retry_of_job_id=retry_of_job_id,
-            language=normalized_language,
-            timestamps=timestamps,
-            used_vad=use_vad,
-            model_load_seconds=model_load_seconds,
-            inference_seconds=time.monotonic() - started,
-        )
+        with _stage(STTFailureStage.NORMALIZATION):
+            return self._build_result(
+                text=text,
+                raw_segments=raw_segments,
+                duration=duration,
+                attempt_id=attempt_id,
+                batch_id=batch_id,
+                job_id=job_id,
+                retry_of_attempt_id=retry_of_attempt_id,
+                retry_of_job_id=retry_of_job_id,
+                language=normalized_language,
+                timestamps=timestamps,
+                used_vad=use_vad,
+                model_load_seconds=model_load_seconds,
+                inference_seconds=time.monotonic() - started,
+            )
 
     def transcribe_buffer(
         self,
@@ -396,27 +439,25 @@ class ParakeetOnnxRuntime:
 
         from tldw_chatbook.Utils.optional_deps import require_dependency
 
-        np = require_dependency("numpy", "transcription_parakeet_onnx")
+        with _stage(STTFailureStage.AUDIO_DECODE):
+            np = require_dependency("numpy", "transcription_parakeet_onnx")
 
         started = time.monotonic()
         model_load_seconds = self._take_model_load_seconds()
-        samples = np.frombuffer(source.audio, dtype="<i2").reshape(
-            -1, source.channels
-        )
-        mono = samples.astype(np.float32).mean(axis=1) / 32768.0
+        with _stage(STTFailureStage.AUDIO_DECODE):
+            samples = np.frombuffer(source.audio, dtype="<i2").reshape(
+                -1, source.channels
+            )
+            mono = samples.astype(np.float32).mean(axis=1) / 32768.0
         ends = segment_end_frames or (len(mono),)
         if (
             any(type(end) is not int or end <= 0 for end in ends)
             or any(a >= b for a, b in pairwise(ends))
             or ends[-1] != len(mono)
         ):
-            raise ValueError(
-                "segment_end_frames must increase to the final PCM frame"
-            )
+            raise ValueError("segment_end_frames must increase to the final PCM frame")
         starts = (0, *ends[:-1])
-        logical_waveforms = tuple(
-            mono[start:end] for start, end in zip(starts, ends)
-        )
+        logical_waveforms = tuple(mono[start:end] for start, end in zip(starts, ends))
         duration = len(mono) / source.sample_rate
         if (
             duration > LONG_FORM_SECONDS
@@ -449,12 +490,13 @@ class ParakeetOnnxRuntime:
             logical_segments_list: list[str] = []
             for waveform in logical_waveforms:
                 self._check_cancelled(is_cancelled)
-                text = str(
-                    self._model.recognize(
+                with _stage(STTFailureStage.INFERENCE):
+                    recognized = self._model.recognize(
                         waveform,
                         sample_rate=source.sample_rate,
                     )
-                ).strip()
+                with _stage(STTFailureStage.NORMALIZATION):
+                    text = str(recognized).strip()
                 logical_segments_list.append(text)
             logical_segments = tuple(logical_segments_list)
         text = " ".join(item for item in logical_segments if item)
@@ -478,6 +520,7 @@ class ParakeetOnnxRuntime:
             logical_segments=logical_segments,
         )
 
+    @_stage(STTFailureStage.NORMALIZATION)
     def _build_result(
         self,
         *,
@@ -498,9 +541,7 @@ class ParakeetOnnxRuntime:
         """Assemble the shared normalized file-or-buffer result contract."""
 
         granularity = (
-            TimestampGranularity.SEGMENT
-            if timestamps
-            else TimestampGranularity.NONE
+            TimestampGranularity.SEGMENT if timestamps else TimestampGranularity.NONE
         )
         segments = (
             tuple(
@@ -513,9 +554,7 @@ class ParakeetOnnxRuntime:
         is_v3 = self.model_id == PARAKEET_V3_MODEL
         effective_language = "auto" if is_v3 else "en"
         warnings = (
-            (TranscriptionWarningCode.REQUESTED_LANGUAGE_NOT_ENFORCED,)
-            if is_v3
-            else ()
+            (TranscriptionWarningCode.REQUESTED_LANGUAGE_NOT_ENFORCED,) if is_v3 else ()
         )
         provenance = TranscriptionProvenance(
             schema_version=1,
@@ -570,33 +609,35 @@ class ParakeetOnnxRuntime:
         logical_texts: list[str] = []
         for logical_waveform in logical_waveforms:
             self._check_cancelled(is_cancelled)
-            waveforms, lengths = self._model.resampler(
-                [logical_waveform],
-                [len(logical_waveform)],
-                sample_rate,
-            )
-            target_rate = self._model.asr._get_sample_rate()
+            with _stage(STTFailureStage.AUDIO_DECODE):
+                waveforms, lengths = self._model.resampler(
+                    [logical_waveform],
+                    [len(logical_waveform)],
+                    sample_rate,
+                )
+                target_rate = self._model.asr._get_sample_rate()
             self._check_cancelled(is_cancelled)
-            segment_groups = self._vad.segment_batch(
-                waveforms,
-                lengths,
-                target_rate,
-            )
+            with _stage(STTFailureStage.VAD):
+                segment_groups = self._vad.segment_batch(
+                    waveforms, lengths, target_rate
+                )
             recognized_segments: list[str] = []
             for waveform, ranges in zip(
                 waveforms,
-                segment_groups,
+                _stage_values(STTFailureStage.VAD, segment_groups),
                 strict=True,
             ):
-                for start, end in ranges:
+                for start, end in _stage_values(STTFailureStage.VAD, ranges):
                     self._check_cancelled(is_cancelled)
-                    batch, batch_lengths = self._pad_list([waveform[start:end]])
-                    recognized = self._model.asr.recognize_batch(
-                        batch,
-                        batch_lengths,
-                    )
-                    result = next(iter(recognized))
-                    text = str(result.text).strip()
+                    with _stage(STTFailureStage.AUDIO_DECODE):
+                        batch, batch_lengths = self._pad_list([waveform[start:end]])
+                    with _stage(STTFailureStage.INFERENCE):
+                        recognized = self._model.asr.recognize_batch(
+                            batch, batch_lengths
+                        )
+                        result = next(iter(recognized))
+                    with _stage(STTFailureStage.NORMALIZATION):
+                        text = str(result.text).strip()
                     if text:
                         recognized_segments.append(text)
             logical_texts.append(" ".join(recognized_segments))
@@ -613,25 +654,32 @@ class ParakeetOnnxRuntime:
         *,
         is_cancelled: Callable[[], bool] | None,
     ) -> tuple[str, tuple[tuple[float, float, str], ...]]:
-        waveforms, lengths, sample_rate = self._audio_reader(
-            audio_path,
-            channel="mean",
-        )
-        waveforms, lengths = self._model.resampler(
-            waveforms,
-            lengths,
-            sample_rate,
-        )
-        target_rate = self._model.asr._get_sample_rate()
-        segment_groups = self._vad.segment_batch(waveforms, lengths, target_rate)
+        with _stage(STTFailureStage.AUDIO_DECODE):
+            waveforms, lengths, sample_rate = self._audio_reader(
+                audio_path,
+                channel="mean",
+            )
+            waveforms, lengths = self._model.resampler(
+                waveforms,
+                lengths,
+                sample_rate,
+            )
+            target_rate = self._model.asr._get_sample_rate()
+        with _stage(STTFailureStage.VAD):
+            segment_groups = self._vad.segment_batch(waveforms, lengths, target_rate)
         segments: list[tuple[float, float, str]] = []
-        for waveform, ranges in zip(waveforms, segment_groups, strict=True):
-            for start, end in ranges:
+        for waveform, ranges in zip(
+            waveforms, _stage_values(STTFailureStage.VAD, segment_groups), strict=True
+        ):
+            for start, end in _stage_values(STTFailureStage.VAD, ranges):
                 self._check_cancelled(is_cancelled)
-                batch, batch_lengths = self._pad_list([waveform[start:end]])
-                recognized = self._model.asr.recognize_batch(batch, batch_lengths)
-                result = next(iter(recognized))
-                text = str(result.text).strip()
+                with _stage(STTFailureStage.AUDIO_DECODE):
+                    batch, batch_lengths = self._pad_list([waveform[start:end]])
+                with _stage(STTFailureStage.INFERENCE):
+                    recognized = self._model.asr.recognize_batch(batch, batch_lengths)
+                    result = next(iter(recognized))
+                with _stage(STTFailureStage.NORMALIZATION):
+                    text = str(result.text).strip()
                 if text:
                     segments.append((start / target_rate, end / target_rate, text))
         return " ".join(item[2] for item in segments), tuple(segments)

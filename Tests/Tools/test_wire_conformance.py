@@ -117,6 +117,7 @@ _ARGUMENTS_BY_OPERATION: dict[str, dict[str, Any]] = {
         "new_string": "after",
         "sensitive_exclusions": [],
     },
+    "fs_mkdir": {"path": "new/dir", "sensitive_exclusions": []},
     "fs_patch": {
         "diff": "--- a/file\n+++ b/file\n",
         "sensitive_exclusions": [],

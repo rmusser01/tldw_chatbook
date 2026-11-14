@@ -1,0 +1,30 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedul  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and c… Speak replies   ▌   Hands-free   ▌     Running
+   New tab     Settings     Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────
+                             │ Conversation | Source                                     │
+                  Context ◂  │        ● Source        ✕    New tab     Temporary         │
+   Terminal                  │  │ Workspace: Project                                 │   │
+ ──────────────────────────  │  │ The workspace and its other active chats will      │   │
+ Workspaces             ▸    │  │ become visible.                                    │   │
+ ──────────────────────────  │  │ Chats archived individually will stay archived.    │   │
+ Conversations          ▾    │  │                                                    │   │
+     Archive this chat       │  │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │   │
+      Archived chats         │  │ ▊  Restore chat and       ▼                      ▎ │   │
+     Search all chats…       │  │ ▊  workspace                                     ▎ │   │◂ Inspect
+   Source                    │  │                                                    │   │
+                           ▇ │  │                                                    │   │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │  │             Confirm restore · Original             │   │
+  ▊  Filter      ▎           │  │                                                    │▃  │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │  │                                                    │   │
+                             │  │                                                    │   │
+   New conversation          │  │                       Cancel                       │   │
+  Chats                 ▾    │  │                                                    │   │
+ ▼ Character · Model · +2    │  │                                                    │▄  │
+                             │            ▼ streaming below — jump to latest             │  setup
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Run: Agent running.     Library · Auto off · Agent allowed     Provider: llama_cpp
+█  Composer ▾  Menu  Unrelated unfinished draft                     Queue | $       Dictate   Redir
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Ctrl+P · Ctrl+Q

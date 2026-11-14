@@ -1,0 +1,36 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+──────────────────────╭──────────────────────────────────────────────────────────────────────────╮──────────────────────
+ Library | Local      │                                                                          │
+  Library notes  |  Fo│  Library Shortcuts — Notes                                               │
+┌─────────────────────│  Shortcuts:                                                              │─────────────────────┐
+│   N  ┌──────────────│  - : typing in field                                                     │changes save         │
+│   a  │ Library notes│  - esc: back to list                                                     │                     │
+│   v  │ Notes (122)  │  - F6: next pane                                                         │ting 2026-09-24      │
+│      │ These notes l│  - shift+f6: Previous pane                                               │                     │
+│      │ notes that li│  - ctrl+n: New note                                                      │                     │
+│      │ files. To cop│  │                                                                    │  │y — no file on disk  │
+│      │ from files.  │  │                                                                    │  │                     │
+│      │              │  │                                                                    │  │iew            Info  │
+│      │ Filter       │  │                                                                    │  │                     │
+│ ---> │ ▊▔▔▔▔▔▔▔▔▔▔▔▔│  │                                                                    │  │                     │
+│      │ ▊ Filter note│  │                                                                    │  │▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁│  │                                                                    │  │                   ▎ │
+│      │              │  │                                                                    │  │▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      │    New     So│  │                                                                    │  │                     │
+│      │    Add from f│  │                                                                    │  │                     │
+│      │ Folders & pla│  │                                                                    │  │▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │    New folder│  │                                                                    │  │                   ▎ │
+│      │    Remove pla│  │                                                                    │  │▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│ ---> │              │  │                                                                    │  │                     │
+│      │              │  │                                                                    │  │                     │
+│      │  ▸ Agent_Less│  │                                                                    │  │━━━━━━━━━━━━━━━━━━━┓ │
+│      │  ▸ Journal   │  │                                                                    │  │9-24               ┃ │
+│      │  ▾ Meetings  │  │                                                                    │  │                   ┃ │
+│      │    Meeting no│  └────────────────────────────────────────────────────────────────────┘  │                   ┃ │
+│      │    Meeting: d│                                                                          │                   ┃ │
+│      │    Advisor me│       Close                                                              │━━━━━━━━━━━━━━━━━━━┛ │
+│      │    ملاحظات ال│                                                                          │                     │
+│      └──────────────╰──────────────────────────────────────────────────────────────────────────╯     60 words · 1:1  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  esc back to notes | ctrl+end end of note | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

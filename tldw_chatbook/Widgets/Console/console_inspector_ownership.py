@@ -195,6 +195,7 @@ class InspectorOwnedContent:
     world_book_rows: tuple[OwnedInspectorRow, ...]
     world_book_actions: tuple[OwnedInspectorAction, ...]
     unknown_identifiers: tuple[str, ...]
+    pending_only: bool = False
 
     @property
     def incomplete(self) -> bool:
@@ -355,4 +356,5 @@ def classify_inspector_content(
         world_book_rows=world_book_rows,
         world_book_actions=world_book_actions,
         unknown_identifiers=unknown_identifiers,
+        pending_only=state.pending_only is True,
     )

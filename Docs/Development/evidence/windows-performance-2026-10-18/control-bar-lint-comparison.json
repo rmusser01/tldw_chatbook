@@ -1,0 +1,46 @@
+{
+  "baseline": {
+    "lint": [
+      {
+        "cell": null,
+        "code": "E721",
+        "end_location": {
+          "column": 62,
+          "row": 781
+        },
+        "filename": "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\UI\\Console_Modules\\console_spend_projection.py",
+        "fix": null,
+        "location": {
+          "column": 37,
+          "row": 781
+        },
+        "message": "Do not compare types, use `isinstance()`",
+        "noqa_row": 781,
+        "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+      }
+    ],
+    "format_changed_lines": 71
+  },
+  "current": {
+    "lint": [
+      {
+        "cell": null,
+        "code": "E721",
+        "end_location": {
+          "column": 62,
+          "row": 772
+        },
+        "filename": "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\UI\\Console_Modules\\console_spend_projection.py",
+        "fix": null,
+        "location": {
+          "column": 37,
+          "row": 772
+        },
+        "message": "Do not compare types, use `isinstance()`",
+        "noqa_row": 772,
+        "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+      }
+    ],
+    "format_changed_lines": 71
+  }
+}

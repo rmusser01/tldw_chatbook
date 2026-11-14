@@ -1,9 +1,14 @@
-import base64
+import tldw_chatbook.Chat.attachment_core as _attachment_core
+import tldw_chatbook.Chat.console_chat_fork as _fork_contracts
+import tldw_chatbook.Chat.console_chat_models as _chat_models
+import tldw_chatbook.Chat.console_project_instructions as _project_instructions
+import tldw_chatbook.Chat.rag_scope as _rag_scope
 import json
+import sqlite3
 import threading
 import time
-from collections.abc import Iterator
-from contextlib import contextmanager
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager, nullcontext
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from uuid import UUID
@@ -16,28 +21,31 @@ from typing import (
     List,
     Mapping,
     Optional,
-    Sequence,
-    Tuple,
     cast,
 )
 
+if TYPE_CHECKING:
+    from tldw_chatbook.Agents.goal_models import GoalProvisioning
+
 from loguru import logger as _logger
 
-from tldw_chatbook.Chat.attachment_core import MAX_ATTACHMENT_BYTES
 from tldw_chatbook.Chat.citation_trace_models import SealedCitationWrite
 from tldw_chatbook.Chat.citation_trace_repository import (
     CitationPersistenceUnavailable,
     CitationTraceRepository,
 )
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
+from tldw_chatbook.Chat.console_prompt_mixins import (
+    MixinAttemptWrite,
+    MixinForkState,
+    MixinPreferenceRead,
+    MixinPreferences,
+    MixinReplayRead,
+)
 from tldw_chatbook.Chat.console_chat_fork import (
-    CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT,
     ConsoleChatForkSnapshot,
     encode_console_fork_message_metadata,
-    fingerprint_console_fork_selected_image,
-    validate_console_fork_image_payload,
 )
-from tldw_chatbook.Chat.console_chat_models import CONSOLE_GLOBAL_WORKSPACE_ID
 from tldw_chatbook.Chat.console_context_repository import (
     ConsoleContextRepository,
     ContextPolicyReadResult,
@@ -56,6 +64,7 @@ from tldw_chatbook.Chat.console_library_policy import (
     ConsoleLibraryPolicyCandidate,
     ConsoleLibraryPolicySnapshot,
     ConsoleLibraryPolicyWriteStatus,
+    repairs_missing_policy,
 )
 from tldw_chatbook.Chat.console_generation_settings_metadata import (
     ConsoleGenerationSettingsReadResult,
@@ -79,36 +88,34 @@ from tldw_chatbook.Chat.console_trace_repository import (
 )
 from tldw_chatbook.Chat.console_semantic_revision import SemanticRevisionCoordinator
 if TYPE_CHECKING:
+    from tldw_chatbook.Chat.response_rules.store import ResponseRuleStore
     from tldw_chatbook.Chat.console_voice_promotion import (
         CompletedVoicePairCommit,
         ResolvedVoicePromotionDestination,
         VoicePromotionContext,
         VoicePromotionIdentitySet,
     )
-from tldw_chatbook.Chat.library_activity import LibraryActivityContribution
 from tldw_chatbook.Chat.console_prefill import PINNED_PREFILL_METADATA_KEY
-from tldw_chatbook.Chat.conversation_local_marks_service import (
-    ConversationLocalMarksService,
-)
 from tldw_chatbook.Chat.console_roleplay_metadata import (
     ConsoleRoleplayContext,
     merge_console_roleplay_context,
     parse_console_roleplay_context,
 )
+from tldw_chatbook.Chat.console_session_endpoint_policy import (
+    ConsoleEndpointAdoptionReceipt,
+)
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_speech_preferences import (
     ConsoleSpeechPreferences,
     merge_console_speech_preferences,
     parse_console_speech_preferences,
 )
-from tldw_chatbook.Chat.console_session_endpoint_policy import (
-    ConsoleEndpointAdoptionReceipt,
+from tldw_chatbook.Chat.conversation_local_marks_service import (
+    ConversationLocalMarksService,
 )
-from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
-from tldw_chatbook.Chat.console_project_instructions import (
-    encode_project_context_json,
-)
-from tldw_chatbook.Chat.rag_scope import serialize_scope
+from tldw_chatbook.Chat.library_activity import LibraryActivityContribution
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
+from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.DB.ChaChaNotes_DB import (
     CharactersRAGDB,
     ConflictError,
@@ -123,6 +130,56 @@ logger = _logger.bind(module="ChatPersistenceService")
 _ASSISTANT_AUTHORITY_UNSET = cast(Optional[str], object())
 _CONTEXT_POLICY_EXPECTED_REVISION_UNSET = object()
 CONSOLE_FORK_SOURCE_LINEAGE_MAX_DEPTH = 10_000
+
+_FORK_VERIFY_BATCH_CAP = 500
+_FORK_VERIFY_COLUMNS = (
+    "id, conversation_id, parent_message_id, sender, content, deleted, version"
+)
+_SQLITE_DEFAULT_VARIABLE_LIMIT = 999
+
+
+# Explicit live dependency exports for the extracted implementation.
+MAX_ATTACHMENT_BYTES = _attachment_core.MAX_ATTACHMENT_BYTES
+CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT = (
+    _fork_contracts.CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT
+)
+fingerprint_console_fork_selected_image = (
+    _fork_contracts.fingerprint_console_fork_selected_image
+)
+validate_console_fork_image_payload = (
+    _fork_contracts.validate_console_fork_image_payload
+)
+CONSOLE_GLOBAL_WORKSPACE_ID = _chat_models.CONSOLE_GLOBAL_WORKSPACE_ID
+encode_project_context_json = _project_instructions.encode_project_context_json
+serialize_scope = _rag_scope.serialize_scope
+
+
+def _bounded_id_batches(
+    cursor: Any, ids: Sequence[str]
+) -> Iterator[Sequence[str]]:
+    """Yield ``ids`` in slices one ``IN (?, ...)`` list can bind.
+
+    Mirrors the house chunking in ``ChaChaNotes_DB._bounded_id_batches``
+    (500-id cap, bounded by the live connection's variable limit). Callers
+    run every batch inside one transaction, so the batches read one snapshot.
+
+    Args:
+        cursor: The transaction cursor whose connection bounds the batch.
+        ids: The ids to bind, one variable each.
+
+    Yields:
+        Consecutive slices of at most ``min(500, limit)`` ids.
+    """
+    connection = getattr(cursor, "connection", None)
+    limit = _SQLITE_DEFAULT_VARIABLE_LIMIT
+    if connection is not None:
+        try:
+            limit = connection.getlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER)
+        except (AttributeError, sqlite3.Error):
+            limit = _SQLITE_DEFAULT_VARIABLE_LIMIT
+    size = max(1, min(_FORK_VERIFY_BATCH_CAP, limit))
+    for start in range(0, len(ids), size):
+        yield ids[start : start + size]
 
 # Complete census of direct ChaChaNotes message/revision locators. The schema
 # inventory regression requires every new locator to be classified before the
@@ -140,6 +197,17 @@ _VOICE_PROMOTION_FORBIDDEN_MESSAGE_LOCATORS = frozenset(
         ("canvas_revisions", "origin_message_id"),
         ("console_dispatch_checkpoints", "assistant_message_id"),
         ("console_dispatch_checkpoints", "user_message_id"),
+        ("console_prompt_mixin_attempts", "user_message_id"),
+        ("console_prompt_mixin_attempts", "assistant_message_id"),
+        ("console_hook_continuation_receipts", "assistant_message_id"),
+        ("console_hook_continuation_receipts", "parent_assistant_message_id"),
+        ("fleet_progress_messages", "message_id"),
+        ("console_response_rule_assessments", "message_id"),
+        ("console_response_rule_drafts", "message_id"),
+        ("console_response_rule_fixtures", "message_id"),
+        ("console_response_rule_validations", "message_id"),
+        ("console_machine_followup_receipts", "assistant_message_id"),
+        ("console_machine_followup_receipts", "parent_assistant_message_id"),
         ("message_attachments", "message_id"),
         ("message_exchanges", "message_id"),
         ("message_generation_metadata", "message_id"),
@@ -245,6 +313,10 @@ def _is_canonical_utc_timestamp(value: object) -> bool:
     return True
 
 
+class GoalConversationConflict(ValueError):
+    """The preallocated conversation cannot be proven to belong to this launch."""
+
+
 class ChatPersistenceService:
     def __init__(
         self,
@@ -253,6 +325,7 @@ class ChatPersistenceService:
         citation_repository: CitationTraceRepository | None = None,
     ):
         self.db = db
+        self.response_rule_store: ResponseRuleStore | None = None
         self.workspace_registry = workspace_registry
         self.citation_repository = citation_repository
         self.context_repository = ConsoleContextRepository(db)
@@ -634,8 +707,14 @@ class ChatPersistenceService:
         context: "VoicePromotionContext",
         identities: "VoicePromotionIdentitySet",
         assistant_metadata_json: str,
+        user_metadata_json: str | None,
     ) -> "CompletedVoicePairCommit | None":
-        """Adopt one complete exact-ID commit or fail closed on any residue."""
+        """Adopt one complete exact-ID commit or fail closed on any residue.
+
+        ``user_metadata_json`` is the user row's exact expected record: the
+        ``root_fork`` marker when the destination is a root fork, otherwise
+        ``None`` (TASK-33628.12).
+        """
         from tldw_chatbook.Chat.console_voice_promotion import (
             CompletedVoicePairCommit,
         )
@@ -720,7 +799,7 @@ class ChatPersistenceService:
             and user["is_selected_variant"] == 1
             and user["total_variants"] == 1
             and user["usage_json"] is None
-            and user["metadata_json"] is None
+            and user["metadata_json"] == user_metadata_json
             and user["provider_continuation_json"] is None
             and user["thinking_blocks_json"] is None
             and user["assistant_generation_state"] is None
@@ -878,6 +957,12 @@ class ChatPersistenceService:
         assistant_metadata_json = MessageMetadata(
             terminal_receipt_id=identities.terminal_receipt_id
         ).to_json()
+        # A prompt sent beside an existing root is a root fork (TASK-33628.12).
+        user_metadata_json = (
+            MessageMetadata(root_fork=True).to_json()
+            if destination.user_root_fork
+            else None
+        )
         with self.db.transaction(immediate=True) as cursor:
             reconciled = self._reconcile_completed_voice_pair(
                 cursor,
@@ -886,6 +971,7 @@ class ChatPersistenceService:
                 context=context,
                 identities=identities,
                 assistant_metadata_json=assistant_metadata_json,
+                user_metadata_json=user_metadata_json,
             )
             if reconciled is not None:
                 result = reconciled
@@ -926,6 +1012,7 @@ class ChatPersistenceService:
                         "sender": "user",
                         "role": "user",
                         "content": context.user_text,
+                        "metadata_json": user_metadata_json,
                     }
                 )
                 if user_message_id != identities.user_message_id:
@@ -1162,6 +1249,139 @@ class ChatPersistenceService:
     ) -> ContextPolicyReadResult:
         """Return local sparse context-policy overrides for one conversation."""
         return self.context_repository.load_policy(conversation_id)
+
+    def get_conversation_mixin_preferences(
+        self, conversation_id: str
+    ) -> "MixinPreferenceRead":
+        """Read chat-local selection state through the existing DB owner."""
+        from tldw_chatbook.DB.console_prompt_mixins import read_preferences
+
+        with operation_owned_connection(self.db), self.db.transaction() as cursor:
+            return read_preferences(cursor, conversation_id)
+
+    def save_conversation_mixin_preferences(
+        self, *, conversation_id: str, expected_revision: int, value: "MixinPreferences"
+    ) -> "MixinPreferences":
+        """CAS one preference component in its native owned transaction."""
+        from tldw_chatbook.DB.console_prompt_mixins import save_preferences
+
+        with operation_owned_connection(self.db), self.db.transaction() as cursor:
+            return save_preferences(
+                cursor, conversation_id, expected_revision=expected_revision, value=value
+            )
+
+    def save_conversation_mixin_attempt(
+        self,
+        conversation_id: str,
+        *,
+        batch: MixinAttemptWrite,
+        native_message_ids: Mapping[str, str],
+        pending_assistant: tuple[str | None, str | None] | None = None,
+    ) -> None:
+        """Persist an exact replay attempt and its marker before provider entry."""
+        from .console_prompt_mixin_service import MixinAttemptContribution
+        from .console_transaction_contribution import _scoped_console_transaction_writer
+
+        with (
+            operation_owned_connection(self.db),
+            self.db.transaction(immediate=True) as cursor,
+        ):
+            if pending_assistant is not None:
+                if (
+                    native_message_ids.get(batch.assistant_message_id)
+                    != batch.assistant_message_id
+                ):
+                    raise ValueError("mixin_pending_anchor_conflict")
+                self._create_pending_assistant(
+                    conversation_id, batch.assistant_message_id, *pending_assistant
+                )
+            with _scoped_console_transaction_writer(cursor, conversation_id) as writer:
+                MixinAttemptContribution(batch).write_exact(
+                    writer=writer,
+                    conversation_id=conversation_id,
+                    native_message_ids=native_message_ids,
+                )
+
+    def save_pending_assistant(
+        self,
+        conversation_id: str,
+        message_id: str,
+        parent_id: str | None,
+        metadata_json: str | None,
+    ) -> None:
+        """Save an anchorless turn's empty reply row before provider entry (TASK-39119)."""
+        with operation_owned_connection(self.db), self.db.transaction():
+            self._create_pending_assistant(
+                conversation_id, message_id, parent_id, metadata_json
+            )
+
+    def _create_pending_assistant(
+        self, conversation_id, message_id, parent_id, metadata_json
+    ) -> None:
+        self.create_message(
+            conversation_id=conversation_id,
+            sender="assistant",
+            content="",
+            message_id=message_id,
+            parent_message_id=parent_id,
+            metadata_json=metadata_json,
+            assistant_generation_state="accepted",
+        )
+
+    def get_conversation_mixin_fork_state(
+        self, conversation_id: str, *, message_ids: Mapping[str, str]
+    ) -> MixinForkState:
+        """Capture historical fork ownership in one native read transaction."""
+        from tldw_chatbook.DB.console_prompt_mixins import read_fork_state
+
+        with operation_owned_connection(self.db), self.db.transaction() as cursor:
+            return read_fork_state(cursor, conversation_id, message_ids)
+
+    def get_conversation_mixin_attempt(
+        self,
+        conversation_id: str,
+        *,
+        assistant_message_id: str,
+        attempt_id: str | None = None,
+    ) -> "MixinReplayRead":
+        """Classify raw durable markers before returning an exact anchored replay."""
+        from tldw_chatbook.DB.console_prompt_mixins import read_attempt
+        from tldw_chatbook.Utils.input_validation import strict_json_loads
+
+        with operation_owned_connection(self.db), self.db.transaction() as cursor:
+            message = cursor.execute(
+                "SELECT metadata_json FROM messages WHERE conversation_id=? AND id=? AND lower(sender)='assistant' AND deleted=0",
+                (conversation_id, assistant_message_id),
+            ).fetchone()
+            if message is None:
+                return MixinReplayRead("unavailable", None)
+            try:
+                metadata = strict_json_loads(message[0]) if message[0] else {}
+            except (ValueError, TypeError, RecursionError):
+                return MixinReplayRead("unavailable", None)
+            if type(metadata) is not dict:
+                return MixinReplayRead("unavailable", None)
+            linked = cursor.execute(
+                "SELECT attempt_id FROM console_prompt_mixin_attempts WHERE conversation_id=? AND assistant_message_id=?",
+                (conversation_id, assistant_message_id),
+            ).fetchall()
+            if not (
+                {"mixin_attempt_id", "mixin_snapshot_schema_version"} & metadata.keys()
+            ):
+                return MixinReplayRead(
+                    "unavailable" if linked or attempt_id is not None else "legacy", None
+                )
+            marked_id = metadata.get("mixin_attempt_id")
+            if (
+                type(metadata.get("mixin_snapshot_schema_version")) is not int
+                or metadata["mixin_snapshot_schema_version"] != 1
+                or type(marked_id) is not str
+                or not marked_id
+                or (attempt_id is not None and attempt_id != marked_id)
+                or not any(row[0] == marked_id for row in linked)
+            ):
+                return MixinReplayRead("unavailable", None)
+            return read_attempt(cursor, conversation_id, attempt_id=marked_id)
 
     def get_conversation_generation_settings(
         self, conversation_id: str
@@ -1536,6 +1756,100 @@ class ChatPersistenceService:
                 )
         return result.snapshot
 
+    def update_agent_handoff_launch(self, conversation_id: str, launch: Any) -> None:
+        """Merge bounded display facts without changing draft custody or authority."""
+        from dataclasses import asdict
+
+        from tldw_chatbook.DB.base_db import operation_owned_connection
+
+        from .message_metadata import AgentHandoffLaunchMetadata
+
+        if not isinstance(launch, AgentHandoffLaunchMetadata):
+            raise ValueError("invalid handoff launch metadata")
+        with (
+            operation_owned_connection(self.db),
+            self.db.transaction(immediate=True) as cursor,
+        ):
+            row = cursor.execute(
+                "SELECT metadata, version FROM conversations WHERE id = ? AND deleted = 0",
+                (conversation_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError("handoff conversation unavailable")
+            metadata = json.loads(row["metadata"] or "{}")
+            handoff = metadata.get("console_agent_handoff")
+            if not isinstance(handoff, dict) or handoff.get("version") != 2:
+                raise ValueError("versioned handoff unavailable")
+            handoff["launch"] = asdict(launch)
+            cursor.execute(
+                "UPDATE conversations SET metadata = ?, version = version + 1, last_modified = ?, client_id = ? WHERE id = ? AND version = ? AND deleted = 0",
+                (
+                    json.dumps(metadata),
+                    self.db._get_current_utc_timestamp_iso(),
+                    self.db.client_id,
+                    conversation_id,
+                    row["version"],
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("handoff launch publication conflict")
+
+    def update_agent_handoff_draft(
+        self,
+        conversation_id: str,
+        *,
+        expected_revision: int,
+        draft_revision: int,
+        draft: str,
+    ) -> bool:
+        """Merge one pending handoff revision under the conversation version fence."""
+        if (
+            type(expected_revision) is not int
+            or expected_revision < 1
+            or type(draft_revision) is not int
+            or draft_revision <= expected_revision
+            or not isinstance(draft, str)
+        ):
+            raise ValueError("invalid handoff revision")
+        from tldw_chatbook.DB.base_db import operation_owned_connection
+
+        with (
+            operation_owned_connection(self.db),
+            self.db.transaction(immediate=True) as cursor,
+        ):
+            row = cursor.execute(
+                "SELECT metadata, version FROM conversations WHERE id = ? AND deleted = 0",
+                (conversation_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            metadata = json.loads(row["metadata"] or "{}")
+            handoff = metadata.get("console_agent_handoff")
+            if (
+                not isinstance(handoff, dict)
+                or handoff.get("version") != 2
+                or handoff.get("state") != "pending"
+                or handoff.get("draft_revision") != expected_revision
+            ):
+                return False
+            metadata["console_agent_handoff"] = {
+                **handoff,
+                "draft": draft,
+                "draft_revision": draft_revision,
+            }
+            updated = cursor.execute(
+                "UPDATE conversations SET metadata = ?, version = version + 1, "
+                "last_modified = ?, client_id = ? WHERE id = ? AND version = ? AND deleted = 0",
+                (
+                    json.dumps(metadata),
+                    self.db._get_current_utc_timestamp_iso(),
+                    self.db.client_id,
+                    conversation_id,
+                    row["version"],
+                ),
+            )
+            return updated.rowcount == 1
+
     def commit_durable_turn(
         self,
         *,
@@ -1607,7 +1921,15 @@ class ChatPersistenceService:
                     (acceptance.conversation_id,),
                 ).fetchone()
                 authority = acceptance.frozen_authority.policy
-                if (
+                if policy_row is None and repairs_missing_policy(
+                    authority, policy_candidate
+                ):  # TASK-33620.3: a legacy/imported chat gets its safe row.
+                    repaired = self.console_library_policy_repository.insert(
+                        acceptance.conversation_id, policy_candidate
+                    )
+                    if repaired.status is not ConsoleLibraryPolicyWriteStatus.COMMITTED:
+                        raise RuntimeError("Console Library policy repair failed.")
+                elif (
                     policy_row is None
                     or authority.source != "durable"
                     or authority.policy_revision != policy_row["policy_revision"]
@@ -1619,10 +1941,72 @@ class ChatPersistenceService:
                     raise RuntimeError(
                         "Durable Console Library policy no longer matches acceptance."
                     )
+            # The request pair and the exact handoff receipt share this transaction.
+            if acceptance.handoff_draft_revision is not None:
+                row = cursor.execute(
+                    "SELECT metadata, version FROM conversations WHERE id=? AND deleted=0",
+                    (acceptance.conversation_id,),
+                ).fetchone()
+                metadata = json.loads(row["metadata"] or "{}") if row else {}
+                handoff = metadata.get("console_agent_handoff")
+                receipt = (
+                    acceptance.agent_chat_start_attempt_id or acceptance.attempt_id
+                )
+                revision = acceptance.handoff_draft_revision
+                if not isinstance(handoff, dict) or handoff.get("version") != 2:
+                    raise ValueError("handoff custody unavailable")
+                if handoff.get("state") == "consumed":
+                    if (
+                        handoff.get("accepted_attempt_id") != receipt
+                        or handoff.get("draft_revision") != revision + 1
+                    ):
+                        raise ValueError("handoff receipt mismatch")
+                else:
+                    if (
+                        handoff.get("state") != "pending"
+                        or handoff.get("draft_revision") != revision
+                        or (
+                            acceptance.origin == "agent_chat_start"
+                            and handoff.get("draft") != acceptance.user_content
+                        )
+                    ):
+                        raise ValueError("handoff revision changed")
+                    metadata["console_agent_handoff"] = {
+                        **handoff,
+                        "state": "consumed",
+                        "draft": "",
+                        "draft_revision": revision + 1,
+                        "accepted_attempt_id": receipt,
+                    }
+                    updated = cursor.execute(
+                        "UPDATE conversations SET metadata=?, version=version+1, last_modified=?, client_id=? "
+                        "WHERE id=? AND version=? AND deleted=0",
+                        (
+                            json.dumps(metadata),
+                            self.db._get_current_utc_timestamp_iso(),
+                            self.db.client_id,
+                            acceptance.conversation_id,
+                            row["version"],
+                        ),
+                    )
+                    if updated.rowcount != 1:
+                        raise ValueError("handoff conversation changed")
+            elif acceptance.origin == "agent_chat_start":
+                raise ValueError("handoff revision required")
             return self.console_dispatch_repository.insert_with_messages(
                 cursor,
                 acceptance,
             )
+
+    def bind_response_rule_store(self, rules: "ResponseRuleStore") -> None:
+        """Use the same local rule owner for adoption and source cleanup."""
+        from .response_rules.store import ResponseRuleStore
+
+        if not isinstance(rules, ResponseRuleStore) or rules.repository.db is not self.db:
+            raise ValueError("response_rules_persistence_owner_mismatch")
+        if self.response_rule_store is not None and self.response_rule_store is not rules:
+            raise ValueError("response_rules_owner_already_bound")
+        self.response_rule_store = rules
 
     def promote_console_conversation_bundle(
         self,
@@ -1638,6 +2022,7 @@ class ChatPersistenceService:
         context_policy_overrides: ConsoleContextPolicyOverrides | None = None,
         contributions: Sequence[ConsolePromotionTransactionContribution] = (),
         trace_boundary: TraceForkBoundary | None = None,
+        rule_adoption_session_id: str | None = None,
     ) -> ConsoleLibraryPolicySnapshot:
         """Commit one temporary Console transcript and all Task-7 sidecars."""
         self.validate_workspace_target(**conversation_kwargs)
@@ -1699,6 +2084,13 @@ class ChatPersistenceService:
                 self.db.set_conversation_console_project_context(
                     conversation_id,
                     project_context_json,
+                )
+            if rule_adoption_session_id is not None:
+                if self.response_rule_store is None:
+                    raise RuntimeError("response_rules_owner_unbound")
+                self.response_rule_store.adopt_temporary(
+                    rule_adoption_session_id, conversation_id,
+                    native_message_ids, cursor,
                 )
             if contributions:
                 exact_native_message_ids = MappingProxyType(dict(native_message_ids))
@@ -1834,6 +2226,48 @@ class ChatPersistenceService:
                 )
                 if persisted_id != message.persisted_message_id:
                     raise RuntimeError("Persistence returned an unexpected message id.")
+            if snapshot.source_conversation_id is not None:
+                from tldw_chatbook.DB.console_prompt_mixins import (
+                    copy_conversation_mixins,
+                )
+
+                if snapshot.prompt_mixin_history is not None:
+                    from tldw_chatbook.DB.console_prompt_mixins import read_fork_state
+
+                    current_history = read_fork_state(
+                        cursor,
+                        snapshot.source_conversation_id,
+                        {
+                            message.source_persisted_message_id: message.native_message_id
+                            for message in snapshot.messages
+                            if message.source_persisted_message_id is not None
+                        },
+                    )
+                    if current_history != snapshot.prompt_mixin_history:
+                        raise ValueError("Console fork source changed.")
+                copy_conversation_mixins(
+                    cursor,
+                    source_conversation_id=snapshot.source_conversation_id,
+                    destination_conversation_id=target_id,
+                    message_ids={
+                        message.source_persisted_message_id: message.persisted_message_id
+                        for message in snapshot.messages
+                        if message.source_persisted_message_id is not None
+                        and message.persisted_message_id is not None
+                    },
+                )
+            elif snapshot.prompt_mixin_history is not None:
+                from tldw_chatbook.DB.console_prompt_mixins import write_fork_state
+
+                write_fork_state(
+                    cursor,
+                    target_id,
+                    state=snapshot.prompt_mixin_history,
+                    message_ids={
+                        row.native_message_id: row.persisted_message_id
+                        for row in snapshot.messages
+                    },
+                )
             self._link_console_fork_citations(cursor, snapshot)
             policy_result = self.console_library_policy_repository.insert(
                 target_id,
@@ -1923,15 +2357,33 @@ class ChatPersistenceService:
         )
         if actual_identity != expected_identity:
             raise RuntimeError("Console fork target identity collision.")
+        persisted_rows = self._load_fork_verification_rows(
+            cursor,
+            [
+                message.persisted_message_id
+                for message in snapshot.messages
+                if message.persisted_message_id is not None
+            ],
+        )
         for message in snapshot.messages:
-            persisted = cursor.execute(
-                """
-                SELECT conversation_id, parent_message_id, sender, content, deleted
-                FROM messages WHERE id = ?
-                """,
-                (message.persisted_message_id,),
-            ).fetchone()
-            if persisted is None or tuple(persisted) != (
+            persisted = persisted_rows.get(message.persisted_message_id)
+            if persisted is None:
+                # Row absent from the batch (e.g. deleted mid-transaction):
+                # fall back to the original single-row read for this id.
+                persisted = cursor.execute(
+                    """
+                    SELECT conversation_id, parent_message_id, sender, content, deleted
+                    FROM messages WHERE id = ?
+                    """,
+                    (message.persisted_message_id,),
+                ).fetchone()
+            if persisted is None or (
+                persisted["conversation_id"],
+                persisted["parent_message_id"],
+                persisted["sender"],
+                persisted["content"],
+                persisted["deleted"],
+            ) != (
                 target_id,
                 message.persisted_parent_id,
                 message.role.value,
@@ -1966,6 +2418,71 @@ class ChatPersistenceService:
             if message.persisted_message_id is not None
         }
 
+    @staticmethod
+    def _load_fork_verification_rows(
+        cursor: Any,
+        message_ids: Sequence[str | None],
+    ) -> dict[str, Any]:
+        """Batch-load message rows for fork verification (chunked IN-lists).
+
+        One chunked ``SELECT ... WHERE id IN (...)`` per 500 ids replaces the
+        per-message single-row reads in the fork-commit verification and
+        source-recheck walks (review-B B24). Callers run inside one
+        transaction, so the batches read one snapshot.
+
+        Args:
+            cursor: The transaction cursor to read through.
+            message_ids: Ids to load; ``None``/duplicates are ignored.
+
+        Returns:
+            Mapping of id to row carrying ``_FORK_VERIFY_COLUMNS``; ids with
+            no row are absent from the mapping.
+        """
+        unique_ids = [
+            message_id
+            for message_id in dict.fromkeys(message_ids)
+            if message_id is not None
+        ]
+        if not unique_ids:
+            return {}
+        rows: dict[str, Any] = {}
+        for batch in _bounded_id_batches(cursor, unique_ids):
+            placeholders = ",".join("?" * len(batch))
+            for row in cursor.execute(
+                f"""
+                SELECT {_FORK_VERIFY_COLUMNS}
+                FROM messages WHERE id IN ({placeholders})
+                """,
+                tuple(batch),
+            ):
+                rows[row["id"]] = row
+        return rows
+
+    @staticmethod
+    def _fork_row_resolver(cursor: Any, cache: dict[str, Any]) -> Any:
+        """Return a lookup resolving message ids through ``cache``.
+
+        A cache miss (a row outside the prefetched batch, e.g. a saved System
+        note on a parent hop) falls back to the original single-row SELECT and
+        memoizes the outcome -- including ``None`` -- for the rest of the
+        transaction, so repeated hops never re-query.
+        """
+
+        def resolve(message_id: str | None) -> Any:
+            if message_id is None or message_id in cache:
+                return cache.get(message_id)
+            row = cursor.execute(
+                f"""
+                SELECT {_FORK_VERIFY_COLUMNS}
+                FROM messages WHERE id = ?
+                """,
+                (message_id,),
+            ).fetchone()
+            cache[message_id] = row
+            return row
+
+        return resolve
+
     def _recheck_fork_source(
         self,
         cursor: Any,
@@ -1991,19 +2508,22 @@ class ChatPersistenceService:
         ):
             raise RuntimeError("Console fork source changed.")
         previous_source_id = None
+        source_rows = self._load_fork_verification_rows(
+            cursor,
+            [message.source_persisted_message_id for message in snapshot.messages],
+        )
+        resolve_row = self._fork_row_resolver(cursor, source_rows)
         for message in snapshot.messages:
-            row = cursor.execute(
-                """
-                SELECT conversation_id, parent_message_id, version, content, deleted
-                FROM messages WHERE id = ?
-                """,
-                (message.source_persisted_message_id,),
-            ).fetchone()
+            row = resolve_row(message.source_persisted_message_id)
             if (
                 row is None
                 or row["conversation_id"] != source_id
                 or self._fork_source_parent(
-                    cursor, source_id, row["parent_message_id"], previous_source_id
+                    cursor,
+                    source_id,
+                    row["parent_message_id"],
+                    previous_source_id,
+                    row_resolver=resolve_row,
                 )
                 != previous_source_id
                 or row["version"] != message.source_persisted_revision
@@ -2020,13 +2540,7 @@ class ChatPersistenceService:
             if active_lineage_id in seen or not active_lineage_id:
                 raise RuntimeError("Console fork source changed.")
             seen.add(active_lineage_id)
-            active_row = cursor.execute(
-                """
-                SELECT conversation_id, parent_message_id, deleted
-                FROM messages WHERE id = ?
-                """,
-                (active_lineage_id,),
-            ).fetchone()
+            active_row = resolve_row(active_lineage_id)
             if (
                 active_row is None
                 or active_row["conversation_id"] != source_id
@@ -2046,23 +2560,32 @@ class ChatPersistenceService:
         source_id: str,
         parent_id: str | None,
         previous_id: str | None,
+        *,
+        row_resolver: Any | None = None,
     ) -> str | None:
         """Walk a copied row's saved parent up past saved System notes.
 
-        A fork copies only the USER/ASSISTANT chain (ADR-092 §2), so a saved
+        A fork copies only the USER/ASSISTANT chain (ADR-334 §2), so a saved
         SYSTEM row -- a promoted ``/help`` note, image-edit failure guidance --
         may sit between two copied rows. Only live ``system`` rows of the
         source conversation are skipped (TASK-33621.10); anything else stops
         the walk and the caller's exact-parent check decides.
+
+        ``row_resolver`` supplies prefetched rows (B24); when omitted each hop
+        reads its own row. The hop cap accounting is identical either way:
+        every hop consumes exactly one loop iteration.
         """
         for _ in range(CONSOLE_FORK_SOURCE_LINEAGE_MAX_DEPTH):
             if parent_id is None or parent_id == previous_id:
                 return parent_id
-            row = cursor.execute(
-                "SELECT conversation_id, parent_message_id, sender, deleted "
-                "FROM messages WHERE id = ?",
-                (parent_id,),
-            ).fetchone()
+            if row_resolver is not None:
+                row = row_resolver(parent_id)
+            else:
+                row = cursor.execute(
+                    "SELECT conversation_id, parent_message_id, sender, deleted "
+                    "FROM messages WHERE id = ?",
+                    (parent_id,),
+                ).fetchone()
             if (
                 row is None
                 or row["deleted"]
@@ -2109,57 +2632,12 @@ class ChatPersistenceService:
         snapshot: ConsoleChatForkSnapshot,
         conversation_kwargs: Mapping[str, object],
     ) -> dict[str, object]:
-        configuration = snapshot.configuration
-        global_scope = configuration.workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID
-        prepared: dict[str, object] = {
-            "conversation_title": snapshot.title,
-            "scope_type": "global" if global_scope else "workspace",
-            "workspace_id": None if global_scope else configuration.workspace_id,
-            "system_prompt": configuration.settings.system_prompt,
-            "runtime_backend": configuration.runtime_backend,
-            "assistant_kind": configuration.assistant_kind,
-            "assistant_id": configuration.assistant_id,
-            "assistant_authority_id": configuration.assistant_authority_id,
-            "persona_memory_mode": configuration.persona_memory_mode,
-            "character_id": configuration.character_id,
-            "character_name": configuration.character_name,
-            "speech_preferences": configuration.speech_preferences,
-            "thinking_history_policy": configuration.thinking_history_policy,
-        }
-        if dict(conversation_kwargs) != prepared:
-            raise ValueError("Console fork configuration changed.")
-        metadata: dict[str, object] = {}
-        serialized_settings = asdict(configuration.settings)
-        if configuration.ephemeral_endpoint_policy is not None:
-            serialized_settings.pop("base_url", None)
-        metadata["console_session_settings"] = {
-            "version": 1,
-            **serialized_settings,
-            "pinned_prefill": None,
-        }
-        metadata = merge_console_generation_settings(
-            metadata,
-            snapshot_from_session_settings(configuration.settings),
+        from . import console_chat_fork
+
+        return console_chat_fork._fork_conversation_kwargs(
+            snapshot,
+            conversation_kwargs,
         )
-        if configuration.rag_scope is not None:
-            metadata["rag_scope"] = serialize_scope(configuration.rag_scope)
-        if (
-            configuration.user_display_name_override is not None
-            or configuration.character_system_template is not None
-        ):
-            metadata = json.loads(
-                merge_console_roleplay_context(
-                    metadata,
-                    ConsoleRoleplayContext(
-                        user_name_override=(configuration.user_display_name_override),
-                        character_system_template=(
-                            configuration.character_system_template
-                        ),
-                    ),
-                )
-            )
-        prepared["metadata"] = metadata or None
-        return prepared
 
     @staticmethod
     def _validate_console_fork_persistence_input(
@@ -2168,183 +2646,78 @@ class ChatPersistenceService:
         policy_candidate: ConsoleLibraryPolicyCandidate,
         project_context_json: str,
     ) -> None:
-        if not isinstance(snapshot, ConsoleChatForkSnapshot):
-            raise TypeError("snapshot must be ConsoleChatForkSnapshot")
-        if policy_candidate != snapshot.configuration.library_policy:
-            raise ValueError("Console fork Library policy changed.")
-        if project_context_json != encode_project_context_json(
-            snapshot.configuration.project_instruction_state
-        ):
-            raise ValueError("Console fork project context changed.")
-        if not snapshot.messages:
-            raise ValueError("Console fork must contain a message.")
-        durable_ids = [message.persisted_message_id for message in snapshot.messages]
-        if snapshot.durable:
-            if (
-                not snapshot.fork_conversation_id
-                or any(not message_id for message_id in durable_ids)
-                or len(set(durable_ids)) != len(durable_ids)
-            ):
-                raise ValueError("Console fork durable identities are invalid.")
-        elif snapshot.fork_conversation_id is not None or any(durable_ids):
-            raise ValueError("Temporary fork cannot carry durable identities.")
-        if not snapshot.durable and (
-            snapshot.source_conversation_id is not None
-            or snapshot.source_conversation_version is not None
-            or snapshot.source_active_leaf_persisted_message_id is not None
-            or snapshot.source_boundary_persisted_message_id is not None
-            or snapshot.citation_links
-            or any(
-                message.source_persisted_message_id is not None
-                or message.source_persisted_revision is not None
-                or message.source_persisted_content is not None
-                for message in snapshot.messages
-            )
-        ):
-            raise ValueError("Temporary fork citation identity is invalid.")
-        source_carriers = tuple(
-            (
-                message.source_persisted_message_id,
-                message.source_persisted_revision,
-                message.source_persisted_content,
-            )
-            for message in snapshot.messages
+        from . import console_chat_fork
+
+        return console_chat_fork._validate_console_fork_persistence_input(
+            snapshot,
+            policy_candidate=policy_candidate,
+            project_context_json=project_context_json,
         )
-        if snapshot.source_conversation_id is not None:
-            if (
-                type(snapshot.source_conversation_version) is not int
-                or not snapshot.source_active_leaf_persisted_message_id
-                or not snapshot.source_boundary_persisted_message_id
-                or any(
-                    type(source_id) is not str
-                    or not source_id
-                    or type(revision) is not int
-                    or type(content) is not str
-                    for source_id, revision, content in source_carriers
+
+    def provision_goal_conversation(self, intent: "GoalProvisioning") -> str:
+        """Reconcile one launch's exact conversation and workspace membership.
+
+        Args:
+            intent: Immutable IDs and payload digest persisted by the goal owner.
+
+        Returns:
+            The preallocated conversation UUID after membership is present.
+
+        Raises:
+            GoalConversationConflict: Existing history has different ownership.
+            Exception: A store write failed; retry this intent without cleanup.
+        """
+        from tldw_chatbook.Agents.goal_models import GoalProvisioning
+
+        if type(intent) is not GoalProvisioning:
+            raise TypeError("intent must be GoalProvisioning")
+        workspace_id = self._require_workspace_scope(
+            scope_type="workspace", workspace_id=intent.workspace_id
+        )
+        marker = {
+            "goal_id": intent.goal_id,
+            "launch_id": intent.launch_id,
+            "payload_hash": intent.payload_hash,
+        }
+        row = self.db.get_conversation_by_id(
+            intent.conversation_id, include_deleted=True
+        )
+        if row is None:
+            try:
+                self.db.add_conversation(
+                    {
+                        "id": intent.conversation_id,
+                        "title": "Goal run",
+                        "scope_type": "workspace",
+                        "workspace_id": workspace_id,
+                        "client_id": self.db.client_id,
+                        "metadata": json.dumps({"goal_launch": marker}, sort_keys=True),
+                    }
                 )
-            ):
-                raise ValueError("Console fork durable source fence is invalid.")
-        elif snapshot.durable and (
-            snapshot.source_conversation_version is not None
-            or snapshot.source_active_leaf_persisted_message_id is not None
-            or snapshot.source_boundary_persisted_message_id is not None
-            or any(carrier != (None, None, None) for carrier in source_carriers)
-            or snapshot.citation_links
-        ):
-            raise ValueError(
-                "Unsaved fork source cannot carry durable source identity."
+            except ConflictError:
+                # A concurrent identical Start may have committed the same UUID.
+                pass
+            row = self.db.get_conversation_by_id(
+                intent.conversation_id, include_deleted=True
             )
-        expected_citations = {
-            (
-                message.source_persisted_message_id,
-                message.source_persisted_revision,
-            )
-            for message in snapshot.messages
-            if message.source_persisted_message_id is not None
-        }
-        actual_citations = {
-            (link.source_persisted_message_id, link.source_revision)
-            for link in snapshot.citation_links
-        }
+        try:
+            metadata = _initial_metadata_object(row.get("metadata")) if row else {}
+        except ValueError:
+            metadata = {}
         if (
-            len(actual_citations) != len(snapshot.citation_links)
-            or actual_citations != expected_citations
-            or any(
-                link.state not in {"active_required", "unavailable", "none"}
-                for link in snapshot.citation_links
-            )
-            or any(
-                (
-                    link.state == "active_required"
-                    and (type(link.trace_id) is not str or not link.trace_id)
-                )
-                or (link.state != "active_required" and link.trace_id is not None)
-                for link in snapshot.citation_links
-            )
+            not row
+            or row.get("deleted")
+            or row.get("scope_type") != "workspace"
+            or row.get("workspace_id") != workspace_id
+            or metadata.get("goal_launch") != marker
         ):
-            raise ValueError("Console fork citation states are invalid.")
-        prior_native = None
-        prior_persisted = None
-        image_ids: set[str] = set()
-        for message in snapshot.messages:
-            if message.status not in {"complete", "stopped", "failed"}:
-                raise ValueError("Console fork message status is invalid.")
-            if (
-                message.native_parent_id != prior_native
-                or message.persisted_parent_id != prior_persisted
-            ):
-                raise ValueError("Console fork lineage is invalid.")
-            if message.video_tombstone is not None:
-                if (
-                    message.attachments
-                    or message.generation_metadata
-                    or message.status != "complete"
-                    or message.content != CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT
-                    or message.video_tombstone.owner_native_message_id
-                    != message.native_message_id
-                    or message.video_tombstone.owner_persisted_message_id
-                    != message.persisted_message_id
-                    or (
-                        message.video_tombstone.source_image_message_id is not None
-                        and message.video_tombstone.source_image_message_id
-                        not in image_ids
-                    )
-                ):
-                    raise ValueError("Console fork video tombstone is invalid.")
-            if message.generation_metadata and len(message.generation_metadata) != len(
-                message.attachments
-            ):
-                raise ValueError("Console fork generation metadata is invalid.")
-            has_image = False
-            for position, attachment in enumerate(message.attachments):
-                if (
-                    attachment.owner_native_message_id != message.native_message_id
-                    or attachment.owner_persisted_message_id
-                    != message.persisted_message_id
-                    or attachment.position != position
-                    or type(attachment.data) is not bytes
-                    or not attachment.data
-                    or len(attachment.data) > MAX_ATTACHMENT_BYTES
-                    or type(attachment.mime_type) is not str
-                    or not attachment.mime_type
-                    or type(attachment.display_name) is not str
-                ):
-                    raise ValueError("Console fork attachment is invalid.")
-                if attachment.mime_type.startswith("image/"):
-                    validate_console_fork_image_payload(
-                        attachment.data,
-                        attachment.mime_type,
-                    )
-                    has_image = True
-            for position, metadata in enumerate(message.generation_metadata):
-                if (
-                    metadata.owner_native_message_id != message.native_message_id
-                    or metadata.owner_persisted_message_id
-                    != message.persisted_message_id
-                    or metadata.position != position
-                    or not has_image
-                ):
-                    raise ValueError("Console fork generation metadata is invalid.")
-                try:
-                    fingerprint_console_fork_selected_image(
-                        message.attachments[position],
-                        metadata,
-                    )
-                except (TypeError, ValueError):
-                    raise ValueError(
-                        "Console fork generation metadata is invalid."
-                    ) from None
-            if has_image:
-                image_id = (
-                    message.persisted_message_id
-                    if snapshot.durable
-                    else message.native_message_id
-                )
-                if image_id is None:
-                    raise ValueError("Console fork image identity is invalid.")
-                image_ids.add(image_id)
-            prior_native = message.native_message_id
-            prior_persisted = message.persisted_message_id
+            raise GoalConversationConflict("conversation_identity_conflict")
+        self._link_workspace_conversation(
+            workspace_id=workspace_id,
+            conversation_id=intent.conversation_id,
+            title=str(row.get("title") or "Goal run"),
+        )
+        return intent.conversation_id
 
     def fork_conversation_into_workspace(
         self,
@@ -2402,7 +2775,8 @@ class ChatPersistenceService:
             raise ValueError(
                 "Workspace registry is required for workspace conversations"
             )
-        workspace = self.workspace_registry.get_workspace(safe_workspace_id)
+        with operation_owned_connection(getattr(self.workspace_registry, "db", None)):
+            workspace = self.workspace_registry.get_workspace(safe_workspace_id)
         if workspace is None:
             raise ValueError(f"Unknown workspace: {safe_workspace_id}")
         return safe_workspace_id
@@ -2416,7 +2790,13 @@ class ChatPersistenceService:
 
     def project_workspace_membership(self, conversation_id: str) -> Any | None:
         """Project durable workspace authority into the registry idempotently."""
-        conversation = self.db.get_conversation_by_id(conversation_id)
+        database = self.db
+        with (
+            operation_owned_connection(database)
+            if type(database) is CharactersRAGDB and not database.is_memory_db
+            else nullcontext()
+        ):
+            conversation = database.get_conversation_by_id(conversation_id)
         if conversation is None:
             raise ValueError(f"Conversation {conversation_id} not found")
         safe_workspace_id = self._require_workspace_scope(
@@ -2438,13 +2818,14 @@ class ChatPersistenceService:
         conversation_id: str,
         title: str,
     ) -> Any:
-        return self.workspace_registry.link_membership(
-            workspace_id,
-            item_type="conversation",
-            item_id=conversation_id,
-            role="workspace-thread",
-            title=title,
-        )
+        with operation_owned_connection(getattr(self.workspace_registry, "db", None)):
+            return self.workspace_registry.link_membership(
+                workspace_id,
+                item_type="conversation",
+                item_id=conversation_id,
+                role="workspace-thread",
+                title=title,
+            )
 
     def update_conversation_system_prompt(
         self,
@@ -3171,6 +3552,15 @@ class ChatPersistenceService:
                 terminal_outcome=terminal_outcome,
                 mark_type=terminal_mark_type,
             )
+            if terminal_outcome == "complete":
+                from tldw_chatbook.DB.console_prompt_mixins import seal_attempt_result
+
+                seal_attempt_result(
+                    cursor,
+                    conversation_id=conversation_id,
+                    assistant_message_id=message_id,
+                    metadata_json=metadata_json,
+                )
             message_ids = MappingProxyType(
                 {
                     native_message_id: message_id,
@@ -3294,14 +3684,32 @@ class ChatPersistenceService:
             expected_count=expected_count,
         )
 
-    def delete_message_subtree(self, *, message_id: str) -> list[dict[str, Any]]:
-        """Atomically tombstone one persisted branch and return its versions."""
+    def delete_message_subtree(
+        self, *, message_id: str, subtree_message_ids: Sequence[str | None] = ()
+    ) -> list[dict[str, Any]]:
+        """Atomically tombstone one persisted branch and return its versions.
+
+        Args:
+            message_id: Persisted id of the branch's root message.
+            subtree_message_ids: Persisted ids the caller shows in the
+                branch (``None`` for unsaved nodes is ignored), including those
+                with no ``parent_message_id`` link (a legacy flat conversation
+                the Console chains in memory, TASK-33628.6); see
+                :meth:`CharactersRAGDB.soft_delete_message_subtree`.
+
+        Returns:
+            The committed tombstones with their new versions.
+
+        Raises:
+            ValueError: The message does not exist.
+        """
         current_message = self.db.get_message_by_id(message_id)
         if not current_message:
             raise ValueError(f"Message {message_id} not found")
         rows = self.db.soft_delete_message_subtree(
             message_id,
             expected_version=current_message["version"],
+            subtree_message_ids=subtree_message_ids,
         )
         self._release_recovered_messages([row["message_id"] for row in rows])
         return rows
@@ -3848,174 +4256,3 @@ class ChatPersistenceService:
             are omitted.
         """
         return self.db.get_generation_metadata_for_messages(message_ids)
-
-    def save_history(
-        self,
-        *,
-        conversation_id: str,
-        chatbot_history: List[Dict[str, Any]],
-    ) -> int:
-        existing_messages = self.db.get_messages_for_conversation(
-            conversation_id,
-            limit=10000,
-            order_by_timestamp="ASC",
-        )
-        existing_by_id = {message["id"]: message for message in existing_messages}
-        existing_by_position = [
-            message
-            for message in existing_messages
-            if message.get("variant_of") is None
-        ]
-        consumed_existing_ids = set()
-
-        saved_count = 0
-        fallback_index = 0
-
-        for message_obj in chatbot_history:
-            sender = message_obj.get("role")
-            if not sender or sender == "system":
-                continue
-
-            content, image_data, image_mime_type = self._extract_message_payload(
-                message_obj
-            )
-            if not content and not image_data:
-                continue
-
-            message_id = message_obj.get("id")
-            parent_message_id = message_obj.get("parent_message_id")
-            feedback = message_obj.get("feedback")
-
-            if message_id and message_id in existing_by_id:
-                self.update_message_content(
-                    message_id=message_id,
-                    content=content,
-                    image_data=image_data,
-                    image_mime_type=image_mime_type,
-                    parent_message_id=parent_message_id,
-                    feedback=feedback,
-                    update_parent="parent_message_id" in message_obj,
-                    update_feedback="feedback" in message_obj,
-                    preserve_descendants=True,
-                )
-                consumed_existing_ids.add(message_id)
-            elif message_id:
-                self.create_message(
-                    conversation_id=conversation_id,
-                    sender=sender,
-                    content=content,
-                    image_data=image_data,
-                    image_mime_type=image_mime_type,
-                    message_id=message_id,
-                    parent_message_id=parent_message_id,
-                    feedback=feedback,
-                )
-            else:
-                while (
-                    fallback_index < len(existing_by_position)
-                    and existing_by_position[fallback_index]["id"]
-                    in consumed_existing_ids
-                ):
-                    fallback_index += 1
-
-            if not message_id and fallback_index < len(existing_by_position):
-                existing_message = existing_by_position[fallback_index]
-                self.update_message_content(
-                    message_id=existing_message["id"],
-                    content=content,
-                    image_data=image_data,
-                    image_mime_type=image_mime_type,
-                    parent_message_id=parent_message_id,
-                    feedback=feedback,
-                    update_parent="parent_message_id" in message_obj,
-                    update_feedback="feedback" in message_obj,
-                    preserve_descendants=True,
-                )
-                consumed_existing_ids.add(existing_message["id"])
-                fallback_index += 1
-            elif not message_id:
-                self.create_message(
-                    conversation_id=conversation_id,
-                    sender=sender,
-                    content=content,
-                    image_data=image_data,
-                    image_mime_type=image_mime_type,
-                    parent_message_id=parent_message_id,
-                    feedback=feedback,
-                )
-
-            saved_count += 1
-
-        retained_existing_ids = set(consumed_existing_ids)
-        variants_added = True
-        while variants_added:
-            variants_added = False
-            for existing_message in existing_messages:
-                if existing_message["id"] in retained_existing_ids:
-                    continue
-                if existing_message.get("variant_of") in retained_existing_ids:
-                    retained_existing_ids.add(existing_message["id"])
-                    variants_added = True
-
-        for existing_message in existing_messages:
-            if (
-                existing_message["id"] not in retained_existing_ids
-                and self.db.soft_delete_message(
-                    existing_message["id"], existing_message["version"]
-                )
-            ):
-                self._release_recovered_messages([existing_message["id"]])
-
-        return saved_count
-
-    @staticmethod
-    def _extract_message_payload(
-        message_obj: Dict[str, Any],
-    ) -> Tuple[str, Optional[bytes], Optional[str]]:
-        text_content_parts: List[str] = []
-        image_data_bytes: Optional[bytes] = None
-        image_mime_type_str: Optional[str] = None
-        content_data = message_obj.get("content")
-
-        if isinstance(content_data, str):
-            text_content_parts.append(content_data)
-        elif isinstance(content_data, list):
-            for part in content_data:
-                part_type = part.get("type")
-                if part_type == "text":
-                    text_content_parts.append(part.get("text", ""))
-                elif part_type == "image_url":
-                    image_url_dict = part.get("image_url", {})
-                    url_str = image_url_dict.get("url", "")
-                    if url_str.startswith("data:") and ";base64," in url_str:
-                        try:
-                            header, b64_data = url_str.split(";base64,", 1)
-                            image_mime_type_str = (
-                                header.split("data:", 1)[1]
-                                if "data:" in header
-                                else None
-                            )
-                            if image_mime_type_str:
-                                image_data_bytes = base64.b64decode(b64_data)
-                            else:
-                                text_content_parts.append(
-                                    "<Error: Malformed image data URI in history>"
-                                )
-                        except Exception:
-                            image_data_bytes = None
-                            image_mime_type_str = None
-                            text_content_parts.append(
-                                "<Error: Failed to decode image data from history>"
-                            )
-                    elif url_str:
-                        text_content_parts.append(f"<Image URL: {url_str}>")
-        elif content_data is not None:
-            text_content_parts.append(
-                f"<Unsupported content type: {type(content_data)}>"
-            )
-
-        return (
-            "\n".join(text_content_parts).strip(),
-            image_data_bytes,
-            image_mime_type_str,
-        )

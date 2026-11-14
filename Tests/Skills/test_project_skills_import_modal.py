@@ -91,10 +91,8 @@ async def test_new_rows_checked_installed_rows_unchecked(tmp_path):
     app = _HarnessApp(modal)
     async with app.run_test() as pilot:
         await pilot.pause()
-        boxes = {
-            box.id: box.value for box in modal.query(Checkbox)
-        }
-        assert boxes["project-skill-row-0"] is True   # alpha-skill: new
+        boxes = {box.id: box.value for box in modal.query(Checkbox)}
+        assert boxes["project-skill-row-0"] is True  # alpha-skill: new
         assert boxes["project-skill-row-1"] is False  # beta-skill: installed
 
 
@@ -175,30 +173,54 @@ async def test_never_during_inflight_import_is_inert(tmp_path):
     outcomes yet), "Never for this folder" must be inert -- it must not
     dismiss the modal mid-import -- and the flow must still land on the
     results phase once the import finishes.
+
+    TASK-19642.27: the original ``asyncio.sleep(0.1)`` importer raced the
+    pilot's zero-duration pauses. Under the loaded long session the pauses
+    outlasted the window, the import finished before the Never click, the
+    results-phase recompose unmounted the button, and the test errored
+    with ``NoMatches: No nodes match '#project-skills-never'`` (reproduced
+    deterministically by swapping in a zero-duration importer). The gated
+    importer below removes the wall clock from both sides: the import is
+    provably in flight when Never is clicked, and the test itself releases
+    it -- the inertness invariant is tested strictly, not probabilistically.
     """
     imported: list[str] = []
+    import_in_flight = asyncio.Event()
+    release_import = asyncio.Event()
 
-    async def slow_importer(entry):
-        await asyncio.sleep(0.1)
+    async def gated_importer(entry):
+        import_in_flight.set()
+        await release_import.wait()
         imported.append(entry.name)
 
     modal = ProjectSkillsImportModal(
         discovery=_discovery(tmp_path),
         installed_names=frozenset(),
-        importer=slow_importer,
+        importer=gated_importer,
     )
     app = _HarnessApp(modal)
     async with app.run_test() as pilot:
         await pilot.pause()
         await pilot.click("#project-skills-import")
-        await pilot.pause()
-        # The slow importer is still in flight here (0.1s sleep, no pause
-        # duration given) -- Never must be a no-op, not a dismissal.
+        # Pump the pilot until the worker has provably entered the
+        # importer -- the import is GUARANTEED in flight here, whatever
+        # the machine's load.
+        for _ in range(200):
+            if import_in_flight.is_set():
+                break
+            await pilot.pause()
+        assert import_in_flight.is_set()
+        # Never must be a no-op while the committed import runs, not a
+        # dismissal.
         await pilot.click("#project-skills-never")
         await pilot.pause()
         assert app.result == "unset"  # still open -- no dismissal happened
         assert app.screen is modal
-        await pilot.pause(0.2)  # let the slow importer finish
+        release_import.set()
+        for _ in range(100):
+            await pilot.pause(0.05)
+            if modal._outcomes is not None:
+                break
         assert modal._outcomes is not None  # landed on the results phase
     assert sorted(imported) == ["alpha-skill", "beta-skill"]
 
@@ -383,7 +405,13 @@ async def test_maybe_offer_chains_installed_names_ledger_and_navigation(
         await pilot.pause()
 
     assert service.import_calls == [
-        ("directory", str(root_b / ".SKILLS" / "beta-skill"), "local", "beta-skill", False)
+        (
+            "directory",
+            str(root_b / ".SKILLS" / "beta-skill"),
+            "local",
+            "beta-skill",
+            False,
+        )
     ]
     assert app.navigated == ["skills"]
 
@@ -535,9 +563,7 @@ async def test_partial_import_failure_leaves_ledger_untouched(tmp_path, monkeypa
 
 
 @pytest.mark.asyncio
-async def test_fully_successful_import_records_imported_decision(
-    tmp_path, monkeypatch
-):
+async def test_fully_successful_import_records_imported_decision(tmp_path, monkeypatch):
     ledger_dir = tmp_path / "data"
     monkeypatch.setattr(_offer_module, "get_user_data_dir", lambda: ledger_dir)
 
@@ -755,9 +781,7 @@ class _RaisingOnceRunWorkerApp(_RecorderApp):
         return super().run_worker(coro, **kwargs)
 
 
-def test_initial_scheduling_failure_clears_flag_and_allows_retry(
-    tmp_path, monkeypatch
-):
+def test_initial_scheduling_failure_clears_flag_and_allows_retry(tmp_path, monkeypatch):
     monkeypatch.setattr(_offer_module, "get_cli_setting", lambda *a, **k: True)
     monkeypatch.setattr(_offer_module, "get_user_data_dir", lambda: tmp_path / "data")
 

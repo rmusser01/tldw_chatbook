@@ -1,0 +1,21 @@
+{
+  "direct-fenced": {
+    "terminal": "direct-fenced 160 48 1 0",
+    "native_quit": true,
+    "source_unchanged": true
+  },
+  "rag-fenced": {
+    "terminal": "rag-fenced 160 48 1 0",
+    "native_quit": true,
+    "source_unchanged": true
+  },
+  "normal_fingerprints_equal": true,
+  "health": 200,
+  "budget": {
+    "consumed": 30,
+    "authorized_total": 30,
+    "remaining": 0
+  },
+  "server_idle": "not measured",
+  "no_source_change": true
+}

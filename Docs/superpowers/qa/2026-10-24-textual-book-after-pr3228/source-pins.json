@@ -1,0 +1,52 @@
+[
+  {
+    "path": "tldw_chatbook/UI/Dictation_Window_Improved.py",
+    "native_sha256": "0c10109d0b099e20ac2b86e91307f2149c454841b40b91c02fe2ec08d473aceb",
+    "lf_sha256": "67ecb3c152edca73c6581993b541d3514d63679199f6f283abdb2a4b4aa172e4"
+  },
+  {
+    "path": "tldw_chatbook/UI/STTS_Window.py",
+    "native_sha256": "11d29ce7d497bfbfc4c515abf8bde66e537a22d045a5c7f81671e8e9e85e38fa",
+    "lf_sha256": "ff5a52fb64092cc133ceffa7fc693bb87c82c2000e8d491fa7c2dfaf022a2f6e"
+  },
+  {
+    "path": "tldw_chatbook/Audio/dictation_service_lazy.py",
+    "native_sha256": "84be95c78e7df6995e5d26e10f1ff59bb726f3db6d04ac66302b6b752437bd6c",
+    "lf_sha256": "a2de1c6d1b9ab573cc816f93008462bc5714c4926b4a8a865aa78b21e4764ee2"
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/chunking_lab_screen.py",
+    "native_sha256": "d33e5ff6b5e3a853d90d6d3e69c6c2c3f5602658f05e007f8e6785abbe703cbf",
+    "lf_sha256": "0a7a95a157a319d03751a6a00c58f6999c279b132674aa46b8ee0440578577ff"
+  },
+  {
+    "path": "tldw_chatbook/UI/Chunking_Lab_Modules/sample_region.py",
+    "native_sha256": "5f225806ca71e44b17c1f088e910e907794f3e5d69c137a6a84f8f498b3e68a2",
+    "lf_sha256": "6137dce3b9beec92f3fcdfb9af2b22fb5a2e5a140870b69fa82efb4df115fa2e"
+  },
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+    "native_sha256": "4cb3ccd87da48c85d2abab5ed94e8c26dffcee0faaa6a551de53eb339e89e5f7",
+    "lf_sha256": "60cb1048910c571122f9eb259d070ba8ea850bbd20eb88f78d4bb1b95b28ba69"
+  },
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_profile_form.py",
+    "native_sha256": "e787ac315d6d6bd88a3598e8ecee0ec88a6803e6bb58ebe71254109dc133cba5",
+    "lf_sha256": "8bd1b0d408cd5cd13b17e09d37b2f040ecbb9c65e7f55a7079e5cadd8b8c8fa4"
+  },
+  {
+    "path": "tldw_chatbook/MCP/mcp_import.py",
+    "native_sha256": "68982787e656a6e27190d2796d3e6f0a4b21a0edaac72edf97d31aa5f744495b",
+    "lf_sha256": "6384f1675ac73a3881da01e74df8cc41b17cbd8056ec6c9c94ea4c6e7eca5b73"
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/image_gen_demo_screen.py",
+    "native_sha256": "30af61c6356f63109143400438c767f348407ec36412810ea28a28b5785e4fb4",
+    "lf_sha256": "1444d338c89dc5e05acb802b689f6cb6700f3df43990a7a4a10b4bd9c5ffc925"
+  },
+  {
+    "path": "tldw_chatbook/UI/image_gen_command_provider.py",
+    "native_sha256": "680541076d01609772f1889c693b63a910cb106da3ec4b7a79919494c3455bb9",
+    "lf_sha256": "a114bf505a52799b07346e02b14f6f17b3b108f47ae05ae0a24f7173694c434b"
+  }
+]

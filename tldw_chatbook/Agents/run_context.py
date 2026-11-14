@@ -60,16 +60,16 @@ distinct key no review hook ever writes, so such a caller finds no stamp
 and falls through to the provider's own gate, which is exactly what it did
 before this module existed.
 
-Stdlib only, no project imports: this is consumed by ``tool_catalog`` and
+Only the standard library loads at module import. This is consumed by ``tool_catalog`` and
 the providers, which are all deliberately dependency-light.
 """
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Iterator, Literal
+from typing import Any, Iterator, Literal
 
 
 #: task-31382: a sub-agent display label is cut here so a card title or a
@@ -127,6 +127,8 @@ _CURRENT_RUN_ACTOR: ContextVar[CurrentRunActor | None] = ContextVar(
 _CURRENT_TOOL_CALL_ID: ContextVar[str] = ContextVar(
     "tldw_agent_tool_call_id", default=""
 )
+_WORKFLOW_PREPARATION = ContextVar("native_workflow_preparation", default=None)
+_AGENT_SOURCE_ISSUANCE = ContextVar("console_agent_sources", default=None)
 
 
 def current_run_actor() -> CurrentRunActor | None:
@@ -204,3 +206,64 @@ def use_tool_call_id(call_id: str) -> Iterator[None]:
         yield
     finally:
         _CURRENT_TOOL_CALL_ID.reset(token)
+
+
+@contextmanager
+def bind_workflow_preparation(prepared: object) -> Iterator[None]:
+    """Bind the original preparation for the duration of its source scope."""
+    token = _WORKFLOW_PREPARATION.set(prepared)
+    try:
+        yield
+    finally:
+        _WORKFLOW_PREPARATION.reset(token)
+
+
+def current_workflow_preparation(controller=None):
+    prepared = _WORKFLOW_PREPARATION.get()
+    if (
+        prepared is None
+        or controller is not None
+        and prepared.controller is not controller
+    ):
+        return None
+    return prepared
+
+
+def current_planning_preparation(controller=None):
+    """Return only the original current native planning producer, not a flag."""
+    prepared = current_workflow_preparation(controller)
+    if prepared is None:
+        return None
+
+    from .workflow_phase import registered_planning_preparation
+
+    return registered_planning_preparation(prepared)
+
+
+@contextmanager
+def issuing_agent_sources(controller: object) -> Iterator[None]:
+    """Keep live provenance outside copied configuration and prompt identities."""
+    import asyncio
+
+    with ExitStack() as stack:
+        holder = [controller, asyncio.current_task(), stack, None]
+        token = _AGENT_SOURCE_ISSUANCE.set(holder)
+        try:
+            yield
+        finally:
+            _AGENT_SOURCE_ISSUANCE.reset(token)
+
+
+def current_agent_sources(controller: object | None = None) -> Any | None:
+    holder = _AGENT_SOURCE_ISSUANCE.get()
+    if holder is None or controller is not None and holder[0] is not controller:
+        prepared = current_workflow_preparation(controller)
+        if prepared is not None:
+            return prepared.source
+        return None
+    return holder[3]
+
+
+def current_agent_source_issuance() -> list[Any] | None:
+    """Return the active holder for the Console source preparation callback."""
+    return _AGENT_SOURCE_ISSUANCE.get()

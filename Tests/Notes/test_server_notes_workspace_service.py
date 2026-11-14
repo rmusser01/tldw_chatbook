@@ -740,16 +740,13 @@ async def test_service_preserves_actual_missing_media_zero_for_adapter_normaliza
 
 
 @pytest.mark.asyncio
-async def test_service_retains_mismatched_status_identities_for_adapter_validation(
-):
+async def test_service_retains_mismatched_status_identities_for_adapter_validation():
     client = SourceProjectionClient()
 
     async def mismatched_status(_workspace_id):
         return {
             "workspace_id": "workspace-top-other",
-            "sources": [
-                {"id": "source-1", "workspace_id": "workspace-row-other"}
-            ],
+            "sources": [{"id": "source-1", "workspace_id": "workspace-row-other"}],
             "summary": {},
         }
 
@@ -767,9 +764,7 @@ async def test_service_selection_and_reorder_return_post_write_refetched_version
     client = SourceProjectionClient()
     service = ServerNotesWorkspaceService(client=client)
 
-    selected = await service.set_workspace_source_selection(
-        "workspace-1", ["source-1"]
-    )
+    selected = await service.set_workspace_source_selection("workspace-1", ["source-1"])
     reordered = await service.reorder_workspace_sources(
         "workspace-1", ["source-2", "source-1"]
     )
@@ -810,9 +805,7 @@ async def test_workspace_note_delete_does_not_advertise_a_guard_it_cannot_honour
     client = DeleteRecordingClient()
     service = ServerNotesWorkspaceService(client=client)
 
-    parameters = set(
-        inspect.signature(service.delete_workspace_note).parameters
-    )
+    parameters = set(inspect.signature(service.delete_workspace_note).parameters)
     assert not parameters & {"version", "expected_version"}, (
         "a version parameter here is a concurrency guard that does not exist"
     )
@@ -821,9 +814,7 @@ async def test_workspace_note_delete_does_not_advertise_a_guard_it_cannot_honour
 
     # Positive control: the server-note sibling DOES have the guard, and
     # forwards it -- so this test pins a real asymmetry, not "fewer args".
-    server_parameters = set(
-        inspect.signature(service.delete_server_note).parameters
-    )
+    server_parameters = set(inspect.signature(service.delete_server_note).parameters)
     assert "version" in server_parameters
     await service.delete_server_note("note-1", 4)
 

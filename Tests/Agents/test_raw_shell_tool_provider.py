@@ -169,8 +169,10 @@ def test_invalid_arguments_fail_before_permission_or_launch(
         runtime=runtime,
         console_session_id="console-session",
         initial_directory=lambda: tmp_path,
-        resolve_state=lambda hub: permission_reads.append(hub.name)
-        or EffectiveToolState(state="allow", origin="tool_override"),
+        resolve_state=lambda hub: (
+            permission_reads.append(hub.name)
+            or EffectiveToolState(state="allow", origin="tool_override")
+        ),
         local_tools_enabled=lambda: True,
         kill_switch=lambda: False,
     )
@@ -192,8 +194,10 @@ def test_missing_initial_directory_fails_before_permission_or_launch(
         runtime=runtime,
         console_session_id="console-session",
         initial_directory=lambda: tmp_path,
-        resolve_state=lambda hub: permission_reads.append(hub.name)
-        or EffectiveToolState(state="ask", origin="global_default"),
+        resolve_state=lambda hub: (
+            permission_reads.append(hub.name)
+            or EffectiveToolState(state="ask", origin="global_default")
+        ),
         local_tools_enabled=lambda: True,
         kill_switch=lambda: False,
     )
@@ -264,9 +268,7 @@ def test_console_raw_shell_resolution_captures_the_exact_named_profile(
     state = provider._resolve_state(provider.hub_tool())
 
     assert state.state == "allow"
-    assert service.calls == [
-        (RAW_SHELL_SERVER_KEY, RAW_SHELL_TOOL_NAME, "research")
-    ]
+    assert service.calls == [(RAW_SHELL_SERVER_KEY, RAW_SHELL_TOOL_NAME, "research")]
 
 
 @pytest.mark.parametrize(
@@ -382,3 +384,20 @@ def test_raw_off_without_pending_review_and_final_disabled_have_distinct_facts(
     with use_run_id("run"), use_tool_call_id("c1"):
         result = provider.invoke("raw_shell:shell_exec", args)
     assert not result.ok and result.approval_decision is None
+
+
+def test_raw_pending_captures_chat_owner_without_changing_schema(tmp_path):
+    from tldw_chatbook.Agents.agent_models import ToolCall
+
+    provider = _provider(tmp_path)
+    schema = provider.load_schema("raw_shell:shell_exec")
+    args = {"command": "echo hello"}
+    row = provider.pending_gate_for(ToolCall("shell_exec", args, "owned-call"))
+    assert row.presentation_authority.profile_id == "console-session"
+    assert row.presentation_authority.grant_domain == "console_chat"
+    assert row.presentation_authority.revocation_label == "Disarm or exit"
+    assert row.requires_individual_review
+    assert "Until Chatbook exits" in row.scope_notice
+    assert row.options == ("approve_once", "approve_session", "deny")
+    assert provider.load_schema("raw_shell:shell_exec") == schema
+    assert args == {"command": "echo hello"}

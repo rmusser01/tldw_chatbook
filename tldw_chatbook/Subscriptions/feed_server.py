@@ -552,7 +552,11 @@ class FeedDirectoryServer:
         # handler (`watchlists_collections_screen.py`) catches -- it would
         # escape as an unhandled exception instead of the toast every
         # other rejection here produces.
-        if not isinstance(port, int) or isinstance(port, bool) or not (0 <= port <= 65535):
+        if (
+            not isinstance(port, int)
+            or isinstance(port, bool)
+            or not (0 <= port <= 65535)
+        ):
             raise FeedServerError(
                 f"Port {port!r} is not valid: it must be an integer between "
                 "0 and 65535 (0 requests an OS-assigned ephemeral port)."
@@ -567,7 +571,9 @@ class FeedDirectoryServer:
         # `AF_INET` `address_family`, not a platform limitation). IPv4 and
         # hostname binds are unaffected -- same base class as before.
         server_cls = (
-            _IPv6ThreadingHTTPServer if _is_ipv6_literal(bind) else http.server.ThreadingHTTPServer
+            _IPv6ThreadingHTTPServer
+            if _is_ipv6_literal(bind)
+            else http.server.ThreadingHTTPServer
         )
         httpd = server_cls((bind, port), handler_cls)
         # daemon_threads: a request handled by ThreadingHTTPServer's own
@@ -614,9 +620,7 @@ class FeedDirectoryServer:
         self._url = f"http://{_format_host_for_url(bind)}:{actual_port}/"
         self._bind = bind
         self._directory = resolved_directory
-        logger.debug(
-            "Feed directory server started on {}:{}", bind, actual_port
-        )
+        logger.debug("Feed directory server started on {}:{}", bind, actual_port)
         return self._url
 
     def stop(self) -> None:

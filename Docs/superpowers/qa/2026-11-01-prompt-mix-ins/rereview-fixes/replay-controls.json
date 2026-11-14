@@ -1,0 +1,23 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "Tests/Chat/test_console_prompt_mixin_retry.py::test_frozen_replay_cannot_roll_current_accepted_layout_back",
+    "Tests/Chat/test_console_prompt_mixin_retry.py::test_current_queue_observes_layout_once_and_drain_preserves_later_intent",
+    "Tests/Chat/test_console_prompt_mixin_retry.py::test_retry_original_regenerate_current_and_clean_history",
+    "Tests/Chat/test_console_prompt_mixin_retry.py::test_current_choice_edit_continue_preview_and_clean_history",
+    "Tests/Chat/test_console_prompt_mixin_retry.py::test_current_choice_replay_refuses_source_rebind",
+    "Tests/Chat/test_console_prompt_mixin_retry.py::test_continue_refuses_source_rebind_during_hook",
+    "Tests/Chat/test_console_prompt_mixin_retry.py::test_queue_usage_publishes_only_after_admission",
+    "Tests/Chat/test_console_prompt_mixin_retry.py::test_original_retry_ignores_unavailable_current_usage_preferences",
+    "Tests/Chat/test_console_prompt_mixin_retry.py::test_frozen_queue_acceptance_and_drain_ignore_missing_current_choices",
+    "Tests/Chat/test_console_prompt_mixin_retry.py::test_first_native_acceptance_publishes_usage",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/rereview-fixes/replay-controls-tmp"
+  ],
+  "exit_code": 0,
+  "seconds": 27.824806928634644
+}

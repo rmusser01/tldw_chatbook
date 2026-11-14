@@ -1,0 +1,44 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮   ▌   Hands-free   ▌     Ready · not tested
+   New tab     Settings     ⚓      Context r│                                                                                                                      │
+─────────────────────────────────────────────│   New endpoint from template                                                                                         │──────────────────────────────────────────────
+                                    │ Convers│                                                                                                                      │                                   │
+                         Context ◂  │        │  Template                                                                                                            │                                   │
+   Terminal                         │        │  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │                                   │
+ ─────────────────────────────────  │        │  ▊ OpenAI-compatible (blank)                                                                                      ▎  │                                   │
+ Workspaces                    ▸    │        │  ▊ anthropic                                                                                                      ▎  │                                   │
+ ─────────────────────────────╭──────────────│  ▊ arcee                                                                                                          ▎  │──────────────╮                    │
+ Conversations                │  Conversation│  ▊ azure                                                                                                          ▎  │              │                    │
+        Archive this chat     │              │  ▊ qianfan                                                                                                        ▎  │              │                    │
+          Archived chats      │  Model and ge│  ▊ baseten                                                                                                        ▎  │              │                    │
+        Search all chats…     │ Use: this con│  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │              │                    │
+   Chat 1                     │ Model        │                                                                                                                      │hange Alt+M   │                    │
+                              │ Temperature  │  Display name    ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎               │              │                    │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Cle│ Max tokens   │                  ▊  Lab box                                                                          ▎               │              │                    │
+  ▊  Filter visible     ▎     │ Streaming    │                  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎               │              │                    │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎     │ Thinking     │  Family          ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎               │inking the m… │                    │
+                              │ Thinking budg│                  ▊  OpenAI-compatible                                                             ▼  ▎               │ thinking wh… │                    │◂ Inspect
+   New conversation           │  ▶ Sampling ·│                  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎               │(this         │                    │
+  Chats                       │  provider doe│  Endpoint        ┌───────────────────────────────────────────────────────────────────────────────────┐               │              │                    │
+   Chat 1                     │  ▶ Connection│                  │  http://127.0.0.1:9187                                                            │               │              │                    │
+                              │  ▶ Request es│                  └───────────────────────────────────────────────────────────────────────────────────┘               │              │                    │
+ ─────────────────────────────│  ▶ Your name │  Models          ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎               │              │                    │
+ Character · No chats         │              │                  ▊  Comma-separated model ids                                                        ▎               │              │                    │
+ ─────────────────────────────│              │                  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎               │              │                    │
+ Model                        │              │  Params          ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎               │or Anthropic. │                    │
+ ─────────────────────────────│              │                  ▊                                                                                   ▎               │              │                    │
+ Agent                        │              │                  ▊                                                                                   ▎               │conversation  │                    │
+ ─────────────────────────────╰──────────────│                  ▊                                                                                   ▎               │──────────────╯                    │
+ Details                       ▸    │        │                  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎               │                                   │
+                                    │        │  Optional sampling params, one key = value per line (e.g. temperature = 0.2); empty = none.                          │                                   │
+                                    │        │                                                                                                                      │                                   │
+                                    │        │                                                                                         Cancel          Create       │                                   │
+                                    │        │                                                                                                                      │                                   │
+─────────────────────────────────────────────│                                                                                                                      │──────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocke╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯Approvals: 0 pending     Context 0% · Current
+
+█  Composer ▾  Menu  ▌Ask, command, or paste task...                                                                                    Send disabled: type a message       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Alt+C context rail | Ctrl+P · Ctrl+Q

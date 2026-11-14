@@ -156,9 +156,9 @@ async def test_console_new_workspace_announces_creation() -> None:
         assert any(
             "Created" in message and active.name in message for message in messages
         ), f"expected a creation notification naming {active.name!r}, got {messages!r}"
-        assert any(
-            "switched" in message.lower() for message in messages
-        ), f"expected the notification to say Console switched, got {messages!r}"
+        assert any("switched" in message.lower() for message in messages), (
+            f"expected the notification to say Console switched, got {messages!r}"
+        )
 
 
 @pytest.mark.asyncio

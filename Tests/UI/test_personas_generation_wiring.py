@@ -17,7 +17,6 @@ from contextlib import asynccontextmanager
 import pytest
 from textual.widgets import Button, Input
 
-import tldw_chatbook.config as config_module
 from tldw_chatbook.Character_Chat.character_generation import (
     CharacterGenerationError,
 )
@@ -27,8 +26,9 @@ from tldw_chatbook.Widgets.Persona_Widgets.personas_character_editor_widget impo
 
 from Tests.UI.test_personas_dictionaries import PersonasTestApp
 from Tests.UI.test_personas_library_scale import scaled_db  # noqa: F401  (fixture)
+from Tests.UI.roleplay_frame_harness import start_new
 
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
 
 
 def _press(screen, selector: str) -> None:
@@ -65,7 +65,7 @@ class _FakeController:
 
 @asynccontextmanager
 async def _editor(mock_app_instance, db, monkeypatch, controller):
-    monkeypatch.setattr(config_module, "get_chachanotes_db_lazy", lambda: db)
+    mock_app_instance.services.storage.chachanotes = db
     mock_app_instance.chachanotes_db = db
     mock_app_instance.chat_dictionary_scope_service = None
     app = PersonasTestApp(mock_app_instance)
@@ -76,7 +76,7 @@ async def _editor(mock_app_instance, db, monkeypatch, controller):
         screen._generation_controller_override = controller
         # Open the editor the way a user does, so the wiring under test is the
         # real one rather than a hand-built widget.
-        await pilot.click("#personas-library-new")
+        await start_new(pilot)
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()

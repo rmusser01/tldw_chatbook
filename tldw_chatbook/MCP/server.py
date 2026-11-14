@@ -131,8 +131,50 @@ def _first_doc_line(value: str | None) -> str:
     return value.strip().splitlines()[0].strip()
 
 
+#: ``(identity, tree)`` of the last parse of this file (TASK-33620.15.5).
+_SERVER_MODULE_AST: tuple[tuple, ast.Module] | None = None
+
+
+def _server_source_identity(path: Path) -> tuple:
+    info = path.stat()
+    return (
+        str(path),
+        info.st_dev,
+        info.st_ino,
+        info.st_size,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
+    )
+
+
 def _load_server_module_ast() -> ast.Module:
-    return ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    """Parse this module's source, reusing the tree while the file is unchanged.
+
+    TASK-33620.15.5: every Console send's configuration capture reads the
+    built-in manifest on the UI loop, and each read parsed this file again
+    (about 3 ms; more on a loaded machine). The tree is kept only when the
+    file's identity is the same before and after the read. Callers only read
+    the tree; the manifest is still built fresh from it on every call.
+    """
+    global _SERVER_MODULE_AST
+    path = Path(__file__)
+    identity = _server_source_identity(path)
+    kept = _SERVER_MODULE_AST
+    if kept is not None and kept[0] == identity:
+        return kept[1]
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    if _server_source_identity(path) == identity:
+        _SERVER_MODULE_AST = (identity, tree)
+    return tree
+
+
+def prime_local_manifest_source() -> None:
+    """Parse and keep this module's source ahead of the first manifest read.
+
+    Called from the app's idle pre-import pass (TASK-33620.15.5), so a
+    Console's first send does not parse it on the UI loop.
+    """
+    _load_server_module_ast()
 
 
 _AST_SIMPLE_TYPES = {
@@ -228,9 +270,10 @@ def _signature_to_prompt_arguments(
 
 
 def _extract_registered_entries(
-    method_name: str, decorator_name: str
+    method_name: str, decorator_name: str, *, module_node: ast.Module | None = None
 ) -> list[dict[str, Any]]:
-    module_node = _load_server_module_ast()
+    if module_node is None:
+        module_node = _load_server_module_ast()
     for node in module_node.body:
         if not isinstance(node, ast.ClassDef) or node.name != "TldwMCPServer":
             continue
@@ -275,16 +318,28 @@ def _extract_registered_entries(
     return []
 
 
-def _describe_local_resources() -> list[dict[str, Any]]:
-    return _extract_registered_entries("_register_resources", "resource")
+def _describe_local_resources(
+    *, module_node: ast.Module | None = None
+) -> list[dict[str, Any]]:
+    return _extract_registered_entries(
+        "_register_resources", "resource", module_node=module_node
+    )
 
 
-def _describe_local_prompts() -> list[dict[str, Any]]:
-    return _extract_registered_entries("_register_prompts", "prompt")
+def _describe_local_prompts(
+    *, module_node: ast.Module | None = None
+) -> list[dict[str, Any]]:
+    return _extract_registered_entries(
+        "_register_prompts", "prompt", module_node=module_node
+    )
 
 
-def _describe_local_tools() -> list[dict[str, Any]]:
-    return _extract_registered_entries("_register_tools", "tool")
+def _describe_local_tools(
+    *, module_node: ast.Module | None = None
+) -> list[dict[str, Any]]:
+    return _extract_registered_entries(
+        "_register_tools", "tool", module_node=module_node
+    )
 
 
 def _describe_local_library_tools() -> list[dict[str, Any]]:
@@ -306,14 +361,34 @@ def _describe_local_library_tools() -> list[dict[str, Any]]:
 
 
 def describe_local_mcp_capabilities() -> dict[str, Any]:
-    """Return a stable local MCP capability manifest without opening a loopback connection."""
+    """Return a fresh local manifest without opening a loopback connection."""
+    module_node = _load_server_module_ast()
     return {
         "server_id": "local:tldw_chatbook",
         "server_label": "tldw_chatbook local MCP",
-        "tools": _describe_local_tools() + _describe_local_library_tools(),
-        "resources": _describe_local_resources(),
-        "prompts": _describe_local_prompts(),
+        "tools": _describe_local_tools(module_node=module_node)
+        + _describe_local_library_tools(),
+        "resources": _describe_local_resources(module_node=module_node),
+        "prompts": _describe_local_prompts(module_node=module_node),
     }
+
+
+_CONSOLE_ORDINARY_MANIFEST_SOURCE = tuple(
+    (name, globals()[name], globals()[name].__code__)
+    for name in (
+        "_first_doc_line",
+        "_load_server_module_ast",
+        "_annotation_to_property",
+        "_signature_to_input_schema",
+        "_signature_to_prompt_arguments",
+        "_extract_registered_entries",
+        "_describe_local_resources",
+        "_describe_local_prompts",
+        "_describe_local_tools",
+        "_describe_local_library_tools",
+        "describe_local_mcp_capabilities",
+    )
+)
 
 
 def build_local_library_tool_service(
@@ -507,58 +582,55 @@ class TldwMCPServer:
 
         # Initialize databases
         self._init_databases()
+        try:
+            # Initialize MCP components
+            from .tools import MCPTools
+            from .resources import MCPResources
+            from .prompts import MCPPrompts
 
-        # Initialize MCP components
-        from .tools import MCPTools
-        from .resources import MCPResources
-        from .prompts import MCPPrompts
+            from ..Tools.character_tool_service import load_runtime_source
 
-        from ..Tools.character_tool_service import load_runtime_source
+            self.tools = MCPTools(self.chachanotes_db, self.media_db)
+            # No Console session here: the default profile's source decides.
+            self.tools.runtime_source_loader = load_runtime_source
+            self.resources = MCPResources(self.chachanotes_db, self.media_db)
+            self.prompts = MCPPrompts(self.chachanotes_db, self.media_db)
 
-        self.tools = MCPTools(self.chachanotes_db, self.media_db)
-        # No Console session here: the default profile's source decides.
-        self.tools.runtime_source_loader = load_runtime_source
-        self.resources = MCPResources(self.chachanotes_db, self.media_db)
-        self.prompts = MCPPrompts(self.chachanotes_db, self.media_db)
-
-        # Register tools, resources, and prompts
-        self._register_tools()
-        self._register_resources()
-        self._register_prompts()
-        self._register_local_agent_tools()
-        self.mcp.finalize()
+            # Register tools, resources, and prompts
+            self._register_tools()
+            self._register_resources()
+            self._register_prompts()
+            self._register_local_agent_tools()
+            self.mcp.finalize()
+        except BaseException:
+            self.storage.close()  # main() never gets a server to close
+            raise
 
         logger.info(f"MCP Server '{name}' initialized")
 
     def _init_databases(self):
         """Initialize database connections."""
+        storage = None
         try:
+            from ..app_services import open_profile_storage
             from ..config import (
                 get_chachanotes_db_path,
                 get_media_db_path,
                 CLI_APP_CLIENT_ID,
-                load_console_library_migration_seed,
             )
-            from ..DB.ChaChaNotes_DB import CharactersRAGDB
-            from ..DB.Client_Media_DB_v2 import MediaDatabase
             from ..Notes.Notes_Library import NotesInteropService
 
-            # Initialize character/chat/notes database
-            self.chachanotes_db = CharactersRAGDB(
-                db_path=get_chachanotes_db_path(),
+            # The shared factory (ADR-250 section 6); main() closes it. The
+            # media DB uses the same resolver the rest of the app opens it
+            # through -- ``get_cli_setting("database", "media_db", ...)`` used
+            # to read a config key that was never declared (TASK-854).
+            storage = self.storage = open_profile_storage(
                 client_id=CLI_APP_CLIENT_ID,
-                console_library_migration_seed=load_console_library_migration_seed(),
+                chachanotes=get_chachanotes_db_path(),
+                media=get_media_db_path(),
             )
-
-            # Initialize media database. Uses the same resolver the rest of
-            # the app opens the media DB through -- ``get_cli_setting("database",
-            # "media_db", ...)`` used to read a config key ("media_db") that
-            # was never declared anywhere; the real key is "media_db_path"
-            # and get_media_db_path() is its accessor (see TASK-854).
-            media_db_path = get_media_db_path()
-            self.media_db = MediaDatabase(
-                db_path=media_db_path, client_id=CLI_APP_CLIENT_ID
-            )
+            self.chachanotes_db = self.storage.chachanotes
+            self.media_db = self.storage.media
 
             # Initialize services. There is deliberately no
             # ``self.character_service`` here: this used to construct a
@@ -594,7 +666,9 @@ class TldwMCPServer:
             )
 
             logger.info("Databases initialized successfully")
-        except Exception:
+        except BaseException:  # as the other two post-factory guards: Ctrl-C closes too
+            if storage is not None:
+                storage.close()  # opened before a later step failed
             logger.bind(operation="initialize_standalone_mcp_databases").error(
                 "Standalone MCP database initialization failed."
             )
@@ -1109,7 +1183,28 @@ class TldwMCPServer:
 
 async def main() -> int:
     """Main entry point for running the MCP server."""
-    return await TldwMCPServer().run("stdio")
+    from ..Utils.optional_deps import apply_config_eager_flags
+
+    from ..Chat.console_semantic_revision import install_semantic_coordination
+    from ..Sync_Interop.chat_sync_source import install_chat_sync_hashing
+    from ..DB.transaction_observer import install_safe_capture_trimmer
+
+    def _trim_safe_capture(blob: bytes) -> bytes | None:
+        # Lazy: the capture codec (~150 modules) loads only when a v52->v53
+        # upgrade meets a stored Safe capture (TASK-36949.6).
+        from ..Chat.console_exchange_capture import trim_safe_capture_blob
+
+        return trim_safe_capture_blob(blob)
+
+    apply_config_eager_flags()
+    install_semantic_coordination()  # DB-layer port; composition root
+    install_chat_sync_hashing()  # DB-layer port; composition root
+    install_safe_capture_trimmer(_trim_safe_capture)  # DB-layer port; composition root
+    server = TldwMCPServer()
+    try:
+        return await server.run("stdio")
+    finally:
+        server.storage.close()
 
 
 if __name__ == "__main__":

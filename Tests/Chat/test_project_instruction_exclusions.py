@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import time
+import unicodedata
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,6 +16,7 @@ from tldw_chatbook.Agents.project_instruction_resolver import (
     InstructionSnapshot,
     InstructionSource,
     ProjectInstructionResolver,
+    remote_path_is_excluded,
 )
 from tldw_chatbook.Agents.project_instruction_runtime import (
     InstructionActivationLedger,
@@ -56,6 +58,15 @@ def test_path_is_excluded_folds_case(tmp_path: Path):
     assert path_is_excluded(tmp_path / "private" / "AGENTS.md", excluded)
     assert not path_is_excluded(tmp_path / "privatefoo" / "AGENTS.md", excluded)
     assert not path_is_excluded(tmp_path / "other" / "AGENTS.md", excluded)
+
+
+@pytest.mark.parametrize(("rule_form", "path_form"), (("NFC", "NFD"), ("NFD", "NFC")))
+def test_path_is_excluded_folds_unicode_normalization(tmp_path, rule_form, path_form):
+    """TASK-37655: APFS opens either spelling of ``Données`` as the same folder."""
+    rule = unicodedata.normalize(rule_form, "Données")
+    candidate = unicodedata.normalize(path_form, "Données/AGENTS.md")
+    assert path_is_excluded(tmp_path / candidate, frozenset({tmp_path / rule}))
+    assert remote_path_is_excluded(candidate, frozenset({Path(rule)}))
 
 
 class _BindingRegistry:

@@ -27,11 +27,18 @@ from .executor import (
     ExecutorResident,
     ExecutorResult,
     LocalSourceChangedError,
+    URLIngestSource,
     WorkerPhase,
     validate_local_source_snapshot,
 )
 from .executor_process_tree import enter_worker_containment
 from .parakeet_dispatch import ParakeetDispatch
+from .failure_diagnostics import (
+    STTExceptionCategory,
+    STTFailureDiagnostic,
+    STTFailureStage,
+    diagnostic_from_exception,
+)
 
 TranscriptionRunner = Callable[..., dict[str, Any]]
 ProviderBuilder = Callable[
@@ -215,6 +222,7 @@ def _executor_failure(
     failed_attempt: dict[str, Any] | None = None,
 ) -> ExecutorFailure:
     origin, failed_device = _typed_device_failure(error)
+    diagnostic = getattr(error, "stt_diagnostic", None)
     return ExecutorFailure(
         request.generation,
         request.attempt_id,
@@ -223,6 +231,7 @@ def _executor_failure(
         failed_attempt=failed_attempt,
         device_failure_origin=origin,
         failed_device=failed_device,
+        diagnostic=diagnostic if type(diagnostic) is STTFailureDiagnostic else None,
     )
 
 
@@ -595,11 +604,7 @@ def _parakeet_provider(
     model_id = request.identity.model_id
     precision = request.identity.precision
     requested_language = request.options.get("language") or "en"
-    effective_language = (
-        "auto"
-        if model_id == "nemo-parakeet-tdt-0.6b-v3"
-        else "en"
-    )
+    effective_language = "auto" if model_id == "nemo-parakeet-tdt-0.6b-v3" else "en"
     artifact_root = None
     artifact_dependencies: tuple[Any, ...] = ()
 
@@ -614,6 +619,7 @@ def _parakeet_provider(
         batch_id: str | None = None,
         job_id: str | None | object = missing,
         language: str | None = None,
+        diagnostic: STTFailureDiagnostic | None = None,
     ) -> ParakeetOnnxFailure:
         return ParakeetOnnxFailure(
             code,
@@ -628,6 +634,7 @@ def _parakeet_provider(
             requested_language=language or requested_language,
             effective_language=effective_language,
             effective_device=effective_device,
+            diagnostic=diagnostic,
         )
 
     if request.options.get("_verify_legacy_parakeet_v2"):
@@ -688,26 +695,33 @@ def _parakeet_provider(
             artifact_root=artifact_root,
             artifact_dependencies=artifact_dependencies,
         )
-    except ModuleNotFoundError:
+    except ModuleNotFoundError as error:
         raise failure(
             TranscriptionFailureCode.PROVIDER_UNAVAILABLE,
             "The Parakeet ONNX runtime is unavailable.",
+            diagnostic=diagnostic_from_exception(STTFailureStage.MODEL_LOAD, error),
         ) from None
     except ParakeetOnnxFailure:
         raise
-    except Exception:
+    except Exception as error:
+        diagnostic = diagnostic_from_exception(STTFailureStage.MODEL_LOAD, error)
+        if diagnostic.exception_category is STTExceptionCategory.MODULE_NOT_FOUND_ERROR:
+            raise failure(
+                TranscriptionFailureCode.PROVIDER_UNAVAILABLE,
+                "The Parakeet ONNX runtime is unavailable.",
+                diagnostic=diagnostic,
+            ) from None
         raise failure(
             TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE,
             "The selected Parakeet ONNX model cannot be loaded.",
+            diagnostic=diagnostic,
         ) from None
 
     def runner(audio_path: str, **kwargs: Any) -> dict[str, Any]:
         attempt_id = kwargs.get("attempt_id") or request.attempt_id
         batch_id = kwargs.get("batch_id") or context.get("batch_id")
         job_id = kwargs.get("job_id") or request.job_id
-        language = (
-            kwargs.get("language") or request.options.get("language") or "en"
-        )
+        language = kwargs.get("language") or request.options.get("language") or "en"
         try:
             normalized = runtime.transcribe(
                 audio_path=Path(audio_path),
@@ -730,7 +744,7 @@ def _parakeet_provider(
             )
         except (ParakeetOnnxCancelled, ParakeetOnnxFailure):
             raise
-        except Exception:
+        except Exception as error:
             raise failure(
                 TranscriptionFailureCode.INFERENCE_FAILED,
                 "Parakeet ONNX could not complete this transcription.",
@@ -739,12 +753,25 @@ def _parakeet_provider(
                 batch_id=batch_id,
                 job_id=job_id,
                 language=language,
+                diagnostic=diagnostic_from_exception(STTFailureStage.INFERENCE, error),
             ) from None
-        provenance = build_transcription_provenance_document(
-            normalized,
-            failed_attempt=kwargs.get("retry_source_failure_provenance")
-            or context.get("retry_source_failure_provenance"),
-        )
+        try:
+            provenance = build_transcription_provenance_document(
+                normalized,
+                failed_attempt=kwargs.get("retry_source_failure_provenance")
+                or context.get("retry_source_failure_provenance"),
+            )
+        except Exception as error:
+            raise failure(
+                TranscriptionFailureCode.INFERENCE_FAILED,
+                "Parakeet ONNX could not complete this transcription.",
+                effective_device=ExecutionDevice.CPU,
+                attempt_id=attempt_id,
+                batch_id=batch_id,
+                job_id=job_id,
+                language=language,
+                diagnostic=diagnostic_from_exception(STTFailureStage.PROVENANCE, error),
+            ) from None
         return {
             "text": normalized.text,
             "segments": [
@@ -769,16 +796,14 @@ def _parakeet_provider(
         transcription_context: dict[str, Any],
     ) -> dict[str, Any]:
         if source.sample_width != 2:
-            raise _ProviderLoadFailure(
-                TranscriptionFailureCode.UNSUPPORTED_CAPABILITY
-            )
+            raise _ProviderLoadFailure(TranscriptionFailureCode.UNSUPPORTED_CAPABILITY)
         current_context = (
-            transcription_context
-            if isinstance(transcription_context, dict)
-            else {}
+            transcription_context if isinstance(transcription_context, dict) else {}
         )
 
-        def buffer_failure() -> ParakeetOnnxFailure:
+        def buffer_failure(
+            diagnostic: STTFailureDiagnostic,
+        ) -> ParakeetOnnxFailure:
             return ParakeetOnnxFailure(
                 TranscriptionFailureCode.INFERENCE_FAILED,
                 "Parakeet ONNX could not complete this transcription.",
@@ -792,6 +817,7 @@ def _parakeet_provider(
                 requested_language=language,
                 effective_language=effective_language,
                 effective_device=ExecutionDevice.CPU,
+                diagnostic=diagnostic,
             )
 
         try:
@@ -805,21 +831,31 @@ def _parakeet_provider(
             )
         except (ParakeetOnnxCancelled, ParakeetOnnxFailure):
             raise
-        except Exception:
-            raise buffer_failure() from None
-        normalized = replace(
-            result.normalized,
-            provenance=replace(
-                result.normalized.provenance,
-                batch_id=current_context.get("batch_id"),
-            ),
-        )
-        provenance = build_transcription_provenance_document(
-            normalized,
-            failed_attempt=current_context.get(
-                "retry_source_failure_provenance"
-            ),
-        )
+        except Exception as error:
+            raise buffer_failure(
+                diagnostic_from_exception(STTFailureStage.INFERENCE, error)
+            ) from None
+        try:
+            normalized = replace(
+                result.normalized,
+                provenance=replace(
+                    result.normalized.provenance,
+                    batch_id=current_context.get("batch_id"),
+                ),
+            )
+        except Exception as error:
+            raise buffer_failure(
+                diagnostic_from_exception(STTFailureStage.NORMALIZATION, error)
+            ) from None
+        try:
+            provenance = build_transcription_provenance_document(
+                normalized,
+                failed_attempt=current_context.get("retry_source_failure_provenance"),
+            )
+        except Exception as error:
+            raise buffer_failure(
+                diagnostic_from_exception(STTFailureStage.PROVENANCE, error)
+            ) from None
         return {
             "text": normalized.text,
             "logical_segments": result.logical_segments,
@@ -855,10 +891,7 @@ def _buffer_runner_kwargs(
         parameters = inspect.signature(runner).parameters.values()
     except (TypeError, ValueError):
         return values
-    if any(
-        parameter.kind is inspect.Parameter.VAR_KEYWORD
-        for parameter in parameters
-    ):
+    if any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters):
         return values
     accepted = {parameter.name for parameter in parameters}
     return {name: value for name, value in values.items() if name in accepted}
@@ -897,10 +930,17 @@ def _default_parse_job(
         parse_local_file_for_ingest,
     )
 
+    from tldw_chatbook.Utils.egress import UrlProvenance
+
+    parse_options = dict(options)
+    provenance = parse_options.pop("url_provenance", None)
+    if not isinstance(provenance, UrlProvenance):
+        provenance = None
     return parse_local_file_for_ingest(
         file_path,
-        options,
+        parse_options,
         transcription_runner=transcription_runner,
+        url_provenance=provenance,
     )
 
 
@@ -979,9 +1019,14 @@ def _run_executor_worker(
                         WorkerPhase.TRANSCRIBING,
                     )
                 )
-                if type(request.source) is FileAudioSource:
+                if type(request.source) in (FileAudioSource, URLIngestSource):
+                    source = (
+                        request.source.url
+                        if type(request.source) is URLIngestSource
+                        else request.source.path
+                    )
                     payload = parse_job(
-                        request.source.path,
+                        source,
                         dict(request.options),
                         transcription_runner=resident.provider.runner,
                     )

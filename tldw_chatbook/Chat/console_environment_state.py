@@ -250,7 +250,7 @@ def relative_age(then: datetime | None, now: datetime) -> str:
     return f"{seconds // 86400}d ago"
 
 
-from tldw_chatbook.Widgets.Console.console_inspector_section import (
+from tldw_chatbook.Chat.console_inspector_state import (
     RAIL_CONTENT_WIDTH_MIN,
     ROW_INDENT_COLUMNS,
     SECTION_TOGGLE_WIDTH,
@@ -331,7 +331,7 @@ TASKS_SUMMARY_BUDGET = (
 #
 # Investigated whether the true cause can be told apart cheaply at the
 # seam this panel reads (`ChatScreen._console_environment_root` ->
-# `resolve_turn_execution_context(...).workspace_roots`): it cannot, for
+# `resolve_session_workspace_roots(...)`): it cannot, for
 # the common cases. `ChangeReviewConsentService.admit_turn` returns the
 # SAME empty `ChangeReviewAdmission()` -- no ready roots, no
 # `skipped_roots` entries -- whether consent is off, the capability is

@@ -512,6 +512,5 @@ async def test_leaving_the_screen_mid_check_does_not_cancel_accepted_execution()
                 break
 
         assert runs and runs[0]["status"] == "completed", (
-            "accepted execution must survive screen navigation; "
-            f"got {runs!r}"
+            f"accepted execution must survive screen navigation; got {runs!r}"
         )

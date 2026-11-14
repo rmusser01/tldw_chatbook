@@ -143,7 +143,9 @@ def test_protocol_diagnostics_reports_tools_call_as_unsupported():
 
     diagnostics = delegate.get_protocol_diagnostics()
 
-    methods_by_name = {entry["name"]: entry["supported"] for entry in diagnostics["methods"]}
+    methods_by_name = {
+        entry["name"]: entry["supported"] for entry in diagnostics["methods"]
+    }
     assert methods_by_name["tools/call"] is False
     # Every other advertised method stays truthfully supported -- the
     # refusal is scoped to `tools/call` alone, not a blanket downgrade.
@@ -253,3 +255,43 @@ def test_all_three_gate_error_surfaces_derive_from_the_shared_clause():
     assert _UNKNOWN_ORIGIN_SENTENCE == (
         f"{capitalize_first(PERMISSION_STATE_UNRESOLVED_CLAUSE)}."
     )
+
+
+# -- TASK-36947.6: the delegate's databases come from its host ----------------
+
+
+def test_delegate_without_host_storage_reports_its_databases_unavailable():
+    delegate = _delegate()
+    with pytest.raises(RuntimeError, match="ChaChaNotes database is unavailable"):
+        delegate._require_chachanotes_db()
+    with pytest.raises(RuntimeError, match="media database is unavailable"):
+        delegate._require_media_db()
+
+
+def test_delegate_resolves_host_storage_per_call():
+    from types import SimpleNamespace
+
+    current = {"storage": None}
+    delegate = LocalMCPRuntimeDelegate(
+        manifest_provider=lambda: {}, storage_provider=lambda: current["storage"]
+    )
+    database = object()
+    current["storage"] = SimpleNamespace(chachanotes=database, media=None)
+    assert delegate._require_chachanotes_db() is database
+
+
+def test_control_service_hands_its_storage_provider_to_the_default_delegate():
+    """TASK-36947.6: ``LocalMCPControlService(storage_provider=...)`` reaches the
+    delegate it builds, which is how the TUI gives it the services bundle."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
+
+    database = object()
+    storage = SimpleNamespace(chachanotes=database, media=None)
+    service = LocalMCPControlService(
+        store=SimpleNamespace(),
+        manifest_provider=lambda: {},
+        storage_provider=lambda: storage,
+    )
+    assert service.runtime_delegate._storage_db("chachanotes") is database

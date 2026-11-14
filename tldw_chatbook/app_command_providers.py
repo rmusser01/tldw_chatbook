@@ -15,7 +15,7 @@ only have been meant for code that moved out.
 
 from dataclasses import replace
 from functools import partial
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from loguru import logger
 from textual.app import App
@@ -67,6 +67,11 @@ from .UI.Navigation.shell_destinations import (
     get_shell_destination,
 )
 from .UI.Workbench.help import WorkbenchHelpPanel, WorkbenchHelpState
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    # Quoted-annotation-only names (the runtime imports stay lazy inside the
+    # palette command handlers; see _switch_theme/_persist_switch).
+    from .css.Themes.theme_catalog import QueuedLaunchDefault, ThemeChange
 
 
 class ThemeProvider(Provider):
@@ -253,22 +258,10 @@ def _display_key(key: str) -> str:
 
 
 def _bindings_to_shortcuts(bindings: Any) -> tuple[tuple[str, str], ...]:
-    """Flatten BINDINGS entries into (key, description) pairs for help display.
+    """Project current binding classes and glyphs through the help renderer."""
+    from .UI.Workbench.help import binding_shortcuts
 
-    Accepts both Binding objects and the legacy tuple form so any screen's
-    BINDINGS can be rendered as truthful shortcut help. Keys render as
-    display glyphs (TASK-32887): the Evals help leaked the raw binding
-    identifiers ``left_square_bracket``/``right_square_bracket`` as copy.
-    """
-    pairs: list[tuple[str, str]] = []
-    for entry in bindings or ():
-        if isinstance(entry, Binding):
-            pairs.append((_display_key(entry.key), entry.description))
-        elif isinstance(entry, (tuple, list)) and entry:
-            key = _display_key(str(entry[0]))
-            description = str(entry[2]) if len(entry) > 2 else ""
-            pairs.append((key, description))
-    return tuple(pairs)
+    return binding_shortcuts(bindings, display_key=_display_key, binding_type=Binding)
 
 
 class TabNavigationProvider(Provider):
@@ -283,7 +276,7 @@ class TabNavigationProvider(Provider):
         TAB_WATCHLISTS_COLLECTIONS: "Open Watchlists for monitored sources, runs, alerts, and recovery",
         TAB_SCHEDULES: "Open Schedules for run timing, triggers, pauses, retries, and recovery",
         TAB_WORKFLOWS: "Open Workflows for reusable procedures, dry-runs, and outputs",
-        TAB_MCP: "Open MCP for servers, tools, permissions, auth, and audit",
+        TAB_MCP: "Open Settings → Tools & MCP for servers, tools, permissions, and audit",
         TAB_ACP: "Open ACP for agents, sessions, runtimes, diffs, and terminals",
         TAB_SKILLS: "Open Skills for Agent Skills discovery, validation, and attachments",
         TAB_SETTINGS: "Open global preferences, appearance, storage, and app behavior",
@@ -300,7 +293,7 @@ class TabNavigationProvider(Provider):
         TAB_RESEARCH: "Switch to research workflows",
         TAB_RESEARCH_WORKSPACE: "Open Research Workspace for grounded research",
         TAB_CHATBOOKS: "Switch to portable Chatbook context packs",
-        TAB_TOOLS_SETTINGS: "Open MCP for legacy tools and settings",
+        TAB_TOOLS_SETTINGS: "Open Settings → Tools & MCP (legacy tools-settings route)",
         TAB_LOGS: "Switch to application logs",
         TAB_STATS: "Switch to statistics view",
     }
@@ -319,12 +312,16 @@ class TabNavigationProvider(Provider):
         TAB_SETTINGS,
     )
 
-    # task-423: labeled deep-link commands into Library-folded content
-    # types that would otherwise only fuzzy-match the generic Library
-    # command (which lands on generic Library, not the content row). Each
-    # entry is (legacy route, command text, help text); the route rides
-    # ``_LEGACY_ROUTE_LIBRARY_NAV_CONTEXT`` to land on its rail row.
-    LIBRARY_SUBROUTE_COMMANDS: tuple[tuple[str, str, str], ...] = (
+    # task-423: labeled deep-link commands into destination-folded content
+    # that would otherwise only fuzzy-match the owning destination's
+    # generic command (which lands on the generic screen, not the folded
+    # surface). Each entry is (legacy route, command text, help text); the
+    # route rides the legacy-route nav-context maps to land on its surface.
+    # task-35152 / ADR-240: this is also the label mechanism for the
+    # retired MCP destination's popular-row slot -- without its own entry,
+    # ``_tab_command`` resolves "mcp" to the Settings destination and the
+    # popular row would show "Switch to Settings" twice.
+    FOLDED_ROUTE_COMMANDS: tuple[tuple[str, str, str], ...] = (
         (
             "artifacts",
             "Tab Navigation: Library — Artifacts",
@@ -334,6 +331,11 @@ class TabNavigationProvider(Provider):
             "skills",
             "Tab Navigation: Library — Skills",
             "Open Library's Skills row for Agent Skills packs, validation, and trust",
+        ),
+        (
+            TAB_MCP,
+            "Tab Navigation: Switch to Tools & MCP",
+            "Open Settings → Tools & MCP for servers, tools, permissions, and audit",
         ),
     )
 
@@ -403,7 +405,7 @@ class TabNavigationProvider(Provider):
         return f"Open {destination.accessible_label} for {destination.purpose}"
 
     def _tab_command(self, tab_id: str) -> tuple[str, str, str]:
-        for route, text, help_text in self.LIBRARY_SUBROUTE_COMMANDS:
+        for route, text, help_text in self.FOLDED_ROUTE_COMMANDS:
             if route == tab_id:
                 return text, tab_id, help_text
         destination = self._shell_destination_for_tab(tab_id)
@@ -444,8 +446,9 @@ class TabNavigationProvider(Provider):
                     help=help_text,
                 )
 
-        # task-423: Library sub-route deep links (e.g. "skills").
-        for route, command_text, help_text in self.LIBRARY_SUBROUTE_COMMANDS:
+        # task-423 / task-35152: folded-route deep links (e.g. "skills",
+        # "mcp").
+        for route, command_text, help_text in self.FOLDED_ROUTE_COMMANDS:
             score = max(
                 matcher.match(command_text),
                 matcher.match(help_text),
@@ -483,13 +486,29 @@ class TabNavigationProvider(Provider):
             self.app.notify(f"Failed to switch tab: {e}", severity="error")
 
 
-#: task-18812 / ADR-071: the command-palette entry for the Console focus
-#: toggle -- one tuple reused by both QuickActionsProvider lists so the
-#: command text, action id, and help string cannot drift apart.
 FOCUS_TOGGLE_PALETTE_ENTRY = (
     "Quick Actions: Toggle Focus Mode",
     "toggle_focus_mode",
     "Hide or restore the Console's nav bar and header (Ctrl+Shift+F)",
+)
+
+_QUICK_ACTIONS = {
+    "new_chat": ("Quick Actions: New Chat Conversation", "Start a new chat conversation"),
+    "new_character": (
+        "Quick Actions: New Character Chat",
+        "Start a new character-based conversation",
+    ),
+    "new_note": ("Quick Actions: New Note", "Create a new note"),
+    "import_media": ("Quick Actions: Import Media File", "Import a new media file for processing"),
+    "search_all": ("Quick Actions: Search All Content", "Search across all content"),
+    FOCUS_TOGGLE_PALETTE_ENTRY[1]: (FOCUS_TOGGLE_PALETTE_ENTRY[0], FOCUS_TOGGLE_PALETTE_ENTRY[2]),
+    "report_bug": (
+        "Quick Actions: Report a bug…",
+        "Describe an issue, review retained diagnostics and copy a report",
+    ),
+}
+_POPULAR_QUICK_ACTIONS = (
+    "new_chat", "new_note", "search_all", "import_media", "toggle_focus_mode", "report_bug"
 )
 
 
@@ -503,32 +522,7 @@ class QuickActionsProvider(Provider):
     async def search(self, query: str) -> Hits:
         matcher = self.matcher(query)
 
-        quick_actions = [
-            (
-                "Quick Actions: New Chat Conversation",
-                "new_chat",
-                "Start a new chat conversation",
-            ),
-            (
-                "Quick Actions: New Character Chat",
-                "new_character",
-                "Start a new character-based conversation",
-            ),
-            ("Quick Actions: New Note", "new_note", "Create a new note"),
-            (
-                "Quick Actions: Import Media File",
-                "import_media",
-                "Import a new media file for processing",
-            ),
-            (
-                "Quick Actions: Search All Content",
-                "search_all",
-                "Search across all content",
-            ),
-            FOCUS_TOGGLE_PALETTE_ENTRY,
-        ]
-
-        for command_text, action_id, help_text in quick_actions:
+        for action_id, (command_text, help_text) in _QUICK_ACTIONS.items():
             score = matcher.match(command_text)
             if score > 0:
                 yield Hit(
@@ -539,27 +533,8 @@ class QuickActionsProvider(Provider):
                 )
 
     async def discover(self) -> Hits:
-        popular_actions = [
-            (
-                "Quick Actions: New Chat Conversation",
-                "new_chat",
-                "Start a new chat conversation",
-            ),
-            ("Quick Actions: New Note", "new_note", "Create a new note"),
-            (
-                "Quick Actions: Search All Content",
-                "search_all",
-                "Search across all content",
-            ),
-            (
-                "Quick Actions: Import Media File",
-                "import_media",
-                "Import a new media file for processing",
-            ),
-            FOCUS_TOGGLE_PALETTE_ENTRY,
-        ]
-
-        for command_text, action_id, help_text in popular_actions:
+        for action_id in _POPULAR_QUICK_ACTIONS:
+            command_text, help_text = _QUICK_ACTIONS[action_id]
             yield Hit(
                 1.0,
                 command_text,
@@ -595,6 +570,8 @@ class QuickActionsProvider(Provider):
                 )
             elif action_id == FOCUS_TOGGLE_PALETTE_ENTRY[1]:
                 self.app.action_toggle_focus_mode()
+            elif action_id == "report_bug":
+                self.app.action_report_bug()
         except Exception as e:
             self.app.notify(f"Failed to execute quick action: {e}", severity="error")
 

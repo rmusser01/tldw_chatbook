@@ -3,7 +3,8 @@
 CSS Build Script for tldw_chatbook
 Concatenates modular CSS files into a single file for Textual
 
-Five files are generated (TASK-15450 -- see ``widget_css.py`` for the why):
+These files are generated (TASK-15450 -- see ``widget_css.py`` for the why;
+``css/CSS-MODULAR.md`` says what loads each one):
 
 * ``tldw_cli_modular.tcss`` -- the app bundle, concatenated from ``CSS_MODULES``.
 * ``widget_defaults_{self,scoped}.tcss`` -- the class-level ``BUNDLED_CSS``
@@ -12,6 +13,9 @@ Five files are generated (TASK-15450 -- see ``widget_css.py`` for the why):
 * ``screen_css_{self,scoped}.tcss`` -- the class-level ``BUNDLED_SCREEN_CSS``
   blocks, loaded as app CSS either side of the bundle, in place of the source
   Textual used to add (with a full cold reparse) on a modal's first open.
+* ``screen_agentic_*``, ``screen_feature_*`` and ``screen_modal_*.tcss`` --
+  single-owner rules split out of the ``SCREEN_OWNED_SPLITS`` modules, parsed
+  on the owning screen's first visit (TASK-25812/TASK-24459).
 """
 
 import dataclasses
@@ -240,6 +244,7 @@ CSS_MODULES = [
     "components/_dialogs.tcss",
     "components/_status.tcss",
     "components/_agentic_terminal.tcss",
+    "features/_console_approvals.tcss",
     "components/_workbench.tcss",
     "components/_widgets.tcss",
     "components/stats_screen.css",
@@ -251,7 +256,6 @@ CSS_MODULES = [
     # rules now live in _settings_splash_theme.tcss at this same manifest
     # position so cascade order is unchanged.
     "components/_settings_splash_theme.tcss",
-    "components/_settings_personal_context.tcss",
     "components/_profile_interview.tcss",
     # TASK-394: generic, app-wide component styles moved OUT of the splash/theme
     # module. Kept at this manifest position (immediately after it) so the
@@ -269,10 +273,15 @@ CSS_MODULES = [
     # screen_agentic_{library,settings}.tcss sheets.
     "features/_console.tcss",
     "features/_console_panels.tcss",
+    "features/_console_prompts.tcss",
+    "features/_console_response_rules.tcss",
     "features/_library.tcss",
     "features/_library_panels.tcss",
+    "features/_library_notes_panels.tcss",
     "features/_library_artifacts.tcss",
+    "components/_settings_personal_context.tcss",
     "features/_settings.tcss",
+    "features/_plugins.tcss",
     "features/_home.tcss",
     "features/_chat.tcss",
     # task-577 T4: "features/_chat_tabs.tcss" removed -- every selector in it
@@ -292,9 +301,13 @@ CSS_MODULES = [
     # _wizards.tcss), so dropping this sheet's copies is a no-op. The other two
     # (.action-spacer, .param-group) were this sheet's SOLE definitions with
     # live users (CodeRepoCopyPasteWindow, MediaViewerPanel) and were moved
-    # verbatim to components/_shared_components.tcss to preserve them.
+    # verbatim to components/_shared_components.tcss to preserve them; both
+    # rules were later removed again (TASK-38605) once those widgets
+    # themselves were deleted.
     "features/_llm-management.tcss",
-    "features/_tools-settings.tcss",
+    # task-33244: "features/_tools-settings.tcss" removed -- it styled the
+    # navigation-unreachable legacy Tools & Settings window, deleted along
+    # with the window; the canonical Settings hub styles its own surfaces.
     "features/_ingest.tcss",
     # task-745: "features/_ingest_tldw_api_tabs.tcss" removed -- it styled the
     # standalone ingest window's tab strip and API form, deleted in task-684.4.
@@ -330,6 +343,9 @@ CSS_MODULES = [
     "features/_logs.tcss",
     "features/_writing.tcss",
     "features/_workflows.tcss",
+    # Roleplay frame B1: Roleplay's own vocabulary, split whole into
+    # screen_feature_roleplay.tcss (see SCREEN_OWNED_SPLITS).
+    "features/_roleplay.tcss",
     "features/config_search.tcss",
     "features/feature_alerts.tcss",
     # ADR-161 task 5: the pattern gallery's layout glue (dialog/nav preview
@@ -389,6 +405,10 @@ MODAL_OWNED_SPLIT_SHEETS: dict[str, tuple[str, str]] = {
         "tldw_chatbook.Widgets.Console.console_message_delete_receipt",
         "ConsoleMessageDeleteReceiptModal",
     ),
+    "screen_modal_file_notes_history.tcss": (
+        "tldw_chatbook.Widgets.Library.library_file_notes_workspace",
+        "FileNotesHistoryDialog",
+    ),
 }
 
 #: Tokens that PREFIX-match an owner but are composed by widgets on OTHER
@@ -403,7 +423,7 @@ MODAL_OWNED_SPLIT_SHEETS: dict[str, tuple[str, str]] = {
 #: PR #2281 became moot when the console split was dissolved -- every
 #: console rule but the Delete receipt's rides the boot bundle now -- and
 #: the settings pin moved to the settings split below.)
-SETTINGS_SPLIT_PINNED_TOKENS = frozenset({"settings-input-label"})
+SETTINGS_SPLIT_PINNED_TOKENS = frozenset({"settings-input-label", "personal-context-recovery-dialog"})
 
 _SPLIT_HEADER = """/* ========================================
  * GENERATED FILE - DO NOT EDIT DIRECTLY
@@ -456,6 +476,15 @@ class ScreenOwnedSplit:
 #: ``build_screen_owned_sheets``), because two lazily-loaded sheets have
 #: visit-order-dependent cascade order between them.
 SCREEN_OWNED_SPLITS: tuple[ScreenOwnedSplit, ...] = (
+    # PluginsScreen alone composes plugins-* (including its inline form).
+    # Shared selectors and singular plugin-review/modal rules remain in the
+    # boot remainder so standalone modals work before a Plugins route visit.
+    ScreenOwnedSplit(
+        modules=("features/_plugins.tcss",),
+        sheets={"plugins": "screen_feature_plugins.tcss"},
+        prefixes={"plugins": ("plugins",)},
+        pinned=frozenset(),
+    ),
     # ADR-161 task 10: the library vocabulary's split source (carved out of
     # the agentic-terminal monolith 2026-09-14). The generated sheet and its
     # moved selector set are IDENTICAL to the pre-carve agentic split's
@@ -465,6 +494,7 @@ SCREEN_OWNED_SPLITS: tuple[ScreenOwnedSplit, ...] = (
         modules=(
             "features/_library.tcss",
             "features/_library_panels.tcss",
+            "features/_library_notes_panels.tcss",
             "features/_library_artifacts.tcss",
         ),
         sheets={"library": "screen_agentic_library.tcss"},
@@ -476,12 +506,12 @@ SCREEN_OWNED_SPLITS: tuple[ScreenOwnedSplit, ...] = (
     # composed by Widgets/Persona_Widgets/personas_policy_rules_editor.py,
     # so its rule must ride the boot bundle, not the lazy settings sheet.
     ScreenOwnedSplit(
-        modules=("features/_settings.tcss",),
+        modules=("components/_settings_personal_context.tcss", "features/_settings.tcss"),
         sheets={"settings": "screen_agentic_settings.tcss"},
         # Hook review shares this existing lazy source with canonical Settings;
         # its own modal CSS_PATH loads it when opened from Console first.
         prefixes={
-            "settings": ("settings", "console-hooks", "hook-review", "-wide-viewport")
+            "settings": ("settings", "personal-context", "console-hooks", "hook-review", "-wide-viewport")
         },
         pinned=SETTINGS_SPLIT_PINNED_TOKENS,
     ),
@@ -514,11 +544,61 @@ SCREEN_OWNED_SPLITS: tuple[ScreenOwnedSplit, ...] = (
     # Exact-token consumer audit (2026-09-15, repo-relative paths): moved
     # tokens occur only in UI/Workflows_Modules/ and workflows_screen.py;
     # a no-owner negative control detects the same consumer hits.
+    # TASK-38719: `-wide-viewport` is claimed as the Settings split claims
+    # it, so the run dialogs' wide-tier rule loads with their base rule.
     ScreenOwnedSplit(
         modules=("features/_workflows.tcss",),
         sheets={"workflows": "screen_feature_workflows.tcss"},
-        prefixes={"workflows": ("workflow", "workflows")},
+        prefixes={"workflows": ("workflow", "workflows", "-wide-viewport")},
         pinned=frozenset(),
+    ),
+    # Roleplay frame B1 (spec R18, G18): Roleplay's rules load on the first
+    # visit to Roleplay. Narrow prefixes, never bare `personas`. Exact-token
+    # compose-site audit (2026-10-03, repo-relative paths, control-checked):
+    # `personas-header*`, `personas-library*` and `personas-work*` are composed
+    # only in UI/Screens/personas_screen.py and Widgets/Persona_Widgets/; the
+    # `roleplay-*` and `personas-more*`/`personas-try*` prefixes have no compose
+    # site yet. `personas-library-rows` stays pinned in boot (its `:focus` rule,
+    # Tests/UI/test_personas_library_rail_focus_outline.py). The last four
+    # entries claim SHARED tokens exactly (DestinationHeader's fixed child
+    # classes and Textual's `-active`), so Roleplay's copies of the inline
+    # header and grip rules leave boot; legal only because every Roleplay
+    # selector also carries a Roleplay token, which
+    # Tests/UI/test_roleplay_stylesheet.py enforces (a bare `.-active` rule
+    # here would restyle every app button after the first Ctrl+4).
+    ScreenOwnedSplit(
+        modules=("features/_roleplay.tcss",),
+        sheets={"roleplay": "screen_feature_roleplay.tcss"},
+        prefixes={
+            "roleplay": (
+                "roleplay-shell",
+                "roleplay-rail",
+                "roleplay-nav",
+                "roleplay-items",
+                "personas-header",
+                "personas-library",
+                "personas-work",
+                "personas-more",
+                "personas-try",
+                "workbench-header-title",
+                "workbench-header-subtitle",
+                "workbench-header-status",
+                "-active",
+                # Roleplay frame B2a (TASK-33910.3): OptionList's highlighted-row
+                # component class, claimed exactly so the items list's
+                # focus-only cursor rules (`.roleplay-items-list > ...`) leave
+                # boot. A unit moves only when every token is Roleplay's, and
+                # Tests/UI/test_roleplay_stylesheet.py keeps each selector
+                # anchored by a Roleplay token (SHARED_CLAIMS).
+                "option-list--option-highlighted",
+                # Roleplay frame B2b (TASK-33910.4): Input's placeholder
+                # component class, claimed exactly for the same reason: the
+                # search placeholder's AA rules (`.roleplay-items-search >
+                # .input--placeholder`) leave boot.
+                "input--placeholder",
+            )
+        },
+        pinned=frozenset({"personas-library-rows"}),
     ),
     # TASK-32187: the largest un-split bundle module (57,721 B). Its token
     # vocabulary is NOT a single `watchlists-*` prefix -- the screen's panes
@@ -553,11 +633,27 @@ SCREEN_OWNED_SPLITS: tuple[ScreenOwnedSplit, ...] = (
     # composed only in Widgets/Console/console_message_delete_receipt.py.
     ScreenOwnedSplit(
         modules=("features/_console.tcss",),
-        sheets={
-            "console_delete_receipt": "screen_modal_console_delete_receipt.tcss"
-        },
+        sheets={"console_delete_receipt": "screen_modal_console_delete_receipt.tcss"},
         prefixes={"console_delete_receipt": ("console-delete-receipt",)},
         pinned=frozenset(),
+    ),
+    # TASK-36386 / ADR-097: the File Notes revision-history dialog is a
+    # rarely opened Library modal, so its `file-notes-history*` ids leave the
+    # boot bundle for a sheet its own CSS_PATH loads on first open -- see
+    # MODAL_OWNED_SPLIT_SHEETS. features/_notes.tcss holds no other rule.
+    # Owner audit 2026-10-23, repo-relative paths: the moved ids are composed
+    # only in Widgets/Library/library_file_notes_workspace.py
+    # (FileNotesHistoryDialog). The pin is the workspace's own History
+    # button (`#file-notes-history`, same file, LibraryFileNotesWorkspace):
+    # it matches the prefix but is on screen whenever File Notes is, so a
+    # rule naming it must ride the bundle.
+    # TASK-38719: `-wide-viewport` is claimed too, so the dialog's wide-tier
+    # rule loads with the rest of its sheet.
+    ScreenOwnedSplit(
+        modules=("features/_notes.tcss",),
+        sheets={"file_notes_history": "screen_modal_file_notes_history.tcss"},
+        prefixes={"file_notes_history": ("file-notes-history", "-wide-viewport")},
+        pinned=frozenset({"file-notes-history"}),
     ),
     ScreenOwnedSplit(
         modules=("features/_watchlists.tcss",),
@@ -654,8 +750,7 @@ def _unit_owner(unit: str, split: ScreenOwnedSplit) -> str | None:
             return None
         for owner, prefixes in split.prefixes.items():
             if any(
-                token == prefix or token.startswith(prefix + "-")
-                for prefix in prefixes
+                token == prefix or token.startswith(prefix + "-") for prefix in prefixes
             ):
                 owners.add(owner)
                 break
@@ -682,16 +777,10 @@ def _unit_selector_set(unit: str) -> set[str]:
     if brace == -1:
         return set()
     selector = stripped[:brace]
-    return {
-        " ".join(part.split())
-        for part in selector.split(",")
-        if part.strip()
-    }
+    return {" ".join(part.split()) for part in selector.split(",") if part.strip()}
 
 
-def _later_module_selectors(
-    css_dir: Path | None, after_module: str
-) -> set[str]:
+def _later_module_selectors(css_dir: Path | None, after_module: str) -> set[str]:
     """Selectors of every ``CSS_MODULES`` entry AFTER ``after_module``.
 
     A moved block parses after the whole bundle, so an equal-specificity
@@ -998,7 +1087,17 @@ def build_css(css_dir: Path, output_file: Path) -> None:
 
     for index, module in enumerate(CSS_MODULES, start=1):
         print(f"Processing CSS module {index} of {len(CSS_MODULES)}")
+        if module == "features/_console_approvals.tcss":
+            # Extracted rules retain their original intra-component cascade slot.
+            continue
         content = (css_dir / module).read_text(encoding="utf-8")
+        if module == "components/_agentic_terminal.tcss":
+            content = content.replace(
+                "/* @console-approvals */",
+                (css_dir / "features/_console_approvals.tcss").read_text(
+                    encoding="utf-8"
+                ),
+            )
         if module in split_remainders:
             # TASK-25812/TASK-24459: only the multi-screen remainder rides
             # the boot bundle; the single-owner rules ship as the per-screen
@@ -1299,9 +1398,10 @@ def main():
             "the manifest was not published. Re-run build_css."
         )
 
-    print("\nTo use the modular CSS:")
-    print("1. Update app.py to use 'tldw_cli_modular.tcss'")
-    print("2. Run this script whenever you modify any module files")
+    print(
+        "\nCommit the regenerated sheets with your source change, then run "
+        "./scripts/preflight.sh (see css/CSS-MODULAR.md)."
+    )
 
 
 if __name__ == "__main__":

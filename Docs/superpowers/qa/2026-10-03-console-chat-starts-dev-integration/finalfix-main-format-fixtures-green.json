@@ -1,0 +1,17 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-B",
+    "scripts/terminal_qualification/format_ratchet.py",
+    "verify",
+    "--baseline",
+    ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/format-ratchet-baseline.json"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "env": {
+    "TLDW_TEST_GC_EVERY": "1"
+  },
+  "returncode": 0,
+  "elapsed_s": 9.366427898406982,
+  "output": ""
+}

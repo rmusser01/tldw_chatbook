@@ -344,6 +344,85 @@ async def test_subagent_counts_are_batched_and_gated_not_refreshed_every_tick(
             console._console_chat_controller = original_controller
 
 
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_an_active_run_requeries_subagent_counts_at_most_once_a_second(
+    monkeypatch,
+):
+    """TASK-33620.15: a run refreshes the badge counts promptly, not per sync.
+
+    During a run every Console sync (the 0.2 s transcript tick plus every
+    event) re-ran the batched count query, each paying AgentRunsDB's
+    storage-admission checks on the UI thread -- the largest single item
+    (18% of main-thread samples) between a live first send's Enter and its
+    provider call. A run still refreshes on its first sync, then at most
+    once a second, and the first sync after it ends refreshes once more: a
+    count read up to a second before the end would otherwise stand for the
+    whole idle TTL.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
+        calls = []
+
+        class _FakeBridge:
+            def subagent_counts(self, conversation_ids):
+                calls.append(list(conversation_ids))
+                return {cid: len(calls) for cid in conversation_ids}
+
+        bridge = _FakeBridge()
+        rows = (
+            ConsoleConversationBrowserInputRow(
+                row_key="c0",
+                conversation_id="c0",
+                native_session_id=None,
+                title="Conv 0",
+                scope_type="global",
+                workspace_id=None,
+                workspace_label="",
+                updated_sort="2026-07-13T00:00:00Z",
+            ),
+        )
+        fake_time = {"t": 100.0}
+        monkeypatch.setattr(
+            "tldw_chatbook.UI.Screens.chat_screen.time.monotonic",
+            lambda: fake_time["t"],
+        )
+        agent = console._agent
+        assert agent._console_subagent_counts_for_rows(bridge, rows) == {"c0": 1}
+        original_controller = console._console_chat_controller
+        try:
+            console._console_chat_controller = SimpleNamespace(
+                run_state=SimpleNamespace(status=ConsoleRunStatus.STREAMING)
+            )
+            # The run's first sync refreshes even inside the idle TTL...
+            assert agent._console_subagent_counts_for_rows(bridge, rows) == {"c0": 2}
+            # ...its next syncs within a second reuse that answer...
+            for _tick in range(4):
+                fake_time["t"] += 0.2
+                assert agent._console_subagent_counts_for_rows(bridge, rows) == {
+                    "c0": 2
+                }
+            assert len(calls) == 2
+            # ...and a second after the last query the run refreshes again.
+            fake_time["t"] += 0.2
+            assert agent._console_subagent_counts_for_rows(bridge, rows) == {"c0": 3}
+            # The run ends inside that second: the first idle sync refreshes,
+            # then idle syncs keep the idle TTL.
+            fake_time["t"] += 0.2
+            console._console_chat_controller = SimpleNamespace(
+                run_state=SimpleNamespace(status=ConsoleRunStatus.COMPLETED)
+            )
+            assert agent._console_subagent_counts_for_rows(bridge, rows) == {"c0": 4}
+            fake_time["t"] += 0.2
+            assert agent._console_subagent_counts_for_rows(bridge, rows) == {"c0": 4}
+        finally:
+            console._console_chat_controller = original_controller
+
+
 # --- Finding B: rail Agent-section lines render into markup=False Statics
 # -- escaping bracket text there produces literal backslashes, not markup
 # protection, so this text must stay raw. ---
@@ -763,6 +842,7 @@ async def test_drilldown_step_text_grows_with_a_configured_cap_above_eighty(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_full_log_probe_never_touches_the_bridge_while_collapsed():
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -815,6 +895,7 @@ async def test_full_log_probe_never_touches_the_bridge_while_collapsed():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_full_log_probe_is_cached_per_run_id_while_open():
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -1328,6 +1409,7 @@ async def test_drilldown_still_prefers_the_persisted_steps_once_they_exist():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_full_log_slow_probe_is_off_thread_and_rejects_stale_target():
     import threading
 

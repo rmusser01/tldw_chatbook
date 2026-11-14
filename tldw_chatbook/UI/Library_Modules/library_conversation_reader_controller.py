@@ -82,6 +82,7 @@ through generated properties reading
 shape Task 6 installed on ``LibraryScreen`` itself, applied here to the
 controller instead.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -107,7 +108,11 @@ from ...Library.library_conversation_reader_state import (
     settle_conversation_unavailable,
 )
 from ...Library.library_shell_state import LIBRARY_ROW_BROWSE_CONVERSATIONS
-from ...Utils.adaptive_reader_state import PaneName, resolve_adaptive_reader_layout
+from ...Utils.adaptive_reader_state import (
+    PaneName,
+    list_holds_the_stage,
+    resolve_adaptive_reader_layout,
+)
 from ...Widgets.Library import LibraryAdaptiveReaderShell, LibraryConversationReader
 from .library_conversations_state import (
     CONVERSATIONS_PLURAL_STATE_FIELDS,
@@ -242,10 +247,8 @@ class LibraryConversationReaderController:
         )
         self._selected_row_id_accessor = selected_row_id_accessor
         self._selected_conversation_id_accessor = selected_conversation_id_accessor
-        # (task-32056) ``LibraryScreen._library_conversation_workspace_block``
-        # -- the workspace-registry read behind the reader's inline refusal.
-        # Bound like every other cross-cluster dependency: the depth-state
-        # cache it consults is shell-wide, not reader-owned.
+        # task-32056: bind LibraryScreen._library_conversation_workspace_block;
+        # its workspace-registry refusal reads the shell-wide depth-state cache.
         self._library_conversation_workspace_block = (
             library_conversation_workspace_block
         )
@@ -462,26 +465,14 @@ class LibraryConversationReaderController:
         return None
 
     def _ensure_library_conversation_reader_selection(self) -> None:
-        """Start the initial selected-row read once the permanent pane mounts."""
+        """Load the selected row, or re-check its loaded transcript."""
         conversation_id = self._selected_conversation_id
         if not conversation_id or self._library_conversations_select_mode:
             return
-        state = self._library_conversation_reader_state
-        record_version = self._conversation_reader_record_version(
-            self._conversation_reader_record(conversation_id)
-        )
-        if state.selected_id == conversation_id and (
-            (
-                state.loading
-                and (record_version is None or state.selected_version == record_version)
-            )
-            or (
-                state.loaded_actions_eligible
-                and (record_version is None or state.loaded_version == record_version)
-            )
-        ):
-            return
-        self._start_library_conversation_reader_selection(conversation_id)
+        # Off the boot path: Library's reader is the only caller.
+        from .library_conversation_reader_freshness import ensure_reader_current
+
+        ensure_reader_current(self, conversation_id)
 
     def _start_library_conversation_reader_selection(
         self, conversation_id: str
@@ -508,6 +499,7 @@ class LibraryConversationReaderController:
                 bulk_selected_count=0,
                 bulk_loaded_preview_selected=None,
             )
+            self._hand_the_list_stage_to_the_reader()
             self._sync_library_conversation_reader()
             self.run_worker(
                 self._bootstrap_library_conversation_reader(
@@ -523,12 +515,23 @@ class LibraryConversationReaderController:
             version=version,
         )
         self._library_conversation_reader_state = state
+        self._hand_the_list_stage_to_the_reader()
         self._sync_library_conversation_reader()
         self.run_worker(
             self._load_library_conversation_reader(request),
             exclusive=True,
             group="library_conversation_reader",
         )
+
+    def _hand_the_list_stage_to_the_reader(self) -> None:
+        """TASK-38981 review: a conversation picked from the list holding the
+        stage takes the stage back instead of loading behind it."""
+        layout = self._library_conversation_reader_layout
+        if list_holds_the_stage(layout):
+            self._library_conversation_reader_layout = dataclasses.replace(
+                layout, priority_pane=None
+            )
+            self._sync_library_conversation_reader_layout_from_shell()
 
     async def _bootstrap_library_conversation_reader(
         self, conversation_id: str, bootstrap_generation: int
@@ -767,6 +770,9 @@ class LibraryConversationReaderController:
 
             state = self._library_conversation_reader_state
             if state.complete:
+                from .library_conversation_reader_freshness import recheck_settled_load
+
+                recheck_settled_load(self)
                 return
             next_offset = len(state.messages)
             if next_offset <= request.message_offset:
@@ -925,6 +931,7 @@ class LibraryConversationReaderController:
         """Retry the selected detail with a fresh pure-state generation."""
         event.stop()
         self._retry_library_conversation_reader()
+
 
 # --- BEGIN generated conversations-state shims ---
 # Permanent, not a cleanup-PR deletion target: the conversations cleanup PR

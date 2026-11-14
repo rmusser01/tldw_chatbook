@@ -13,3 +13,8 @@ else:
     import fcntl
 
     os = _os
+
+
+def supports_native_process_groups() -> bool:
+    """Check the platform primitives needed for native process-group custody."""
+    return _os.name == "posix" and hasattr(_os, "killpg")

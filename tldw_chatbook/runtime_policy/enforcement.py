@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from inspect import getattr_static
 from typing import Any, Callable
 
 from .engine import PolicyEngine
 from .registry import CAPABILITY_REGISTRY
-from .types import PolicyDeniedError, RuntimeSourceState
+from .source_state import normalize_runtime_source_state
+from .types import CapabilityEntry, PolicyDecision, PolicyDeniedError, RuntimeSourceState
 
 
 class ServicePolicyEnforcer:
@@ -64,6 +66,88 @@ class ServicePolicyEnforcer:
             effective_source=decision.effective_source,
             authority_owner=decision.authority_owner,
         )
+
+
+# Used only by the Console's two metadata listings with an exact local override.
+# The normal enforcer and engine still evaluate the live entries.
+_CONSOLE_LOCAL_LISTING_REGISTRY = CAPABILITY_REGISTRY
+_CONSOLE_LOCAL_LISTING_METHODS = tuple(
+    (
+        owner, name, getattr_static(owner, "__getattribute__"), descriptor, function,
+        function.__code__, function.__defaults__, function.__kwdefaults__,
+        tuple((function.__kwdefaults__ or {}).items()),
+    )
+    for owner, name in (
+        (ServicePolicyEnforcer, "require_allowed"),
+        (PolicyEngine, "evaluate"),
+        (PolicyEngine, "_deny"),
+        (RuntimeSourceState, "__init__"),
+        (RuntimeSourceState, "normalized_for_policy"),
+        (PolicyDecision, "__init__"),
+        (PolicyDeniedError, "__init__"),
+    )
+    for descriptor in (vars(owner)[name],)
+    for function in (
+        descriptor.__func__ if type(descriptor) is staticmethod else descriptor,
+    )
+)
+_CONSOLE_NORMALIZER_CODE = normalize_runtime_source_state.__code__
+
+
+def _console_local_listing_source(enforcer, actions):
+    """Observe the exact finite policy chain and entries used by these listings."""
+    from . import engine, registry, source_state, types
+
+    if type(enforcer) is not ServicePolicyEnforcer:
+        return None
+    evaluator = getattr_static(enforcer, "_engine", None)
+    if type(evaluator) is not PolicyEngine:
+        return None
+    entries = getattr_static(evaluator, "_registry", None)
+    if (
+        type(entries) is not dict
+        or entries is not _CONSOLE_LOCAL_LISTING_REGISTRY
+        or registry.CAPABILITY_REGISTRY is not entries
+        or engine.RuntimeSourceState is not RuntimeSourceState
+        or engine.PolicyDecision is not PolicyDecision
+        or types.RuntimeSourceState is not RuntimeSourceState
+        or types.PolicyDeniedError is not PolicyDeniedError
+        or source_state.normalize_runtime_source_state is not normalize_runtime_source_state
+        or normalize_runtime_source_state.__code__ is not _CONSOLE_NORMALIZER_CODE
+    ):
+        return None
+    for owner, name, getattribute, descriptor, function, code, defaults, keywords, items in (
+        _CONSOLE_LOCAL_LISTING_METHODS
+    ):
+        receiver = (
+            enforcer if owner is ServicePolicyEnforcer else
+            evaluator if owner is PolicyEngine else owner
+        )
+        if (
+            getattr_static(owner, "__getattribute__") is not getattribute
+            or getattr_static(receiver, name, None) is not descriptor
+            or vars(owner).get(name) is not descriptor
+            or function.__code__ is not code
+            or function.__defaults__ is not defaults
+            or function.__kwdefaults__ is not keywords
+            or tuple((keywords or {}).items()) != items
+        ):
+            return None
+    selected = []
+    for action in actions:
+        entry = entries.get(action)
+        if entry is None:
+            selected.append((None,))
+            continue
+        if (
+            type(entry) is not CapabilityEntry
+            or type(entry.enabled) is not bool
+            or type(entry.required_source) is not str
+            or type(entry.authority_owner) is not str
+        ):
+            return None
+        selected.append((entry, entry.enabled, entry.required_source, entry.authority_owner))
+    return (enforcer, evaluator, entries, tuple(selected))
 
 
 def classify_backend_exception(error: Exception) -> str | None:

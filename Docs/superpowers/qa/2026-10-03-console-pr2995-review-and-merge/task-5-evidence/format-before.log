@@ -1,0 +1,2 @@
+Tests/UI/test_console_runtime_ownership.py: formatter-required hunk overlaps changed lines
+Tests/UI/test_console_runtime_ownership.py: normalized formatter debt grew from 56 to 99

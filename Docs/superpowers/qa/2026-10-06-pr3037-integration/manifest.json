@@ -1,0 +1,58 @@
+{
+  "created_utc": "2026-10-07T03:28:57.174522+00:00",
+  "reviewed_head": "ebb84e496fe3a3d6cd1bdfdcd819e321efe1f99c",
+  "reviewed_tree": "e951f3cbd94e5c7e33706c9bc2baa08b8a35c165",
+  "exact_incoming_dev": "518277133cc1281e446387b06d59dc54fea9b727",
+  "prior_reviewed_head": "8d88ababdf83701174fac753283cbd44153262ad",
+  "preserving_tree_receipt_sha256": "fd87dfd6b6d0d072cab4773131742b9c4506eb2ab7273b1230d343281a21a9b8",
+  "independent_reviews": [
+    {
+      "sha256": "f9fa097f546230c4320cd4035bf71fa59cc377a2f3edabe861120ec0d5d88b58",
+      "status": "Ready",
+      "findings": []
+    },
+    {
+      "sha256": "b0ae25379fb36f437ff02654dd7c34cecc087f741570b58406a8ea0834a6482e",
+      "status": "scoped source integration Ready",
+      "findings": []
+    }
+  ],
+  "targeted_selections": {
+    "incoming": {
+      "tests": 58,
+      "xml_seconds": "181.650",
+      "raw_sha256": "d167b9e9151972b646d887a3ea56b1b780ec6d98a993bdb05b0d470de4a712f3",
+      "xml_sha256": "99075d004892240ea9635670e749b2678f89ee6a41ff0527c9ee3a93b32ad8c1",
+      "receipt_sha256": "a5a48c5bf00cd7d55f673ae2f275243dedd1ec1dd43209d1662a10bfddec887c",
+      "late_rm_rf_warnings": 27,
+      "PyAudio_mentions": 0,
+      "pydub_mentions": 0,
+      "FD_lines": []
+    },
+    "boundaries": {
+      "tests": 17,
+      "xml_seconds": "110.583",
+      "raw_sha256": "e366a6eedcb23205e8c46f21b251b4e52dfea331fe4ca7e6cebdf2d999f5fcad",
+      "xml_sha256": "49554ade504ca06b25a8fab10e4dbd7175e0550012f3de7682673767cf31842d",
+      "receipt_sha256": "40f66d0bc2844f92e0e71af5c98903cb70ec33682c133ba59d9a0199adbd184b",
+      "late_rm_rf_warnings": 27,
+      "PyAudio_mentions": 0,
+      "pydub_mentions": 0,
+      "FD_lines": []
+    }
+  },
+  "selections_never_summed": true,
+  "archive_sha256": "3715dc0070207a835b3781ecb4ad581b07af8988b89cb5304938ae8abcddc33c",
+  "archive_entries": {
+    "incoming/raw.log": "d167b9e9151972b646d887a3ea56b1b780ec6d98a993bdb05b0d470de4a712f3",
+    "incoming/results.xml": "99075d004892240ea9635670e749b2678f89ee6a41ff0527c9ee3a93b32ad8c1",
+    "incoming/receipt.json": "a5a48c5bf00cd7d55f673ae2f275243dedd1ec1dd43209d1662a10bfddec887c",
+    "boundaries/raw.log": "e366a6eedcb23205e8c46f21b251b4e52dfea331fe4ca7e6cebdf2d999f5fcad",
+    "boundaries/results.xml": "49554ade504ca06b25a8fab10e4dbd7175e0550012f3de7682673767cf31842d",
+    "boundaries/receipt.json": "40f66d0bc2844f92e0e71af5c98903cb70ec33682c133ba59d9a0199adbd184b",
+    "hook-review.json": "f9fa097f546230c4320cd4035bf71fa59cc377a2f3edabe861120ec0d5d88b58",
+    "storage-review.json": "b0ae25379fb36f437ff02654dd7c34cecc087f741570b58406a8ea0834a6482e",
+    "preserving-tree.json": "fd87dfd6b6d0d072cab4773131742b9c4506eb2ab7273b1230d343281a21a9b8"
+  },
+  "limitation": "The earlier 884-to-286/67.64561% paired workload remains historical; the incoming established-store UI change alters demand. No merged-app measurement, full-suite, resource/cause, provider-live, non-macOS or original-budget renewal."
+}

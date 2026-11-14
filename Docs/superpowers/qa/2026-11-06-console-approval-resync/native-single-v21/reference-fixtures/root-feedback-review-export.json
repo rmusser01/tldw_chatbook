@@ -1,0 +1,22 @@
+{
+  "reviewer": "root independent actual image inspection",
+  "reviewed_ns": 103192380205200,
+  "correlation": "f65a5053cfd88a033f734cf5f1cb40d8",
+  "reviews": [
+    {
+      "file": "owned-009-feedback-candidate.png",
+      "png_sha256": "98efba78f65aef37aa781523e7cd51488074000a2e16d07c57187c2a0631b59d",
+      "observed": true,
+      "description": "Decision accepted; full current fixture nonce visible; same Read file single-call scope; disabled actions."
+    },
+    {
+      "file": "owned-026-after-collect-final-owned.png",
+      "png_sha256": "519723ea925fc3b52c12287ae86708aa425afeb8100499e81fd7fc1de1aadf45",
+      "observed": true,
+      "description": "Approval card retired; whole UI still shows Running / Waiting for reply / Preparing. Transitional actual capture only; no terminal UI paint claim."
+    }
+  ],
+  "timing_qualified": false,
+  "product_samples": 0,
+  "whole_UI_terminal_paint_verified": false
+}

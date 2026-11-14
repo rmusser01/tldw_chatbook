@@ -1,0 +1,72 @@
+{
+  "product_commit": "e9c894e9bc9696aca60317fc2029f6709dcf9d0b",
+  "baseline_revision": "473c32b4edbcf4c17e982045a749b5e7c6bc49b7",
+  "full_suite_run": false,
+  "distinct_targeted_passes": 115,
+  "runs": {
+    "expiry_regression_red": {
+      "failed": 3,
+      "passed": 1,
+      "seconds": 18.02
+    },
+    "expiry_regression_green": {
+      "passed": 4,
+      "seconds": 22.27,
+      "overlaps_primary": true
+    },
+    "primary": {
+      "passed": 103,
+      "seconds": 175.88
+    },
+    "connected_initial": {
+      "passed": 10,
+      "failed": 4,
+      "seconds": 192.15
+    },
+    "connected_baseline_control": {
+      "failed": 4,
+      "seconds": 108.83,
+      "qualification": "Three warm-reply fixture failures reproduced. The fourth control refused source fidelity before overflow: invalid for overflow attribution."
+    },
+    "recorder_red": {
+      "failed": 1,
+      "seconds": 5.29
+    },
+    "recorder_and_original_mounted_green": {
+      "passed": 2,
+      "seconds": 63.13
+    },
+    "recorder_final": {
+      "passed": 1,
+      "seconds": 4.8,
+      "overlaps_recorder_green": true
+    }
+  },
+  "remaining_failures": {
+    "count": 3,
+    "file": "Tests/UI/test_console_cost_config_source_retry.py",
+    "baseline_reproduced": true,
+    "cause": "Warm-reply setup times out before target behavior: separate worker :memory: SQLite connections lack conversations; trace capture refuses and provider is never contacted.",
+    "coverage_claim": false
+  },
+  "recorder_correction": "Coalesce identical plain scalar observations with counts; retain 64-distinct-row limit, copy isolation, overflow refusal, exact type checks and helper source pinning.",
+  "lint": {
+    "changed_test_and_diagnostic_files": "Ruff check and format clean",
+    "projection_existing_debt": "Same E721 exact-type guard finding and formatter delta on baseline and candidate; preserved rather than weakening storage checks.",
+    "receipt": "control-bar-lint-comparison.json"
+  },
+  "storage_safety_receipt": "control-bar-safety.json",
+  "independent_review": {
+    "required_changes": 0,
+    "final_evidence_review": "Confirmed mixed timings, nonreproducing natural diagnostics, direct RED/GREEN branch evidence, and separation of three reproduced fixture failures from invalid fourth baseline control."
+  },
+  "profiling": {
+    "exact_exit_zero": 6,
+    "draft_and_attachment_successes": 36,
+    "plain_comparison": "control-bar-comparison.json",
+    "separate_diagnostics": "control-bar-diagnostics.json",
+    "plain_source_hashes_reverified_unchanged": true,
+    "natural_diagnostics_reproduce_original_coalesced_native_entry": false
+  },
+  "cleanup_receipt": "control-bar-cleanup.json"
+}

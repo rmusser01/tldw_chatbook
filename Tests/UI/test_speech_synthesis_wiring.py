@@ -38,9 +38,9 @@ def test_synthesis_comes_from_the_shared_mixin():
     mixin is what let the pane adopt it whole rather than reimplementing it,
     and is what the remaining Speech surfaces will inherit in turn."""
     assert issubclass(SpeechPlaygroundPane, SpeechSynthesisMixin)
-    assert (
-        SpeechPlaygroundPane._generate_tts is SpeechSynthesisMixin._generate_tts
-    ), "the pane redefined generate instead of inheriting it"
+    assert SpeechPlaygroundPane._generate_tts is SpeechSynthesisMixin._generate_tts, (
+        "the pane redefined generate instead of inheriting it"
+    )
 
 
 @pytest.mark.asyncio

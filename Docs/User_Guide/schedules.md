@@ -48,8 +48,10 @@ re-enabling gives it no new run time; edit its schedule to arm it
 again). Each row shows a status
 glyph (`○` recurring, `▶` one-shot, `⏸` paused, `✓` completed), the
 title with the same owner/transfer-badge suffixes described below, and
-a subtitle line (the schedule summary plus a relative next-run time, or
-"— (paused)"/"— (disabled)" when nothing will fire). An automation row
+a subtitle line (the next run with its relative time, or
+"— (paused)"/"— (disabled)" when nothing will fire, then the schedule
+summary; the next run comes first so a narrow queue cuts the summary,
+not the time). An automation row
 with unread results carries a bold unread dot after its title.
 
 Highlighting a row opens its detail pane beside the list — a reminder's
@@ -194,6 +196,12 @@ error the loop hit, if any. Staleness is judged against your configured poll
 interval, so a deliberately long interval is not mistaken for a stall. The
 signal is durable (a small heartbeat file), so a stalled or dead loop is
 distinguishable from an idle one even across a restart.
+
+When the Console's **emergency stop** is active, the line adds "scheduled
+dispatches are held by the emergency stop (/emergency-stop clear in
+Console)". The scheduler records that on each tick, so the note appears (and
+goes away after a clear) at the scheduler's next tick, within one poll
+interval. Held tasks are not lost: they run once the stop is cleared.
 
 ## Preflight checks
 
@@ -385,6 +393,14 @@ shows "2026-08-31 14:30 UTC (in 2d)" and the queue column a shorter
 "2026-08-31 14:30 (in 2d)". Overdue times read "(overdue 2h)"; times
 within a minute read "(due now)".
 
+A recurring task keeps showing its next run after it has run. Its badge
+reads **Completed**, **Missed** or **Timed out** for the last run, and
+Next Run still names the next occurrence. A one-time task that has fired
+has no next run and reads a bare **—** (see Disabled tasks below). Edit
+its schedule to give it a new time and, once it is enabled, Next Run
+shows that time under the same **Completed** badge; until you enable it,
+it reads **— (disabled)**.
+
 ## Bulk actions — marking rows
 
 Press **x** to mark or unmark the highlighted row (●). While any rows
@@ -409,8 +425,12 @@ dispatching it also disables it and clears its next run internally, but
 the screen reads that specific shape as **finished**, not disabled —
 the detail badge and Next Run agree with the queue row: **Completed**,
 Next Run **—**, the `✓` glyph, and the **Completed** chip, everywhere at
-once. A task you disabled yourself (its next run is still armed
-underneath) is the only shape that reads **Disabled** / **— (disabled)**.
+once. Every other disabled reminder reads **Disabled** /
+**— (disabled)**, whether or not a next run is still stored underneath:
+for example one you disabled yourself, a fired one-time reminder you
+gave a new time and have not enabled yet, or an overdue one-time
+reminder the server parked disabled when you moved it there (see Moving
+a task between this device and the server below).
 
 ## Ran late — what happens to overdue reminders
 
@@ -627,7 +647,10 @@ preset, whether to be notified, and an optional provider/model pin.
 **Preview** runs the same validation the save itself will run and shows
 the next few scheduled occurrences without saving anything; a rejected
 preview highlights the specific field that needs fixing. **Save** always
-previews first — an invalid definition is never written. Only the
+previews first — an invalid definition is never written. While saving, the
+button shows **Saving…** and repeated Save actions cannot start another
+save. Validation errors, server refusals and failed writes keep your draft
+open so you can correct it or retry. Only the
 `recurring_question` family can be authored here; agent-task automations
 are not yet supported from this form.
 
@@ -791,12 +814,18 @@ Actions inside the view are keys:
 | `r` | Mark the selected result **read** |
 | `d` | **Dismiss** the selected result |
 | `o` | Mark the selected finding's automation **solved** |
-| `a` | Mark **every** currently-listed unread result read |
+| `a` | Mark **every** unread result in this view’s scope read, including rows beyond the table window |
 
 These four belong to the results view itself — it is a screen of its
 own, so its keys never collide with the list's behind it. A server-owned
 row's read/dismiss writes locally and automatically queues the matching
 pushback to the server; nothing extra to do.
+
+While one Results action is pending, another `r`, `d`, `o` or `a` shows
+a busy notice. Wait for completion, then press the desired key again. An accepted
+action keeps its original result or unread batch even if you move the selection;
+new results arriving afterward wait for a later batch. Mark all read reports how
+many succeeded and how many failed; failed rows stay unread and can be retried.
 
 **Mark solved** only applies to a `finding` whose automation is not
 already solved — a `failure` row, or a finding whose automation was

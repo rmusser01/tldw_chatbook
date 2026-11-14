@@ -1,0 +1,173 @@
+[
+  {
+    "path": "Tests/UI/test_reminder_form.py",
+    "baseline": [
+      [
+        "E402",
+        "from Tests.UI.schedules_test_helpers import ("
+      ]
+    ],
+    "current": [
+      [
+        "E402",
+        "from Tests.UI.schedules_test_helpers import ("
+      ]
+    ]
+  },
+  {
+    "path": "tldw_chatbook/Scheduling/services/scheduling_service.py",
+    "baseline": [
+      [
+        "E402",
+        "from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ("
+      ],
+      [
+        "E402",
+        "from tldw_chatbook.Scheduling.models import ("
+      ],
+      [
+        "E402",
+        "from tldw_chatbook.Scheduling.services.briefing_projection import BriefingProjection"
+      ],
+      [
+        "E402",
+        "from tldw_chatbook.Scheduling.services.server_client import ("
+      ],
+      [
+        "E402",
+        "from tldw_chatbook.Scheduling.services.sync_engine import SyncEngine"
+      ],
+      [
+        "E402",
+        "from tldw_chatbook.Scheduling.services.watchlist_projection import WatchlistProjection"
+      ]
+    ],
+    "current": [
+      [
+        "E402",
+        "from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ("
+      ],
+      [
+        "E402",
+        "from tldw_chatbook.Scheduling.models import ("
+      ],
+      [
+        "E402",
+        "from tldw_chatbook.Scheduling.services.briefing_projection import BriefingProjection"
+      ],
+      [
+        "E402",
+        "from tldw_chatbook.Scheduling.services.server_client import ("
+      ],
+      [
+        "E402",
+        "from tldw_chatbook.Scheduling.services.sync_engine import SyncEngine"
+      ],
+      [
+        "E402",
+        "from tldw_chatbook.Scheduling.services.watchlist_projection import WatchlistProjection"
+      ]
+    ]
+  },
+  {
+    "path": "tldw_chatbook/UI/STTS_Window.py",
+    "baseline": [
+      [
+        "E721",
+        "if type(destination_id) is not str:"
+      ],
+      [
+        "E721",
+        "if type(value) is str and value != Select.BLANK"
+      ],
+      [
+        "E721",
+        "if type(revision) is not int or revision < 0:"
+      ],
+      [
+        "E721",
+        "if type(view) is not str or view not in STTS_VIEW_KEYS:"
+      ],
+      [
+        "E721",
+        "if type(new_view) is not str or new_view not in STTS_VIEW_KEYS:"
+      ]
+    ],
+    "current": [
+      [
+        "E721",
+        "if type(destination_id) is not str:"
+      ],
+      [
+        "E721",
+        "if type(value) is str and value != Select.BLANK"
+      ],
+      [
+        "E721",
+        "if type(revision) is not int or revision < 0:"
+      ],
+      [
+        "E721",
+        "if type(view) is not str or view not in STTS_VIEW_KEYS:"
+      ],
+      [
+        "E721",
+        "if type(new_view) is not str or new_view not in STTS_VIEW_KEYS:"
+      ]
+    ]
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/stts_screen.py",
+    "baseline": [
+      [
+        "E721",
+        "type(candidate) is not str"
+      ],
+      [
+        "E721",
+        "if type(view) is not str or view not in STTS_VIEW_KEYS:"
+      ]
+    ],
+    "current": [
+      [
+        "E721",
+        "type(candidate) is not str"
+      ],
+      [
+        "E721",
+        "if type(view) is not str or view not in STTS_VIEW_KEYS:"
+      ]
+    ]
+  },
+  {
+    "path": "tldw_chatbook/Widgets/Console/console_transcript.py",
+    "baseline": [
+      [
+        "E721",
+        "and type(count) is int"
+      ],
+      [
+        "E721",
+        "and type(count) is int"
+      ],
+      [
+        "E721",
+        "return identity if type(identity) is str and identity else None"
+      ]
+    ],
+    "current": [
+      [
+        "E721",
+        "and type(count) is int"
+      ],
+      [
+        "E721",
+        "and type(count) is int"
+      ],
+      [
+        "E721",
+        "return identity if type(identity) is str and identity else None"
+      ]
+    ]
+  }
+]

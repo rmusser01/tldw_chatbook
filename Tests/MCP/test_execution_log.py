@@ -4,6 +4,7 @@ import json
 import os
 import stat
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -163,7 +164,9 @@ def test_legacy_payload_records_are_migrated_off_disk_on_read(
 ) -> None:
     private = "MCP-LEGACY-SENTINEL-sk-not-a-real-key"
     active = tmp_path / "mcp_execution_log.jsonl"
-    selected = active if generation == "active" else active.with_name(active.name + ".1")
+    selected = (
+        active if generation == "active" else active.with_name(active.name + ".1")
+    )
     selected.write_text(
         json.dumps(
             {
@@ -325,7 +328,9 @@ def _count_parses(monkeypatch) -> dict[str, int]:
         counter["loads"] += 1
         return real_loads(payload, *args, **kwargs)
 
-    monkeypatch.setattr(module.json, "loads", counting_loads)
+    monkeypatch.setattr(
+        module, "json", SimpleNamespace(**{**vars(json), "loads": counting_loads})
+    )
     return counter
 
 
@@ -347,9 +352,7 @@ def test_steady_state_appends_do_not_reparse_the_whole_log(tmp_path, monkeypatch
     for index in range(5):
         execution_log.append(_record(f"hot-{index}"))
 
-    assert counter["loads"] == 0, (
-        f"appends re-parsed the log {counter['loads']} times"
-    )
+    assert counter["loads"] == 0, f"appends re-parsed the log {counter['loads']} times"
 
 
 def test_appends_after_a_rotation_do_not_reparse_either_generation(
@@ -486,3 +489,17 @@ def test_a_concurrent_append_is_not_pinned_by_the_cache(tmp_path, monkeypatch):
     names = [row["tool_name"] for row in execution_log.read_recent()]
     assert names == ["other", "ours", "warm"], names
     assert private not in active.read_text(encoding="utf-8")
+
+
+def test_reviewed_definition_fingerprint_survives_log_sanitization(log):
+    record = _record(initiator="agent", decision="approved", definition_hash="a" * 64)
+    log.append(record)
+    assert log.read_recent()[0]["definition_hash"] == "a" * 64
+
+
+@pytest.mark.parametrize(
+    "fingerprint", [None, "", "private description", "A" * 64, "a" * 65]
+)
+def test_log_drops_unqualified_definition_fingerprints(fingerprint):
+    row = MCPExecutionLog._metadata_only_payload({"definition_hash": fingerprint})
+    assert "definition_hash" not in row

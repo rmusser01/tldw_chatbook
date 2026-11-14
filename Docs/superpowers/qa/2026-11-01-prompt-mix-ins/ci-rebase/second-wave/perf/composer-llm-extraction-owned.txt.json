@@ -1,0 +1,4 @@
+{
+  "sha256": "46d79ae507c29cca5ea3d602e0ed895c719c5f989080825cc1283a66f2d0f529",
+  "raw_text": "tldw_chatbook/Widgets/Console/console_composer_bar.py\ntldw_chatbook/Widgets/Console/console_speech_controls.py\ntldw_chatbook/LLM_Calls/LLM_API_Calls.py\ntldw_chatbook/LLM_Calls/openai_protocol.py\ntldw_chatbook/UI/Console_Modules/composer_run_controls.py\nTests/Chat/test_openai_streaming_usage.py\nTests/UI/test_console_voice_chip.py\nTests/UI/test_console_idle_voice_boot.py\ntldw_chatbook/Chat/console_first_send_modules.py\ntldw_chatbook/app_idle_warmup.py\nTests/UI/test_console_first_send_preimport.py\nTests/UI/test_console_idle_heap_refreeze.py\ntldw_chatbook/app.py\n"
+}

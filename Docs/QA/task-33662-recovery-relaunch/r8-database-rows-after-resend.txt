@@ -1,0 +1,8 @@
+user|first question|0|-|(root)
+assistant|Stub reply #1 from the scratch stub.|0|complete|first question
+user|second question|0|-|Stub reply #1 from the scratch stub.
+assistant|Stub reply #2 from the scratch stub.|0|complete|second question
+user|third question|0|-|Stub reply #2 from the scratch stub.
+assistant|Response discarded.|1|discarded|third question
+assistant|Stub reply #3 from the scratch stub.|0|complete|third question
+open dispatch checkpoints: 0

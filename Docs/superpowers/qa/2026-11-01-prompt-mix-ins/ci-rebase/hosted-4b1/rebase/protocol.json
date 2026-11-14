@@ -1,0 +1,7 @@
+{
+  "old_base": "88af9f937908b46e8c5f9f7fddd9e8748c917d46",
+  "new_base": "2dcf038cb8be0af991f92c43b0c262f02471c51d",
+  "head_before_test_commit": "4b1e070c972320e1353b6bac7e185035db125571",
+  "path_count": 9684,
+  "qualification": "Snapshot includes final frozen QA fix before commit; new dev changes only the size table and unrelated task docs. Preserve final exact guard bytes; do not alter runtime/tests."
+}

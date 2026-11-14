@@ -585,6 +585,11 @@ def test_notes_footer_states_use_per_key_grammar_and_never_advertise_dead_keys()
     fake._with_library_notes_focus_chip = MethodType(
         LibraryScreen._with_library_notes_focus_chip, fake
     )
+    # TASK-34000.40 (N-31): the editor and navigator tiers end in the shared
+    # typing-field transform (a no-op here: no text field has focus).
+    fake._library_typing_field_footer = MethodType(
+        LibraryScreen._library_typing_field_footer, fake
+    )
     for name in vars(LibraryScreen):
         if name.startswith("LIBRARY_NOTES_"):
             setattr(fake, name, getattr(LibraryScreen, name))

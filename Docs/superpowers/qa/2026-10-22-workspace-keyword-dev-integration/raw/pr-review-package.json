@@ -1,0 +1,15 @@
+{
+  "base": "2a5afa03b31f60e00bdcd10a161e3e351fad023b",
+  "head": "e16100e2b3aea1e1da3d6d73ecbcbefebb135a80",
+  "paths": 201,
+  "full": {
+    "path": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\pr-review-full-e16100e2b3.diff",
+    "bytes": 18408721,
+    "sha256": "dfe870dff58b607dc09b6d72d283465d6b775197a46f52c39a98a4e7051af29e"
+  },
+  "source": {
+    "path": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\pr-review-source-e16100e2b3.diff",
+    "bytes": 1051460,
+    "sha256": "fc64346454dcb1b73b19d69b225e9c7f30eee7ba21acb9a82e5ee88daee90249"
+  }
+}

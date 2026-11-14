@@ -44,9 +44,7 @@ YTDLP_TIMEOUT_SECONDS = 30.0
 MAX_STREAM_SECONDS = 2 * 60 * 60
 
 #: Bias yt-dlp toward a single progressive https URL (no separate a/v).
-YTDLP_PROGRESSIVE_FORMAT = (
-    "best[ext=mp4][protocol=https]/best[protocol=https]/best"
-)
+YTDLP_PROGRESSIVE_FORMAT = "best[ext=mp4][protocol=https]/best[protocol=https]/best"
 
 HLS_FOLLOW_UP_NOTE = (
     "HLS/DASH streams with separate audio/video tracks are not supported "
@@ -83,10 +81,7 @@ def _check_media_content_type(content_type: str) -> bool:
 
 def _is_hls_url(url: str, content_type: str) -> bool:
     lowered_type = (content_type or "").lower()
-    return (
-        urlparse(url).path.lower().endswith(".m3u8")
-        or "mpegurl" in lowered_type
-    )
+    return urlparse(url).path.lower().endswith(".m3u8") or "mpegurl" in lowered_type
 
 
 def _validate_first_hop(url: str) -> None:
@@ -122,7 +117,9 @@ def _walk_redirects(raw_url: str) -> tuple[str, httpx.Response]:
         )
     _validate_first_hop(raw_url)
     current = raw_url
-    with httpx.Client(follow_redirects=False, timeout=RESOLVE_TIMEOUT_SECONDS) as client:
+    with httpx.Client(
+        follow_redirects=False, timeout=RESOLVE_TIMEOUT_SECONDS
+    ) as client:
         for hop in range(MAX_REDIRECT_HOPS + 1):
             try:
                 response = client.head(current)
@@ -131,9 +128,13 @@ def _walk_redirects(raw_url: str) -> tuple[str, httpx.Response]:
                     with client.stream("GET", current) as get_response:
                         response = get_response
             except httpx.HTTPError as exc:
-                raise StreamResolutionError(f"could not reach {current!r}: {exc}") from exc
+                raise StreamResolutionError(
+                    f"could not reach {current!r}: {exc}"
+                ) from exc
             if response.is_redirect:
-                location = response.headers.get("location") or response.headers.get("Location")
+                location = response.headers.get("location") or response.headers.get(
+                    "Location"
+                )
                 if not location:
                     raise StreamResolutionError("redirect without a Location header")
                 current = urljoin(str(response.url), location)
@@ -147,7 +148,9 @@ def _probe_ranges(url: str) -> tuple[bool, int | None]:
     """Probe Accept-Ranges/Content-Length on the final URL (untrusted hop)."""
     _validate_later_hop(url)
     try:
-        with httpx.Client(follow_redirects=False, timeout=RESOLVE_TIMEOUT_SECONDS) as client:
+        with httpx.Client(
+            follow_redirects=False, timeout=RESOLVE_TIMEOUT_SECONDS
+        ) as client:
             response = client.head(url)
     except httpx.HTTPError:
         return False, None
@@ -178,7 +181,8 @@ def _resolve_with_ytdlp(url: str) -> str:
         "yt-dlp",
         "--no-playlist",
         "--no-warnings",
-        "-f", YTDLP_PROGRESSIVE_FORMAT,
+        "-f",
+        YTDLP_PROGRESSIVE_FORMAT,
         "-g",
         url,
     ]

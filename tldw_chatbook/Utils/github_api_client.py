@@ -73,9 +73,7 @@ class GitHubAPIClient:
         # ``_prune_closed_loops`` (below) so a long-running process that
         # spawns many short-lived worker loops over time doesn't accumulate
         # dead entries waiting on GC.
-        self._loop_clients: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, httpx.AsyncClient]" = (
-            weakref.WeakKeyDictionary()
-        )
+        self._loop_clients: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, httpx.AsyncClient]" = weakref.WeakKeyDictionary()
 
         # Load config settings
         self.enable_rate_limit_handling = get_cli_setting(
@@ -251,7 +249,11 @@ class GitHubAPIClient:
         current_client: Optional[httpx.AsyncClient] = None
         if loop is not None:
             current_client = self._loop_clients.pop(loop, None)
-            if current_client is None and self._client is not None and self._client_loop is None:
+            if (
+                current_client is None
+                and self._client is not None
+                and self._client_loop is None
+            ):
                 # Unknown-loop escape hatch, mirroring the ``client``
                 # property: an injected ``_client`` with no known owning
                 # loop is treated as belonging to whichever loop is calling
@@ -485,7 +487,10 @@ class GitHubAPIClient:
         if cached_tree is not None:
             return cached_tree
 
-        from ..Utils.egress import MAX_FETCH_BYTES_GITHUB_FILE, guarded_fetch_httpx_async
+        from ..Utils.egress import (
+            MAX_FETCH_BYTES_GITHUB_FILE,
+            guarded_fetch_httpx_async,
+        )
 
         # First try to get the branch SHA
         branch_url = f"{self.base_url}/repos/{owner}/{repo}/branches/{branch}"
@@ -565,7 +570,10 @@ class GitHubAPIClient:
         Returns:
             File content as string
         """
-        from ..Utils.egress import MAX_FETCH_BYTES_GITHUB_FILE, guarded_fetch_httpx_async
+        from ..Utils.egress import (
+            MAX_FETCH_BYTES_GITHUB_FILE,
+            guarded_fetch_httpx_async,
+        )
 
         url = f"{self.base_url}/repos/{owner}/{repo}/contents/{path}"
         params = {"ref": branch}
@@ -633,7 +641,10 @@ class GitHubAPIClient:
         if branch:
             url += f"?ref={branch}"
 
-        from ..Utils.egress import MAX_FETCH_BYTES_GITHUB_FILE, guarded_fetch_httpx_async
+        from ..Utils.egress import (
+            MAX_FETCH_BYTES_GITHUB_FILE,
+            guarded_fetch_httpx_async,
+        )
 
         # Check cache
         cached_data = self._get_from_cache(url)

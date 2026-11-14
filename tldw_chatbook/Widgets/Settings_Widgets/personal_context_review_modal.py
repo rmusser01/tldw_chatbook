@@ -31,11 +31,15 @@ from ...Personal_Context.interview_coordinator import (
 )
 from ...Personal_Context.interview_diff import InterviewDiff, InterviewDiffChange
 from ...Personal_Context.service import (
+    PersonalContextService,
     ProfileConflictError,
     ProfileKeyCollisionError,
 )
+from ...Personal_Context.settings_provenance import SettingsProvenanceSubject
 from ..modal_dismissal import SafeModalDismissMixin
+from ..state_checkbox import StateCheckbox
 from tldw_chatbook.Widgets.status_line import set_status_line
+from .personal_context_provenance import PersonalContextProvenanceDetails
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +80,10 @@ class PersonalContextProposalReviewModal(
         proposal: ProfileProposal,
         scope_label: str,
         target_record: ProfileRecord | None = None,
+        provenance_subject: SettingsProvenanceSubject | None = None,
+        provenance_service_loader: Callable[[], PersonalContextService] | None = None,
+        provenance_current_service_getter: Callable[[], PersonalContextService | None]
+        | None = None,
     ) -> None:
         super().__init__()
         self._proposal_service = proposal_service
@@ -85,6 +93,29 @@ class PersonalContextProposalReviewModal(
         self._busy = False
         self._outcome_unknown = False
         self._control_state: dict[int, bool] = {}
+        self._provenance_details = (
+            PersonalContextProvenanceDetails(
+                provenance_subject,
+                provenance_service_loader,
+                current_service_getter=provenance_current_service_getter,
+            )
+            if provenance_subject is not None
+            and provenance_service_loader is not None
+            and provenance_current_service_getter is not None
+            else None
+        )
+
+    def invalidate_provenance(self) -> None:
+        if self._provenance_details is not None:
+            self._provenance_details.invalidate()
+
+    def on_screen_suspend(self) -> None:
+        if self._provenance_details is not None:
+            self._provenance_details.suspend()
+
+    def on_screen_resume(self) -> None:
+        if self._provenance_details is not None:
+            self.call_after_refresh(self._provenance_details.resume)
 
     def compose(self) -> ComposeResult:
         payload = self._payload()
@@ -165,6 +196,14 @@ class PersonalContextProposalReviewModal(
                             "by the proposal.",
                             classes="settings-inline-guidance",
                         )
+                if self._provenance_details is not None:
+                    yield self._provenance_details
+                else:
+                    yield Static(
+                        "Recorded provenance unavailable.",
+                        markup=False,
+                        classes="settings-inline-guidance",
+                    )
                 yield Static(
                     "",
                     id="personal-context-proposal-status",
@@ -285,6 +324,7 @@ class PersonalContextProposalReviewModal(
         *,
         edited_payload: ProfilePayload | None = None,
     ) -> None:
+        self.invalidate_provenance()
         self._set_busy(True)
         if state == "rejected":
             operation = partial(
@@ -346,7 +386,9 @@ class PersonalContextProposalReviewModal(
 
     def _resolved(self, state: str, record_id: str | None) -> None:
         self._set_busy(False)
-        self.dismiss_safe_once(
+        # Covered (Ctrl+Q's quit-anyway question), the close is kept for when
+        # this review is on top again, so its result still lands (TASK-33622.15).
+        self.dismiss_safe_once_when_on_top(
             ProposalReviewResult(
                 proposal_id=self._proposal.proposal_id,
                 state=state,
@@ -359,9 +401,19 @@ class PersonalContextProposalReviewModal(
         if not self._busy:
             self.dismiss_safe_once(None)
 
+    async def confirm_quit(self) -> bool:
+        """Stay while a review choice is saved, as Escape does (TASK-33622.15).
+
+        Returns:
+            refuse_quit_while_working's answer while busy; else True.
+        """
+        return await _quit_unless_busy(self)
+
     def _set_status(self, copy: str) -> None:
         if self.is_mounted:
-            set_status_line(self, "#personal-context-proposal-status", copy, missing_ok=False)
+            set_status_line(
+                self, "#personal-context-proposal-status", copy, missing_ok=False
+            )
 
     def _set_busy(self, value: bool) -> None:
         self._busy = value
@@ -481,7 +533,7 @@ class PersonalContextReviewModal(
             ProposalOperation.UPDATE,
         }
         with Vertical(classes="personal-context-review-row"):
-            yield Checkbox(
+            yield StateCheckbox(
                 (
                     f"{change.operation.value.title()} · "
                     f"{kind.replace('_', ' ').title()} · {subject or 'record'}"
@@ -695,7 +747,10 @@ class PersonalContextReviewModal(
         self._receipt = receipt
         self._set_busy(False)
         if receipt.runtime_update_succeeded and receipt.draft_cleanup_succeeded:
-            self.dismiss_safe_once(ReviewCommitResult(receipt, self._enable_runtime))
+            # Kept while covered, as in _resolved (TASK-33622.15).
+            self.dismiss_safe_once_when_on_top(
+                ReviewCommitResult(receipt, self._enable_runtime)
+            )
             return
         parts = ["Selected records were saved."]
         if not receipt.runtime_update_succeeded:
@@ -719,7 +774,7 @@ class PersonalContextReviewModal(
     def _cleanup_finished(self, _result: Any) -> None:
         if self._commit_unknown:
             self._set_busy(False)
-            self.dismiss_safe_once(ReviewCommitUnknownResult())
+            self.dismiss_safe_once_when_on_top(ReviewCommitUnknownResult())
             return
         assert self._receipt is not None
         self._receipt = replace(
@@ -729,7 +784,7 @@ class PersonalContextReviewModal(
         )
         self._set_busy(False)
         if self._receipt.runtime_update_succeeded:
-            self.dismiss_safe_once(
+            self.dismiss_safe_once_when_on_top(
                 ReviewCommitResult(self._receipt, self._enable_runtime)
             )
             return
@@ -752,6 +807,14 @@ class PersonalContextReviewModal(
             else ReviewCommitResult(self._receipt, self._enable_runtime)
         )
         self.dismiss_safe_once(result)
+
+    async def confirm_quit(self) -> bool:
+        """Stay while review changes are saved, as Escape does (TASK-33622.15).
+
+        Returns:
+            refuse_quit_while_working's answer while busy; else True.
+        """
+        return await _quit_unless_busy(self)
 
     def _run_thread(
         self,
@@ -853,3 +916,23 @@ class PersonalContextReviewModal(
                     else ""
                 ),
             }
+
+
+async def _quit_unless_busy(
+    modal: PersonalContextProposalReviewModal | PersonalContextReviewModal,
+) -> bool:
+    """Answer the quit walk for a review modal that refuses Escape while busy.
+
+    Args:
+        modal: The open review modal.
+
+    Returns:
+        True when nothing is being saved; else refuse_quit_while_working's answer.
+    """
+    if not modal._busy:
+        return True
+    from ..quit_while_working import refuse_quit_while_working
+
+    return await refuse_quit_while_working(
+        modal, "Personal context changes are still being saved."
+    )

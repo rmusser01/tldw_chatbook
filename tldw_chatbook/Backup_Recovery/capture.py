@@ -310,12 +310,17 @@ def _capture_options(options):
 
 
 def _item_validator(adapter, item):
-    """Match the installed mixed recovered catalog/payload capture dispatch."""
+    """Match the installed mixed SQLite/raw-file tree capture dispatch."""
+    from tldw_chatbook.Plugins.backup import _Plugins
+
+    from .inventory import sqlite_tree_member
     from .recovered_media import MAX_PAYLOAD_BYTES, _RecoveredAdapter
     from .recovery_files import _RawDeclaration
 
-    if type(adapter) is _RecoveredAdapter and item.path.name != "catalog.sqlite3":
+    if type(adapter) is _RecoveredAdapter and not sqlite_tree_member(item):
         return _RawDeclaration(adapter.owner_id, max_bytes=MAX_PAYLOAD_BYTES)
+    if type(adapter) is _Plugins and not sqlite_tree_member(item):
+        return _RawDeclaration(adapter.owner_id, max_bytes=adapter.max_bytes)
     return adapter
 
 
@@ -363,7 +368,14 @@ def _capture_under_maintenance(
     if (not current.complete or external) and (
         not options.get("allow_partial", False)
         or set(current.issues)
-        - {"unsupported", "unavailable", "missing_required", "unsupported_owner"}
+        - {
+            "unsupported",
+            "unavailable",
+            "missing_required",
+            "unsupported_owner",
+            # Every plugin item is then unavailable, so partial capture omits it.
+            "plugin_writers_active",
+        }
     ):
         raise CaptureReviewRequired(
             current.issues

@@ -1,0 +1,2644 @@
+diff --git a/tldw_chatbook/Chat/console_agent_bridge.py b/tldw_chatbook/Chat/console_agent_bridge.py
+index 22bfcf73c6..bb0d6b941b 100644
+--- a/tldw_chatbook/Chat/console_agent_bridge.py
++++ b/tldw_chatbook/Chat/console_agent_bridge.py
+@@ -2494,8 +2494,14 @@ class _ModelCallLifeline:
+                     await asyncio.gather(*pending, return_exceptions=True)
+                 await self.loop.shutdown_asyncgens()
+             finally:
+-                if self._close_current_loop is not None:
+-                    await self._close_current_loop()
++                try:
++                    if self._close_current_loop is not None:
++                        await self._close_current_loop()
++                finally:
++                    # A cancelled to_thread leaves its worker running (the
++                    # generic transport's chat_api_call): the model operation
++                    # stays owned until it returns, as ADR-134 requires.
++                    await self.loop.shutdown_default_executor()
+         except BaseException:  # noqa: BLE001 -- cleanup cannot replace the run result
+             logger.warning("model-call loop cleanup failed")
+         finally:
+@@ -3140,6 +3146,9 @@ class _StreamingModelAdapter:
+     chunk is always accounted for, while still stopping the stream promptly
+     (no more chunks are pulled once cancellation is observed) and letting the
+     loop's own boundary check catch the cancellation on the next poll.
++    While NO chunk arrives it is also polled on a timer (TASK-33666; see
++    ``watch_content_stalls``), so a Stop ends the wait on a silent provider.
++    That poll runs only between chunks, so it never drops a received one.
+ 
+     ``chat_call`` bridges into async gateway code via the single event
+     ``loop`` passed in at construction — created once by
+@@ -3615,6 +3624,7 @@ class _StreamingModelAdapter:
+             )
+         gate = StreamGate()
+         any_streamed = False
++        received_item = False
+         native_calls: list[dict] = []
+         terminal_metadata: ProviderTurnMetadata | None = None
+         call_signals: ConsoleProviderCallSignals | None = None
+@@ -3632,6 +3642,7 @@ class _StreamingModelAdapter:
+         @agent_async_worker_guard(self)
+         async def _consume() -> None:
+             nonlocal any_streamed, terminal_metadata, effective_resolution, live_provider_usage_enabled
++            nonlocal received_item
+             if rerouted:
+                 # Task 6B: the child names a provider other than the
+                 # parent's -- re-resolve through the gateway's send seam
+@@ -3801,7 +3812,15 @@ class _StreamingModelAdapter:
+                 first_item_timeout_seconds=first_token_timeout_seconds(
+                     effective_resolution.provider, stall_timeout=stall_timeout
+                 ),
++                # TASK-33666: the cuts below are only reached when a chunk
++                # arrives. A provider that accepted the request and sends
++                # nothing would hold this run's thread for the whole window
++                # after a Stop, and the app's exit joins that thread. The
++                # plain cancel, not stream_cut: a redirect is not a cancel
++                # and still waits for the next chunk (TASK-28227).
++                should_stop=self._should_cancel,
+             ):
++                received_item = True
+                 synthetic = emission_synthetic is True
+                 emission_synthetic = None
+                 if terminal_metadata is not None:
+@@ -3966,8 +3985,11 @@ class _StreamingModelAdapter:
+                 repeated,
+             )
+             raise
+-        # A productive turn clears this session's stall streak (AC#4).
+-        reset_session_stalls(_stall_session_id, self._resolution.provider)
++        # A productive turn clears this session's stall streak (AC#4). A
++        # stream the stop poll ended before anything arrived is not one
++        # (TASK-33666): the same Stop used to run out the window as a stall.
++        if received_item:
++            reset_session_stalls(_stall_session_id, self._resolution.provider)
+         _visible, tool_call = gate.result()
+         if tool_call is not None and not native_calls and not is_subagent:
+             self._thinking_capture.observe_tool()
+diff --git a/tldw_chatbook/Chat/console_chat_controller.py b/tldw_chatbook/Chat/console_chat_controller.py
+index 13737474b8..d4fc30f555 100644
+--- a/tldw_chatbook/Chat/console_chat_controller.py
++++ b/tldw_chatbook/Chat/console_chat_controller.py
+@@ -297,11 +297,11 @@ from tldw_chatbook.Chat.custom_endpoint_registry import provider_identity_key
+ from tldw_chatbook.Chat.console_settings_apply import (
+     FULL_MODEL_DEFAULT_FIELDS,
+     QUICK_MODEL_DEFAULT_FIELDS,
+-    ConsoleEndpointDraft,
+     ConsoleSettingsDraftState,
+     ConsoleSettingsFieldDraft,
+     ConsoleSettingsFieldProvenance,
+     quick_blank_field_default,
++    rebased_endpoint,
+ )
+ from tldw_chatbook.Chat.console_provider_endpoints import first_configured_endpoint
+ from tldw_chatbook.Chat.console_project_instructions import (
+@@ -3757,6 +3757,7 @@ class ConsoleChatController:
+         canvas_enabled_reader: Callable[[], bool] | None = None,
+         canvas_disabled_reader: Callable[[], bool] | None = None,
+         library_preparation_timeout: float = 5.0,
++        library_initialization_timeout: float = 60.0,
+         ensure_run_hooks: "Callable[[], Any] | None" = None,
+         hook_permissions_accessor: Callable[[], HookPermissions] | None = None,
+         response_rules_changed: Callable[[str], None] | None = None,
+@@ -3817,6 +3818,9 @@ class ConsoleChatController:
+         self._library_preparation_timeout = max(
+             0.001, float(library_preparation_timeout)
+         )
++        self._library_initialization_timeout = max(
++            0.001, float(library_initialization_timeout)
++        )
+         self._preparation_outcomes: dict[str, ConsolePreparationOutcome] = {}
+         self._prepared_send_continuations: dict[str, _PreparedSendContinuation] = {}
+         # TASK-34350: sends held at the compaction threshold (Ask), and the
+@@ -7369,148 +7373,22 @@ class ConsoleChatController:
+ 
+         return self._preparation_outcomes.get(preparation_id)
+ 
++    async def _prewarm_library_service(self, service: Any) -> None:
++        """Initialize retrieval within its own finite startup budget."""
++        prewarm = getattr(service, "prewarm", None)
++        if callable(prewarm):
++            async with asyncio.timeout(self._library_initialization_timeout):
++                result = prewarm()
++                if inspect.isawaitable(result):
++                    await result
++
+     async def prepare_library_for_turn(
+         self, preparation_id: str
+     ) -> ConsolePreparationOutcome:
+         """Run one frozen automatic retrieval attempt and CAS its result."""
++        from .console_library_preparation import prepare_library_for_turn
+ 
+-        preparation = self._preparation_by_id(preparation_id)
+-        if preparation is None:
+-            raise KeyError(preparation_id)
+-        if preparation.state is not ConsoleTurnPreparationState.PREPARING:
+-            existing = self._preparation_outcomes.get(preparation_id)
+-            if existing is not None and existing.attempt_id == preparation.attempt_id:
+-                return existing
+-            return ConsolePreparationOutcome(
+-                preparation_id=preparation.preparation_id,
+-                attempt_id=preparation.attempt_id,
+-                state=preparation.state,
+-                evidence_bundle=None,
+-                contribution=None,
+-                error_code=None,
+-            )
+-
+-        authority = preparation.execution_context.library_authority
+-        request = LibraryRagSearchRequest(
+-            query=preparation.executed_draft,
+-            source_types=self._frozen_rag_source_types(preparation.execution_context),
+-            mode="rag",
+-            top_k=self._frozen_rag_top_k(preparation.execution_context),
+-            include_citations=True,
+-            scope=self._automatic_scope_for_authority(authority),
+-        )
+-        error_code: str | None = None
+-        try:
+-            async with asyncio.timeout(self._library_preparation_timeout):
+-                service = getattr(self.app, "library_rag_search_service", None)
+-                search = getattr(service, "search", None)
+-                if not callable(search):
+-                    raise RuntimeError("library service unavailable")
+-                kwargs: dict[str, object] = {
+-                    "top_k": request.top_k,
+-                    "include_citations": request.include_citations,
+-                }
+-                if request.scope is not None:
+-                    kwargs["scope"] = request.scope
+-                raw_result = search(
+-                    request.query,
+-                    request.source_types,
+-                    request.mode,
+-                    **kwargs,
+-                )
+-                if inspect.isawaitable(raw_result):
+-                    raw_result = await raw_result
+-                result = _outcome_from_service_result(raw_result)
+-        except asyncio.CancelledError:
+-            raise
+-        except TimeoutError:
+-            result = None
+-            error_code = "library_retrieval_timeout"
+-        except Exception:
+-            result = None
+-            error_code = "library_retrieval_failed"
+-
+-        results = tuple(getattr(result, "results", ()) or ()) if result else ()
+-        status = str(getattr(result, "status", "") or "") if result else ""
+-        if error_code is None and status not in {"ready", "empty"}:
+-            error_code = "library_retrieval_failed"
+-        if error_code is not None:
+-            paused = self.store.compare_and_set_preparation(
+-                preparation.session_id,
+-                ConsolePreparationTransition(
+-                    preparation_id=preparation.preparation_id,
+-                    expected_state=ConsoleTurnPreparationState.PREPARING,
+-                    new_state=ConsoleTurnPreparationState.PAUSED,
+-                    pause_kind=ConsolePreparationPauseKind.RETRIEVAL,
+-                    new_attempt_id=None,
+-                ),
+-            )
+-            current = paused or self._preparation_by_id(preparation_id)
+-            if current is None:
+-                outcome = ConsolePreparationOutcome(
+-                    preparation_id=preparation.preparation_id,
+-                    attempt_id=preparation.attempt_id,
+-                    state=ConsoleTurnPreparationState.CANCELLED,
+-                    evidence_bundle=None,
+-                    contribution=None,
+-                    error_code=None,
+-                )
+-                return outcome
+-            outcome = ConsolePreparationOutcome(
+-                preparation_id=current.preparation_id,
+-                attempt_id=current.attempt_id,
+-                state=current.state,
+-                evidence_bundle=None,
+-                contribution=None,
+-                error_code=error_code if paused is not None else None,
+-            )
+-            self._preparation_outcomes[preparation_id] = outcome
+-            return outcome
+-
+-        bundle = (
+-            build_library_rag_evidence_bundle(
+-                results,
+-                query=preparation.executed_draft,
+-            )
+-            if results
+-            else None
+-        )
+-        ready = self.store.compare_and_set_preparation(
+-            preparation.session_id,
+-            ConsolePreparationTransition(
+-                preparation_id=preparation.preparation_id,
+-                expected_state=ConsoleTurnPreparationState.PREPARING,
+-                new_state=ConsoleTurnPreparationState.READY,
+-                pause_kind=None,
+-                new_attempt_id=None,
+-            ),
+-        )
+-        current = ready or self._preparation_by_id(preparation_id)
+-        if current is None:
+-            outcome = ConsolePreparationOutcome(
+-                preparation_id=preparation.preparation_id,
+-                attempt_id=preparation.attempt_id,
+-                state=ConsoleTurnPreparationState.CANCELLED,
+-                evidence_bundle=None,
+-                contribution=None,
+-                error_code=None,
+-            )
+-            return outcome
+-        contribution = (
+-            self._preparation_contribution("zero_matches", current)
+-            if ready is not None and bundle is None
+-            else None
+-        )
+-        outcome = ConsolePreparationOutcome(
+-            preparation_id=current.preparation_id,
+-            attempt_id=current.attempt_id,
+-            state=current.state,
+-            evidence_bundle=bundle if ready is not None else None,
+-            contribution=contribution,
+-            error_code=None,
+-        )
+-        self._preparation_outcomes[preparation_id] = outcome
+-        return outcome
++        return await prepare_library_for_turn(self, preparation_id)
+ 
+     async def retry_library_preparation(
+         self, preparation_id: str
+@@ -9295,6 +9173,15 @@ class ConsoleChatController:
+                 if result.accepted
+                 else "refused"
+             )
++            if not result.accepted or result.terminal_status in {
++                ConsoleRunStatus.BLOCKED,
++                ConsoleRunStatus.FAILED,
++            }:
++                logger.warning(
++                    "Console submit requires attention | accepted={} status={}",
++                    result.accepted,
++                    diagnostic.outcome,
++                )
+             return result
+ 
+     async def _submit_draft_lifecycle(
+@@ -10611,6 +10498,7 @@ class ConsoleChatController:
+                         session_id=session.id,
+                         origin=origin,
+                         queue_entry_id=queue_entry_id,
++                        preparation_id=preparation.preparation_id,
+                     )
+ 
+         if origin is ConsoleSubmissionOrigin.GOAL_ITERATION:
+@@ -12894,6 +12782,11 @@ class ConsoleChatController:
+                 provider_started=True,
+             )
+         except BaseException as exc:
++            if not isinstance(exc, asyncio.CancelledError):
++                logger.error(
++                    "Console accepted-turn settlement failed | exception_type={}",
++                    type(exc).__name__,
++                )
+             if native_owner is not None:
+                 if not self._ordinary_native_commit_current(native_owner):
+                     return self._retain_original_native_commit_recovery(
+@@ -13203,6 +13096,7 @@ class ConsoleChatController:
+             if request.scope is not None:
+                 kwargs["scope"] = request.scope
+             try:
++                await self._prewarm_library_service(service)
+                 async with asyncio.timeout(self._library_preparation_timeout):
+                     raw = search(
+                         request.query,
+@@ -13939,7 +13833,8 @@ class ConsoleChatController:
+         The current or remembered exact target retains its conversation snapshot,
+         including fields hidden by the calling surface. An unseen target starts
+         from its established default chain and carries only supported dirty
+-        fields. Explicit Inherit edits resolve current lower-precedence defaults.
++        fields; ``rebased_endpoint`` decides its endpoint (TASK-35190).
++        Explicit Inherit edits resolve current lower-precedence defaults.
+ 
+         Args:
+             state: The draft being switched away from; never mutated.
+@@ -13992,21 +13887,8 @@ class ConsoleChatController:
+             current_key != target_key and remembered_target is not None
+         )
+         preserve_snapshot = current_key == target_key or restoring_remembered_target
+-        source_settings = (
+-            remembered_target.settings
+-            if restoring_remembered_target
+-            else state.settings
+-        )
+-        source_fields = (
+-            remembered_target.field_drafts
+-            if restoring_remembered_target
+-            else state.field_drafts
+-        )
+-        source_endpoint = (
+-            remembered_target.endpoint_draft
+-            if restoring_remembered_target
+-            else state.endpoint_draft
+-        )
++        source = (remembered_target if restoring_remembered_target else None) or state
++        source_settings, source_fields = source.settings, source.field_drafts
+ 
+         quick_surface = exposed_fields == QUICK_MODEL_DEFAULT_FIELDS
+         inherited_dirty_fields = (
+@@ -14122,35 +14004,15 @@ class ConsoleChatController:
+             **field_values,
+         }
+ 
+-        endpoint_draft: ConsoleEndpointDraft | None = None
+-        target_base_url = target_defaults.base_url
+-        if preserve_snapshot and (
+-            source_endpoint is None
+-            or (
+-                not source_endpoint.dirty
+-                and source_endpoint.bound_provider_config_key
+-                == provider_config_key(target_provider)
+-            )
+-        ):
+-            target_base_url = source_settings.base_url
+-        if (
+-            exposed_fields == FULL_MODEL_DEFAULT_FIELDS
+-            and source_endpoint is not None
+-            and source_endpoint.dirty
+-            and source_endpoint.bound_provider_config_key
+-            == provider_config_key(target_provider)
+-        ):
+-            endpoint_draft = source_endpoint
+-            target_base_url = source_endpoint.value or None
+-        elif target_base_url is not None and not (
+-            preserve_snapshot and source_endpoint is None
+-        ):
+-            endpoint_draft = ConsoleEndpointDraft(
+-                value=target_base_url,
+-                bound_provider_config_key=provider_config_key(target_provider),
+-                dirty=False,
+-                checked=False,
+-            )
++        target_base_url, endpoint_draft = rebased_endpoint(
++            state,
++            source,
++            provider_id=target_provider_id,
++            config_key=provider_config_key(target_provider),
++            default_base_url=target_defaults.base_url,
++            preserve_snapshot=preserve_snapshot,
++            full_surface=exposed_fields == FULL_MODEL_DEFAULT_FIELDS,
++        )
+         settings_changes["base_url"] = target_base_url
+ 
+         return replace(
+@@ -23697,7 +23559,7 @@ class ConsoleChatController:
+         return effective, project_effective_memory(provider_messages, effective)
+ 
+     def context_control_inputs(
+-        self, session_id: str
++        self, session_id: str, *, include_global: bool = True
+     ) -> tuple[
+         ConsoleContextPolicyOverrides,
+         ConsoleContextPolicyOverrides | None,
+@@ -23707,6 +23569,7 @@ class ConsoleChatController:
+ 
+         This read-only seam keeps widgets away from the repository and from
+         the active-lineage validation rules used by provider dispatch.
++        ``include_global=False`` skips the cold-cache global policy read (TASK-35444).
+         """
+         owner = next(
+             (item for item in self.store.sessions() if item.id == session_id), None
+@@ -23714,7 +23577,7 @@ class ConsoleChatController:
+         if owner is None:
+             raise KeyError(session_id)
+         try:
+-            global_overrides = self._global_context_policy_overrides()
++            global_overrides = self._global_context_policy_overrides() if include_global else None
+         except Exception:
+             global_overrides = None
+         effective = EffectiveMemoryResult(EffectiveMemoryKind.RAW)
+@@ -26483,8 +26346,13 @@ class ConsoleChatController:
+                 expected_project_state = state
+ 
+                 def on_owning_loop(callback):
+-                    call_from_thread = getattr(self.app, "call_from_thread", None)
+-                    if callable(call_from_thread):
++                    app = self.app
++                    call_from_thread = getattr(app, "call_from_thread", None)
++                    # Stock composition checks authority on the app loop too;
++                    # Textual only permits call_from_thread from another thread.
++                    if callable(call_from_thread) and threading.get_ident() != getattr(
++                        app, "_thread_id", None
++                    ):
+                         return call_from_thread(callback)
+                     return callback()
+ 
+diff --git a/tldw_chatbook/UI/Console_Modules/workspace.py b/tldw_chatbook/UI/Console_Modules/workspace.py
+index 30ae95d3a7..5e67f1af45 100644
+--- a/tldw_chatbook/UI/Console_Modules/workspace.py
++++ b/tldw_chatbook/UI/Console_Modules/workspace.py
+@@ -376,23 +376,6 @@ def _console_workspace_ssh_status_chips(
+     return chips
+ 
+ 
+-def _bind_composer_after_switch(owner: Any) -> None:
+-    """Bind the Console composer to the chat a workspace path just switched to.
+-
+-    TASK-33622.7: see ``ConsoleSessionController._bind_composer_to_active_
+-    session`` -- never leave the rebind to the coalescable sync pass. Focus
+-    stays with the path, which focuses the composer when it finishes.
+-
+-    Args:
+-        owner: The workspace controller (or a test double); reached through
+-            its screen's session controller when one is attached.
+-    """
+-    session = getattr(getattr(owner, "_screen", None), "_session", None)
+-    bind = getattr(session, "_bind_composer_to_active_session", None)
+-    if callable(bind):
+-        bind(focus=False)
+-
+-
+ def _normalized_console_workspace_id(workspace_id: str | None) -> str:
+     """Fold the "no explicit workspace" sentinels onto one identity.
+ 
+@@ -649,6 +632,7 @@ class ConsoleWorkspaceController:
+             [ConsoleWorkspaceContextState], ConsoleWorkspaceContextState
+         ],
+         capture_draft_switch_snapshot: Callable[[], None],
++        bind_composer_after_switch: Callable[[], None],
+         sync_chat_core_state: Callable[[], None],
+         sync_native_console_chat_ui: Callable[[], Any],
+         sync_temporary_chip: Callable[[], None],
+@@ -716,6 +700,10 @@ class ConsoleWorkspaceController:
+             current_conversation_id_accessor: Return the active conversation id.
+             native_session_rows_accessor: Add native session rows to Workspace state.
+             capture_draft_switch_snapshot: Preserve the draft before switching.
++            bind_composer_after_switch: Bind the composer, tab highlight and
++                title to the chat a path just switched to, leaving focus to
++                the path (TASK-33622.7: never left to the coalescable sync
++                pass; TASK-35640: a required collaborator, never skipped).
+             sync_chat_core_state: Refresh Console chat-core state.
+             sync_native_console_chat_ui: Refresh the native Console UI.
+             sync_temporary_chip: Refresh the temporary-chat chip.
+@@ -780,6 +768,7 @@ class ConsoleWorkspaceController:
+         self._current_conversation_id_accessor = current_conversation_id_accessor
+         self._native_session_rows_accessor = native_session_rows_accessor
+         self._capture_draft_switch_snapshot_fn = capture_draft_switch_snapshot
++        self._bind_composer_after_switch_fn = bind_composer_after_switch
+         self._sync_chat_core_state_fn = sync_chat_core_state
+         self._sync_native_console_chat_ui_fn = sync_native_console_chat_ui
+         self._sync_temporary_chip_fn = sync_temporary_chip
+@@ -1446,6 +1435,10 @@ class ConsoleWorkspaceController:
+     def _capture_console_draft_switch_snapshot(self) -> Any:
+         return self._capture_draft_switch_snapshot_fn
+ 
++    @property
++    def _bind_composer_after_switch(self) -> Any:
++        return self._bind_composer_after_switch_fn
++
+     @property
+     def _sync_console_chat_core_state(self) -> Any:
+         return self._sync_chat_core_state_fn
+@@ -2684,7 +2677,8 @@ class ConsoleWorkspaceController:
+         self._console_conversation_browser_error = ""
+         self._sync_console_workspace_context()
+         self._flat_conversation_search.worker = self.run_worker(
+-            self._refresh_console_conversation_browser_search(query, token),
++            partial(self._refresh_console_conversation_browser_search, query, token),
++            name="_refresh_console_conversation_browser_search",
+             group="console-flat-conversation-search",
+             exclusive=True,
+         )
+@@ -3790,6 +3784,11 @@ class ConsoleWorkspaceController:
+         offset: int = 0,
+     ) -> tuple[list[ConsoleConversationBrowserInputRow], int | None, str]:
+         """Return persisted global/workspace rows for grouped browser search."""
++        runtime = self._workspace_availability_runtime()
++        if getattr(self.app_instance, "_shutting_down", False) or (
++            runtime is not None and runtime._disposed
++        ):
++            raise asyncio.CancelledError
+         services: list[tuple[Any, bool]] = []
+         scope_service = getattr(
+             self.app_instance,
+@@ -4044,7 +4043,11 @@ class ConsoleWorkspaceController:
+             # database access"), so skip scheduling when the pump is not
+             # running; the mounted app always is, and the guard also avoids
+             # minting a coroutine that can never be awaited.
+-            if self._screen_running_accessor():
++            runtime = self._workspace_availability_runtime()
++            if self._screen_running_accessor() and not (
++                getattr(self.app_instance, "_shutting_down", False)
++                or runtime is not None and runtime._disposed
++            ):
+                 self._console_persisted_rows_refresh_key = refresh_key
+                 self.run_worker(
+                     partial(
+@@ -5501,7 +5504,7 @@ class ConsoleWorkspaceController:
+             if prior_active_session_id != session_id:
+                 self._capture_console_draft_switch_snapshot()
+                 controller.switch_session(session_id)
+-                _bind_composer_after_switch(self)
++                self._bind_composer_after_switch()
+             self._set_active_workspace_for_console_session(session_id)
+             session = next(item for item in store.sessions() if item.id == session_id)
+             try:
+@@ -5694,7 +5697,7 @@ class ConsoleWorkspaceController:
+             if session.workspace_id == target_workspace_id:
+                 self._capture_console_draft_switch_snapshot()
+                 store.switch_session(session.id)
+-                _bind_composer_after_switch(self)
++                self._bind_composer_after_switch()
+                 # task-7 review: this switches the active session with no
+                 # other chip-refresh call anywhere in the caller chain (all
+                 # three callers only run `_sync_native_console_chat_ui()`
+@@ -5715,6 +5718,7 @@ class ConsoleWorkspaceController:
+         session.new_chat_default_generation = (
+             self._console_new_chat_default_generation()
+         )
++        self._bind_composer_after_switch()  # TASK-35640
+         # task-7 review: `create_session` activates the new (never
+         # ephemeral -- no `ephemeral=` passed) session inline; same
+         # staleness risk as the switch branch above if the workspace's
+@@ -6454,7 +6458,7 @@ class ConsoleWorkspaceController:
+         restored = True
+         try:
+             store.switch_session(prior_active_session_id)
+-            _bind_composer_after_switch(self)
++            self._bind_composer_after_switch()
+             self._set_active_workspace_for_console_session(prior_active_session_id)
+             self._sync_console_chat_core_state()
+             sync_result = self._sync_native_console_chat_ui_fn()
+@@ -6482,7 +6486,7 @@ class ConsoleWorkspaceController:
+         *,
+         target_scope_type: str | None = None,
+         target_workspace_id: str | None = None,
+-        reuse_existing: bool = False,
++        reuse_existing: bool = True,
+         preserve_persisted_scope: bool = False,
+         resume_if: Callable[[], bool] | None = None,
+     ) -> bool | None:
+@@ -6492,8 +6496,12 @@ class ConsoleWorkspaceController:
+             conversation_id: Exact persisted conversation identity.
+             target_scope_type: Optional fallback scope for cold hydration.
+             target_workspace_id: Optional fallback workspace for cold hydration.
+-            reuse_existing: Prefer an open runtime after validating the saved
+-                record. History opts in; explicit fresh-session callers do not.
++            reuse_existing: Activate the session already open on this
++                conversation, after validating the saved record, instead of
++                opening it a second time. The default since TASK-33667: a
++                dispatch recovery's owner rows keep their ids in the first
++                session only (TASK-33662), so a second one's card could never
++                settle and its pending recovery blocked sends there.
+             preserve_persisted_scope: Restore the saved workspace or global scope.
+             resume_if: Optional ownership predicate carried through activation.
+ 
+@@ -6657,7 +6665,7 @@ class ConsoleWorkspaceController:
+                 )
+                 return None
+             store.switch_session(session.id)
+-            _bind_composer_after_switch(self)
++            self._bind_composer_after_switch()
+             self._set_active_workspace_for_console_session(session.id)
+             self._sync_console_retrieval_scope_row()
+             self._console_agent_drilldown_run_id = None
+diff --git a/tldw_chatbook/UI/Screens/settings_screen.py b/tldw_chatbook/UI/Screens/settings_screen.py
+index a9de25a758..e99561db4f 100644
+--- a/tldw_chatbook/UI/Screens/settings_screen.py
++++ b/tldw_chatbook/UI/Screens/settings_screen.py
+@@ -21,6 +21,7 @@ import threading
+ import tomllib
+ from typing import TYPE_CHECKING, Any, cast
+ from uuid import uuid4
++from weakref import WeakKeyDictionary
+ 
+ from rich.cells import cell_len
+ from rich.table import Table
+@@ -137,6 +138,7 @@ from ...Chat.provider_test_evidence import (
+     ProviderTestEvidenceStore,
+     connection_credential_revision,
+     listing_unavailable_endpoint_copy,
++    model_facet,
+     shared_connection_evidence,
+ )
+ from ...Chat.sampling_params import temperature_range
+@@ -151,13 +153,10 @@ from ...Chat.console_provider_support import (
+ )
+ from ...Chat.console_session_settings import (
+     _custom_endpoint_declared_credential,
+-    build_console_settings_readiness,
+-    build_target_default_console_session_settings,
+     chat_defaults_held_fields,
+     chat_defaults_value,
+     model_default_value,
+     normalize_console_model_value,
+-    readiness_words,
+     settings_provider_catalog,
+     verdict_readiness_words,
+ )
+@@ -209,6 +208,7 @@ from ...Chat.provider_catalog import (
+ )
+ from ...config import (
+     ConfigMutationResult,
++    refresh_runtime_config_from_cli_config,
+     resolve_provider_api_key,
+     DEFAULT_CONFIG_FROM_TOML,
+     DEFAULT_CONSOLE_AGENT_MAX_MODEL_TURNS,
+@@ -340,6 +340,17 @@ from .settings_config_models import (
+     SettingsDraft,
+     SettingsOwnershipRecord,
+ )
++from .settings_tools_hub import (
++    TOOL_PROFILES_OWNERSHIP_RECORD,
++    TOOLS_HUB_CATEGORY_SUMMARY,
++    TOOLS_HUB_OWNERSHIP_RECORD,
++    ToolsHubPanel,
++    builtin_hub_tool_names,
++    mcp_permission_store,
++    parse_tools_navigation_context,
++    tool_pack_failure_copy,
++    tools_footer_hints,
++)
+ from ...Widgets.settings_splash_screen_viewer import SettingsSplashScreenViewer
+ from ...Widgets.settings_theme_editor import SettingsThemeEditor, ThemeLeaveModal
+ from ...Widgets.settings_theme_picker import ThemeOptionList, ThemePane, ThemePicker
+@@ -387,6 +398,7 @@ from .settings_image_gen_defaults import (
+     effective_secret_value as image_gen_effective_secret_value,
+     key_source_after_clear as image_gen_key_source_after_clear,
+     probe_backend as image_gen_probe_backend,
++    unsaved_field_count,
+     validate_draft as validate_image_gen_draft,
+ )
+ from .settings_video_gen_defaults import (
+@@ -490,8 +502,8 @@ from ..Navigation.vllm_handoff import (
+ )
+ 
+ if TYPE_CHECKING:
++    from ...Widgets.Settings_Widgets.composer_paste_panel import ComposerPasteSettingsPanel
+     from ...Agents.hook_permissions import HookReviewSnapshot
+-    from ...Tool_Packs.contracts import ToolPackError
+     from ...Tool_Packs.service import ToolProfileListing
+     from ...Widgets.model_search_picker import ModelSearchPicker
+     from ...Widgets.Settings_Widgets.personal_context_panel import (
+@@ -1216,8 +1228,10 @@ MODEL_DISCOVERY_IDLE_COPY = (
+     "No models discovered yet. Discover models lists what the configured "
+     "endpoint serves."
+ )
+-MODEL_DISCOVERY_CAPABILITY_WARNING = (
+-    "Capabilities unknown until saved or verified; text chat is assumed."
++#: Whole-S1 review: the file loaded, but the caches the lists come from did not.
++RELOAD_LISTS_NOT_REFRESHED = (
++    "Config reload: loaded, but the saved model lists may not have been refreshed; "
++    "reload again. Details are in Logs (F3)."
+ )
+ MODEL_DISCOVERY_AMBIGUOUS_PROVIDER_COPY = (
+     "Multiple provider entries match this provider. Rename or remove duplicates before "
+@@ -2128,23 +2142,6 @@ SETTINGS_DOMAIN_CATEGORY_CONTRACTS = (
+         ),
+         follow_up="add workflow defaults after Workflows exposes a persisted execution-safety contract.",
+     ),
+-    SettingsDomainCategoryContract(
+-        category=SettingsCategoryId.MCP_DEFAULTS,
+-        title="MCP Defaults",
+-        owner_destination="MCP",
+-        source_of_truth=("Unified MCP panel", "MCP configured server target store"),
+-        rows=(
+-            (
+-                "Runtime owner",
+-                "MCP owns server/tool runtime, target management, and tool readiness",
+-            ),
+-            (
+-                "Settings role",
+-                "show global defaults/status only; server operations stay in MCP",
+-            ),
+-        ),
+-        follow_up="add MCP defaults only after server-first settings are exposed without flattening tools into Settings.",
+-    ),
+     SettingsDomainCategoryContract(
+         category=SettingsCategoryId.ACP_DEFAULTS,
+         title="ACP Defaults",
+@@ -3778,37 +3775,56 @@ class SettingsScreen(BaseAppScreen):
+     )
+ 
+     @staticmethod
++    def _category_action_supported(category: SettingsCategoryId, action: str) -> bool:
++        """Read category capability without I/O, focus or transient safety checks.
++
++        Guidance-only bindings remain active. Action bodies and category-owned
++        panels retain validation, busy-state and confirmation checks.
++        """
++        if action == "save":
++            return (
++                category in GUIDED_SETTINGS_MUTATION_CATEGORIES
++                or category is SettingsCategoryId.NETWORK
++            )
++        if action == "revert":
++            return (
++                category in GUIDED_SETTINGS_MUTATION_CATEGORIES
++                or category is SettingsCategoryId.ADVANCED_CONFIG
++            )
++        if action == "test":
++            return category in SettingsScreen.TESTABLE_SETTINGS_CATEGORIES
++        if action in {"set_active", "clone", "backfill"}:
++            return category is SettingsCategoryId.LIBRARY_RAG
++        if action in {"add_record", "edit_record", "delete_record", "export_profile"}:
++            return category is SettingsCategoryId.PERSONAL_CONTEXT
++        return False
++
+     def _category_footer_shortcuts(
+-        category: SettingsCategoryId,
++        self, category: SettingsCategoryId, *, include_owned_actions: bool = True
+     ) -> tuple[tuple[str, str], ...]:
+-        """Advertised footer hints for ONE category (task-1340, ADR-031).
+-
+-        Only working keys are advertised: s/r where the guided save/revert
+-        path exists, t only where a test action is implemented -- and with
+-        the same per-category verb the live footer uses (task-1714), so the
+-        F1 help panel and the footer never disagree. The keys stay bound
+-        screen-wide (they respond with guidance everywhere), but only what
+-        the active category actually supports is taught.
+-        """
++        """Describe supported actions; owned widgets filter their live hints."""
++        supports = SettingsScreen._category_action_supported
+         shortcuts: list[tuple[str, str]] = []
+-        if category in GUIDED_SETTINGS_MUTATION_CATEGORIES:
++        if supports(category, "save"):
+             shortcuts.append(("s", "save category"))
+-            shortcuts.append(("r", "revert category"))
+-        elif category is SettingsCategoryId.NETWORK:
+-            # Network saves through its own branch in
+-            # action_settings_save_category (no SettingsDraft), so `s`
+-            # works; `r` has no draft to revert and stays unadvertised.
+-            shortcuts.append(("s", "save category"))
+-        if category is SettingsCategoryId.ADVANCED_CONFIG:
+-            shortcuts.append(("r", "revert raw draft"))
+-        if category in SettingsScreen.TESTABLE_SETTINGS_CATEGORIES:
++        if supports(category, "revert"):
++            label = (
++                "revert raw draft"
++                if category is SettingsCategoryId.ADVANCED_CONFIG
++                else "revert category"
++            )
++            shortcuts.append(("r", label))
++        if supports(category, "test"):
+             shortcuts.append(
+                 ("t", SettingsScreen.TEST_ACTION_LABELS.get(category, "test category"))
+             )
+-        if category is SettingsCategoryId.PERSONAL_CONTEXT:
+-            shortcuts.extend(SettingsScreen.PERSONAL_CONTEXT_SHORTCUTS)
+-        if category is SettingsCategoryId.THEME:
+-            shortcuts.extend(SettingsScreen.THEME_SHORTCUTS)
++        if include_owned_actions:
++            if supports(category, "add_record"):
++                shortcuts.extend(SettingsScreen.PERSONAL_CONTEXT_SHORTCUTS)
++            if category is SettingsCategoryId.THEME:
++                shortcuts.extend(SettingsScreen.THEME_SHORTCUTS)
++            if category is SettingsCategoryId.TOOLS:
++                shortcuts.extend(tools_footer_hints(self._tools_hub_pane()))
+         return tuple(shortcuts)
+ 
+     #: task-1564: categories whose `t` binding performs a real test action --
+@@ -3938,6 +3954,7 @@ class SettingsScreen(BaseAppScreen):
+     _PROVIDER_TEST_STALE_COPY = (
+         "Provider settings changed since the last check — re-run Configuration check."
+     )
++    _PROVIDER_TEST_SENTINELS = (_PROVIDER_TEST_NOT_RUN_COPY, _PROVIDER_TEST_STALE_COPY)
+ 
+     def __init__(self, app_instance, *, personal_context_service=None, **kwargs):
+         from ...Tool_Packs.service import ToolProfileListing
+@@ -3962,6 +3979,7 @@ class SettingsScreen(BaseAppScreen):
+         self._tool_profile_review_modal: ModalScreen | None = None
+         self._tool_profile_operation_revision = 0
+         self._tool_profile_completion_revision = 0
++        self._tools_hub_initial_view_state: dict[str, object] | None = None
+ 
+         # Network category pending edits. Deliberately NOT a SettingsDraft in
+         # _settings_drafts: the category bypasses the draft-staging machinery
+@@ -4013,8 +4031,9 @@ class SettingsScreen(BaseAppScreen):
+         self._model_picker_overlay_provider = ""
+         self._model_discovery_revision = 0
+         self._model_discovery_clears_in_flight = 0
+-        # Save selected is serialised, never cancelled (TASK-19559's rule).
++        # Add to model list is serialised, never cancelled (TASK-19559's rule).
+         self._discovered_models_save_lock = asyncio.Lock()
++        self._discovered_pick: tuple[str, str] | None = None  # TASK-35011
+         self._model_catalog_form_values: dict[str, dict[str, object]] | None = None
+         self._model_catalog_save_status = ""
+         self._model_catalog_save_failed = False
+@@ -4060,12 +4079,7 @@ class SettingsScreen(BaseAppScreen):
+         self._syncing_provider_model_value = False
+         self._syncing_provider_manual = False
+         self._syncing_provider_selection = False
+-        self._syncing_console_threshold = False
+-        self._syncing_console_max_parallel_runs = False
+-        self._syncing_console_agent_budget = False
+-        self._syncing_console_tool_result_display_chars = False
+-        self._syncing_console_sidechat = False
+-        self._syncing_console_paste_toggle = False
++        self._pending_console_input_edits = WeakKeyDictionary[Input, list[str]]()
+         self._syncing_console_thinking_visibility = False
+         toggle_writes = getattr(app_instance, "_settings_console_toggle_writes", None)
+         if toggle_writes is None:
+@@ -4454,6 +4468,8 @@ class SettingsScreen(BaseAppScreen):
+         # draft, a return continuation) outlived its Save or Revert (13c).
+         state: dict[str, object] = {}
+         state["active_category"] = self.active_category
++        if (tools_pane := self._tools_hub_pane()) is not None:
++            state["mcp_hub_view_state"] = tools_pane.get_view_state()
+         state["category_search_query"] = self._sanitize_category_search_query(
+             self.category_search_query
+         )
+@@ -4493,11 +4509,14 @@ class SettingsScreen(BaseAppScreen):
+                     else None
+                 ),
+             }
++        from ..Settings_Modules import saved_model_list
+         from ..Settings_Modules import settings_quit_guard as quit_guard
+ 
+         # C-N1: a quit from another screen asks about these (quit_guard), named
+         # after every capture, the snapshot preferences' too (cf3r1-N1).
+         quit_guard.keep_snapshot_preferences(self, state)
++        if (pick := saved_model_list.kept_pick(self)) is not None:
++            state["discovered_pick"] = pick  # TASK-35011: kept with its draft
+         titles = quit_guard.unsaved_settings_titles(self)
+         state[quit_guard.KEPT_UNSAVED_TITLES] = titles
+         return state
+@@ -4519,6 +4538,12 @@ class SettingsScreen(BaseAppScreen):
+         else:
+             self.active_category = category.value
+ 
++        mcp_view_state = state.get("mcp_hub_view_state")
++        if isinstance(mcp_view_state, dict):
++            self._tools_hub_initial_view_state = mcp_view_state
++        if (tools_pane := self._tools_hub_pane()) is not None:
++            tools_pane.set_initial_view_state(self._tools_hub_initial_view_state)
++
+         query = state.get("category_search_query")
+         if isinstance(query, str):
+             self.category_search_query = self._sanitize_category_search_query(query)
+@@ -4574,9 +4599,11 @@ class SettingsScreen(BaseAppScreen):
+             except (TypeError, ValueError):
+                 self._speech_tts_draft_snapshot = None
+ 
++        from ..Settings_Modules import saved_model_list
+         from ..Settings_Modules import settings_quit_guard as quit_guard
+ 
+         quit_guard.restore_snapshot_preferences(self, state)
++        saved_model_list.restore_pick(self, state)
+         continuation = state.get("provider_return_continuation")
+         if not isinstance(continuation, Mapping) or set(continuation) != {
+             "target",
+@@ -4632,6 +4659,21 @@ class SettingsScreen(BaseAppScreen):
+         """
+         shortcuts = self._footer_shortcut_entries()
+         self.register_footer_shortcuts(source="settings", shortcuts=shortcuts)
++        # The "settings" and "settings-tools" sources share one footer slot
++        # (last writer wins), so re-assert the TOOLS set when active.
++        self._refresh_tools_footer_shortcuts()
++
++    def _refresh_tools_footer_shortcuts(self) -> None:
++        """Register the active Tools-mode hint set; clear it otherwise."""
++        if self.active_category != SettingsCategoryId.TOOLS.value:
++            self.clear_footer_shortcuts(source="settings-tools")
++            return
++        # Unconditional: a fresh TOOLS enter runs before the pane mounts,
++        # and a default (servers) load fires no ModeChanged to re-register.
++        self.register_footer_shortcuts(
++            source="settings-tools",
++            shortcuts=tools_footer_hints(self._tools_hub_pane()),
++        )
+ 
+     def _footer_shortcut_entries(self) -> tuple[tuple[str, str], ...]:
+         """Category- and focus-aware footer hints (task-1564/1560).
+@@ -4647,21 +4689,8 @@ class SettingsScreen(BaseAppScreen):
+         and prefixes keys with "Esc, " while a text-entry widget owns focus
+         (printable keys feed the field until Esc).
+         """
+-        shortcuts = self.SETTINGS_SHORTCUTS
+         active = self._active_category_id()
+-        if active not in GUIDED_SETTINGS_MUTATION_CATEGORIES:
+-            dropped = "r" if active is SettingsCategoryId.NETWORK else {"s", "r"}
+-            shortcuts = tuple(entry for entry in shortcuts if entry[0] not in dropped)
+-        if active not in self.TESTABLE_SETTINGS_CATEGORIES:
+-            shortcuts = tuple(entry for entry in shortcuts if entry[0] != "t")
+-        else:
+-            test_label = self.TEST_ACTION_LABELS.get(active, "test category")
+-            shortcuts = tuple(
+-                (key, test_label if key == "t" else description)
+-                for key, description in shortcuts
+-            )
+-        if active is SettingsCategoryId.ADVANCED_CONFIG:
+-            shortcuts = shortcuts + (("r", "revert raw draft"),)
++        shortcuts = self._category_footer_shortcuts(active, include_owned_actions=False)
+         text_entry_focused = self._text_entry_focused()
+         if text_entry_focused:
+             # task-1560: s/r/t are real bindings and therefore inert while an
+@@ -4671,7 +4700,7 @@ class SettingsScreen(BaseAppScreen):
+             shortcuts = tuple(
+                 (f"Esc, {key}", description) for key, description in shortcuts
+             )
+-        if self._active_category_id() is SettingsCategoryId.LIBRARY_RAG:
++        if self._category_action_supported(active, "set_active"):
+             shortcuts = shortcuts + self.LIBRARY_RAG_SHORTCUTS
+         if (
+             self._active_category_id() is SettingsCategoryId.THEME
+@@ -4998,7 +5027,7 @@ class SettingsScreen(BaseAppScreen):
+         shortcuts = self._category_footer_shortcuts(category)
+         if category is SettingsCategoryId.PERSONAL_CONTEXT:
+             shortcuts = self._active_personal_context_shortcuts()
+-        if category is SettingsCategoryId.LIBRARY_RAG:
++        if self._category_action_supported(category, "set_active"):
+             # Same gating the footer applies: a/c/b only act in LIBRARY_RAG.
+             shortcuts = shortcuts + self.LIBRARY_RAG_SHORTCUTS
+         return WorkbenchHelpState(
+@@ -5028,7 +5057,12 @@ class SettingsScreen(BaseAppScreen):
+             Non-empty tuple of plain-text help lines.
+         """
+         ownership = self._ownership_record(category)
+-        badge_note = f"Save contract: {self._persistence_badge(category)}."
++        badge = self._persistence_badge(category)
++        badge_note = f"Save contract: {badge}."
++        if badge.startswith("Draft") and category is not SettingsCategoryId.SPEECH_TTS:
++            badge_note += (  # TASK-33002.10: the State line has no room to say it.
++                " Switching categories keeps the draft; the rail marks it with *."
++            )
+         if category is SettingsCategoryId.OVERVIEW:
+             notes = [
+                 badge_note,
+@@ -5198,8 +5232,8 @@ class SettingsScreen(BaseAppScreen):
+             self._subscription_readiness_gate = None
+             return
+         provider = (
+-            str(self._resolve_provider_model_for_settings().provider or "")
+-            if category is SettingsCategoryId.OVERVIEW
++            str(resolve_effective_provider_model(self._chat_defaults()).provider or "")
++            if category is SettingsCategoryId.OVERVIEW  # the saved pair (33005.15)
+             else self._provider_widget_value()
+         )
+         # Cheap gate BEFORE the expensive resolution: readiness can only
+@@ -5220,6 +5254,8 @@ class SettingsScreen(BaseAppScreen):
+             self._provider_auth_source_value(provider),
+             subscription_credential_status(background=True),
+             subscription_readiness_revision(),
++            # TASK-33005.15: an evidence change elsewhere repaints the Status.
++            getattr(shared_connection_evidence(lambda: self.app), "version", 0),
+         )
+         if gate == self._subscription_readiness_gate:
+             return
+@@ -5230,19 +5266,18 @@ class SettingsScreen(BaseAppScreen):
+             else self._provider_auth_readiness_config(provider),
+             background_credentials=True,
+         )
+-        observation = (category.value, provider, readiness.subscription_status)
++        observation = (*gate[:2], readiness.subscription_status, gate[-1])
+         self._subscription_readiness_gate = gate
+         if observation == self._subscription_readiness_observation:
+             return
+         self._subscription_readiness_observation = observation
+         if category is SettingsCategoryId.OVERVIEW:
+             presentation = self._settings_overview_presentation()
+-            for row in presentation.primary_rows:
+-                if row.key == "configuration":
+-                    self._set_static_text(
+-                        "#settings-overview-configuration",
+-                        f"{row.label}: {_fold_long_tokens(row.value)}",
+-                    )
++            for row in presentation.primary_rows:  # the test row with the Status
++                self._set_static_text(
++                    f"#settings-overview-{row.key.replace('_', '-')}",
++                    f"{row.label}: {_fold_long_tokens(row.value)}",
++                )
+             return
+         from ..Settings_Modules.providers_models_card import refresh_key_rows
+ 
+@@ -5253,8 +5288,7 @@ class SettingsScreen(BaseAppScreen):
+         if tested_draft != (provider, self._provider_draft_generation):
+             self._provider_subscription_test = None
+             return
+-        detail, _summary, _passed = self._provider_readiness_test_report()
+-        self._provider_test_result = detail
++        self._provider_test_result = self._run_provider_readiness_test()
+         self._update_provider_test_result()
+ 
+     def _workbench_compact_now(self) -> bool:
+@@ -5299,6 +5333,8 @@ class SettingsScreen(BaseAppScreen):
+                 continue
+ 
+     def on_screen_resume(self) -> None:
++        # ADR-240: re-assert what suspend cleared ("settings-tools" source).
++        self._register_footer_shortcuts()
+         if self.query(".personal-context-provenance"):
+             from ...Widgets.Settings_Widgets.personal_context_provenance import (
+                 PersonalContextProvenanceDetails,
+@@ -5313,6 +5349,9 @@ class SettingsScreen(BaseAppScreen):
+         # have moved while Settings was suspended).
+         mount_already_refreshed = self._settings_mount_visit_refreshed
+         self._settings_mount_visit_refreshed = False
++        # TASK-33007.11: focus Esc released stays released when a dialog
++        # closes; Textual's resume would focus the nav bar, where Enter leaves.
++        self.AUTO_FOCUS = "" if self.focused is None else None
+         under_theme_dialog = self._suspended_under_theme_dialog
+         self._suspended_under_theme_dialog = False
+         if self._manual_sync_run_in_flight:
+@@ -5598,6 +5637,7 @@ class SettingsScreen(BaseAppScreen):
+                 "Import, export, review, bind, and remove portable tool permission profiles.",
+                 "Immediate actions",
+             ),
++            TOOLS_HUB_CATEGORY_SUMMARY,
+             SettingsCategorySummary(
+                 SettingsCategoryId.PRIVACY_SECURITY,
+                 "Privacy & Security",
+@@ -5676,12 +5716,6 @@ class SettingsScreen(BaseAppScreen):
+                 "Procedure, dry-run, approval, and execution safety defaults.",
+                 "Read-only",
+             ),
+-            SettingsCategorySummary(
+-                SettingsCategoryId.MCP_DEFAULTS,
+-                "MCP Defaults",
+-                "Server/tool management defaults without owning MCP runtime operations.",
+-                "Read-only",
+-            ),
+             SettingsCategorySummary(
+                 SettingsCategoryId.ACP_DEFAULTS,
+                 "ACP Defaults",
+@@ -5921,7 +5955,7 @@ class SettingsScreen(BaseAppScreen):
+             )
+             copy = f"{label} in progress. Wait for it to finish."
+         elif state.error_category:
+-            copy = self._tool_pack_failure_copy(
++            copy = tool_pack_failure_copy(
+                 state.operation, ToolPackError(state.operation, state.error_category)
+             )
+         elif state.operation == "import":
+@@ -5968,53 +6002,6 @@ class SettingsScreen(BaseAppScreen):
+         self._sync_tool_profile_operations()
+         return outcome
+ 
+-    @staticmethod
+-    def _tool_pack_failure_copy(operation: str, error: "ToolPackError") -> str:
+-        """Return bounded recovery copy for one stable Tool Pack error."""
+-        if operation == "export" and error.category == "cancelled":
+-            return "Export cancelled before publication."
+-        if operation == "export" and error.category == "destination_changed":
+-            return "Export destination changed. Choose a new filename."
+-        if operation == "import" and error.category == "activation_uncertain":
+-            return (
+-                "Import outcome uncertain. Check the current profile state "
+-                "before retrying."
+-            )
+-        if operation == "export" and error.category == "durability_uncertain":
+-            return (
+-                "Export outcome uncertain. Check the chosen destination "
+-                "before retrying."
+-            )
+-        if operation == "remove":
+-            return {
+-                "outcome_uncertain": (
+-                    "Removal outcome uncertain. Check the current profile state "
+-                    "before retrying."
+-                ),
+-                "stale": "Profile changed. Review its current details before removing it.",
+-                "in_use": (
+-                    "Profile is in use. Finish its active run, then reopen Tool Profiles."
+-                ),
+-                "referenced": (
+-                    "Profile is referenced by a workspace. Update its active and "
+-                    "archived workspace defaults first."
+-                ),
+-                "non_removable": "Profile cannot be removed. Review its current details.",
+-            }.get(
+-                error.category, "Removal unavailable. Check the current profile state."
+-            )
+-        if operation == "export" and error.category == "publication_unsupported":
+-            if os.name == "nt":
+-                return (
+-                    "Export unavailable · publication_unsupported. Native Windows "
+-                    "Tool Pack publication is not supported yet."
+-                )
+-            return (
+-                "Export unavailable · publication_unsupported. Required safe "
+-                "publication primitives are unavailable on this platform."
+-            )
+-        return f"{operation.title()} failed · {error.category}"
+-
+     @on(ToolProfilesPanel.ImportRequested)
+     def _handle_tool_profile_import(
+         self,
+@@ -6143,7 +6130,7 @@ class SettingsScreen(BaseAppScreen):
+         except ToolPackError as exc:
+             if mutation_started or self._tool_profile_review_is_current(intent):
+                 self._set_tool_profiles_result(
+-                    self._tool_pack_failure_copy("import", exc)
++                    tool_pack_failure_copy("import", exc)
+                 )
+                 if mutation_started:
+                     self._request_tool_profiles_listing()
+@@ -6289,7 +6276,7 @@ class SettingsScreen(BaseAppScreen):
+         except ToolPackError as exc:
+             if mutation_started or self._tool_profile_review_is_current(intent):
+                 self._set_tool_profiles_result(
+-                    self._tool_pack_failure_copy("export", exc)
++                    tool_pack_failure_copy("export", exc)
+                 )
+         except asyncio.CancelledError:
+             raise
+@@ -6381,8 +6368,9 @@ class SettingsScreen(BaseAppScreen):
+             return
+         self.post_message(
+             NavigateToScreen(
+-                "mcp",
++                "settings",
+                 {
++                    "category": "tools",
+                     "mode": "permissions",
+                     "tool_policy_profile_id": event.profile_id,
+                     "profile_revision": event.revision,
+@@ -6530,6 +6518,7 @@ class SettingsScreen(BaseAppScreen):
+                     SettingsCategoryId.STORAGE,
+                     SettingsCategoryId.WORKSPACES,
+                     SettingsCategoryId.TOOL_PROFILES,
++                    SettingsCategoryId.TOOLS,
+                     SettingsCategoryId.PRIVACY_SECURITY,
+                     SettingsCategoryId.NETWORK,
+                     SettingsCategoryId.PERSONAL_CONTEXT,
+@@ -6563,7 +6552,6 @@ class SettingsScreen(BaseAppScreen):
+                     SettingsCategoryId.DREAMS,
+                     SettingsCategoryId.GUARDIAN,
+                     SettingsCategoryId.WORKFLOWS,
+-                    SettingsCategoryId.MCP_DEFAULTS,
+                     SettingsCategoryId.ACP_DEFAULTS,
+                     SettingsCategoryId.IMAGE_GENERATION,
+                     SettingsCategoryId.VIDEO_GENERATION,
+@@ -6961,28 +6949,8 @@ class SettingsScreen(BaseAppScreen):
+                     "Quick actions: switch/rename/archive in Console (Alt+W); create in Library."
+                 ),
+             ),
+-            SettingsOwnershipRecord(
+-                category=SettingsCategoryId.TOOL_PROFILES,
+-                owns_config_sections=(
+-                    "MCP permission-store Tool profiles",
+-                    "portable Tool Pack import receipts",
+-                ),
+-                reads_runtime_state_from=(
+-                    "ToolPackService lifecycle",
+-                    "workspace profile references",
+-                    "MCP permission inventory",
+-                ),
+-                writes_allowed=True,
+-                runtime_owner="ToolPackService (immediate reviewed actions)",
+-                boundary_copy=(
+-                    "Settings manages profile lifecycle; MCP Permissions owns policy editing. "
+-                    "Tool Packs never install tools."
+-                ),
+-                recovery_copy=(
+-                    "Re-inspect stale imports and remove only profiles with no active or "
+-                    "archived workspace references."
+-                ),
+-            ),
++            TOOL_PROFILES_OWNERSHIP_RECORD,
++            TOOLS_HUB_OWNERSHIP_RECORD,
+             SettingsOwnershipRecord(
+                 category=SettingsCategoryId.PRIVACY_SECURITY,
+                 owns_config_sections=(
+@@ -9371,8 +9339,8 @@ class SettingsScreen(BaseAppScreen):
+         """Count the fields in ``category`` that differ from their saved values.
+ 
+         TASK-33002.4: fields, not draft keys -- the context window and its
+-        reset flag are one field, and Advanced Config's raw TOML draft counts
+-        as one. Only read while the category is dirty, so never below 1.
++        reset flag are one field, as are Advanced Config's raw TOML draft and an
++        Image/Video Gen field's edit or Clear. Only read while dirty, so >= 1.
+         """
+         snapshot = self._speech_tts_draft_snapshot
+         if category is SettingsCategoryId.PROVIDERS_MODELS:
+@@ -9381,7 +9349,7 @@ class SettingsScreen(BaseAppScreen):
+             count = snapshot.unsaved_field_count()
+         else:
+             draft = self._settings_drafts.get(category)
+-            count = len(draft.dirty_keys) if draft is not None else 0
++            count = unsaved_field_count(draft.dirty_keys) if draft is not None else 0
+         return max(count, 1)
+ 
+     _SNAPSHOT_PREFERENCES_UNAVAILABLE_COPY = (
+@@ -10127,7 +10095,7 @@ class SettingsScreen(BaseAppScreen):
+         if category is SettingsCategoryId.STORAGE:
+             return self._storage_save_enabled()
+         return (
+-            category in GUIDED_SETTINGS_MUTATION_CATEGORIES
++            self._category_action_supported(category, "save")
+             and self._category_has_unsaved_changes(category)
+         )
+ 
+@@ -13092,8 +13060,8 @@ class SettingsScreen(BaseAppScreen):
+         widget's tooltip text into the shell's focus-help line makes the
+         same content reachable by Tab/j/k without a second display for
+         mouse users (the line only changes on focus, never on hover). Only
+-        Settings' own controls: Textual's auto-focus parks focus on the nav
+-        bar when Settings resumes with none (capture finding 19).
++        Settings' own controls: first-paint auto-focus or Tab can land on the
++        nav bar (capture finding 19); a resume no longer does (TASK-33007.11).
+         """
+         tooltip = getattr(widget, "tooltip", None)
+         ours = any(n.id == "settings-shell" for n in getattr(widget, "ancestors", ()))
+@@ -13139,11 +13107,8 @@ class SettingsScreen(BaseAppScreen):
+                 None,
+             )
+ 
+-        validation_result = (
+-            f"Config validation: valid - {redact_secret_text(validation.message)}\n{source}"
+-            if validation.valid
+-            else f"Config validation: invalid - {redact_secret_text(validation.message)}\n{source}"
+-        )
++        word = "valid" if validation.valid else "invalid"
++        validation_result = f"Config validation: {word} - {redact_secret_text(validation.message)}\n{source}"
+         if not validation.valid:
+             return (
+                 validation_result,
+@@ -13160,7 +13125,9 @@ class SettingsScreen(BaseAppScreen):
+                 None,
+             )
+         if isinstance(loaded, dict):
+-            return validation_result, f"Config reload: loaded\n{source}", loaded
++            refreshed = refresh_runtime_config_from_cli_config().caches_reloaded  # TASK-35010: an in-place edit, read here off the UI thread
++            line = "Config reload: loaded" if refreshed else RELOAD_LISTS_NOT_REFRESHED
++            return validation_result, f"{line}\n{source}", loaded
+         return (
+             validation_result,
+             f"Config reload: failed - loaded config was not a table\n{source}",
+@@ -13174,7 +13141,7 @@ class SettingsScreen(BaseAppScreen):
+         loaded_config: dict | None,
+     ) -> None:
+         if loaded_config is not None:
+-            self.app_instance.app_config = loaded_config
++            self._adopt_config(loaded_config)
+         self._diagnostics_validation_result = validation_result
+         self._diagnostics_reload_result = reload_result
+         self._set_static_text(
+@@ -13215,17 +13182,14 @@ class SettingsScreen(BaseAppScreen):
+         adapter = SettingsConfigAdapter()
+         try:
+             validation = adapter.validate_config_file(self._config_path())
++            loaded = adapter.load(force_reload=True) if validation.valid else None
+         except Exception as exc:
+             return f"Config reload: failed - {redact_secret_text(str(exc))}"
+         if not validation.valid:
+             return f"Config reload: failed - {redact_secret_text(validation.message)}"
+-        try:
+-            loaded = adapter.load(force_reload=True)
+-        except Exception as exc:
+-            return f"Config reload: failed - {redact_secret_text(str(exc))}"
+         if isinstance(loaded, dict):
+-            self.app_instance.app_config = loaded
+-            return "Config reload: loaded"
++            refreshed = self._adopt_config(loaded, force=True)
++            return "Config reload: loaded" if refreshed else RELOAD_LISTS_NOT_REFRESHED
+         return "Config reload: failed - loaded config was not a table"
+ 
+     def _raw_config_model(self) -> "AdvancedConfigSettings":
+@@ -13233,15 +13197,26 @@ class SettingsScreen(BaseAppScreen):
+ 
+         if self._advanced_config_settings is None:
+             self._advanced_config_settings = AdvancedConfigSettings(
+-                self._raw_config_changed,
+-                lambda loaded: setattr(self.app_instance, "app_config", loaded),
++                self._raw_config_changed, self._adopt_config
+             )
+         self._advanced_config_settings.changed = self._raw_config_changed
+-        self._advanced_config_settings.applied = (
+-            lambda loaded, owner=self.app_instance: setattr(owner, "app_config", loaded)
+-        )
++        self._advanced_config_settings.applied = self._adopt_config
+         return self._advanced_config_settings
+ 
++    def _adopt_config(self, loaded: dict, *, force: bool = False) -> bool:
++        """Install a config and its lists in place, so no picker rebuilds (TASK-35010);
++        ``force`` re-reads the file; False when that could not refresh the lists."""
++        from ...LLM_Provider_Catalog.model_discovery_persistence import (
++            refresh_providers_models,
++        )
++
++        self.app_instance.app_config = loaded
++        refreshed = refresh_providers_models(self.app_instance, force=force)
++        if self.is_attached:  # a popped screen stays is_mounted
++            self._sync_model_picker(self._provider_widget_value() or None, reload=True)
++            self._refresh_advanced()
++        return refreshed
++
+     def _raw_config_changed(self) -> None:
+         if not self.is_mounted:
+             return
+@@ -13252,38 +13227,9 @@ class SettingsScreen(BaseAppScreen):
+             self._refresh_category_button_label(category)
+ 
+     def _provider_readiness_label(self) -> str:
+-        resolved = self._resolve_provider_model_for_settings()
+-        provider = str(resolved.provider or "not selected").strip()
+-        model = str(resolved.model or "not selected").strip()
+-        if provider and provider != "not selected":
+-            return (
+-                f"Provider readiness: {self._provider_display_label(provider)} / {model}"
+-            )
+-        return "Provider readiness: needs provider and model"
+-
+-    def _provider_overview_readiness_status(self) -> str:
+-        """The Overview status row's readiness word, as the Console says it.
+-
+-        TASK-31805: what a send would do, never the mere presence of a name.
+-        TASK-33005: the Console's future-chat builder and words, test evidence
+-        included, so it never reads "Ready" above a refused last test.
++        from ..Settings_Modules.readiness_lines import readiness_label
+ 
+-        Returns:
+-            'Ready · not tested', 'Ready · reachable/verified HH:MM' or
+-            'Not ready · <reason>'.
+-        """
+-        resolved = self._resolve_provider_model_for_settings()
+-        app_config = self._provider_readiness_app_config()
+-        settings = build_target_default_console_session_settings(
+-            app_config, str(resolved.provider or ""), resolved.model
+-        )
+-        readiness = build_console_settings_readiness(
+-            # The model the Overview names, never a provider-table fallback.
+-            replace(settings, model=normalize_console_model_value(resolved.model)),
+-            app_config=app_config,
+-            connection_evidence=shared_connection_evidence(lambda: self.app),
+-        )
+-        return readiness_words(readiness)
++        return readiness_label(self)  # the pair and its word (TASK-33005.7)
+ 
+     def _provider_draft(self) -> SettingsDraft | None:
+         return self._settings_drafts.get(SettingsCategoryId.PROVIDERS_MODELS)
+@@ -14294,7 +14240,7 @@ class SettingsScreen(BaseAppScreen):
+             else:
+                 model = (
+                     resolve_remembered_provider_model(
+-                        self._app_config_mapping(), provider
++                        self._app_config_mapping(), provider, skip_samples=True
+                     )
+                     or ""
+                 )
+@@ -14406,15 +14352,16 @@ class SettingsScreen(BaseAppScreen):
+         draft = self._settings_drafts.setdefault(
+             category, SettingsDraft(category=category)
+         )
+-        if key != "provider":
++        original = draft.originals.get(key, current.get(key))  # before the pin
++        if key == "provider":  # the model's original, before the provider moves
++            draft.originals.setdefault("model", current.get("model"))  # 33001.8
++        else:
+             self._pin_provider_draft_selection(draft, current)
+         if key == "api_key":
+             provider = str(
+                 self._provider_setting_values_mapping().get("provider") or ""
+             ).strip()
+             original = self._provider_api_key_value(provider)
+-        else:
+-            original = draft.originals.get(key, current.get(key))
+         draft.set_value(key, original, value)
+         if not draft.is_dirty:
+             self._settings_drafts.pop(category, None)
+@@ -14424,7 +14371,6 @@ class SettingsScreen(BaseAppScreen):
+         self,
+     ) -> _VllmDefaultPresentationSnapshot:
+         """Capture the full mounted provider presentation before staging."""
+-
+         card = self.query_one("#settings-providers-models-card", Vertical)
+         inputs = tuple(
+             (
+@@ -14955,11 +14901,7 @@ class SettingsScreen(BaseAppScreen):
+         if key != "model":
+             return
+         identity = self._provider_current_draft_identity()
+-        evidence = (
+-            self._provider_evidence_store().evidence_for(identity)
+-            if identity is not None
+-            else None
+-        )
++        evidence = self._provider_evidence_store().evidence_for(identity)
+         selected_model = str(value or "").strip()
+         if evidence is not None and evidence.endpoint == "testing":
+             self._provider_evidence_store().invalidate(identity)
+@@ -15670,7 +15612,7 @@ class SettingsScreen(BaseAppScreen):
+ 
+         Returns:
+             True when discovery marks it persisted or config already lists it,
+-            so Save selected would add nothing for it.
++            so Add to model list would add nothing for it.
+         """
+         model_id = str(getattr(model, "model_id", "") or "").strip()
+         return bool(getattr(model, "persisted", False)) or model_id in saved_ids
+@@ -15678,7 +15620,7 @@ class SettingsScreen(BaseAppScreen):
+     def _provider_model_default(self, provider: str) -> str:
+         try:
+             configured_model = resolve_remembered_provider_model(
+-                self._app_config_mapping(), provider
++                self._app_config_mapping(), provider, skip_samples=True
+             )
+         except ValueError:
+             configured_model = None
+@@ -16508,11 +16450,11 @@ class SettingsScreen(BaseAppScreen):
+         return options
+ 
+     def _reset_provider_model_discovery_state(
+-        self,
+-        status: str = MODEL_DISCOVERY_IDLE_COPY,
++        self, status: str = MODEL_DISCOVERY_IDLE_COPY, *, forget_pick: bool = False
+     ) -> None:
+         # A monotonic revision rejects late work even after an A -> B -> A edit.
+         self._model_discovery_revision += 1
++        self._discovered_pick = None if forget_pick else self._discovered_pick
+         self._model_discovery_status = status
+         self._model_discovery_models = ()
+         self._model_discovery_selected_model_ids = set()
+@@ -16579,27 +16521,6 @@ class SettingsScreen(BaseAppScreen):
+             pass
+         self._refresh_advanced()
+ 
+-    def _append_saved_discovered_models(
+-        self,
+-        provider_list_key: str | None,
+-        model_ids: tuple[str, ...],
+-    ) -> None:
+-        if not provider_list_key or not model_ids:
+-            return
+-        providers_models = getattr(self.app_instance, "providers_models", None)
+-        if not isinstance(providers_models, dict):
+-            providers_models = {}
+-            self.app_instance.providers_models = providers_models
+-        current = providers_models.get(provider_list_key, [])
+-        if not isinstance(current, list):
+-            current = list(current) if isinstance(current, tuple) else []
+-        seen = {model for model in current if isinstance(model, str)}
+-        for model_id in model_ids:
+-            if model_id not in seen:
+-                current.append(model_id)
+-                seen.add(model_id)
+-        providers_models[provider_list_key] = current
+-
+     @work(exclusive=True, group="settings-model-discovery")
+     async def _discover_provider_models_worker(self) -> None:
+         await self._discover_provider_models()
+@@ -16743,7 +16664,7 @@ class SettingsScreen(BaseAppScreen):
+ 
+         Args:
+             provider: When given, re-scope the picker to this provider.
+-            reload: Re-read the provider's lists, e.g. after Save selected
++            reload: Re-read the provider's lists, e.g. after Add to model list
+                 added ids to them.
+         """
+         # Imported here: the picker module stays off the Settings route's
+@@ -16787,21 +16708,6 @@ class SettingsScreen(BaseAppScreen):
+                 return candidate
+         return ""
+ 
+-    def _activate_saved_model_if_field_empty(
+-        self, saved_model_ids: tuple[str, ...]
+-    ) -> None:
+-        """Populate the empty Model field with a just-saved model (TASK-369)."""
+-        try:
+-            model_input = self.query_one("#settings-model-value", Input)
+-        except QueryError:
+-            return
+-        next_value = self._model_to_activate_after_save(
+-            model_input.value, saved_model_ids
+-        )
+-        if next_value and next_value != model_input.value:
+-            # Not quiet: Input.Changed stages the model draft.
+-            self._set_model_field_value(next_value, quiet=False)
+-
+     async def _save_selected_discovered_provider_models(self) -> None:
+         provider = self._provider_widget_value()
+         provider_key = provider_config_key(provider)
+@@ -16825,7 +16731,7 @@ class SettingsScreen(BaseAppScreen):
+             selected_model_ids = sorted(self._model_discovery_selected_model_ids)
+         if not selected_model_ids:
+             # Capture fix 3 round 1, finding 4: the line is the one report.
+-            self._model_discovery_status = "Select discovered models to save."
++            self._model_discovery_status = "Select discovered models to add."
+             self._refresh_model_discovery_widgets()
+             return
+ 
+@@ -16847,29 +16753,9 @@ class SettingsScreen(BaseAppScreen):
+             logger.warning(
+                 f"Provider model discovery persistence failed: {type(exc).__name__}"
+             )
+-            # The step follows what is on screen now: Discover, a Clear that
+-            # worked or a provider change since the press drop the checked
+-            # rows; a Clear that failed keeps them. A Clear still running may
+-            # yet drop them, so it counts as dropping them.
+-            same_provider = (
+-                provider_config_key(self._provider_widget_value()) == provider_key
+-            )
+-            if (
+-                same_provider
+-                and not self._model_discovery_clears_in_flight
+-                and set(selected_model_ids) <= self._model_discovery_selected_model_ids
+-            ):
+-                retry = "Try Save again"
+-            elif same_provider:
+-                retry = (
+-                    "Select them again (Discover first if they are no longer "
+-                    "listed), then press Save selected"
+-                )
+-            else:
+-                retry = (
+-                    f"Switch back to {self._provider_display_label(provider)}, "
+-                    "Discover and select them again, then press Save selected"
+-                )
++            from ..Settings_Modules.saved_model_list import retry_step
++
++            retry = retry_step(self, provider, selected_model_ids)
+             failure = failure_status_text(
+                 "Could not save the discovered models",
+                 exc,
+@@ -16889,14 +16775,14 @@ class SettingsScreen(BaseAppScreen):
+             if str(model_id).strip()
+         )
+         if status == "saved":
+-            provider_list_key = getattr(result, "provider_list_key", None)
+-            self._append_saved_discovered_models(provider_list_key, saved_model_ids)
+-            count, label = len(saved_model_ids), self._provider_display_label(provider)
+-            receipt = (
+-                f"Saved {count} discovered model{'' if count == 1 else 's'} to {label}."
+-                if count
+-                else f"The selected models are already saved for {label}."
++            from ...LLM_Provider_Catalog.model_discovery_persistence import (
++                refresh_providers_models,
+             )
++            from ..Settings_Modules.saved_model_list import add_receipt, fill_default
++
++            # TASK-35010: the lists follow the file the save just wrote.
++            refresh_providers_models(self.app_instance)
++            label = self._provider_display_label(provider)
+             # The save belongs to its original provider even if the form moved.
+             # Discover or Clear since the press own the status line, so the
+             # receipt is a toast (its one report); the saved ids still group
+@@ -16904,16 +16790,17 @@ class SettingsScreen(BaseAppScreen):
+             if revision != self._model_discovery_revision:
+                 if provider_config_key(self._provider_widget_value()) == provider_key:
+                     self._sync_model_picker(provider, reload=True)
++                receipt = add_receipt(label, saved_model_ids)
+                 self.app.notify(receipt, severity="information", markup=False)
+                 return
+             # TASK-369: recognition over recall — offer the saved model for
+             # activation instead of leaving an empty Model field the user must
+             # retype from memory of a name the cleared discovery list no longer
+             # shows.
+-            self._activate_saved_model_if_field_empty(saved_model_ids)
++            filled = fill_default(self, saved_model_ids)
+             # The saved ids now group as saved in the Default model picker.
+             self._sync_model_picker(provider, reload=True)
+-            self._model_discovery_status = receipt
++            self._model_discovery_status = add_receipt(label, saved_model_ids, filled)
+             self._refresh_model_discovery_widgets()
+             return
+ 
+@@ -16928,7 +16815,7 @@ class SettingsScreen(BaseAppScreen):
+     def _report_discovered_models_save_failure(
+         self, text: str, revision: int, provider: str
+     ) -> None:
+-        """Say once why Save selected saved nothing: on its line, or (once
++        """Say once why Add to model list added nothing: on its line, or (once
+         Discover, Clear or a provider change own that line) in a warning
+         toast that names the provider the save was for."""
+         if revision != self._model_discovery_revision:
+@@ -17262,9 +17149,7 @@ class SettingsScreen(BaseAppScreen):
+             model = str(values.get("model") or "").strip()
+             draft_endpoint = str(values.get("endpoint") or "").strip()
+         draft = self._provider_draft()
+-        dirty = (
+-            draft.dirty_keys if draft is not None else set()
+-        )  # dirty_keys is a @property
++        dirty = draft.dirty_keys if draft is not None else set()  # a @property
+         # Only a name typed here is the Env var field's fault.
+         typed_env_var = self._provider_draft_value("credential_env_var")
+         readiness = get_provider_readiness(
+@@ -17278,11 +17163,7 @@ class SettingsScreen(BaseAppScreen):
+             else None
+         )
+         identity = self._provider_current_draft_identity()
+-        evidence = (
+-            self._provider_evidence_store().evidence_for(identity)
+-            if identity is not None
+-            else None
+-        )
++        evidence = self._provider_evidence_store().evidence_for(identity)
+         # TASK-33001.3 / TASK-33002.2: the rows are rebuilt from the one
+         # current evidence value on every render, so no fact can repeat.
+         return self._build_provider_readiness_findings(
+@@ -17429,15 +17310,16 @@ class SettingsScreen(BaseAppScreen):
+                 getattr(evidence, "category", None), cloud=cloud
+             )
+ 
++        unlisted = bool(model_ids) and listing == "reachable" and model not in model_ids
+         if not model:
+             model_text = "not set — choose a default model"
+         else:
+             model_text = f"{model} (draft)" if "model" in dirty else model
+             if listing == "reachable" and model_ids:
+                 model_text += (
+-                    " · listed by the server"
+-                    if model in model_ids
+-                    else " · not listed by the server — pick a listed model"
++                    " · not listed by the server — pick a listed model"
++                    if unlisted
++                    else " · listed by the server"
+                 )
+ 
+         generation = getattr(evidence, "generation", "not_tested")
+@@ -17455,7 +17337,7 @@ class SettingsScreen(BaseAppScreen):
+             )
+         elif listing == "unreachable":
+             lead = "Endpoint"
+-        elif not model:
++        elif not model or unlisted:  # TASK-33002.9: an unlisted model too
+             lead = "Model"
+         elif generation == "failed":
+             lead = "Generation"
+@@ -17472,13 +17354,7 @@ class SettingsScreen(BaseAppScreen):
+             ProviderReadinessSnapshot(
+                 configuration=readiness.configuration_facet,
+                 endpoint=listing,
+-                model=(
+-                    "missing"
+-                    if not model
+-                    else "confirmed"
+-                    if listing == "reachable" and model in model_ids
+-                    else "unconfirmed"
+-                ),
++                model=model_facet(model, listing, model_ids),  # TASK-33005.10
+                 category=(
+                     getattr(evidence, "category", None)
+                     if listing in {"unreachable", "model_listing_unavailable"}
+@@ -17593,9 +17469,8 @@ class SettingsScreen(BaseAppScreen):
+ 
+         Returns:
+             Tuple of (redacted labelled rows, one line each, redacted toast
+-            summary, passed).
++            summary, passed: no model the server's listing left out).
+         """
+-        passed = bool(readiness.ready and model)
+         display_name = self._provider_display_name(provider) if provider else "Provider"
+         # Qodo #2876: a registry id's URL and credential are its entry's, never
+         # the family slot's ("provider default", "not required"). The rows are
+@@ -17626,6 +17501,7 @@ class SettingsScreen(BaseAppScreen):
+                 "Custom endpoints"
+             )
+         rows = tuple((label, registry_rows.get(label, text)) for label, text in rows)
++        passed = bool(readiness.ready and model) and rows[1][0] != "Model"
+         generation = dict(rows)["Generation"]
+         listing = None if checking else getattr(evidence, "endpoint", None)
+         choose = "" if model else " Choose a default model."
+@@ -17683,6 +17559,8 @@ class SettingsScreen(BaseAppScreen):
+                 f"Configuration check complete: {display_name} is configured; "
+                 f"model {model}. Live generation has not been tested."
+             )
++        if readiness.ready and model and not passed:  # TASK-33002.9: as its row
++            summary += f" {model} is not listed by the server — pick a listed model."
+         detail = "\n".join(
+             f"{label:<{_PROVIDER_TEST_LABEL_CELLS}}{text}" for label, text in rows
+         )
+@@ -17700,16 +17578,12 @@ class SettingsScreen(BaseAppScreen):
+         """
+         if self._provider_test_result == self._PROVIDER_TEST_NOT_RUN_COPY:
+             identity = self._provider_current_draft_identity()
+-            if (
+-                identity is not None
+-                and self._provider_evidence_store().evidence_for(identity) is not None
+-            ):
++            if self._provider_evidence_store().evidence_for(identity) is not None:
+                 self._provider_test_result = self._provider_readiness_test_report()[0]
+         return self._provider_test_result
+ 
+     def _run_provider_readiness_test(self) -> str:
+-        detail, _summary, _passed = self._provider_readiness_test_report()
+-        return detail
++        return self._provider_readiness_test_report()[0]
+ 
+     def _provider_live_probe_base_url(self) -> str:
+         """Return the endpoint to live-probe after a passing readiness test.
+@@ -17983,14 +17857,9 @@ class SettingsScreen(BaseAppScreen):
+         self._provider_test_result = detail
+         self._update_provider_test_result()
+         self._update_provider_return_widgets()  # its line quotes the Key check
+-        self.app.notify(
+-            summary,
+-            severity=(
+-                "information"
+-                if passed and probe_result.endpoint == "reachable"
+-                else "warning"
+-            ),
+-        )
++        reached = passed and probe_result.endpoint == "reachable"  # listed (33002.9)
++        tone = "information" if reached else "warning"
++        self.app.notify(summary, severity=tone, markup=False)  # it names the model
+ 
+     def _provider_probe_generation_current(self, generation: int | None) -> bool:
+         """Whether a probe launched at ``generation`` still describes the draft.
+@@ -18015,6 +17884,7 @@ class SettingsScreen(BaseAppScreen):
+         for selector, text in (
+             ("#settings-provider-test-result", lambda: self._provider_test_result),
+             ("#settings-provider-readiness", lambda: key_check_verdict(self)),
++            ("#settings-provider-inspector-readiness", self._provider_readiness_label),
+         ):
+             try:
+                 row = self.query_one(selector, Static)
+@@ -18039,10 +17909,7 @@ class SettingsScreen(BaseAppScreen):
+         self._provider_test_draft_generation = (
+             getattr(self, "_provider_test_draft_generation", 0) + 1
+         )
+-        if self._provider_test_result in (
+-            self._PROVIDER_TEST_NOT_RUN_COPY,
+-            self._PROVIDER_TEST_STALE_COPY,
+-        ):
++        if self._provider_test_result in self._PROVIDER_TEST_SENTINELS:
+             return
+         self._provider_test_result = self._PROVIDER_TEST_STALE_COPY
+         self._update_provider_test_result()
+@@ -18077,9 +17944,6 @@ class SettingsScreen(BaseAppScreen):
+             )
+         except QueryError:
+             pass
+-        self._set_static_text(
+-            "#settings-provider-inspector-readiness", self._provider_readiness_label()
+-        )
+         self._set_static_text(
+             "#settings-provider-endpoint-key",
+             # Folded at its dots, as _detail_row composed it.
+@@ -18179,8 +18043,10 @@ class SettingsScreen(BaseAppScreen):
+         return rows + save_row
+ 
+     def _provider_field_guidance_rows(self) -> tuple[tuple[str, str], ...]:
++        from ..Settings_Modules.saved_model_list import SAVE_ROW_COPY
++
+         rows = self._provider_field_guidance_rows_base()
+-        save_copy = (
++        save_copy = SAVE_ROW_COPY.get(self._active_settings_field_id or "") or (
+             INSTANT_APPLY_BEHAVIOR_COPY
+             if self._active_settings_field_id
+             in {
+@@ -18302,9 +18168,9 @@ class SettingsScreen(BaseAppScreen):
+             from ..Settings_Modules.providers_models_card import endpoint_field_guide
+ 
+             return endpoint_field_guide(provider, endpoint_key)
+-        from ..Settings_Modules.providers_models_card import connect_field_guide
++        from ..Settings_Modules.providers_models_card import card_field_guide
+ 
+-        if (guide := connect_field_guide(self, field_id)) is not None:
++        if (guide := card_field_guide(self, field_id)) is not None:
+             return guide
+         if field_id == "settings-provider-api-mode":
+             purpose = (
+@@ -19051,10 +18917,9 @@ class SettingsScreen(BaseAppScreen):
+         return re.sub(r"handoff", "transfer", str(value), flags=re.IGNORECASE)
+ 
+     def _settings_overview_presentation(self) -> SettingsOverviewPresentation:
+-        resolved = self._resolve_provider_model_for_settings()
++        from ..Settings_Modules.readiness_lines import overview_configuration
++
+         # Plain: every Overview row is a ``_detail_row`` (``markup=False``).
+-        provider = self._provider_display_label(str(resolved.provider or ""))
+-        model = str(resolved.model or "not selected")
+         source_rows = dict(self.server_sync_workspace_handoff_rows)
+         conversation_updates = "; ".join(
+             value
+@@ -19066,10 +18931,8 @@ class SettingsScreen(BaseAppScreen):
+         )
+         return build_settings_overview(
+             {
+-                "configuration": (
+-                    f"{provider or 'Not selected'} / {model}; Status: "
+-                    f"{self._provider_overview_readiness_status()}"
+-                ),
++                # TASK-31805 / TASK-33005.15: what a new chat would send with.
++                "configuration": overview_configuration(self),
+                 "last_connection_test": self._provider_test_headline(
+                     self._adopt_shared_provider_test_evidence()
+                 ),
+@@ -19858,29 +19721,14 @@ class SettingsScreen(BaseAppScreen):
+                 id="settings-console-status-row-position-help",
+                 classes="settings-help-copy",
+             )
+-            yield Static("Composer paste handling", classes="destination-section")
+-            yield Static(
+-                "Collapse large pasted chunks only when they exceed the threshold.",
+-                id="settings-console-collapse-large-pastes-label",
++            from ...Widgets.Settings_Widgets.composer_paste_panel import (
++                ComposerPasteSettingsPanel,
+             )
+-            yield StateCheckbox(
+-                "Collapse large pastes",
+-                value=self._collapse_large_pastes_enabled(),
+-                id="settings-console-collapse-large-pastes-toggle",
+-                tooltip="Toggle compact display for large pasted Console chunks.",
+-            )
+-            with Horizontal(classes="settings-input-row"):
+-                yield Static("Threshold (chars)", classes="settings-input-label")
+-                yield Input(
+-                    value=str(self._paste_collapse_threshold_value()),
+-                    id="settings-console-paste-collapse-threshold",
+-                    classes="settings-compact-input",
+-                    placeholder=str(DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD),
+-                    restrict=r"^[0-9]*$",
+-                )
+-            yield Static(
+-                "Normal typing stays literal. The canonical message payload is preserved.",
+-                id="settings-console-collapse-large-pastes-help",
++
++            yield ComposerPasteSettingsPanel(
++                enabled=self._collapse_large_pastes_enabled(),
++                threshold=str(self._paste_collapse_threshold_value()),
++                default_threshold=DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+             )
+             yield Static("Chat images", classes="destination-section")
+             yield Static(
+@@ -19925,7 +19773,7 @@ class SettingsScreen(BaseAppScreen):
+             for budget_field in AGENT_BUDGET_FIELDS:
+                 with Horizontal(classes="settings-input-row"):
+                     yield Static(budget_field.label, classes="settings-input-label")
+-                    yield Input(
++                    yield self._tracked_console_input(
+                         value=str(self._agent_budget_value(budget_field)),
+                         id=budget_field.widget_id,
+                         classes=(f"settings-compact-input {AGENT_BUDGET_INPUT_CLASS}"),
+@@ -19949,7 +19797,7 @@ class SettingsScreen(BaseAppScreen):
+             yield Static("Agent tool-result display cap", classes="destination-section")
+             with Horizontal(classes="settings-input-row"):
+                 yield Static("Display cap (chars)", classes="settings-input-label")
+-                yield Input(
++                yield self._tracked_console_input(
+                     value=str(self._tool_result_display_chars_value()),
+                     id="settings-console-tool-result-display-chars",
+                     classes="settings-compact-input",
+@@ -20041,7 +19889,7 @@ class SettingsScreen(BaseAppScreen):
+             )
+             with Horizontal(classes="settings-input-row"):
+                 yield Static("Side chat model", classes="settings-input-label")
+-                yield Input(
++                yield self._tracked_console_input(
+                     value=self._console_input_value(
+                         self._console_behavior_value("sidechat_model")
+                     ),
+@@ -20051,7 +19899,7 @@ class SettingsScreen(BaseAppScreen):
+                 )
+             with Horizontal(classes="settings-input-row"):
+                 yield Static("Prompt template", classes="settings-input-label")
+-                yield Input(
++                yield self._tracked_console_input(
+                     value=self._console_input_value(
+                         self._console_behavior_value("sidechat_prompt_template")
+                     ),
+@@ -22191,7 +22039,7 @@ class SettingsScreen(BaseAppScreen):
+             markup=False,
+         )
+ 
+-        store = self._settings_workspace_permission_store()
++        store = mcp_permission_store(self.app_instance)
+         profile_options: list[Option] = []
+         highlight_profile = (pending or {}).get("profile_id") or (
+             getattr(defaults, "tool_policy_profile_id", None) if defaults else None
+@@ -22244,7 +22092,7 @@ class SettingsScreen(BaseAppScreen):
+                     preview_rules,
+                     preview_payload,
+                     str(highlight_profile or "default"),
+-                    self._settings_workspace_preview_tool_names(),
++                    builtin_hub_tool_names(self.app_instance),
+                 )
+             ),
+             id="settings-workspace-posture-preview",
+@@ -22262,32 +22110,6 @@ class SettingsScreen(BaseAppScreen):
+             return None
+         return record if isinstance(record, dict) else None
+ 
+-    def _settings_workspace_permission_store(self) -> Any:
+-        """The unified service's permission store, or None (guarded)."""
+-        service = getattr(self.app_instance, "unified_mcp_service", None)
+-        return getattr(service, "permission_store", None)
+-
+-    def _settings_workspace_preview_tool_names(self) -> list[str]:
+-        """Built-in hub tool names for the posture preview (guarded).
+-
+-        Reads the unified service's local inventory — the same builtin
+-        catalog source the MCP workbench's hub list uses. Any missing
+-        seam yields an empty list, which the preview renders as its
+-        single "Tool catalog unavailable" degrade line.
+-        """
+-        service = getattr(self.app_instance, "unified_mcp_service", None)
+-        local_service = getattr(service, "local_service", None)
+-        get_inventory = getattr(local_service, "get_inventory", None)
+-        if not callable(get_inventory):
+-            return []
+-        try:
+-            inventory = get_inventory()
+-        except Exception:  # noqa: BLE001 -- preview degrades, never blocks
+-            return []
+-        from ...MCP.hub_tool_catalog import builtin_tools_from_inventory
+-
+-        return [tool.name for tool in builtin_tools_from_inventory(inventory or {})]
+-
+     def _render_workspace_folder_bindings(
+         self,
+         registry: LocalWorkspaceRegistryService,
+@@ -22925,6 +22747,12 @@ class SettingsScreen(BaseAppScreen):
+         event.stop()
+         await open_profile_rules(self)
+ 
++    def _tools_hub_pane(self) -> ToolsHubPanel | None:
++        try:
++            return self.query_one("#settings-tools-hub", ToolsHubPanel)
++        except QueryError:
++            return None
++
+     def _render_detail_pane(self) -> ComposeResult:
+         category = SettingsCategoryId(self.active_category)
+         if category is SettingsCategoryId.HOOKS:
+@@ -23018,6 +22846,12 @@ class SettingsScreen(BaseAppScreen):
+                 result_profile_id=self._tool_profiles_result_profile_id,
+                 id="settings-tool-profiles-panel",
+             )
++        elif category is SettingsCategoryId.TOOLS:
++            yield ToolsHubPanel(
++                self.app_instance,
++                initial_view_state=self._tools_hub_initial_view_state,
++                id="settings-tools-hub",
++            )
+         elif category is SettingsCategoryId.CONSOLE_BEHAVIOR:
+             yield Static(
+                 "Console Behavior", classes="destination-section settings-column-title"
+@@ -23802,7 +23636,10 @@ class SettingsScreen(BaseAppScreen):
+         # previously read-only categories showed it permanently disabled
+         # (dim-on-dim noise) while five own-persistence categories omitted
+         # it, with no stated rule. Mirrors the task-1580 footer gating.
+-        if summary.category in GUIDED_SETTINGS_MUTATION_CATEGORIES:
++        if (
++            self._category_action_supported(summary.category, "save")
++            and self._category_action_supported(summary.category, "revert")
++        ):
+             dirty = self._category_has_unsaved_changes(summary.category)
+             save_button = Button(
+                 self._guided_action_label("Save (s)", dirty=dirty),
+@@ -24474,6 +24311,17 @@ class SettingsScreen(BaseAppScreen):
+             self._select_category(category_value, restore_focus=True)
+             self._after_category_panes(self._apply_speech_tts_navigation_context)
+             return
++        if category_value == SettingsCategoryId.TOOLS.value:
++            # Bounds live in the hub module; None = reject, {} = no state.
++            view_state = parse_tools_navigation_context(context)
++            if view_state is None:
++                return
++            self._tools_hub_initial_view_state = view_state or None
++            self._clear_navigation_provider_context()
++            self._select_category(category_value, restore_focus=True)
++            if (pane := self._tools_hub_pane()) is not None:
++                pane.set_initial_view_state(self._tools_hub_initial_view_state)
++            return
+         if category_value != SettingsCategoryId.PROVIDERS_MODELS.value:
+             self._clear_navigation_provider_context()
+             self._select_category(category_value, restore_focus=True)
+@@ -24683,7 +24531,7 @@ class SettingsScreen(BaseAppScreen):
+             provider_value
+         ):
+             # The discovery listing is the provider's the form just left.
+-            self._reset_provider_model_discovery_state()
++            self._reset_provider_model_discovery_state(forget_pick=True)
+         self._update_provider_dynamic_widgets()
+         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+         self._focus_navigation_provider_field(field or self._navigation_field or "")
+@@ -26016,6 +25864,15 @@ class SettingsScreen(BaseAppScreen):
+             # not even show (e.g. after an archive elsewhere).
+             self._settings_selected_workspace_id = None
+             self._discard_workspace_memory_confirmation()
++        if (
++            self.active_category == SettingsCategoryId.TOOLS.value
++            and category_value != SettingsCategoryId.TOOLS.value
++        ):
++            # The pane swap below destroys the hub pane -- snapshot its
++            # live view state (target-guarded so a Tools->Tools deep-link
++            # that just set its own state is not clobbered).
++            if (tools_pane := self._tools_hub_pane()) is not None:
++                self._tools_hub_initial_view_state = tools_pane.get_view_state()
+         if (
+             self.active_category == SettingsCategoryId.THEME.value
+             and category_value != SettingsCategoryId.THEME.value
+@@ -26086,6 +25943,9 @@ class SettingsScreen(BaseAppScreen):
+             # here too would fire first, against the pane the swap has not
+             # rebuilt yet -- pre-swap geometry, and a wasted pass.
+             self.call_after_refresh(self._update_inspector_overflow_hint)
++        # Enter and leave alike: the helper self-clears the "settings-tools"
++        # hint set for non-TOOLS categories; the pane re-registers on load.
++        self._refresh_tools_footer_shortcuts()
+ 
+     async def recompose(self) -> None:
+         """Restore a pending category focus after a WHOLE-screen rebuild.
+@@ -28746,14 +28606,22 @@ class SettingsScreen(BaseAppScreen):
+         self._console_capture_status = message
+         self._set_static_text("#settings-console-exchange-capture-status", message)
+ 
+-    @on(Checkbox.Changed, "#settings-console-collapse-large-pastes-toggle")
+-    def handle_console_collapse_large_pastes_changed(
+-        self, event: Checkbox.Changed
++    def on_composer_paste_settings_panel_edited(
++        self, event: "ComposerPasteSettingsPanel.Edited"
+     ) -> None:
++        """Stage local widget edits through the category's existing draft owner."""
+         event.stop()
+-        if self._syncing_console_paste_toggle:
+-            return
+-        self._stage_console_large_paste_value(bool(event.value))
++        self._apply_console_paste_edit(event.key, event.value)
++
++    def _apply_console_paste_edit(self, key: str, value: object) -> None:
++        if key == "collapse_large_pastes":
++            self._stage_console_large_paste_value(bool(value))
++        else:
++            self._stage_console_paste_threshold_value(value)
++            self._console_behavior_result = "Console behavior settings staged."
++            self._set_static_text(
++                "#settings-console-behavior-result", self._console_behavior_result_text()
++            )
+         self._update_console_paste_summary()
+         self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
+ 
+@@ -28905,39 +28773,49 @@ class SettingsScreen(BaseAppScreen):
+         if event.value != self._status_row_position_value():
+             self._toggle_status_row_position()
+ 
+-    @on(Input.Changed, "#settings-console-paste-collapse-threshold")
+     def handle_console_paste_threshold_changed(self, event: Input.Changed) -> None:
+-        if self._syncing_console_threshold:
+-            return
+-        self._stage_console_paste_threshold_value(event.value)
+-        self._console_behavior_result = "Console behavior settings staged."
+-        self._set_static_text(
+-            "#settings-console-behavior-result", self._console_behavior_result_text()
++        """Compatibility entry for callers outside the widget message path."""
++        self._apply_console_paste_edit("paste_collapse_threshold", event.value)
++
++    def _tracked_console_input(self, **kwargs: Any) -> Input:
++        """Remember edits synchronously, before their Changed message is delivered."""
++        control = Input(**kwargs)
++        self.watch(
++            control,
++            "value",
++            lambda value: self._pending_console_input_edits.setdefault(
++                control, []
++            ).append(value),
++            init=False,
+         )
+-        self._update_console_paste_summary()
+-        self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
++        return control
+ 
+-    @on(Input.Changed, f".{AGENT_BUDGET_INPUT_CLASS}")
+-    def handle_console_agent_budget_changed(self, event: Input.Changed) -> None:
+-        """One handler for all five budget inputs.
++    def _sync_console_input(self, control: Input, value: str) -> None:
++        # A refresh may precede the latest genuine edit's queued message.
++        if self._pending_console_input_edits.get(control):
++            return
++        with control.prevent(Input.Changed):
++            control.value = value
++        self._pending_console_input_edits.pop(control, None)
+ 
+-        They share a CSS class and differ only by id, so a single
+-        selector-matched handler replaces five near-identical decorated
+-        methods. `_syncing_console_agent_budget` guards the same
+-        write-back loop every other Console field guards against: the
+-        revert/sync path assigns `.value`, which re-fires Input.Changed.
++    def _console_input_edit_is_current(self, event: Input.Changed, value: str) -> bool:
++        pending = self._pending_console_input_edits.get(event.input)
++        if pending and event.value == pending[0]:
++            pending.pop(0)
++            if not pending:
++                self._pending_console_input_edits.pop(event.input)
++        return event.value == event.input.value and event.value != value
+ 
+-        Args:
+-            event: The Input.Changed carrying the edited text. Its input's
+-                id selects which `AGENT_BUDGET_FIELDS` entry to stage.
+-        """
+-        if self._syncing_console_agent_budget:
+-            return
++    @on(Input.Changed, f".{AGENT_BUDGET_INPUT_CLASS}")
++    def handle_console_agent_budget_changed(self, event: Input.Changed) -> None:
++        """Stage the current user edit from one of the five budget inputs."""
+         field = next(
+             (f for f in AGENT_BUDGET_FIELDS if f.widget_id == event.input.id),
+             None,
+         )
+-        if field is None:
++        if field is None or not self._console_input_edit_is_current(
++            event, str(self._agent_budget_value(field))
++        ):
+             return
+         self._stage_agent_budget_value(field, event.value)
+         self._refresh_agent_budget_hints()
+@@ -28948,12 +28826,7 @@ class SettingsScreen(BaseAppScreen):
+         self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
+ 
+     def _refresh_agent_budget_hints(self) -> None:
+-        """Re-render every budget field's live hint and the step warning.
+-
+-        All five are refreshed on any change, not just the edited one: the
+-        step-floor warning is a function of TWO fields, so editing either
+-        must update it.
+-        """
++        """Refresh all hints: the step-floor warning depends on two budget fields."""
+         for budget_field in AGENT_BUDGET_FIELDS:
+             self._set_static_text(
+                 f"#{budget_field.widget_id}-help",
+@@ -28966,7 +28839,11 @@ class SettingsScreen(BaseAppScreen):
+ 
+     @on(Input.Changed, "#settings-console-max-parallel-runs")
+     def handle_console_max_parallel_runs_changed(self, event: Input.Changed) -> None:
+-        if self._syncing_console_max_parallel_runs:
++        # Mount-time initialization and stale queued values are not new edits.
++        if (
++            event.value != event.input.value
++            or event.value == str(self._console_max_parallel_runs_value())
++        ):
+             return
+         self._stage_console_max_parallel_runs_value(event.value)
+         self._console_behavior_result = "Console behavior settings staged."
+@@ -28979,7 +28856,9 @@ class SettingsScreen(BaseAppScreen):
+     def handle_console_tool_result_display_chars_changed(
+         self, event: Input.Changed
+     ) -> None:
+-        if self._syncing_console_tool_result_display_chars:
++        if not self._console_input_edit_is_current(
++            event, str(self._tool_result_display_chars_value())
++        ):
+             return
+         self._stage_tool_result_display_chars_value(event.value)
+         self._console_behavior_result = "Console behavior settings staged."
+@@ -28993,14 +28872,14 @@ class SettingsScreen(BaseAppScreen):
+     def handle_console_sidechat_changed(self, event: Input.Changed) -> None:
+         """Stage a selection side-chat string preference (phase 2 task-2)."""
+         event.stop()
+-        if self._syncing_console_sidechat:
+-            return
+         key_by_id = {
+             "settings-console-sidechat-model": "sidechat_model",
+             "settings-console-sidechat-prompt-template": "sidechat_prompt_template",
+         }
+         key = key_by_id.get(event.input.id or "")
+-        if key is None:
++        if key is None or not self._console_input_edit_is_current(
++            event, self._console_input_value(self._console_behavior_value(key))
++        ):
+             return
+         self._stage_console_default_value(key, event.value)
+         self._console_behavior_result = "Console behavior settings staged."
+@@ -29993,6 +29872,11 @@ class SettingsScreen(BaseAppScreen):
+             isinstance(self.app.screen, ModalScreen)
+             and self._active_category_id() is SettingsCategoryId.THEME
+         )
++        # ADR-240 port: under an overlay, clear the Tools & MCP hint set
++        # and invalidate an accepted recovery review's receipt.
++        self.clear_footer_shortcuts(source="settings-tools")
++        if (tools_pane := self._tools_hub_pane()) is not None:
++            tools_pane.suspend_recovery_review()
+         if self.query(".personal-context-provenance"):
+             from ...Widgets.Settings_Widgets.personal_context_provenance import (
+                 PersonalContextProvenanceDetails,
+@@ -30644,7 +30528,7 @@ class SettingsScreen(BaseAppScreen):
+             )
+         model = str(self._provider_setting_values_mapping().get("model") or "")
+         self._sync_provider_model_profile_widgets(staged_provider, model)
+-        self._reset_provider_model_discovery_state()
++        self._reset_provider_model_discovery_state(forget_pick=True)
+         self._update_provider_dynamic_widgets()
+         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+ 
+@@ -30765,14 +30649,16 @@ class SettingsScreen(BaseAppScreen):
+     ) -> None:
+         """Stage a chosen model as the default for new chats (AC#3, C4).
+ 
+-        Any listed id replaces a default that is already set; the saved
+-        model list is untouched (ADR-002: Save selected persists ids).
++        Any listed id replaces a default that is already set; a discovered
++        one also joins the saved list on s (TASK-35011, ADR-002 amendment).
+ 
+         Args:
+             event: The picker's choice.
+         """
++        from ..Settings_Modules.saved_model_list import note_pick
++
+         event.stop()
+-        self._set_model_field_value(event.model_id, quiet=False)
++        note_pick(self, event.model_id)
+ 
+     def on_model_search_picker_model_value_changed(
+         self, event: "ModelSearchPicker.ModelValueChanged"
+@@ -30782,8 +30668,10 @@ class SettingsScreen(BaseAppScreen):
+         Args:
+             event: The picker's Custom ID edit, or its rollback.
+         """
++        from ..Settings_Modules.saved_model_list import note_pick
++
+         event.stop()
+-        self._set_model_field_value(event.model_id or "", quiet=False)
++        note_pick(self, event.model_id or "", custom=event.custom)
+ 
+     @on(Input.Changed, "#settings-model-value")
+     def handle_model_value_changed(self, event: Input.Changed) -> None:
+@@ -30909,7 +30797,7 @@ class SettingsScreen(BaseAppScreen):
+         ):
+             return
+         self._stage_provider_value("endpoint", event.value.strip())
+-        self._reset_provider_model_discovery_state()
++        self._reset_provider_model_discovery_state(forget_pick=True)
+         self._update_provider_dynamic_widgets()
+         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+ 
+@@ -31017,7 +30905,7 @@ class SettingsScreen(BaseAppScreen):
+         ):
+             return
+         self._stage_provider_value("credential_env_var", event.value.strip())
+-        self._reset_provider_model_discovery_state()
++        self._reset_provider_model_discovery_state(forget_pick=True)
+         self._update_provider_dynamic_widgets()
+         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+ 
+@@ -31058,7 +30946,7 @@ class SettingsScreen(BaseAppScreen):
+             draft.originals.pop("api_key", None)
+             if not draft.is_dirty:
+                 self._settings_drafts.pop(SettingsCategoryId.PROVIDERS_MODELS, None)
+-        self._reset_provider_model_discovery_state()
++        self._reset_provider_model_discovery_state(forget_pick=True)
+         self._update_provider_dynamic_widgets()
+         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+ 
+@@ -31128,7 +31016,7 @@ class SettingsScreen(BaseAppScreen):
+         )
+         if api_key_input is not None:
+             self._set_provider_api_key_input_value(api_key_input, "")
+-        self._reset_provider_model_discovery_state()
++        self._reset_provider_model_discovery_state(forget_pick=True)
+         self._update_provider_dynamic_widgets()
+         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+ 
+@@ -33217,6 +33105,12 @@ class SettingsScreen(BaseAppScreen):
+             return
+         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
+             return
++        if self.active_category == SettingsCategoryId.TOOLS.value:
++            # No draft state: `s` answers with guidance here (ADR-240 A3).
++            self.app.notify(
++                "Tools & MCP applies changes immediately — nothing to save."
++            )
++            return
+         category = self._active_category_id()
+         if category is SettingsCategoryId.HOOKS:
+             self._start_hooks_save()
+@@ -33263,7 +33157,7 @@ class SettingsScreen(BaseAppScreen):
+                 exclusive=False,
+             )
+             return
+-        if category not in GUIDED_SETTINGS_MUTATION_CATEGORIES:
++        if not self._category_action_supported(category, "save"):
+             self.app.notify(
+                 self._guided_action_message(category), severity="information"
+             )
+@@ -33713,6 +33607,9 @@ class SettingsScreen(BaseAppScreen):
+                 for section, keys in delete_keys.items()
+                 if keys
+             }
++            from ..Settings_Modules.saved_model_list import LIST_CHANGED_COPY, join_pick
++
++            join = join_pick(self, provider, model, section_values)
+             evidence_store = self._provider_evidence_store()
+             save_lease = (
+                 evidence_store.begin_save(tested_identity)
+@@ -33726,6 +33623,7 @@ class SettingsScreen(BaseAppScreen):
+                     model=model,
+                     section_values=section_values,
+                     delete_keys=normalized_delete_keys,
++                    locked_snapshot_precondition=join.precondition,
+                 )
+             except ValueError:
+                 mutation_result = ConfigMutationResult(
+@@ -33765,6 +33663,7 @@ class SettingsScreen(BaseAppScreen):
+                     section_values,
+                     normalized_delete_keys,
+                 )
++                join.applied(self, provider)
+                 if (
+                     next_model_capabilities is not None
+                     or delete_model_capabilities_entry
+@@ -33779,6 +33678,11 @@ class SettingsScreen(BaseAppScreen):
+                 )
+                 if not evidence_preserved:
+                     self._mark_provider_test_result_stale()
++                elif setup_mutation is not None and (  # TASK-33005.8: drop "(draft)"
++                    self._provider_test_result not in self._PROVIDER_TEST_SENTINELS
++                ):
++                    self._provider_test_result = self._run_provider_readiness_test()
++                    self._update_provider_test_result()
+                 if self._navigation_provider:
+                     # A deep link's form now holds the model that was saved.
+                     self._navigation_model = model
+@@ -33819,8 +33723,10 @@ class SettingsScreen(BaseAppScreen):
+                 if self._provider_return_outcome is not None:
+                     self.call_after_refresh(self._focus_provider_return_continuation)
+                 self.app.notify(
+-                    f"Provider and model settings saved: {PROVIDER_SAVE_SCOPE_COPY}",
++                    f"Provider and model settings saved: {PROVIDER_SAVE_SCOPE_COPY}"
++                    f"{join.receipt}",
+                     severity="information",
++                    markup=False,  # the receipt names a model id
+                 )
+             else:
+                 if mutation_result.file_replaced:
+@@ -33829,6 +33735,8 @@ class SettingsScreen(BaseAppScreen):
+                         "but the app could not reload it. Draft retained; restart "
+                         "before retrying."
+                     )
++                elif mutation_result.conflict:  # only join's check refuses here
++                    self._provider_save_result = LIST_CHANGED_COPY
+                 else:
+                     self._provider_save_result = (
+                         "Provider settings not fully applied: the file was not "
+@@ -34137,6 +34045,15 @@ class SettingsScreen(BaseAppScreen):
+             return
+         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
+             return
++        if self.active_category == SettingsCategoryId.TOOLS.value:
++            # The pane-held `r` binding wins while focus is inside the pane;
++            # this branch keeps the advertised key working when focus is
++            # outside it (e.g. on the category rail) -- force-reload the
++            # workbench (ADR-240), not the draft revert path.
++            pane = self._tools_hub_pane()
++            if pane:
++                pane.refresh_now()
++            return
+         category = self._active_category_id()
+         if category is SettingsCategoryId.PRIVACY_SECURITY and getattr(
+             self, "_raw_cli_save_pending", False
+@@ -34227,7 +34144,10 @@ class SettingsScreen(BaseAppScreen):
+                 "Return to the active profile to revert.", severity="warning"
+             )
+             return
+-        if not self._category_has_unsaved_changes(category):
++        if (
++            not self._category_action_supported(category, "revert")
++            or not self._category_has_unsaved_changes(category)
++        ):
+             self.app.notify("No Settings changes to revert.", severity="information")
+             return
+         # ADR-031 rule 3 (task-1340): revert discards every staged edit in
+@@ -34378,7 +34298,7 @@ class SettingsScreen(BaseAppScreen):
+                 self._provider_evidence_store().invalidate()
+                 self._mark_provider_test_result_stale()
+                 # A listing discovered from the discarded draft goes with it.
+-                self._reset_provider_model_discovery_state()
++                self._reset_provider_model_discovery_state(forget_pick=True)
+             self._update_provider_dynamic_widgets()
+             self._update_draft_status_widgets(category)
+         else:
+@@ -34394,6 +34314,20 @@ class SettingsScreen(BaseAppScreen):
+             return
+         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
+             return
++        if self.active_category == SettingsCategoryId.TOOLS.value:
++            # The pane-held `t` binding wins while focus is inside the pane;
++            # this branch keeps the advertised key working outside it (e.g.
++            # the rail), not the stub toast (ADR-240, test_settings_tools_hub).
++            pane = self._tools_hub_pane()
++            if pane:
++                pane.test_selected_tool()
++            return
++        if not self._category_action_supported(self._active_category_id(), "test"):
++            self.app.notify(
++                "No test action is available for this Settings category yet.",
++                severity="warning",
++            )
++            return
+         if self._active_category_id() is SettingsCategoryId.PROVIDERS_MODELS:
+             live_probe_url = self._provider_live_probe_base_url()
+             detail, summary, passed = self._provider_readiness_test_report()
+@@ -34455,8 +34389,7 @@ class SettingsScreen(BaseAppScreen):
+             self._provider_test_result = detail
+             self._update_provider_test_result()
+             self.app.notify(
+-                summary,
+-                severity="information" if passed else "warning",
++                summary, severity="information" if passed else "warning", markup=False
+             )
+             return
+         if self._active_category_id() is SettingsCategoryId.DIAGNOSTICS:
+@@ -34552,17 +34485,31 @@ class SettingsScreen(BaseAppScreen):
+         """
+         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
+             return
+-        if self._active_category_id() is SettingsCategoryId.PERSONAL_CONTEXT:
++        if self.active_category == SettingsCategoryId.TOOLS.value:
++            # The pane-held `a` binding wins while focus is inside the pane;
++            # this branch keeps the advertised key working when focus is
++            # outside it (e.g. on the category rail) -- open the hub's
++            # Add-server form (ADR-240), not the RAG set-active flow.
++            pane = self._tools_hub_pane()
++            if pane:
++                pane.add_server()
++            return
++        if self._category_action_supported(self._active_category_id(), "add_record"):
+             self._dispatch_personal_context_action("add_record")
+             return
+-        if self._active_category_id() is not SettingsCategoryId.LIBRARY_RAG:
++        if not self._category_action_supported(self._active_category_id(), "set_active"):
+             return
+         self._trigger_library_rag_profile_set_active()
+ 
++    async def handle_runtime_backend_changed(self, runtime_backend: str) -> None:
++        """Forward runtime-backend changes to the Tools & MCP pane (ADR-240)."""
++        if (pane := self._tools_hub_pane()) is not None:
++            pane.handle_runtime_backend_change(runtime_backend)
++
+     def _dispatch_personal_context_action(self, action_name: str) -> None:
+         """Route a category-scoped shortcut to the mounted profile panel."""
+ 
+-        if self._active_category_id() is not SettingsCategoryId.PERSONAL_CONTEXT:
++        if not self._category_action_supported(self._active_category_id(), action_name):
+             return
+         panel_class = _personal_context_settings_panel_class()
+         try:
+@@ -34600,7 +34547,7 @@ class SettingsScreen(BaseAppScreen):
+         """
+         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
+             return
+-        if self._active_category_id() is not SettingsCategoryId.LIBRARY_RAG:
++        if not self._category_action_supported(self._active_category_id(), "clone"):
+             return
+         self._trigger_library_rag_profile_clone()
+ 
+@@ -34616,7 +34563,7 @@ class SettingsScreen(BaseAppScreen):
+         """
+         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
+             return
+-        if self._active_category_id() is not SettingsCategoryId.LIBRARY_RAG:
++        if not self._category_action_supported(self._active_category_id(), "backfill"):
+             return
+         self._trigger_library_rag_index_backfill()
+ 
+@@ -34833,7 +34780,6 @@ class SettingsScreen(BaseAppScreen):
+         self._confirm_reindex_then_save(
+             values, pending_activate, _definition_action=action
+         )
+-        return
+ 
+     def _confirm_reindex_then_save(
+         self,
+@@ -35370,74 +35316,42 @@ class SettingsScreen(BaseAppScreen):
+         except QueryError:
+             pass
+         try:
+-            self._syncing_console_paste_toggle = True
+-            try:
+-                self.query_one(
+-                    "#settings-console-collapse-large-pastes-toggle", Checkbox
+-                ).value = self._collapse_large_pastes_enabled()
+-            finally:
+-                self._syncing_console_paste_toggle = False
+-        except QueryError:
+-            pass
+-        try:
+-            self._syncing_console_threshold = True
+-            try:
+-                self.query_one(
+-                    "#settings-console-paste-collapse-threshold", Input
+-                ).value = str(self._paste_collapse_threshold_value())
+-            finally:
+-                self._syncing_console_threshold = False
++            self.query_one("#settings-console-paste-panel").sync_values(
++                enabled=self._collapse_large_pastes_enabled(),
++                threshold=str(self._paste_collapse_threshold_value()),
++            )
+         except QueryError:
+             pass
+         try:
+-            self._syncing_console_max_parallel_runs = True
+-            try:
+-                self.query_one(
+-                    "#settings-console-max-parallel-runs", Input
+-                ).value = str(self._console_max_parallel_runs_value())
+-            finally:
+-                self._syncing_console_max_parallel_runs = False
++            control = self.query_one("#settings-console-max-parallel-runs", Input)
++            with control.prevent(Input.Changed):
++                control.value = str(self._console_max_parallel_runs_value())
+         except QueryError:
+             pass
+         for budget_field in AGENT_BUDGET_FIELDS:
+             try:
+-                self._syncing_console_agent_budget = True
+-                try:
+-                    self.query_one(f"#{budget_field.widget_id}", Input).value = str(
+-                        self._agent_budget_value(budget_field)
+-                    )
+-                finally:
+-                    self._syncing_console_agent_budget = False
++                self._sync_console_input(
++                    self.query_one(f"#{budget_field.widget_id}", Input),
++                    str(self._agent_budget_value(budget_field)),
++                )
+             except QueryError:
+                 pass
+         self._refresh_agent_budget_hints()
+         try:
+-            self._syncing_console_tool_result_display_chars = True
+-            try:
+-                self.query_one(
+-                    "#settings-console-tool-result-display-chars", Input
+-                ).value = str(self._tool_result_display_chars_value())
+-            finally:
+-                self._syncing_console_tool_result_display_chars = False
++            self._sync_console_input(
++                self.query_one("#settings-console-tool-result-display-chars", Input),
++                str(self._tool_result_display_chars_value()),
++            )
+         except QueryError:
+             pass
+-        try:
+-            self._syncing_console_sidechat = True
++        for key in ("sidechat_model", "sidechat_prompt_template"):
+             try:
+-                self.query_one(
+-                    "#settings-console-sidechat-model", Input
+-                ).value = self._console_input_value(
+-                    self._console_behavior_value("sidechat_model")
+-                )
+-                self.query_one(
+-                    "#settings-console-sidechat-prompt-template", Input
+-                ).value = self._console_input_value(
+-                    self._console_behavior_value("sidechat_prompt_template")
++                self._sync_console_input(
++                    self.query_one(f"#settings-console-{key.replace('_', '-')}", Input),
++                    self._console_input_value(self._console_behavior_value(key)),
+                 )
+-            finally:
+-                self._syncing_console_sidechat = False
+-        except QueryError:
+-            pass
++            except QueryError:
++                pass
+         self._syncing_console_context_memory = True
+         try:
+             context_selects = {
+@@ -35741,12 +35655,13 @@ class SettingsScreen(BaseAppScreen):
+             and isinstance(focused, (Input, TextArea))
+             and not self._category_search_has_focus()
+         ):
+-            # task-1560: Esc releases field focus so the footer's advertised
+-            # "Esc, s save category" chain is true for EVERY text-entry
+-            # field -- previously only the filter input handled Esc, so
+-            # keys after Esc kept feeding the field (the critique's silent
+-            # no-op trap, one level deeper).
+-            self.set_focus(None)
++            # task-1560: Esc releases field focus, so the footer's "Esc, s save
++            # category" chain holds for EVERY text field, not just the filter.
++            self.set_focus(None)  # no DescendantFocus follows, so reset here
++            self._update_focus_help(None)  # its focus-help line (task-2835)
++            self._active_settings_field_id = None  # TASK-33007.11: nor its guide
++            for k in ("provider", "appearance", "storage", "rag", "console_behavior"):
++                getattr(self, f"_refresh_{k}_field_guidance")()  # off-category: no-op
+             self._register_footer_shortcuts()
+             event.stop()
+             event.prevent_default()
+diff --git a/tldw_chatbook/app_lifecycle.py b/tldw_chatbook/app_lifecycle.py
+index 4574e0dbbd..2fed7bd355 100644
+--- a/tldw_chatbook/app_lifecycle.py
++++ b/tldw_chatbook/app_lifecycle.py
+@@ -1844,6 +1844,10 @@ class LifecycleMixin:
+         """Preserve Ctrl+6 as a Library route outside permanent shell destinations."""
+         self.post_message(NavigateToScreen(TAB_ARTIFACTS))
+ 
++    def action_settings_tools_hub(self) -> None:
++        """Preserve Ctrl+9 as a Tools & MCP route outside the shell strip."""
++        self.post_message(NavigateToScreen("mcp"))
++
+     def action_shell_destination(self, destination_id: str) -> None:
+         """Navigate to the shell destination identified by a stable ID.
+ 
+@@ -2126,9 +2130,17 @@ class LifecycleMixin:
+                         pass
+                     return
+             self._shutting_down = True
+-            # TASK-22215: the user has approved the quit -- nothing further from
+-            # the staggered boot fleet may start (idempotent with the same call in
+-            # `on_shutdown_request`, which the quit path reaches later).
++            from .UI.Console_Modules import view_workers
++
++            # Cancel before cleanup yields; the original manager retains Tasks
++            # through native retirement for the later runtime shutdown drain.
++            view_workers.cancel_console_view_workers(
++                view_workers.capture_console_view_workers(
++                    self, groups=view_workers.CONSOLE_BROWSER_WORKER_GROUPS
++                )
++            )
++            # Approved Quit also closes staggered boot admission before cleanup
++            # (idempotent with the later on_shutdown_request).
+             self._close_boot_worker_gate("quit")
+             await self._run_approved_quit_cleanup()
+         finally:

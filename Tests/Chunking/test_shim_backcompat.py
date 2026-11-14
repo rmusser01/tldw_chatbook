@@ -13,6 +13,7 @@ accepts chunk options as kwargs; the shim keeps chatbook's legacy explicit
 signature (custom_chunk_options dict). The upstream assertion set is
 signature-agnostic (list-of-dicts, non-empty), so it ports directly.
 """
+
 from tldw_chatbook.Chunking.Chunk_Lib import (
     chunk_for_embedding,
     improved_chunking_process,

@@ -79,8 +79,7 @@ _NO_CHARACTER_OPTIONS_COPY = (
     "a speaker to one."
 )
 _NO_VOICE_OPTIONS_COPY = (
-    "No voice profiles available. Connect TTS profiles to bind a speaker's "
-    "voice."
+    "No voice profiles available. Connect TTS profiles to bind a speaker's voice."
 )
 #: Phase 2a records `voice_profile_id`; nothing consumes it yet -- phase 2b
 #: (audio synthesis) is what reads it. Shown whenever a voice IS selectable,
@@ -226,14 +225,10 @@ class BriefingPresetModal(ModalScreen[bool]):
                                     variant="primary" if selected else "default",
                                 )
                         else:
-                            yield Static(
-                                "No presets yet.", id="bpm-preset-list-empty"
-                            )
+                            yield Static("No presets yet.", id="bpm-preset-list-empty")
                 with VerticalScroll(id="bpm-editor-column"):
                     yield Static(
-                        "Edit preset"
-                        if self._editing_id is not None
-                        else "New preset",
+                        "Edit preset" if self._editing_id is not None else "New preset",
                         id="bpm-editor-heading",
                         classes="bpm-column-heading",
                     )
@@ -275,10 +270,21 @@ class BriefingPresetModal(ModalScreen[bool]):
                     # `-role`/`-character`/`-voice`) so each label lands in
                     # the same column as the field it names.
                     with Horizontal(classes="bpm-speaker-header-row"):
-                        yield Static("Name", classes="bpm-speaker-name bpm-speaker-column-label")
-                        yield Static("Role prompt", classes="bpm-speaker-role bpm-speaker-column-label")
-                        yield Static("Character", classes="bpm-speaker-character bpm-speaker-column-label")
-                        yield Static("Voice", classes="bpm-speaker-voice bpm-speaker-column-label")
+                        yield Static(
+                            "Name", classes="bpm-speaker-name bpm-speaker-column-label"
+                        )
+                        yield Static(
+                            "Role prompt",
+                            classes="bpm-speaker-role bpm-speaker-column-label",
+                        )
+                        yield Static(
+                            "Character",
+                            classes="bpm-speaker-character bpm-speaker-column-label",
+                        )
+                        yield Static(
+                            "Voice",
+                            classes="bpm-speaker-voice bpm-speaker-column-label",
+                        )
                     for index, speaker in enumerate(self._speakers):
                         with Horizontal(
                             classes="bpm-speaker-row",
@@ -395,9 +401,7 @@ class BriefingPresetModal(ModalScreen[bool]):
         for index, speaker in enumerate(self._speakers):
             name_input = self.query_one(f"#bpm-speaker-name-{index}", Input)
             role_input = self.query_one(f"#bpm-speaker-role-{index}", Input)
-            character_select = self.query_one(
-                f"#bpm-speaker-character-{index}", Select
-            )
+            character_select = self.query_one(f"#bpm-speaker-character-{index}", Select)
             voice_select = self.query_one(f"#bpm-speaker-voice-{index}", Select)
             speaker["name"] = name_input.value
             speaker["role_prompt"] = role_input.value
@@ -609,10 +613,7 @@ class BriefingPresetModal(ModalScreen[bool]):
         confirmed = await self.app.push_screen_wait(
             ConfirmationDialog(
                 title="Delete preset",
-                message=(
-                    f'Delete the preset "{preset_name}"? '
-                    "This cannot be undone."
-                ),
+                message=(f'Delete the preset "{preset_name}"? This cannot be undone.'),
                 confirm_label="Delete",
                 cancel_label="Cancel",
             )
@@ -675,9 +676,7 @@ class BriefingPresetModal(ModalScreen[bool]):
             coro.close()
             return
         self._write_in_flight = True
-        self.run_worker(
-            self._run_write(coro), exclusive=True, group="bpm-write"
-        )
+        self.run_worker(self._run_write(coro), exclusive=True, group="bpm-write")
 
     async def _run_write(self, coro: Any) -> None:
         try:

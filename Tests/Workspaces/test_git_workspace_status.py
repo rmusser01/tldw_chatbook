@@ -4,6 +4,7 @@ Every test drives REAL git in a temp repo -- the engine has no mockable
 seam by design (spec `Docs/superpowers/specs/2026-08-20-console-review-git-modes-design.md`,
 AC #5, no mocked git).
 """
+
 import subprocess
 from pathlib import Path
 
