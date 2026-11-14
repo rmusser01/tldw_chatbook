@@ -344,7 +344,8 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # 2026-11-12, same waiver: re-measured on dev 4b90eb860b (24,524 lines);
     # this branch adds 44 lines and the one method above.
     #: 2026-11-12: re-measured after rebasing onto dev 4b90eb860b (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24608/741 -> 24524/741.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24568, 742),
+    #: 2026-11-13: re-measured after rebasing onto dev 531acb8cdc (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24568/742 -> 24558/742.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24558, 742),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

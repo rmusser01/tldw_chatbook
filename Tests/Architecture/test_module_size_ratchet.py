@@ -1060,7 +1060,8 @@ _BUDGETS: dict[str, int] = {
     # refusal itself moved to console_received_dispatch.py on dev; dev's row
     # already covers the growth.
     # 2026-11-12: re-measured after rebasing onto dev 4b90eb860b (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 7043 -> 7037.
-    "tldw_chatbook/Chat/console_runtime.py": 7037,
+    # 2026-11-13: re-measured after rebasing onto dev 531acb8cdc (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 7037 -> 7052.
+    "tldw_chatbook/Chat/console_runtime.py": 7052,
     # 2026-10-27 (TASK-33621.29 / TASK-33621.7, owner decision 2026-10-19,
     # "expand limits, never contort code"): +56 for the rewritten-tail
     # transition (ADR-337 amendment 2026-10-27). The proof itself lives in
