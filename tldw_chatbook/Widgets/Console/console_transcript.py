@@ -1347,12 +1347,10 @@ def _sync_message_classes(
     selected: bool,
     markdown: bool,
 ) -> None:
-    for class_name in _MANAGED_MESSAGE_CLASSES:
-        widget.remove_class(class_name)
-    for class_name in _message_row_classes(
+    classes = _message_row_classes(
         message, presentation, selected=selected, markdown=markdown
-    ):
-        widget.add_class(class_name)
+    )
+    widget.set_classes((widget.classes - _MANAGED_MESSAGE_CLASSES).union(classes))
 
 
 class ConsoleMessageHeader(TranscriptCompositionMixin, Horizontal):
@@ -1492,7 +1490,10 @@ class ConsoleMessageHeader(TranscriptCompositionMixin, Horizontal):
         except NoMatches:
             return
         speaker.set_classes(" ".join(_speaker_label_classes(presentation)))
-        speaker.update(self._speaker_copy())
+        copy = self._speaker_copy()
+        prior = speaker.content
+        if not isinstance(prior, Content) or prior != copy or prior.spans != copy.spans:
+            speaker.update(copy, layout=False)
         self._sync_raw_cli_timer()
         if prior_has_action != next_has_action:
             self.refresh(recompose=True)
@@ -1505,7 +1506,8 @@ class ConsoleMessageHeader(TranscriptCompositionMixin, Horizontal):
         except NoMatches:
             self.refresh(recompose=True)
             return
-        status.update(self._speech.status_label)
+        if status.content != self._speech.status_label:
+            status.update(self._speech.status_label, layout=False)
         had_focus = action.has_focus
         if had_focus and not self._speech.action.enabled:
             action.console_restore_focus = True

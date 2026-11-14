@@ -188,6 +188,53 @@ async def test_non_scrolling_rows_record_native_sizes_without_relayout(monkeypat
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_transcript_row_restyles_once_only_for_changed_classes(monkeypatch):
+    app = WindowHarness()
+    async with app.run_test(size=(100, 30)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        messages = _messages(4)
+        transcript.set_messages(messages)
+        await transcript.refresh_messages()
+        await pilot.pause()
+        row = transcript.query_one("#console-message-m0")
+        row.add_class("unrelated-class")
+        speaker = row.query_one(".console-transcript-speaker-label")
+        original_restyle = row.update_node_styles
+        original_speaker_update = speaker.update
+        restyles = []
+        speaker_updates = []
+
+        def restyle(*args, **kwargs):
+            restyles.append(row.classes)
+            original_restyle(*args, **kwargs)
+
+        def speaker_update(content, *, layout=True):
+            speaker_updates.append(layout)
+            original_speaker_update(content, layout=layout)
+
+        monkeypatch.setattr(row, "update_node_styles", restyle)
+        monkeypatch.setattr(speaker, "update", speaker_update)
+        row.sync_message(messages[0])
+        assert not restyles
+        assert not speaker_updates
+
+        failed = replace(messages[0], status="failed")
+        row.sync_message(failed, selected=True)
+        assert row.has_class(
+            "unrelated-class",
+            "console-transcript-message-failed",
+            "console-transcript-message-selected",
+        )
+        assert restyles == [row.classes]
+        row.sync_message(messages[0])
+        assert row.has_class("unrelated-class")
+        assert not row.has_class("console-transcript-message-failed")
+        assert not row.has_class("console-transcript-message-selected")
+        assert len(restyles) == 2
+
+
+@pytest.mark.asyncio
 async def test_scroll_boundary_hydrates_earlier_rows_and_preserves_reader_state() -> (
     None
 ):
