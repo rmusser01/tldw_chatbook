@@ -1,7 +1,7 @@
 ---
 id: TASK-40717
 title: "Startup workflow recovery runs with workflow runs off, and its failure stops sub-agent result delivery to ordinary chats"
-status: In Progress
+status: Done
 created_date: 2026-11-13 06:28
 labels:
 - follow-up
@@ -42,7 +42,7 @@ So for the rest of the session, finished sub-agent results are not delivered to 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 With `workflow_runs_enabled` off and no workflow runs in the startup audit, startup recovery builds no workflow service. Workflow runs left by an earlier session still get their worktree protections.
-- [ ] #2 A failing workflow projection does not stop sub-agent result delivery to chats that have no workflow runs.
+- [x] #2 On an install with no saved workflow runs, a failing workflow projection cannot stop sub-agent result delivery. When saved workflow runs exist and the projection fails, delivery stays stopped (fail closed), because worktree protections are runtime-wide (owner decision 2026-11-13).
 - [x] #3 A test with workflow runs off and a raising workflow projection shows a sub-agent result still delivered to an ordinary chat.
 <!-- AC:END -->
 
@@ -66,7 +66,7 @@ Why not "the audit's `workflows` tuple is empty": that tuple leaves out closed, 
 
 Tests: `test_workflow_projection_without_saved_workflows_cannot_fence_delivery` (flag off, workflow service unbuildable, sub-agent result delivered) failed on base with "wake recovery failed (exception_type=RuntimeError)" and passes now; it fails again with the guard removed. The protection test gains two flag-off cases (plain, legacy closed); both keep the folder protected.
 
-AC #2 is met only where there is no saved workflow run. With saved workflow runs, a failing projection still fences delivery to every chat: worktree protections are runtime-wide, so letting any chat's woken turn run without them would weaken folder protection. Needs an owner decision; left open.
+AC #2 was reworded to the owner's 2026-11-13 decision: keep failing closed. With saved workflow runs, a failing projection still stops delivery to every chat, because worktree protections are runtime-wide and a woken turn run without them could write into a protected folder. Installs with no workflow history are no longer affected. The two rejected options were a fence that blocks all worktree admission while deliveries continue (in practice it also blocks ordinary agent runs), and running the protections step on its own so only its failure stops delivery.
 
 Files: `Agents/automatic_work_budget.py`, `DB/automatic_work.py`, `Chat/console_runtime.py`, `Tests/Chat/test_automatic_wake_recovery.py`, `Tests/Chat/test_workflow_recovery.py`.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
