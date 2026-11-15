@@ -95,7 +95,8 @@ async def test_credential_poll_defers_native_config_contention(lock_name):
                 screen._console_credential_snapshot is None
                 or screen._console_sync_in_progress
                 or screen._console_sync_requested
-                or screen._console_control_bar_replay_whole_sync
+                # Lazily created; production reads it the same way.
+                or getattr(screen, "_console_control_bar_replay_whole_sync", False)
                 or screen._console_control_bar_sync_scheduled
                 or any(
                     worker.node is screen
