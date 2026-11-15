@@ -113,6 +113,7 @@ async def blocked_phase(tmp_path):
 
 async def live_worker_failure(tmp_path):
     import asyncio
+    import threading
 
     from Tests.Chat.workflow_rig import WorkflowProvider, build_workflow_rig
     from tldw_chatbook.Agents.goal_storage_lifetime import owned_goal_storage
@@ -175,6 +176,25 @@ async def live_worker_failure(tmp_path):
             )
         assert not run.phase._retired
         assert await rig.service.call(rig.service.get, rig.workflow.id) == returned
+        # A launch racing the record: it starts right after the live check
+        # passes, through the launch gate's own protocol (take the phase's
+        # control lock, refuse a retired phase; agent_native_execution.py).
+        # It must be refused, or the record must refuse; never both proceed.
+        live_check = rig.service._has_live_workflow_resources
+        launches = []
+
+        def racing_launch():
+            with run.phase._control_lock:
+                launches.append("refused" if run.phase._retired else "bound")
+
+        def check_then_launch(workflow_id):
+            live = live_check(workflow_id)
+            if not launches:
+                launcher = threading.Thread(target=racing_launch)
+                launcher.start()
+                launcher.join(10)
+            return live
+
         # A release that raises is finished by the next reconcile.
         wake = rig.controller._fleet_wake
         release = wake.release_automatic_primary
@@ -187,6 +207,9 @@ async def live_worker_failure(tmp_path):
             return release(session_id, token)
 
         with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(
+                rig.service, "_has_live_workflow_resources", check_then_launch
+            )
             patch.setattr(wake, "release_automatic_primary", release_once)
             with pytest.raises(RuntimeError, match="primary release failed"):
                 await rig.coordinator.reconcile(
@@ -195,6 +218,7 @@ async def live_worker_failure(tmp_path):
                     decision=review,
                     command_id="reconcile-returned",
                 )
+            assert launches == ["refused"], launches
             assert rig.coordinator._runs.get(rig.workflow.id) is run
             current = await rig.service.call(rig.service.get, rig.workflow.id)
             closed = await rig.coordinator.reconcile(

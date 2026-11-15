@@ -2453,6 +2453,7 @@ class ConsoleWorkflowCoordinator:
                         and not (
                             cell.disposed.done()
                             and not cell.disposed.cancelled()
+                            and cell.disposed.exception() is None
                             and cell.disposed.result() is True
                         )
                     ):

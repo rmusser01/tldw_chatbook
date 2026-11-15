@@ -2179,14 +2179,16 @@ class WorkflowRunService:
             raise ValueError("original_execution_phase_required")
         phase._check_owner()
         attempt = phase.attempt
-        # Before the control lock: launches take a task's lock, then this one.
-        if self._has_live_workflow_resources(attempt.workflow_id):
-            raise ValueError("workflow_resources_still_live")
         ledger = self.db.automatic_work
-        # Pause, stop and launch commits take the control lock before the
-        # ledger, so none runs between the record and the retirement. The
-        # phase keeps its authority unless the record commits (review M1).
+        # Retire first. Launches, pause and stop check this under the control
+        # lock, so none can start after the live check below. That check runs
+        # outside the lock: a launch takes its task's lock and then this one.
         with phase._control_lock:
+            retired = phase._retired
+            phase._retired = True
+        try:
+            if self._has_live_workflow_resources(attempt.workflow_id):
+                raise ValueError("workflow_resources_still_live")
             with ledger.transaction() as conn:
                 ledger._check_runtime_owner(conn, attempt.owner_id)
                 native = ledger._attempt(
@@ -2239,7 +2241,12 @@ class WorkflowRunService:
                     if updated.rowcount != 1:
                         raise ValueError("revision_conflict")
                 result = self.get(snapshot.id)
-            phase._retired = True
+        except BaseException:
+            if not retired:
+                with phase._control_lock:
+                    phase._retired = False  # Nothing recorded: stays retryable.
+            raise
+        with phase._control_lock:
             phase._paused_tasks = {}
         for workflow_id, footprint in self.recovery_protections(ledger.recovery_result):
             if workflow_id == result.id:
