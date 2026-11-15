@@ -14,6 +14,9 @@ class RuntimeRecoveryResult:
     recovered_chains: tuple[str, ...]
     goals: tuple[tuple[str, int, str], ...]
     workflows: tuple[tuple[str, int, str], ...] = ()
+    # Any saved (non-removed) workflow run, including closed history the
+    # `workflows` tuple leaves out but whose worktree may still need protecting.
+    workflow_history: bool = False
 
 
 class AutomaticWorkRefused(RuntimeError):

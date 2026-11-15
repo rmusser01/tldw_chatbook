@@ -1936,8 +1936,15 @@ class AutomaticWorkLedger:
                     "SELECT id,control_revision,chain_id,status FROM workflow_runs WHERE status NOT IN ('removed','closed','completed','stopped')"
                 )
             )
+            history = conn.execute(
+                "SELECT 1 FROM workflow_runs WHERE status!='removed' LIMIT 1"
+            ).fetchone()
             audit = RuntimeRecoveryResult(
-                current_owner_id, tuple(sorted(chains)), goals, workflows
+                current_owner_id,
+                tuple(sorted(chains)),
+                goals,
+                workflows,
+                history is not None,
             )
             # Snapshot only the entries covered while this transaction owns
             # recovery. Later recoveries/setters may run before our return.

@@ -144,6 +144,9 @@ class WorkflowPhaseAuthorization:
         self._committed_tasks = {}
         self._paused_tasks = {}
         self._retired = False
+        # Finalized retirement is permanent; a refused record never undoes it.
+        self._finalized = False
+        self._record_lock = threading.Lock()  # One returned-execution record at a time.
         self._quiescence = None
         self.attempt = attempt
         self._planning_preparation = ref(_planning) if _planning is not None else None

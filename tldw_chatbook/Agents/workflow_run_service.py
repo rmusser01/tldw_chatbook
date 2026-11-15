@@ -453,6 +453,7 @@ class WorkflowRunService:
             "resolve_recovery",
             "remove_payloads",
             "record_returned_planning",
+            "record_returned_execution",
         }
         if (
             type(operation) is not MethodType
@@ -1398,6 +1399,7 @@ class WorkflowRunService:
                 self._fresh_task_result(snapshot, task)
         with phase._control_lock:
             phase._retired = True
+            phase._finalized = True
             phase._paused_tasks = {}
         if any(
             len(auth._native_launch) != len(launch)
@@ -2144,6 +2146,115 @@ class WorkflowRunService:
                 if updated.rowcount != 1:
                     raise ValueError("revision_conflict")
             result = self.get(snapshot.id)
+        for workflow_id, footprint in self.recovery_protections(ledger.recovery_result):
+            if workflow_id == result.id:
+                self._runtime.worktree_activity.protect_recovery(workflow_id, footprint)
+        return result
+
+    @goal_storage_operation
+    def record_returned_execution(
+        self,
+        phase,
+        *,
+        expected_control_revision: int | None = None,
+    ) -> WorkflowSnapshot:
+        """Hand a failed execution phase whose native work all returned to review.
+
+        The execution counterpart of ``record_returned_planning`` (TASK-40718):
+        the phase stops authorizing work, its native attempt waits for review
+        and the workflow becomes ``recovery_required`` so ``resolve_recovery``
+        can close it. Retrying after a recorded return changes nothing.
+
+        Raises:
+            ValueError: Not the original execution phase, any workflow
+                resource may still be live, or the control revision changed.
+        """
+        from .automatic_work_budget import AutomaticWorkRefused
+        from .workflow_phase import WorkflowPhaseAuthorization
+
+        if (
+            type(phase) is not WorkflowPhaseAuthorization
+            or phase._ledger._db is not self.db
+            or phase.attempt.purpose != "execution"
+        ):
+            raise ValueError("original_execution_phase_required")
+        phase._check_owner()
+        attempt = phase.attempt
+        ledger = self.db.automatic_work
+        # One record per phase at a time, so a refused record can only undo
+        # its own retirement. Retire first: launches, pause and stop check this
+        # under the control lock, so none can start after the live check
+        # below. That check runs outside the control lock, because a launch
+        # takes its task's lock and then this one.
+        with phase._record_lock:
+            with phase._control_lock:
+                ours = not phase._retired
+                phase._retired = True
+            try:
+                if self._has_live_workflow_resources(attempt.workflow_id):
+                    raise ValueError("workflow_resources_still_live")
+                with ledger.transaction() as conn:
+                    ledger._check_runtime_owner(conn, attempt.owner_id)
+                    native = ledger._attempt(
+                        conn, attempt.id, attempt.owner_id, "workflow_phase"
+                    )
+                    row = conn.execute(
+                        "SELECT * FROM workflow_phase_attempts WHERE native_attempt_id=?",
+                        (attempt.id,),
+                    ).fetchone()
+                    snapshot = self.get(attempt.workflow_id)
+                    if (
+                        expected_control_revision is not None
+                        and snapshot.control_revision != expected_control_revision
+                    ):
+                        raise ValueError("revision_conflict")
+                    if (
+                        native["state"]
+                        not in {"accepted", "completed", "review_required"}
+                        or row is None
+                        or row["purpose"] != "execution"
+                        or row["workflow_id"] != snapshot.id
+                    ):
+                        raise ValueError("workflow_execution_return_required")
+                    if native["state"] == "accepted":
+                        try:
+                            ledger._close_workflow_interval(conn, snapshot.id)
+                        except AutomaticWorkRefused as clock_error:
+                            if clock_error.reason not in {
+                                "clock_unknown",
+                                "clock_reversed",
+                            }:
+                                raise
+                            # Preserve the unknown interval; never invent an ending clock.
+                        conn.execute(
+                            "UPDATE automatic_wake_attempts SET state='review_required' WHERE id=?",
+                            (attempt.id,),
+                        )
+                        conn.execute(
+                            "UPDATE workflow_phase_attempts SET status='uncertain',retirement='unknown' WHERE id=?",
+                            (row["id"],),
+                        )
+                    if (
+                        snapshot.status != "recovery_required"
+                        and not self.db.workflow_runs._recovery_reviewed(
+                            conn, snapshot.id
+                        )
+                    ):
+                        updated = conn.execute(
+                            "UPDATE workflow_runs SET status='recovery_required',control_revision=control_revision+1,updated_at=? "
+                            "WHERE id=? AND control_revision=?",
+                            (time.time(), snapshot.id, snapshot.control_revision),
+                        )
+                        if updated.rowcount != 1:
+                            raise ValueError("revision_conflict")
+                    result = self.get(snapshot.id)
+            except BaseException:
+                with phase._control_lock:
+                    if ours and not phase._finalized:
+                        phase._retired = False  # Nothing recorded: retryable.
+                raise
+            with phase._control_lock:
+                phase._paused_tasks = {}
         for workflow_id, footprint in self.recovery_protections(ledger.recovery_result):
             if workflow_id == result.id:
                 self._runtime.worktree_activity.protect_recovery(workflow_id, footprint)

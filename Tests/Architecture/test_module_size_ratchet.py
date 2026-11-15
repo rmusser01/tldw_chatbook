@@ -1061,7 +1061,10 @@ _BUDGETS: dict[str, int] = {
     # dev's 7,046 plus TASK-39117's +3.
     # 2026-11-10, restack onto dev e78b62f0e7 (owner size waiver): dev's 7,040
     # plus TASK-39117's +3; exact measurement.
-    "tldw_chatbook/Chat/console_runtime.py": 7043,
+    # 2026-11-15, TASK-40717 (owner rule: raise by the change's own lines):
+    # 7043 -> 7047 (+4) -- startup skips workflow recovery with no workflow
+    # history.
+    "tldw_chatbook/Chat/console_runtime.py": 7047,
     # 2026-10-27 (TASK-33621.29 / TASK-33621.7, owner decision 2026-10-19,
     # "expand limits, never contort code"): +56 for the rewritten-tail
     # transition (ADR-337 amendment 2026-10-27). The proof itself lives in
