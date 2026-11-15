@@ -1,6 +1,7 @@
 """Real parser and numerical measurement checks; no audio-device access."""
 
 import json
+import hashlib
 import os
 from pathlib import Path
 import subprocess
@@ -18,10 +19,14 @@ from qualification import (
     ProgressObservation,
     StatsReader,
     _write_wav,
+    artifact_receipt,
     marker_signal,
     measure_match,
     parse_stats_position,
+    native_result,
     resolve_ffplay,
+    run_matrix,
+    saved_bookmark_frame,
     select_fresh,
 )
 
@@ -98,6 +103,49 @@ class ParserTests(unittest.TestCase):
 
 
 class MeasurementTests(unittest.TestCase):
+    def test_full_near_eof_slices_match_and_truncated_slices_cannot_pass_tail(self):
+        source = marker_signal(2.5)
+        for start_frame, expected_start in [(113280, 2.36), (117120, 2.44)]:
+            with self.subTest(remaining=2.5 - expected_start):
+                full = np.concatenate(
+                    [np.zeros(4800), source[start_frame:], np.zeros(12000)]
+                )
+                match = measure_match(full, source)
+                self.assertIsNotNone(match)
+                self.assertAlmostEqual(
+                    match["start_source_s"], expected_start, delta=0.01
+                )
+                self.assertAlmostEqual(match["end_source_s"], 2.5, delta=0.01)
+                truncated = np.concatenate(
+                    [np.zeros(4800), source[start_frame:118560], np.zeros(12000)]
+                )
+                match = measure_match(truncated, source)
+                if match is not None:
+                    self.assertGreater(2.5 - match["end_source_s"], 0.020)
+
+    def test_padding_preserves_original_pcm_and_adds_exactly_12000_zero_frames(self):
+        source = marker_signal(0.120)
+        with tempfile.TemporaryDirectory() as scratch:
+            original = Path(scratch) / "original.wav"
+            padded = Path(scratch) / "padded.wav"
+            _write_wav(original, source)
+            _write_wav(padded, source, tail_padding_ms=250)
+            with wave.open(str(original), "rb") as wav:
+                original_pcm = wav.readframes(5760)
+            with wave.open(str(padded), "rb") as wav:
+                self.assertEqual(wav.getnframes(), 17760)
+                self.assertEqual(wav.getnchannels(), 2)
+                self.assertEqual(wav.getsampwidth(), 2)
+                self.assertEqual(wav.getframerate(), 48000)
+                self.assertEqual(wav.readframes(5760), original_pcm)
+                self.assertEqual(wav.readframes(12000), b"\x00" * 48000)
+            geometry = artifact_receipt(padded, 5760)
+            self.assertEqual(geometry["content_frames"], 5760)
+            self.assertEqual(geometry["file_frames"], 17760)
+            self.assertEqual(geometry["padding_frames"], 12000)
+            self.assertEqual(geometry["content_duration_s"], 0.120)
+            self.assertEqual(geometry["file_duration_s"], 0.370)
+
     def test_tail_correlator_distinguishes_full_and_truncated_content(self):
         source = marker_signal(2.5, seed=41177)
         full = np.concatenate([np.zeros(4800), source, np.zeros(4800)])
@@ -163,6 +211,61 @@ class MeasurementTests(unittest.TestCase):
 
 
 class CliTests(unittest.TestCase):
+    def test_padded_repeat_options_in_no_capture_receipt(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(Path(__file__).with_name("qualification.py")),
+                    "--output-dir",
+                    scratch,
+                    "--tail-padding-ms",
+                    "250",
+                    "--repeat",
+                    "3",
+                    "--ffplay",
+                    "must-not-open",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            receipt = json.loads((Path(scratch) / "qualification.json").read_text())
+            self.assertEqual(receipt["tail_padding_ms"], 250)
+            self.assertEqual(receipt["repeat"], 3)
+            self.assertEqual(receipt["run_count"], 0)
+            self.assertEqual(receipt["full_gate"], "unqualified")
+
+    def test_invalid_padding_and_repeat_refuse_before_creating_output(self):
+        for option, value in [
+            ("--tail-padding-ms", "1"),
+            ("--tail-padding-ms", "-250"),
+            ("--repeat", "0"),
+            ("--repeat", "4"),
+        ]:
+            with (
+                self.subTest(option=option, value=value),
+                tempfile.TemporaryDirectory() as scratch,
+            ):
+                destination = Path(scratch) / "must-not-create"
+                completed = subprocess.run(
+                    [
+                        sys.executable,
+                        str(Path(__file__).with_name("qualification.py")),
+                        "--output-dir",
+                        str(destination),
+                        "--capture-loopback",
+                        option,
+                        value,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                )
+                self.assertEqual(completed.returncode, 2)
+                self.assertFalse(destination.exists())
+
     def test_no_capture_only_checks_fixtures_and_never_launches_player(self):
         with tempfile.TemporaryDirectory() as scratch:
             completed = subprocess.run(
@@ -213,6 +316,143 @@ class ResolutionTests(unittest.TestCase):
             payload.parent.mkdir(parents=True)
             payload.write_bytes(b"fixture only: must never execute")
             self.assertEqual(resolve_ffplay(str(payload)), payload.resolve())
+
+
+class BookmarkTests(unittest.TestCase):
+    def test_fresh_current_generation_bookmark_becomes_one_content_frame(self):
+        values = [ProgressObservation(1.25, 9.9, 4), ProgressObservation(2.7, 9.95, 3)]
+        self.assertEqual(
+            saved_bookmark_frame(values, generation=4, now_s=10, content_frames=120000),
+            60000,
+        )
+        values.append(ProgressObservation(2.7, 9.99, 4))
+        self.assertIsNone(
+            saved_bookmark_frame(values, generation=4, now_s=10, content_frames=120000)
+        )
+
+
+class MatrixTests(unittest.TestCase):
+    def test_missing_bookmark_logical_eof_or_unreaped_stop_cannot_launch_resume(self):
+        for changed in [
+            {"saved_bookmark_frame": None, "bookmark": "unqualified"},
+            {"saved_bookmark_frame": 120000},
+            {"capture_reaped": False},
+        ]:
+            calls = []
+
+            def capture_boundary(*args, calls=calls, changed=changed, **kwargs):
+                calls.append(kwargs["offset"])
+                result = {
+                    "launched": True,
+                    "process_exit": "pass",
+                    "endpoint_loopback": "pass",
+                    "post_stop_silence": "pass",
+                    "post_stop_latency": "pass",
+                    "player_reaped": True,
+                    "capture_reaped": True,
+                    "saved_bookmark_frame": 19200,
+                    "bookmark": "pass",
+                    "stop_process_latency_s": 0.01,
+                }
+                result.update(changed)
+                return result
+
+            with (
+                self.subTest(changed=changed),
+                tempfile.TemporaryDirectory() as scratch,
+                patch("qualification.run_case", side_effect=capture_boundary),
+            ):
+                runs = run_matrix(
+                    Path("never-executed"), Path(scratch), tail_padding_ms=250, repeat=1
+                )
+            self.assertEqual(len(calls), 6)
+            self.assertEqual(len(runs), 7)
+            self.assertFalse(runs[-1]["launched"])
+            self.assertEqual(
+                native_result(runs),
+                "fail" if changed.get("capture_reaped") is False else "unqualified",
+            )
+
+    def test_three_rounds_resume_exact_stopped_artifact_and_saved_frame(self):
+        calls = []
+
+        def capture_boundary(
+            executable, wav, source, *, offset, generation, stop_after
+        ):
+            calls.append(
+                (
+                    wav,
+                    id(source),
+                    hashlib.sha256(wav.read_bytes()).hexdigest(),
+                    offset,
+                    stop_after,
+                )
+            )
+            return {
+                "launched": True,
+                "process_exit": "pass",
+                "endpoint_loopback": "pass",
+                "post_stop_silence": "pass",
+                "post_stop_latency": "pass",
+                "player_reaped": True,
+                "capture_reaped": True,
+                "saved_bookmark_frame": 19200,
+                "bookmark": "pass",
+                "stop_process_latency_s": 0.01,
+            }
+
+        with (
+            tempfile.TemporaryDirectory() as scratch,
+            patch("qualification.run_case", side_effect=capture_boundary),
+        ):
+            runs = run_matrix(
+                Path("never-executed"), Path(scratch), tail_padding_ms=250, repeat=3
+            )
+        self.assertEqual(len(calls), 21)
+        self.assertEqual(len(runs), 21)
+        for index in (5, 12, 19):
+            stopped, resumed = calls[index : index + 2]
+            self.assertEqual(stopped[:3], resumed[:3])
+            self.assertEqual(resumed[3], 0.4)
+            self.assertEqual(
+                runs[index]["artifact_sha256"], runs[index + 1]["artifact_sha256"]
+            )
+            self.assertEqual(
+                runs[index + 1]["resume_from_generation"], runs[index]["generation"]
+            )
+        self.assertEqual({run["round"] for run in runs}, {1, 2, 3})
+        self.assertEqual(len({str(call[0]) for call in calls}), 3)
+
+    def test_native_gate_cannot_average_away_unmatched_or_unreaped_case(self):
+        run = {
+            "case": "near_eof_60ms",
+            "stop_after_launch_s": None,
+            "duration_s": 2.5,
+            "requested_start_s": 2.44,
+            "process_exit": "pass",
+            "endpoint_loopback": "pass",
+            "seek": "pass",
+            "tail_coverage": "pass",
+            "player_reaped": True,
+            "capture_reaped": True,
+        }
+        self.assertEqual(native_result([run]), "pass")
+        self.assertEqual(
+            native_result([run, dict(run, endpoint_loopback="unqualified")]),
+            "unqualified",
+        )
+        self.assertEqual(native_result([run, dict(run, tail_coverage="fail")]), "fail")
+        self.assertEqual(native_result([run, dict(run, capture_reaped=False)]), "fail")
+
+    def test_retired_stale_or_future_callback_cannot_supply_bookmark(self):
+        values = [
+            ProgressObservation(1.0, 9.9, 3),
+            ProgressObservation(2.0, 9.0, 4),
+            ProgressObservation(1.5, 10.1, 4),
+        ]
+        self.assertIsNone(
+            saved_bookmark_frame(values, generation=4, now_s=10, content_frames=120000)
+        )
 
 
 if __name__ == "__main__":

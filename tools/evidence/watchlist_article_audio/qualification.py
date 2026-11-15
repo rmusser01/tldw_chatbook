@@ -323,11 +323,43 @@ def _build_receipt(executable: Path) -> dict:
                 reader.join(timeout=1)
 
 
-def _write_wav(path: Path, source: np.ndarray) -> None:
+def saved_bookmark_frame(
+    observations: list[ProgressObservation],
+    *,
+    generation: int,
+    now_s: float,
+    content_frames: int,
+) -> int | None:
+    """Accept one fresh content clock and convert it once to a PCM frame."""
+    fresh = select_fresh(observations, generation=generation, now_s=now_s)
+    if fresh is None or fresh.position_s > content_frames / RATE:
+        return None
+    return min(round(fresh.position_s * RATE), content_frames)
+
+
+def _write_wav(path: Path, source: np.ndarray, *, tail_padding_ms: int = 0) -> None:
+    if tail_padding_ms not in (0, 250):
+        raise ValueError("padding_must_be_zero_or_250ms")
     pcm = np.repeat((source * 32767).astype("<i2")[:, None], 2, axis=1)
     with wave.open(str(path), "wb") as output:
         output.setparams((2, 2, RATE, 0, "NONE", "not compressed"))
         output.writeframes(pcm.tobytes())
+        output.writeframes(b"\x00" * (tail_padding_ms * RATE // 1000) * 4)
+
+
+def artifact_receipt(wav: Path, content_frames: int) -> dict:
+    """Describe physical frames separately from original spoken-content frames."""
+    with wave.open(str(wav), "rb") as reader:
+        file_frames = reader.getnframes()
+    return {
+        "artifact_sha256": hashlib.sha256(wav.read_bytes()).hexdigest(),
+        "content_frames": content_frames,
+        "content_duration_s": content_frames / RATE,
+        "file_frames": file_frames,
+        "file_duration_s": file_frames / RATE,
+        "padding_frames": file_frames - content_frames,
+        "sample_rate_hz": RATE,
+    }
 
 
 def run_case(
@@ -341,6 +373,7 @@ def run_case(
 ) -> dict:
     """Measure one bounded native run; all raw samples/output are disposable."""
     result = {
+        "launched": False,
         "generation": generation,
         "duration_s": len(source) / RATE,
         "requested_start_s": offset,
@@ -411,6 +444,7 @@ def run_case(
                     stderr=subprocess.PIPE,
                     bufsize=0,
                 )
+                result["launched"] = True
                 reader = threading.Thread(
                     target=_stats_pump,
                     args=(process.stderr, observations, generation),
@@ -424,6 +458,18 @@ def run_case(
                     and now - launched_at >= stop_after
                 ):
                     stop_at = time.perf_counter()
+                    frame = saved_bookmark_frame(
+                        list(observations),
+                        generation=generation,
+                        now_s=stop_at,
+                        content_frames=len(source),
+                    )
+                    result["saved_bookmark_frame"] = frame
+                    result["saved_bookmark_s"] = (
+                        frame / RATE if frame is not None else None
+                    )
+                    result["bookmark_sample_rate_hz"] = RATE
+                    result["bookmark"] = "pass" if frame is not None else "unqualified"
                     _stop_process(process)
                     result["stop_process_latency_s"] = time.perf_counter() - stop_at
                 if process.poll() is not None and exited_at is None:
@@ -553,6 +599,148 @@ def run_case(
                 capture.close()
 
 
+def run_matrix(
+    executable: Path, scratch: Path, *, tail_padding_ms: int, repeat: int
+) -> list[dict]:
+    """Reuse three stable artifacts; a resume consumes its confirmed Stop frame."""
+    if tail_padding_ms not in (0, 250) or repeat not in (1, 2, 3):
+        raise ValueError("invalid_matrix_settings")
+    artifacts = {}
+    for duration in (0.120, 0.500, 2.5):
+        source = marker_signal(duration, seed=41176 + round(duration * RATE))
+        wav = scratch / f"marker-{len(source)}.wav"
+        _write_wav(wav, source, tail_padding_ms=tail_padding_ms)
+        artifacts[duration] = (source, wav, artifact_receipt(wav, len(source)))
+    cases = [
+        ("start", 2.5, 0.0, None),
+        ("resume_1", 2.5, 0.8, None),
+        ("resume_1_repeat", 2.5, 0.8, None),
+        ("resume_2", 2.5, 1.4, None),
+        ("resume_2_repeat", 2.5, 1.4, None),
+        ("short_120ms", 0.120, 0.0, None),
+        ("short_500ms", 0.500, 0.0, None),
+        ("near_eof", 2.5, 2.36, None),
+        ("stop_startup", 2.5, 0.0, 0.020),
+        ("stop_playing", 2.5, 0.0, 0.700),
+    ]
+    if tail_padding_ms:
+        cases = [
+            ("resume_fixed", 2.5, 0.8, None),
+            ("short_120ms", 0.120, 0.0, None),
+            ("short_500ms", 0.500, 0.0, None),
+            ("near_eof_140ms", 2.5, 2.36, None),
+            ("near_eof_60ms", 2.5, 2.44, None),
+            ("stop_playing", 2.5, 0.0, 0.700),
+        ]
+    runs = []
+    for round_number in range(1, repeat + 1):
+        for name, duration, offset, stop_after in cases:
+            source, wav, artifact = artifacts[duration]
+            generation = len(runs) + 1
+            run = run_case(
+                executable,
+                wav,
+                source,
+                offset=offset,
+                generation=generation,
+                stop_after=stop_after,
+            )
+            run.update(
+                artifact,
+                case=name,
+                round=round_number,
+                generation=generation,
+                duration_s=duration,
+                requested_start_s=offset,
+                stop_after_launch_s=stop_after,
+            )
+            runs.append(run)
+            if not tail_padding_ms or name != "stop_playing":
+                continue
+            frame = run.get("saved_bookmark_frame")
+            safe_resume = (
+                isinstance(frame, int)
+                and 0 <= frame < len(source)
+                and run.get("player_reaped") is True
+                and run.get("capture_reaped") is True
+                and all(
+                    run.get(key) == "pass"
+                    for key in (
+                        "process_exit",
+                        "endpoint_loopback",
+                        "post_stop_silence",
+                        "post_stop_latency",
+                        "bookmark",
+                    )
+                )
+                and run.get("stop_process_latency_s", math.inf) <= STOP_BOUND_S
+            )
+            if safe_resume:
+                resume = run_case(
+                    executable,
+                    wav,
+                    source,
+                    offset=frame / RATE,
+                    generation=generation + 1,
+                    stop_after=None,
+                )
+            else:
+                resume = {
+                    "launched": False,
+                    "reason": "saved_resume_preconditions_unqualified",
+                }
+            resume.update(
+                artifact,
+                case="resume_saved",
+                round=round_number,
+                generation=generation + 1,
+                duration_s=duration,
+                requested_start_s=frame / RATE if isinstance(frame, int) else None,
+                stop_after_launch_s=None,
+                resume_from_generation=generation,
+                resume_from_bookmark_frame=frame,
+            )
+            runs.append(resume)
+    return runs
+
+
+def native_result(runs: list[dict]) -> str:
+    """Every required case counts; unmatched cases and missing cleanup cannot pass."""
+    required = []
+    for run in runs:
+        required.append(run.get("process_exit", "unqualified"))
+        for key in ("player_reaped", "capture_reaped"):
+            value = run.get(key)
+            required.append(
+                "pass" if value is True else "fail" if value is False else "unqualified"
+            )
+        if run["case"] != "stop_startup":
+            required.append(run.get("endpoint_loopback", "unqualified"))
+        if run["stop_after_launch_s"] is None:
+            required.extend(
+                run.get(key, "unqualified") for key in ("seek", "tail_coverage")
+            )
+            offset = run.get("requested_start_s")
+            if offset is not None and run["duration_s"] - offset >= 0.5:
+                required.append(run.get("telemetry", "unqualified"))
+        else:
+            required.extend(
+                run.get(key, "unqualified")
+                for key in ("post_stop_silence", "post_stop_latency")
+            )
+            if run["case"] == "stop_playing":
+                required.append(run.get("bookmark", "unqualified"))
+            if run.get("stop_process_latency_s", math.inf) > STOP_BOUND_S:
+                required.append("fail")
+    return (
+        "fail"
+        if "fail" in required
+        else "unqualified"
+        if not required or "unqualified" in required
+        else "pass"
+    )
+
+
 def fixture_check() -> dict:
     """Return numeric known-truth checks without opening a device/player."""
     reader = StatsReader()
@@ -590,6 +778,8 @@ def main() -> int:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--capture-loopback", action="store_true")
     parser.add_argument("--ffplay")
+    parser.add_argument("--tail-padding-ms", type=int, choices=(0, 250), default=0)
+    parser.add_argument("--repeat", type=int, choices=(1, 2, 3), default=1)
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
     clock = time.get_clock_info("perf_counter")
@@ -618,62 +808,23 @@ def main() -> int:
         "capture_channels": 2,
         "stop_wait_bound_s": STOP_BOUND_S,
         "seek_target_s": 0.250,
+        "tail_padding_ms": args.tail_padding_ms,
+        "repeat": args.repeat,
+        "logical_eof": "no_content_or_exact_content_eof_requires_later_service_no_audio_run",
     }
     try:
         if args.capture_loopback:
             executable = resolve_ffplay(args.ffplay)
             receipt["executable"] = _build_receipt(executable)
             # Only synthetic fixture WAVs touch disk, in an owned temporary dir.
-            cases = [
-                ("start", 2.5, 0.0, None),
-                ("resume_1", 2.5, 0.8, None),
-                ("resume_1_repeat", 2.5, 0.8, None),
-                ("resume_2", 2.5, 1.4, None),
-                ("resume_2_repeat", 2.5, 1.4, None),
-                ("short_120ms", 0.120, 0.0, None),
-                ("short_500ms", 0.500, 0.0, None),
-                ("near_eof", 2.5, 2.36, None),
-                ("stop_startup", 2.5, 0.0, 0.020),
-                ("stop_playing", 2.5, 0.0, 0.700),
-            ]
             with tempfile.TemporaryDirectory(prefix="ffplay-synthetic-") as scratch:
-                for generation, (name, duration, offset, stop_after) in enumerate(
-                    cases, 1
-                ):
-                    source = marker_signal(duration, seed=41176 + generation)
-                    wav = Path(scratch) / "marker.wav"
-                    _write_wav(wav, source)
-                    run = run_case(
-                        executable,
-                        wav,
-                        source,
-                        offset=offset,
-                        generation=generation,
-                        stop_after=stop_after,
-                    )
-                    run["case"] = name
-                    receipt["runs"].append(run)
-            required = []
-            for run in receipt["runs"]:
-                required.append(run["process_exit"])
-                if run["case"] != "stop_startup":
-                    required.append(run["endpoint_loopback"])
-                if run["stop_after_launch_s"] is None:
-                    required.extend([run["seek"], run["tail_coverage"]])
-                    if run["duration_s"] - run["requested_start_s"] >= 0.5:
-                        required.append(run["telemetry"])
-                else:
-                    required.append(run["post_stop_silence"])
-                    required.append(run.get("post_stop_latency", "unqualified"))
-                    if run.get("stop_process_latency_s", math.inf) > STOP_BOUND_S:
-                        required.append("fail")
-            native = (
-                "fail"
-                if "fail" in required
-                else "unqualified"
-                if "unqualified" in required
-                else "pass"
-            )
+                receipt["runs"] = run_matrix(
+                    executable,
+                    Path(scratch),
+                    tail_padding_ms=args.tail_padding_ms,
+                    repeat=args.repeat,
+                )
+            native = native_result(receipt["runs"])
             if platform.system() in receipt["native_platforms"]:
                 receipt["native_platforms"][platform.system()] = native
             if native == "fail":
@@ -681,7 +832,8 @@ def main() -> int:
     except Exception:
         # Paths, raw native errors and output may contain private data.
         receipt["runner_error"] = "qualification_failed"
-    receipt["run_count"] = len(receipt["runs"])
+    receipt["run_count"] = sum(run.get("launched", False) for run in receipt["runs"])
+    receipt["case_count"] = len(receipt["runs"])
     output = args.output_dir / "qualification.json"
     output.write_text(
         json.dumps(receipt, indent=2, allow_nan=False) + "\n", encoding="utf-8"
