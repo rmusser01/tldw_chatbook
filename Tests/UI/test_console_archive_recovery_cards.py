@@ -1036,3 +1036,47 @@ def test_a_scope_select_value_can_be_set_outside_any_app():
     select = PruneSafeSelect([("A", "a"), ("B", "b")])
     select.value = "b"  # Raised NoActiveAppError when `_retired` read `self.app`.
     assert select.value == "b"
+
+
+@pytest.mark.asyncio
+async def test_a_stock_select_composed_after_app_exit_began_does_not_crash(
+    monkeypatch,
+):
+    """TASK-41141: the exit gate covers stock `Select`, not only PruneSafeSelect.
+
+    Past `App._exit`, `mount` refuses and `mount_all` mounts nothing, so the
+    one way a `Select` composes then is a mount already in flight. It gets no
+    `SelectOverlay`, and its `_on_mount` and `set_options` raised `NoMatches`
+    on that lookup. Constructing the app installs the gate.
+    """
+    from textual.containers import Vertical
+
+    from Tests.UI.app_factory import _build_test_app
+    from textual.widgets._select import SelectOverlay
+
+    class HostApp(App):
+        def compose(self):
+            yield Vertical(id="host")
+
+    real_compose = Select.compose
+
+    def compose_as_exit_begins(select):
+        select.app._exit = True  # What App.exit and TldwCli._shutdown set.
+        return real_compose(select)
+
+    _build_test_app()  # TldwCli.__init__ installs the gate on stock Select.
+    monkeypatch.setattr(Select, "compose", compose_as_exit_begins)
+    app = HostApp()
+    async with app.run_test() as pilot:
+        try:
+            select = Select([("A", "a"), ("B", "b")], id="stock")
+            await app.query_one("#host").mount(select)
+            await pilot.pause()
+            assert select.is_mounted and not select.query(SelectOverlay)
+            assert app._exception is None, "the stock Select's mount crashed"
+            select.set_options([("C", "c")])
+            select.value = "c"
+            assert app._exception is None
+            assert select.value == "c"
+        finally:
+            app._exit = False  # Let run_test's own teardown run as usual.
