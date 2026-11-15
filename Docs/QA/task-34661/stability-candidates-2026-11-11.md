@@ -1593,3 +1593,66 @@ observer captured no timing sample. It retired with zero private DB
 descriptors, and its receipts were kept before a fresh-profile repeat.
 TASK-31966 stays open. The complete and incomplete traces and 80 verified
 hashes are local under `/private/tmp/pr3536-inspector-audit-CL8BfeVQ`.
+
+### Scroll versus idle generation-two collection
+
+Three paired runs used frozen source `f497f8d3e9`, Terminal.app 470.2
+at 120×50, the same sealed corpus and the same two Active priming
+switches. They opened `perf-00000` and observed the full 13 seconds.
+A performed the existing PageUp/PageDown round trip after the usable
+frame. B issued no scroll keys. Execution order was A1, B1, B2, A2,
+A3, B3. The 18-CPU host's one-minute load ranged from 34.97 to 47.47.
+The observer timed main-thread generation-two callbacks, identified calls
+under the existing refreeze and compaction entry points, and recorded
+counts from the collector. It added no collection calls.
+
+| Run | Busy paint (ms) | Original max gap (ms) | Full max gap (ms) | Compaction start after Return (ms) | Compaction (ms) | Post-usable gen-2 total (ms) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| A1 | 59.91 | 151.43 | 392.48 | 8866.57 | 341.84 | 394.07 |
+| B1 | 52.91 | 113.13 | 355.78 | 6742.20 | 306.59 | 340.65 |
+| B2 | 57.08 | 127.60 | 392.75 | 6792.87 | 344.82 | 344.82 |
+| A2 | 57.45 | 148.98 | 388.61 | 8767.99 | 336.96 | 396.77 |
+| A3 | 54.68 | 133.03 | 350.28 | 8568.88 | 300.64 | 338.60 |
+| B3 | 53.40 | 140.88 | 355.99 | 6828.03 | 312.14 | 348.24 |
+
+The largest gap in every arm contained the entire explicit
+`compact:conversation_painted` pass. The scroll runs started that
+pass 4.98 seconds after returning to the tail. The idle controls
+also compacted, about 1.74–2.12 seconds earlier from Return in the
+matched pairs. Scroll minus idle post-usable GC time was +53.42,
++51.95, and −9.64 ms. The largest gap increased in one pair. These
+observations identify the common compaction and its timing, with
+no consistent increase in the largest stall attributable to scrolling.
+All six retained exact identity, tabs, composer focus, and ordinary
+retirement with zero private DB descriptors. The scroll arms also
+verified the oldest and tail frames. Busy paint passed in all six.
+Both loop windows exceeded 50 ms in all six.
+
+One separate idle profile used weak references to watch the actual
+viewport owners and counted GC-tracked objects around the app's
+existing unfreeze call. The cold switch retained the outgoing viewport
+and unmounted the older one. All 51 observed rows in the evicted
+viewport were still frozen just before compaction and all 51 weak
+references cleared during the original compaction. The retained
+viewport and its 51 rows stayed live. The observer counted 143,433
+unfrozen tracked objects before the pass and 802,748 tracked objects
+after unfreeze, including a prior frozen set of 659,308. The app's
+full pass reclaimed 64,261 objects in that profile. These counts
+show the whole-heap scope of the pass, without attributing its CPU
+time to the sampled rows.
+
+One earlier ownership trace marked stranded debt at a warm transition
+that kept the outgoing viewport attached with its rows and performed
+no viewport retirement on that transition. That notification uses a
+conversation key and freeze epoch. It does not distinguish retention
+from actual retirement. The later cold eviction in the completed
+census gives the existing compactor real frozen work, so correcting
+only the earlier notification would not establish a cold-latency fix.
+
+The first two heap attempts failed to capture the complete original
+compaction with the type census installed. Their receipts and valid
+pre-compaction ownership events are retained. The completed diagnostic
+used raw object counts instead. All heap attempts are excluded from the
+timing comparison. A runner path typo also failed before launching a
+timing arm. TASK-31966 stays open. All results and 194 verified hashes
+are local under `/private/tmp/pr3536-scroll-gc-cah2qeAs`.
