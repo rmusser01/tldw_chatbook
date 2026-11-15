@@ -77,6 +77,7 @@ COPY_BACKUP_OWNER_IDS = (
     "recovery.rag_indexing",
     "recovery.recovered_media",
     "recovery.plugins.registry",
+    "recovery.personal_context.repository",
     "recovery.files.tts",
     "recovery.operations.workspaces",
     "recovery.operations.agent_runs",
