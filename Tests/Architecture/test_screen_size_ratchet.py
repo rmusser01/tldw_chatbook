@@ -379,6 +379,7 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-11-12, TASK-33620.8.3 re-measured after rebasing onto dev (owner rule:
     #: exact): dev's 24,568/742 + 4 lines (the one-time citation-records question
     #: asked after count discovery) -> 24,572/742.
+    #: 2026-11-15: re-measured after rebasing onto dev 2ff0e9a5e5 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24569/742 -> 24563/742.
     "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24632, 742),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
