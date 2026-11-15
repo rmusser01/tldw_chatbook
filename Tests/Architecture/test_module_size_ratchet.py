@@ -372,7 +372,9 @@ _BUDGETS: dict[str, int] = {
     # the measurement after the 2026-11-12 rebase.
     # 2026-11-14, TASK-40322 (owner size waiver): clearing the stale poll
     # gate (+1, 16,878 -> 16,879).
-    "tldw_chatbook/UI/Screens/personas_screen.py": 16879,
+    # 2026-11-13, TASK-40304 (same rule): the storage-busy import copy
+    # (+3, 16,879 -> 16,882).
+    "tldw_chatbook/UI/Screens/personas_screen.py": 16882,
     # Roleplay frame B1: recipient ceiling for the moved header code (spec 5.4).
     # Roleplay frame B1 (TASK-33910.2), owner decision 2026-10-04 ("expand the
     # limits"), applied 2026-10-09: the final-review fix that puts a name and a

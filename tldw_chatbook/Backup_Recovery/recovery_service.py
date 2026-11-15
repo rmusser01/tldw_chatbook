@@ -88,6 +88,8 @@ _OWNER_LABELS = {
     "external.files": "External files",
     "persona.assets": "Persona artwork",
     "persona.visual_identity_builtin": "Bundled persona artwork",
+    "persona.visual_identity": "Reaction artwork",
+    "persona.actor_packs": "Actor Pack persona artwork",
     "chat.dictionaries": "Chat dictionaries",
     "runtime.source_state": "Runtime settings",
     "eval.definitions": "Evaluation definitions",

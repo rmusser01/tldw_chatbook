@@ -1771,3 +1771,11 @@ counts `os.open`, not `lstat`. Its macOS `os_opens` rows therefore rise while
 total filesystem calls fall: trace GC pass goes from 54 to 110, and admissions
 are unchanged. Re-pinning that macOS row is an owner decision recorded in
 TASK-33620.15.47. The Linux rows cannot change, because Linux keeps the fallback.
+
+### 2026-11-13 note (TASK-40304): Actor Pack activation admission
+
+`ActorPackActivationService.activate` holds ordinary storage admission on both trees it publishes into (`visual_identities/actor_packs/<digest>/` and `actor_packs/<digest>/`) from before its first write through its commit or the cleanup of its own files. It follows the fixed-root precedent above (TASK-35582) and adds no source bridge: the two trees' rows commit through the existing ChaChaNotes core operation, and the published files are content-addressed, private and owned by this one call.
+- A capture's or restore's local pause refuses a new activation (`actor_pack_import_storage_unavailable`) before it writes, and the pause's drain waits for an activation already inside.
+- A failure before commit, including a store read the pause refuses, removes the attempt's own files before the lease closes, so a drain never completes over an uncommitted asset.
+- After the persona commit nothing removes files: a refused intent cleanup (a pause beginning in that window) returns the committed actor with `cleanup_pending`, and startup `recover()` finishes the committed intent if the persona store is unchanged; a persona edit in between leaves it quarantined (`authority_mismatch`), and later activations then refuse `actor_pack_creation_blocked` (existing coordinator rule).
+- Rejected: registering activation as a Persona Visual or Shared Visual Identity producer. Those bridges authenticate their own modules' callsites and candidate objects; activation has neither, and a third copy of that machinery buys no stronger guarantee for immutable files that one call creates and removes.

@@ -184,7 +184,10 @@ class PersonaActorPackCoordinator:
             self.repository.cleanup_persona_intent(
                 intent.intent_id, expected_state="committed"
             )
-        except (ActorPackRepositoryError, ValueError):
+        except Exception:
+            # Committed: any failure here (a storage pause included) only
+            # leaves the intent for startup recover(), which finishes it if
+            # the persona store is unchanged and else quarantines it.
             return PersonaActorPackCreationResult(identity, cleanup_pending=True)
         return PersonaActorPackCreationResult(identity, cleanup_pending=False)
 

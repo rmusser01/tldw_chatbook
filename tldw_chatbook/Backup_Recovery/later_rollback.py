@@ -628,6 +628,19 @@ def _preserved_snapshot_members(source, archive, target):
     return preserved
 
 
+# Tree owners whose whole root a restore may create, and a later rollback may
+# retire again after reobserving it. TASK-40305 added the Actor Pack and
+# reaction trees, which a restore creates in a profile that never had them.
+_CREATED_TREE_ROOT_OWNERS = frozenset(
+    {
+        "persona.visual_identity_builtin",
+        "eval.definitions",
+        "persona.actor_packs",
+        "persona.visual_identity",
+    }
+)
+
+
 def _builtin_sources(plan):
     return tuple(
         item
@@ -644,7 +657,7 @@ def _stage_read_sources(plan):
     roots = {
         item.logical_id: item
         for item in plan.target.items
-        if item.owner in {"persona.visual_identity_builtin", "eval.definitions"}
+        if item.owner in _CREATED_TREE_ROOT_OWNERS
         and item.status == "included_directory"
         and item.metadata is not None
         and item.metadata.parent_id is None
@@ -1374,7 +1387,8 @@ def _created_persona_subtree(
 def _created_destination_target(
     journal, original, prepared, rows, target, *, session=None, config_files=()
 ):
-    """Reobserve only committed inactive builtin/eval roots created by this copy."""
+    """Reobserve only committed builtin, Actor Pack, reaction or eval roots
+    (and nested Persona packs) created by this copy."""
     from pydantic import TypeAdapter
 
     from tldw_chatbook.Evals.recovery import _DefinitionsAdapter
@@ -1435,10 +1449,10 @@ def _created_destination_target(
             raise ValueError("local_snapshot_absence_unclassified")
         owner = owners.get(item.owner)
         if not (
-            item.owner == "persona.visual_identity_builtin"
-            and type(owner) is _Assets
-            or item.owner == "eval.definitions"
-            and type(owner) is _DefinitionsAdapter
+            item.owner in _CREATED_TREE_ROOT_OWNERS
+            and type(owner) is (
+                _DefinitionsAdapter if item.owner == "eval.definitions" else _Assets
+            )
             or active_persona
             and type(owner) is _Assets
         ):

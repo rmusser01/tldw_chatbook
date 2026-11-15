@@ -131,7 +131,9 @@ as well. Refusals name the file: "{file} is larger than 10 MB; nothing was
 imported." (cards, lore books and dictionaries; packs keep their own
 limits), "{file} is not a Roleplay file; nothing was imported.", "{file}
 could not be imported: {reason}". A second Import while one runs says "An
-import is already in progress."
+import is already in progress." Activating a reviewed Actor Pack while a
+backup or restore is running adds nothing and says "Backup or restore is
+using this profile. Import again when it finishes."
 
 Import never asks about unsaved edits. When nothing is unsaved, Roleplay
 still shows, and you have not done anything newer since you picked the
