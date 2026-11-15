@@ -370,7 +370,7 @@ moved bodies for every ``self.<attr>`` load/store AND every
 state fields and the movers themselves -- **90 names** -- and then adding
 **2 more the walk cannot see**, for **92**, every one pinned in
 ``test_media_controller_binds_every_name_its_moved_bodies_use``. That pin
-holds **92** since TASK-36952.3.2 (measured: 16 framework services, the 18
+holds **92** since TASK-36952.3.2 (measured: 16 framework services, the 19
 state accessors of groups (b)/(b')/(c), 29 group-(a) helpers and 28 group-(e)
 callables):
 
@@ -389,7 +389,7 @@ callables):
    including the five review-set entry points the One Home Rule kept on the
    screen (``_active_review_set_banner``, ``_review_dismiss_receipt_name``,
    ``_review_selected_worker``, ``_review_set_picker_worker``,
-   ``_review_these_worker``, ``_walk_active_review_set``); (b) 11 shared
+   ``_review_these_worker``, ``_walk_active_review_set``); (b) 12 shared
    shell state accessors this cluster READS and never writes; (b') **5 it
    also WRITES** (``_library_selected_row_id``,
    ``_library_notes_programmatic_focus_target``,
