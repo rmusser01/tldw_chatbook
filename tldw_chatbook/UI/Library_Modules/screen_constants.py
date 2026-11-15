@@ -590,3 +590,31 @@ _ANALYZE_ORIGIN_IMPORT = "import"
 # the person looking at the row: nothing happened to it.
 _TRASH_PERMANENT_DELETE_FAILURE_COPY = "Could not delete this media item permanently."
 _TRASH_RESTORE_FAILURE_COPY = "Could not restore this media item."
+
+
+# --- relocated from ``library_screen.py`` by TASK-36952.3.5: the three
+# --- bulk-Analyze constants the moved analysis bodies read as bare module
+# --- globals, moved verbatim (comments included). ``library_screen.py``
+# --- imports them back, as it does every name here.
+
+# task-28007 AC#4: ONE exclusive worker group for the Select-mode bulk
+# Analyze run (and its Skip/Overwrite/Retry re-runs), so a second gesture
+# can never interleave two runs over the same ids.
+_ANALYZE_SELECTED_WORKER_GROUP = "library_media_analyze_selected"
+# task-28007 AC#2: the catch-all reason an ``on_item_done`` hook reports for
+# a failed item that raised no exception (fix round 1, I-1: a RAISED
+# exception's own ``str(exc)`` is used instead -- see the loop in
+# ``_analyze_library_media_selection``). Covers the no-exception failure
+# branches inside ``_analyze_one_library_media_item``/
+# ``_generate_library_media_analysis``/``_save_library_media_analysis``
+# (empty content, a provider that returned nothing, a failed save) without a
+# signature change to any of their bool-returning contracts -- all three
+# ultimately mean the same thing from here: no analysis exists for this item
+# now.
+_ANALYZE_ITEM_FAILED_REASON = "analysis did not persist"
+# task-28007 (Qodo review round, PR #2400 #3): the ``on_item_done`` reason
+# recorded for an id the AC#3 partition pass auto-skips (an Import-run id
+# that already carries an analysis) rather than running -- ``_apply_
+# analyze_outcome`` (``library_ingest_state.py``) reads this to paint
+# "already analyzed" instead of the generic "analyzed" receipt.
+_ANALYZE_AUTO_SKIP_REASON = "already analyzed"
