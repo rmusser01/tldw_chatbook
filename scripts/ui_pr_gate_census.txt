@@ -3106,3 +3106,8 @@ Tests/UI/test_console_received_intent_feedback.py::test_actual_send_paints_sendi
 Tests/UI/test_library_file_notes_git.py::test_a_git_row_fit_during_partial_removal_ends_quietly
 # TASK-41248: native partial-unmount callback regression and live-row controls.
 Tests/UI/test_library_git_row_shutdown.py
+# TASK-41125 (2026-11-15): the known-profiles backup review, red on dev in no
+# lane until the builtin visual identity owner kept its root for a profile
+# with no database yet (serial with the lane's flags 24.3 s, 18.1 s of call,
+# load 104-111).
+Tests/UI/test_backup_known_profiles.py

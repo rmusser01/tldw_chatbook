@@ -613,6 +613,9 @@ RECOVERED_SUITES_TARGETS = (
     # TASK-40323: the first-run wizard's subscription-readiness file
     # (sandboxed), which ran on no lane.
     "Tests/Wizards/test_first_run_subscription_readiness.py",
+    # TASK-41112: the Actor Pack export goldens, red on dev in no lane before.
+    # Sandboxed, ~83 s serial; with the sandboxed suites.
+    "Tests/Actor_Packs/test_actor_pack_export.py",
     # TASK-39142: bootstrap_profile since TASK-38111. TASK-39049's keyword-leg
     # pool retirement file runs beside its four siblings.
     "Tests/Prompt_Management/test_prompt_improvement_service.py",
@@ -701,6 +704,21 @@ BACKUP_OWNER_SUITE_TARGETS = (
     "Tests/Backup_Recovery/test_core_owners.py",
     "Tests/Backup_Recovery/test_operational_owners.py",
     "Tests/Backup_Recovery/test_publication_crashes.py",
+    # TASK-41125: the restored-startup gating and manual extraction files,
+    # red on dev in no lane before.
+    "Tests/Backup_Recovery/test_activation_startup.py",
+    "Tests/Backup_Recovery/test_inert_extraction.py",
+    # TASK-41118: round 14's Personal Context backup, restore, re-encryption
+    # and relink tests, and the activation network sync file, on no PR lane.
+    "Tests/Backup_Recovery/test_activation_network_sync.py",
+    "Tests/Backup_Recovery/test_portable_relocation.py",
+    "Tests/Backup_Recovery/test_restore_data_groups.py",
+    "Tests/Backup_Recovery/test_credentials.py",
+    "Tests/Backup_Recovery/test_data_groups.py",
+    "Tests/Personal_Context/test_repository.py",
+    "Tests/Personal_Context/test_runtime_policy.py",
+    "Tests/Personal_Context/test_service.py",
+    "Tests/App/test_personal_context_wiring.py",
 )
 #: Red at dev 26b2e677dd, outside TASK-40306's five files; TASK-40307's notes
 #: give each node's first error. Remove a node when it is fixed.
@@ -711,7 +729,6 @@ BACKUP_OWNER_SUITES_DESELECTED = (
     "Tests/Backup_Recovery/test_later_rollback_credential_ui.py::test_f9_later_rollback_requires_explicit_credential_review",
     "Tests/Backup_Recovery/test_inventory.py::test_normal_config_and_pure_resolvers_agree",
     "Tests/Backup_Recovery/test_inventory.py::test_fresh_process_discovery_imports_no_bootstrap_or_services_and_changes_nothing",
-    "Tests/Backup_Recovery/test_inventory.py::test_custom_db_and_disabled_features_are_not_external_or_unused",
     "Tests/Backup_Recovery/test_core_owners.py::test_factory_discovery_and_schema_policy_are_runtime_independent",
 )
 DREAMS_ADMISSION_TARGETS = (

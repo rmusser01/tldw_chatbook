@@ -513,8 +513,8 @@ all existing selectors remain exactly once across the three required profiles.
 job of its own, `backup-owner-suites-dev` ("Backup_Recovery owner suites (push
 to dev)"), runs the 13 Backup_Recovery owner suites that ran on no lane (27 of
 their nodes had gone red on dev unseen, TASK-40306) and the restore-journal
-file, whole, with 8 red nodes deselected by name (11 at first; review
-r14bk-rev1 re-admitted three, TASK-40307), on every push to dev and
+file, whole, with 7 red nodes deselected by name (11 at first; review
+r14bk-rev1 re-admitted three, TASK-40307; TASK-41116 one more), on every push to dev and
 never on a pull request, like `library-shell-dev`. It is not in the required
 check's `needs`, so no PR runner and no PR verdict: the counts above are
 unchanged (30 concurrent test runners, 31 with perf-guard, 48 eligible test
@@ -523,6 +523,15 @@ jobs per PR). A dev push starts one more job, about 40 runner-minutes. It runs
 its two rollback files alone would take over an hour. Three local runs took
 31-43 min at load 22-57 on a shared 18-core host, so its step cap is 50 min
 and its job cap 55; the first CI runs should set both.
+
+2026-11-15 (round 15, TASK-41118 and TASK-41125): the same job also runs
+eleven sandboxed files that ran on no lane: two Backup_Recovery files of
+TASK-41125 and nine Personal Context backup/restore files of TASK-41118
+(five Backup_Recovery, `Tests/Personal_Context`'s three and
+`Tests/App/test_personal_context_wiring.py`). Its caps rise by 20 min to 70
+(step) and 75 (job). TASK-41112's Actor Pack export file joins the existing
+`recovered-suites` step and TASK-41125's known-profiles file the UI census
+tail. None of this adds a job or a runner: the counts above are unchanged.
 
 ## Amendment (2026-11-15, TASK-39144): 38 shards, 19 at once
 
