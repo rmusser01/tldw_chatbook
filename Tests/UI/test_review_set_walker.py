@@ -1637,11 +1637,11 @@ def test_review_selected_handler_shares_the_one_id_coercion():
         _review_selected_worker=worker,
         run_worker=lambda work, **kwargs: started.append({"work": work, **kwargs}),
     )
-    fake._media_controller = _ReviewSelectedControllerFake(fake)
+    # TASK-36952.2: the controller seam is called directly, not through an
+    # attribute on the fake screen.
+    controller = _ReviewSelectedControllerFake(fake)
 
-    fake._media_controller.handle_library_media_review_selected(
-        SimpleNamespace(stop=lambda: None)
-    )
+    controller.handle_library_media_review_selected(SimpleNamespace(stop=lambda: None))
 
     assert captured["ids"] == (7, 3)
     assert len(started) == 1, started
@@ -1662,10 +1662,10 @@ def test_review_selected_handler_starts_nothing_when_no_id_coerces():
         _review_selected_worker=lambda backing_ids: "unused",
         run_worker=lambda work, **kwargs: started.append({"work": work, **kwargs}),
     )
-    fake._media_controller = _ReviewSelectedControllerFake(fake)
+    # TASK-36952.2: the controller seam is called directly, not through an
+    # attribute on the fake screen.
+    controller = _ReviewSelectedControllerFake(fake)
 
-    fake._media_controller.handle_library_media_review_selected(
-        SimpleNamespace(stop=lambda: None)
-    )
+    controller.handle_library_media_review_selected(SimpleNamespace(stop=lambda: None))
 
     assert started == []

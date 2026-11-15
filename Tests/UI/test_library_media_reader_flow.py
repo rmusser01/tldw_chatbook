@@ -1468,8 +1468,9 @@ class _MoreHandlerControllerFake:
     """The one production hop the More delegator makes, reproduced minimally.
 
     (wave-7 merge) ``handle_library_media_reader_more`` moved to
-    ``LibraryMediaController``; the screen keeps a one-line delegator. The
-    controller reaches the session through its GENERATED state shim and
+    ``LibraryMediaController``; the screen keeps a one-line delegator, which
+    the tests no longer call (TASK-36952.2). The controller reaches the
+    session through its GENERATED state shim and
     ``_after_library_media_viewer_sync`` through its group-(e) late-binding
     property, so both are reproduced here -- the REAL controller body still
     runs, against this file's own screen fake. The alternative (reverting the
@@ -1537,13 +1538,11 @@ def test_more_toggle_chains_the_restore_already_queued_on_the_viewer():
     fake._queue_after_library_media_viewer_recompose = MethodType(
         LibraryScreen._queue_after_library_media_viewer_recompose, fake
     )
-    # (wave-7 merge) the handler itself moved; the screen delegates to the
-    # controller, so the fake carries the same one hop.
-    fake._media_controller = _MoreHandlerControllerFake(fake)
+    # TASK-36952.2: the handler lives on the controller, so the test calls it
+    # there rather than through the screen's one-line delegator.
+    controller = _MoreHandlerControllerFake(fake)
 
-    LibraryScreen.handle_library_media_reader_more(
-        fake, SimpleNamespace(stop=lambda: None)
-    )
+    controller.handle_library_media_reader_more(SimpleNamespace(stop=lambda: None))
 
     assert fake._media_state.reader_session.more_open is True
     assert calls == ["sync"]
@@ -1627,13 +1626,11 @@ def test_more_toggle_without_a_viewer_falls_back_to_the_screen_seam():
     fake._queue_after_library_media_viewer_recompose = MethodType(
         LibraryScreen._queue_after_library_media_viewer_recompose, fake
     )
-    # (wave-7 merge) the handler itself moved; the screen delegates to the
-    # controller, so the fake carries the same one hop.
-    fake._media_controller = _MoreHandlerControllerFake(fake)
+    # TASK-36952.2: the handler lives on the controller, so the test calls it
+    # there rather than through the screen's one-line delegator.
+    controller = _MoreHandlerControllerFake(fake)
 
-    LibraryScreen.handle_library_media_reader_more(
-        fake, SimpleNamespace(stop=lambda: None)
-    )
+    controller.handle_library_media_reader_more(SimpleNamespace(stop=lambda: None))
 
     assert fake._media_state.reader_session.more_open is True
     assert len(calls) == 2 and calls[0] == "sync"
