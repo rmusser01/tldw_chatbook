@@ -42,6 +42,19 @@ interpreting small lifecycle durations. A padded control supports drain research
 it does not qualify a production workaround or another OS. Evidence:
 `Docs/Testing/watchlist-article-audio-qualification.md`.
 
+**Windows fixed-tail follow-up.** Repeated qualification later exposed two harness
+traps. Eight-second helper preparation deadlines censored playback, and a Stop
+clock measured from launch could fire before audio began. Separate bounded
+preparation from independently observed playing. Synchronous live matching took
+up to 62.5 ms; a requested 10 ms recorder buffer was actually 22 ms and reported
+discontinuity. A 100 ms buffer with unchanged 10 ms emitted reads improved the
+focused control but the repeated run still contained unmatched/drifting captures
+and a noisy/discontinuous case. Record actual buffer size, warnings, backlog,
+matcher rejection and partial receipts. Passing edge correlations alone do not
+certify a capture with gaps. Two same-file bookmark resumes passed, but the
+three-round workaround remained unqualified; do not relax the oracle or discard
+the other rows to claim success.
+
 ## On Windows, bind the interpreter rather than the venv launcher; separate startup from fixture work (TASK-34569, 2026-11-08)
 
 **Incident.** A private Console approval probe treated the PID returned by the venv launcher as the Python interpreter PID. The interpreter was an actual child of that launcher. A guarded bootstrap with a held, authenticated interpreter handle and a nonce/PID acknowledgment reached normal closure. In the first App attempt with that ownership, workspace binding began with about 16 seconds left on a shared startup deadline and was censored there. Under a separate fixture phase, a later binding completed in about 27 seconds and exposed a real config identity refusal. Another launch hit its original startup deadline before the mounted-context marker, even though it had logged "on_mount completed in". That log is emitted before the end of the App's mount body.
