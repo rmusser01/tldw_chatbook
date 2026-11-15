@@ -6,9 +6,8 @@ run roleplay characters with lorebooks, schedule watchlists, and drive
 agent/tool workflows — stored locally in SQLite by default (some surfaces
 can sync with a tldw server you configure).
 
-> This guide tracks the **dev** branch. Each fully written page carries a
-> "Verified against dev @ `<sha>`" stamp (stub pages are marked 🚧 instead);
-> if your build is older, screens may differ slightly.
+> This guide tracks the **dev** branch; stub pages awaiting a full write-up
+> are marked 🚧. If your build is older, screens may differ slightly.
 
 ## Quick start — your first five minutes
 
@@ -47,7 +46,7 @@ can sync with a tldw server you configure).
 | F4 | [Settings](settings.md) | Global app preferences, appearance, accounts, and storage. |
 | F5 | [Research](research_workspace.md) | Authority-explicit research workspaces, plus navigation to durable Research Runs. |
 | F7 | [Meetings](meetings.md) | Record a call or a room with a live labelled transcript, then file it in the Library. |
-| F8 | [Plugins](plugins.md) 🚧 | Installed plugins, source-qualified browsing, and marketplaces. |
+| F8 | [Plugins](plugins.md) | Installed plugins, source-qualified browsing, and marketplaces. |
 | F9 | [Kanban](kanban.md) | A keyboard-first board of columns and cards over the local Kanban store. |
 
 Lab, Logs, Settings, Research, Meetings, Plugins, and Kanban sit past the ten
