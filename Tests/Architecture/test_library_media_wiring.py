@@ -701,17 +701,17 @@ _MEDIA_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
     # writes a field on the Notes state object
     "_notes_controller",
     "_notes_state",
-    # task-32350 (critique #10 review, finding 10): THREE more screen names
-    # are read by this controller and are deliberately NOT listed --
-    # `_library_loaded`, `_library_lookup_error` and `_local_source_counts`,
-    # reached through `self._screen` by `_library_media_unfiltered_total`.
-    # They are absent because this census asserts every listed name is a
-    # PROPERTY on the controller, and those three have no accessor: the
-    # injection site (`library_screen.py`'s `LibraryMediaController(...)`
-    # call) was outside the branch that needed them. Recorded here so the
-    # list still reads as a complete account of this controller's reach.
-    # (TASK-36952.3.2 bound `_local_source_counts` above for its own movers;
-    # `_library_media_unfiltered_total` still reads all three through
+    # task-32350 (critique #10 review, finding 10): more screen names are
+    # read by this controller and are deliberately NOT listed --
+    # `_library_loaded`, `_library_lookup_error` and
+    # `_local_source_total_known`, reached through `self._screen` by
+    # `_library_media_unfiltered_total`. They are absent because this census
+    # asserts every listed name is a PROPERTY on the controller, and those
+    # have no accessor: the injection site (`library_screen.py`'s
+    # `LibraryMediaController(...)` call) was outside the branch that needed
+    # them. Recorded here so the list still reads as a complete account of
+    # this controller's reach. (task-32350 also named `_local_source_counts`,
+    # which TASK-36952.3.2 bound above; that method still reads it through
     # `self._screen`.)
     # -- shared shell state this cluster also WRITES (getter + setter) (5)
     "_library_canvas_resync_pending",
@@ -722,7 +722,7 @@ _MEDIA_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
     # -- the 2 prior-extracted media WIRING controller instances (2)
     "_library_media_browse_controller",
     "_library_media_trash_browse_controller",
-    # -- general Library-wide shell helpers, named constructor callables (24)
+    # -- general Library-wide shell helpers, named constructor callables (33)
     "_acknowledge_library_destination_change",
     "_active_review_set_banner",
     "_apply_library_open_item_surface",

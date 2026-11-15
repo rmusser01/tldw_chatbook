@@ -1171,9 +1171,9 @@ def _sync_library_canvas(
             ) -> None:
                 # Resolved at fire time, not queue time: the receiver here
                 # can be one of the seven forwarding controllers (a bare
-                # ``self``), and only the notes/prompts controllers expose
-                # the guarded continuation -- an armed channel on a
-                # receiver without it simply does not re-request from this
+                # ``self``); of those only the media controller exposes the
+                # guarded continuation (TASK-36952.3.3) -- an armed channel
+                # on a receiver without it does not re-request from this
                 # seam (the screen-level retry chain still covers it).
                 focus_if_current = getattr(
                     _screen, "_focus_library_list_entry_if_current", None

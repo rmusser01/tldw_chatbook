@@ -640,3 +640,51 @@ def test_programmatic_media_restore_releases_only_its_failed_focus_marker():
         expected = later_owner if outcome == "later-owner" else None
         assert attempt._library_notes_programmatic_focus_target is expected, outcome
         assert attempt.focus_calls == int(outcome != "already-focused"), outcome
+
+
+# --- TASK-36952.3.3: controller-hosted Media syncs re-request armed focus -----
+
+
+@pytest.mark.asyncio
+async def test_controller_hosted_media_sync_re_requests_an_armed_list_entry_focus(
+    tmp_path, monkeypatch
+):
+    """A Media canvas sync hosted by the media controller re-requests an armed
+    list-entry focus with the arm's generation, as a screen-hosted sync does.
+
+    ``_sync_library_canvas`` probes its host for
+    ``_focus_library_list_entry_if_current``. TASK-36952.3.3 bound that name on
+    ``LibraryMediaController`` for its moved browse sync, so the controller's
+    other Media syncs (sort, sort choice, select all, select clear, delete
+    selected, cancel bulk delete, bulk-delete confirm, receipt dismiss) now
+    queue the re-request after the recompose too. Without the binding the
+    probe finds nothing and no re-request is queued.
+    """
+    from tldw_chatbook.UI.Library_Modules.canvas_sync import _sync_library_canvas
+
+    host, profile = _host(tmp_path)
+    async with host.run_test(size=SIZE) as pilot:
+        screen = await _library(host, pilot)
+        await _rail(screen, pilot, "media")
+        await _wait_for_selector(screen, pilot, MEDIA_ROW)
+        await screen.workers.wait_for_complete()
+        await pilot.pause()
+        requested: list[int] = []
+        monkeypatch.setattr(
+            screen, "_focus_library_list_entry_if_current", requested.append
+        )
+        screen._library_pending_list_entry_focus = True
+        generation = screen._library_list_entry_focus_generation
+
+        _sync_library_canvas(screen._media_controller, "media")
+        await _until(
+            pilot,
+            lambda: bool(requested),
+            "the armed list-entry re-request after the controller-hosted sync",
+            timeout=5.0,
+        )
+        for _ in range(4):
+            await pilot.pause()
+
+        assert requested == [generation]
+    profile.db.close_connection()
