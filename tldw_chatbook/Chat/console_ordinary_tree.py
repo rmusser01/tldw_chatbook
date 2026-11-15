@@ -656,6 +656,13 @@ def _capture_maximum(tree, *, hook_read=None):
                 and (goal_bindings is None or goal_bindings[binding.binding_id])
             ):
                 writes.append(scope)
+    if tree.source is not None and tree.source.root is not None:
+        # The run log's root is picked from every binding; a goal may have
+        # dropped it above. Keep it declared, as a read (its per-run directory
+        # is private storage).
+        scope = WorktreeScope(tree.source.root, True, tree.source.root_identity)
+        if scope not in reads:
+            reads.append(scope)
     return WorktreeFootprint(tuple(reads), tuple(writes), opaque)
 
 

@@ -126,6 +126,7 @@ async def exercise():
                     project = Path(os.environ["XDG_DATA_HOME"]).parent / name
                     project.mkdir()
                     registry.add_folder_binding("shared", project, allow_write=True)
+                    facts.setdefault("binding_roots", []).append(str(project.resolve()))
                 state = ProjectInstructionControlState.legacy_disabled()
                 first, other = (
                     store.create_session(workspace_id="shared", project_instruction_state=state)
@@ -210,7 +211,8 @@ def test_default_config_second_chat_reaches_provider_while_first_reply_runs(
         # log's per-run directory is private storage, not a project write.
         # The real composition still binds and replies (first_runs).
         assert first["local_writes"] == [], why
-        assert not any(path.endswith("project") for path in first["writes"]), why
+        assert len(facts["binding_roots"]) == 2, why
+        assert not set(first["writes"]) & set(facts["binding_roots"]), why
     elif surface == "full_tools":
         # Full agent tools still count Canvas and chatbook's MCP tools up front.
         assert first["opaque"], why

@@ -37,6 +37,11 @@ def widen_refusal(tool_name, refused):
             "running: it needs the workspace to itself. Continue without it, "
             "or retry after that activity finishes."
         )
+    if str(refused) == "ordinary_turn_changed":
+        return (
+            f"{tool_name} is unavailable: this chat changed after its turn "
+            "began. Continue without it."
+        )
     return f"{tool_name} is unavailable: this turn has already closed."
 
 

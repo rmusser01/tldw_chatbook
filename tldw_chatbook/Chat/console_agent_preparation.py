@@ -841,6 +841,10 @@ def _prepare_native_reply(
             ordinary_tree.widen()
         except CapacityRefused as refused:
             return native_host.ToolResult(ok=False, error=widen_refusal(name, refused))
+        except RuntimeError:  # check(): the chat or its binding changed
+            return native_host.ToolResult(
+                ok=False, error=widen_refusal(name, "ordinary_turn_changed")
+            )
         return None
 
     install_skill_tool = None

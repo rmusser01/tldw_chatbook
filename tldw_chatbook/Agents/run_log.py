@@ -657,8 +657,12 @@ class RunLogWriter:
                 {"context": resolve_sensitive_context()} if can_share_context() else {}
             )
             base = root / dir_name
-            # Verify containment before creating any directories.
-            if not is_within(base, root, **(context_kwargs if can_share_context() else {})):
+            # Verify containment before creating any directories. `is_within`
+            # resolves links, so a linked `base` inside the root would pass
+            # it; never create or write anything through a link.
+            if base.is_symlink() or not is_within(
+                base, root, **(context_kwargs if can_share_context() else {})
+            ):
                 logger.warning("run log: base directory escapes root; logging disabled")
                 self._active = False
                 return
@@ -668,13 +672,15 @@ class RunLogWriter:
                 self._migrate_legacy_dir(root, legacy_dir_name, base)
             base.mkdir(parents=True, exist_ok=True)
             gitignore = base / ".gitignore"
-            if not gitignore.exists():
+            if not os.path.lexists(gitignore):
                 # Created only if absent: writing into a user's repository
                 # is itself a mutation.
                 gitignore.write_text("*\n", encoding="utf-8")
             run_dir = base / run_id
             # Verify containment of run_dir before creating it.
-            if not is_within(run_dir, root, **(context_kwargs if can_share_context() else {})):
+            if run_dir.is_symlink() or not is_within(
+                run_dir, root, **(context_kwargs if can_share_context() else {})
+            ):
                 logger.warning("run log: run directory escapes root; logging disabled")
                 self._active = False
                 return
@@ -751,7 +757,8 @@ class RunLogWriter:
         """
         legacy = root / legacy_name
         try:
-            if not legacy.is_dir():
+            # A link would move or merge whatever it points at.
+            if legacy.is_symlink() or dotted.is_symlink() or not legacy.is_dir():
                 return
             from tldw_chatbook.Tools.file_operation_tools import is_within
 

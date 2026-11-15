@@ -485,7 +485,10 @@ async def test_fleet_child_script_after_its_parent_runs_only_while_the_turn_is_c
         assert result.accepted, "the turn's claim outlived its child"
     else:
         assert effects == [], "the script ran after its turn stopped being current"
-        assert "Tool result for run_skill_script: ERROR" in script_result
+        assert (
+            "run_skill_script is unavailable: this chat changed after its turn began"
+            in script_result
+        ), script_result
 
 
 async def test_widened_turn_refuses_a_skill_install_after_runtime_disposal(
@@ -545,16 +548,18 @@ async def test_widened_turn_refuses_a_skill_install_after_runtime_disposal(
     assert effects == [], "the install ran after the runtime was disposed"
 
 
-async def test_retained_source_stack_defers_handles_only_to_its_own_task():
-    """A nested retention skips its handle check only inside the same task.
+async def test_retained_source_stack_leaves_handles_to_their_operation_owner():
+    """A retention inside an operation this thread owns does not check handles.
 
-    Another task's retention of the same tree, held across an await on this
-    loop thread, is not an outer stack: a handle the second task keeps still
-    fails its own check.
+    The outer ``operation_owned_connection`` owns a handle opened inside, and
+    closes it when it ends, as in a nested activation or in ``asyncio.run``
+    on a fleet child's thread. Without such an owner, a kept handle still
+    fails the retention's check.
     """
     from contextlib import contextmanager
 
     from tldw_chatbook.Agents.native_source_storage import _retained_source_stack
+    from tldw_chatbook.DB.base_db import operation_owned_connection
 
     class Tree:
         @contextmanager
@@ -564,26 +569,98 @@ async def test_retained_source_stack_defers_handles_only_to_its_own_task():
     class Database:
         def __init__(self):
             self._local = threading.local()
+            self._connection_quiescence = SimpleNamespace(is_registered=lambda c: False)
+            self.closed = 0
+
+        def close_connection(self):
+            self._local.conn = None
+            self.closed += 1
 
     tree, database = Tree(), Database()
-    entered, release = asyncio.Event(), asyncio.Event()
 
-    async def held_retention():
-        with _retained_source_stack(tree, (database,)):
-            entered.set()
-            await release.wait()
+    def owned_activation(body):
+        with _retained_source_stack(tree, (database,)) as stack:
+            stack.enter_context(operation_owned_connection(database))
+            return body()
 
-    holder = asyncio.create_task(held_retention())
-    await entered.wait()
-    try:
-        with pytest.raises(RuntimeError, match="did not return"):
-            with _retained_source_stack(tree, (database,)):
-                database._local.conn = object()  # this task keeps a handle
-    finally:
-        database._local.conn = None
-        release.set()
-    await holder
-    with _retained_source_stack(tree, (database,)):
+    def open_handle_in_activation():
+        def open_handle():
+            database._local.conn = object()
+
+        owned_activation(open_handle)
+        assert database._local.conn is not None, "the inner owner closed it"
+
+    owned_activation(open_handle_in_activation)  # a nested activation
+    assert database._local.conn is None and database.closed == 1
+
+    def fleet_thread():
+        async def builtin_tool():  # tools run in asyncio.run on that thread
+            open_handle_in_activation()
+
+        owned_activation(lambda: asyncio.run(builtin_tool()))
+        return database._local.conn
+
+    assert await asyncio.to_thread(fleet_thread) is None
+    assert database.closed == 2, "the fleet thread's owner did not close it"
+
+    with pytest.raises(RuntimeError, match="did not return"):
         with _retained_source_stack(tree, (database,)):
-            database._local.conn = object()  # the outer stack's owner closes it
-        database._local.conn = None
+            database._local.conn = object()  # no owner: the handle is kept
+
+
+async def test_goal_turn_keeps_a_read_scope_on_the_run_log_root(
+    ordinary_host, monkeypatch
+):
+    """The run log's root comes from every binding; a goal may name another.
+
+    The goal's filter drops the run-log root's own binding scope, so the
+    capture keeps a read scope for it (never a write: the per-run run-log
+    directory is private storage).
+    """
+    from tldw_chatbook.Agents import automatic_work_runtime
+    from tldw_chatbook.Chat import console_ordinary_tree as ordinary
+    from tldw_chatbook.Chat.console_project_instructions import (
+        ProjectInstructionControlState,
+    )
+
+    h = ordinary_host
+    h.registry.create_workspace(workspace_id="goal", name="Goal")
+    roots = []
+    for name in ("log-root", "goal-root"):
+        root = h.tmp_path / name
+        root.mkdir()
+        binding = h.registry.add_folder_binding("goal", root, allow_write=True)
+        roots.append((root.resolve(), binding.binding_id))
+    (log_root, _), (goal_root, goal_binding) = roots
+    request = SimpleNamespace(
+        tool_scope=None,
+        binding=SimpleNamespace(binding_id=goal_binding, access="rw"),
+        source_bindings=(),
+    )
+    goal = SimpleNamespace(goal=SimpleNamespace(request=request))
+    capture, seen = ordinary._capture_maximum, []
+
+    def goal_capture(tree, **kwargs):
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                automatic_work_runtime,
+                "current_automatic_work",
+                lambda: SimpleNamespace(goal=goal),
+            )
+            footprint = capture(tree, **kwargs)
+        seen.append((tree.source.root, footprint))
+        return footprint
+
+    monkeypatch.setattr(ordinary, "_capture_maximum", goal_capture)
+    _install(h, _RecordingGateway())
+    chat = h.store.create_session(
+        workspace_id="goal",
+        project_instruction_state=ProjectInstructionControlState.legacy_disabled(),
+    )
+    result = await h.controller.submit_draft("goal chat", session_id=chat.id)
+    assert result.accepted, result.visible_copy
+    source_root, footprint = seen[0]
+    assert source_root == log_root, "the run log did not pick the first binding"
+    reads = {scope.path for scope in footprint.reads}
+    assert {log_root, goal_root} <= reads
+    assert log_root not in {scope.path for scope in footprint.writes}

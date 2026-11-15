@@ -772,3 +772,22 @@ def test_workspace_folder_outside_the_sandbox_also_gets_dotted_and_hidden(
         "grep_files must not be able to read the run log through a "
         "genuine, non-nested bound workspace folder"
     )
+
+
+@pytest.mark.parametrize("link", [".agent-runs", "agent-runs", "agent-runs+dotted"])
+def test_bind_never_writes_through_a_linked_log_directory(root, link):
+    # TASK-40715: the run-log directory is private storage, so nothing may be
+    # created, written or moved through a link into the project's own files.
+    src = root / "src"
+    src.mkdir()
+    (src / "main.py").write_text("print()\n")
+    (root / link.split("+")[0]).symlink_to(src)
+    if link.endswith("+dotted"):
+        (root / ".agent-runs").mkdir()  # the legacy merge path
+    writer = make(root)
+    assert sorted(path.name for path in src.iterdir()) == ["main.py"]
+    if link == ".agent-runs":
+        assert not writer.is_active
+    else:
+        assert writer.log_dir == root / ".agent-runs" / "run-abc"
+        assert (root / "agent-runs").is_symlink(), "a linked legacy dir moved"

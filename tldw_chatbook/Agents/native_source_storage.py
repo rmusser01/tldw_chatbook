@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
 import inspect
-import threading
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
@@ -14,34 +12,24 @@ from tldw_chatbook.app_services import (
     read_workspace_registry,
 )
 from .activation import _sources, captured_sources, execution
-from tldw_chatbook.DB.base_db import operation_owned_connection
+from tldw_chatbook.DB.base_db import _OPERATION_OWNERS, operation_owned_connection
 from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
-
-
-_RETAINED_ON_THREAD = threading.local()
 
 
 @contextmanager
 def _retained_source_stack(tree, databases):
     """Retain the original tree until native scopes and handles return.
 
-    Inside this thread's own outer retention of the same tree, a handle opened
-    here belongs to the outer stack's operation owner, which closes it later
-    (``operation_owned_connection`` defers to the outermost owner). So a nested
-    stack checks no handles; the outer one checks them when it exits. Nesting
-    is per asyncio task: another task's retention held across an await on the
-    same loop thread is not an outer stack of this one.
+    A database whose operation this thread already owns (an outer
+    ``operation_owned_connection``, per thread like the handles) is not checked
+    here: a handle opened inside belongs to that owner, which closes it when it
+    ends. That covers a nested activation, including one inside ``asyncio.run``
+    on a fleet child's thread.
     """
-    try:
-        task = asyncio.current_task()
-    except RuntimeError:  # no running loop on this thread
-        task = None
-    held = vars(_RETAINED_ON_THREAD).setdefault("trees", [])
-    key = (tree, task)
-    nested = key in held
+    owned = getattr(_OPERATION_OWNERS, "ids", ())
     locals_and_handles = []
     for database in dict.fromkeys(db for db in databases if db is not None):
-        if nested or getattr(database, "is_memory_db", False):
+        if id(database) in owned or getattr(database, "is_memory_db", False):
             continue
         namespace = vars(database)
         local = namespace.get("_local") or namespace.get("_thread_local")
@@ -49,34 +37,28 @@ def _retained_source_stack(tree, databases):
             locals_and_handles.append((local, getattr(local, "conn", None)))
     cleanup = [False]
     body_error = None
-    held.append(key)
-    try:
-        with tree.retain_source_scope(_cleanup_state=cleanup):
-            try:
-                with ExitStack() as stack:
-                    try:
-                        yield stack
-                    except BaseException as error:
-                        body_error = error
-                        raise
-            except BaseException as error:
-                if error is body_error and all(
-                    getattr(local, "conn", None) is original
-                    for local, original in locals_and_handles
-                ):
-                    cleanup[0] = True
-                raise
-            else:
-                if not all(
-                    getattr(local, "conn", None) is original
-                    for local, original in locals_and_handles
-                ):
-                    raise RuntimeError(
-                        "original source database handle did not return"
-                    )
+    with tree.retain_source_scope(_cleanup_state=cleanup):
+        try:
+            with ExitStack() as stack:
+                try:
+                    yield stack
+                except BaseException as error:
+                    body_error = error
+                    raise
+        except BaseException as error:
+            if error is body_error and all(
+                getattr(local, "conn", None) is original
+                for local, original in locals_and_handles
+            ):
                 cleanup[0] = True
-    finally:
-        held.remove(key)
+            raise
+        else:
+            if not all(
+                getattr(local, "conn", None) is original
+                for local, original in locals_and_handles
+            ):
+                raise RuntimeError("original source database handle did not return")
+            cleanup[0] = True
 
 
 class _AgentSources:
