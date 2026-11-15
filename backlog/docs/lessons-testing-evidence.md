@@ -25646,6 +25646,12 @@ An expiry-only assertion must establish the coordinator-free render precondition
 
 **What to do.** When you add a `credential_*` issue that only discloses something left out by design, list it in `credential_policies.MANUAL_CREDENTIAL_ISSUES`, and prove the archive with a real Replace restore, not only with capture and preview tests.
 
+## A synchronous drain can prevent the retirement it awaits (TASK-41176, 2026-11-15)
+
+**Incident.** Hosted dev job 132963900278 failed the run-log owner fixture at its one-second `pause.drain` assertion; the later TTS cancellation error was cleanup fallout. A real storage lease scheduled to close on the event loop reproduced both errors: synchronous drain blocked that callback for the entire second. Matching `monitor_app`'s immediate probes and async yields passed the handoff; a lease that never retired still failed at about 1.018 seconds.
+
+**What to do.** Inspect the original child traceback before diagnosing teardown errors. When drain runs inside the pause-owning async task, let loop-owned cleanup run between immediate probes and preserve the deadline. Keep the pause on its original task/thread and repeat current-thread cache retirement as production does; moving drain into a worker changes its authority.
+
 ## Hook-review fixtures must select their captured Send continuation (#3495, 2026-11-15)
 
 **Incident.** Hosted Console P0 reported four hook-review failures while the same cold-profile cases passed locally. Waiting for actual Console arrival readiness reproduced the refusal-copy failure. The resident runtime owned one turn, `_hooks._busy` was false, and the fixture's replacement of `_prompt_queue.dispatch` was bypassed. That replacement did not select the controller continuation the regression tests intended to exercise. [Failed CI job](https://github.com/rmusser01/tldw_chatbook/actions/runs/43749012857/job/132963725227)

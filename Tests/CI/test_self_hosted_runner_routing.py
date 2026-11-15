@@ -31,6 +31,7 @@ ROUTES = [
     ("lint.yml", "gate-new", "control", "ubuntu-latest"),
     ("lint.yml", "gate-ratchet", "control", "ubuntu-latest"),
     ("derived-artifacts.yml", "library-shell-dev", "dev-test", "ubuntu-latest"),
+    ("derived-artifacts.yml", "backup-owner-suites-dev", "dev-test", "ubuntu-latest"),
     ("perf-guard.yml", "ui-latency-guardrails", "dev-test", "ubuntu-latest"),
 ]
 
@@ -106,6 +107,25 @@ def test_runner_routing(
     elif pool == "dev-test" and event == "push" and ref == "refs/heads/dev":
         expected = test_label or hosted
     assert selected == expected
+
+
+def test_controller_deadlines_allow_every_local_test_job_to_finish(workflows):
+    directory = WORKFLOWS.parents[1] / "scripts" / "ci" / "self_hosted"
+    config = yaml.safe_load((directory / "config.example.yaml").read_text())
+    pool = next(pool for pool in config["pools"] if pool["name"] == "test")
+    job_limit = int(pool["job_timeout"].removesuffix("m"))
+    drain_limit = int(pool["drain_timeout"].removesuffix("m"))
+    for workflow, job, role, _ in ROUTES:
+        if role in ("test", "dev-test"):
+            assert workflows[workflow]["jobs"][job]["timeout-minutes"] < job_limit, job
+    assert drain_limit >= job_limit
+    service = (directory / "github-qemu-runner.service").read_text()
+    stop_limit = next(
+        line.split("=", 1)[1]
+        for line in service.splitlines()
+        if line.startswith("TimeoutStopSec=")
+    )
+    assert int(stop_limit.removesuffix("m")) > drain_limit
 
 
 def test_p0_profiles_each_run_once_without_fail_fast(workflows):

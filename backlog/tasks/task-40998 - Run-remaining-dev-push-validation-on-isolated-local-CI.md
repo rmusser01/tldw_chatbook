@@ -5,7 +5,7 @@ status: In Progress
 created_date: 2026-11-14 17:57
 assignee:
 - '@codex'
-updated_date: 2026-11-14 18:06
+updated_date: 2026-11-15 23:15
 ---
 
 ## Description
@@ -16,9 +16,9 @@ Complete the owner-requested migration of development-branch CI execution to the
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 Pushes to dev route all 14 Library shell shards and the Perf Guard job to the configured disposable test pool; clearing its variable preserves hosted rollback and other event routing remains unchanged.
+- [x] #1 Pushes to dev route all 14 Library shell shards, Perf Guard and the Backup_Recovery owner suites to the configured disposable test pool; clearing its variable preserves hosted rollback and other event routing remains unchanged.
 - [x] #2 Existing test selections, isolation, latency budgets, per-test and job deadlines, Library parallelism, dependency ordering and required-status policy remain intact.
-- [ ] #3 Focused routing and workflow contracts, independent review and actual local dev-push Library and Perf Guard jobs pass before the migration is declared complete.
+- [ ] #3 Focused routing and workflow contracts, independent review and actual local dev-push Library, Perf Guard and Backup_Recovery owner jobs pass before the migration is declared complete; deployed controller and stop deadlines accommodate the longest job without changing CPU, memory, isolation or workflow budgets.
 - [ ] #4 After successful local dev qualification, a fresh full normal pull_request Derived Artifacts run on the final migration head is retained with per-attempt timing, all job records, runner/environment evidence and contention limits; tested/deployed contents match before the optimization comparison starts.
 <!-- AC:END -->
 
@@ -33,6 +33,7 @@ Reason: Extend the existing accepted runner-placement policy from PR/control wor
 3. Run focused workflow/routing contracts and independent review without local full-suite sweeps. Preserve all runtime/test commands and limits.
 4. Schedule around legitimate local work; create a migration PR with a normal full pull_request gate for integration. Keep required-review and queue policy; do not manually dispatch the required gate.
 5. After normal merge, verify actual dev-push Library and Perf Guard execution on local guests, fix any failures without weakening budgets, and then rerun the final successful normal pull_request gate in a clear local workload window for a fresh baseline after deployment, verifying tested/deployed content and environment equivalence. Handoff to PR3532 owner; preserve failed attempts separately.
+6. New dev coverage on 2026-11-15 adds Backup_Recovery owner suites. Include its dev-only routing and preserve four pytest workers, its 55-minute job/50-minute step/300-second per-test limits, existing deselections and non-required policy. Amend ADR-359 for a bounded 60-minute test-pool execution/drain limit and 65-minute service-stop grace; validate the deadline hierarchy and gracefully drain active guests before applying it. Qualify this actual dev job alongside Library and Perf Guard. Keep updates in this chat as the owner subsequently requested.
 <!-- SECTION:PLAN:END -->
 ## Implementation Notes
 
@@ -44,6 +45,7 @@ Expanded the existing routing evaluator across dev/main/feature refs and both la
 Amended ADR359 before implementation under the owner's2026-11-14 instruction to finish dev-job migration. Updated operational routing/rollback and event-specific qualification guidance. Existing local closeout files for PR3529 accompany this follow-up: its three finished repair tasks, integration status, and historical raw baseline artifacts. That successful88m09s gate is retained as historical evidence and will not substitute for the newly requested final baseline.
 
 Live qualification and new baseline remain pending. After merge, actual Library and Perf Guard dev-push execution must pass on local runner identities. Then rerun the final migration head's normal pull_request gate in a clear window, verify tested/deployed source equivalence and retain per-attempt timing, including the rerun request timestamp rather than counting the original attempt's age as execution time. Perf Guard's real hardware latency thresholds are unchanged; source contracts do not establish hardware compatibility or timing. PR3457 currently occupies the pool; no unrelated work was cancelled. Independent review found no blockers: it independently inventoried every workflow and verified event/ref/rollback semantics, unchanged commands and deadlines, guest tooling, and hardware-sensitive Perf Guard limits. Its sequence concern is addressed by measuring a fresh normal PR rerun after actual dev qualification, rather than promoting a predeployment observation. Publication and live evidence remain pending.
+2026-11-15 amendment: rebased onto cc6006fcf59328353004206bba8724c399216749, which adds the dev-only Backup_Recovery owner job. Its runs-on now uses the same dev/ref/variable selection and hosted rollback as Library and Perf Guard. Parsed old/new workflow objects are identical after restoring that single field: all 14 files, eight existing deselections, four workers, 300-second per-test, 50-minute step and 55-minute job budgets, and non-required status remain unchanged. ADR359 now accommodates the job with 60-minute test execution/drain and 65-minute service stop limits; control15m, pool sizing, resources, image and security boundaries remain unchanged. The deadline contract failed against the old45m controller; two dev-routing cases also failed as expected. Routing now passes591 cases. Broader targeted workflow/queue/shard contracts passed819 cases, with their harness-dependent storage-lease test passing separately under normal conftest loading (0.39s). Ruff passes; the changed fixture/routing files pass format. The large queue-pressure file already had unrelated formatting drift at HEAD; its sole assertion replacement adds none. Backlog file/id and ADR validators pass. Related deterministic fixture repair is tracked by TASK41176. Controller activation, independent review, actual local dev jobs and new clean-window baseline remain pending. All updates stay in this chat.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 

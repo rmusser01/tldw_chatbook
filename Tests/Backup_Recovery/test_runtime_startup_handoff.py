@@ -17,6 +17,7 @@ keyring.set_keyring(Keyring())
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Backup_Recovery import storage_admission as storage
 from tldw_chatbook.Backup_Recovery.runtime_maintenance import RuntimeMaintenance
+from tldw_chatbook.Backup_Recovery.participants import retire_current_thread_caches
 from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 
 async def main():
@@ -45,6 +46,7 @@ async def main():
     entered, release = threading.Event(), threading.Event()
     errors = []
     worker = None
+    pending_lease = None
     try:
         await runtime.settle_producers(time.monotonic()+10)
         if audio_tasks:
@@ -53,8 +55,17 @@ async def main():
             assert (await owner.list_tts_history())['total'] == 1
             with __import__('pytest').raises(RuntimeError, match='audio_history_paused_for_maintenance'):
                 await owner.create_audio_speech({'input':'during capture'})
+        if sys.argv[2] == 'retiring':
+            pending_lease = storage.acquire_storage()
+            asyncio.get_running_loop().call_soon(pending_lease.close)
         runtime.retire_local_caches()
-        assert runtime.pause.drain(time.monotonic()+1)
+        deadline = time.monotonic()+1
+        # Like monitor_app, let loop-owned retirement finish on the pause owner task.
+        while not runtime.pause.drain(time.monotonic()):
+            assert time.monotonic() < deadline, 'native drain deadline expired'
+            await asyncio.sleep(.01)
+            retire_current_thread_caches(runtime.pause)
+        assert time.monotonic() < deadline, 'native drain deadline expired'
         startup = next(iter(storage._startups.values()))
         holder = storage._holds[startup._key]
         with __import__('pytest').raises(RecoveryRequired, match='participant_runtime_coverage_incomplete'):
@@ -94,6 +105,8 @@ async def main():
         if audio_tasks:
             assert (await owner.create_audio_speech({'input':'after capture'}))['content'] == b'accepted speech'
     finally:
+        if pending_lease is not None:
+            pending_lease.close()
         audio_release.set()
         if audio_tasks:
             await asyncio.gather(*audio_tasks, return_exceptions=True)
@@ -116,7 +129,7 @@ print('retired and reopened')
 """
 
 
-@pytest.mark.parametrize("outcome", ["resume", "cancel", "audio"])
+@pytest.mark.parametrize("outcome", ["resume", "cancel", "audio", "retiring"])
 def test_actual_app_startup_returns_before_ordinary_admission(tmp_path, outcome):
     _run(tmp_path, "startup", outcome, script=_SCRIPT)
 

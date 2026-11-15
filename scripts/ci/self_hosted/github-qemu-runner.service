@@ -14,7 +14,7 @@ SupplementaryGroups=kvm
 ExecStart=/usr/local/bin/github-qemu-runner -config /etc/github-qemu-runner/config.yaml controller
 Restart=on-failure
 RestartSec=15
-TimeoutStopSec=50m
+TimeoutStopSec=65m
 # Let the controller drain busy guests before systemd kills the cgroup.
 KillMode=mixed
 NoNewPrivileges=yes

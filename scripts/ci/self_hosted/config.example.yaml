@@ -14,8 +14,8 @@ pools:
     memory_mb: 6144
     disk_gb: 20
     labels: [self-hosted, linux, x64, tldw-ci-test]
-    drain_timeout: 45m
-    job_timeout: 45m
+    drain_timeout: 60m
+    job_timeout: 60m
   - name: control
     scope: repo
     repo: rmusser01/tldw_chatbook

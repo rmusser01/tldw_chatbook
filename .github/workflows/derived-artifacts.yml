@@ -1919,7 +1919,7 @@ jobs:
     # takes 9.6 min of it. Re-read the first CI runs before tightening a cap.
     name: Backup_Recovery owner suites (push to dev)
     if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 55
 
     steps:

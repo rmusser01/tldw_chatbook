@@ -1690,7 +1690,7 @@ def test_backup_owner_suites_run_on_dev_pushes_only_and_are_never_required() -> 
         for step in required["steps"]
     )
     assert not job.get("continue-on-error", False)
-    assert job["runs-on"] == "ubuntu-latest"
+    # Event/ref/variable routing is exercised by test_self_hosted_runner_routing.
     assert "strategy" not in job
     assert len(job["steps"]) == 4
     setup = next(
