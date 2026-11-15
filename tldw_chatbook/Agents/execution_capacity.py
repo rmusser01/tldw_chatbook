@@ -445,8 +445,8 @@ class ExecutionOwner:
 class UnprovenRetention:
     """One operation whose cleanup could not be proven (ADR-134, TASK-40716).
 
-    Its resource, scopes, storage leases and activity claim stay held until a
-    late proof or process exit, and are never reused. Its run ends at once.
+    Its resource, scopes, storage leases and activity claim stay held until
+    restart (no proof path exists yet) and are never reused. Its run ends at once.
     ``abandon`` returns only the tool-worker slot. Disposal stops waiting for it.
     """
 
@@ -465,7 +465,7 @@ class UnprovenRetention:
         return self._proven.is_set()
 
     def hold(self) -> None:
-        """Keep this worker's original scopes until a late proof.
+        """Keep this worker's original scopes until restart or ``prove()``.
 
         Callers hold on a daemon worker, so process exit ends the wait and a
         held custody never delays exit. Custody is already entered here, so a
@@ -595,8 +595,8 @@ class OwnedOperation:
     def retain_unproven(self, label: str) -> UnprovenRetention:
         """Keep this operation's resource held because its cleanup is unproven.
 
-        The operation stays stopping and keeps its tool-worker slot until a
-        late proof or an explicit ``abandon``. The owner's drain is unproven.
+        The operation stays stopping and keeps its tool-worker slot until an
+        explicit ``abandon`` or restart. The owner's drain is unproven.
         """
         capacity = self.owner.capacity
         with capacity._lock:

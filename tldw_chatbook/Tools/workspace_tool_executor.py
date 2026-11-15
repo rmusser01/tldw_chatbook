@@ -1625,7 +1625,7 @@ class ModelSshCall:
                 for r in (*self.requests, *self.master_launches, *self.session_starts)
             ):
                 # Unknown physical state retains the original worker/storage
-                # until a late proof; the run ends at once (TASK-40716).
+                # until restart; the run ends at once (TASK-40716).
                 operation.retain_unproven(self.name).hold()
             try:
                 operation.finish()

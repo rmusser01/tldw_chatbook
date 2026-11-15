@@ -230,6 +230,10 @@ def test_a_closed_and_reopened_card_keeps_its_release_row():
     assert release_unproven_tool_slot(controller, "reopened-card")
     assert capacity.snapshot().tool_workers == 0
     assert unproven_cleanup_rows(controller, reopened) == {"reopened-card": True}
+    # Each reopen replaces the run's alias instead of adding another.
+    for index in range(3):
+        unproven_cleanup_rows(controller, [_card(f"reopen-{index}", "db-card")])
+    assert controller.run_terminal_rows == {"db-card": "held", "reopen-2": "held"}
 
 
 def test_release_returns_every_slot_a_run_retains():

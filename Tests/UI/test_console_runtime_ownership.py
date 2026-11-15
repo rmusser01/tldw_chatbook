@@ -2781,6 +2781,76 @@ def test_terminal_manager_is_app_owned_unarmed_and_reads_config_replacements():
 
 
 @pytest.mark.asyncio
+async def test_a_console_shutdown_error_still_shuts_down_every_later_owner(
+    monkeypatch,
+):
+    """TASK-40716: a retained cleanup keeps its custody; exit closes the rest."""
+    from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.Utils import egress
+
+    ran: list[str] = []
+
+    def owner(name, error=None):
+        async def shutdown(*_args, **_kwargs):
+            ran.append(name)
+            if error is not None:
+                raise error
+
+        return shutdown
+
+    unresolved = RuntimeError("workflow_original_shutdown_unresolved")
+    for name in (
+        "_shutdown_recovery_service",
+        "_stop_backup_maintenance_monitor",
+        "_shutdown_collections_capture_runtime",
+        "_shutdown_notes_sync_runtime",
+        "_shutdown_actor_pack_import",
+        "_shutdown_actor_pack_export",
+        "_shutdown_raw_cli_runtime",
+        "_shutdown_terminal_session_manager",
+        "_shutdown_console_settings_durability",
+        "_shutdown_persona_buddy",
+        "_shutdown_console_image_edits",
+        "_shutdown_file_notes_session_owner",
+    ):
+        monkeypatch.setattr(TldwCli, name, owner(name))
+    monkeypatch.setattr(
+        TldwCli, "_shutdown_console_runtime", owner("console", unresolved)
+    )
+    monkeypatch.setattr(
+        egress, "close_pooled_default_sessions", lambda: ran.append("egress pools")
+    )
+    app = object.__new__(TldwCli)
+    app.change_review_consent_service = SimpleNamespace(
+        begin_close=lambda: ran.append("change review close"),
+        shutdown=lambda timeout: ran.append("change review shutdown"),
+    )
+    app._llamacpp_snapshot_service = SimpleNamespace(shutdown=owner("llamacpp"))
+    app._audio_cpp_artifact_lease_coordinator = SimpleNamespace(
+        shutdown=owner("audio leases")
+    )
+    app.audio_cpp_model_install_owner = SimpleNamespace(shutdown=owner("audio models"))
+    app._meeting_session_owner = SimpleNamespace(
+        shutdown=lambda: ran.append("meeting")
+    )
+
+    with pytest.raises(RuntimeError, match="workflow_original_shutdown_unresolved"):
+        await app._shutdown_app_owned_lifecycles()
+    assert ran[ran.index("console") :] == [
+        "console",
+        "change review shutdown",
+        "_shutdown_persona_buddy",
+        "llamacpp",
+        "audio leases",
+        "audio models",
+        "meeting",
+        "_shutdown_console_image_edits",
+        "_shutdown_file_notes_session_owner",
+        "egress pools",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_raw_cli_runtime_shutdown_is_once_and_precedes_console_shutdown():
     """Both Textual shutdown paths share one raw-runtime shutdown task."""
     from tldw_chatbook.app import TldwCli

@@ -283,12 +283,9 @@ def test_host_return_is_visible_only_with_its_decided_durability():
     assert member.host_returned and member.durable is False
 
 
-@pytest.mark.parametrize("path", ["definitive_after_start", "no_timeout"])
-def test_a_retained_cleanup_ends_the_run_on_the_unwrapped_dispatch_paths(
-    tmp_path, monkeypatch, path
-):
-    """Calls that skip the timeout wrapper must end the run too, not continue."""
-    from tldw_chatbook.Agents.agent_models import RunBudget, ToolCall
+def _unwrapped_dispatch(tmp_path, monkeypatch, path, owner):
+    """`invoke_tool` for a calculator call on the definitive or no-timeout path."""
+    from tldw_chatbook.Agents.agent_models import RunBudget
     from tldw_chatbook.Agents.agent_service import AgentService
     from tldw_chatbook.Agents.tool_catalog import (
         BuiltinToolProvider,
@@ -316,9 +313,6 @@ def test_a_retained_cleanup_ends_the_run_on_the_unwrapped_dispatch_paths(
         registry=registry,
         chat_call=lambda **_kwargs: pytest.fail("no model call"),
     )
-    capacity = RuntimeCapacity()
-    owner = capacity.begin_execution(origin=WorkOrigin.MANUAL, conversation_id="c")
-    owner.reserve_tool().retain_unproven("fs_read")
     config = AgentConfig(
         model="m",
         system_prompt="s",
@@ -329,10 +323,66 @@ def test_a_retained_cleanup_ends_the_run_on_the_unwrapped_dispatch_paths(
         invoke_tool = service._make_invoke_tool(
             config, disclosed_names={"calculator"}, run_id="run-1"
         )
+    return invoke_tool, invoked
+
+
+@pytest.mark.parametrize("path", ["definitive_after_start", "no_timeout"])
+def test_a_retained_cleanup_ends_the_run_on_the_unwrapped_dispatch_paths(
+    tmp_path, monkeypatch, path
+):
+    """Calls that skip the timeout wrapper must end the run too, not continue."""
+    from tldw_chatbook.Agents.agent_models import ToolCall
+
+    capacity = RuntimeCapacity()
+    owner = capacity.begin_execution(origin=WorkOrigin.MANUAL, conversation_id="c")
+    owner.reserve_tool().retain_unproven("fs_read")
+    invoke_tool, invoked = _unwrapped_dispatch(tmp_path, monkeypatch, path, owner)
     result = invoke_tool(ToolCall(name="calculator", args={"expression": "2+2"}))
     assert result.termination_reason is RunTerminationReason.CLEANUP_UNPROVEN
     assert "cleanup of fs_read could not be proven" in result.error
     assert invoked == []
+
+
+class _CustodyCall:
+    """A captured SSH call: its activation is where custody would be held."""
+
+    finished = False
+
+    def __init__(self):
+        self.threads = []
+
+    @contextmanager
+    def activate(self, operation):
+        import threading
+
+        self.threads.append(threading.current_thread())
+        yield
+
+
+@pytest.mark.parametrize("path", ["definitive_after_start", "no_timeout"])
+def test_custody_bearing_calls_never_hold_the_run_thread(tmp_path, monkeypatch, path):
+    """Custody may only be held on a daemon tool worker, by construction."""
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Tools import workspace_tool_executor
+
+    custody = _CustodyCall()
+    monkeypatch.setattr(
+        workspace_tool_executor, "capture_model_ssh", lambda _registry, _name: custody
+    )
+    capacity = RuntimeCapacity()
+    owner = capacity.begin_execution(origin=WorkOrigin.MANUAL, conversation_id="c")
+    invoke_tool, invoked = _unwrapped_dispatch(tmp_path, monkeypatch, path, owner)
+    result = invoke_tool(ToolCall(name="calculator", args={"expression": "2+2"}))
+    if path == "definitive_after_start":
+        # Refused before start: nothing ran and no custody was entered.
+        assert not result.ok and "custody-bearing" in result.error
+        assert invoked == [] and custody.threads == []
+    else:
+        # Routed through the timeout wrapper's daemon worker.
+        assert result.ok and invoked == ["calculator"]
+        (thread,) = custody.threads
+        assert thread.daemon and thread.name == "tool-calculator"
+    assert capacity.snapshot().tool_workers == 0
 
 
 def test_change_review_snapshot_on_a_retained_owner_fails_closed():

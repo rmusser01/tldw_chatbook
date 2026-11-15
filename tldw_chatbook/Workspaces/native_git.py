@@ -63,7 +63,7 @@ async def run_native_git(producer, cmd, env, payload, *, cwd, timeout_seconds):
             controller.close(tree)
         except BaseException:  # noqa: BLE001 -- no proof permits original scopes to return
             # No proof mechanism remains: this daemon worker keeps the original
-            # storage until a late proof; its waiters stop waiting (TASK-40716).
+            # storage until restart; its waiters stop waiting (TASK-40716).
             producer.operation.retain_unproven("native Git").hold()
         raise
 

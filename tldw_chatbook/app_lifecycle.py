@@ -795,7 +795,11 @@ class LifecycleMixin:
         change_review = getattr(self, "change_review_consent_service", None)
         if change_review is not None:
             change_review.begin_close()
-        await self._shutdown_console_runtime()
+        console_error = None
+        try:
+            await self._shutdown_console_runtime()
+        except Exception as exc:  # noqa: BLE001 - other owners still shut down (TASK-40716).
+            console_error = exc
         change_review = getattr(self, "change_review_consent_service", None)
         if change_review is not None:
             await asyncio.to_thread(change_review.shutdown, timeout=1.0)
@@ -824,7 +828,13 @@ class LifecycleMixin:
             close_pooled_default_sessions()
         except Exception as exc:  # noqa: BLE001 - preserve retained owner failures.
             pool_error = exc
-        for error in (recovery_cancellation, lab_error, workflow_error, pool_error):
+        for error in (
+            recovery_cancellation,
+            lab_error,
+            workflow_error,
+            console_error,
+            pool_error,
+        ):
             if error is not None:
                 raise error
 

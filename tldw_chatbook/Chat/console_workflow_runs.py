@@ -2668,11 +2668,36 @@ class ConsoleWorkflowCoordinator:
         if self._metadata_cells:
             raise RuntimeError("workflow_original_metadata_shutdown_unresolved")
         if self._runs or self._pending_planning:
+            if self._retained_only():
+                raise WorkflowShutdownRetained("workflow_original_shutdown_unresolved")
             raise RuntimeError("workflow_original_shutdown_unresolved")
         if cancellation is not None:
             if _runtime_disposal is self.runtime:
                 return cancellation
             raise cancellation
+
+    def _retained_only(self) -> bool:
+        """Every unresolved run returned and is held only by an unproven cleanup."""
+        from tldw_chatbook.Agents.execution_capacity import holds_unproven_custody
+
+        return all(
+            run.driver is not None
+            and run.driver.done()
+            and any(
+                holds_unproven_custody(worker)
+                for worker in getattr(run.prepared, "_tool_workers", ())
+            )
+            for run in {*self._runs.values(), *self._pending_planning}
+        )
+
+
+class WorkflowShutdownRetained(RuntimeError):
+    """Unresolved runs hold only unproven tool cleanups (TASK-40716).
+
+    Their custody stays held until restart; the runtime's other owners still
+    shut down, and disposal reports this error afterwards.
+    """
+
 
 _COORDINATOR_CLASS = ConsoleWorkflowCoordinator
 _QUIESCENCE_CLASS = _WorkflowQuiescence

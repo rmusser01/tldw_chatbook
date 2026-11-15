@@ -1207,7 +1207,7 @@ class _ModelRawCliCall:
             yield
         finally:
             if not self.physical_proven:
-                # The original scopes stay held until a late proof (TASK-40716).
+                # The original scopes stay held until restart (TASK-40716).
                 operation.retain_unproven(self.name).hold()
             _current_call.reset(token)
             self.operation = None

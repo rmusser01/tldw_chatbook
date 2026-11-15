@@ -374,10 +374,12 @@ This supersedes the Consequences sentence that lets unproven native Git cleanup 
 
 **Implementation note (not an owner decision).**
 - `OwnedOperation.retain_unproven` records the retention on the runtime's capacity.
-- A worker that still holds the original scopes waits on that record on a daemon thread. A late proof or process exit ends the wait. `UnprovenRetention.hold` never unwinds custody it has entered: on a joined thread it logs an error and still holds.
+- A worker that still holds the original scopes waits on that record on a daemon thread until restart (no proof path exists yet; `UnprovenRetention.prove` would end the wait early, but no production code calls it). `UnprovenRetention.hold` never unwinds custody it has entered: on a joined thread it logs an error and still holds.
 - Raw CLI user commands, Undo, @git reference expansion and the Console's startup SSH instruction read run their custody on a daemon worker, so no joined pool thread ever holds. Undo also marks its owner unproven.
 - In an ordinary Console turn, @git references and the startup SSH instruction read borrow the turn's owner, so the turn's next tool reservation is refused as cleanup-unproven. That ends the agent run at its first tool call ("the cleanup of native Git could not be proven"), or, when the turn reserves a tool slot while composing its agent request (MCP), stops the turn before the run starts.
 - A retention that arrives after a timeout, cancel or per-call abandon ends the run at its next tool call.
+- A custody-bearing (SSH or Raw CLI) call never holds a run thread: with no timeout it still runs on a daemon tool worker, and a definitive-after-start one is refused before it starts.
+- A workflow run held only by an unproven cleanup does not stop exit. `ConsoleRuntime.dispose` closes every other owner and then reports `workflow_original_shutdown_unresolved`, and the app's exit runs its remaining owners before re-raising. A run whose custody is still live keeps stopping disposal before capacity closes.
 - A goal iteration that ends on it is uncertain, so it needs recovery.
 - A Change Review snapshot whose owner holds a retained cleanup is refused at once (unadmitted), not queued as a capacity wait: waiting would admit it after the slot is released and read a workspace that may still be changing.
 - The Release row follows the run's retained records, not how the run ended, and releases every slot the run still holds. A closed and reopened conversation finds it again by the card's persisted id.

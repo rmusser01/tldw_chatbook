@@ -138,15 +138,21 @@ async def retained_planning_worker_journey(tmp_path):
         assert exits == [] and not prepared._native_closed
         # ...so the phase failed its physical-return proof.
         assert refusals and worker.is_alive()
-        # Disposal returns instead of waiting on the retained worker. It
-        # reports the planning run unresolved rather than claim retirement.
+        # Disposal returns instead of waiting on the retained worker, closes
+        # every other owner, then reports the planning run unresolved rather
+        # than claim its retirement.
+        from tldw_chatbook.Chat.console_workflow_runs import WorkflowShutdownRetained
+
         try:
             await asyncio.wait_for(rig.runtime.dispose(), 30)
-        except RuntimeError as error:
+        except WorkflowShutdownRetained as error:
             assert str(error) == "workflow_original_shutdown_unresolved"
         else:
             raise AssertionError("disposal claimed the retained planning retired")
+        capacity = rig.runtime.execution_capacity
+        assert capacity.snapshot().closed  # the rest of disposal ran
         assert exits == [] and worker.is_alive()
+        assert retention in capacity.retained()
         print("retired and reopened", flush=True)  # the end marker `_run` expects
         os._exit(0)  # The retained custody ends only with this private process.
     except BaseException:

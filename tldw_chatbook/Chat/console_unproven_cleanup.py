@@ -47,9 +47,13 @@ def unproven_cleanup_rows(controller: Any, messages: Any = ()) -> dict[str, bool
             cards.pop(card, None)
     rows = {}
     for message in messages:
+        keep = (message.id, message.persisted_message_id)
         run_id = cards.get(message.id) or cards.get(message.persisted_message_id)
         if run_id in retained:
-            cards[message.id] = run_id  # a reopened card releases by its new id
+            # A reopened card releases by its new id; one alias per run.
+            for card in [c for c, r in cards.items() if r == run_id and c not in keep]:
+                del cards[card]
+            cards[message.id] = run_id
             rows[message.id] = all(record.abandoned for record in retained[run_id])
     return rows
 

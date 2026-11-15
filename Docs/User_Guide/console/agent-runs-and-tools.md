@@ -284,7 +284,7 @@ the app-wide tool limit, the run's last reply shows **Release tool slot**, also
 after you close and reopen the conversation.
 Releasing frees every slot that run still holds for other runs; the workspace and
 storage stay held until you restart the app. When you quit, the app does not wait
-for such a tool.
+for such a tool, and everything else still shuts down normally.
 
 While a model call is generating or thinking, this line may also show its
 current output count. `17 provider output tok` means the provider supplied an

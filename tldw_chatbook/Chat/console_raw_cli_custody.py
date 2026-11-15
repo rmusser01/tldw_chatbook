@@ -299,7 +299,7 @@ class _UserRawCliCall:
     def retain_unproven(self):
         if not (self.required_proven and self.physical_proven and self.host_proven):
             # No native retry/reaper exists. This daemon worker keeps its original
-            # scopes until a late proof; disposal stops waiting (TASK-40716).
+            # scopes until restart; disposal stops waiting (TASK-40716).
             self.operation.retain_unproven("Raw CLI").hold()
 
     def finish_operation(self):

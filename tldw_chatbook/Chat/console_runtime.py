@@ -6304,7 +6304,14 @@ class ConsoleRuntime:
                         wake_fence_error = error
             coordinator = getattr(self, "_workflow_coordinator", None)
             if coordinator is not None:
-                workflow_cancellation = await coordinator.close(_runtime_disposal=self)
+                from .console_workflow_runs import WorkflowShutdownRetained
+
+                try:
+                    workflow_cancellation = await coordinator.close(
+                        _runtime_disposal=self
+                    )
+                except WorkflowShutdownRetained as error:  # raised after the rest closes
+                    workflow_cancellation = error
             # Planning retains the same native primary and source until its
             # required terminal worker returns. Fence it before closing capacity.
             planning = tuple(
