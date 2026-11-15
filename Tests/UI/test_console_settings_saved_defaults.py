@@ -444,8 +444,10 @@ async def test_saving_an_endpoint_the_contract_refuses_shows_its_reason(
     """TASK-38964 review r10e-rev4: the modal passed an endpoint Settings'
     **s** refuses, the writer refused it, and the only feedback was "Not
     written to disk" with a Retry that refused again, while the guard kept
-    asking for Save endpoint. The contract's own reason now shows, nothing is
-    submitted, and the secret in the query is not repeated."""
+    asking for Save endpoint. TASK-40300 now refuses these URLs in readiness,
+    before offering Save endpoint. The contract's own reason shows, nothing
+    is submitted, and the secret in the query is not repeated; correcting the
+    URL restores Save endpoint & use model."""
     app = CoreFirstHarness()
     app.app_config["api_settings"]["vllm"] = {
         "api_url": "http://127.0.0.1:8002/v1",
@@ -464,17 +466,33 @@ async def test_saving_an_endpoint_the_contract_refuses_shows_its_reason(
     async with app.run_test(size=(211, 44)) as pilot:
         await _open(pilot, app, modal, results)
         save = modal.query_one("#console-settings-save-default", Button)
-        assert str(save.label) == SAVE_ENDPOINT_ACTION_LABEL
+        assert str(save.label) == SAVE_MODEL_DEFAULT_LABEL
+        readiness = modal.query_one("#console-settings-readiness", Static)
+        assert "Provider setup needed: invalid base URL" in str(
+            readiness.content
+        ).splitlines()
+        assert "sk-secret123" not in str(readiness.content)
+        block = modal.query_one("#console-settings-new-chat-default-block", Static)
+        assert block.display
+        assert str(block.content) == f"Unavailable: Provider blocked: {reason}"
+        assert "sk-secret123" not in str(block.content)
+        assert modal.query_one("#console-settings-save", Button).disabled
+        assert modal.query_one("#console-settings-make-default", Button).disabled
+        await pilot.press("ctrl+n", "ctrl+enter")
+        await settle(pilot, app)
+        assert results == []
         await pilot.click(save)
         await settle(pilot, app)
         assert results == []
         error = modal.query_one("#console-settings-error", Static)
-        assert str(error.content) == reason
+        assert str(error.content) == "Endpoint must be a valid http(s) URL."
         assert "sk-secret123" not in str(error.content)
 
         modal.query_one("#console-settings-base-url", Input).value = fixed
         await settle(pilot, app)
+        assert str(save.label) == SAVE_ENDPOINT_ACTION_LABEL
         await pilot.click(save)
         await settle(pilot, app)
         (committed,) = results
+        assert committed.submission.action is ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT
         assert committed.submission.draft.endpoint_draft.value == fixed
