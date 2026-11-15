@@ -417,7 +417,10 @@ async def test_hook_context_retires_only_its_new_workspace_worker_handle(
         return {"workspace_roots": (), "project_authority": None}
 
     runtime._chat_controller = SimpleNamespace(
-        app=app, _hook_authority_values=authority
+        app=app,
+        _hook_authority_values=authority,
+        # Dev's custom-callback route runs authority through this seam.
+        _run_owned_chat_db_operation=lambda call, *args: call(*args),
     )
 
     def probe():
