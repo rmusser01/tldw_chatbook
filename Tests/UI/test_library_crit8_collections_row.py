@@ -46,7 +46,11 @@ from Tests.UI.test_library_shell import (
 )
 
 
-pytestmark = pytest.mark.asyncio
+# TASK-41127: the Library harness reads config (app_factory's
+# `load_settings()`), which the per-test TLDW_CONFIG_PATH redirect refuses
+# (RecoveryRequired raw_source_selection_changed); keep the collection-time
+# profile, as test_library_shell.py does (TASK-39141).
+pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
 
 
 def _collections_row_label(screen) -> str:
@@ -189,11 +193,22 @@ async def test_rail_count_never_falls_back_to_the_unfiltered_total_after_a_visit
         )
 
         # Narrow to a scope holding nothing, then force the loading/stale
-        # window the fallback used to paint through.
-        screen.query_one("#library-collections-scope-favorites", Button).press()
+        # window the fallback used to paint through. TASK-41127: the scope
+        # rows mount after the first page; press the mounted row.
+        (
+            await _wait_for_selector(
+                screen, pilot, "#library-collections-scope-favorites"
+            )
+        ).press()
+        # TASK-41127: the press sets the scope before it awaits the scoped
+        # page, so wait for that page too; the claim below is the rail once
+        # the canvas owns a narrower total, not the load window in between.
         await _wait_for_condition(
             pilot,
-            lambda: screen._collections_state.active_scope == "favorites",
+            lambda: (
+                screen._collections_state.active_scope == "favorites"
+                and controller.state.exact_total is not None
+            ),
             message="The Favorites scope was never applied.",
         )
         # The scoped total wins over the unfiltered prefetch, which is

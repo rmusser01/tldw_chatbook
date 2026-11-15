@@ -241,17 +241,10 @@ async def test_escape_from_reader_focuses_loaded_row_and_down_advances():
         # Load ROW 0 fully first (the reliable open-and-settle pattern the
         # sibling traversal test uses): a fully-loaded item is what the
         # Escape-then-Down selection path needs -- a still-pending selection
-        # is disarmed, not re-selected, when focus moves.
-        row_0 = screen.query_one("#library-media-row-0", Button)
-        row_0_id, backing_id_0, _ = _row_identity(row_0)
-        row_0.press()
-        await _wait_for_detail_call(service, backing_id_0)
-        service.release(backing_id_0)
-        await _wait_for_condition(
-            pilot,
-            lambda: screen._media_state.reader_session.loaded_id == row_0_id,
-            message="Row 0 never settled in the Reader.",
-        )
+        # is disarmed, not re-selected, when focus moves. TASK-41127: through
+        # `_load_row_0`, which also waits for the re-mounted Reader chrome
+        # the next line focuses.
+        row_0_id = await _load_row_0(screen, service, pilot)
         assert screen._media_state.selected_media_id == row_0_id
 
         # Put focus INSIDE the Reader pane, then Escape outward to Items.
@@ -290,6 +283,10 @@ async def _load_row_0(screen, service, pilot):
         lambda: screen._media_state.reader_session.loaded_id == row_0_id,
         message="Row 0 never settled in the Reader.",
     )
+    # TASK-41127: the loaded detail re-mounts the Reader chrome after the
+    # session publishes ``loaded_id``; callers press Find/More next, so return
+    # once that chrome is on the glass (under load the gap is many frames).
+    await _wait_for_selector(screen, pilot, "#library-media-reader-find")
     return row_0_id
 
 
@@ -435,7 +432,11 @@ async def test_edit_metadata_from_read_routes_to_info_form_actions():
         )
         assert screen._media_state.reader_session.mode == "read"
 
-        screen.query_one("#library-media-reader-more", Button).press()
+        # TASK-41127: the loaded detail re-mounts the Reader chrome; press the
+        # live More, not whatever the state flag beat to the glass.
+        (
+            await _wait_for_selector(screen, pilot, "#library-media-reader-more")
+        ).press()
         edit = await _wait_for_selector(screen, pilot, "#library-media-edit")
         edit.press()
         await _wait_for_selector(screen, pilot, "#library-media-edit-form")
@@ -666,7 +667,11 @@ async def test_info_calls_empty_content_metadata_only_like_console():
             message="Empty-content detail did not load.",
         )
 
-        screen.query_one("#library-media-reader-select-info", Button).press()
+        # TASK-41127: the loaded detail re-mounts the Reader chrome; press the
+        # live tab, not whatever the state flag beat to the glass.
+        (
+            await _wait_for_selector(screen, pilot, "#library-media-reader-select-info")
+        ).press()
         provenance = await _wait_for_selector(
             screen, pilot, "#library-media-reader-provenance"
         )
@@ -878,7 +883,11 @@ async def test_filter_uses_authoritative_search_and_restores_page_three_anchor()
             ),
             message="The first authoritative filter result was not selected in Reader.",
         )
-        screen.query_one("#library-media-filter-clear", Button).press()
+        # TASK-41127: the filter result recomposes the Items pane, so the clear
+        # button is pressed once it is mounted again, not on the state flag alone.
+        (
+            await _wait_for_selector(screen, pilot, "#library-media-filter-clear")
+        ).press()
         await _wait_for_condition(
             pilot,
             lambda: (
@@ -1059,7 +1068,13 @@ async def test_entering_select_mode_cancels_pending_single_item_settlement():
         screen = await _open_media_list(host, pilot)
         screen.query_one("#library-media-row-1", Button).focus()
         screen.query_one("#library-media-select-toggle", Button).press()
-        await pilot.pause()
+        # TASK-41127: the press is a posted message; under load one pause did
+        # not always reach its handler. Wait for select mode itself.
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._media_state.select_mode is True,
+            message="The select toggle never entered select mode.",
+        )
 
         assert screen._media_state.select_mode is True
         assert screen._media_state.reader_session.pending_request is None
@@ -3144,15 +3159,29 @@ async def test_any_non_markdown_item_with_content_says_why_rendered_is_absent(
         assert viewer.viewer.media_type == media_type
         assert not viewer.viewer.is_markdown
 
-        screen.query_one("#library-media-reader-select-info", Button).press()
-        await pilot.pause()
-        note = screen.query_one("#library-media-content-mode-note", Static)
+        # TASK-41127: the tab and its note mount, lay out and paint over
+        # several frames; one pause read an empty region under load. Wait for
+        # the live tab, then for the note to reach the glass.
+        (
+            await _wait_for_selector(
+                screen, pilot, "#library-media-reader-select-info"
+            )
+        ).press()
+
+        def painted_note() -> str:
+            note = screen.query_one("#library-media-content-mode-note", Static)
+            return _painted_text(host, note.region)
+
         # Type-neutral copy (batch-3 review ruling 1): it says why THIS item
         # has no rendered view, not which types one is for -- the old
         # spelling told a transcript reader rendering was "for transcripts".
-        assert (
-            "No Markdown formatting to render — showing the stored text"
-            in _painted_text(host, note.region)
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                "No Markdown formatting to render — showing the stored text"
+                in painted_note()
+            ),
+            message=lambda: f"Rendered-view note never painted: {painted_note()!r}",
         )
         # Text only: the slot gains no control.
         assert not screen.query("#library-media-content-mode-rendered")
