@@ -65,8 +65,14 @@ def _narrow_stage_layout(screen):
     shells = screen.query(_LIBRARY_READER_SHELL_SELECTOR)
     if not shells:
         return None
-    layout = shells.first(Widget).effective_layout
+    shell = shells.first(Widget)
+    layout = shell.effective_layout
     if layout.library_open or layout.items_width + layout.reader_width == 0:
+        return None
+    # TASK-41130: Collections composes with a real layout now, so non-zero
+    # widths no longer mean the shell was measured; Escape before that asks
+    # for a pane the layout sync cannot resolve yet.
+    if not screen._library_adaptive_reader_allocation_is_current(shell):
         return None
     return layout
 
