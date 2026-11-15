@@ -23,6 +23,7 @@ import tempfile
 import threading
 import time
 import wave
+import warnings
 
 import numpy as np
 from scipy.signal import butter, correlate, resample_poly, sosfiltfilt
@@ -144,7 +145,24 @@ def measure_match(
     *,
     capture_rate: int = RATE,
     source_rate: int = RATE,
+    diagnostics: dict | None = None,
 ) -> dict | None:
+    metrics = {} if diagnostics is None else diagnostics
+    metrics.clear()
+    started = time.perf_counter()
+    try:
+        return _measure_match(
+            captured,
+            source,
+            capture_rate=capture_rate,
+            source_rate=source_rate,
+            diagnostics=metrics,
+        )
+    finally:
+        metrics["duration_s"] = time.perf_counter() - started
+
+
+def _measure_match(captured, source, *, capture_rate, source_rate, diagnostics):
     """Match independent early/tail windows; silence and unrelated audio refuse.
 
     Positions are measured from synthetic content, never from ffplay telemetry
@@ -152,6 +170,7 @@ def measure_match(
     """
     captured = np.asarray(captured, dtype=np.float64)
     source = np.asarray(source, dtype=np.float64)
+    diagnostics["stage"] = "invalid_source"
     if source.ndim != 1 or not np.isfinite(source).all():
         return None
     if captured.ndim == 2:
@@ -161,28 +180,55 @@ def measure_match(
         captured = resample_poly(
             captured, source_rate // divisor, capture_rate // divisor
         )
+    diagnostics["stage"] = "invalid_capture"
     if len(captured) < source_rate * 0.03 or not np.isfinite(captured).all():
         return None
     envelope = np.convolve(captured * captured, np.ones(240) / 240, mode="same")
     active = np.flatnonzero(envelope > max(1e-9, float(envelope.max()) * 0.025))
+    diagnostics.update(
+        stage="insufficient_active_content",
+        active_frames=len(active),
+        capture_frames=len(captured),
+    )
     if len(active) < source_rate * 0.03:
         return None
     start, end = int(active[0]), int(active[-1]) + 1
     # Stay inside the active region so boundary silence cannot inflate scores.
     margin = round(source_rate * 0.008)
     length = min(round(source_rate * 0.045), (end - start - 2 * margin) // 2)
+    diagnostics.update(
+        stage="window_too_short",
+        active_start_frame=start,
+        active_end_frame=end,
+        window_frames=length,
+    )
     if length < source_rate * 0.012 or len(source) < length:
         return None
     early = start + margin
     late = end - margin - length
     first, first_score = _window_match(captured[early : early + length], source)
     last, last_score = _window_match(captured[late : late + length], source)
-    if min(first_score, last_score) < 0.70 or last < first:
+    drift_s = ((last - first) - (late - early)) / source_rate
+    diagnostics.update(
+        stage="low_correlation",
+        early_score=first_score,
+        tail_score=last_score,
+        early_source_frame=first,
+        tail_source_frame=last,
+        early_capture_frame=early,
+        tail_capture_frame=late,
+        alignment_drift_s=drift_s,
+    )
+    if min(first_score, last_score) < 0.70:
+        return None
+    diagnostics["stage"] = "tail_before_early"
+    if last < first:
         return None
     # Independent alignments must also agree on how much content elapsed.
-    drift_s = ((last - first) - (late - early)) / source_rate
+    diagnostics["stage"] = "alignment_drift"
     if abs(drift_s) > 0.020:
         return None
+    diagnostics["stage"] = "matched"
     return {
         "start_source_s": (first - (early - start)) / source_rate,
         "end_source_s": (last + length + (end - late - length)) / source_rate,
@@ -194,39 +240,95 @@ def measure_match(
     }
 
 
-def _capture_worker(connection, duration_s: float) -> None:
-    """Select the exact default render endpoint's stereo loopback, or refuse."""
-    diagnostics = open(os.devnull, "w")
-    sys.stdout = diagnostics
-    sys.stderr = diagnostics
-    try:
-        import soundcard as sc
+def _count_capture_warning(metrics: dict, message) -> None:
+    metrics["warning_count"] += 1
+    if "discontinuity" in str(message).lower():
+        metrics["discontinuity_count"] += 1
 
-        speaker = sc.default_speaker()
-        if speaker is None:
-            connection.send(("error", "no_default_render"))
-            return
-        loopback = sc.get_microphone(id=speaker.id, include_loopback=True)
-        if not loopback.isloopback or loopback.id != speaker.id:
-            connection.send(("error", "no_exact_render_loopback"))
-            return
-        with loopback.recorder(
-            samplerate=RATE, channels=2, blocksize=BLOCK
-        ) as recorder:
-            connection.send(("ready", time.perf_counter()))
-            deadline = time.perf_counter() + duration_s
-            while time.perf_counter() < deadline:
-                data = recorder.record(numframes=BLOCK)
-                connection.send(("block", time.perf_counter(), data))
+
+def _capture_worker(
+    connection, duration_s: float, capture_buffer_frames: int = BLOCK
+) -> None:
+    """Capture only the exact render loopback; emit sanitized numerical telemetry."""
+    output = open(os.devnull, "w")
+    original_stdout, original_stderr = sys.stdout, sys.stderr
+    sys.stdout = sys.stderr = output
+    metrics = {
+        "warning_count": 0,
+        "discontinuity_count": 0,
+        "completed_sends": 0,
+        "send_wait_max_s": 0.0,
+        "send_wait_total_s": 0.0,
+        "record_max_s": 0.0,
+        "block_gap_max_s": 0.0,
+    }
+    previous_stamp = None
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("always")
+            warnings.showwarning = (
+                lambda message, *args, **kwargs: _count_capture_warning(
+                    metrics, message
+                )
+            )
+            import soundcard as sc
+
+            speaker = sc.default_speaker()
+            if speaker is None:
+                connection.send(("error", "no_default_render"))
+                return
+            loopback = sc.get_microphone(id=speaker.id, include_loopback=True)
+            if not loopback.isloopback or loopback.id != speaker.id:
+                connection.send(("error", "no_exact_render_loopback"))
+                return
+            with loopback.recorder(
+                samplerate=RATE, channels=2, blocksize=capture_buffer_frames
+            ) as recorder:
+                try:
+                    actual_frames = int(recorder.buffersize)
+                except Exception:
+                    actual_frames = None
+                connection.send(
+                    (
+                        "ready",
+                        time.perf_counter(),
+                        {
+                            "actual_buffer_frames": actual_frames,
+                            "requested_buffer_frames": capture_buffer_frames,
+                            "emitted_block_frames": BLOCK,
+                        },
+                    )
+                )
+                deadline = time.perf_counter() + duration_s
+                while time.perf_counter() < deadline:
+                    record_started = time.perf_counter()
+                    data = recorder.record(numframes=BLOCK)
+                    stamp = time.perf_counter()
+                    metrics["record_max_s"] = max(
+                        metrics["record_max_s"], stamp - record_started
+                    )
+                    if previous_stamp is not None:
+                        metrics["block_gap_max_s"] = max(
+                            metrics["block_gap_max_s"], stamp - previous_stamp
+                        )
+                    previous_stamp = stamp
+                    # The next block reports this send only after it completes.
+                    connection.send(("block", stamp, data, dict(metrics)))
+                    elapsed = time.perf_counter() - stamp
+                    metrics["completed_sends"] += 1
+                    metrics["send_wait_max_s"] = max(
+                        metrics["send_wait_max_s"], elapsed
+                    )
+                    metrics["send_wait_total_s"] += elapsed
     except Exception:
-        # Native exceptions may contain private endpoint names. Never serialize.
         try:
             connection.send(("error", "capture_failed"))
         except (BrokenPipeError, EOFError, OSError):
             pass
     finally:
         connection.close()
-        diagnostics.close()
+        sys.stdout, sys.stderr = original_stdout, original_stderr
+        output.close()
 
 
 def _stop_process(process: subprocess.Popen) -> bool:
@@ -341,14 +443,20 @@ def observed_playing(
     *,
     launched_at_s: float,
     now_s: float,
+    diagnostics: dict | None = None,
 ) -> dict | None:
     """Require recent post-launch loopback content, using the unchanged oracle."""
     recent = [
         (stamp, data) for stamp, data in blocks[-20:] if launched_at_s <= stamp <= now_s
     ]
+    if diagnostics is not None:
+        diagnostics.clear()
+        diagnostics["stage"] = "no_recent_postlaunch_capture"
     if not recent or now_s - recent[-1][0] > 0.5:
         return None
-    return measure_match(np.concatenate([data for _, data in recent]), source)
+    return measure_match(
+        np.concatenate([data for _, data in recent]), source, diagnostics=diagnostics
+    )
 
 
 def bookmark_alignment(frame: int | None, source_end_s: float | None) -> dict:
@@ -410,8 +518,11 @@ def run_case(
     generation: int,
     stop_after: float | None = None,
     padded: bool = False,
+    capture_buffer_frames: int = BLOCK,
 ) -> dict:
     """Measure one bounded native run; all raw samples/output are disposable."""
+    if capture_buffer_frames not in (480, 4800):
+        raise ValueError("capture_buffer_frames_must_be_480_or_4800")
     result = {
         "launched": False,
         "generation": generation,
@@ -425,6 +536,14 @@ def run_case(
         "playing_ready_timeout_s": 30 if padded else None,
         "capture_lifetime_s": 45 if padded else 12,
         "max_capture_blocks": 4500 if padded else 1800,
+        "capture_buffer_frames": capture_buffer_frames,
+        "capture_started": False,
+        "diagnostics": {
+            "live_matcher_calls": 0,
+            "live_matcher_max_s": 0.0,
+            "receive_backlog_max_s": 0.0,
+            "received_block_gap_max_s": 0.0,
+        },
         "endpoint_loopback": "unqualified",
         "seek": "unqualified",
         "tail_coverage": "unqualified",
@@ -435,7 +554,9 @@ def run_case(
     context = mp.get_context("spawn")
     receiver, sender = context.Pipe(duplex=False)
     capture = context.Process(
-        target=_capture_worker, args=(sender, result["capture_lifetime_s"]), daemon=True
+        target=_capture_worker,
+        args=(sender, result["capture_lifetime_s"], capture_buffer_frames),
+        daemon=True,
     )
     process = None
     reader = None
@@ -451,6 +572,7 @@ def run_case(
     try:
         capture.start()
         capture_started = True
+        result["capture_started"] = True
         sender.close()
         if not receiver.poll(result["capture_ready_timeout_s"]):
             result["reason"] = "capture_ready_timeout"
@@ -459,6 +581,8 @@ def run_case(
         if ready[0] != "ready":
             result["reason"] = ready[1]
             return result
+        if len(ready) > 2:
+            result["diagnostics"]["capture_configuration"] = ready[2]
         # Independent pre-launch baseline; no output names or samples are saved.
         baseline_until = time.perf_counter() + 0.35
         deadline = (
@@ -474,6 +598,19 @@ def run_case(
                     result["reason"] = message[1]
                     return result
                 if message[0] == "block":
+                    metrics = result["diagnostics"]
+                    received_at = time.perf_counter()
+                    metrics["receive_backlog_max_s"] = max(
+                        metrics["receive_backlog_max_s"], received_at - message[1]
+                    )
+                    if blocks:
+                        metrics["received_block_gap_max_s"] = max(
+                            metrics["received_block_gap_max_s"],
+                            message[1] - blocks[-1][0],
+                        )
+                    if len(message) > 3:
+                        metrics["worker"] = message[3]
+                        metrics["send_metrics_through_previous_block"] = True
                     blocks.append((message[1], message[2]))
                     if len(blocks) > result["max_capture_blocks"]:
                         result["reason"] = "capture_bound_exceeded"
@@ -515,12 +652,22 @@ def run_case(
                     and len(blocks) - last_checked_blocks >= 4
                 ):
                     last_checked_blocks = len(blocks)
+                    live_metrics = {}
+                    match_started = time.perf_counter()
                     match = observed_playing(
                         blocks,
                         source,
                         launched_at_s=launched_at,
                         now_s=time.perf_counter(),
+                        diagnostics=live_metrics,
                     )
+                    metrics = result["diagnostics"]
+                    metrics["live_matcher_calls"] += 1
+                    metrics["live_matcher_max_s"] = max(
+                        metrics["live_matcher_max_s"],
+                        time.perf_counter() - match_started,
+                    )
+                    metrics["live_matcher_last"] = live_metrics
                     if match is not None:
                         playing_at = time.perf_counter()
                         result["playing_observed_at_s"] = playing_at
@@ -595,7 +742,9 @@ def run_case(
             result["endpoint_loopback"] = "fail"
             return result
         captured = np.concatenate([data for _, data in blocks])
-        measurement = measure_match(captured, source)
+        final_metrics = {}
+        measurement = measure_match(captured, source, diagnostics=final_metrics)
+        result["diagnostics"]["final_matcher"] = final_metrics
         result["capture_blocks"] = len(blocks)
         result["observation_count_retained"] = len(observations)
         if stop_at is not None:
@@ -675,32 +824,72 @@ def run_case(
         result["error_type"] = type(error).__name__
         return result
     finally:
-        try:
+        errors = result.setdefault("cleanup_errors", [])
+
+        def cleanup(phase, operation, default=None):
             try:
-                if process is not None:
-                    _stop_process(process)
-                    result["player_reaped"] = process.poll() is not None
-            finally:
-                if process is not None and process.stderr is not None:
-                    process.stderr.close()
-                if reader is not None:
-                    reader.join(timeout=1)
-        finally:
-            receiver.close()
-            sender.close()
-            if capture_started:
-                if capture.is_alive():
-                    capture.terminate()
-                capture.join(timeout=STOP_BOUND_S)
-                if capture.is_alive():
-                    capture.kill()
-                    capture.join(timeout=STOP_BOUND_S)
-                result["capture_reaped"] = not capture.is_alive()
-                capture.close()
+                return operation()
+            except Exception as error:
+                errors.append({"phase": phase, "error_type": type(error).__name__})
+                return default
+
+        result["player_reaped"] = process is None or cleanup(
+            "player_stop", lambda: _stop_process(process), False
+        )
+        if process is not None and process.stderr is not None:
+            cleanup("stderr_close", process.stderr.close)
+        if reader is not None:
+            cleanup("reader_join", lambda: reader.join(timeout=1))
+        cleanup("receiver_close", receiver.close)
+        cleanup("sender_close", sender.close)
+        if capture_started:
+            if cleanup("capture_alive", capture.is_alive, True):
+                cleanup("capture_terminate", capture.terminate)
+            cleanup("capture_join", lambda: capture.join(timeout=STOP_BOUND_S))
+            if cleanup("capture_alive", capture.is_alive, True):
+                cleanup("capture_kill", capture.kill)
+                cleanup("capture_kill_join", lambda: capture.join(timeout=STOP_BOUND_S))
+            result["capture_reaped"] = not cleanup(
+                "capture_final_alive", capture.is_alive, True
+            )
+            cleanup("capture_close", capture.close)
+        else:
+            result["capture_reaped"] = True
+        result["cleanup_status"] = "fail" if errors else "pass"
+
+
+def _retirement_unconfirmed(run: dict) -> bool:
+    return (
+        bool(run.get("cleanup_errors"))
+        or any(run.get(key) is False for key in ("player_reaped", "capture_reaped"))
+        or (run.get("launched") is True and run.get("player_reaped") is not True)
+        or (
+            run.get("capture_started") is True and run.get("capture_reaped") is not True
+        )
+    )
+
+
+def _case_receipt(*args, **kwargs) -> dict:
+    try:
+        return run_case(*args, **kwargs)
+    except Exception as error:
+        return {
+            "launched": None,
+            "reason": "case_exception",
+            "cleanup_errors": [
+                {"phase": "case_boundary", "error_type": type(error).__name__}
+            ],
+            "cleanup_status": "fail",
+        }
 
 
 def run_matrix(
-    executable: Path, scratch: Path, *, tail_padding_ms: int, repeat: int
+    executable: Path,
+    scratch: Path,
+    *,
+    tail_padding_ms: int,
+    repeat: int,
+    runs: list[dict] | None = None,
 ) -> list[dict]:
     """Reuse three stable artifacts; a resume consumes its confirmed Stop frame."""
     if tail_padding_ms not in (0, 250) or repeat not in (1, 2, 3):
@@ -732,12 +921,12 @@ def run_matrix(
             ("near_eof_60ms", 2.5, 2.44, None),
             ("stop_playing", 2.5, 0.0, 0.700),
         ]
-    runs = []
+    runs = [] if runs is None else runs
     for round_number in range(1, repeat + 1):
         for name, duration, offset, stop_after in cases:
             source, wav, artifact = artifacts[duration]
             generation = len(runs) + 1
-            run = run_case(
+            run = _case_receipt(
                 executable,
                 wav,
                 source,
@@ -758,6 +947,9 @@ def run_matrix(
                 stop_after_s=stop_after,
             )
             runs.append(run)
+            if _retirement_unconfirmed(run):
+                run["matrix_aborted"] = True
+                return runs
             if not tail_padding_ms or name != "stop_playing":
                 continue
             frame = run.get("saved_bookmark_frame")
@@ -780,7 +972,7 @@ def run_matrix(
                 and run.get("stop_process_latency_s", math.inf) <= STOP_BOUND_S
             )
             if safe_resume:
-                resume = run_case(
+                resume = _case_receipt(
                     executable,
                     wav,
                     source,
@@ -807,6 +999,9 @@ def run_matrix(
                 resume_from_bookmark_frame=frame,
             )
             runs.append(resume)
+            if _retirement_unconfirmed(resume):
+                resume["matrix_aborted"] = True
+                return runs
     return runs
 
 
@@ -814,6 +1009,8 @@ def native_result(runs: list[dict]) -> str:
     """Every required case counts; unmatched cases and missing cleanup cannot pass."""
     required = []
     for run in runs:
+        if run.get("cleanup_errors"):
+            required.append("fail")
         required.append(run.get("process_exit", "unqualified"))
         for key in ("player_reaped", "capture_reaped"):
             value = run.get(key)
@@ -931,11 +1128,12 @@ def main() -> int:
             receipt["executable"] = _build_receipt(executable)
             # Only synthetic fixture WAVs touch disk, in an owned temporary dir.
             with tempfile.TemporaryDirectory(prefix="ffplay-synthetic-") as scratch:
-                receipt["runs"] = run_matrix(
+                run_matrix(
                     executable,
                     Path(scratch),
                     tail_padding_ms=args.tail_padding_ms,
                     repeat=args.repeat,
+                    runs=receipt["runs"],
                 )
             native = native_result(receipt["runs"])
             if platform.system() in receipt["native_platforms"]:
@@ -945,7 +1143,10 @@ def main() -> int:
     except Exception:
         # Paths, raw native errors and output may contain private data.
         receipt["runner_error"] = "qualification_failed"
-    receipt["run_count"] = sum(run.get("launched", False) for run in receipt["runs"])
+    receipt["run_count"] = sum(run.get("launched") is True for run in receipt["runs"])
+    receipt["unknown_launch_count"] = sum(
+        run.get("launched") is None for run in receipt["runs"]
+    )
     receipt["case_count"] = len(receipt["runs"])
     output = args.output_dir / "qualification.json"
     output.write_text(

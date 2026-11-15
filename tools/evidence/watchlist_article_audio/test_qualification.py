@@ -8,7 +8,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, Mock, patch
+from types import SimpleNamespace
 import warnings
 import wave
 
@@ -19,15 +20,19 @@ from qualification import (
     ProgressObservation,
     StatsReader,
     _write_wav,
+    _capture_worker,
+    _count_capture_warning,
     artifact_receipt,
     bookmark_alignment,
     marker_signal,
+    main,
     measure_match,
     parse_stats_position,
     native_result,
     observed_playing,
     resolve_ffplay,
     run_matrix,
+    run_case,
     saved_bookmark_frame,
     select_fresh,
     stop_is_due,
@@ -106,6 +111,38 @@ class ParserTests(unittest.TestCase):
 
 
 class MeasurementTests(unittest.TestCase):
+    def test_diagnostics_identify_independently_correlated_but_discontinuous_content(
+        self,
+    ):
+        source = marker_signal(2)
+        captured = np.concatenate([source[9600:28800], source[31200:52800]])
+        diagnostic = {}
+        self.assertIsNone(measure_match(captured, source, diagnostics=diagnostic))
+        self.assertEqual(diagnostic["stage"], "alignment_drift")
+        self.assertGreater(diagnostic["early_score"], 0.99)
+        self.assertGreater(diagnostic["tail_score"], 0.99)
+        self.assertAlmostEqual(diagnostic["alignment_drift_s"], 0.05, delta=0.001)
+
+    def test_diagnostics_expose_rejection_without_changing_acceptance(self):
+        source = marker_signal(1)
+        diagnostic = {}
+        self.assertIsNone(
+            measure_match(np.zeros(48000), source, diagnostics=diagnostic)
+        )
+        self.assertEqual(diagnostic.get("stage"), "insufficient_active_content")
+        unrelated = marker_signal(0.5, seed=2)
+        self.assertIsNone(measure_match(unrelated, source, diagnostics=diagnostic))
+        self.assertEqual(diagnostic["stage"], "low_correlation")
+        self.assertIn("early_score", diagnostic)
+        match = measure_match(source[4800:24000], source, diagnostics=diagnostic)
+        self.assertIsNotNone(match)
+        self.assertEqual(diagnostic["stage"], "matched")
+        self.assertGreaterEqual(diagnostic["duration_s"], 0)
+        self.assertEqual(
+            diagnostic["early_source_frame"],
+            round(match["start_source_s"] * 48000) + diagnostic["early_capture_frame"],
+        )
+
     def test_full_near_eof_slices_match_and_truncated_slices_cannot_pass_tail(self):
         source = marker_signal(2.5)
         for start_frame, expected_start in [(113280, 2.36), (117120, 2.44)]:
@@ -214,6 +251,33 @@ class MeasurementTests(unittest.TestCase):
 
 
 class CliTests(unittest.TestCase):
+    def test_main_serializes_prior_rows_even_if_matrix_later_raises(self):
+        def interrupted(*args, **kwargs):
+            kwargs["runs"].append({"launched": True, "case": "first", "generation": 1})
+            raise RuntimeError("PRIVATE_ENDPOINT")
+
+        with (
+            tempfile.TemporaryDirectory() as scratch,
+            patch.object(
+                sys,
+                "argv",
+                ["qualification", "--output-dir", scratch, "--capture-loopback"],
+            ),
+            patch("qualification.resolve_ffplay", return_value=Path("never")),
+            patch(
+                "qualification._build_receipt",
+                return_value={"version": "fixture", "sha256": "0" * 64},
+            ),
+            patch("qualification.run_matrix", side_effect=interrupted),
+            patch("builtins.print"),
+        ):
+            self.assertEqual(main(), 1)
+            receipt = json.loads((Path(scratch) / "qualification.json").read_text())
+        self.assertEqual(receipt["run_count"], 1)
+        self.assertEqual(receipt["runs"][0]["case"], "first")
+        self.assertEqual(receipt["runner_error"], "qualification_failed")
+        self.assertNotIn("PRIVATE_ENDPOINT", json.dumps(receipt))
+
     def test_padded_repeat_options_in_no_capture_receipt(self):
         with tempfile.TemporaryDirectory() as scratch:
             completed = subprocess.run(
@@ -294,6 +358,93 @@ class CliTests(unittest.TestCase):
             self.assertEqual(receipt["full_gate"], "unqualified")
             self.assertEqual(set(receipt["native_platforms"].values()), {"unqualified"})
             self.assertNotIn("executable", receipt)
+
+
+class CaptureDiagnosticsTests(unittest.TestCase):
+    def test_invalid_capture_buffer_refuses_before_creating_owned_resources(self):
+        with self.assertRaises(ValueError):
+            run_case(
+                Path("never"),
+                Path("never"),
+                np.zeros(48000),
+                offset=0,
+                generation=1,
+                capture_buffer_frames=1024,
+            )
+
+    def test_warning_counter_retains_only_numeric_counts(self):
+        metrics = {"warning_count": 0, "discontinuity_count": 0}
+        _count_capture_warning(metrics, "data discontinuity on PRIVATE_ENDPOINT")
+        _count_capture_warning(metrics, "another PRIVATE_ENDPOINT warning")
+        self.assertEqual(metrics, {"warning_count": 2, "discontinuity_count": 1})
+
+    def test_capture_buffer_request_keeps_emitted_geometry_and_reports_actual_size(
+        self,
+    ):
+        recorder = MagicMock()
+        recorder.buffersize = 4800
+        recorded = []
+
+        def record(*, numframes):
+            if recorded:
+                raise StopIteration
+            recorded.append(numframes)
+            warnings.warn(
+                "data discontinuity PRIVATE_ENDPOINT", RuntimeWarning, stacklevel=1
+            )
+            return np.zeros((480, 2))
+
+        recorder.record.side_effect = record
+        factory = MagicMock()
+        factory.return_value.__enter__.return_value = recorder
+        endpoint = SimpleNamespace(
+            id="PRIVATE_ENDPOINT", isloopback=True, recorder=factory
+        )
+        soundcard = SimpleNamespace(
+            default_speaker=lambda: endpoint, get_microphone=lambda **kwargs: endpoint
+        )
+        messages = []
+        connection = SimpleNamespace(send=messages.append, close=lambda: None)
+        with (
+            patch.dict(sys.modules, {"soundcard": soundcard}),
+            patch("qualification.sys.stdout"),
+            patch("qualification.sys.stderr"),
+        ):
+            _capture_worker(connection, 1, 4800)
+        self.assertEqual(factory.call_args.kwargs["blocksize"], 4800)
+        self.assertEqual(recorder.record.call_args.kwargs["numframes"], 480)
+        ready = next(message for message in messages if message[0] == "ready")
+        self.assertGreater(len(ready), 2)
+        self.assertEqual(ready[2]["actual_buffer_frames"], 4800)
+        block = next(message for message in messages if message[0] == "block")
+        self.assertEqual(block[3]["discontinuity_count"], 1)
+        self.assertEqual(block[3]["warning_count"], 1)
+        self.assertNotIn("PRIVATE_ENDPOINT", json.dumps(block[3]))
+
+    def test_cleanup_failure_is_serialized_and_does_not_escape_case(self):
+        receiver, sender, capture = Mock(), Mock(), Mock()
+        receiver.poll.return_value = False
+        capture.is_alive.return_value = True
+        capture.terminate.side_effect = RuntimeError("PRIVATE_ENDPOINT")
+        context = Mock()
+        context.Pipe.return_value = (receiver, sender)
+        context.Process.return_value = capture
+        with patch("qualification.mp.get_context", return_value=context):
+            try:
+                result = run_case(
+                    Path("never"),
+                    Path("never"),
+                    np.zeros(48000),
+                    offset=0,
+                    generation=1,
+                )
+            except RuntimeError:
+                self.fail(
+                    "cleanup exception escaped instead of producing a sanitized receipt"
+                )
+        self.assertFalse(result["capture_reaped"])
+        self.assertEqual(result["cleanup_status"], "fail")
+        self.assertNotIn("PRIVATE_ENDPOINT", json.dumps(result))
 
 
 class PhaseTests(unittest.TestCase):
@@ -401,6 +552,60 @@ class BookmarkTests(unittest.TestCase):
 
 
 class MatrixTests(unittest.TestCase):
+    def test_unconfirmed_retirement_preserves_rows_and_aborts_all_later_launches(self):
+        completed = []
+        first = {"launched": True, "player_reaped": True, "capture_reaped": True}
+        failed = {"launched": True, "player_reaped": True, "capture_reaped": False}
+        calls = []
+
+        def boundary(*args, **kwargs):
+            calls.append(kwargs["generation"])
+            return first.copy() if len(calls) == 1 else failed.copy()
+
+        with (
+            tempfile.TemporaryDirectory() as scratch,
+            patch("qualification.run_case", side_effect=boundary),
+        ):
+            run_matrix(
+                Path("never"),
+                Path(scratch),
+                tail_padding_ms=250,
+                repeat=3,
+                runs=completed,
+            )
+        self.assertEqual(calls, [1, 2])
+        self.assertEqual(len(completed), 2)
+        self.assertFalse(completed[1]["capture_reaped"])
+
+    def test_completed_receipts_survive_a_later_case_exception(self):
+        completed = []
+        first = {
+            "launched": True,
+            "process_exit": "pass",
+            "player_reaped": True,
+            "capture_reaped": True,
+        }
+        with (
+            tempfile.TemporaryDirectory() as scratch,
+            patch(
+                "qualification.run_case",
+                side_effect=[first, RuntimeError("private endpoint must not persist")],
+            ),
+        ):
+            try:
+                run_matrix(
+                    Path("never-executed"),
+                    Path(scratch),
+                    tail_padding_ms=250,
+                    repeat=1,
+                    runs=completed,
+                )
+            except RuntimeError:
+                pass
+        self.assertGreaterEqual(len(completed), 1)
+        self.assertTrue(completed[0]["launched"])
+        self.assertNotIn("private endpoint", json.dumps(completed))
+
     def test_censored_stop_missing_latency_is_unqualified_but_measured_overrun_fails(
         self,
     ):
@@ -433,7 +638,8 @@ class MatrixTests(unittest.TestCase):
                     "bookmark_alignment": "pass",
                     "stop_process_latency_s": 0.01,
                 }
-                result.update(changed)
+                if kwargs["stop_after"] is not None:
+                    result.update(changed)
                 return result
 
             with (
@@ -445,8 +651,12 @@ class MatrixTests(unittest.TestCase):
                     Path("never-executed"), Path(scratch), tail_padding_ms=250, repeat=1
                 )
             self.assertEqual(len(calls), 6)
-            self.assertEqual(len(runs), 7)
-            self.assertFalse(runs[-1]["launched"])
+            if changed.get("capture_reaped") is False:
+                self.assertEqual(len(runs), 6)
+                self.assertFalse(runs[-1]["capture_reaped"])
+            else:
+                self.assertEqual(len(runs), 7)
+                self.assertFalse(runs[-1]["launched"])
             self.assertEqual(
                 native_result(runs),
                 "fail" if changed.get("capture_reaped") is False else "unqualified",
