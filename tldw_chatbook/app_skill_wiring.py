@@ -14,11 +14,17 @@ from .Skills_Interop.skill_trust_models import (
 
 
 def record_native_skill_trust_candidate(app, candidate):
-    """Observe only the original publisher's actual just-assigned candidate."""
-    import inspect
-    import sys
-    from types import FunctionType
+    """Record the service a first-use build just published, for the active publication.
 
+    Internal: called only by the two first-use builders (the
+    ``local_skill_trust_service`` getter and ``ensure_local_skill_trust_service``)
+    right after they fill the empty slot; the setter never calls it. The
+    publication registered for this app on this thread and task, and the slot
+    still holding ``candidate``, decide; the caller's identity does not. Any
+    caller on that thread and task could pass the slot's current value and have
+    it recorded; ADR-356 rule 4 accepts that, since in-process code is not a
+    boundary this check could enforce.
+    """
     marker = _skill_trust_publisher.get()
     if type(marker) is not _SkillTrustPublisher or not marker.active:
         return
@@ -27,27 +33,7 @@ def record_native_skill_trust_candidate(app, candidate):
     source = marker.preparation.trust_source
     if source is None or source.app is not app or candidate is None:
         return
-    frame = sys._getframe(1)
-    getter = inspect.getattr_static(type(app), "local_skill_trust_service", None)
-    initializer = inspect.getattr_static(
-        type(app), "ensure_local_skill_trust_service", None
-    )
-    if not (
-        frame.f_locals.get("self") is app
-        and (
-            (
-                isinstance(getter, property)
-                and frame.f_code is getter.fget.__code__
-                and frame.f_locals.get("candidate") is candidate
-            )
-            or (
-                type(initializer) is FunctionType
-                and frame.f_code is initializer.__code__
-                and frame.f_locals.get("service") is candidate
-            )
-        )
-        and vars(app).get("_local_skill_trust_service") is candidate
-    ):
+    if vars(app).get("_local_skill_trust_service") is not candidate:
         return
     marker.candidate = candidate
 

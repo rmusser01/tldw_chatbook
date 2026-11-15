@@ -366,6 +366,70 @@ async def test_viewless_manual_turn_keeps_session_flag_when_publisher_is_replace
 
 
 @pytest.mark.asyncio
+async def test_viewless_first_send_is_saved_through_a_wrapped_config_writer(
+    monkeypatch,
+) -> None:
+    """TASK-40719: a delegating wrapper around the writer keeps the save."""
+    import functools
+    import tomllib
+
+    from tldw_chatbook import config
+
+    writer = config.apply_settings_mutation_to_cli_config
+    calls: list[dict] = []
+
+    @functools.wraps(writer)
+    def wrapped(mutations, **kwargs):
+        calls.append(mutations)
+        return writer(mutations, **kwargs)
+
+    monkeypatch.setattr(config, "apply_settings_mutation_to_cli_config", wrapped)
+    app = type("App", (), {})()
+    app.app_config = {}
+    runtime = ConsoleRuntime(app)
+    app.console_runtime = runtime
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    runtime.set_chat_store(store)
+
+    class SuccessfulController:
+        prompt_queue_coordinator = SimpleNamespace(
+            bind_turn_request=lambda _request, *, origin: None
+        )
+
+        async def run_prompt_chain(self, *, session_id, initial_turn):
+            return await initial_turn()
+
+        async def submit_draft(self, draft, **kwargs):
+            kwargs["custody_acceptance_hook"]()
+            return SimpleNamespace(accepted=True)
+
+        def run_state_for(self, session_id):
+            return ConsoleRunState(ConsoleRunStatus.COMPLETED, "done")
+
+    controller = SuccessfulController()
+    controller.store = store
+    runtime.set_chat_controller(controller)
+    request = ConsoleTurnCustodyRequest(
+        turn_id="turn-first-send-wrapped-writer",
+        session_id=session.id,
+        draft="first successful turn",
+        configuration=ConsoleTurnConfigurationSnapshot.capture(
+            session_id=session.id,
+            provider_selection=ConsoleProviderSelection(provider="openai"),
+        ),
+    )
+
+    turn_id = runtime.accept_turn(request)
+    await runtime.wait_for_turn(turn_id)
+    await asyncio.wait_for(asyncio.shield(runtime._first_send_task), 5)
+
+    assert calls == [{"console.onboarding": {"first_send_completed": True}}]
+    saved = tomllib.loads(Path(config._get_effective_config_path()).read_text())
+    assert saved["console"]["onboarding"]["first_send_completed"] is True
+
+
+@pytest.mark.asyncio
 async def test_runtime_injects_its_scratch_manager_into_chat_controller():
     runtime = ConsoleRuntime(type("App", (), {})())
 

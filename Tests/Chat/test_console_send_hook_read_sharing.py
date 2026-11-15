@@ -227,6 +227,27 @@ async def test_warm_send_reads_once_before_commit_and_fresh_at_dispatch(rig, ent
     assert rig.send_reads() == [False, True], rig.reads
 
 
+@pytest.mark.parametrize("wrapped", ["submit_draft", "prepare_hooks_v2"])
+async def test_a_wrapped_collaborator_still_shares_the_attempts_one_read(
+    rig, monkeypatch, wrapped
+):
+    """TASK-40719: a delegating wrapper (spy, profiler) changes no Send."""
+    owner = rig.controller if wrapped == "submit_draft" else rig.runtime
+    original = getattr(owner, wrapped)
+
+    async def delegate(*args, **kwargs):
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(owner, wrapped, delegate)
+    record = rig.start_received()
+
+    result = await _outcome(record)
+
+    assert not isinstance(result, BaseException), result
+    assert result.accepted and rig.gateway.calls == 1
+    assert rig.send_reads() == [False, True], rig.reads
+
+
 async def test_externally_revoked_grant_is_still_refused_at_final_admission(rig):
     """Another process revokes after the shared read; dispatch is refused."""
     key = rig.key()
