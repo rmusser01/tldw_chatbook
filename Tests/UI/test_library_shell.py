@@ -11726,8 +11726,8 @@ async def test_library_shell_media_viewer_inplace_search_preserves_identity_focu
         await _open_media_viewer(screen, pilot)
 
         # task-31249: the Find bar composes only while open (task-31237's
-        # collapsed-until-open bar), so OPENING it legitimately recomposes
-        # the viewer once to mount the search controls. The identity
+        # collapsed-until-open bar), so OPENING it mounts the search controls
+        # (in place since TASK-40327). The identity
         # promise this test pins starts AFTER the bar is up: submitting a
         # query and walking matches must not rebuild the viewer, the body,
         # or the controls, and must not re-parse the Markdown.
@@ -11901,10 +11901,9 @@ async def test_library_shell_media_viewer_inplace_large_document_latency_and_par
         # baseline identities are taken, so the measured submit/Next/Prev
         # are what they claim to be.
         await _open_media_find(screen, pilot)
-        # Known debt (r13l-rev1): since 7b04023420 opening Find re-mounts the
-        # document, which parses it once more. Bound it at exactly one extra
-        # parse, so a second re-parse on Find open still fails here.
-        assert len(markdown_updates) == 2, markdown_updates
+        # TASK-40327: opening Find mounts the bar in place -- no re-parse
+        # (7b04023420..TASK-40327 re-mounted the document for it).
+        assert len(markdown_updates) == 1, markdown_updates
         viewer_before = screen.query_one("#library-media-viewer", LibraryMediaViewer)
         markdown_before = screen.query_one(
             "#library-media-viewer-content-markdown", Markdown
@@ -11964,9 +11963,8 @@ async def test_library_shell_media_viewer_inplace_large_document_latency_and_par
         # happened to win the race the other way, which is exactly why this
         # count must be pinned rather than observed. 7b04023420 (2026-09-03,
         # task-31237) then made the Find bar a viewer compose input, so
-        # opening Find re-mounts the document once more; 110e6a0dea recorded
-        # that parse as known debt (TASK-39152). Submit/Next/Prev parse
-        # nothing, in place.
+        # opening Find re-mounted the document once more, until TASK-40327
+        # mounted the bar in place. Submit/Next/Prev parse nothing, in place.
         assert markdown_updates[parses_before_search - 1] == id(markdown_before)
         assert markdown_updates[parses_before_search:] == []
 
@@ -12416,8 +12414,8 @@ async def test_library_shell_media_viewer_inplace_search_chrome_paints_above_con
         await _open_media_viewer(screen, pilot)
 
         # task-31249: the Find bar composes only while open (task-31237), so
-        # the submit helper's Find press legitimately recomposes the viewer
-        # ONCE to mount the search controls. The identity promise starts
+        # the submit helper's Find press mounts the search controls (in place
+        # since TASK-40327). The identity promise starts
         # AFTER that: the layout baseline and the post-navigation identity
         # assertions below both capture from the bar-mounted state.
         await _submit_content_search_query(screen, pilot, "budget")
@@ -33300,7 +33298,20 @@ async def test_library_note_breakpoint_round_trips_restore_every_region_focus_ro
             await pilot.pause()
             await pilot.resize_terminal(60, 20)
             await _wait_for_library_notes_compact(screen, pilot, True)
-            await pilot.pause()
+            # TASK-40299: the offset lands once its owner is laid out, which
+            # on a busy loop takes more than one pause after the breakpoint.
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen._capture_library_notes_focus_identity().scroll_offset
+                    == before.scroll_offset
+                ),
+                message=lambda: (
+                    f"{semantic_role}: "
+                    f"{screen._capture_library_notes_focus_identity().scroll_offset}"
+                    f" != {before.scroll_offset}"
+                ),
+            )
 
             after = screen._capture_library_notes_focus_identity()
             assert after.semantic_role == semantic_role

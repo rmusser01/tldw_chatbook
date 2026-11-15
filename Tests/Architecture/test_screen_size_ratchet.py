@@ -1357,7 +1357,20 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-11-13, TASK-40298 review r14lf-rev1: the rail F6 target moves to
     #: ``library_rail.py`` and the Artifacts shell shares it: 38185 -> 38175
     #: lines, 1376 methods.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38175, 1376),
+    #: 2026-11-13, TASK-40328 review r14ls-rev1: one rail-sync helper
+    #: (``_sync_library_rail_state``) shared by the two entry/snapshot
+    #: reconciles and the Collections entry load, which repaints the rail's
+    #: count in place: 38164 -> 38165 lines, 1376 -> 1377 methods (measured).
+    #: 2026-11-13 restack: both stacked, measured 38176 lines, 1377 methods.
+    #: 2026-11-13, TASK-40328 review r14ls-rev2: the restore's focus id kept
+    #: for the Collections shell's first layout sync: 38165 -> 38169 lines
+    #: (measured).
+    #: 2026-11-13 restack: both stacked, measured 38180 lines, 1377 methods.
+    #: (measured). Review r14ls-rev3: the retry also keeps the widget the
+    #: restore parked focus on, and the rail-sync docstring says when it
+    #: recomposes: 38169 -> 38177 lines (measured).
+    #: 2026-11-13 restack: both stacked, measured 38188 lines, 1377 methods.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38188, 1377),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

@@ -362,3 +362,289 @@ async def test_saved_highlight_survives_failed_refresh_without_resubmitting_draf
         finally:
             release.set()
             await pending
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile  # the Library harness's profile (TASK-39141)
+@pytest.mark.parametrize("rail_count", ["late_capture", "failed_prefetch"])
+async def test_rail_press_recomposes_library_once_and_loads_captures_in_place(
+    rail_count, monkeypatch
+):
+    """TASK-40328: the capture loads re-render the reader panes, not the screen.
+
+    The entry loader used to end each of its three steps in a whole-screen
+    recompose (rail, canvas and reader re-mounted three times, about
+    0.64-0.80 s of UI-loop CPU), on top of the route change's own one.
+    Counts ``compose_content`` passes instead of timing the press.
+
+    Those recomposes were also what repainted the rail with the count the
+    load produced (review r14ls-rev1): the painted Collections row and the
+    Details line must show it, for a capture saved after the rail's prefetch
+    and after a failed prefetch (task-32103's contradiction). The rail is
+    re-synced in place, not recomposed, and Enter on the focused row leaves
+    focus on it (review r14ls-rev2: it used to land on a rail control, so a
+    second Enter acted on something else).
+    """
+    from textual.widgets import Static
+
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+    from tldw_chatbook.Widgets.Library.library_rail import LibraryRail
+
+    app, scope, _identities = await _seed()
+    host = LibraryProductionCSSHarness(app)
+    composes = []
+    compose_content = LibraryScreen.compose_content
+
+    def counting_compose_content(screen):
+        composes.append(screen)
+        return compose_content(screen)
+
+    rail_composes = []
+    rail_compose = LibraryRail.compose
+
+    def counting_rail_compose(rail):
+        rail_composes.append(rail)
+        return rail_compose(rail)
+
+    def row_label() -> str:
+        return str(screen.query_one("#library-row-browse-collections", Button).label)
+
+    monkeypatch.setattr(LibraryScreen, "compose_content", counting_compose_content)
+    monkeypatch.setattr(LibraryRail, "compose", counting_rail_compose)
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_condition(
+            pilot, lambda: "(2)" in row_label(), message="Prefetch never painted"
+        )
+        if rail_count == "late_capture":
+            await scope.save_capture(
+                CaptureSaveRequest(
+                    scope.active_authority.key,
+                    "https://example.test/gamma",
+                    title="Gamma",
+                    text_content="Readable Gamma body.",
+                )
+            )
+        else:
+            screen._library_collections_prefetched_total = None
+            screen._library_collections_count_authority = scope.active_authority.key
+            screen._library_collections_count_failure = "error"
+            await screen.recompose()
+            await _wait_for_condition(
+                pilot, lambda: "(\u2014)" in row_label(), message="No failed count"
+            )
+            assert "Collections count unavailable" in str(
+                screen.query_one("#library-details-body", Static).render()
+            )
+        count = 3 if rail_count == "late_capture" else 2
+        expected = f"({count})"
+        row = screen.query_one("#library-row-browse-collections", Button)
+        row.focus()
+        await pilot.pause()
+        composes.clear()
+        rail_composes.clear()
+        await pilot.press("enter")
+
+        def settled() -> bool:
+            work = screen.query("#library-collections-work")
+            return (
+                bool(work)
+                and work.first().presentation.state.loaded_detail is not None
+                and not screen._recompose_required
+                and not any(
+                    worker.group == "library_collections_capture_entry"
+                    and not worker.is_finished
+                    for worker in screen.app.workers
+                )
+            )
+
+        await _wait_for_condition(pilot, settled, message="Collections never settled")
+        await pilot.pause()
+        await pilot.pause()
+        assert len(composes) <= 1, f"{len(composes)} Library recomposes for one press"
+        assert len(rail_composes) <= 1, f"{len(rail_composes)} rail composes"
+        assert getattr(screen.focused, "id", None) == "library-row-browse-collections"
+        title = str(screen.query_one("#library-collections-reader-title").render())
+        assert any(name in title for name in ("Alpha", "Beta", "Gamma")), title
+        assert len(screen.query(".library-collections-item-row")) == count
+        await _wait_for_condition(
+            pilot,
+            lambda: expected in row_label(),
+            message=lambda: f"Rail row reads {row_label()!r}, the canvas {expected}",
+        )
+        details = str(screen.query_one("#library-details-body", Static).render())
+        assert "Collections count unavailable" not in details, details
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile  # the Library harness's profile (TASK-39141)
+async def test_a_pane_repaint_cancelled_mid_recompose_is_rebuilt_by_the_next():
+    """TASK-40328 review r14ls-rev1: a cancelled repaint never strands a pane.
+
+    The exclusive entry worker is cancelled when the rail is pressed again,
+    possibly while a pane is mid-recompose: its old children are already
+    being removed and the new ones never mount. The next repaint must rebuild
+    that pane even when it carries the very same presentation.
+    """
+    import dataclasses
+
+    from tldw_chatbook.Widgets.Library.library_collections_capture_reader import (
+        recompose_capture_panes,
+    )
+
+    app, _scope, _identities = await _seed()
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = await _open(host, pilot)
+        items = screen.query_one("#library-collections-items")
+
+        def rows() -> int:
+            return len(items.query(".library-collections-item-row"))
+
+        assert rows() == 2
+        presentation = dataclasses.replace(
+            screen._collections_controller._library_collections_capture_presentation(),
+            action_status="restarted",
+        )
+        original_recompose = items.recompose
+
+        async def cancelled_mid_recompose() -> None:
+            asyncio.get_running_loop().call_soon(asyncio.current_task().cancel)
+            await original_recompose()
+
+        items.recompose = cancelled_mid_recompose
+        repaint = asyncio.create_task(recompose_capture_panes(screen, presentation))
+        with pytest.raises(asyncio.CancelledError):
+            await repaint
+        del items.recompose
+        await _wait_for_condition(
+            pilot, lambda: rows() == 0, message="The cancel left the old rows"
+        )
+
+        await recompose_capture_panes(screen, presentation)
+        await _wait_for_condition(
+            pilot,
+            lambda: rows() == 2,
+            message=lambda: f"An identical repaint left the pane with {rows()} rows",
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile  # the Library harness's profile (TASK-39141)
+@pytest.mark.parametrize("window_action", ["user_focuses_other_grip", "route_to_notes"])
+async def test_collections_focus_retry_never_moves_a_users_own_focus(
+    window_action, monkeypatch
+):
+    """TASK-40328 review r14ls-rev3: the first-visit focus retry is pinned.
+
+    A first visit composes the reader shell with the width-0 layout, so the
+    route's restore parks focus on a grip and the shell's first layout sync
+    retries the Collections row. The layout sync is held back here to open
+    that window. If the user moves focus inside it -- to the other grip, or
+    away to Notes -- the retry must not fire: their focus is never pulled to
+    the row, the stored pair is spent, and a later Collections entry settles
+    on its own.
+    """
+    from tldw_chatbook.UI.Library_Modules.library_collections_controller import (
+        LibraryCollectionsController,
+    )
+
+    hold = {"on": False}
+    layout_sync = (
+        LibraryCollectionsController._sync_library_collections_reader_layout_from_shell
+    )
+
+    def held_layout_sync(controller, priority=None):
+        if not hold["on"]:
+            layout_sync(controller, priority)
+
+    monkeypatch.setattr(
+        LibraryCollectionsController,
+        "_sync_library_collections_reader_layout_from_shell",
+        held_layout_sync,
+    )
+    app, _scope, _identities = await _seed()
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        def row() -> Button:
+            return screen.query_one("#library-row-browse-collections", Button)
+
+        def focused_id():
+            return getattr(screen.focused, "id", None)
+
+        await _wait_for_condition(
+            pilot, lambda: "(2)" in str(row().label), message="Prefetch never painted"
+        )
+        row().focus()
+        await pilot.pause()
+        hold["on"] = True
+        await pilot.press("enter")
+
+        def parked() -> bool:
+            shells = screen.query("#library-collections-reader-shell")
+            return (
+                bool(shells)
+                and screen._library_collections_focus_retry is not None
+                and screen.focused is shells.first().library_grip
+            )
+
+        await _wait_for_condition(
+            pilot,
+            parked,
+            message=lambda: f"Restore never parked on the grip; focus={focused_id()}",
+        )
+        shell = screen.query_one("#library-collections-reader-shell")
+        if window_action == "user_focuses_other_grip":
+            screen.set_focus(shell.items_grip)
+            await pilot.pause()
+        else:
+            await screen._select_library_rail_row("browse-notes")
+            await _wait_for_condition(
+                pilot,
+                lambda: not screen.query("#library-collections-reader-shell")
+                and not screen._recompose_required,
+                message="Notes never replaced Collections",
+            )
+        user_focus = screen.focused
+        hold["on"] = False
+        screen._sync_library_collections_reader_layout_from_shell()
+        for _ in range(3):
+            await pilot.pause()
+
+        assert focused_id() != "library-row-browse-collections"
+        assert screen._library_collections_focus_retry is None
+        if window_action == "user_focuses_other_grip":
+            # The shell reopens the Items pane the user's grip names and may
+            # hand focus into it; it must stay on that side, not the rail row.
+            assert screen.focused is shell.items_grip or shell.items in (
+                screen.focused.ancestors_with_self
+            ), screen.focused
+            return
+        assert screen.focused is user_focus
+
+        # Entering Collections later settles on its own: no stale retry.
+        row().focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(screen.query("#library-collections-work"))
+            and screen.query_one(
+                "#library-collections-work"
+            ).presentation.state.loaded_detail
+            is not None
+            and not any(
+                worker.group == "library_collections_capture_entry"
+                and not worker.is_finished
+                for worker in screen.app.workers
+            ),
+            message="Collections never settled after Notes",
+        )
+        for _ in range(5):
+            await pilot.pause()
+        assert focused_id() == "library-row-browse-collections"
+        assert screen._library_collections_focus_retry is None

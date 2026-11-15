@@ -4458,11 +4458,7 @@ class LibraryMediaController:
             # while one was generating, plus a stale "○" label and tooltip.
             and viewer.generating_analysis == self._library_media_generating_analysis
             and viewer.analysis_provider_reason == analysis_provider_reason
-            and viewer.content_query == self._library_media_content_query
-            and viewer.content_match_index == self._library_media_content_match_index
             and viewer.content_mode == self._library_media_content_mode
-            and viewer.find_open == self._library_media_find_open
-            and not self._library_media_find_focus_pending
             and viewer.error_message == (self._library_media_reader_session.error or "")
             and viewer.reader_mode == self._library_media_reader_session.mode
             and viewer.more_open == self._library_media_reader_session.more_open
@@ -4474,8 +4470,18 @@ class LibraryMediaController:
             and viewer.image_preview_status == preview_status
             and viewer.image_preview_hidden == preview_hidden
             and viewer.image_preview_available == preview_available
+            # TASK-40327: the Find bar (and the query clear that closes it) is
+            # patched in place, last so only when nothing else changed: a
+            # recompose here re-parsed the whole document for one bar.
+            and viewer.sync_find_bar(
+                find_open=self._library_media_find_open,
+                query=self._library_media_content_query,
+                match_index=self._library_media_content_match_index,
+                focus=self._library_media_find_focus_pending,
+            )
         )
         if unchanged:
+            self._consume_library_media_find_focus()
             # Re-anchor the memoized state object so the NEXT no-change sync
             # short-circuits on identity again -- after an identical
             # re-fetch settles (new detail dict, equal values), the mounted

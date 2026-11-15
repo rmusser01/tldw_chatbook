@@ -1055,6 +1055,25 @@ MINIMUM_FILES = 2130
 # TASK-40293 review r14lf-rev1 (2026-11-13): append the queued-grip-focus and
 # wide rail-focus nodes at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 2138
+MINIMUM_FILES = 2132
+# TASK-40327 (2026-11-13): append the Media Find-toggle node at the tail. The
+# floor is the measured entry count.
+MINIMUM_FILES = 2139
+MINIMUM_FILES = 2133
+MINIMUM_FILES = 2029
+# TASK-40328 (2026-11-13): append the Collections rail-press recompose node at
+# the tail. The floor is the measured entry count.
+MINIMUM_FILES = 2140
+MINIMUM_FILES = 2134
+MINIMUM_FILES = 2030
+# TASK-40328 review r14ls-rev1 (2026-11-13): append the cancelled pane-repaint
+# node at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 2141
+MINIMUM_FILES = 2135
+MINIMUM_FILES = 2031
+# TASK-40328 review r14ls-rev3 (2026-11-13): append the focus-retry guard node
+# at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 2142
 
 
 def read_census(path: Path) -> list[str]:

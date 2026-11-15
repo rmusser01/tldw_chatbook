@@ -97,6 +97,31 @@ def _seed_legacy_records(db, *, count: int) -> None:
         )
 
 
+async def _wait_for_collections_entry(screen, pilot) -> None:
+    """Wait until the Collections entry load, pane repaints included, finishes.
+
+    TASK-40328: the entry load repaints the reader panes in place now, so the
+    shell the route mounts stays while they re-render; a test acting on the
+    first shell it sees can find a pane mid-recompose or a control still
+    disabled while capabilities load.
+    """
+    await _wait_for_condition(
+        pilot,
+        lambda: not any(
+            worker.group == "library_collections_capture_entry"
+            and not worker.is_finished
+            for worker in screen.app.workers
+        ),
+        message="Collections entry never settled",
+    )
+
+
+async def _press_quick_capture(screen, pilot) -> None:
+    """Press Quick Capture once the entry load settles (TASK-40328)."""
+    await _wait_for_collections_entry(screen, pilot)
+    screen.query_one("#library-collections-quick-capture", Button).press()
+
+
 def _identity(value: str) -> CaptureIdentity:
     return CaptureIdentity(AUTHORITY, value)
 
@@ -546,7 +571,7 @@ async def test_real_library_route_quick_capture_persists_and_selects_capture() -
         screen.query_one("#library-row-browse-collections", Button).press()
         await _wait_for_selector(screen, pilot, "#library-collections-reader-shell")
 
-        screen.query_one("#library-collections-quick-capture", Button).press()
+        await _press_quick_capture(screen, pilot)
         await _wait_for_selector(screen, pilot, "#library-collections-capture-url")
         screen.query_one(
             "#library-collections-capture-url", Input
@@ -592,7 +617,7 @@ async def test_quick_capture_draft_survives_background_reader_recompose() -> Non
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-collections", Button).press()
         await _wait_for_selector(screen, pilot, "#library-collections-reader-shell")
-        screen.query_one("#library-collections-quick-capture", Button).press()
+        await _press_quick_capture(screen, pilot)
         original_url = await _wait_for_selector(
             screen, pilot, "#library-collections-capture-url"
         )
@@ -652,7 +677,7 @@ async def test_unknown_quick_capture_preserves_draft_and_does_not_auto_retry(
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-collections", Button).press()
         await _wait_for_selector(screen, pilot, "#library-collections-reader-shell")
-        screen.query_one("#library-collections-quick-capture", Button).press()
+        await _press_quick_capture(screen, pilot)
         await _wait_for_selector(screen, pilot, "#library-collections-capture-url")
         screen.query_one(
             "#library-collections-capture-url", Input
@@ -937,7 +962,7 @@ async def test_quick_capture_hostile_fields_are_rejected_and_valid_still_saves()
         screen.query_one("#library-row-browse-collections", Button).press()
         await _wait_for_selector(screen, pilot, "#library-collections-reader-shell")
 
-        screen.query_one("#library-collections-quick-capture", Button).press()
+        await _press_quick_capture(screen, pilot)
         await _wait_for_selector(screen, pilot, "#library-collections-capture-url")
 
         def _fill(title: str, tags: str, note: str) -> None:

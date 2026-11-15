@@ -92,6 +92,9 @@ from ...Widgets.Library import (
     CollectionsCaptureReaderPresentation,
     LibraryAdaptiveReaderShell,
 )
+from ...Widgets.Library.library_collections_capture_reader import (
+    recompose_capture_panes,
+)
 from .library_collections_capture_controller import (
     CollectionsCaptureControllerState,
     LibraryCollectionsCaptureController,
@@ -261,8 +264,26 @@ class LibraryCollectionsController:
                 and capture_controller.state.selected_identity is not None
             ),
         )
+        screen = self._screen
+        retry = screen._library_collections_focus_retry
+        screen._library_collections_focus_retry = None
+        # r14ls-rev2/rev3: a first visit composes this shell with the width-0
+        # layout, so the route's restore found its rail row disabled and
+        # parked focus on a grip; retry that id now the rail is open -- only
+        # while focus is still on that very grip, never a user's own.
+        parked = (
+            previous is None
+            and retry is not None
+            and retry[1] in (shell.library_grip, shell.items_grip)
+            and screen.focused is retry[1]
+        )
         shell.sync_layout(layout)
         self._library_collections_reader_layout = layout
+        if parked:
+            chain = screen.focus_chain
+            targets = [target for target in screen.query(retry[0]) if target in chain]
+            if targets:
+                screen.set_focus(targets[0], scroll_visible=False)
 
     def _mirror_library_collections_reader_preference(
         self,
@@ -419,6 +440,20 @@ class LibraryCollectionsController:
                 lambda: self.call_after_refresh(reveal_current_focus)
             )
 
+    async def _sync_library_collections_capture_panes(self) -> None:
+        """TASK-40328: re-render the capture panes in place (whole screen without)."""
+        self._capture_reader_annotation_draft()
+        presentation = self._library_collections_capture_presentation()
+        if not await recompose_capture_panes(self._screen, presentation):
+            self._refresh_library_collections_capture_reader()
+        elif (rail := self._screen._active_library_rail()) is not None:
+            # The rail row and Details read the count this load produced; the
+            # retired whole-screen recompose used to repaint them (r14ls-rev1).
+            self._screen._sync_library_rail_state(rail)
+        self.call_after_refresh(
+            self._sync_library_collections_reader_layout_from_shell
+        )
+
     def _capture_reader_annotation_draft(self) -> None:
         """Retain only live, editable fields under their painted capture identity."""
         try:
@@ -460,13 +495,10 @@ class LibraryCollectionsController:
     async def _load_library_collections_capture_entry(self) -> None:
         """Adopt app authority, load bounded rail data, page, and first detail."""
         controller = self._ensure_library_collections_capture_controller()
-        if controller is None:
-            self._refresh_library_collections_capture_reader()
-            return
-        controller.adopt_active_authority()
-        self._refresh_library_collections_capture_reader()
-
-        if controller.state.authority_key is None:
+        if controller is not None:
+            controller.adopt_active_authority()
+        await self._sync_library_collections_capture_panes()
+        if controller is None or controller.state.authority_key is None:
             return
         scope = controller.scope_service
         try:
@@ -492,7 +524,7 @@ class LibraryCollectionsController:
                 self._library_collections_legacy_recovery_rows = legacy.total
         request = self._library_collections_capture_request()
         if request is None:
-            self._refresh_library_collections_capture_reader()
+            await self._sync_library_collections_capture_panes()
             return
         await controller.load_page(request)
         self._library_collections_requested_page = (
@@ -500,10 +532,10 @@ class LibraryCollectionsController:
             if controller.state.applied_scope is not None
             else request.page
         )
-        self._refresh_library_collections_capture_reader()
+        await self._sync_library_collections_capture_panes()
         if controller.state.selected_identity is not None:
             await controller.load_selected_now()
-        self._refresh_library_collections_capture_reader()
+        await self._sync_library_collections_capture_panes()
 
     def _ensure_library_collections_capture_controller(
         self,

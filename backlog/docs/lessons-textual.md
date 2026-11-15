@@ -2658,3 +2658,9 @@ nodes had been red for weeks; a `set_focus` wrapper with a short stack, plus a l
   recomposes, so a post-recompose callback reads False).
 - When focus "lands, then moves to a grip", look for a queued recompose of an
   ancestor, not for a second writer.
+
+## A clamped scroll restore cannot wait out a late layout by retrying hops -- watch the owner's `virtual_size` (TASK-40299, 2026-11-13)
+
+**Incident.** The compact Notes Preview lost its remembered offset after a compact -> wide -> compact round trip on a busy machine. A probe of every `_restore_library_notes_scroll_offset` call showed the whole restore chain (`call_later` and `call_after_refresh` hops) running while the Preview was still 0 wide with `max_scroll_y` 0, so `scroll_to(y=2)` clamped to 0; the Preview laid out seconds later and nothing restored again. A first fix re-queued the last restore through `call_after_refresh` up to 40 more times: all 40 ran in about 200 ms with the owner still unlaid out (45 of 46 restores at range 0), because a hop with no pending layout returns at once. What worked: when the restore clamps, park it on the owner and `watch(owner, "virtual_size", ...)`; the layout that gives the owner its range fires the watcher and the rerun lands.
+
+**What to do.** When a deferred restore depends on a widget's layout, key it on that widget's own layout signal (`virtual_size`, a `Resize`, or a widget message such as `Markdown.TableOfContentsUpdated`), not on a count of refresh hops. Check whether the restore actually held (`round(scroll_y) == target`) instead of assuming it.

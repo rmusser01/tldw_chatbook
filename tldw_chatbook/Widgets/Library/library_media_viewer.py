@@ -1175,11 +1175,7 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         Returns:
             None.
         """
-        forces_analysis_raw = (
-            self.reader_mode == "analysis"
-            and bool(self.content_query) != bool(query)
-            and looks_like_markdown_content(self.viewer.analysis)
-        )
+        forces_analysis_raw = self._query_flip_swaps_analysis_mode(query)
         self.content_query = query
         self.content_match_index = match_index
         if forces_analysis_raw:
@@ -1203,6 +1199,79 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         self.query_one(
             "#library-media-viewer-content", LibraryMediaContentBody
         ).sync_search(query, match_index)
+
+    def _query_flip_swaps_analysis_mode(self, query: str) -> bool:
+        """Whether moving to ``query`` swaps a Markdown analysis Raw<->Rendered."""
+        return (
+            self.reader_mode == "analysis"
+            and bool(self.content_query) != bool(query)
+            and looks_like_markdown_content(self.viewer.analysis)
+        )
+
+    def sync_find_bar(
+        self, *, find_open: bool, query: str, match_index: int, focus: bool
+    ) -> bool:
+        """Open or close the Find bar without rebuilding the Reader (TASK-40327).
+
+        Both bodies compose the bar as the content body's previous sibling,
+        so it is mounted there, or removed after the closing clear of its
+        query is applied to the body in place. The body keeps its identity
+        and its parsed document, and focus is left where it is (an opening
+        bar takes it through its own ``focus_on_mount`` token).
+
+        Args:
+            find_open: Whether the Find bar is open.
+            query: The screen's content query (closing clears it to "").
+            match_index: The screen's active match index.
+            focus: The one-shot Find-gesture focus token.
+
+        Returns:
+            True when nothing changed or it was patched in place; False when
+            only a recompose can apply it (no content body, a new query, an
+            Analysis Raw/Rendered swap, or a reopen while the bar a close in
+            the same loop turn removed is still in the DOM).
+        """
+        if not focus and (find_open, query, match_index) == (
+            self.find_open,
+            self.content_query,
+            self.content_match_index,
+        ):
+            return True
+        bodies = self.query("#library-media-viewer-content")
+        body = next(bodies.results(LibraryMediaContentBody), None)
+        clearing = (query, match_index) != (
+            self.content_query,
+            self.content_match_index,
+        )
+        controls = self.query("#library-media-content-search-controls")
+        # A close earlier in this loop turn only marked its bar for removal;
+        # reopening must not adopt the doomed bar (review r14ls-rev1).
+        reopening_pruned = find_open and any(node._pruning for node in controls)
+        if (
+            body is None
+            or reopening_pruned
+            or (clearing and (query or self._query_flip_swaps_analysis_mode(query)))
+        ):
+            return False
+        if clearing:
+            body.sync_search(query, match_index)
+            self.content_query, self.content_match_index = query, match_index
+        self.find_open = find_open
+        if not (find_open or query):
+            controls.remove()
+        elif not controls:
+            body.parent.mount(
+                LibraryMediaContentSearchControls(
+                    is_markdown=body.is_markdown,
+                    query=query,
+                    matches=find_content_matches(body.content, query),
+                    match_index=match_index,
+                    focus_on_mount=focus,
+                    id="library-media-content-search-controls",
+                ),
+                before=body,
+            )
+        return True
 
     def sync_match_index(self, *, matches: tuple[int, ...], match_index: int) -> None:
         """Synchronize match navigation without rebuilding viewer children.

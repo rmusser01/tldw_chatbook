@@ -3708,6 +3708,10 @@ class LibraryScreen(BaseAppScreen):
         #: instead of dropping its number silently, and only the deadline
         #: kind claims a wait (fix round 1).
         self._library_collections_count_failure: str = ""
+        #: r14ls-rev2/rev3: the last recompose restore's focus id and the
+        #: widget it parked focus on instead, retried by the Collections
+        #: shell's first layout sync once it opens the rail.
+        self._library_collections_focus_retry: tuple[str, Widget | None] | None = None
         self._collections_state.reader_layout = resolve_adaptive_reader_layout(
             0,
             self._collections_state.reader_preferences,
@@ -8934,11 +8938,15 @@ class LibraryScreen(BaseAppScreen):
         unconditional control to fall back to, so it is closed in the
         predicate instead -- it stands down when nothing is there.)
         """
+        self._library_collections_focus_retry = None
         if self._library_focus_channel_owns_this_window():
             return
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA:
             self._restore_library_media_focus(previous)
+        before = self.focused
         super().restore_focus_after_recompose(previous)
+        if previous and self.focused is not before:
+            self._library_collections_focus_retry = (previous, self.focused)
 
     def _library_focus_channel_owns_this_window(self) -> bool:
         """Whether an armed one-shot channel will land focus itself.
@@ -10081,22 +10089,7 @@ class LibraryScreen(BaseAppScreen):
             # "Loading media…" placeholder forever. Deleted-record safety
             # uses the permanent Reader's explicit error + Retry surface,
             # matching a live row whose backing record vanished before open.
-            if self._media_state.reader_session.pending_request is None:
-                reader_identity = self._library_media_reader_identity(
-                    self._media_state.selected_media_id
-                )
-                if reader_identity is not None:
-                    canonical_id, backing_id = reader_identity
-                    self._media_state.reader_session = begin_selection(
-                        self._media_state.reader_session,
-                        canonical_id,
-                        backing_id,
-                        self._media_state.selected_media_id,
-                        immediate=True,
-                    )
-                    # TASK-34000.18 fix round 2: a restored selection is
-                    # the Reader's item too.
-                    self._media_state.highlight_held_by_reader = True
+            # ``restore_state`` begins the Reader selection (TASK-40296).
             self.run_worker(
                 self._refresh_library_media_detail(
                     self._media_state.selected_media_id,
@@ -10736,6 +10729,18 @@ class LibraryScreen(BaseAppScreen):
             media_view = "list"
         self._media_state.selected_media_id = selected_media_id
         self._media_state.view = media_view
+        reader_identity = self._library_media_reader_identity(selected_media_id)
+        if media_view == "viewer" and reader_identity is not None:
+            # TASK-40296: begin the restored Reader item here, not in on_mount:
+            # the first compose runs before on_mount and its highlight adoption
+            # clears a selection the Reader does not hold (TASK-34000.18).
+            self._media_state.reader_session = begin_selection(
+                self._media_state.reader_session,
+                *reader_identity,
+                selected_media_id,
+                immediate=True,
+            )
+            self._media_state.highlight_held_by_reader = True
 
         self._rag_search_state.query = str(state.get("library_rag_query") or "")
         rag_mode = state.get("library_rag_mode")
@@ -12754,13 +12759,7 @@ class LibraryScreen(BaseAppScreen):
                     onboarding_all_empty=self._library_onboarding_all_empty,
                 )
             else:
-                rail.sync_state(
-                    shell,
-                    self._library_rail_preferences(),
-                    query=self._library_rail_search_value(),
-                    lifecycle=self._library_lifecycle,
-                    onboarding_all_empty=self._library_onboarding_all_empty,
-                )
+                self._sync_library_rail_state(rail, shell)
                 self._sync_workspaces_rail_body(rail)
             header_renderable = header.renderable
             header_text = getattr(header_renderable, "plain", str(header_renderable))
@@ -13225,13 +13224,7 @@ class LibraryScreen(BaseAppScreen):
             else None
         )
         try:
-            rail.sync_state(
-                shell,
-                self._library_rail_preferences(),
-                query=self._library_rail_search_value(),
-                lifecycle=self._library_lifecycle,
-                onboarding_all_empty=self._library_onboarding_all_empty,
-            )
+            self._sync_library_rail_state(rail, shell)
             self._sync_workspaces_rail_body(rail)
             header_renderable = header.renderable
             header_text = getattr(header_renderable, "plain", str(header_renderable))
@@ -15801,7 +15794,7 @@ class LibraryScreen(BaseAppScreen):
                 row_context_factory=lambda row: (
                     (
                         LibraryCollectionsScopeRows(
-                            presentation,
+                            self._library_collections_capture_presentation(),
                             id="library-collections-scopes",
                         ),
                     )
@@ -22195,6 +22188,26 @@ class LibraryScreen(BaseAppScreen):
             self._gather_library_onboarding_evidence(generation),
             group="library_onboarding_evidence",
             exclusive=True,
+        )
+
+    def _sync_library_rail_state(
+        self, rail: LibraryRail, shell: LibraryShellState | None = None
+    ) -> None:
+        """Re-sync ``rail`` from ``shell`` (default: a fresh one).
+
+        ``LibraryRail.sync_state`` patches it in place when its tree's shape is
+        unchanged and recomposes it otherwise.
+        """
+        rail.sync_state(
+            shell
+            or build_library_shell_state(
+                self._build_library_shell_input(),
+                selected_row_id=self._library_selected_row_id,
+            ),
+            self._library_rail_preferences(),
+            query=self._library_rail_search_value(),
+            lifecycle=self._library_lifecycle,
+            onboarding_all_empty=self._library_onboarding_all_empty,
         )
 
     def _sync_library_rail_lifecycle_presentation(self) -> None:

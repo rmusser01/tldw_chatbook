@@ -3072,3 +3072,15 @@ Tests/UI/test_library_media_side_by_side.py::test_compact_media_viewer_back_empt
 # the wide size (7.3 s and 8.4 s call, ~15 s whole, serial at load 19-36).
 Tests/UI/test_library_media_side_by_side.py::test_compact_media_empty_page_landing_survives_a_queued_grip_focus
 Tests/UI/test_library_media_side_by_side.py::test_wide_media_reader_reset_leaves_focus_the_user_holds_in_the_rail
+# TASK-40327 (2026-11-13): a Library Media Find toggle keeps the content body
+# (no re-parse of the document) and focus.
+Tests/UI/test_library_media_reader_match_nav_t22209.py::test_find_toggle_keeps_body_parse_and_focus
+# TASK-40328 (2026-11-13): a Collections rail press recomposes the Library at
+# most once and loads its captures into the reader panes in place.
+Tests/UI/test_library_collection_reader_journeys.py::test_rail_press_recomposes_library_once_and_loads_captures_in_place
+# TASK-40328 review r14ls-rev1 (2026-11-13): a pane repaint cancelled
+# mid-recompose is rebuilt by the next, identical one.
+Tests/UI/test_library_collection_reader_journeys.py::test_a_pane_repaint_cancelled_mid_recompose_is_rebuilt_by_the_next
+# TASK-40328 review r14ls-rev3 (2026-11-13): the Collections first-visit
+# focus retry never moves a user's own focus.
+Tests/UI/test_library_collection_reader_journeys.py::test_collections_focus_retry_never_moves_a_users_own_focus
