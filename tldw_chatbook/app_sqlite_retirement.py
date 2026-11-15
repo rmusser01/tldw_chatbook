@@ -9,9 +9,9 @@ async def retire_app_sqlite_handles(app: Any) -> None:
     """Retire settled app caches, preserving native borrowers (ADR225)."""
     from tldw_chatbook.Backup_Recovery import storage_admission as storage
     from tldw_chatbook.Backup_Recovery.participants import (
-        _close_settled_core_cache,
-        _core_cached_connection,
-        _repository_participant,
+        close_settled_core_cache,
+        core_cached_connection,
+        repository_participant,
     )
     from tldw_chatbook.DB.base_db import SqliteRetirementIncomplete
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -66,57 +66,57 @@ async def retire_app_sqlite_handles(app: Any) -> None:
     for name, owner, source_type, local_attribute, connection_attribute in owners:
         if type(owner) is not source_type or owner.is_memory_db:
             continue  # Custom/memory owners retain their existing contract.
-        if name == "Evaluations" and type(evaluations) is EvaluationOrchestrator:
-            evaluations._maintenance_close_admission()
-        cache = getattr(owner, local_attribute)
-        connection = _core_cached_connection(
-            owner, getattr(cache, connection_attribute, None)
-        )
-        if (
-            name == "Chat"
-            and owner is borrowed_owner
-            and connection is borrowed_connection
-            and connection is not None
-        ):
-            continue
-        participant = _repository_participant(owner)
-        current_thread = threading.current_thread()
-        with storage._lock:
-            busy = (
-                storage._pause is not None
-                or participant.closed
-                or (
-                    current_thread in participant.retiring_threads
-                    if name == "Chat"
-                    else bool(participant.retiring_threads)
-                )
-                or any(
-                    operation.participant is participant
-                    and (name != "Chat" or operation.thread is current_thread)
-                    for operation in storage._operations
-                )
-                or (
-                    name not in ("Chat", "Evaluations")
-                    and any(
-                        lease.resource_thread is not current_thread
-                        for lease in participant.connections.values()
+        try:
+            if name == "Evaluations" and type(evaluations) is EvaluationOrchestrator:
+                evaluations._maintenance_close_admission()
+            cache = getattr(owner, local_attribute)
+            connection = core_cached_connection(
+                owner, getattr(cache, connection_attribute, None)
+            )
+            if (
+                name == "Chat"
+                and owner is borrowed_owner
+                and connection is borrowed_connection
+                and connection is not None
+            ):
+                continue
+            participant = repository_participant(owner)
+            current_thread = threading.current_thread()
+            with storage._lock:
+                busy = (
+                    storage._pause is not None
+                    or participant.closed
+                    or (
+                        current_thread in participant.retiring_threads
+                        if name == "Chat"
+                        else bool(participant.retiring_threads)
+                    )
+                    or any(
+                        operation.participant is participant
+                        and (name != "Chat" or operation.thread is current_thread)
+                        for operation in storage._operations
+                    )
+                    or (
+                        name not in ("Chat", "Evaluations")
+                        and any(
+                            lease.resource_thread is not current_thread
+                            for lease in participant.connections.values()
+                        )
                     )
                 )
-            )
-        if connection is not None:
-            try:
-                busy = busy or connection.in_transaction
-            except sqlite3.ProgrammingError:
-                pass  # The source close can clear an already-retired cache.
-            if isinstance(connection, sqlite3.Connection) and hasattr(
-                connection, "_quiescence_tokens_lock"
-            ):
-                with connection._quiescence_tokens_lock:
-                    busy = busy or bool(connection._quiescence_tokens)
-        if busy:
-            incomplete.append(name)
-            continue
-        try:
+            if connection is not None:
+                try:
+                    busy = busy or connection.in_transaction
+                except sqlite3.ProgrammingError:
+                    pass  # The source close can clear an already-retired cache.
+                if isinstance(connection, sqlite3.Connection) and hasattr(
+                    connection, "_quiescence_tokens_lock"
+                ):
+                    with connection._quiescence_tokens_lock:
+                        busy = busy or bool(connection._quiescence_tokens)
+            if busy:
+                incomplete.append(name)
+                continue
             if name == "Evaluations":
                 if type(evaluations) is not EvaluationOrchestrator:
                     incomplete.append(name)
@@ -126,11 +126,11 @@ async def retire_app_sqlite_handles(app: Any) -> None:
                 # Current-thread handle, not shared owner admission. No TRUNCATE
                 # checkpoint: it would block the loop on another writer's lock.
                 owner.close_connection(checkpoint=False)
-            elif not _close_settled_core_cache(owner):
+            elif not close_settled_core_cache(owner):
                 incomplete.append(name)
                 continue
             if (
-                _core_cached_connection(
+                core_cached_connection(
                     owner, getattr(cache, connection_attribute, None)
                 )
                 is not None

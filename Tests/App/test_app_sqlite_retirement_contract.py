@@ -130,6 +130,30 @@ async def test_live_tracked_chat_cursor_survives_refused_retirement(app):
     _assert_closed(connection)
 
 
+async def test_one_unbound_owner_does_not_abort_the_other_owners(app, monkeypatch):
+    """PR #3536 review M1: the participant lookup ran outside the per-owner
+    `try`, so one owner's ValueError left every later owner open."""
+    from tldw_chatbook.Backup_Recovery import participants
+
+    bind = participants.repository_participant
+
+    def unbound_chat(repository):
+        if repository is app.chachanotes_db:
+            raise ValueError("repository_participant_not_installed")
+        return bind(repository)
+
+    connections = [getattr(cache, attribute) for _, cache, attribute in _handles(app)]
+    with monkeypatch.context() as patch:
+        # Both spellings: the private alias is what the original code imported.
+        for name in ("repository_participant", "_repository_participant"):
+            patch.setattr(participants, name, unbound_chat)
+        with pytest.raises(RuntimeError, match=r"incomplete:Chat:ValueError$"):
+            await LifecycleMixin._retire_app_sqlite_handles(app)
+    assert connections[0].execute("SELECT 1").fetchone()[0] == 1
+    for connection in connections[1:]:
+        _assert_closed(connection)
+
+
 async def test_chat_retirement_does_not_block_the_loop_on_another_writer(app):
     """PR #3536 review I3: the Chat close ran `wal_checkpoint(TRUNCATE)` on the
     loop and waited out the 15 s busy_timeout while another writer held the DB."""
