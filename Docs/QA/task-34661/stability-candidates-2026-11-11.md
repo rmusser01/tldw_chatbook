@@ -1656,3 +1656,36 @@ used raw object counts instead. All heap attempts are excluded from the
 timing comparison. A runner path typo also failed before launching a
 timing arm. TASK-31966 stays open. All results and 194 verified hashes
 are local under `/private/tmp/pr3536-scroll-gc-cah2qeAs`.
+
+### Retained viewport compaction debt follow-up
+
+A disposable mounted control froze a Textual label and a Console viewport
+with seven row widgets. Normal unmount and releasing Console's references
+left all nine sampled widgets alive. Each still had a Textual style object
+pointing back to its widget. The probe establishes that Console-owned
+reference cleanup alone cannot release this frozen graph.
+
+The mounted regression reproduced compaction debt on the first warm switch
+while the frozen viewport was still attached. With the freeze record owned
+by the viewport, the switch and warm return preserve the record. Opening a
+third chat evicts the frozen viewport and still records compaction debt.
+This verifies the retirement signal. The cold whole-heap compaction and
+the 50 ms event-loop qualification remain open.
+
+The independent review of `b69a67c9` found that staging an in-place
+replacement still recorded debt before the widget acquired its refresh lock.
+A mounted check canceled the switch with the lock held. The exact old row
+remained mounted when the original assertion found compaction due. The
+correction tracks which identity actually reached the row reconciler and
+records debt once Textual queues the prune. The mounted cases now check both
+cancellation before removal and cancellation after the old row is detached.
+The existing refreeze request and collector policy in
+[ADR-198](../../../backlog/decisions/198-gc-policy-freeze-boot-heap.md)
+still apply.
+
+Re-review found a freeze window before a new viewport's first refresh. Its
+setup row was already mounted when a worker-thread freeze ran. With the
+first record deferred to reconciliation, the rejected candidate and the
+later-evicted candidate both left frozen widgets without reporting debt.
+The first record now precedes that refresh. The mounted cases exercise
+both staging cancellation and publication followed by eviction.

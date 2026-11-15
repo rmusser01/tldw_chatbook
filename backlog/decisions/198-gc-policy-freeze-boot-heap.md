@@ -247,8 +247,8 @@ within a launch (36 ms on the first send, 121 ms by the fifth).
    of wall time at a load average near 95), against 329 ms for dev's worst
    generation-2 pass in the same run. The total collection CPU was the same
    on both arms (12.4 s against 12.5 s); the budget only gathered it into a
-   few long stalls. The Console rebuilds its transcript for every
-   conversation it shows, so it records the process's freeze epoch
+   few long stalls. At the time the Console rebuilt its transcript for every
+   conversation, so it recorded the process's freeze epoch
    (`heap_freeze_epoch()`) with each conversation it paints. When it paints
    another one and the epoch has moved, a freeze caught the outgoing rows
    while they were shown, and it calls `IdleHeapRefreezer.note_stranded()`:
@@ -263,6 +263,11 @@ within a launch (36 ms on the first send, 121 ms by the fifth).
    follow-up, 2026-10-20: live, a fresh session's first send owed a 316 ms
    compaction only because the screen pre-import froze the heap while the
    empty chat was shown).
+
+   The viewport retention rules in [ADR-365](365-console-transcript-viewport-ownership.md)
+   now keep the freeze record with each viewport. Unmount and a committed
+   in-place row prune can report debt. A staged switch can leave the rows
+   attached and their freeze record intact.
 
    **A freeze follows only a collection that ran (2026-10-19).** CPython's
    `gc.collect()` returns 0 at once, collecting nothing, while another pass

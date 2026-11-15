@@ -3058,6 +3058,12 @@ class ConsoleTranscript(VerticalScroll):
         teardown still runs.
         """
         _LIVE_TRANSCRIPTS.discard(self)
+        if getattr(self, "_console_heap_refreeze_painted", None) is not None:
+            from tldw_chatbook.UI.Console_Modules.transcript import (
+                note_console_transcript_discarded,
+            )
+
+            note_console_transcript_discarded(self)
 
     def watch_has_focus(self, _has_focus: bool) -> None:
         """Restyle only the transcript itself when it gains or loses focus.
@@ -7169,6 +7175,12 @@ class ConsoleTranscript(VerticalScroll):
     async def _reconcile_rows(self, rows: list[_TranscriptRow]) -> None:
         if not self._can_mutate_widget(self):
             return
+        projection_key = getattr(self, "_console_heap_refreeze_projection_key", None)
+        if projection_key is not None:
+            from tldw_chatbook.UI.Console_Modules.transcript import (
+                note_console_transcript_rows_projected,
+            )
+
         desired_keys = [row.key for row in rows]
         desired_key_set = set(desired_keys)
         turn_file_cards = self._turn_file_cards_enabled()
@@ -7210,9 +7222,15 @@ class ConsoleTranscript(VerticalScroll):
         if removals:
             for widget in removals:
                 self._cancel_selection_if_row_removed(widget)
+            removal = self.remove_children(removals)
+            # Textual has queued the prune even if the following wait is canceled.
+            if projection_key is not None:
+                note_console_transcript_rows_projected(
+                    self, projection_key, rows_removed=True
+                )
             # TASK-34982: the poll paints in its timer's task; a stopped timer
             # must not cancel the removed rows' own pumps mid-exit.
-            await finish_removal(self.remove_children(removals))
+            await finish_removal(removal)
             if not self._can_mutate_widget(self):
                 return
 
@@ -7280,6 +7298,8 @@ class ConsoleTranscript(VerticalScroll):
                 else:
                     self.move_child(widget, after=previous_widget)
             previous_widget = widget
+        if projection_key is not None and not removals:
+            note_console_transcript_rows_projected(self, projection_key)
         self._paint_debug_dump("after-reconcile")
 
     async def _sync_assistant_turn_widget(

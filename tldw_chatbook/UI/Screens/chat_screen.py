@@ -178,9 +178,10 @@ from ..Console_Modules.retrieval import (
 )
 from ..Console_Modules.transcript import (
     _ConsoleTranscriptReadingState,
-    note_console_conversation_painted,
+    note_console_transcript_rows_projected,
     request_console_heap_refreeze,
     request_transcript_sync as _request_transcript_sync,
+    stage_console_transcript_refreeze,
 )
 from ..Console_Modules import console_spend_projection as spend
 from ..Console_Modules import inspector_data
@@ -17137,7 +17138,7 @@ class ChatScreen(BaseAppScreen):
                 messages,
                 session_id=self._ensure_console_chat_store().active_session_id,
             )
-            note_console_conversation_painted(self)  # TASK-33620.15.3
+            refreeze_key = stage_console_transcript_refreeze(self, transcript)
             # Live turn-activity line. `apply_turn_activity` hands back the
             # EFFECTIVE value ("" unless a row is actually in flight), which
             # is what joins the refresh key below -- so an idle transcript
@@ -17294,6 +17295,7 @@ class ChatScreen(BaseAppScreen):
                     refresh_key,
                     gate,
                 )
+            note_console_transcript_rows_projected(transcript, refreeze_key)
         if gate is not None:
             self._console_transcript_sync_token = gate
         return None
