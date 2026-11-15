@@ -161,6 +161,7 @@ from tldw_chatbook.Widgets.Console.console_selection_menu import (
     selection_menus_on_screen,
 )
 from tldw_chatbook.Widgets.Console.console_transcript_input import (
+    _current_visit,
     guard_transcript_action,
     transcript_action_current,
     transcript_callback,
@@ -6609,6 +6610,8 @@ class ConsoleTranscript(VerticalScroll):
         TASK-33622.4: otherwise the binding claims every Esc before the
         screen's return-to-composer binding can run.
         """
+        if getattr(self, "_transcript_surface", None) and not _current_visit(self):
+            return False  # mid-switch: keys fall through to the screen
         if action == "clear_selection":
             return self.has_escape_layer()
         return super().check_action(action, parameters)

@@ -9,6 +9,7 @@ from inspect import iscoroutinefunction
 from typing import Any
 
 from textual.dom import DOMNode
+from textual.events import Key
 from textual.message import Message
 from textual.widget import Widget
 
@@ -80,7 +81,11 @@ def guard_transcript_action(method):
     def allowed(widget: Widget, message: Message) -> bool:
         if transcript_action_current(message, widget):
             return True
-        message.stop().prevent_default()
+        # Mid-switch no visit is published: skip only this handler and let the
+        # key reach screen bindings (the transcript's own are off in
+        # ``check_action``). Input queued before a newer visit stays dropped.
+        if not isinstance(message, Key) or _current_visit(_managed_transcript(widget)):
+            message.stop().prevent_default()
         return False
 
     if iscoroutinefunction(method):

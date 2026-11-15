@@ -570,6 +570,50 @@ async def test_keyboard_switch_to_retained_chat_removes_message_overlays(overlay
         assert console.focused is console.query_one("#console-native-composer")
 
 
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_mid_switch_transcript_keys_reach_screen_bindings_only(monkeypatch):
+    host = _ready_console_host()
+    async with host.run_test(size=(120, 50)) as pilot:
+        console = await _mounted_console(host, pilot)
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session()
+        second = store.create_session(title="Other", activate=False)
+        for session in (first, second):
+            store.append_message(
+                session.id, role=ConsoleMessageRole.USER, content="Text"
+            )
+        await console._sync_native_console_transcript()
+        await pilot.pause()
+        first_view = console.query_one(ConsoleTranscriptSurface).transcript
+        console.set_focus(first_view, scroll_visible=False)
+        await pilot.pause()
+        entered = asyncio.Event()
+        original = console._project_native_console_transcript
+
+        async def hold_stage(viewport, current):
+            if viewport is not first_view:
+                entered.set()
+                await asyncio.Future()
+            return await original(viewport, current)
+
+        monkeypatch.setattr(console, "_project_native_console_transcript", hold_stage)
+        store.switch_session(second.id)
+        switch = asyncio.create_task(console._sync_native_console_transcript())
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+            assert console.focused is first_view
+            await pilot.press("j")  # transcript-local: dropped
+            assert first_view.selected_message_id is None
+            assert console.focused is first_view
+            await pilot.press("tab")  # screen binding: still reaches the screen
+            assert console.focused is not first_view
+        finally:
+            switch.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await switch
+
+
 def test_more_menu_focus_restore_ignores_a_detached_owner():
     """A menu that outlives its viewport must not raise NoScreen on dismissal."""
     from tldw_chatbook.Widgets.Console.console_message_more_menu import (
