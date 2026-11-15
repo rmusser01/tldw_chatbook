@@ -50,6 +50,9 @@ _AUDITED_LITERAL_ALLOWLIST: dict[str, tuple[int, int]] = {
     "tldw_chatbook/Chat/console_session_settings.py": (1, 1),
     # Audit-leave: identity aliases (execution spelling -> readiness key).
     "tldw_chatbook/Provider_Contract/provider_endpoint_contract.py": (1, 1),
+    # Audit-leave: identity map (dispatch key -> the config table its legacy
+    # adapter reads, TASK-40300 review r14ep-rev3), not membership.
+    "tldw_chatbook/Chat/console_provider_endpoints.py": (1, 1),
     # Audit-leave: identity aliases (setup persistence).
     "tldw_chatbook/Chat/provider_setup_persistence.py": (1, 1),
     # Audit-leave: docstring reference to the legacy table's own keys.

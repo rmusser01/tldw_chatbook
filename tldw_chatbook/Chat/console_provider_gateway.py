@@ -63,6 +63,7 @@ from tldw_chatbook.Chat.console_provider_endpoints import (
     CONFIG_READING_LOCAL_EXECUTION_KEYS,
     URL_BASED_PROVIDER_KEYS,
     adapter_api_base_url,
+    console_own_table_endpoint,
     invalid_llamacpp_base_url_copy,
     refuse_a_refused_endpoint,
     effective_provider_endpoint,
@@ -4708,7 +4709,7 @@ class ConsoleProviderGateway:
                 else selection.base_url,
                 provider_settings,
                 custom_endpoint=custom_entry is not None,
-            )
+            ) or console_own_table_endpoint(identity.execution_key, app_config)
 
         # TASK-40300: the endpoint contract decides, before the unsaved guard,
         # as readiness does; a refused custom entry never falls back to its

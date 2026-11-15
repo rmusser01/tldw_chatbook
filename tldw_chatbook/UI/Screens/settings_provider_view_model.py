@@ -497,33 +497,37 @@ class DetachRefused(RuntimeError):
         self.user_copy = user_copy
 
 
-def _detach_refusal(entry: CustomEndpointEntry) -> str:
+def _detach_refusal(entry: CustomEndpointEntry, urls: list[str | None]) -> str:
     """Why detaching ``entry`` is refused, or "" (review r14ep-rev2 M-e).
 
-    Detach moves an OpenAI-compatible entry's conversations to the plain
-    ``custom`` provider, whose reading refuses a base such as DeepInfra's
+    Detach moves each conversation to the family provider with ``urls``, the
+    endpoint each would keep; that provider's reading must accept every one
+    (review r14ep-rev3 I-2: an ollama ``?token=`` entry and a conversation's
+    own relaxed URL moved). An OpenAI-compatible base such as DeepInfra's
     ``/v1/openai`` that only a named entry accepts (owner decision
-    2026-11-13), so those conversations would lose a working endpoint.
+    2026-11-13) gets its own copy: the entry keeps working.
     """
     from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
         endpoint_refusal,
     )
 
-    if entry.family != "openai_compatible" or not endpoint_refusal(
-        "custom", entry.base_url
-    ):
+    provider = family_execution_key(entry.family)
+    refused = [url for url in urls if endpoint_refusal(provider, url or "")]
+    if not refused:
         return ""
     name = entry.display_name
-    if endpoint_refusal("custom", entry.base_url, custom_endpoint=True):
+    if entry.family != "openai_compatible" or any(
+        endpoint_refusal(provider, url or "", custom_endpoint=True) for url in refused
+    ):
         return (
-            f"Detach blocked: '{name}' has an endpoint URL Console refuses, so "
-            "its conversations would move to it. Fix it with Edit, or switch "
-            "those conversations to another provider, then delete it."
+            f"Detach blocked: '{name}' conversations would move to an endpoint "
+            "URL Console refuses. Fix it with Edit, or switch those "
+            "conversations to another provider, then delete it."
         )
     return (
-        f"Detach blocked: '{name}' uses an OpenAI-compatible base that only a "
-        "named endpoint accepts (its v1 is not the last part of the path), so "
-        f"its conversations would lose their endpoint. '{name}' keeps working; "
+        f"Detach blocked: '{name}' conversations use an OpenAI-compatible base "
+        "that only a named endpoint accepts (its v1 is not the last part of the "
+        f"path), so they would lose their endpoint. '{name}' keeps working; "
         "switch those conversations to another provider, then delete it."
     )
 
@@ -570,21 +574,23 @@ def detach_and_delete_entry(
     references = (
         conversations_referencing_endpoint(store, provider_id) if store is not None else []
     )
-    if references and (refusal := _detach_refusal(entry)):
+    moves = [
+        (
+            session_id,
+            replace(
+                settings,
+                provider=family_provider,
+                base_url=_detach_base_url(entry, settings),
+            ),
+        )
+        for session_id in references
+        if store is not None
+        and (settings := store.session_settings(session_id)) is not None
+    ]
+    if refusal := _detach_refusal(entry, [settings.base_url for _, settings in moves]):
         raise DetachRefused(refusal)
-    if store is not None:
-        for session_id in references:
-            settings = store.session_settings(session_id)
-            if settings is None:
-                continue
-            store.replace_session_settings(
-                session_id,
-                replace(
-                    settings,
-                    provider=family_provider,
-                    base_url=_detach_base_url(entry, settings),
-                ),
-            )
+    for session_id, settings in moves:
+        store.replace_session_settings(session_id, settings)
     if not delete_settings_from_cli_config("custom_endpoints", [slug]):
         logger.warning(
             "Custom endpoint '%s' was detached but could not be deleted "

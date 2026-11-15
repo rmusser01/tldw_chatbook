@@ -240,6 +240,81 @@ CONDITIONAL_BASE_URL_EXECUTION_KEYS = frozenset(
 CONFIG_READING_LOCAL_EXECUTION_KEYS = frozenset(
     {"aphrodite", "koboldcpp", "oobabooga", "tabbyapi"}
 )
+#: Where an adapter reads its endpoint when the request pins none, in its own
+#: order, when that is not its ``api_settings`` table under the dispatch name
+#: (TASK-40300 review r14ep-rev3 I-1/I-3: ``[api_settings.ooba_api] api_ip``
+#: was sent to unchecked).
+_ADAPTER_OWN_ENDPOINTS: dict[str, tuple[tuple[str, ...], ...]] = {
+    "openai": (("openai_api", "api_base_url"),),
+    "anthropic": (("anthropic_api", "api_base_url"),),
+    "google": (("google", "api_base_url"),),
+    "huggingface": (("huggingface_api", "api_base_url"),),
+    "local-llm": (
+        ("api_settings", "local-llm", "api_url"),
+        ("api_settings", "local-llm", "api_ip"),
+    ),
+    "custom-openai-api": (("api_settings", "custom", "api_url"),),
+    "custom-openai-api-2": (("custom_openai_api_2", "api_ip"),),
+    "oobabooga": (("api_settings", "ooba_api", "api_ip"),),
+    "aphrodite": (("api_settings", "aphrodite_api", "api_url"),),
+    "tabbyapi": (("api_settings", "tabby_api", "api_url"),),
+    "koboldcpp": (("api_settings", "koboldcpp", "api_url"),),
+}
+
+
+def adapter_own_endpoint(
+    dispatch: str, app_config: Mapping[str, object]
+) -> str | None:
+    """The endpoint ``dispatch``'s adapter sends to when the request pins none.
+
+    Covers what Console's ``api_settings`` lookup misses: the adapter's own
+    table, MLX's host and port, and an engine preset's shipped default.
+
+    Args:
+        dispatch: The ``chat_api_call`` endpoint name.
+        app_config: The loaded configuration.
+
+    Returns:
+        That endpoint, read as Console reads a configured one, or None.
+    """
+    from tldw_chatbook.provider_registry import RECORDS_BY_KEY
+
+    for path in _ADAPTER_OWN_ENDPOINTS.get(dispatch, ()):
+        value: object = app_config
+        for key in path:
+            value = value.get(key) if isinstance(value, Mapping) else None
+        if isinstance(value, str) and value.strip():
+            return _effective_contract_endpoint(dispatch, value.strip())
+    if dispatch in {"mlx_lm", "local_mlx_lm"}:
+        api_settings = app_config.get("api_settings")
+        table = api_settings.get(dispatch) if isinstance(api_settings, Mapping) else None
+        table = table if isinstance(table, Mapping) else {}
+        return f"http://{table.get('host', '127.0.0.1')}:{table.get('port', 8080)}/v1"
+    record = RECORDS_BY_KEY.get(dispatch)
+    return record.default_base_url if record and record.engine_driven else None
+
+
+def console_own_table_endpoint(
+    execution_key: str, app_config: Mapping[str, object]
+) -> str | None:
+    """The endpoint a local adapter reads from its own table on a Console send.
+
+    Console's send and readiness check it when the provider's
+    ``api_settings`` table has none, so ``[api_settings.ooba_api] api_ip``
+    is checked and pinned rather than sent to unchecked (TASK-40300 review
+    r14ep-rev3 I-3). Refusing instead would break a working config that
+    sets only the adapter's own table.
+
+    Args:
+        execution_key: Console's resolved adapter key.
+        app_config: The loaded configuration.
+
+    Returns:
+        That endpoint, or None for any other adapter.
+    """
+    if execution_key in CONFIG_READING_LOCAL_EXECUTION_KEYS | {"local-llm"}:
+        return adapter_own_endpoint(execution_key, app_config)
+    return None
 
 
 def adapter_api_base_url(execution_key: str, base_url: str | None) -> str | None:

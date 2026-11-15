@@ -132,13 +132,17 @@ def resolve_permission_summary(
 
 
 def _summary_endpoint(config: Mapping, dispatch: str) -> Optional[str]:
-    """The endpoint a summary call pins: "" for the adapter's default, None
-    when the endpoint contract refuses the one it would use (TASK-40300
-    review r14ep-rev2 I2: a ``127.1``, ``-bad.corp`` or ``?token=`` endpoint
-    was sent to, since only the credential was checked).
+    """The endpoint a summary call pins, or None when there is none or the
+    endpoint contract refuses it (TASK-40300 review r14ep-rev2 I2: a
+    ``127.1``, ``-bad.corp`` or ``?token=`` endpoint was sent to).
+
+    Always pinned: unpinned, an adapter reads its own table, which is not
+    always the one looked up here (review r14ep-rev3 I-1: Local LLM, Custom
+    OpenAI API, Oobabooga and MLX-LM sent to refused URLs).
     """
     from tldw_chatbook.Chat.console_provider_endpoints import (
         adapter_api_base_url,
+        adapter_own_endpoint,
         effective_provider_endpoint,
         first_configured_endpoint,
     )
@@ -151,12 +155,12 @@ def _summary_endpoint(config: Mapping, dispatch: str) -> Optional[str]:
         settings = provider_settings_for_key(config.get("api_settings"), dispatch)
     except Exception:  # noqa: BLE001 -- a malformed table means no summary
         return None
-    effective = effective_provider_endpoint(dispatch, None, settings)
-    if effective and endpoint_refusal(dispatch, effective):
+    effective = (
+        None if first_configured_endpoint(settings) else adapter_own_endpoint(dispatch, config)
+    ) or effective_provider_endpoint(dispatch, None, settings)
+    if not effective or endpoint_refusal(dispatch, effective):
         return None
-    if not first_configured_endpoint(settings):
-        return ""
-    return adapter_api_base_url(dispatch, effective) or ""
+    return adapter_api_base_url(dispatch, effective)
 
 
 _USER_ASSISTANT_ROLES = frozenset({"user", "assistant"})

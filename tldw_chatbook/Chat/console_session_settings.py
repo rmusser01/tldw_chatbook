@@ -35,6 +35,7 @@ from tldw_chatbook.Chat.console_provider_support import (
 )
 from tldw_chatbook.Chat.console_provider_endpoints import (
     DEFAULT_LLAMACPP_BASE_URL,  # noqa: F401  (re-exported; console_settings_modal imports it from here)
+    console_own_table_endpoint,
     invalid_llamacpp_base_url_copy,
     URL_BASED_PROVIDER_KEYS,  # also re-exported; console_settings_modal imports it from here
     effective_provider_endpoint,
@@ -2002,6 +2003,7 @@ def build_console_settings_readiness(
             )
             if provider_key in {"llama_cpp", "local_llamacpp"}
             else effective_provider_endpoint(provider_key, None, provider_settings)
+            or console_own_table_endpoint(identity.execution_key, app_config)
         )
     endpoint_error = (
         endpoint_refusal(provider_key, checked_url, custom_endpoint=entry is not None)

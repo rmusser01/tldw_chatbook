@@ -315,20 +315,27 @@ def missing_custom_endpoint_copy(app_config: Mapping[str, object], provider: str
 
     Returns:
         For an entry refused at load, its reason and where to fix it (review
-        r14ep-rev2 M-d); for one that is gone, the restore copy.
+        r14ep-rev2 M-d); for one that is gone, the restore copy. Settings
+        can fix a URL or a name, not a family or sampling params (review
+        r14ep-rev3 Mi-1).
     """
     from tldw_chatbook.Chat.console_provider_endpoints import (
         CUSTOM_ENDPOINT_NOT_CONFIGURED_COPY,
     )
 
-    slug = split_custom_endpoint_id(provider)
-    reason = custom_endpoint_refusals(app_config).get(slug or "")
-    if reason:
-        return (
-            f"Provider blocked: this custom endpoint is not loaded: {reason} "
-            "Fix it in Settings ▸ Custom endpoints."
-        )
-    return CUSTOM_ENDPOINT_NOT_CONFIGURED_COPY
+    slug = split_custom_endpoint_id(provider) or ""
+    refused = _load_custom_endpoints(app_config)[1].get(slug)
+    if refused is None:
+        return CUSTOM_ENDPOINT_NOT_CONFIGURED_COPY
+    entry, reason = refused
+    params = _custom_endpoints_section(app_config)[slug].get("params")
+    where = (
+        "Fix it in config.toml, or delete the entry in Settings ▸ Custom endpoints."
+        if entry.family not in ENDPOINT_FAMILIES
+        or reason in validate_sampling_params(params if isinstance(params, Mapping) else {})
+        else "Fix it in Settings ▸ Custom endpoints."
+    )
+    return f"Provider blocked: this custom endpoint is not loaded: {reason.rstrip('.')}. {where}"
 
 
 def _load_custom_endpoints(

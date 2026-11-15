@@ -3046,9 +3046,21 @@ async def test_an_openai_compatible_custom_endpoint_keeps_a_v1_that_is_not_last(
     )
 
 
-def test_a_legacy_completions_route_is_not_a_custom_endpoint_base():
-    """TASK-40300 owner decision 2026-11-13: ``/v1/completions`` is the legacy
-    text route, not an API base (a chat would post to
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/v1/completions",
+        # Review r14ep-rev3: the relaxed reading took these routes as bases.
+        "/v1/embeddings",
+        "/v1/responses",
+        "/v1/chat",
+        "/v1/chat/completions/extra",
+        "/v1/openai/embeddings",
+    ],
+)
+def test_an_api_route_is_not_a_custom_endpoint_base(path):
+    """TASK-40300 owner decision 2026-11-13: a route such as the legacy
+    ``/v1/completions`` is not an API base (a chat would post to
     ``/v1/completions/chat/completions``), so it stays refused, with the
     contract's reason."""
     from tldw_chatbook.Chat.custom_endpoint_registry import (
@@ -3057,13 +3069,13 @@ def test_a_legacy_completions_route_is_not_a_custom_endpoint_base():
         validate_entry,
     )
 
-    config = _entry_config("http://localhost:8000/v1/completions")
+    config = _entry_config(f"http://localhost:8000{path}")
 
     assert load_custom_endpoints(config) == {}
     assert custom_endpoint_refusals(config) == {
         "box": "Endpoint path has ambiguous API suffixes."
     }
-    assert validate_entry("Box", "openai_compatible", "http://localhost:8000/v1/completions") == [
+    assert validate_entry("Box", "openai_compatible", f"http://localhost:8000{path}") == [
         "Endpoint path has ambiguous API suffixes."
     ]
 
@@ -3097,54 +3109,103 @@ def test_a_refused_custom_endpoint_is_listed_in_settings_with_its_reason():
     assert list(load_custom_endpoints(config, include_refused=True)) == ["box", "leaky"]
 
 
-@pytest.mark.parametrize("shape", sorted(_CONTRACT_REFUSED_BASES))
-def test_the_approval_summary_never_calls_an_endpoint_the_contract_refuses(shape):
-    """TASK-40300 review r14ep-rev2 I2: the approval-round summarizer checked
-    only the provider's credential, then called ``chat_api_call`` with no
-    endpoint, so the adapter read and POSTed to a refused configured value."""
+def _summary_calls(provider, api_settings, **extra):
+    """Resolve and run one approval summary; return it and the calls made."""
     from tldw_chatbook.Chat import permission_summary_service as summary
 
-    endpoint = _with_path("vllm", _CONTRACT_REFUSED_BASES[shape])
     config = {
-        "api_settings": {"vllm": {"api_url": endpoint, "model": "m"}},
-        "permission_summary": {"mode": "always", "provider": "vllm", "model": "m"},
+        "api_settings": api_settings,
+        "permission_summary": {"mode": "always", "provider": provider, "model": "m"},
+        **extra,
     }
     calls: list[dict] = []
     resolution = summary.resolve_permission_summary(config, environ={})
-
     out = summary.summarize_pending_round(
-        resolution,
-        [{"role": "user", "content": "hi"}],
-        [{"tool_name": "t", "server_label": "", "description": "", "arguments_summary": ""}],
-        call_fn=lambda **kwargs: calls.append(kwargs) or _openai_models_payload("m"),
-    )
-
-    assert resolution.active is False
-    assert out is None and calls == []
-
-
-def test_the_approval_summary_pins_the_endpoint_it_checked():
-    """TASK-40300 review r14ep-rev2 I2: an accepted configured endpoint is the
-    one the call is pinned to, not whatever the adapter reads."""
-    from tldw_chatbook.Chat import permission_summary_service as summary
-
-    config = {
-        "api_settings": {"vllm": {"api_url": "http://127.0.0.1:8000/v1", "model": "m"}},
-        "permission_summary": {"mode": "always", "provider": "vllm", "model": "m"},
-    }
-    calls: list[dict] = []
-    resolution = summary.resolve_permission_summary(config, environ={})
-
-    summary.summarize_pending_round(
         resolution,
         [{"role": "user", "content": "hi"}],
         [{"tool_name": "t", "server_label": "", "description": "", "arguments_summary": ""}],
         call_fn=lambda **kwargs: calls.append(kwargs)
         or {"choices": [{"message": {"content": "ok"}}]},
     )
+    return resolution, out, calls
+
+
+#: Review r14ep-rev3 I-1: the table each adapter reads its endpoint from. The
+#: summary looked settings up by the dispatch name, found nothing for these
+#: but vLLM, and left the call unpinned, so the adapter sent to its own value.
+_SUMMARY_ADAPTER_TABLES = (
+    ("vllm", "vllm", "api_url"),
+    ("local_llm", "local-llm", "api_url"),
+    ("local_llm", "local-llm", "api_ip"),
+    ("custom-openai-api", "custom", "api_url"),
+    ("oobabooga", "ooba_api", "api_ip"),
+)
+
+
+@pytest.mark.parametrize("shape", sorted(_CONTRACT_REFUSED_BASES))
+@pytest.mark.parametrize(("provider", "table", "key"), _SUMMARY_ADAPTER_TABLES)
+def test_the_approval_summary_never_calls_an_endpoint_the_contract_refuses(
+    provider, table, key, shape
+):
+    """TASK-40300 review r14ep-rev2 I2: the approval-round summarizer checked
+    only the provider's credential, then called ``chat_api_call`` with no
+    endpoint, so the adapter read and POSTed to a refused configured value."""
+    endpoint = _with_path("vllm", _CONTRACT_REFUSED_BASES[shape])
+
+    resolution, out, calls = _summary_calls(
+        provider, {table: {key: endpoint, "model": "m"}}
+    )
+
+    assert resolution.active is False
+    assert out is None and calls == []
+
+
+@pytest.mark.parametrize("host", ["127.1", "-bad.corp", "bücher.example", "localhost.."])
+def test_the_approval_summary_never_calls_an_mlx_host_the_contract_refuses(host):
+    """Review r14ep-rev3 I-1: MLX-LM builds its endpoint from ``host`` and
+    ``port``, which the summary never read, so ``host = "127.1"`` was sent to."""
+    resolution, out, calls = _summary_calls("mlx_lm", {"mlx_lm": {"host": host}})
+
+    assert resolution.active is False
+    assert out is None and calls == []
+
+
+@pytest.mark.parametrize(
+    ("provider", "api_settings", "extra", "pinned"),
+    [
+        ("vllm", {"vllm": {"api_url": "http://127.0.0.1:8000/v1"}}, {}, "http://127.0.0.1:8000/v1"),
+        # Review r14ep-rev3 I-1: the adapter's own table, checked and pinned.
+        ("local_llm", {"local-llm": {"api_ip": "http://127.0.0.1:8000/v1"}}, {}, "http://127.0.0.1:8000/v1"),
+        ("oobabooga", {"ooba_api": {"api_ip": "http://127.0.0.1:5000/v1"}}, {}, "http://127.0.0.1:5000/v1"),
+        ("mlx_lm", {"mlx_lm": {"port": 9000}}, {}, "http://127.0.0.1:9000/v1"),
+        (
+            "custom-openai-api-2",
+            {},
+            {"custom_openai_api_2": {"api_ip": "http://127.0.0.1:5000/v1/chat/completions"}},
+            "http://127.0.0.1:5000/v1/chat/completions",
+        ),
+        # Nothing configured: the adapter's own default, never unpinned.
+        ("openai", {"openai": {"api_key": "sk-not-a-real-key-0000"}}, {}, "https://api.openai.com/v1"),
+        ("together", {"together": {"api_key": "not-a-real-key-0000"}}, {}, "https://api.together.xyz/v1"),
+    ],
+)
+def test_the_approval_summary_pins_the_endpoint_it_checked(provider, api_settings, extra, pinned):
+    """TASK-40300 review r14ep-rev2 I2: an accepted endpoint is the one the
+    call is pinned to, not whatever the adapter reads (review r14ep-rev3 I-1:
+    always pinned)."""
+    resolution, _out, calls = _summary_calls(provider, api_settings, **extra)
 
     assert resolution.active is True
-    assert [call["api_base_url"] for call in calls] == ["http://127.0.0.1:8000/v1"]
+    assert [call["api_base_url"] for call in calls] == [pinned]
+
+
+def test_the_approval_summary_is_off_with_no_endpoint_to_send_to():
+    """Review r14ep-rev3 I-1: with nothing configured and no built-in endpoint
+    there is nothing checked to pin, so no summary is requested."""
+    resolution, out, calls = _summary_calls("vllm", {})
+
+    assert resolution.active is False
+    assert out is None and calls == []
 
 
 @pytest.mark.asyncio
@@ -3255,51 +3316,168 @@ async def test_llamacpp_readiness_and_send_name_the_contracts_reason():
 class _ReferencingStore:
     """One live session on ``custom-ep:box`` (a minimal Console store)."""
 
-    def __init__(self):
+    def __init__(self, base_url=None):
         self.replaced = []
+        self.base_url = base_url
 
     def sessions(self):
         return [SimpleNamespace(id="s1", settings=SimpleNamespace(provider="custom-ep:box"))]
 
     def session_settings(self, _session_id):
-        return ConsoleSessionSettings(provider="custom-ep:box", model="m")
+        return ConsoleSessionSettings(provider="custom-ep:box", model="m", base_url=self.base_url)
 
     def replace_session_settings(self, session_id, settings):
         self.replaced.append((session_id, settings))
 
 
 @pytest.mark.parametrize(
-    ("base_url", "keeps_working"),
+    ("family", "base_url", "session_url", "keeps_working"),
     [
-        ("https://api.deepinfra.com/v1/openai", True),
-        ("https://gateway.ai.cloudflare.com/v1/acct123/gw1/compat", True),
-        ("http://127.0.0.1:8000/v1?token=not-a-real-secret", False),
+        ("openai_compatible", "https://api.deepinfra.com/v1/openai", None, True),
+        ("openai_compatible", "https://gateway.ai.cloudflare.com/v1/acct123/gw1/compat", None, True),
+        ("openai_compatible", "http://127.0.0.1:8000/v1?token=not-a-real-secret", None, False),
+        # Review r14ep-rev3 I-2: only the OpenAI-compatible family was checked,
+        # and only the entry's URL, not the one each conversation keeps.
+        ("ollama", "http://127.0.0.1:11434?token=not-a-real-secret", None, False),
+        ("llama_cpp", "http://127.1:8080", None, False),
+        ("openai_compatible", "http://127.0.0.1:8000/v1", "https://api.deepinfra.com/v1/openai", True),
     ],
 )
 def test_detach_refuses_to_move_conversations_onto_a_url_the_custom_provider_refuses(
-    base_url, keeps_working
+    family, base_url, session_url, keeps_working
 ):
     """TASK-40300 review r14ep-rev2 M-e (coordinator ruling): Detach moves an
-    OpenAI-compatible entry's conversations to plain ``custom``, whose reading
-    refuses a base only a named entry accepts, so they would lose a working
-    endpoint. It is refused, nothing changes, and the copy names the entry and
-    says it keeps working, never the URL."""
+    entry's conversations to the family provider, each with the endpoint it
+    keeps; one that provider refuses is never moved. Nothing changes, and the
+    copy names the entry, never the URL, and says whether the entry keeps
+    working or Edit fixes it."""
     from tldw_chatbook.UI.Screens.settings_provider_view_model import (
         DetachRefused,
         detach_and_delete_entry,
     )
 
-    store = _ReferencingStore()
-    config = _entry_config(base_url)
+    store = _ReferencingStore(session_url)
+    config = _entry_config(base_url, family=family)
 
     with pytest.raises(DetachRefused) as caught:
         detach_and_delete_entry(config, store, "custom-ep:box")
 
     assert store.replaced == []
-    assert caught.value.user_copy.startswith("Detach blocked: 'Box'")
-    assert ("'Box' keeps working" in caught.value.user_copy) is keeps_working
-    assert "deepinfra" not in caught.value.user_copy
-    assert "not-a-real-secret" not in caught.value.user_copy
+    copy = caught.value.user_copy
+    assert copy.startswith("Detach blocked: 'Box'")
+    assert ("'Box' keeps working" in copy) is keeps_working
+    assert ("Fix it with Edit" in copy) is not keeps_working
+    assert "deepinfra" not in copy and "not-a-real-secret" not in copy
+
+
+def test_detach_moves_conversations_whose_own_url_the_custom_provider_accepts(monkeypatch):
+    """Review r14ep-rev3 I-2: an entry with a base only a named endpoint
+    accepts was refused even when every conversation keeps its own URL, which
+    plain ``custom`` accepts."""
+    from tldw_chatbook.UI.Screens import settings_provider_view_model as view_model
+
+    deleted = []
+    monkeypatch.setattr(
+        view_model,
+        "delete_settings_from_cli_config",
+        lambda section, keys: deleted.append((section, keys)) or True,
+    )
+    store = _ReferencingStore("http://127.0.0.1:8000/v1")
+
+    view_model.detach_and_delete_entry(
+        _entry_config("https://api.deepinfra.com/v1/openai"), store, "custom-ep:box"
+    )
+
+    assert [(sid, s.provider, s.base_url) for sid, s in store.replaced] == [
+        ("s1", "custom", "http://127.0.0.1:8000/v1")
+    ]
+    assert deleted == [("custom_endpoints", ["box"])]
+
+
+@pytest.mark.parametrize(
+    ("params", "copy"),
+    [
+        (
+            {},
+            "Provider blocked: this custom endpoint is not loaded: Endpoint URL "
+            "must not include a query. Fix it in Settings ▸ Custom endpoints.",
+        ),
+        (
+            {"temperature": 5},
+            "Provider blocked: this custom endpoint is not loaded: 'temperature' "
+            "must be between 0.0 and 2.0. Fix it in config.toml, or delete the "
+            "entry in Settings ▸ Custom endpoints.",
+        ),
+        (
+            {"bogus": 1},
+            "Provider blocked: this custom endpoint is not loaded: unknown "
+            "sampling param 'bogus'. Fix it in config.toml, or delete the entry "
+            "in Settings ▸ Custom endpoints.",
+        ),
+    ],
+)
+def test_a_custom_endpoint_not_loaded_says_where_its_reason_can_be_fixed(params, copy):
+    """Review r14ep-rev3 Mi-1: the copy ran the reason into the next sentence
+    and sent a sampling-params refusal to Settings, which cannot edit params."""
+    from tldw_chatbook.Chat.custom_endpoint_registry import missing_custom_endpoint_copy
+
+    url = "http://127.0.0.1:8000/v1?token=not-a-real-secret" if not params else "http://127.0.0.1:8000/v1"
+    config = _entry_config(url)
+    config["custom_endpoints"]["box"]["params"] = params
+
+    assert missing_custom_endpoint_copy(config, "custom-ep:box") == copy
+
+
+#: Review r14ep-rev3 I-3: adapters that read a table Console does not, so a
+#: send with nothing in Console's table went unpinned to the adapter's value.
+_OWN_TABLE_ADAPTERS = [
+    ("aphrodite", "aphrodite_api", "api_url"),
+    ("oobabooga", "ooba_api", "api_ip"),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shape", sorted(_CONTRACT_REFUSED_BASES))
+@pytest.mark.parametrize(("provider", "table", "key"), _OWN_TABLE_ADAPTERS)
+async def test_console_never_sends_to_a_refused_endpoint_in_the_adapters_own_table(
+    provider, table, key, shape
+):
+    """Review r14ep-rev3 I-3: with the refused URL only in
+    ``[api_settings.aphrodite_api] api_url`` or ``[api_settings.ooba_api]
+    api_ip``, readiness and the send were Ready with no endpoint, and the
+    adapter POSTed to it."""
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_console_settings_readiness,
+    )
+
+    config = {"api_settings": {table: {key: _with_path(provider, _CONTRACT_REFUSED_BASES[shape])}}}
+    settings = ConsoleSessionSettings(provider=provider, model="m")
+    seen: list[str] = []
+
+    readiness = build_console_settings_readiness(settings, app_config=config, environ={})
+    resolution = await _resolve_endpoint_send(settings, config, False, seen)
+
+    assert readiness.label == "Invalid URL", readiness
+    assert resolution.ready is False
+    assert seen == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("provider", "table", "key"), _OWN_TABLE_ADAPTERS)
+async def test_console_checks_and_pins_an_endpoint_in_the_adapters_own_table(
+    provider, table, key
+):
+    """Review r14ep-rev3 I-3: a config that sets only the adapter's own table
+    keeps working; the send is pinned to the endpoint Console checked."""
+    config = {"api_settings": {table: {key: "http://127.0.0.1:5000/v1"}}}
+    seen: list[str] = []
+
+    resolution = await _resolve_endpoint_send(
+        ConsoleSessionSettings(provider=provider, model="m"), config, False, seen
+    )
+
+    assert resolution.ready is True, resolution.visible_copy
+    assert "adapter:http://127.0.0.1:5000/v1" in seen
 
 
 def test_a_refused_entry_renames_and_counts_but_offers_no_duplicate():

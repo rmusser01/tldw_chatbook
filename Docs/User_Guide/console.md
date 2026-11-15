@@ -814,7 +814,9 @@ whether it is the chat's endpoint or the provider's configured one, and a
 send says why, as in "Provider blocked: Endpoint URL must not include a
 query." Console neither sends to such an address nor checks it, and neither
 does an agent's sub-call, an approval summary or `/image`'s conversation
-context call. A custom endpoint whose base URL is one of these is not loaded,
+context call. The provider's configured endpoint includes one in a table only
+its adapter reads, such as `[api_settings.aphrodite_api] api_url` or
+`[api_settings.ooba_api] api_ip`, when the provider's own table has none. A custom endpoint whose base URL is one of these is not loaded,
 like the llama.cpp one above; Settings lists it with the reason so you can fix
 or delete it.
 A value typed without a scheme and without a port is shown as "invalid
