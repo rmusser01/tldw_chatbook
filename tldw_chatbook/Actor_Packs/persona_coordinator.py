@@ -100,6 +100,56 @@ class PersonaActorPackCoordinator:
         self.ensure_recovered()
         if self._blocked_intent_ids:
             raise PersonaActorPackCoordinatorError("actor_pack_creation_blocked")
+        # TASK-41114: hold the persona store's and ChaChaNotes' admission from
+        # the plan through the commit or its compensation, so a capture's pause
+        # that begins in between waits for the whole change. Before, the pause
+        # refused the commit and then the compensation, leaving a persona with
+        # no identity. A failure is relayed after the scope closes: both stores
+        # are reconciled by then, so the scope must not read it as an
+        # interrupted publication.
+        failure: BaseException | None = None
+        with self.local_service._actor_pack_mutation_scope():
+            try:
+                intent, identity = self._create_persona_admitted(
+                    profile,
+                    portable_uuid=portable_uuid,
+                    operation=operation,
+                    source_portable_uuid=source_portable_uuid,
+                    cancel_requested=cancel_requested,
+                    authority_guard=authority_guard,
+                    phase_hook=phase_hook,
+                    sqlite_effect=sqlite_effect,
+                )
+            except BaseException as exc:
+                failure = exc
+        if failure is not None:
+            raise failure
+
+        try:
+            self.repository.cleanup_persona_intent(
+                intent.intent_id, expected_state="committed"
+            )
+        except Exception:
+            # Committed: any failure here (a storage pause included) only
+            # leaves the intent for startup recover(), which finishes it if
+            # the persona store is unchanged and else quarantines it.
+            return PersonaActorPackCreationResult(identity, cleanup_pending=True)
+        return PersonaActorPackCreationResult(identity, cleanup_pending=False)
+
+    def _create_persona_admitted(
+        self,
+        profile: Mapping[str, Any],
+        *,
+        portable_uuid: str,
+        operation: str,
+        source_portable_uuid: str | None,
+        cancel_requested: Callable[[], bool],
+        authority_guard: Callable[[], bool],
+        phase_hook: Callable[[str], None] | None,
+        sqlite_effect: Callable[[], None] | None,
+    ) -> tuple[PersonaActorPackIntent, PortableActorIdentity]:
+        """Prepare, apply and commit, compensating any failure before commit."""
+
         try:
             plan = self.local_service._actor_pack_plan_persona_profile(
                 profile, operation=operation
@@ -180,16 +230,7 @@ class PersonaActorPackCoordinator:
                     "actor_pack_creation_failed"
                 ) from None
 
-        try:
-            self.repository.cleanup_persona_intent(
-                intent.intent_id, expected_state="committed"
-            )
-        except Exception:
-            # Committed: any failure here (a storage pause included) only
-            # leaves the intent for startup recover(), which finishes it if
-            # the persona store is unchanged and else quarantines it.
-            return PersonaActorPackCreationResult(identity, cleanup_pending=True)
-        return PersonaActorPackCreationResult(identity, cleanup_pending=False)
+        return intent, identity
 
     def ensure_recovered(self) -> PersonaActorPackRecoveryResult | None:
         """Run `recover` at most once per coordinator lifetime, from any thread.

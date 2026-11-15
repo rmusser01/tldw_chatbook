@@ -1145,13 +1145,16 @@ def test_actor_pack_persona_images_preview_and_validate_with_persona_artwork(
     ] == ["references_unavailable"]
 
 
-def _actor_pack_activation_on_profile(tmp_path, monkeypatch, actor_kind="persona"):
+def _actor_pack_activation_on_profile(
+    tmp_path, monkeypatch, actor_kind="persona", *, bound=False
+):
     """TASK-40304: an Actor Pack review on a configured file-backed profile.
 
     Activating a persona pack publishes into both captured trees:
     ``visual_identities/actor_packs/<digest>/`` (shared visual) and
     ``actor_packs/<digest>/persona-runtime/`` (persona runtime). A character
-    pack publishes only the shared visual.
+    pack publishes only the shared visual. ``bound`` builds the persona
+    service the way the app does (``build_persona_service``).
     """
     from Tests.Actor_Packs.test_actor_pack_activation import (
         _persona_runtime_section,
@@ -1184,9 +1187,16 @@ def _actor_pack_activation_on_profile(tmp_path, monkeypatch, actor_kind="persona
     profile = config.get_user_data_dir()
     db = CharactersRAGDB(tmp_path / "chat.sqlite", "actor-pack-storage")
     repository = ActorPackRepository(db)
-    local_service = LocalCharacterPersonaService(
-        db, persona_store_path=profile / "personas.json"
-    )
+    if bound:
+        from tldw_chatbook.Backup_Recovery.chat_source_participants import (
+            build_persona_service,
+        )
+
+        local_service = build_persona_service(db)
+    else:
+        local_service = LocalCharacterPersonaService(
+            db, persona_store_path=profile / "personas.json"
+        )
     importer = ActorPackImportService(
         repository,
         staging_root=profile / "actor_pack_imports",
@@ -1467,6 +1477,81 @@ def test_actor_pack_store_error_before_commit_removes_published_files(
         ) is None
     finally:
         db.close_connection()
+
+
+def test_actor_pack_pause_between_persona_apply_and_commit_leaves_no_half_persona(
+    tmp_path, monkeypatch
+):
+    """TASK-41114 AC2: a capture's pause that begins after the persona plan
+    is applied but before its SQLite commit must not leave a persona without
+    its committed identity or artwork, neither in what the capture copies nor
+    in the running app after the pause ends. The commit needs the shared
+    visual tree's own admission, which the pause refuses, so the activation
+    is refused and every store goes back to its state before it."""
+    import json
+    import threading
+    import time
+
+    from tldw_chatbook.Actor_Packs.activation import ActorPackActivationError
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+    from tldw_chatbook.Backup_Recovery.participants import (
+        retire_current_thread_caches,
+    )
+
+    db, activation, review, trees = _actor_pack_activation_on_profile(
+        tmp_path, monkeypatch, bound=True
+    )
+    local = activation.local_service
+    repository = activation.repository
+    applied, release = threading.Event(), threading.Event()
+    apply = type(local)._actor_pack_apply_persona_plan
+
+    def apply_then_wait(plan):
+        apply(local, plan)
+        applied.set()
+        assert release.wait(30)
+
+    monkeypatch.setattr(local, "_actor_pack_apply_persona_plan", apply_then_wait)
+
+    def stored_personas():
+        store = local.persona_store_path
+        if not store.exists():
+            return []
+        return [row["id"] for row in json.loads(store.read_bytes())["profiles"]]
+
+    worker, outcome = _activate_on_worker(activation, review)
+    try:
+        assert applied.wait(30)
+        assert len(stored_personas()) == 1
+        pause = storage._begin_local_pause()
+        try:
+            release.set()
+            worker.join(60)
+            assert not worker.is_alive()
+            # Runtime maintenance's drain loop: retire this thread's caches
+            # until every other holder has finished.
+            deadline = time.monotonic() + 10
+            while not pause.drain(time.monotonic()):
+                assert time.monotonic() < deadline, "the pause never drained"
+                retire_current_thread_caches(pause)
+                time.sleep(0.01)
+            # What a capture starting now would copy.
+            copied = (stored_personas(), _published_files(trees))
+        finally:
+            pause.resume()
+        identity = repository.get_identity_by_portable_uuid(review.portable_uuid)
+        intents = [row.state for row in repository.list_persona_intents()]
+        live = [row["id"] for row in local.list_persona_profiles()]
+    finally:
+        release.set()
+        worker.join(30)
+        db.close_idle_connections()
+        db.close_connection()
+    assert type(outcome[0]) is ActorPackActivationError, outcome
+    assert outcome[0].category == "actor_pack_import_storage_unavailable"
+    assert outcome[0].cleanup_pending is False
+    assert copied == ([], []), "a capture copied a half-created persona"
+    assert (identity, intents, live) == (None, [], []), "a half-created persona"
 
 
 def test_actor_pack_import_leaves_no_worker_connection_for_a_later_drain(
