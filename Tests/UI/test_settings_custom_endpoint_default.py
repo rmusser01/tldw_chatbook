@@ -680,19 +680,20 @@ async def _click_until(screen, pilot, selector: str, done) -> None:
     Review r14ep-rev6: under load a coordinate click could land while the
     detail pane was still laying out and be lost (the Rename form never
     mounted in 1 of 21 serial runs at load 31-54), so while the button is
-    still there the press is retried through the button itself. Opening a
-    form is idempotent, and a repeated save writes the same value.
+    still there the click is retried, scrolled into view again; a real click
+    keeps hit-testing in the test. Opening a form is idempotent, and a
+    repeated save writes the same value.
     """
-    await _click_scrolled_settings_button(screen, pilot, selector)
-    for _attempt in range(3):
+    for attempt in range(3):
+        if attempt and not screen.query(selector):
+            break
+        await _click_scrolled_settings_button(screen, pilot, selector)
         deadline = time.monotonic() + 4.0
         while time.monotonic() < deadline:
             if done():
                 await pilot.pause()
                 return
             await pilot.pause(0.05)
-        if screen.query(selector):
-            screen.query_one(selector, Button).press()
     assert done(), f"{selector} never took effect"
 
 
