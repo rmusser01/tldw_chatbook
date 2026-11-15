@@ -1687,6 +1687,28 @@ class ConsoleWorkflowCoordinator:
         self.controller._fleet_wake.release_automatic_primary(run.session_id, run.token)
         self._runs.pop(run.workflow_id)
 
+    def _return_reviewed_admission(self, run):
+        """Return a reviewed execution run's chat claim; a retry finishes it.
+
+        Each claim is released only while this run still holds it, so a
+        reconcile after a raised release completes it (TASK-40718 review M2).
+        """
+        store, wake = self.controller.store, self.controller._fleet_wake
+        with store._preparation_lock:
+            held = store._preparations_by_session.get(run.session_id) is run.intake
+        if held and store.release_received_turn(run.intake) is not True:
+            raise PermissionError("original workflow received claim did not return")
+        with wake._registry_lock:
+            held = wake._automatic_primary_claims.get(run.session_id) is run.token
+        if (
+            held
+            and wake.release_automatic_primary(run.session_id, run.token) is not True
+        ):
+            raise PermissionError("original workflow primary token did not return")
+        cell = run.final_metadata
+        if cell is not None and self._metadata_cells.get(cell) is cell.disposed:
+            self._metadata_cells.pop(cell)  # The retention marker for this run.
+
     async def _pending_control(self, run, expected_control_revision, action):
         import asyncio
 
@@ -2421,11 +2443,18 @@ class ConsoleWorkflowCoordinator:
                     # TASK-40718: a failed execution phase becomes reviewed
                     # history once its native work has returned; the service
                     # refuses while any of it may still be live.
+                    cell = run.final_metadata
                     if (
                         run.phase is None
                         or run.control_unknown
                         or run.control_return is not None
                         and not run.control_return.is_set()
+                        or cell is not None
+                        and not (
+                            cell.disposed.done()
+                            and not cell.disposed.cancelled()
+                            and cell.disposed.result() is True
+                        )
                     ):
                         raise ValueError("workflow_resources_still_live")
                     recorded = await self.service.call(
@@ -2453,10 +2482,7 @@ class ConsoleWorkflowCoordinator:
                 if self._runs.get(workflow_id) is not run:
                     raise ValueError("workflow_runtime_changed")
                 if run.prepared is None:
-                    self.controller.store.release_received_turn(run.intake)
-                    self.controller._fleet_wake.release_automatic_primary(
-                        run.session_id, run.token
-                    )
+                    self._return_reviewed_admission(run)
                 self._runs.pop(workflow_id)
             await self._publish(workflow_id)
             return await self.get(workflow_id)

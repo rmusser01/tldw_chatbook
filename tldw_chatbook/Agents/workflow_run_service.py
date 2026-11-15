@@ -2179,61 +2179,68 @@ class WorkflowRunService:
             raise ValueError("original_execution_phase_required")
         phase._check_owner()
         attempt = phase.attempt
+        # Before the control lock: launches take a task's lock, then this one.
         if self._has_live_workflow_resources(attempt.workflow_id):
             raise ValueError("workflow_resources_still_live")
+        ledger = self.db.automatic_work
+        # Pause, stop and launch commits take the control lock before the
+        # ledger, so none runs between the record and the retirement. The
+        # phase keeps its authority unless the record commits (review M1).
         with phase._control_lock:
+            with ledger.transaction() as conn:
+                ledger._check_runtime_owner(conn, attempt.owner_id)
+                native = ledger._attempt(
+                    conn, attempt.id, attempt.owner_id, "workflow_phase"
+                )
+                row = conn.execute(
+                    "SELECT * FROM workflow_phase_attempts WHERE native_attempt_id=?",
+                    (attempt.id,),
+                ).fetchone()
+                snapshot = self.get(attempt.workflow_id)
+                if (
+                    expected_control_revision is not None
+                    and snapshot.control_revision != expected_control_revision
+                ):
+                    raise ValueError("revision_conflict")
+                if (
+                    native["state"] not in {"accepted", "completed", "review_required"}
+                    or row is None
+                    or row["purpose"] != "execution"
+                    or row["workflow_id"] != snapshot.id
+                ):
+                    raise ValueError("workflow_execution_return_required")
+                if native["state"] == "accepted":
+                    try:
+                        ledger._close_workflow_interval(conn, snapshot.id)
+                    except AutomaticWorkRefused as clock_error:
+                        if clock_error.reason not in {
+                            "clock_unknown",
+                            "clock_reversed",
+                        }:
+                            raise
+                        # Preserve the unknown interval; never invent an ending clock.
+                    conn.execute(
+                        "UPDATE automatic_wake_attempts SET state='review_required' WHERE id=?",
+                        (attempt.id,),
+                    )
+                    conn.execute(
+                        "UPDATE workflow_phase_attempts SET status='uncertain',retirement='unknown' WHERE id=?",
+                        (row["id"],),
+                    )
+                if (
+                    snapshot.status != "recovery_required"
+                    and not self.db.workflow_runs._recovery_reviewed(conn, snapshot.id)
+                ):
+                    updated = conn.execute(
+                        "UPDATE workflow_runs SET status='recovery_required',control_revision=control_revision+1,updated_at=? "
+                        "WHERE id=? AND control_revision=?",
+                        (time.time(), snapshot.id, snapshot.control_revision),
+                    )
+                    if updated.rowcount != 1:
+                        raise ValueError("revision_conflict")
+                result = self.get(snapshot.id)
             phase._retired = True
             phase._paused_tasks = {}
-        ledger = self.db.automatic_work
-        with ledger.transaction() as conn:
-            ledger._check_runtime_owner(conn, attempt.owner_id)
-            native = ledger._attempt(
-                conn, attempt.id, attempt.owner_id, "workflow_phase"
-            )
-            row = conn.execute(
-                "SELECT * FROM workflow_phase_attempts WHERE native_attempt_id=?",
-                (attempt.id,),
-            ).fetchone()
-            snapshot = self.get(attempt.workflow_id)
-            if (
-                expected_control_revision is not None
-                and snapshot.control_revision != expected_control_revision
-            ):
-                raise ValueError("revision_conflict")
-            if (
-                native["state"] not in {"accepted", "completed", "review_required"}
-                or row is None
-                or row["purpose"] != "execution"
-                or row["workflow_id"] != snapshot.id
-            ):
-                raise ValueError("workflow_execution_return_required")
-            if native["state"] == "accepted":
-                try:
-                    ledger._close_workflow_interval(conn, snapshot.id)
-                except AutomaticWorkRefused as clock_error:
-                    if clock_error.reason not in {"clock_unknown", "clock_reversed"}:
-                        raise
-                    # Preserve the unknown interval; never invent an ending clock.
-                conn.execute(
-                    "UPDATE automatic_wake_attempts SET state='review_required' WHERE id=?",
-                    (attempt.id,),
-                )
-                conn.execute(
-                    "UPDATE workflow_phase_attempts SET status='uncertain',retirement='unknown' WHERE id=?",
-                    (row["id"],),
-                )
-            if (
-                snapshot.status != "recovery_required"
-                and not self.db.workflow_runs._recovery_reviewed(conn, snapshot.id)
-            ):
-                updated = conn.execute(
-                    "UPDATE workflow_runs SET status='recovery_required',control_revision=control_revision+1,updated_at=? "
-                    "WHERE id=? AND control_revision=?",
-                    (time.time(), snapshot.id, snapshot.control_revision),
-                )
-                if updated.rowcount != 1:
-                    raise ValueError("revision_conflict")
-            result = self.get(snapshot.id)
         for workflow_id, footprint in self.recovery_protections(ledger.recovery_result):
             if workflow_id == result.id:
                 self._runtime.worktree_activity.protect_recovery(workflow_id, footprint)

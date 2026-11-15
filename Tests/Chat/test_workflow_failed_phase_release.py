@@ -33,8 +33,17 @@ def test_phase_failing_with_a_live_worker_keeps_custody_until_reviewed(tmp_path)
     reconcile refuses it. Once the worker has returned, reconcile closes the
     run as reviewed history and the chat gets its claim back; on dev 1455ceeb96
     it kept refusing with `workflow_resources_still_live` because execution
-    runs have no planning preparation."""
+    runs have no planning preparation. A refused record leaves the phase able
+    to retry, and a claim release that raises is finished by the next
+    reconcile instead of wedging the chat."""
     _run(tmp_path, "live_worker_failure", "native", script=_SCRIPT, timeout=90)
+
+
+def test_ownership_error_in_a_phase_keeps_a_claim_it_does_not_own(tmp_path):
+    """The failed-phase path catches every ordinary exception, ownership errors
+    included. A primary token that changed hands stays with its new owner:
+    the run keeps custody until reconcile, once ownership is restored."""
+    _run(tmp_path, "ownership_error", "native", script=_SCRIPT, timeout=90)
 
 
 async def _started(rig):
@@ -154,12 +163,47 @@ async def live_worker_failure(tmp_path):
         assert await rig.service.call(rig.service.get, rig.workflow.id) == stored
         rig.provider_release()
         await asyncio.wait_for(asyncio.gather(*waves, return_exceptions=True), 15)
-        closed = await rig.coordinator.reconcile(
-            rig.workflow.id,
-            expected_control_revision=snapshot.control_revision,
-            decision=WorkflowExecutionRecovery(reason="reviewed_prior_effects"),
-            command_id="reconcile-returned",
-        )
+        review = WorkflowExecutionRecovery(reason="reviewed_prior_effects")
+        returned = await rig.service.call(rig.service.get, rig.workflow.id)
+        # A record refused inside its transaction keeps the phase retryable.
+        with pytest.raises(ValueError, match="revision_conflict"):
+            await rig.coordinator.reconcile(
+                rig.workflow.id,
+                expected_control_revision=snapshot.control_revision + 1,
+                decision=review,
+                command_id="reconcile-stale",
+            )
+        assert not run.phase._retired
+        assert await rig.service.call(rig.service.get, rig.workflow.id) == returned
+        # A release that raises is finished by the next reconcile.
+        wake = rig.controller._fleet_wake
+        release = wake.release_automatic_primary
+        raised = []
+
+        def release_once(session_id, token):
+            if not raised:
+                raised.append(session_id)
+                raise RuntimeError("primary release failed")
+            return release(session_id, token)
+
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(wake, "release_automatic_primary", release_once)
+            with pytest.raises(RuntimeError, match="primary release failed"):
+                await rig.coordinator.reconcile(
+                    rig.workflow.id,
+                    expected_control_revision=snapshot.control_revision,
+                    decision=review,
+                    command_id="reconcile-returned",
+                )
+            assert rig.coordinator._runs.get(rig.workflow.id) is run
+            current = await rig.service.call(rig.service.get, rig.workflow.id)
+            closed = await rig.coordinator.reconcile(
+                rig.workflow.id,
+                expected_control_revision=current.control_revision,
+                decision=review,
+                command_id="reconcile-retry",
+            )
+        assert raised == ["workflow-test-chat"]
         assert closed.status == "stopped"  # Closed history displays as stopped.
         assert rig.workflow.id not in rig.coordinator._runs
         service, db = rig.service, rig.service.db
@@ -180,4 +224,72 @@ async def live_worker_failure(tmp_path):
         logger.remove(sink)
         rig.provider_release()
         await asyncio.wait_for(asyncio.gather(*waves, return_exceptions=True), 15)
+        await rig.close()
+
+
+async def ownership_error(tmp_path):
+    import asyncio
+    import functools
+    from types import MethodType
+
+    from Tests.Chat.workflow_rig import WorkflowProvider, build_workflow_rig
+    from tldw_chatbook.Agents.workflow_models import WorkflowExecutionRecovery
+
+    rig = await build_workflow_rig(tmp_path, None, WorkflowProvider())
+    session_id = "workflow-test-chat"
+    wake = rig.controller._fleet_wake
+    foreign = object()
+    try:
+        decision = await _started(rig)
+        service = rig.service
+        original = service.phase_task_ids
+        reads = []
+
+        @functools.wraps(original)
+        def token_changed_hands(self, phase):
+            reads.append(phase)
+            if len(reads) == 1:
+                with wake._registry_lock:
+                    wake._automatic_primary_claims[session_id] = foreign
+                raise PermissionError("workflow original primary token changed")
+            return original(phase)
+
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(
+                service, "phase_task_ids", MethodType(token_changed_hands, service)
+            )
+            await rig.coordinator.approve(decision, command_id="approved-once")
+            run = rig.coordinator._runs[rig.workflow.id]
+            await asyncio.wait_for(asyncio.shield(run.driver), 15)
+        assert wake._automatic_primary_claims.get(session_id) is foreign
+        assert rig.coordinator._runs.get(rig.workflow.id) is run
+        assert (await rig.coordinator.get(rig.workflow.id)).status == (
+            "recovery_required"
+        )
+        assert not (
+            await rig.controller.submit_draft("Still held", session_id=session_id)
+        ).accepted
+        # Ownership restored: the review closes the run and returns the claim.
+        with wake._registry_lock:
+            wake._automatic_primary_claims[session_id] = run.token
+        current = await service.call(service.get, rig.workflow.id)
+        closed = await rig.coordinator.reconcile(
+            rig.workflow.id,
+            expected_control_revision=current.control_revision,
+            decision=WorkflowExecutionRecovery(reason="reviewed_prior_effects"),
+            command_id="reconcile-restored",
+        )
+        assert closed.status == "stopped"
+        assert rig.workflow.id not in rig.coordinator._runs
+        sent = await rig.controller.submit_draft(
+            "A new turn after the review", session_id=session_id
+        )
+        assert sent.accepted, sent
+        stream = rig.controller._active_stream_tasks.get(session_id)
+        if stream is not None:
+            await asyncio.wait_for(asyncio.shield(stream), 15)
+    finally:
+        with wake._registry_lock:
+            if wake._automatic_primary_claims.get(session_id) is foreign:
+                del wake._automatic_primary_claims[session_id]
         await rig.close()
