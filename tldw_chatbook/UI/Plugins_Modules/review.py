@@ -20,6 +20,11 @@ class PluginReviewDraft:
     job_id: str | None = None
     root_impact: tuple[dict, ...] = ()
     root_before_refs: tuple[object, ...] = ()
+    # TASK-40308: the reviewed folder's (files, bytes, complete) for a rebind or
+    # a kept-folder attachment.
+    folder_summary: tuple[int, int, bool] | None = None
+    # TASK-40308 rev1: the kept saved-data folder chosen for attachment.
+    kept_folder: str | None = None
 
 
 @dataclass(frozen=True, eq=False)

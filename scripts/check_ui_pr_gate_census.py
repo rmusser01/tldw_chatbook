@@ -998,6 +998,19 @@ MINIMUM_FILES = 2029
 # The spoken Send shared-reader control is appended without shifting existing entries.
 # Dev includes the native sync-admission file before these five entries.
 MINIMUM_FILES = 2034
+# TASK-40311 (2026-11-13): append the three Plugins review dialog tests that
+# now wait for the dialog's load and press state at the tail. The floor is the
+# measured entry count.
+MINIMUM_FILES = 2037
+MINIMUM_FILES = 2031
+# TASK-40712 (2026-11-13): append the Plugins screen's Import… preview review
+# buttons and the review dialog's load-failure test at the tail. The floor is
+# the measured entry count.
+MINIMUM_FILES = 2039
+MINIMUM_FILES = 2033
+# TASK-40308 (2026-11-13): append the Plugins screen's restore recovery and
+# reset-fallback tests at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 2041
 
 
 def read_census(path: Path) -> list[str]:

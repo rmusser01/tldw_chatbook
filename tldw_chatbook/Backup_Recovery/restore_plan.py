@@ -1321,6 +1321,12 @@ def plan_restore(
             if by_target_id[key].status == "intentionally_excluded"
             and getattr(producer.get(key), "status", None) == "intentionally_excluded"
         }
+        if "plugins" in selected_owners:
+            # A reset's set-aside plugin state is kept whole even when the
+            # archive predates it (TASK-40308).
+            from tldw_chatbook.Plugins.backup import kept_whole
+
+            kept |= kept_whole(target.items) & {path for _, path in preserve}
         for item in target.items:
             if (
                 item.path

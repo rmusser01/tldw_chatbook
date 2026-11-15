@@ -45,8 +45,9 @@ and file extraction; they cannot replace existing installation data.
 folder: the plugin registry, installed package bytes, every plugin's saved data,
 and each repository fetch's checked snapshot and fetch record, which recovery
 needs to re-verify a plugin installed from a repository. Left out, and shown as
-excluded in the review: the plugin runtime lock file and everything else in each
-fetch folder, such as the copies of your git and SSH configuration the fetch used
+excluded in the review: the plugin runtime lock file, the `reset-…` folder a
+plugin authority reset after a restore sets aside (a later restore keeps it),
+and everything else in each fetch folder, such as the copies of your git and SSH configuration the fetch used
 (they can hold credential helpers), its git object store (`repository.git`) and
 its working copy (`content/`). Each is one excluded entry; Chatbook does not look
 inside it. Plugins in use are not copied: while a plugin process may still be
@@ -254,22 +255,29 @@ Plugins restore only onto the profile and data folder they came from: their
 registry and authority record those folder paths, so restoring them into a
 separate profile, or after the profile's data folder moved, is refused with
 `owner_relocation_unverified`. Choose groups without **Tools and skills** to
-restore the rest of such a backup. A restore after plugins were downloaded from a
+restore the rest of such a backup. Plugins downloaded from a
 repository since the backup (a source refresh, an update check, an install or an
-update) is refused too, at review, with `plugin_fetch_added_since_backup`: each
-such download leaves a download folder the backup does not have, holding files a
-backup never includes, and Chatbook cannot yet restore around them. Restore
-without **Tools and skills**, or open the plugin folder's `staging` folder and,
-inside each folder created after the backup, delete everything except `snapshot`
-(installed plugins keep working; uninstalling a plugin does not remove these
-folders), then review the restore again. After a restore, plugins stay off until plugin
-authority recovery completes. What works today: restoring onto the same profile,
-on the same computer, with plugins unchanged since the backup. Then
-**Plugins → Authority…** asks for the plugin passphrase, and unlocking recovers
-the plugins and lets them run again. What does not work yet: on another computer
-at the same paths, or after the OS keyring was reset (the protected marker lives
-in the OS keyring and is never in a backup), or after plugins changed since the
-backup, Chatbook cannot recover the restored plugins. They stay off, and their files and saved data stay on disk. See
+update) each leave a download folder the backup does not have, holding files a
+backup never includes. **Review restore** lists those folders and the files that
+removing them deletes, and offers **Remove newer plugin downloads**. Before you
+press it, the review says what it does: it deletes each folder's git copy
+(`repository.git`, `content`) and the copies of your git and SSH settings the
+download made (`host-git-config`, `host-ssh-*`) now, with no safety copy, so a
+rollback cannot bring them back; your own git configuration and `~/.ssh` are not
+touched. Each folder's `snapshot` and its download record stay until you start
+the restore, which moves them into the before-replacement safety copy with the
+rest of your current data. Installed plugins keep working. The review then runs
+again. (Uninstalling a plugin does not remove these folders. Restoring without
+**Tools and skills** leaves them alone.) After a restore, plugins stay off until plugin
+authority recovery completes: open **Plugins → Authority…** and unlock with the
+plugin passphrase the backup was made with. With plugins unchanged since the
+backup on the same computer, unlocking recovers them. On another computer at the
+same paths, after the OS keyring was reset (the protected marker lives in the OS
+keyring and is never in a backup), or after plugins changed since the backup,
+the same passphrase opens **Recover plugins from this backup**, which lists what
+recovery undoes before you confirm it. Restored folders with a new identity are
+each reviewed on their own, and a lost passphrase falls back to a reset that keeps
+saved data. See
 [Managed plugin operations](Plugins/operations.md#after-restoring-a-backup).
 
 Re-enter missing credentials, review external-folder bindings against their current

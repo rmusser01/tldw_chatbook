@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import os
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import Future
@@ -293,7 +294,9 @@ class PluginService:
 
     async def bootstrap(self, passphrase: str) -> None:
         def operation():
-            self._coordinator.bootstrap(passphrase)
+            # Setup after a post-restore reset completes that restore's review.
+            if self._coordinator.bootstrap(passphrase) is not None:
+                self._finish_restore_review(())
             self._refresh()
 
         await self._call(operation)
@@ -546,9 +549,18 @@ class PluginService:
             posture = authority.posture()
             if posture not in {"ready", "ready_reduced", "locked", "recovery_required"}:
                 raise ValueError("plugin_reset_unavailable")
-            roots = self._coordinator.registry.authority_projection(
+            from .backup import restore_pending
+
+            projection = self._coordinator.registry.authority_projection(
                 operation_result=None
-            )["data_roots"]
+            )
+            roots = projection["data_roots"]
+            root = self._coordinator.owner.root
+            try:
+                restored = restore_pending(root)
+            except (OSError, ValueError, RuntimeError):
+                # An unreadable witness never promises the post-restore setup.
+                restored = False
             review = AuthorityResetReview(
                 uuid4().hex,
                 uuid4().hex,
@@ -557,6 +569,12 @@ class PluginService:
                 authority.load_marker(),
                 canonical_json(roots),
                 time.monotonic() + 900,
+                retained=bool(
+                    projection["installations"]
+                    or roots
+                    or os.path.lexists(root / "data")
+                ),
+                restored=restored,
             )
             self._reset_review = review
             return review
@@ -590,6 +608,154 @@ class PluginService:
             return result
 
         return await self._call(operation)
+
+    async def restore_review_pending(self) -> bool:
+        """Whether a restored generation still awaits plugin authority recovery.
+
+        Strict: an unreadable restore witness raises rather than answers yes.
+        """
+        from .backup import restore_pending
+
+        return await self._call(lambda: restore_pending(self._coordinator.owner.root))
+
+    async def review_restored_authority(self, passphrase: str):
+        """Authenticate a restored plugin authority for adoption (TASK-40308).
+
+        Offered only while a restored generation awaits plugin review. The
+        passphrase's keys must open the restored snapshots; the newest one the
+        restored registry matches is the backup's. The protected marker it would
+        replace tells how many later changes adoption undoes, when it exists.
+        """
+
+        def operation():
+            import secrets
+            import time
+
+            from .backup import restore_pending
+            from .review import RestoredAuthorityReview
+
+            coordinator = self._coordinator
+            if not restore_pending(coordinator.owner.root):
+                raise ValueError("plugin_restore_adoption_unavailable")
+            authority = coordinator.authority
+            found = authority.restored_snapshots(passphrase)
+            matching = [
+                (marker, snapshot)
+                for marker, snapshot in found
+                if coordinator.registry.authority_projection(
+                    operation_result=snapshot["operation_result"]
+                )
+                == snapshot
+            ]
+            if not matching:
+                authority.lock()
+                raise ValueError("plugin_restore_authority_unmatched")
+            marker, snapshot = max(matching, key=lambda row: row[0].generation)
+            current = authority.load_marker()
+            try:
+                checkpoint = authority.load_runtime_checkpoint()
+            except (OSError, ValueError):
+                checkpoint = None
+            # Generations count only within one authority namespace. Commits move
+            # the marker without rewriting the checkpoint, so its namespace, not
+            # its marker, says whose generations the keyring marker counts; with
+            # no readable checkpoint nothing says so (review r14plg-rev2).
+            same_namespace = (
+                checkpoint is not None
+                and checkpoint.namespace_id == authority.namespace_id()
+            )
+            if current == marker:
+                undone = 0
+            elif (
+                same_namespace
+                and current is not None
+                and current.generation > marker.generation
+            ):
+                undone = current.generation - marker.generation
+            else:
+                undone = None
+            review = RestoredAuthorityReview(
+                secrets.token_hex(16),
+                marker,
+                current,
+                undone,
+                tuple(
+                    (row["installation_id"], row.get("alias"), row["revision_digest"])
+                    for row in snapshot["installations"]
+                ),
+                len(snapshot["data_roots"]),
+                time.monotonic() + 900,
+            )
+            self._adoption_review = review
+            return review
+
+        return await self._call(operation)
+
+    async def adopt_restored_authority(self, review):
+        """Pin the reviewed restored marker, then recover (TASK-40308)."""
+
+        async def operation():
+            import time
+
+            coordinator = self._coordinator
+            authority, registry = coordinator.authority, coordinator.registry
+            if (
+                getattr(self, "_adoption_review", None) is not review
+                or review.expires_at <= time.monotonic()
+                or authority.load_marker() != review.current
+            ):
+                raise ValueError("plugin_restore_review_stale")
+            snapshot = authority.verify_snapshot(review.marker)
+            if (
+                registry.authority_projection(
+                    operation_result=snapshot["operation_result"]
+                )
+                != snapshot
+            ):
+                raise ValueError("plugin_restore_review_stale")
+            # Capture refuses while a plugin process or root user is live, so a
+            # restored registry with none of either ended quiescent: its clean
+            # checkpoint lets saved data stay attached without host proof.
+            connection = registry._connection
+            quiescent = not (
+                connection.execute(
+                    "SELECT 1 FROM processes WHERE state!='settled' LIMIT 1"
+                ).fetchone()
+                or connection.execute(
+                    "SELECT 1 FROM root_users WHERE state!='released' LIMIT 1"
+                ).fetchone()
+            )
+            authority.adopt_marker(review.marker)
+            self._adoption_review = None
+            if quiescent and not coordinator.root_usage.initialized:
+                authority.save_runtime_checkpoint(coordinator.owner.session_id, "clean")
+            receipts = await coordinator.recover()
+            self._finish_restore_review(receipts)
+            self._refresh()
+            return receipts
+
+        return await self._call(operation)
+
+    async def review_data_rebind(self, root):
+        """Review rebinding one replaced saved-data folder (TASK-40308)."""
+        return await self._call(lambda: self._coordinator.review_data_rebind(root))
+
+    async def kept_data_folders(self):
+        """Kept saved-data folders as (name, former installation, alias), unproven."""
+        return await self._call(lambda: self._coordinator.kept_data_folders())
+
+    async def review_kept_attachment(self, installation_id, root_id, *, workspace_id):
+        """Review attaching a kept saved-data folder to an installed plugin."""
+        return await self._call(
+            lambda: self._coordinator.review_kept_attachment(
+                installation_id, workspace_id, root_id
+            )
+        )
+
+    async def attach_kept_data(self, review, operation_id: str):
+        return await self._call(
+            lambda: self._coordinator.attach_kept_data(review, operation_id)
+        )
 
     async def review_data_boot_reconciliation(self, roots):
         return await self._call(

@@ -2933,3 +2933,17 @@ Tests/UI/test_console_recovered_image_shutdown.py
 Tests/UI/test_console_configuration_worker_feedback.py::test_actual_send_composes_new_input_while_configuration_reader_is_held
 # TASK-34601.1: background and repeated skill reads cannot claim a spoken Send fixture.
 Tests/UI/test_console_send_draft_snapshot.py::test_spoken_send_skill_read_ignores_background_and_repeated_fetches
+# TASK-40311 (2026-11-13): three Plugins review dialog tests that now wait for
+# the dialog's load and for each press's handler state instead of one pause.
+Tests/UI/test_plugin_review.py::test_refresh_growth_keeps_focused_action_and_cleaned_status_painted
+Tests/UI/test_plugin_review.py::test_action_inputs_hide_without_losing_drafts_or_keyboard_focus
+Tests/UI/test_plugin_review.py::test_confirmed_profile_save_survives_close_during_child_prune
+# TASK-40712 (2026-11-13): an Import… preview's review buttons are disabled with
+# the reason, and a review dialog whose load fails keeps the app running.
+Tests/UI/test_plugins_browse.py::test_import_preview_review_buttons_state_why_and_never_open
+Tests/UI/test_plugins_browse.py::test_review_dialog_load_failure_stays_in_the_dialog
+# TASK-40308 (2026-11-13): restored plugins recover from the Plugins screen with
+# the backup's passphrase and per-folder rebinds, and a lost passphrase falls
+# back to a reset that sets them aside and reattaches kept saved data.
+Tests/UI/test_plugins_browse.py::test_restored_plugins_recover_from_the_plugins_screen
+Tests/UI/test_plugins_browse.py::test_reset_after_restore_sets_plugins_aside_and_kept_data_reattaches

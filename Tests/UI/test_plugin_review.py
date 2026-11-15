@@ -7,6 +7,7 @@ from Tests.Plugins import platform_support
 from Tests.Plugins.conftest import native_console as _native_console
 from Tests.Plugins.conftest import native_package as _native_package
 from Tests.private_profile import private_profile_test
+from Tests.UI import pump_probe
 from Tests.UI.test_plugins_browse import (
     BrowseApp,
     DelayedPluginCall,
@@ -17,6 +18,24 @@ from Tests.UI.test_plugins_browse import (
 
 native_console = _native_console
 native_package = _native_package
+
+
+# One ``pilot.pause()`` misses the load's ``call_after_refresh`` focus restore
+# and an awaited press handler at ``-n 4`` under load, and ``pilot.press`` or
+# ``pilot.pause`` raise ``WaitForScreenTimeout`` once a handler holds the modal
+# for 30 s: the 12-root refresh below reads 29 operation statuses one by one
+# and took 75 s at load ~57 (TASK-40311). So presses that start a handler are
+# delivered without Pilot's idle wait, and the tests poll the state it sets.
+SETTLE_SECONDS = 240
+
+
+async def loaded(pilot, modal):
+    """Wait for the load worker and its focus restore, then apply that focus."""
+    await modal.workers.wait_for_complete()
+    assert await pump_probe.until(lambda: not modal._loading, SETTLE_SECONDS), (
+        "review modal load did not finish"
+    )
+    await pilot.pause()  # ``_loaded`` queued its ``focus()`` with call_later.
 
 
 @private_profile_test
@@ -104,13 +123,32 @@ async def test_refresh_growth_keeps_focused_action_and_cleaned_status_painted(
             )
         )
         modal = app.screen
-        await modal.workers.wait_for_complete()
-        await pilot.pause()
+        await loaded(pilot, modal)
         button = modal.query_one("#plugin-review-refresh", Button)
         button.focus()
         await pilot.pause()
         assert app.focused is button and "Refresh status" in paint(modal)
-        await pilot.press("enter")
+        body = modal.query_one("#plugin-review-body")
+        status = modal.query_one("#plugin-review-status")
+        pump_probe.key(app, "enter")
+        assert await pump_probe.until(
+            lambda: not modal._busy and "Cleaned" in str(body.render()),
+            SETTLE_SECONDS,
+        ), (
+            f"status refresh did not finish: busy {modal._busy}, focused "
+            f"{app.focused}, status {status.render()!s}, body {str(body.render())[:300]!r}"
+        )
+        await pilot.pause()  # Deliver the refresh's keep-visible request.
+        # Geometry read before the growth's layout is stale, so wait for that
+        # layout and the after-refresh callback rather than for a region.
+        assert await pump_probe.until(
+            lambda: (
+                not (
+                    modal._callbacks or modal._layout_required or modal._scroll_required
+                )
+            ),
+            SETTLE_SECONDS,
+        ), "refreshed layout and its keep-visible callback did not run"
         await pilot.pause()
         assert app.focused is button
         assert button in modal._compositor.visible_widgets
@@ -1452,8 +1490,7 @@ async def test_action_inputs_hide_without_losing_drafts_or_keyboard_focus(
             )
         )
         modal = app.screen
-        await modal.workers.wait_for_complete()
-        await pilot.pause()
+        await loaded(pilot, modal)
         action = modal.query_one("#plugin-review-action", Select)
         reference = modal.query_one("#plugin-review-reference", Input)
         synthetic = modal.query_one("#plugin-review-test-data", TextArea)
@@ -1475,9 +1512,14 @@ async def test_action_inputs_hide_without_losing_drafts_or_keyboard_focus(
         assert app.focused is action
         await pilot.press("tab")
         assert app.focused is modal.query_one("#plugin-review-prepare", Button)
-        await pilot.press("enter")
-        await pilot.pause()
-        assert modal.draft.review is not None
+        pump_probe.key(app, "enter")
+        assert await pump_probe.until(
+            lambda: not modal._busy and modal.draft.review is not None,
+            SETTLE_SECONDS,
+        ), (
+            f"prepared review did not finish: status "
+            f"{modal.query_one('#plugin-review-status').render()!s}"
+        )
         action.value = "configure"
         await pilot.pause()
         assert modal.draft.review is None
@@ -1496,8 +1538,7 @@ async def test_action_inputs_hide_without_losing_drafts_or_keyboard_focus(
             )
         )
         reopened = app.screen
-        await reopened.workers.wait_for_complete()
-        await pilot.pause()
+        await loaded(pilot, reopened)
         assert reopened.query_one("#plugin-review-action", Select).value == "test-hook"
         assert (
             reopened.query_one("#plugin-review-test-data", TextArea).text
@@ -2198,7 +2239,7 @@ async def test_confirmed_profile_save_survives_close_during_child_prune(
             )
         )
         modal = app.screen
-        await modal.workers.wait_for_complete()
+        await loaded(pilot, modal)
         modal.query_one("#plugin-review-action", Select).value = "save-profile"
         configuration = json.dumps(
             {
@@ -2211,8 +2252,14 @@ async def test_confirmed_profile_save_survives_close_during_child_prune(
         reference.value = configuration
         await pilot.pause()
         modal.query_one("#plugin-review-prepare", Button).focus()
-        await pilot.press("enter")
-        await pilot.pause()
+        pump_probe.key(app, "enter")
+        assert await pump_probe.until(
+            lambda: not modal._busy and modal.draft.review is not None,
+            SETTLE_SECONDS,
+        ), (
+            f"prepared profile review did not finish: status "
+            f"{modal.query_one('#plugin-review-status').render()!s}"
+        )
         review = modal.draft.review
         assert isinstance(review, PluginConnectionDraft)
         assert review.installation_id == installed.installation_id
@@ -2244,8 +2291,8 @@ async def test_confirmed_profile_save_survives_close_during_child_prune(
             status = modal.query_one("#plugin-review-status", Static)
             before = str(status.render())
             modal.query_one("#plugin-review-confirm", Button).focus()
-            await pilot.press("enter")
-            await asyncio.wait_for(gate.entered.wait(), 3)
+            pump_probe.key(app, "enter")
+            await asyncio.wait_for(gate.entered.wait(), SETTLE_SECONDS)
             worker = next(w for w in modal.workers if w.group == "plugin-profile-view")
             assert modal.draft.review is review
             modal.query_one("#plugin-review-close", Button).press()
@@ -2256,7 +2303,7 @@ async def test_confirmed_profile_save_survives_close_during_child_prune(
             if boundary in {"save-error", "refresh-error"}:
                 await rig.service.aclose()
             gate.release.set()
-            await asyncio.wait_for(worker.wait(), 10)
+            await asyncio.wait_for(worker.wait(), SETTLE_SECONDS)
             assert not worker.is_cancelled
             assert str(status.render()) == before
             assert reference.value == configuration
@@ -2445,6 +2492,10 @@ async def test_unlock_mismatch_shows_restore_copy_not_passphrase_advice():
         async def unlock(self, password):
             raise FileNotFoundError("authority snapshot")
 
+        async def review_restored_authority(self, password):
+            # TASK-40308: no restored generation awaits review here.
+            raise ValueError("plugin_restore_adoption_unavailable")
+
     app = App()
     async with app.run_test(size=(80, 24)) as pilot:
         await app.push_screen(PluginAuthorityDialog(Service(), "unlock"))
@@ -2461,5 +2512,6 @@ async def test_unlock_mismatch_shows_restore_copy_not_passphrase_advice():
         error = str(dialog.query_one("#error-message", Static).render())
         assert app.screen is dialog and field.value == ""
         assert "does not match the plugin files here" in error
-        assert "cannot recover these plugins yet" in error
+        # TASK-40308: the way out is the backup's passphrase, not "yet".
+        assert "Unlock with the plugin passphrase the backup was made with" in error
         assert "passphrase incorrect" not in error

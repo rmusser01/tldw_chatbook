@@ -70,6 +70,29 @@ class AuthorityResetReview:
     marker: object
     roots_json: str
     expires_at: float
+    # TASK-40308: whether setup will be refused afterwards (plugins installed or
+    # saved data kept), and whether a restore lets setup set them aside instead.
+    retained: bool = False
+    restored: bool = False
+
+
+@dataclass(frozen=True)
+class RestoredAuthorityReview:
+    """Adopting a restored plugin authority (TASK-40308): the reviewed rollback.
+
+    ``marker`` is the restored generation the passphrase authenticated and the
+    restored registry matches; ``current`` is the protected marker it replaces
+    (``None`` when the keyring holds none). ``undone`` counts the authority
+    generations after the backup that adoption undoes, when the marker shows them.
+    """
+
+    token: str
+    marker: object
+    current: object
+    undone: int | None
+    installations: tuple[tuple[str, str | None, str | None], ...]
+    data_roots: int
+    expires_at: float
 
 
 def inspection_identity(inspection: PackageInspection) -> str:

@@ -104,20 +104,63 @@ class PluginCoordinator:
             raise RuntimeError("plugin coordinator requires its persistent worker loop")
         self.owner.require_owner(self.registry.path.parent)
 
-    def bootstrap(self, passphrase: str) -> None:
-        """Explicit owner-gated setup; never bootstrap over registry authority."""
+    def bootstrap(self, passphrase: str) -> Path | None:
+        """Explicit owner-gated setup; never bootstrap over registry authority.
+
+        The one exception is the reviewed post-restore reset (TASK-40308): while
+        a restored generation awaits plugin review and authority was reset,
+        setup sets the restored registry, download records and downloads aside
+        and keeps every saved-data folder for reviewed reattachment. Returns
+        the set-aside folder, if any. An unreadable restore witness refuses.
+        """
         self._require_worker()
         prior = self.registry.authority_projection(operation_result=None)
-        if prior["installations"] or prior["data_roots"]:
-            raise ValueError(
-                "existing installation or root custody requires reviewed recovery"
-            )
         data_anchor = self.owner.root / "data"
-        if os.path.lexists(data_anchor):
-            raise ValueError("retained data anchor requires reviewed recovery")
+        retained = bool(prior["installations"] or prior["data_roots"])
+        aside = None
+        if retained or os.path.lexists(data_anchor):
+            from .backup import restore_pending
+
+            try:
+                pending = restore_pending(self.owner.root)
+            except (OSError, ValueError, RuntimeError):
+                pending = False  # An unreadable witness is no restore: refuse.
+            if pending:
+                aside = self._set_restored_plugins_aside()
+            elif retained:
+                raise ValueError(
+                    "existing installation or root custody requires reviewed recovery"
+                )
+            else:
+                raise ValueError("retained data anchor requires reviewed recovery")
         self.authority.bootstrap(passphrase)
         self._published = self.authority.verify_current()
         self.root_usage.initialize(self._published, fresh=True)
+        return aside
+
+    def _set_restored_plugins_aside(self) -> Path:
+        """Move restored plugin state into ``reset-<id>/``; delete nothing.
+
+        Backups exclude ``reset-<id>/`` whole, never walked (so the downloads'
+        host configuration copies stay out of archives), and replace restores
+        keep it (``Plugins/backup.kept_whole``). Saved-data folders under
+        ``data/`` stay where they are. Package bytes under ``packages/`` and
+        ``packages-revisions/`` stay too, unregistered, until removed by hand.
+        """
+        if self.authority.posture() != "needs_setup":
+            raise ValueError("plugin authority reset required before setup")
+        root = self.owner.root
+        aside = root / f"reset-{secrets.token_hex(8)}"
+        aside.mkdir(mode=0o700)
+        for name in ("staging", "acquisition-custody"):
+            if os.path.lexists(root / name):
+                os.rename(root / name, aside / name)
+        self.registry.set_aside(aside)
+        self._published = None
+        self._reviews.clear()
+        # The set-aside registry's roots are no longer registered here.
+        self.root_usage.recovery.clear()
+        return aside
 
     def reset(self, *, operation_id: str) -> Path | None:
         """Perform an explicitly reviewed plugin-only reset with a retained ID."""
@@ -125,7 +168,10 @@ class PluginCoordinator:
         if self.registry._connection.execute(
             "SELECT 1 FROM data_roots LIMIT 1"
         ).fetchone():
-            self.root_usage.require_dirty()
+            # A missing marker (a restore elsewhere, a reset keyring) has no
+            # checkpoint to mark dirty; reset still keeps every root (TASK-40308).
+            if self.authority.load_marker() is not None:
+                self.root_usage.require_dirty()
             self.root_usage.recovery.update(
                 {
                     row[0]: "root_reset_retained_custody"
@@ -1474,6 +1520,35 @@ class PluginCoordinator:
 
         self._require_worker()
         return review_deletion(self, roots)
+
+    def review_data_rebind(self, root: DataRootRef) -> RootReview:
+        from .data_cleanup import review_rebind
+
+        self._require_worker()
+        return review_rebind(self, root)
+
+    def kept_data_folders(self) -> tuple[tuple[str, str | None, str | None], ...]:
+        """Kept folders with their unproven former installation and alias."""
+        from .data_cleanup import kept_folder_hints, kept_folders
+
+        self._require_worker()
+        names = kept_folders(self)
+        hints = kept_folder_hints(self, set(names))
+        return tuple((name, *hints.get(name, (None, None))) for name in names)
+
+    def review_kept_attachment(
+        self, installation_id: str, workspace_id: str | None, root_id: str
+    ) -> RootReview:
+        from .data_cleanup import review_kept_attachment
+
+        self._require_worker()
+        return review_kept_attachment(self, installation_id, workspace_id, root_id)
+
+    async def attach_kept_data(self, review: RootReview, operation_id: str):
+        from .data_cleanup import attach_kept_data
+
+        self._require_worker()
+        return await attach_kept_data(self, review, operation_id)
 
     def review_data_attachment(
         self, roots: tuple[DataRootRef, ...], installation_id: str | None

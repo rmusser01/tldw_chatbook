@@ -2906,6 +2906,7 @@ the plugin authority under `skills/trust/plugins/`.
 | `packages/`, `packages-revisions/`, `data/<root_id>/` | included | raw bytes |
 | `staging/<name>/snapshot/`, `acquisition-custody/*.json` | included | raw bytes. Plugin recovery (`acquisition.verify_reference`) re-verifies git-installed packages from exactly the custody record and the snapshot. |
 | every other member of `staging/<name>/` | intentionally excluded, one row each, never listed | refused (`plugin_staging_member_excluded`). An allow-list (D1's "Capture snapshot/ and the custody records", review ruling I1): known members are the host git/SSH configuration copies a fetch used (`host-git-config`, `host-ssh-*`, which can hold credential helpers and SSH config), the git object store `repository.git/` (for a local source, the user's whole objects and refs: tens of thousands of files, up to 500 MB) and the working copy `content/`; unknown ones (a lockfile residue such as `host-git-config.lock`, a future member) are excluded the same way. The tree walk's `prune` hook keeps each as one row, so none counts toward the tree's entry limit, and replace restore preserves it whole. |
+| `reset-<id>/` (TASK-40308) | intentionally excluded, one row, never listed | refused (`plugin_staging_member_excluded`). Setup after a post-restore authority reset moves the restored registry, `acquisition-custody/` and `staging/` here; it holds the downloads' host git/SSH configuration copies, so it never enters an archive. Replace restore keeps it whole even from an archive made before it (`Plugins/backup.kept_whole`, added to `restore_plan`'s kept directories), and `refuse_added_fetch_folders` never lists it. |
 | anything else (`cache/`, unknown names outside `staging/<name>/`) | included | raw bytes |
 
 **Live writers.** Capture refuses rather than waits. When any registry `processes`
@@ -2935,15 +2936,17 @@ into a separate profile refuses the owner (`owner_relocation_unverified:plugins`
 a registry whose data-root paths, or installed and fetched package paths
 (`materialized_identity` in `revisions.inspection_json`), name another root is
 refused the same way at staging. A replace restore whose target holds a fetch
-folder the archive lacks, with excluded members inside, is refused at review
-with `plugin_fetch_added_since_backup` (`Plugins/backup.refuse_added_fetch_folders`,
-called from `restore_plan.plan_restore` when the plugins owner is selected; owner
-decision 2026-11-12, "Refuse early, feature next"): retiring that folder would
-have to keep members it never captured, which Start cannot do
-(`rollback_dependency_selection_required`, `publication_preserved_overlap`). The
-copy says to restore without Tools and skills, or to delete everything but
-`snapshot/` in those folders first; a snapshot-only folder restores and is
-retired. `restore_plan`'s unknown-children rule keeps a directory whole only when
+folder the archive lacks, with excluded members inside, cannot be planned:
+retiring that folder would have to keep members it never captured, which Start
+cannot do (`rollback_dependency_selection_required`,
+`publication_preserved_overlap`). `Plugins/backup.refuse_added_fetch_folders`
+(called from `restore_plan.plan_restore` when the plugins owner is selected)
+raises `FetchRemovalRequired` (`plugin_fetch_removal_required`) naming those
+members; the Backup screen lists them and, on the user's confirmation,
+`remove_fetch_members` deletes them with no safety copy before the restore is
+planned again (TASK-40309, owner decision 2026-11-12, "Remove it after the user
+confirms"). The snapshot-only folder and its custody record are then retired
+into the safety copy. `restore_plan`'s unknown-children rule keeps a directory whole only when
 both the target and the archive exclude it. Detached import refuses a plugin root
 by name (`detached_owner_unavailable:plugins`). The owner is activation-required: the
 plugin service refuses to run plugins for a restored generation until its own

@@ -743,7 +743,7 @@ class SourceService:
         validate_page(limit, offset)
 
         def operation():
-            from .acquisition import _inventory, _qualify
+            from .acquisition import _inventory, _qualify, identity_changed
 
             owner, authority = self._coordinator.owner, self._coordinator.authority
             records = _inventory(owner, authority)
@@ -780,17 +780,103 @@ class SourceService:
                         verify_reference(owner, authority, reference)
                     except (ValueError, OSError):
                         reason = "acquisition_custody_recovery_required"
+                try:
+                    rebind = identity_changed(owner, record)
+                except (ValueError, OSError):
+                    rebind = None
                 rows.append(
                     {
                         "operation_id": record["operation_id"],
                         "reference": reference,
                         "phase": record["phase"],
                         "reason": reason,
+                        "rebind": rebind,
                     }
                 )
             return tuple(rows)
 
         return await self.plugins._call(operation)
+
+    async def review_custody_rebind(self, operation_id: str) -> dict:
+        """Describe one download record whose folders changed identity (TASK-40308).
+
+        The review names the plugins whose revisions use it, the snapshot
+        folder, and its file count and size. Nothing changes until confirmed.
+        """
+
+        def operation():
+            import secrets
+            import time
+
+            from .acquisition import _inventory, folder_identities, identity_changed
+            from .data_cleanup import folder_summary
+
+            owner, authority = self._coordinator.owner, self._coordinator.authority
+            record = next(
+                (
+                    row
+                    for row in _inventory(owner, authority)
+                    if row["operation_id"] == operation_id
+                ),
+                None,
+            )
+            reason = None if record is None else identity_changed(owner, record)
+            if reason is None:
+                raise ValueError("acquisition_rebind_unavailable")
+            snapshot = owner.acquisition_destination(operation_id)
+            identities = folder_identities(owner, operation_id)
+            files, size, complete = folder_summary(snapshot)
+            installations = tuple(
+                (row[0], row[1])
+                for row in self._coordinator.registry._connection.execute(
+                    "SELECT DISTINCT r.installation_id, i.alias FROM revisions r "
+                    "LEFT JOIN installations i ON i.installation_id = r.installation_id "
+                    "WHERE instr(r.inspection_json, ?) > 0 ORDER BY r.installation_id",
+                    (json.dumps(operation_id),),
+                ).fetchall()
+            )
+            review = {
+                "token": secrets.token_hex(16),
+                "operation_id": operation_id,
+                "nonce": record["nonce"],
+                "reason": reason,
+                "path": str(snapshot),
+                "files": files,
+                "bytes": size,
+                "complete": complete,
+                "installations": installations,
+                "identities": identities,
+                "expires_at": time.monotonic() + 900,
+            }
+            self._custody_rebind_review = review
+            return review
+
+        return await self.plugins._call(operation)
+
+    async def rebind_custody(self, review: dict) -> None:
+        """Re-sign the reviewed download record with its folders' current identity."""
+
+        def operation():
+            import time
+
+            from .acquisition import rebind_custody
+
+            if (
+                getattr(self, "_custody_rebind_review", None) is not review
+                or review["expires_at"] <= time.monotonic()
+            ):
+                raise ValueError("acquisition_rebind_review_stale")
+            coordinator = self._coordinator
+            rebind_custody(
+                coordinator.owner,
+                coordinator.authority,
+                review["operation_id"],
+                review["nonce"],
+                review["identities"],
+            )
+            self._custody_rebind_review = None
+
+        await self.plugins._call(operation)
 
     def _reference_discard_identity(self, reference):
         from .acquisition import _inventory, _qualify

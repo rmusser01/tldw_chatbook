@@ -126,10 +126,16 @@ class PluginOperations:
 
                 refs = tuple(root_ref(row) for row in review.targets)
                 callback = lambda: self.service.delete_data(refs, identity)
-            elif action == "reconcile-data":
+            elif action in {"reconcile-data", "rebind-data"}:
 
                 async def callback():
                     await self.service.reconcile_data(review, identity)
+                    return await self.service.lookup_operation(identity)
+
+            elif action == "attach-data":
+
+                async def callback():
+                    await self.service.attach_kept_data(review, identity)
                     return await self.service.lookup_operation(identity)
 
             else:

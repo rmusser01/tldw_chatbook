@@ -102,47 +102,79 @@ protected marker kept in the OS keyring. After a restore, plugins stay off until
 plugin authority recovery completes; a successful recovery when you unlock (or
 from **Authority…**) also records that review, and plugins can run again.
 
-What works today: a restore onto the same profile on the same computer, with
-plugins unchanged since the backup. **Authority…** asks for the plugin
-passphrase as usual, and unlocking recovers the plugins, including ones
-installed from a repository.
+With plugins unchanged since the backup, on the same computer, **Authority…**
+asks for the plugin passphrase as usual, and unlocking recovers the plugins,
+including ones installed from a repository.
 
-What does not work yet, and what Plugins says:
+In the other restore cases, unlock with the plugin passphrase the backup was
+made with:
 
-- After plugins changed since the backup, unlocking reports "Plugin authority
-  does not match the plugin files here: its protected marker names authority
-  files that are missing, as when plugins changed after a restored backup was
-  made. Chatbook cannot recover these plugins yet. They stay off, and their files
-  and saved data stay on disk."
-- On another computer at the same paths, or after the OS keyring was reset,
-  **Authority…** reports "Plugin authority needs recovery: its protected marker
-  is missing or does not match the plugin files here, as after restoring a backup
-  on another computer at the same paths, or after the OS keyring was reset.
-  Chatbook cannot recover these plugins yet. They stay off, and their files and
-  saved data stay on disk." (A separate profile cannot occur: a restore there
-  refuses plugins.)
+- After plugins changed since the backup, unlocking alone reports that plugin
+  authority does not match the plugin files here.
+- On another computer at the same paths, or after the OS keyring was reset, the
+  protected marker is missing.
 
-Resetting plugin authority does not help in either case: setting it up again
-refuses while the restored registry still lists installed plugins.
+In both, the same passphrase opens the restored plugin authority, and Plugins
+shows **Recover plugins from this backup** before anything changes. It names
+the generation of the restored authority the passphrase opened. It counts the
+plugin changes made after the backup that recovery undoes, when the keyring
+marker shows them; a restore keeps no record of what each change was, and with
+the marker missing, or set by a different plugin authority, the count is
+unknown. It lists the backup's plugins with their revisions and gives the
+number of its saved-data folders. **Confirm recovery** makes that authority
+current on this computer. Saved data stays attached, and plugins run again
+once recovery completes.
 
-A restore after plugins were downloaded from a repository since the backup (a
-source refresh, an update check, an install or an update) is refused when you
-review it (`plugin_fetch_added_since_backup`). Each such download leaves a
-download folder, `staging/<name>/` in the plugin folder, that the backup lacks,
-holding files a backup never includes (the fetch's git copy and your git/SSH
-configuration copies). Uninstalling a plugin does not remove these folders.
-Restore without **Tools and skills**, or delete everything except `snapshot/`
-inside each such folder (an installed plugin keeps working from `snapshot/` and
-its fetch record), then review the restore again; the restore then removes the
-folder with the rest of the plugin state newer than the backup.
+A restore over recreated folders gives them new identities. If the plugin
+folder, `staging/` or a saved-data folder was deleted before the restore, each
+restored folder needs one review:
 
-File identity matters too. A restore over the existing plugin folders keeps
-their identities. If the plugin folder, `staging/` or a saved-data folder was
-deleted before the restore, the restored copy has a new identity: saved data then
-reports a changed root (`root_anchor_changed`), and fetch records fail their
-check, so a plugin installed from a repository cannot run. Chatbook has no way
-to rebind restored folders yet. Plugins restore only onto the profile they came
-from; see [Local backup and recovery](../Backup-and-Recovery.md).
+- **A download record** (a plugin installed from a repository): **Candidates…**
+  marks it "folder replaced since last bound; Review rebind". **Review rebind**
+  shows the plugin, the snapshot folder, its file count and size, and a
+  "Replaced since last bound" warning. **Confirm rebind** records the folder as
+  it is now and finishes recovery. Its files must still match the reviewed
+  plugin package.
+- **A saved-data folder**: Manage plugin ▸ **Review replaced saved-data folder**
+  shows the plugin, the folder, its file count and size, and the same warning.
+  Confirming lets the plugin use the folder again.
+
+If the backup's passphrase is lost, **Reset authority…** keeps everything:
+
+1. Its review says what setup will do next.
+2. Setting authority up again with a new passphrase moves the restored plugin
+   registry, download records and downloads into a `reset-…` folder inside the
+   plugin folder. Nothing is deleted, and every saved-data folder stays where it
+   is. Backups leave the `reset-…` folder out (it holds the downloads' copies of
+   your git and SSH settings), and a later restore leaves it in place. The
+   set-aside plugins' package files also stay in the plugin folder, unused, and
+   keep their disk space until you remove them by hand.
+3. Reinstall each plugin from its source. A plugin whose source is gone cannot
+   come back this way.
+4. Manage plugin ▸ **Attach kept saved-data folder** lists the kept folders.
+   Beside each it shows the plugin the set-aside registry says it belonged to,
+   marked "not proven": nothing authenticates that record any more. Choose one;
+   the review shows its contents before you attach it.
+
+Outside a restore, reset still refuses setup while plugins are installed or
+saved data remains, and its confirmation says so.
+
+Each plugin download from a repository since the backup (a source refresh, an
+update check, an install or an update) leaves a download folder,
+`staging/<name>/` in the plugin folder, that the backup lacks, holding files a
+backup never includes: the fetch's git copy (`repository.git`, `content/`) and
+its copies of your git and SSH settings (`host-git-config`, `host-ssh-*`).
+Uninstalling a plugin does not remove these folders. **Review restore** on the
+Backup screen lists them (`plugin_fetch_removal_required`) and offers **Remove
+newer plugin downloads**, which deletes those files with no safety copy, so a
+rollback cannot bring them back; `~/.gitconfig` and `~/.ssh` themselves are not
+touched. An installed plugin keeps working from `snapshot/` and its fetch
+record, and the restore then moves each folder's `snapshot/` and record into the
+safety copy with the rest of the plugin state newer than the backup.
+
+A restore over the existing plugin folders keeps their identities, so no
+rebind is needed. Plugins restore only onto the profile they came from; see
+[Local backup and recovery](../Backup-and-Recovery.md).
 
 See [compatibility](compatibility.md) for unqualified environments and
 [authoring](authoring.md) for component and resource contracts.
