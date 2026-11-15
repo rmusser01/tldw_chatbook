@@ -346,6 +346,51 @@ async def test_character_mount_loads_groups_without_duplicate_cold_resume_worker
         assert recent_loads == [7, 8]
 
 
+@pytest.mark.asyncio
+async def test_resume_read_queues_behind_a_running_passive_read(monkeypatch) -> None:
+    """A Console return mid-read still gets its forced-fresh Character read."""
+    from tldw_chatbook.UI.Console_Modules import character_context, wiring
+
+    order: list[str] = []
+    passive_done = asyncio.Event()
+    started: list[asyncio.Task] = []
+    screen = SimpleNamespace(
+        is_attached=True,
+        app=SimpleNamespace(_exit=False),
+        _character_context=SimpleNamespace(
+            state=SimpleNamespace(phase=ConsoleCharacterOperationPhase.REFRESHING)
+        ),
+        run_worker=lambda work, **_kwargs: started.append(asyncio.ensure_future(work())),
+    )
+
+    async def wait_passive():
+        await passive_done.wait()
+        order.append("passive")
+
+    screen.workers = [
+        SimpleNamespace(
+            node=screen,
+            group="console-character-context-refresh",
+            is_finished=False,
+            wait=wait_passive,
+        )
+    ]
+
+    async def resume_read(_controller, _screen):
+        order.append("resume")
+
+    monkeypatch.setattr(character_context, "character_view_resume_work", resume_read)
+    wiring.request_console_character_context_refresh(screen)
+    assert started == []  # passive reads still coalesce
+    wiring.request_console_character_context_refresh(screen, resumed=True)
+    assert len(started) == 1
+    await asyncio.sleep(0)
+    assert order == []
+    passive_done.set()
+    await started[0]
+    assert order == ["passive", "resume"]
+
+
 def test_accordion_keeps_at_most_one_stable_typed_key_expanded() -> None:
     controller = _controller()
     controller._publish(ConsoleCharacterContextState(groups=_groups()))

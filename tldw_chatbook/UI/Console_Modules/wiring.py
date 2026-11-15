@@ -48,6 +48,7 @@ do not reintroduce a re-export in `chat_screen.py` to patch through.
 import asyncio
 import threading
 from collections.abc import Callable
+from contextlib import suppress
 from pathlib import Path
 from functools import partial
 from types import CodeType as _CharacterViewCodeType
@@ -57,6 +58,7 @@ from uuid import uuid4
 
 from loguru import logger
 from textual.css.query import QueryError
+from textual.worker import WorkerError
 
 from tldw_chatbook.Chat.console_chat_models import FEEDBACK_ACTIVE_RUN_STATUSES
 from tldw_chatbook.Chat.console_fleet_wake import owner_loop_state
@@ -295,21 +297,26 @@ def _reaction_preview_coordinator(screen: Any) -> Any:
 def request_console_character_context_refresh(
     screen: "ChatScreen", *, resumed: bool = False
 ) -> None:
-    """Coalesce passive reads in the screen's existing Character worker."""
+    """Coalesce passive reads; a resume's fresh read queues behind them."""
     if not screen.is_attached or screen.app._exit:
         return
     controller = screen._character_context
-    if controller.state.phase is not ConsoleCharacterOperationPhase.IDLE:
-        return
     group = "console-character-context-refresh"
-    if any(
-        worker.node is screen and worker.group == group and not worker.is_finished
+    running = [
+        worker
         for worker in screen.workers
+        if worker.node is screen and worker.group == group and not worker.is_finished
+    ]
+    if not resumed and (
+        running or controller.state.phase is not ConsoleCharacterOperationPhase.IDLE
     ):
         return
     from .character_context import character_presentation_work, character_view_resume_work
 
     async def refresh():
+        for worker in running:  # it may have read before the edit elsewhere
+            with suppress(WorkerError):  # its outcome is not ours to report
+                await worker.wait()
         if resumed:
             await character_view_resume_work(controller, screen)
         else:
