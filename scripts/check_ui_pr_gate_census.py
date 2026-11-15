@@ -1077,7 +1077,6 @@ MINIMUM_FILES = 2142
 # TASK-40300 review r14ep-rev1 (2026-11-13): append the refused custom
 # endpoint Settings node at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 2143
-MINIMUM_FILES = 2136
 # TASK-38948 (2026-11-15): append the two 100 ms Send-feedback nodes at the
 # tail (re-gated after eight green dev-push watch runs). The floor is the
 # measured entry count.

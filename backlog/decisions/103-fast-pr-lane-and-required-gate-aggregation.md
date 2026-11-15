@@ -512,7 +512,8 @@ all existing selectors remain exactly once across the three required profiles.
 job of its own, `backup-owner-suites-dev` ("Backup_Recovery owner suites (push
 to dev)"), runs the 13 Backup_Recovery owner suites that ran on no lane (27 of
 their nodes had gone red on dev unseen, TASK-40306) and the restore-journal
-file, whole, with 11 red nodes deselected by name, on every push to dev and
+file, whole, with 8 red nodes deselected by name (11 at first; review
+r14bk-rev1 re-admitted three, TASK-40307), on every push to dev and
 never on a pull request, like `library-shell-dev`. It is not in the required
 check's `needs`, so no PR runner and no PR verdict: the counts above are
 unchanged (30 concurrent test runners, 31 with perf-guard, 48 eligible test
@@ -528,7 +529,7 @@ Owner decision, relayed by the coordinator at the round-14 closeout: "38
 shards, 19 at once". Round 14 appended 111 census entries (2145 in all), each
 charged its local serial time from its task's notes, about 36 pytest min.
 Replayed over the 25 latest PR runs whose 36 UI shards all finished
-(2026-11-14 03:20Z to 19:32Z: 14 on GitHub-hosted runners, 11 on the
+(2026-11-14 03:20Z to 19:32Z: 17 on GitHub-hosted runners, 8 on the
 self-hosted runners of ADR-359), each entry at its slowest, the census carries
 about 493 worst-case pytest min: a 13.7-min floor a shard at 36, so no re-deal
 of 36 keeps every job 5 min under the 20-min cap. At 38,

@@ -18,8 +18,8 @@
 # decision, not a re-deal (TASK-39144). Round 14 (2026-11-15, stacked on dev
 # ecad404bd4) added 111 tail entries, each charged its local serial time from
 # its task's notes (about 36 min), over weights from the 25 latest PR runs
-# with every UI shard finished (2026-11-14 03:20Z to 19:32Z, 14 GitHub-hosted
-# and 11 self-hosted): about 493 worst-case pytest min, a 13.7 floor at 36.
+# with every UI shard finished (2026-11-14 03:20Z to 19:32Z, 17 GitHub-hosted
+# and 8 self-hosted): about 493 worst-case pytest min, a 13.7 floor at 36.
 # The owner chose 38 shards, 19 at once; --rebalance 13.0 swapped 46 pairs and
 # every shard replays at 12.94-12.99 pytest min (12.97 is the floor at 38).
 # To append: add entries at the tail as before, replay recent shard logs with

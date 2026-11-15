@@ -22,7 +22,7 @@ Filed in round 14 of the 2026-10-23 burn-down (closeout, 2026-11-15). Checked ag
 
 **Why.** `tldw-chatbook recovery restore` is the path for a user who cannot start the app. TASK-40309 added the removal to the Backup screen's review only, and the CLI's refusal sends the user to that screen.
 
-**Evidence.** `recovery_service.py:168-175`: `plugin_fetch_removal_required` says "Review the restore on the Backup screen, which lists them and removes them when you confirm; or restore without the Tools and skills group." The `restore` sub-command (`launcher.py:644-668`) has `--group`, `--acknowledge-credential-issue` and `--safety-scope`, and nothing for the newer download folders.
+**Evidence.** `recovery_service.py:168-175`: `plugin_fetch_removal_required` says "Review the restore on the Backup screen, which lists them and removes them when you confirm; or restore without the Tools and skills group." The `restore` sub-command (`launcher.py:644-668`) has no flag for the newer download folders.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

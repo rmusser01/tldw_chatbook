@@ -1838,8 +1838,10 @@ jobs:
             --tb=short
 
       # TASK-38948 (owner decision 2026-11-10, "Off the gate, reorder next"):
-      # the 100 ms Send-feedback nodes left the required UI lane; they keep
-      # running here on every push to dev until CI shows them passing.
+      # the 100 ms Send-feedback nodes left the required UI lane and ran here
+      # on every push to dev. They passed 16 of 16 cases in eight dev-push runs
+      # (2026-11-13..15), so they are back on the UI census by node (2026-11-15,
+      # round-14 closeout); this watch step stays, by the coordinator's decision.
       - name: Watch the 100 ms Send-feedback nodes
         if: ${{ !cancelled() && strategy.job-index == 0 }}
         run: |
