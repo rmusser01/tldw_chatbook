@@ -146,7 +146,7 @@ async def test_keyboard_details_back_resize_and_restore_keep_stable_selection(
         assert "1 of 1 selected components eligible by recorded metadata" in str(
             screen.query_one("#plugins-detail", Static).render()
         )
-        assert "Activation in: workspace-a" in paint(screen)
+        assert "Activation in: A | Installation: this device" in paint(screen)
         if size[0] == 80:
             assert not screen.query_one("#plugins-list-pane").display
             assert screen.query_one("#plugins-detail-scroll").size.height >= 5
@@ -248,6 +248,28 @@ async def test_changed_workspace_refuses_pending_readme_and_refreshes_scope(
             screen.query_one("#plugins-readme", Static).render()
         )
         assert "Disabled" in str(screen.query_one("#plugins-detail", Static).render())
+        # TASK-41103: the scope line names the workspace, literally (a
+        # markup-shaped name stays as typed), while its id keeps driving the
+        # token, so a rename repaints the line and keeps the selection.
+        assert "Activation in: B | Installation: this device" in paint(screen)
+        selected = screen.browse.selected_installation_id
+        assert selected is not None
+        rig.registry.rename_workspace("workspace-b", "[b]Team[/b] B")
+        screen._check_scope_generation()
+        await settled(pilot, screen)
+        assert "Activation in: [b]Team[/b] B | Installation: this device" in paint(
+            screen
+        )
+        assert screen.browse.workspace_id == screen._token()[1] == "workspace-b"
+        assert await screen._current(screen._token())
+        assert screen.browse.selected_installation_id == selected
+        assert "Disabled" in str(screen.query_one("#plugins-detail", Static).render())
+        rig.registry.clear_active_workspace()
+        screen._check_scope_generation()
+        await settled(pilot, screen)
+        assert "Activation in: Global default | Installation: this device" in paint(
+            screen
+        )
 
 
 @private_profile_test
@@ -502,7 +524,7 @@ async def test_navigation_during_child_prune_settles_original_load(
             assert (str(scope.render()), listing.option_count) == before
             assert not worker.is_cancelled
             if boundary == "workspace-success":
-                assert gate.result == "workspace-a"
+                assert gate.result.workspace_id == "workspace-a"
                 assert gate.calls == [((screen,), {})]
                 rows = await rig.service.management_snapshot("workspace-a")
                 assert [row.installation_id for row in rows] == [

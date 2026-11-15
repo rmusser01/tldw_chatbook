@@ -28,7 +28,9 @@ From top to bottom:
 - **Header**: "Plugins | Inspect sources, installation and activation".
 - **Scope line**: "Activation in: *workspace* | Installation: this device".
   Enabling and disabling apply to the workspace named here (your active
-  workspace, shown by its ID, or "Global default" when none is active).
+  workspace by name, "Local Default" for the built-in one, or "Global
+  default" when none is active). Renaming the workspace updates the name and
+  keeps your selection.
   Installation is for this device. Switching workspace elsewhere in the app
   reloads Plugins for the new one.
 - **Views**: **1 Installed**, **2 Browse** and **3 Marketplaces**.
@@ -296,5 +298,3 @@ SSH settings, with no safety copy; installed plugins keep working. See
   again."** The **Manage plugin** dialog failed while loading. It stays open
   with **Review action** disabled, and Chatbook keeps running; close it and
   open it again.
-- **The scope line shows the workspace's ID**, for example
-  "workspace-default", not its display name.
