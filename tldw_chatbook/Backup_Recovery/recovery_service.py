@@ -322,6 +322,45 @@ def _verify_personal_context(service, operation, plan) -> None:
         service._update(operation, issues=issues)
 
 
+def retains_only_installed_keys(scopes, records, issues) -> bool:
+    """TASK-41124: every credential a replace restore keeps in its encrypted
+    archive is a Personal Context key the same restore installs, so none needs
+    manual recovery. ``scopes`` is the staged descriptor's ``credential_scopes``,
+    ``records`` the staged credential material, ``issues`` the plan's issues; a
+    locked Personal Context line means that key is not installed."""
+    import json
+
+    kinds = {record["id"]: record["kind"] for record in records}
+    retained = {
+        kinds.get(key)
+        for key, value in scopes.items()
+        if json.loads(value)["action"] == "retain"
+    }
+    return retained == {"personal_context"} and not any(
+        issue.startswith("personal_context_restore_locked:") for issue in issues
+    )
+
+
+def _retention_installs_keys(candidate, plan) -> bool:
+    """Classify a staged candidate's retention review; unknown reads as manual.
+
+    Reads the staged material as ``_descriptor`` reads ``candidate.json``
+    (pinned and private). ``credentials._material`` would go through storage
+    admission, where a candidate's work folder is not enrolled.
+    """
+    from .bootstrap import _read
+    from .native_files import pinned_directory
+    from .publication import _descriptor
+
+    try:
+        scopes = _descriptor(candidate, plan)["credential_scopes"]
+        with pinned_directory(candidate) as fd:
+            material = _read(fd, "credential-recovery.json", max_bytes=16 * 1024**2)
+        return retains_only_installed_keys(scopes, material["records"], plan.issues)
+    except Exception:  # noqa: BLE001 - a failed check never replaces the review
+        return False
+
+
 def issue_message(code: str) -> str:
     """Explain bounded local failures without rendering arbitrary exception text."""
     if code == "password_required":
@@ -916,8 +955,16 @@ class RecoveryService:
                         rollback_password=rollback_password,
                         cancel=cancel,
                     )
-                except Exception:
+                except Exception as error:
                     self._link_pending_candidate(operation, candidate)
+                    if getattr(error, "issues", None) == (
+                        "credential_isolated_retention_required",
+                    ) and _retention_installs_keys(candidate, plan):
+                        # TASK-41124: the review says the restore installs it.
+                        self._update(
+                            operation,
+                            result={"personal_context_keys_installed": True},
+                        )
                     raise
                 result = {
                     "journal_operation_id": journal_operation,

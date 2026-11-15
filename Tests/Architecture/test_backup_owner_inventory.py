@@ -1500,6 +1500,42 @@ def test_every_installed_backup_owner_has_its_own_review_label():
     assert len(set(labels)) == len(labels), sorted(labels)
 
 
+@pytest.mark.parametrize(
+    ("retained", "issues", "expected"),
+    [
+        (("personal_context",), ("personal_context_restore_readable:pc",), True),
+        # A server credential the restore remaps is installed, not retained.
+        (("personal_context", "server:create"), (), True),
+        (("personal_context", "generation"), (), False),
+        (("server", "personal_context"), (), False),
+        (
+            ("personal_context",),
+            ("personal_context_restore_locked:personal_context_key_install_unavailable:pc",),
+            False,
+        ),
+        ((), (), False),
+    ],
+)
+def test_retention_review_names_only_keys_the_restore_installs(
+    retained, issues, expected
+):
+    """TASK-41124: the retention review drops "manual recovery" only when every
+    retained scope is a Personal Context key and no Personal Context line in the
+    plan is locked (a locked key is not installed)."""
+    import json
+
+    from tldw_chatbook.Backup_Recovery.recovery_service import (
+        retains_only_installed_keys,
+    )
+
+    records, scopes = [], {}
+    for index, entry in enumerate(retained):
+        kind, _, action = entry.partition(":")
+        records.append({"id": f"r{index}", "kind": kind})
+        scopes[f"r{index}"] = json.dumps({"action": action or "retain"})
+    assert retains_only_installed_keys(scopes, records, issues) is expected
+
+
 # TASK-40134: the Personal Context repository is a captured backup owner. These
 # fixtures use the in-memory key protector; no test here reaches an OS keyring.
 
@@ -1966,3 +2002,4 @@ def test_only_the_settings_review_calls_approve_config():
             if isinstance(node, ast.Attribute) and node.attr == "approve_config":
                 uses[path.relative_to(ROOT).as_posix()] += 1
     assert uses == Counter({"tldw_chatbook/UI/Screens/backup_restore_screen.py": 1})
+

@@ -163,6 +163,12 @@ replacement** before returning to inspection, choosing the explicit omission
 acknowledgements, and creating a fresh reviewed plan. Do not treat an omission as
 covered by the credential-recovery guarantee.
 
+A **Replace** restore keeps credentials it cannot install in an encrypted archive and
+asks you to accept that retention before anything is replaced. When the only such
+credential is a Personal Context key that the restore installs itself, the review
+says so instead of asking for manual recovery; a copy of the key also stays in the
+encrypted archive.
+
 Target changes invalidate review. Re-inspect and review the actual current state
 instead of trying to reuse a stale confirmation.
 

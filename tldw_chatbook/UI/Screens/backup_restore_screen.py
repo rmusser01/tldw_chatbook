@@ -1949,7 +1949,12 @@ class BackupRestoreScreen(Screen):
                 self._restore_review_codes_seen = codes
                 self.run_worker(
                     self._show_restore_credential_review(
-                        current["operation_id"], codes
+                        current["operation_id"],
+                        codes,
+                        installs_keys=current.get("result", {}).get(
+                            "personal_context_keys_installed"
+                        )
+                        is True,
                     ),
                     exclusive=True,
                     group="restore-credential-review",
@@ -2013,7 +2018,9 @@ class BackupRestoreScreen(Screen):
                 )
             )
 
-    async def _show_restore_credential_review(self, operation, codes):
+    async def _show_restore_credential_review(
+        self, operation, codes, *, installs_keys=False
+    ):
         if (
             operation != self._requested_restore_operation
             or codes != self._restore_review_codes_seen
@@ -2029,6 +2036,8 @@ class BackupRestoreScreen(Screen):
             return
         area.display = True
         retention = codes == (_RETAINED_CREDENTIAL_REVIEW,)
+        # TASK-41124: the only retained credential is a key this restore installs.
+        installs_keys = retention and installs_keys
         locked = all(code.startswith(_PERSONAL_CONTEXT_LOCKED) for code in codes)
         await area.mount(
             Static(
@@ -2036,6 +2045,11 @@ class BackupRestoreScreen(Screen):
                 "Personal Context will be restored but stay locked. Nothing has been "
                 "written yet. Acknowledge each case, then review restore again."
                 if locked
+                else "This restore installs Personal Context's key itself; a copy also "
+                "stays in the encrypted archive. No replacement was published. "
+                "Accept encrypted retention, enter a new rollback password, "
+                "and review restore again."
+                if installs_keys
                 else "Some incoming credentials need manual recovery and will remain in the encrypted archive. "
                 "No replacement was published. Accept encrypted retention, enter a new rollback password, "
                 "and review restore again."
@@ -2053,6 +2067,8 @@ class BackupRestoreScreen(Screen):
                             code.removeprefix("credential_").split(":profile:", 1)[0]
                         )
                         if locked
+                        else "Accept encrypted retention"
+                        if installs_keys
                         else "Accept encrypted manual retention"
                         if retention
                         else "Acknowledge safety-copy omission: " + code

@@ -994,3 +994,68 @@ async def test_an_unreadable_sync_state_never_crashes_restored_profiles(
     finally:
         service.close()
 
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("installed", [True, False])
+async def test_restore_retention_review_says_when_the_restore_installs_the_key(
+    tmp_path, installed
+):
+    """TASK-41124: a replace restore retains a Personal Context key it then
+    installs itself (TASK-40135), so when that is the only retained credential
+    the retention review does not ask for manual recovery. Any other retained
+    credential keeps the manual-recovery copy. ``start_restore`` records the
+    case in the review's result (pinned for real in the Personal Context
+    restore end-to-end test, Tests/Backup_Recovery/test_restore_data_groups.py).
+    """
+    import asyncio
+
+    from textual.widgets import Checkbox, Select
+
+    from tldw_chatbook.Backup_Recovery.capture import CaptureReviewRequired
+    from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+
+    retention = "credential_isolated_retention_required"
+    service = RecoveryService(tmp_path / "control")
+
+    def refused(operation, cancel):
+        if installed:
+            service._update(
+                operation, result={"personal_context_keys_installed": True}
+            )
+        raise CaptureReviewRequired((retention,))
+
+    app = _harness(service)
+    try:
+        async with app.run_test(size=(110, 40)) as pilot:
+            screen = app.screen
+            screen._show_mode("inspect")
+            screen._inspection_id = "fixture-inspection"
+            screen._inspection_summary = {"destination_slots": (), "profile_ids": ()}
+            screen.query_one("#backup-restore-mode", Select).value = "replace"
+            screen.query_one("#backup-restore-form").display = True
+            await pilot.pause()
+            operation = service._start("restore", refused)
+            screen._requested_restore_operation = operation
+            await asyncio.to_thread(service.wait, operation, timeout=10)
+            screen._refresh_status()
+            area = screen.query_one("#backup-restore-credential-review")
+            async with asyncio.timeout(10):
+                while not area.query(Checkbox):
+                    await pilot.pause(0.02)
+            copy = _text(area, "Static")
+            box = area.query_one(Checkbox)
+            assert box.name == retention
+            if installed:
+                assert "manual" not in copy and "manual" not in str(box.label)
+                assert "installs Personal Context's key" in copy
+                assert "encrypted archive" in copy
+                assert str(box.label) == "Accept encrypted retention"
+            else:
+                assert copy.startswith(
+                    "Some incoming credentials need manual recovery"
+                ), copy
+                assert str(box.label) == "Accept encrypted manual retention"
+    finally:
+        await asyncio.to_thread(service.close)
+
