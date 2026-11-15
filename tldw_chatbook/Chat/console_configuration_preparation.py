@@ -241,6 +241,12 @@ def _source_references(app, store, creator, session, *, _unused_trust=None):
         # initializer's ready publication is not a changed data dependency.
         trust = None
     plugin = _ready_published_plugin(local, app)
+    mcp = _ready_attribute(app, "unified_mcp_service")
+    if mcp is not None:
+        from tldw_chatbook.MCP.console_snapshot import unbound_console_sources
+
+        if unbound_console_sources(mcp):
+            mcp = None  # Nothing can read it, so the turn has no MCP tools.
     persistence = getattr(store, "persistence", None)
     visual = getattr(creator, "_visual_identity_repository", None)
     persona = (
@@ -265,7 +271,7 @@ def _source_references(app, store, creator, session, *, _unused_trust=None):
         visual,
         getattr(visual, "db", None),
         getattr(creator, "_scratch_spaces", None),
-        _ready_attribute(app, "unified_mcp_service"),
+        mcp,
         getattr(creator, "_provider_config", None),
         persona,
         getattr(persona, "db", getattr(persona, "_db", None)),
@@ -2701,7 +2707,10 @@ async def capture_received_configuration_owned(
     import sys
 
     from tldw_chatbook import config
-    from tldw_chatbook.MCP.console_snapshot import standard_console_sources
+    from tldw_chatbook.MCP.console_snapshot import (
+        standard_console_sources,
+        unbound_console_sources,
+    )
 
     if selection is None:
         raise RecoveryRequired("console_snapshot_owner_changed")
@@ -2712,7 +2721,9 @@ async def capture_received_configuration_owned(
     if session is None:
         raise KeyError(session_id)
     service = getattr(app, "unified_mcp_service", None)
-    if service is not None and not standard_console_sources(service):
+    if service is not None and not (
+        standard_console_sources(service) or unbound_console_sources(service)
+    ):
         raise RecoveryRequired("console_snapshot_owner_changed")
     app_config = getattr(app, "app_config", None)
     scratch, provider_config = controller._scratch_spaces, controller._provider_config
@@ -2768,6 +2779,7 @@ async def _controller_capture_turn_configuration_snapshot(
     from tldw_chatbook.MCP.console_snapshot import (
         _capture_console_definition_selection,
         standard_console_sources,
+        unbound_console_sources,
     )
 
     from . import console_chat_controller as _source_controller
@@ -2909,7 +2921,7 @@ async def _controller_capture_turn_configuration_snapshot(
         )
         captured = await capture_mounted_configuration_owned(
             self, session_id, screen_owner, provider, require_current=require_current
-        ) if stock_mcp else None
+        ) if stock_mcp or unbound_console_sources(service) else None
         if captured is not None:
             return captured
     else:

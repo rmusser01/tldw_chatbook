@@ -203,7 +203,7 @@ def _owned_permission_load_helpers_current() -> bool:
     )
 
 
-def standard_local_catalog_sources(local: Any, store: Any) -> bool:
+def standard_local_catalog_sources(local: Any, store: Any, *, _bound: bool = True) -> bool:
     """Keep declared local/store custom readers on their preceding route."""
     if type(local) is not LocalMCPControlService or type(store) is not LocalMCPStore:
         return False
@@ -217,6 +217,8 @@ def standard_local_catalog_sources(local: Any, store: Any) -> bool:
             for name in names
         ):
             return False
+    if not _bound:
+        return True
     try:
         _source_identity(store)
     except RecoveryRequired:
@@ -224,8 +226,14 @@ def standard_local_catalog_sources(local: Any, store: Any) -> bool:
     return True
 
 
-def standard_console_sources(service: Any, *, _include_log: bool = True) -> bool:
-    """Select only the concrete source route, without granting file authority."""
+def standard_console_sources(
+    service: Any, *, _include_log: bool = True, _bound: bool = True
+) -> bool:
+    """Select only the concrete source route, without granting file authority.
+
+    ``_bound=False`` keeps every type and method check but skips the backup
+    binding proofs (see ``unbound_console_sources``).
+    """
     if type(service) is not UnifiedMCPControlPlaneService:
         return False
     for name in ("permission_store", "execution_log"):
@@ -243,7 +251,7 @@ def standard_console_sources(service: Any, *, _include_log: bool = True) -> bool
             return False
     local = service.local_service
     store = getattr(local, "store", None)
-    if not standard_local_catalog_sources(local, store):
+    if not standard_local_catalog_sources(local, store, _bound=_bound):
         return False
     if not (
         _original_class_member(LocalMCPControlService, "get_inventory")
@@ -265,12 +273,26 @@ def standard_console_sources(service: Any, *, _include_log: bool = True) -> bool
             for name in names
         ):
             return False
-        if receiver is not None:
+        if receiver is not None and _bound:
             try:
                 _source_identity(receiver)
             except RecoveryRequired:
                 return False
     return True
+
+
+def unbound_console_sources(service: Any) -> bool:
+    """A stock MCP service whose store never bound to backup custody.
+
+    ``bind`` skips without POSIX pinned I/O (every Windows install) and for a
+    store outside the selected profile. No reader can prove such a source, so
+    a Console turn runs without MCP tools rather than being refused
+    (TASK-40714). Replaced readers or receivers are still not stock.
+    """
+    return (
+        standard_console_sources(service, _bound=False)
+        and service.local_service.store not in sources._BINDINGS
+    )
 
 
 def standard_console_catalog_sources(service: Any, *, _include_log: bool = True) -> bool:
