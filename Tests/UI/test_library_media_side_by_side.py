@@ -645,7 +645,116 @@ async def test_compact_media_viewer_back_empty_page_focuses_recovery_control() -
                 f"focus is {screen.focused!r}."
             ),
         )
+        # TASK-40293 review: the landing must hold. An armed list-entry
+        # channel used to be revoked by Textual's queued grip focus event.
+        await pilot.pause(0.5)
+        assert getattr(screen.focused, "id", None) == "library-media-empty-import"
         assert len(service.search_calls) == reads_after_empty
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile  # TASK-39130: _build_test_app reads config
+async def test_compact_media_empty_page_landing_survives_a_queued_grip_focus(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-40293 review: Textual's grip parking cannot revoke the landing.
+
+    Under load, the Items prune parks focus on the Library grip and its
+    DescendantFocus is still queued when the empty page resets the Reader.
+    That event revoked the list-entry arm the reset used to take, leaving
+    focus at None. The parking is reproduced here right after the reset,
+    with its event put on the screen's own queue so it is handled before the
+    reset's whole-screen recompose, the order the review measured under load.
+    """
+    from textual.events import DescendantFocus
+
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    service = app.media_reading_scope_service
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=COMPACT_SCROLL_SIZE) as pilot:
+        screen, _media_id, _scroll_offset = await _open_scrolled_compact_media_viewer(
+            host, pilot
+        )
+        reset = screen._reset_library_media_reader_to_no_selection
+
+        def reset_then_park_on_grip() -> None:
+            reset()
+            grip = screen.query_one("#library-browse-library-grip")
+            screen.set_focus(grip)
+            screen.post_message(DescendantFocus(grip))
+
+        monkeypatch.setattr(
+            screen,
+            "_reset_library_media_reader_to_no_selection",
+            reset_then_park_on_grip,
+        )
+        controller = screen._library_media_browse_controller
+        service.media_items = []
+        screen._request_library_media_browse(
+            controller.mutation_refresh_scope, focus_identity=None
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: getattr(screen.focused, "id", None) == "library-media-empty-import",
+            message=lambda: (
+                f"The emptied page did not land on Import: {screen.focused!r}."
+            ),
+        )
+        await pilot.pause(0.5)
+        assert getattr(screen.focused, "id", None) == "library-media-empty-import"
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile  # TASK-39130: _build_test_app reads config
+async def test_wide_media_reader_reset_leaves_focus_the_user_holds_in_the_rail() -> (
+    None
+):
+    """TASK-40293 review: an emptied page lands only focus the reset strands.
+
+    With an item in the Reader and focus in the rail's search box, a refresh
+    that empties the page resets the Reader with a whole-screen recompose.
+    The search box survives it and keeps focus: the landing on Import is for
+    focus that was in Media's own panes, and Enter there would start Import.
+    """
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    service = app.media_reading_scope_service
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen.query_one("#library-media-row-0", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                bool(screen._media_state.reader_session.loaded_id)
+                and bool(screen.query("#library-media-viewer-title"))
+            ),
+            message="Reader never loaded row 0.",
+        )
+        search = screen.query_one("#library-search-input")
+        screen.set_focus(search)
+        await pilot.pause()
+        assert screen.focused is search
+        controller = screen._library_media_browse_controller
+        service.media_items = []
+        screen._request_library_media_browse(
+            controller.mutation_refresh_scope, focus_identity=None
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                controller.applied_result is not None
+                and controller.applied_result.total == 0
+                and not controller.loading
+                and bool(screen.query("#library-media-empty-import"))
+            ),
+            message="The empty page and Reader reset never applied.",
+        )
+        await pilot.pause(0.5)
+        assert getattr(screen.focused, "id", None) == "library-search-input"
 
 
 @pytest.mark.asyncio

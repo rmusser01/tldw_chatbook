@@ -511,6 +511,7 @@ from ...Library.library_shell_state import (
 from ...Utils.adaptive_reader_state import list_holds_the_stage
 from ...Widgets.Library import (
     LIBRARY_ADAPTIVE_READER_GRIP_CLASS,
+    LIBRARY_BROWSE_READER_SHELL_ID,
     LibraryMediaCanvas,
     LibraryBrowseReaderShell,
     LibraryMediaTrashCanvas,
@@ -4786,6 +4787,45 @@ class LibraryMediaController:
         from .canvas_sync import _restore_library_media_focus
 
         return _restore_library_media_focus(self, previous, globals())
+
+    def _land_library_media_emptied_page(self) -> None:
+        """Land focus a Reader reset stranded on the emptied page (TASK-40293).
+
+        Called right after the reset's whole-screen recompose is requested.
+        Focus the user holds outside Media's own panes (the rail search box,
+        the nav bar) is left alone. Focus in the Items or Reader pane, on a
+        pane grip (Textual parks it there after a prune) or nowhere lands on
+        the page's recovery action after the recompose. No list-entry arm:
+        Textual's queued grip focus event revoked one. One attempt, no retry:
+        a later one could override a user's move or a route switch.
+        """
+
+        def stranded(widget: Widget | None) -> bool:
+            if widget is None or not widget.is_attached:
+                return True
+            if widget.has_class(LIBRARY_ADAPTIVE_READER_GRIP_CLASS):
+                return True
+            ids = {node.id for node in widget.ancestors_with_self}
+            return LIBRARY_BROWSE_READER_SHELL_ID in ids and "library-rail" not in ids
+
+        def owns_focus() -> bool:
+            return self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA and (
+                stranded(self.focused)
+            )
+
+        def land() -> None:
+            if not self._screen.is_attached or not owns_focus():
+                return
+            target = self._screen._library_media_empty_list_fallback_target()
+            if (
+                target is not None
+                and not getattr(target, "_pruning", False)
+                and target in self._screen.focus_chain
+            ):
+                self.set_focus(target)
+
+        if owns_focus():
+            self.call_after_refresh(land)
 
     def _sync_library_media_viewer_or_recompose(self) -> None:
         """Viewer-scoped recompose for an in-viewer sub-state flip.

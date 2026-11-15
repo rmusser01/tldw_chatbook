@@ -3023,6 +3023,11 @@ async def test_library_starter_hidden_route_focuses_compact_rail_without_search(
     try:
         async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
             await _wait_for_evidence_round(pilot, gates)
+            # TASK-40298: the round enters before the rail mounts its rows,
+            # and F6 picks from what is mounted when it is pressed.
+            await _wait_for_selector(
+                screen, pilot, f"#library-row-{LIBRARY_ROW_INGEST_MEDIA}"
+            )
             footer = screen.query_one(AppFooterStatus)
             assert "/ focus search" not in footer.shortcut_text
             assert all(
@@ -5508,7 +5513,7 @@ async def test_library_63_64_width_only_transition_does_no_non_layout_work(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("guard_kind", ("cancel", "running"))
+@pytest.mark.parametrize("guard_kind", ("cancel", "pick", "toggle", "running"))
 async def test_library_emergency_real_guards_keep_specific_action_authoritative(
     guard_kind: str, monkeypatch
 ) -> None:
@@ -5520,10 +5525,10 @@ async def test_library_emergency_real_guards_keep_specific_action_authoritative(
     async with host.run_test(size=(63, 30)) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
-        if guard_kind in {"cancel", "running"}:
+        if guard_kind in {"cancel", "pick", "toggle", "running"}:
             await screen._select_library_rail_row(LIBRARY_ROW_INGEST_EXPORT)
             await _wait_for_selector(screen, pilot, "#library-export-name")
-            if guard_kind == "cancel":
+            if guard_kind != "running":
                 screen.query_one("#library-export-quality", Button).press()
                 await _wait_for_selector(
                     screen, pilot, "#library-export-quality-choices"
@@ -5554,7 +5559,15 @@ async def test_library_emergency_real_guards_keep_specific_action_authoritative(
         assert dict(panel.state.shortcuts).get("esc") != "rail"
         await pilot.press("escape")
         await pilot.pause()
-        await pilot.press("escape")
+        # TASK-40297: the strip closes three ways -- Escape, picking a
+        # choice, and a second press on its opener -- and each must free
+        # the bar.
+        if guard_kind == "pick":
+            screen.query(".library-export-quality-choice").first(Button).press()
+        elif guard_kind == "toggle":
+            screen.query_one("#library-export-quality", Button).press()
+        else:
+            await pilot.press("escape")
         await pilot.pause()
         assert screen._library_emergency_stage == "canvas-only"
         if guard_kind == "running":
@@ -5566,7 +5579,12 @@ async def test_library_emergency_real_guards_keep_specific_action_authoritative(
                 dict(screen._library_footer_shortcuts_for_current_state()).get("esc")
                 == "rail"
             )
-        elif guard_kind == "cancel":
+        elif guard_kind in {"cancel", "pick", "toggle"}:
+            await _wait_for_condition(
+                pilot,
+                lambda: not screen.query("#library-export-quality-choices"),
+                message=f"The quality strip did not close on {guard_kind}.",
+            )
             assert screen._export_state.quality_choices_visible is False
             assert bar.disabled is False
             assert (
@@ -33987,7 +34005,10 @@ async def test_library_note_footer_tracks_editor_states_and_ancillary_contents()
             ),
             message="Reload did not resolve the conflict.",
         )
-        await wait_footer("esc notes | ctrl+end end")
+        # TASK-40295: Reload lands focus on the reloaded body, a text field,
+        # so its tier carries the N-31 typing chip like the open above.
+        await wait_footer("esc notes | typing in field | ctrl+end end")
+        assert screen.focused is screen.query_one("#library-note-body", TextArea)
         assert screen._notes_state.shortcut_status == ""
 
 
@@ -34046,14 +34067,17 @@ async def test_library_note_footer_covers_navigator_create_sync_and_exit() -> No
         await wait_footer("enter create | esc notes")
         await pilot.press("escape")
         await _wait_for_selector(screen, pilot, "#library-notes-add-from-files")
-        await wait_footer("n new | / find | g folder | esc rail")
+        # TASK-40294: leaving Create and Add-from-files restores the
+        # navigator's "filter" role, and since TASK-34000.40 (N-31) a focused
+        # text field drops the printable keys it would swallow.
+        await wait_footer("esc rail | typing in field")
 
         screen.query_one("#library-notes-add-from-files").press()
         await _wait_for_selector(screen, pilot, "#notes-add-import-once")
         await wait_footer("enter act | esc notes")
         await pilot.press("escape")
         await _wait_for_selector(screen, pilot, "#library-notes-filter")
-        await wait_footer("n new | / find | g folder | esc rail")
+        await wait_footer("esc rail | typing in field")
 
         await pilot.press("escape")
         await _wait_for_condition(

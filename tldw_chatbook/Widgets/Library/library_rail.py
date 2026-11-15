@@ -44,8 +44,22 @@ from tldw_chatbook.Widgets.destination_rail import (
 )
 from tldw_chatbook.Widgets.Library.library_canvas_sync import PostRecomposeCallback
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
+from tldw_chatbook.Widgets.workbench_focus import WorkbenchPaneTarget
 
 LIBRARY_RAIL_ROW_PREFIX = "library-row-"
+
+#: The rail's one F6 target, shared by every Library route and the Artifacts
+#: shell (TASK-40298): the search box, then the Get started rail's Import row
+#: and Explore all tools (that rail has no search box), then Collapse.
+LIBRARY_RAIL_FOCUS_TARGET = WorkbenchPaneTarget(
+    "library-rail",
+    (
+        "library-search-input",
+        f"{LIBRARY_RAIL_ROW_PREFIX}{LIBRARY_ROW_INGEST_MEDIA}",
+        "library-rail-explore-all",
+        "library-rail-collapse",
+    ),
+)
 
 #: task-32219 AC#2: the rail's own last line when its content runs past the
 #: fold. The scrollbar alone was not enough of a cue -- its thumb fills most

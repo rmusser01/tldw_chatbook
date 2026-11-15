@@ -1318,6 +1318,8 @@ class LibraryExportController:
         self._library_export_quality_choices_visible = (
             not self._library_export_quality_choices_visible
         )
+        # TASK-40297: the strip guards the canvas; repaint the ‹ Library bar.
+        self._sync_library_emergency_guard_presentation()
 
         # TASK-21243: canvas-scoped -- the strip open/close only changes
         # export-canvas inputs. The focus follow-up rides the canvas's own
@@ -1349,6 +1351,7 @@ class LibraryExportController:
         event.stop()
         requested = str(getattr(event.button, "choice_value", "") or "")
         self._library_export_quality_choices_visible = False
+        self._sync_library_emergency_guard_presentation()  # TASK-40297
         if requested in MEDIA_QUALITY_OPTIONS:
             self._library_export_form["quality"] = requested
 

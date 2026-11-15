@@ -535,7 +535,8 @@ note unsaved; a list with nothing to drop is left exactly as you typed it
 rewritten at save. Switching to another window and back does not count as leaving the
 field: what you typed stays exactly as it was. If the same note was changed somewhere else while you were editing,
 a banner appears: "This note changed elsewhere — Overwrite saves your text;
-Reload discards it." — pick **Overwrite** or **Reload**.
+Reload discards it." — pick **Overwrite** or **Reload**. Either way, once
+the banner closes the keyboard is back in the note body.
 
 **Quitting with unsaved changes.** **Ctrl+Q** saves the open note before
 Chatbook exits, so text typed in the last moments is kept, and a new note

@@ -177,7 +177,9 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-06, TASK-38989 (owner size waiver): 1492 -> 1501. The export
     # body gains the local-content lifetime span that only the screen's
     # stale duplicate carried; library_screen.py drops 79 lines with it.
-    "tldw_chatbook/UI/Library_Modules/library_export_controller.py": 1501,
+    # 2026-11-13, TASK-40297: the quality strip's open/close and pick repaint
+    # the ‹ Library bar's guard: 1501 -> 1504.
+    "tldw_chatbook/UI/Library_Modules/library_export_controller.py": 1504,
     # 2026-09-05, wave-5 task 2 (ingest controller PR, series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based
     # discovery, recipe §17) -- 57 moved methods (byte-for-byte) + a
@@ -471,7 +473,12 @@ _BUDGETS: dict[str, int] = {
     # immediate select (``]``/``[`` and the review-set walk too) hands it back.
     # 2026-11-06, TASK-38981 re-review 4 (same waiver): 5260 -> 5275 (+15):
     # the viewer sync lands a pending stage pick once its item has loaded.
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 5275,
+    # 2026-11-13, TASK-40293 review r14lf-rev1: the emptied-page landing that
+    # replaces the Reader reset's list-entry arm (the file grows 5267 ->
+    # 5308): 5275 -> 5308.
+    # 2026-11-13, TASK-40293 review r14lf-rev2: the landing drops its retry
+    # and checks the route: 5308 -> 5307.
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 5307,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only
@@ -627,7 +634,9 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-31 PR3259: exact integration size under the user backlog size-limit waiver.
     # 2026-11-10, TASK-39130: the Select all and Clear focus roles' selectors
     # (the pair in ``_library_notes_semantic_role``): 7423 -> 7425.
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7425,
+    # 2026-11-13, TASK-40295: a resolved conflict hands focus to the note
+    # body: 7425 -> 7427.
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7427,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_

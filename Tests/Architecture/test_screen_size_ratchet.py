@@ -1347,7 +1347,17 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-11-10, TASK-39130: Select all and Clear get portable Notes focus
     #: roles, so their own canvas rebuild no longer drops focus into the
     #: filter: 38161 -> 38164 lines, 1376 methods.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38164, 1376),
+    #: 2026-11-13, TASK-40298: one shared rail F6 target replaces six
+    #: search-only ones: 38164 -> 38167 lines, 1376 methods.
+    #: 2026-11-13, TASK-40293: list-entry focus keeps its channel while Media
+    #: loads, waits out a queued canvas recompose, and lands an empty page on
+    #: its recovery action: 38167 -> 38183 lines, 1376 methods.
+    #: 2026-11-13, TASK-40294: footer registration goes through the Notes
+    #: dispatcher (docstring): 38183 -> 38185 lines, 1376 methods.
+    #: 2026-11-13, TASK-40298 review r14lf-rev1: the rail F6 target moves to
+    #: ``library_rail.py`` and the Artifacts shell shares it: 38185 -> 38175
+    #: lines, 1376 methods.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38175, 1376),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

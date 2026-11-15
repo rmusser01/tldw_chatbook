@@ -453,6 +453,7 @@ from ...Widgets.Library import (
     skill_editor_warning_lines,
 )
 from ...Widgets.Library.library_rail import (
+    LIBRARY_RAIL_FOCUS_TARGET,
     LibraryDetailsRow,
     library_db_size_rows,
     library_diagnostics_disclosure,
@@ -1439,15 +1440,7 @@ class LibraryScreen(BaseAppScreen):
             "library-rail-handle",
             ("library-rail-open",),
         ),
-        WorkbenchPaneTarget(
-            "library-rail",
-            (
-                "library-search-input",
-                f"library-row-{LIBRARY_ROW_INGEST_MEDIA}",
-                "library-rail-explore-all",
-                "library-rail-collapse",
-            ),
-        ),
+        LIBRARY_RAIL_FOCUS_TARGET,
         WorkbenchPaneTarget(
             "library-emergency-return",
             ("library-emergency-return",),
@@ -1478,7 +1471,7 @@ class LibraryScreen(BaseAppScreen):
         ),
     )
     _CONVERSATION_WORKBENCH_FOCUS_TARGETS = (
-        WorkbenchPaneTarget("library-rail", ("library-search-input",)),
+        LIBRARY_RAIL_FOCUS_TARGET,
         WorkbenchPaneTarget("library-canvas", ("library-conversations-filter",)),
         WorkbenchPaneTarget(
             "library-conversation-reader",
@@ -1489,7 +1482,7 @@ class LibraryScreen(BaseAppScreen):
         ),
     )
     _COLLECTIONS_WORKBENCH_FOCUS_TARGETS = (
-        WorkbenchPaneTarget("library-rail", ("library-search-input",)),
+        LIBRARY_RAIL_FOCUS_TARGET,
         WorkbenchPaneTarget("library-canvas", ("library-collections-filter",)),
         WorkbenchPaneTarget(
             "library-collections-work",
@@ -1500,7 +1493,7 @@ class LibraryScreen(BaseAppScreen):
         ),
     )
     _MEDIA_WORKBENCH_FOCUS_TARGETS = (
-        WorkbenchPaneTarget("library-rail", ("library-search-input",)),
+        LIBRARY_RAIL_FOCUS_TARGET,
         WorkbenchPaneTarget("library-canvas", ("library-media-filter",)),
         WorkbenchPaneTarget(
             "library-media-viewer",
@@ -1519,7 +1512,7 @@ class LibraryScreen(BaseAppScreen):
         ),
     )
     _NOTES_WORKBENCH_FOCUS_TARGETS = (
-        WorkbenchPaneTarget("library-rail", ("library-search-input",)),
+        LIBRARY_RAIL_FOCUS_TARGET,
         WorkbenchPaneTarget("library-canvas", ("library-notes-filter",)),
         WorkbenchPaneTarget(
             "library-note-work-pane",
@@ -1532,7 +1525,7 @@ class LibraryScreen(BaseAppScreen):
         ),
     )
     _PROMPTS_WORKBENCH_FOCUS_TARGETS = (
-        WorkbenchPaneTarget("library-rail", ("library-search-input",)),
+        LIBRARY_RAIL_FOCUS_TARGET,
         WorkbenchPaneTarget("library-canvas", ("library-prompts-filter",)),
         WorkbenchPaneTarget(
             "library-prompt-work-pane",
@@ -1540,7 +1533,7 @@ class LibraryScreen(BaseAppScreen):
         ),
     )
     _SKILLS_WORKBENCH_FOCUS_TARGETS = (
-        WorkbenchPaneTarget("library-rail", ("library-search-input",)),
+        LIBRARY_RAIL_FOCUS_TARGET,
         WorkbenchPaneTarget("library-canvas", (LIBRARY_SKILLS_FILTER_ID,)),
         WorkbenchPaneTarget(
             "library-skill-work-pane",
@@ -8979,8 +8972,14 @@ class LibraryScreen(BaseAppScreen):
         row_class = _LIBRARY_LIST_ROW_CLASS_BY_ROW_ID.get(self._library_selected_row_id)
         if row_class is None:
             return False
+        browse = self._library_media_browse_controller
         if (
             row_class == "library-media-row"
+            # TASK-40293: no rows YET is not an empty page; standing down while
+            # it loads restored the pre-press focus, which disarmed the channel.
+            and not browse.loading
+            and browse.applied_result is not None
+            and not browse.retained_items
             and not self.query(f".{row_class}")
             and self._library_media_empty_list_fallback_target() is None
         ):
@@ -9109,8 +9108,10 @@ class LibraryScreen(BaseAppScreen):
         of the editor/viewer's several call sites (see
         ``_library_note_editor_active`` etc.) can never leave the footer
         stale the way an easily-missed per-call-site registration could.
+        TASK-40294: through the Notes dispatcher, so a caller here (a pane
+        visibility flip) cannot overwrite a Notes tier with the generic set.
         """
-        shortcuts = self._library_footer_shortcuts_for_current_state()
+        shortcuts = self._library_notes_footer_shortcuts()
         self.register_footer_shortcuts(source="library", shortcuts=shortcuts)
         for bar in self.query(LibraryEmergencyReturn):
             self._sync_library_emergency_return(bar)
@@ -11393,13 +11394,14 @@ class LibraryScreen(BaseAppScreen):
         the filter ``Input`` is the right place to retype, so it LEADS the
         list rather than being left to the shared seam. ``#library-media-
         filter-clear`` is still deliberately not a candidate: Clear
-        discards the query rather than letting the user fix it.
+        discards the query rather than letting the user fix it. TASK-40293:
+        the page's one recovery action leads ``type:``, which is last.
         """
         selectors = (
-            "#library-media-type-filter",
             "#library-media-empty-clear-type",
             "#library-media-empty-import",
             "#library-media-retry",
+            "#library-media-type-filter",
         )
         applied = self._library_media_browse_controller.applied_scope
         if applied is not None and applied.query:
@@ -11449,6 +11451,13 @@ class LibraryScreen(BaseAppScreen):
         # true, and the retry re-attempts against the replacement rows.
         raw_rows = list(self.query(f".{row_class}"))
         rows = [row for row in raw_rows if not getattr(row, "_pruning", False)]
+        if rows and any(
+            getattr(node, "_recompose_required", False)
+            for node in getattr(rows[0], "ancestors", ())
+        ):
+            # TASK-40293: a queued recompose will replace these rows too, and
+            # Textual's reset off the pruned row reads as a user move.
+            rows = []
         if not rows:
             if raw_rows:
                 # (P1-C final fix round, M5) Every row the query found is being
@@ -17325,6 +17334,8 @@ class LibraryScreen(BaseAppScreen):
                         self.call_after_refresh(
                             self._focus_library_control, focus_identity
                         )
+                    else:  # TASK-40293: land focus the reset strands.
+                        self._media_controller._land_library_media_emptied_page()
                 return
         if (
             applied_selection_id

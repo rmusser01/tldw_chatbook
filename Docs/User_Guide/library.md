@@ -51,9 +51,11 @@ Study. This page is the orientation tour; the details live on these pages:
 > task-32059.
 
 A new profile starts with a compact rail: **Import…**, **New note**, and
-**Explore all tools**. The Get started canvas offers the same journey as three
-controls that unlock in order — **Import a file**, **Find it**, and **Use it in
-Console**. A step you cannot run yet stays pressable and says why and what to
+**Explore all tools**. It has no search box, so **F6** lands on **Import…**
+(or on **Explore all tools** when Import is not offered). The Get started
+canvas offers the same journey as three controls that unlock in order —
+**Import a file**, **Find it**, and **Use it in Console**. A step you cannot
+run yet stays pressable and says why and what to
 do first ("Find it needs something to search — Import a file first."), on the
 line under the three controls and again if you press it. While Library checks
 its sources, it says
@@ -410,6 +412,13 @@ No prompts yet. Create or import    No prompts match "draft".
 a prompt to begin.
 [ New prompt ] [ Import... ]        [ Clear filter ]
 ```
+
+On an empty Media page the keyboard lands on that one button (**Import
+media** or **Show all types**), or in the filter box when a typed query found
+nothing. When an open item's page empties under the Reader and the canvas
+returns to its list by itself, focus that was in the Media panes lands there
+too; focus you had put elsewhere, such as the rail's search box, stays where
+it is.
 
 A filtered empty page keeps its submitted type, query, or collection visible
 until you choose the reset action. Loading and failed refreshes do not use this
