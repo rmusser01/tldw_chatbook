@@ -8,7 +8,7 @@ labels:
 - architecture-review-2026-10-25
 - tests
 - ci
-priority: high
+priority: medium
 references:
 - Tests/Chat/test_console_ssh_custody.py
 - Tests/Backup_Recovery/test_activation_mcp.py
@@ -27,7 +27,9 @@ Evidence:
   - 2 were MCP stubs under `test_mcp_failed_termination_re*`.
 - The architecture-review coordinator killed 4 leaked MCP stubs on 2026-11-07, and 7 more orphans from its own runs on 2026-11-13.
 
-On 2026-11-15 a verification run of the six unknown-peer-proof params on dev left one more `control-peer.py serve` behind (all six children hit their 40 s timeout; TASK-40716's parked workers are a likely reason a child cannot exit). Each orphan keeps its basetemp directory alive, and the control-peer servers also leave `/tmp/tldw-cs-test-*` directories. They were also alive both times a Tests/Agents xdist run stalled (TASK-41029).
+On 2026-11-15 a verification run of the six unknown-peer-proof params on dev left one more `control-peer.py serve` behind (all six children hit their 40 s timeout; TASK-40716's parked workers are a likely reason a child cannot exit). Each orphan keeps its basetemp directory alive, and the control-peer servers also leave `/tmp/tldw-cs-test-*` directories. They were also alive each time the Agents covering set or its 85 outside files stalled (TASK-41029).
+
+Why medium, not high: a GitHub Actions runner kills a job's leftover processes when the job ends, so these orphans do not hang CI. The cost falls on developer machines and long local runs.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

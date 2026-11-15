@@ -23,6 +23,7 @@ Besides the RecoveryRequired class (TASK-33370), about 52 DB and ChaChaNotesDB f
 - Missing attributes: CharactersRAGDB._db_diagnostic_ref (6), is_memory_db (1), ChatScreen._dispatch_console_changed_files_worker (3).
 - Stale pins: a schema version expectation of 54 against 73, and EXPECTED_CHACHANOTES_INDEXES missing live indexes.
 - test_core_sqlite_owner_privacy.py fails 7 times with 'core owner resolved the selected database path', and one backup test with 'backup resolved its selected source or target path'. Those assertions guard a privacy contract, so they may be real product regressions rather than test drift. Found 2026-09-28 while verifying PERF-02 (PR #2887) and PERF-01 (PR #2888): the failures reproduce on the unchanged base commit 9cd9aad65f (dev 48019b1914 plus the audit docs commit), so they are pre-existing on dev.
+- Also outside Tests/DB: Tests/Sync_Interop/test_chat_outbox_producer.py::test_source_proof_rejects_illegal_nonassistant_persisted_state, whose raw UPDATE messages fixture is refused the same way ("semantic mutation authorization required for message update"; re-checked on dev ecad404bd4, 2026-11-15).
 <!-- SECTION:DESCRIPTION:END -->
 
 Cross-reference (TASK-22280 closure, 2026-10-02, dev `e92b01515f`): the

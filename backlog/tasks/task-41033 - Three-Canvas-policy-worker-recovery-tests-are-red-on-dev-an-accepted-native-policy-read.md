@@ -31,5 +31,5 @@ If the product is wrong rather than the tests, a backup can start while a Canvas
 <!-- AC:BEGIN -->
 - [ ] #1 The task notes say whether the product or the tests are wrong, and name the commit that changed the behaviour
 - [ ] #2 All four params of test_backup_and_disposal_retain_accepted_native_policy_read and test_cancelled_watcher_reuses_pending_native_read_when_restarted pass on dev, and a fixed product defect is shown red first
-- [ ] #3 These nodes run on a PR lane, or the task notes say why not
+- [ ] #3 These nodes run on a PR lane (through TASK-40307's Backup_Recovery lane work), or the task notes say why not
 <!-- AC:END -->

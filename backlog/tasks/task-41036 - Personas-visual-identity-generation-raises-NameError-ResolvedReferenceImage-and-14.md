@@ -18,7 +18,7 @@ references:
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-`PersonasScreen._visual_identity_reference` (`UI/Screens/personas_screen.py:12003`) builds a `ResolvedReferenceImage`, but the module imports that class only under `TYPE_CHECKING` (`:422`). So the call raises NameError at runtime, and any visual-identity generation that resolves a pack reference fails, including "generate all", restoring a missing canonical asset, and the provider-failure path.
+`PersonasScreen._visual_identity_reference` (`UI/Screens/personas_screen.py:12003`) builds a `ResolvedReferenceImage`, but the module imports that class only under `TYPE_CHECKING` (`:422`). The import moved there in aaa58f4c9f (2026-08-30, "perf(boot): defer optional Console payloads"). So the call raises NameError at runtime, and any visual-identity generation that resolves a pack reference fails, including "generate all", restoring a missing canonical asset, and the provider-failure path.
 
 `Tests/UI/test_personas_expression_generate.py` fails 14 tests on dev ecad404bd4 (2026-11-15) (`-n 4`, bootstrap profile):
 - 5 fail on this NameError;
@@ -30,7 +30,7 @@ TASK-36948.3's notes also recorded the NameError as pre-existing. The file runs 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Generating a visual identity from a pack reference works in the app; a test that drives the real `_visual_identity_reference` was red before the fix, and the task notes name the commit that broke it
+- [ ] #1 Generating a visual identity from a pack reference works in the app; a test that drives the real `_visual_identity_reference` was red before the fix
 - [ ] #2 Every node of Tests/UI/test_personas_expression_generate.py passes on dev at `-n 4`; each red node first gets a named cause
 - [ ] #3 The file runs on a PR lane, or the task notes say why not
 <!-- AC:END -->
