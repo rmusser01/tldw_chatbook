@@ -1,7 +1,7 @@
 # Watchlist article audio: controlled-playback qualification
 
 Date: 2026-11-15
-Status: Native Windows gate failed on unpadded final-content delivery; investigation in progress
+Status: Windows 250 ms workaround not qualified; repeated matrix retains rejected/skipped cases
 Task: [TASK-41176](../../backlog/tasks/task-41176%20-%20Qualify-ffplay-controlled-WAV-playback.md)
 ADR: [366](../../backlog/decisions/366-watchlist-article-listening-and-controlled-playback.md)
 Plan: [Task 1](../superpowers/plans/2026-11-15-watchlist-article-listening.md)
@@ -47,7 +47,58 @@ for these two preflights.
 The [ffplay documentation](https://ffmpeg.org/ffplay.html) describes seeking and
 statistics but promises neither exact seeking nor a stable machine protocol.
 
-## Native gate matrix
+## Current Windows 250 ms decision
+
+**Keep the workaround provisional.** The final three-round matrix has 21 planned
+cases, 20 player launches, and one correctly skipped dependent Resume. Thirteen
+natural playbacks and two playing Stops passed their content-position checks.
+Three natural recordings and one Stop were unmatched; another natural recording
+had a noisy baseline and two capture discontinuities. No rejected/skipped row is
+converted into a pass.
+
+| Case | Passes / planned rounds | Remaining result |
+| --- | --- | --- |
+| Fixed nonzero seek, 0.8 s | 3/3 | None |
+| 120 ms clip | 2/3 | Low-correlation capture |
+| 500 ms clip | 1/3 | One drift rejection, one low-correlation capture |
+| Near EOF, 140 ms remaining | 2/3 | Noisy baseline and two capture discontinuities |
+| Near EOF, 60 ms remaining | 3/3 | None |
+| Playing Stop and independent bookmark alignment | 2/3 | One drift rejection |
+| Same retained WAV resumed from captured bookmark | 2/3 | One skipped after the unqualified Stop |
+
+For the passing measurements, maximum absolute seek error was **2.438 ms**, tail
+error **2.417 ms**, stopped-bookmark error **59.5 ms**, and telemetry error
+**44.56 ms**. Both successful saved resumes reopened the same padded artifact:
+frame 36,480 at 0.76 s and frame 35,520 at 0.74 s, with resumed onset errors of
+-2.167 ms and -1.854 ms and original-content end error +2.167 ms. All 20 started
+players and their capture workers were reaped.
+
+The recorder buffer was requested and observed at 4,800 frames / 100 ms, while
+reads stayed 480 frames / 10 ms. Observed live matching reached 62.50 ms and
+receive backlog 118.91 ms. The contaminated near-EOF case exceeded that buffer's
+interval and reported two discontinuities. Separate rejected captures showed
+approximately 110/113 ms source-to-capture drift or low correlation despite no
+reported discontinuities. These are unresolved capture/mix/timing limitations;
+the evidence does not establish that padding lost spoken content or that every
+gap originates in the player.
+
+All 13 matched natural runs retained the original content tail within the
+unchanged 20 ms oracle, including both successful saved resumes. That positive
+subset is insufficient for reliable repeated qualification. **Do not adopt the
+workaround or start dependent feature work from this result.** Resolve the
+capture/timing ambiguity and rerun the unchanged acceptance cases first.
+macOS/Linux, physical/listener verification, exact logical-EOF resume and
+interruption inside padding remain unqualified. No application implementation
+or provider requests were introduced.
+
+Final numerical receipt:
+`windows-padding-250ms-buffer4800-final/qualification.json` in the ignored plan
+workspace. A [durable allowlisted summary of every case](evidence/watchlist-article-audio/windows-padding-250ms-buffer4800.json)
+preserves the decision, metrics and artifact identities in the repository.
+Tooling commit: `3f6c1995b6983b8f27cd4c7dfc087b8cd0afad2a`. Earlier
+receipts and all censored/rejected attempts below remain preserved.
+
+## Initial unpadded native gate matrix
 
 | Requirement | Windows | macOS | Linux |
 | --- | --- | --- | --- |
@@ -118,7 +169,116 @@ this plan's workspace. This is ten matrix runs plus two paired controls and thre
 high-resolution follow-ups; the two preliminary telemetry probes are separate.
 No captured waveforms or raw stderr were saved.
 
+## Windows 250 ms follow-up: preparation-censored attempt
+
+The first repeated padded attempt used the same ffplay hash with fixed 250 ms
+of local zero PCM, 120/500 ms clips, 140/60 ms of source remaining near EOF,
+fixed seeking and an intended same-WAV Stop/resume chain over three rounds.
+Original content and padded file durations were recorded separately.
+
+Its **21 case rows contain only six actual player launches**, not 21 completed
+audio tests: twelve capture helpers exceeded their eight-second preparation
+budget, two launch-relative Stop timers fired before any matched source audio or
+fresh progress was observed, and three dependent resumes were correctly skipped.
+The four completed natural cases in round three passed independently: both short
+clips and both near-EOF cases. Maximum onset error was 2.438 ms and maximum
+absolute original-content tail error was 2.417 ms. All started players and capture
+workers were reaped. No successful same-WAV resume was established by this attempt.
+
+This is preparation-censored evidence, not proof that padding failed. The original
+receipt retains its conservative failed aggregate; its missing Stop latency was
+also treated as infinity by the initial gate. A follow-up corrects that missing
+measurement to unqualified, separates capture/player preparation from measured
+playback, and anchors playing Stop to independently matched recent source audio.
+The 20 ms tail and 250 ms seek tolerances stay unchanged. The stopped bookmark
+must also match independently captured stopped source position within 250 ms.
+
+Receipt: `windows-padding-250ms-three-rounds/qualification.json` under this plan's
+ignored workspace. Preserve it alongside the subsequent phase-corrected attempt;
+never replace it or count its skipped rows as passing playback.
+
+## Windows 250 ms follow-up: phase-corrected attempt
+
+The next attempt used separate 30-second capture/player preparation bounds,
+45-second bounded capture, and a 700 ms Stop countdown anchored to recently
+matched original source audio. It preserved the same seek/tail oracles and added
+an independent saved-bookmark-versus-stopped-source check.
+
+All 18 base players launched and were reaped; the three dependent resumes stayed
+unlaunched because their preceding full-capture Stop measurements were unqualified.
+Preparation timeouts were eliminated in this attempt.
+
+| Natural case | Individually matched seek/tail passes | Other rows |
+| --- | --- | --- |
+| Nonzero 0.8 s seek | 1/3 | 2 unmatched |
+| 120 ms clip | 2/3 | 1 unmatched |
+| 500 ms clip | 3/3 | None |
+| Near EOF, 140 ms remaining | 1/3 | 1 unmatched, 1 noisy baseline |
+| Near EOF, 60 ms remaining | 3/3 | None |
+
+Every matched natural clip retained its original tail within about 2.5 ms. This
+is **10 passes among 15 natural attempts**, not a passing repeated qualification.
+All three Stops had a live source match and fresh saved positions (0.77, 0.74 and
+0.82 s), but full-capture matching failed, so their bookmark alignment and resumes
+could not be certified. Process retirement and captured post-stop silence passed.
+
+Review identified a measurement risk: synchronous live matching in the receiving
+loop can backpressure the capture worker while its recorder requests only a
+10 ms device buffer. The existing receipt cannot distinguish that mechanism from
+other capture/mix contamination. A focused follow-up records numeric capture
+quality and matcher rejection metrics before varying only the recorder buffer;
+the emitted 480-frame blocks and all source-match tolerances remain fixed.
+
+Receipt: `windows-padding-250ms-phase-corrected/qualification.json`. No native
+Windows workaround pass is claimed from this attempt, and no failures or
+unmatched rows are removed.
+
+## Focused recorder-buffer control
+
+The diagnostic control kept the same padded WAV, source bytes, 700 ms
+observed-playing Stop, emitted 480-frame reads and matching thresholds. It varied
+only the requested recorder buffer, then resumed each eligible Stop from its
+captured content-frame bookmark against the identical file.
+
+| Measurement | 480 frames requested | 4,800 frames requested |
+| --- | --- | --- |
+| Actual recorder buffer | 1,056 frames / 22 ms | 4,800 frames / 100 ms |
+| Observed discontinuities, Stop / Resume | 1 / 0 | 0 / 0 |
+| Largest live-matcher duration in pair | 45.93 ms | 55.60 ms |
+| Largest receive backlog in pair | 48.70 ms | 55.27 ms |
+| Largest completed-send wait in pair | 38.99 ms | 43.78 ms |
+| Stop bookmark versus captured source end | -79.29 ms | -69.50 ms |
+| Resumed source onset versus saved bookmark | -2.313 ms | -2.313 ms |
+| Resumed original-content end error | +2.167 ms | +2.167 ms |
+
+All four players/capture workers were reaped, both baselines were zero, and the
+same artifact digest `3b07a8cade33ae005a9eecc402883e60386b92bfa59a7155da99870342d5ab24`
+and frame 36,000 / 48,000 Hz bookmark were retained. The small-buffer pair passed
+the audio-position/tail checks but contains a capture discontinuity, so it cannot
+be counted as clean qualification evidence. The larger buffer covered the
+observed analysis/backpressure interval and had no reported discontinuities in
+this control. This supports the measured capture setup without proving that it
+caused every earlier unmatched result.
+
+Send metrics cover completed sends through the previous captured block, not an
+in-flight final send. Git approval activity may have overlapped the beginning of
+this control; no baseline contamination was observed. No further test/approval
+activity is scheduled during the final repeated native run.
+
+Receipt: `windows-padding-buffer-control/control.json`. Existing failed/censored
+attempts remain preserved. A known capture discontinuity now prevents a native
+pass even when source-edge matching succeeds.
+
 ## Deterministic verification
+
+The final padding runner passes **38 targeted tests**, Ruff check and format.
+Independent review confirmed both capture-diagnostic and partial-evidence/cleanup
+findings addressed, with no new Important/Critical finding in the fix diff.
+Tests include exact padding geometry, original PCM preservation, 60/140 ms
+near-EOF calibration, captured frame bookmarks, identical-artifact resume,
+bounded phase timing, buffer forwarding, discontinuity refusal, retained partial
+receipts, and aborting later launches after uncertain resource retirement.
+This verifies the runner; it does not promote rejected native measurements.
 
 On initial tooling commit `797bd1284b`, the exact unittest command below passed
 13 tests in 3.091 s in the controller's check. Review then caught an explicit-path
@@ -143,7 +303,7 @@ Use the verified Python environment with the isolated helper directory on
 python -m unittest discover -s tools/evidence/watchlist_article_audio -p test_qualification.py -v
 python -m ruff check tools/evidence/watchlist_article_audio
 python -m ruff format --check tools/evidence/watchlist_article_audio
-python tools/evidence/watchlist_article_audio/qualification.py --capture-loopback --ffplay <direct-executable> --output-dir <this-plan-ignored-workspace/run-directory>
+python tools/evidence/watchlist_article_audio/qualification.py --capture-loopback --ffplay <direct-executable> --output-dir <this-plan-ignored-workspace/run-directory> --tail-padding-ms 250 --repeat 3 --capture-buffer-frames 4800
 ```
 
 The native invocation plays short quiet markers. Without `--capture-loopback`,

@@ -97,6 +97,53 @@ timing, so a bookmark cannot safely refer to newly generated audio.
     required. A qualification-only capture helper may be isolated outside the
     application's environment and must not enter packaged dependencies.
 
+## Windows fixed-tail profile: qualification not passed
+
+The Windows follow-up evaluates **250 ms of local zero PCM appended once to the
+retained WAV**, after all original content frames. It does not request more speech
+from the provider, regenerate audio on Resume, or relax the 250 ms seek / 20 ms
+qualification tail oracles.
+
+- Preserve original content frames unchanged. Record logical content frame count,
+  physical WAV frame count, padding frames and padding-policy identity separately.
+  The retained artifact digest covers the physical padded file.
+- Entry bookmarks and displayed duration use logical content frames. Resume uses
+  the saved frame divided by sample rate against the identical retained WAV;
+  never add the seek offset twice or offer padding as narrated content.
+- Natural completion requires the owned player to finish the validated padded
+  artifact. A last statistics sample or crossing logical content duration is not
+  sufficient evidence of drain. Stop remains an interruption, not natural EOF.
+- This experiment uses PCM16 stereo at 48 kHz on the recorded Windows build and
+  default-render route. It does not qualify other WAV shapes, other output
+  devices, macOS/Linux, or acoustic/listener output. Exact logical-EOF resume and
+  interruption inside padding remain later transport-boundary tests.
+- At the tested shape, padding adds 12,000 frames / 48,000 bytes per file. Apply
+  existing physical-file/cache and aggregate-memory bounds to those bytes too.
+
+The capture setup is a qualification tool concern, not an application dependency.
+A focused same-WAV control measured 46-56 ms live matching work and up to 49 ms
+receive backlog; the small requested 480-frame capture buffer was actually 1,056
+frames (22 ms) and reported a discontinuity. A requested/actual 4,800-frame
+capture buffer (100 ms), still emitting 480-frame reads, showed no discontinuities
+in that control and passed a same-file Stop/resume. This supports the safer
+measurement setup; it is not alone a repeated Windows workaround pass.
+
+The [repeated result](../../Docs/Testing/watchlist-article-audio-qualification.md)
+does **not qualify the workaround**. Three rounds produced 21 planned rows and
+20 actual launches: 13 natural playbacks and two Stops matched successfully,
+including two same-artifact saved-bookmark resumes. Three natural recordings and
+one Stop were unmatched, and one natural recording had a noisy baseline/two capture
+discontinuities. The unmatched Stop prevented one Resume.
+Passing measurements had maximum 2.438 ms seek error, 2.417 ms original-tail error
+and 59.5 ms stopped-bookmark error. All started players/capture workers retired.
+
+Keep the 250 ms policy provisional. Passing tails support the hypothesis, but
+unresolved capture/mix/timeline gaps prevent reliable repeated Windows
+qualification. Do not widen matching tolerances, count skipped cases as passes,
+or wire the workaround into production from this subset. Resolve that measurement
+ambiguity before a fresh unchanged matrix. The portable feature gate and
+macOS/Linux/physical-listener qualification remain open.
+
 ## Alternatives
 
 - A profile-local JSON queue manifest avoids SQL changes but splits atomic state,
@@ -123,7 +170,7 @@ unsupported/unrun platforms remain unqualified. The implementation plan maps the
 remaining deliverables to focused regression tests and mounted/native evidence.
 
 Initial [Windows qualification evidence](../../Docs/Testing/watchlist-article-audio-qualification.md)
-found missing final content despite successful process exits. A trailing-silence
-control is promising but not adopted; ffplay remains provisional and dependent
-feature implementation remains gated. Other platforms and listener/physical
-output have not been qualified.
+found missing final content despite successful process exits. Subsequent fixed-tail
+controls and the repeated Windows matrix remain insufficient for adoption;
+ffplay stays provisional and dependent feature implementation remains gated.
+Other platforms and listener/physical output have not been qualified.

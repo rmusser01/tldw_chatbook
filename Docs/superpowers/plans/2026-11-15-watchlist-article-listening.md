@@ -88,6 +88,13 @@ Commands below use `python` as shorthand for that verified interpreter. Check su
 - [ ] **Step 6: Record honest gate results.** Separate endpoint-loopback measurements from acoustic/listener confirmation. Record actual executable build/OS and every run count; don't average away a failing seek/tail case. Windows digital results cannot qualify macOS/Linux. Repeat the same cases on native macOS/Linux hosts and record listener/physical-output evidence before marking the full gate passed. If unavailable, leave those cells unqualified and this task In Progress. A dummy driver can test process plumbing only.
 - [x] **Step 7: Review and commit qualification.** Independent review checks measurement alignment, false-positive controls, child cleanup and evidence claims. Update notes/lessons for a generalizable trap supported by the run. Commit the source/tests/report after focused checks; keep Task 1 open until the full gate passes.
 
+#### Authorized Windows trailing-silence follow-up
+
+- [x] Extend the qualification tool with fixed 250 ms zero-PCM padding and one-to-three bounded rounds. Preserve original content bytes and frame count separately from the padded file; leave the unpadded control available.
+- [x] Red-green test exact padding, short near-EOF measurement controls, fresh frame bookmarks and same-artifact Stop/resume orchestration. Existing 250 ms seek and 20 ms final-content oracles remain unchanged.
+- [x] Run three rounds of the minimal padded matrix: 120/500 ms clips, nonzero seek, 140/60 ms remaining near EOF, and playing Stop followed by the captured-bookmark resume of the identical WAV. The target is 21 launches and 18 natural completions; the final attempt launched 20 players and correctly skipped one dependent resume. Keep failures and unmatched cases; do not retry to manufacture passes.
+- [x] Independently review code and numerical evidence, update ADR366 with the exact Windows scope and logical-content/padded-file contract, and record the result in the qualification report. The recorded result is not qualified. Task1 and the cross-platform feature gate remain open until their required evidence exists.
+
 ### Task 2: Integrate controlled WAV output with shared ownership (TASK-41177)
 
 **Prerequisite:** TASK-41176 passed on supported platforms; amend ADR first if the backend changes.
@@ -179,4 +186,4 @@ Commands below use `python` as shorthand for that verified interpreter. Check su
 
 The seven deliveries cover all ten design acceptance outcomes. The five Review Focus cases each have an owning test step above. Store, preparation, output and service signatures match their consumers. Tasks are ordered so a storage/voice/UI implementation cannot bypass qualification. SQL names and schema number are intentionally selected against the implementation base, while their ownership and rollback contracts are fixed here.
 
-Gate status after starting Task 1: [Windows native evidence](../../Testing/watchlist-article-audio-qualification.md) exposes intermittent missing final content on unpadded output. Parser/measurement tests pass; a padded experimental control recovers the content tail but is not an adopted workaround. Task 1 remains In Progress; macOS/Linux and listener/physical-output confirmation remain unqualified. Tasks 2-7 have not started.
+Gate status after the fixed-tail Windows follow-up: [native evidence](../../Testing/watchlist-article-audio-qualification.md) retains the original unpadded failures and all padded attempts. The final 21-case/20-launch matrix has 13 matched natural passes and two verified same-WAV saved resumes, but rejected captures, one noisy/discontinuous recording and a skipped resume prevent qualification. The 250 ms workaround stays provisional; 38 measuring-tool tests and static checks pass. Task 1 remains In Progress; macOS/Linux and listener/physical-output confirmation remain unqualified. Tasks 2-7 have not started.
