@@ -132,7 +132,11 @@ from pydantic import (
     field_validator,
 )
 
-from tldw_chatbook.Provider_Contract import ChatBadRequestError, ChatProviderError
+from tldw_chatbook.Provider_Contract import (
+    ChatBadRequestError,
+    ChatConfigurationError,
+    ChatProviderError,
+)
 from tldw_chatbook.Provider_Contract.provider_continuation import (
     ContinuationCall,
     ContinuationRestoreTarget,
@@ -728,6 +732,20 @@ def _resolve_base_url(
         and _url_path(candidate) in ("", "/")
     ):
         candidate = f"{candidate.rstrip('/')}{record.base_url_suffix}"
+    if isinstance(candidate, str):
+        from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+            endpoint_refusal,
+        )
+
+        if refusal := endpoint_refusal(record.key, candidate):
+            # TASK-41131: every caller, not only Console, is refused what the
+            # contract refuses (custom-hosted reads as its relaxed engine
+            # base), before any request; the reason names no part of it.
+            raise ChatConfigurationError(
+                provider=record.key,
+                message=f"{record.display_name} API base URL: {refusal}",
+                status_code=None,
+            )
     if isinstance(candidate, str) and _names_terminal_chat_completions(candidate):
         raise validators.configuration_error(
             f"{record.display_name} API base URL must not include a terminal "

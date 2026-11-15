@@ -111,6 +111,37 @@ def _extract_text_from_message_content(
 # Most local LLMs with OpenAI-compatible endpoints (like LM Studio, Jan.ai, many Ollama setups)
 # can use a generic handler.
 @_provider_recovery.unqualified
+def _refuse_a_refused_endpoint(
+    display_name: str, endpoint: object, contract_key: str = "custom", provider: str | None = None
+) -> None:
+    """Refuse an endpoint the provider endpoint contract refuses (TASK-41131).
+
+    Console checks the endpoint it sends to; every other ``chat_api_call``
+    caller reached an adapter that read its own table unchecked. Each local
+    and custom adapter calls this on the URL it is about to use, whatever
+    the caller pinned or the config held, before any session or request.
+
+    Args:
+        display_name: The adapter's name, for the message.
+        endpoint: The URL the adapter is about to use.
+        contract_key: The contract's reading; "custom" is the generic one,
+            which every OpenAI-compatible local adapter shares.
+        provider: The error's provider; ``display_name`` when None.
+
+    Raises:
+        ChatConfigurationError: Status-less (nothing was sent), with the
+            contract's reason, which names no part of the value.
+    """
+    from ..Provider_Contract.provider_endpoint_contract import endpoint_refusal
+
+    if refusal := endpoint_refusal(contract_key, endpoint):
+        raise ChatConfigurationError(
+            provider=provider or display_name,
+            message=f"{display_name} API URL: {refusal}",
+            status_code=None,
+        )
+
+
 def _chat_with_openai_compatible_local_server(
     api_base_url: str,
     model_name: Optional[str],
@@ -146,6 +177,7 @@ def _chat_with_openai_compatible_local_server(
     api_retry_delay: int = 1,
     chat_template_kwargs: dict[str, Any] | None = None,
 ):
+    _refuse_a_refused_endpoint(provider_name, api_base_url)
     start_time = time.time()
     logged_api_base = safe_llm_url_host(api_base_url)
     logging.debug(
@@ -896,18 +928,15 @@ def chat_with_llama(
             ),
             status_code=None,
         )
-    from ..Provider_Contract.provider_endpoint_contract import endpoint_refusal
-
-    if refusal := endpoint_refusal("llama_cpp", api_base_url):
-        # TASK-40300: the normalizer no longer drops a query or fragment into
-        # an accepted URL, so the endpoint contract refuses such a value here
-        # (and a zone id, ``-bad.corp``, ``127.1`` or an IDN) with its own
-        # reason, which names no part of the value.
-        raise ChatConfigurationError(
-            provider=llama_cpp_config_key_in_api_settings,
-            message=f"{provider_display_name} API URL: {refusal}",
-            status_code=None,
-        )
+    # TASK-40300: the normalizer no longer drops a query or fragment into an
+    # accepted URL, so the endpoint contract refuses such a value here (and a
+    # zone id, ``-bad.corp``, ``127.1`` or an IDN) with its own reason.
+    _refuse_a_refused_endpoint(
+        provider_display_name,
+        api_base_url,
+        "llama_cpp",
+        provider=llama_cpp_config_key_in_api_settings,
+    )
     if api_key_resolved or api_key:
         current_api_key = api_key
     elif record and record.key in {"strata", "polystrata"}:
@@ -1070,6 +1099,10 @@ def chat_with_kobold(
             provider="koboldcpp",  # Consistent with the key used for cfg
             message="KoboldCpp API URL (api_url) is required and could not be determined from arguments or configuration.",
         )
+    # TASK-41131: KoboldAI's native send posts to this URL itself.
+    _refuse_a_refused_endpoint(
+        "KoboldCpp", current_api_base_url, "koboldcpp", provider="koboldcpp"
+    )
     current_api_key = api_key or resolve_provider_api_key(cfg.get("api_key"))
     current_model = model or cfg.get("model")
     if not current_model:
