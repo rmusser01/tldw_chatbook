@@ -91,6 +91,7 @@ if TYPE_CHECKING:
     from .Companion_Interop.server_companion_service import ServerCompanionService
     from .DB.AgentRuns_DB import AgentRunsDB
     from .DB.ChaChaNotes_DB import CharactersRAGDB
+    from .DB.console_execution_owner import ConsoleExecutionOwner
     from .DB.Client_Media_DB_v2 import MediaDatabase
     from .DB.Prompts_DB import PromptsDatabase
     from .DB.Subscriptions_DB import SubscriptionsDB
@@ -362,11 +363,13 @@ def open_workspaces_db(path: Path, *, client_id: str) -> WorkspaceDB:
     return WorkspaceDB(path, client_id=client_id)
 
 
-def open_agent_runs_db(path: Path, *, client_id: str) -> AgentRunsDB:
-    """Open the agent-runs database (it has no startup integrity check)."""
+def open_agent_runs_db(
+    path: Path, *, client_id: str, execution_owner: ConsoleExecutionOwner | None = None
+) -> AgentRunsDB:
+    """Open the agent-runs database under the caller's native execution owner."""
     from .DB.AgentRuns_DB import AgentRunsDB
 
-    return AgentRunsDB(path, client_id=client_id)
+    return AgentRunsDB(path, client_id=client_id, execution_owner=execution_owner)
 
 
 def open_profile_storage(
@@ -377,6 +380,7 @@ def open_profile_storage(
     prompts: Path | None = None,
     workspaces: Path | None = None,
     agent_runs: Path | None = None,
+    agent_runs_execution_owner: ConsoleExecutionOwner | None = None,
     seed_builtin_content: bool = False,
     check_integrity: bool = False,
 ) -> ProfileStorage:
@@ -385,6 +389,7 @@ def open_profile_storage(
     The others stay ``None``. ``check_integrity`` reaches the databases that have
     a startup integrity check (ChaChaNotes, Media, Prompts). Built-in content is
     seeded only when ``seed_builtin_content`` is set; only the TUI sets it.
+    The caller retains the AgentRuns execution owner through storage close.
 
     Raises:
         Exception: Whatever an opener raised, after the databases already
@@ -410,7 +415,9 @@ def open_profile_storage(
         if workspaces is not None:
             opened["workspaces"] = open_workspaces_db(workspaces, client_id=client_id)
         if agent_runs is not None:
-            opened["agent_runs"] = open_agent_runs_db(agent_runs, client_id=client_id)
+            opened["agent_runs"] = open_agent_runs_db(
+                agent_runs, client_id=client_id, execution_owner=agent_runs_execution_owner
+            )
     except BaseException:
         ProfileStorage(**opened).close()
         raise

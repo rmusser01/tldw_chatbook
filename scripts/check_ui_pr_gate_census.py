@@ -1296,6 +1296,8 @@ MINIMUM_FILES = 2316
 MINIMUM_FILES = 2317
 # Retain all six incoming Send and native shutdown selectors in the gate.
 MINIMUM_FILES = 2323
+# Include the seven incoming Plugin review and restore selectors.
+MINIMUM_FILES = 2330
 
 
 MINIMUM_FILES = 2038
