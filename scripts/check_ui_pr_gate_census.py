@@ -1011,6 +1011,22 @@ MINIMUM_FILES = 2033
 # TASK-40308 (2026-11-13): append the Plugins screen's restore recovery and
 # reset-fallback tests at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 2041
+MINIMUM_FILES = 2035
+# TASK-40320 (2026-11-12): append the archive async-completion file at the
+# tail. The floor is the measured entry count.
+MINIMUM_FILES = 2042
+MINIMUM_FILES = 2036
+# TASK-40319 (2026-11-12): append the Settings Workspaces category file's 20
+# tests at the tail, one entry each. The floor is the measured entry count.
+MINIMUM_FILES = 2062
+MINIMUM_FILES = 2056
+# TASK-40318 (2026-11-12): append the Settings Workspaces lifecycle journeys'
+# 13 cases at the tail, one entry each. The floor is the measured entry count.
+MINIMUM_FILES = 2075
+MINIMUM_FILES = 2069
+# TASK-40320 review r14set-rev1 (2026-11-12): append the archive review
+# regressions file at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 2076
 
 
 def read_census(path: Path) -> list[str]:

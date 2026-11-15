@@ -77,10 +77,10 @@ async def test_workspace_lifecycle_feedback_is_visible(request, action):
                     await pilot.pause(0.03)
             await _settle(host, pilot)
             assert registry.get_workspace("ws-review").archived
-            _assert_painted(
-                screen, screen.query_one("#settings-workspace-archive-undo")
-            )
-            _assert_painted(screen, host.focused)
+            # TASK-40318: the next action owns focus and is painted in its pane.
+            undo = screen.query_one("#settings-workspace-archive-undo")
+            assert host.focused is undo
+            _assert_painted(screen, undo)
             await _press(host, pilot, "#settings-workspace-archive-undo")
             await _settle(host, pilot)
             assert not registry.get_workspace("ws-review").archived

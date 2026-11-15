@@ -27283,6 +27283,7 @@ class SettingsScreen(BaseAppScreen):
             storage_call,
             workspace_archive_refusal,
         )
+        from tldw_chatbook.UI.Settings_Modules.workspace_archive import show_receipt
 
         event.stop()
         workspace_id = self._settings_selected_workspace_id
@@ -27350,11 +27351,7 @@ class SettingsScreen(BaseAppScreen):
                 self._settings_workspace_archive_receipt = archived
                 if not _current():
                     return
-                self._settings_selected_workspace_id = None
-                self._settings_workspaces_result = (
-                    f"Archived {record.name}. Saved conversations stay in Library."
-                )
-                self._refresh_settings_workspaces_pane()
+                show_receipt(self, record.name)
 
             async def _archive() -> None:
                 if not _current():
