@@ -14,6 +14,7 @@ from tldw_chatbook.Agents.execution_capacity import (
     WorkOrigin,
     bind_ordinary_tree as bind_ordinary_tree,
     current_ordinary_tree as current_ordinary_tree,
+    run_on_custody_thread,
     set_current_ordinary_tree,
 )
 from tldw_chatbook.Agents.ordinary_tree import (
@@ -375,6 +376,7 @@ async def admit_ordinary_turn(
 
 async def run_ordinary_preparation(controller, callback, *, ssh=None, opaque=False):
     """Retain one actual original preparation worker before its existing enqueue."""
+    from functools import partial
     from threading import Event
 
     from tldw_chatbook.Agents.activation import worker_guard
@@ -399,9 +401,13 @@ async def run_ordinary_preparation(controller, callback, *, ssh=None, opaque=Fal
             finally:
                 operation.finish()
 
+    owned = worker_guard(controller._agent_bridge)(owned)
+    if ssh is not None:
+        # SSH custody holds a daemon worker, never a joined pool thread (TASK-40716).
+        owned = partial(run_on_custody_thread, owned, lambda: operation)
     try:
         return await run_preparation_read(
-            worker_guard(controller._agent_bridge)(owned),
+            owned,
             creator=controller,
             session_id=tree.session.id,
             reads=controller._preparation_reads,

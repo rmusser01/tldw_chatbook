@@ -391,7 +391,11 @@ class GoalRunsStore:
                 or goal.accounting.uncertain
                 or attempt["state"] == "review_required"
                 or result.outcome is None
-                or result.termination_reason == RunTerminationReason.UNKNOWN_EFFECT
+                or result.termination_reason
+                in (
+                    RunTerminationReason.UNKNOWN_EFFECT,
+                    RunTerminationReason.CLEANUP_UNPROVEN,
+                )
                 or any(e.result.exit_code is None for e in result.tool_records)
             )
             if uncertain:

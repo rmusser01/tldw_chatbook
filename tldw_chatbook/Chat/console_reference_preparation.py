@@ -6,7 +6,9 @@ import asyncio
 import os
 import shutil
 from contextlib import ExitStack, asynccontextmanager, contextmanager, nullcontext
+from functools import partial
 from pathlib import Path
+from threading import Lock
 
 from tldw_chatbook.app_services import (
     read_app_config,
@@ -14,7 +16,11 @@ from tldw_chatbook.app_services import (
     read_workspace_registry,
 )
 from tldw_chatbook.Agents.activation import captured_sources, execution
-from tldw_chatbook.Agents.execution_capacity import CapacityRefused, WorkOrigin
+from tldw_chatbook.Agents.execution_capacity import (
+    CapacityRefused,
+    WorkOrigin,
+    run_on_custody_thread,
+)
 from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.Tools import workspace_file_roots as roots_api
 from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
@@ -255,6 +261,7 @@ class _ReferenceRead:
         self.text, self.authority = text, None
         self.candidates = candidates
         self.owner = self.operation = self.claim = None
+        self._finish_once = Lock()
         from .console_ordinary_tree import current_ordinary_tree
 
         self.ordinary_tree = current_ordinary_tree(controller)
@@ -415,13 +422,29 @@ class _ReferenceRead:
             return result
 
     def finish(self):
-        if self.operation is not None:
+        # A retained Git cleanup keeps its operation, root and claim until a
+        # late proof; its custody worker then finishes them once (TASK-40716).
+        retention = getattr(self.operation, "retention", None)
+        if (
+            self.operation is not None
+            and (retention is None or retention.proven)
+            and self._finish_once.acquire(blocking=False)
+        ):
             # Availability listeners inside finish must return before root/claim release.
             with self.activate():
                 self.operation.finish()
                 if self.ordinary_tree is None:
                     self.owner.finish_root()
                     self.claim.settle(durable=True)
+
+
+def _finish_after_late_proof(request, callback):
+    """A retained Git custody worker finishes its reference once proven."""
+    try:
+        return callback()
+    finally:
+        if getattr(request.operation, "retention", None) is not None:
+            request.finish()
 
 
 @asynccontextmanager
@@ -451,11 +474,16 @@ async def prepare_reference_expansion(
             _observe_locked(read, request.runtime._preparation_reads)
     local_reads = set()
 
-    async def run(callback, *, check=True):
+    async def run(callback, *, check=True, custody=False):
         from tldw_chatbook.Agents.activation import worker_guard
 
+        if custody:
+            callback = partial(_finish_after_late_proof, request, callback)
         if request.ordinary_tree is not None:
             callback = worker_guard(controller._agent_bridge)(callback)
+        if custody:
+            # Git custody holds a daemon worker, never a joined pool thread.
+            callback = partial(run_on_custody_thread, callback, lambda: request.operation)
         return await run_preparation_read(
             callback,
             creator=controller,
@@ -467,7 +495,7 @@ async def prepare_reference_expansion(
 
     try:
         await run(request.prepare)
-        result = await run(lambda: request.expand(excluded_candidate))
+        result = await run(lambda: request.expand(excluded_candidate), custody=True)
         request.check_memory()
         yield result
         request.check_memory()

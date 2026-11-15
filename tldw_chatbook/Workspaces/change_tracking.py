@@ -207,8 +207,12 @@ class NativeUndoIssuer:
             pending = tuple(self.pending)
         if not pending:
             return False
+        from tldw_chatbook.Agents.execution_capacity import (
+            wait_retired_unless_retained,
+        )
+
         task = asyncio.create_task(
-            asyncio.to_thread(lambda: [call.retired.wait() for call in pending])
+            asyncio.to_thread(wait_retired_unless_retained, pending)
         )
         cancelled = False
         while True:

@@ -1317,3 +1317,24 @@ Qualification retains the original two-store cache regression before correction,
 ## Task 10 qualification addendum — available failed-check evidence, 2026-11-04
 
 The Console check detail displays each stored check reason. A complete fresh native nonzero exit previously retained the correct failed status and exit but inherited native_evidence_unavailable. For newly published checks, derive native_evidence from the same strict verified_exit predicate already used for conclusive native evidence. This includes both expected and unexpected integer exits with complete output, proven cleanup and current exact manifests/executable/shell. Other evidence states retain native_evidence_unavailable. Preserve native and workflow status handling, full proof, original submitted_digest, exact replay and FULL transaction. Existing historical records retain their old reason label. This narrowly supersedes the earlier keep-check-fields ruling only for future reason publication, with no history rewrite or additional execution authority.
+
+## Unproven-cleanup amendment (TASK-40716, 2026-11-13)
+
+This supersedes the sentences above that let unproven cleanup "hold disposal indefinitely" and keep native worker/storage/disposal retention "potentially indefinite". Custody of the resource does not change; the run, the slot and disposal are no longer held by it. Workflow planning and native close no longer join a tool worker that holds an unproven cleanup; that phase fails its physical-return proof instead.
+
+**Owner decision, 2026-11-13 ([TASK-40716](../tasks/task-40716%20-%20An-unproven-tool-cleanup-parks-a-worker-forever-refusing-later-tool-calls-and-holding-a-tool-slot.md)).**
+- When a tool operation's cleanup cannot be proven, its run ends at once with a reason that names the unproven cleanup. This applies to every run, not only goal runs. The resource stays held and is never reused.
+- The run has already ended by then. An explicit user abandon releases only the tool-worker slot. The resource, its storage leases and any activity claim stay held until restart (ADR-155).
+- The abandon action sits on the run's terminal card: the run's reply, which the explanation naming the unproven cleanup follows.
+- At app exit, disposal records retained items and stops waiting for them.
+
+**Implementation note (not an owner decision).**
+- `OwnedOperation.retain_unproven` records the retention on the runtime's capacity.
+- A worker that still holds the original scopes waits on that record on a daemon thread until restart (no proof path exists yet; `UnprovenRetention.prove` would end the wait early, but no production code calls it). `UnprovenRetention.hold` never unwinds custody it has entered: on a joined thread it logs an error and still holds.
+- Raw CLI user commands, Undo, @git reference expansion and the Console's startup SSH instruction read run their custody on a daemon worker, so no joined pool thread ever holds. Undo also marks its owner unproven.
+- In an ordinary Console turn, @git references and the startup SSH instruction read borrow the turn's owner, so the turn's next tool reservation is refused as cleanup-unproven. That ends the agent run at its first tool call ("the cleanup of native Git could not be proven"), or, when the turn reserves a tool slot while composing its agent request (MCP), stops the turn before the run starts.
+- A retention that arrives after a timeout, cancel or per-call abandon ends the run at its next tool call.
+- A custody-bearing (SSH or Raw CLI) call never holds a run thread: with no timeout it still runs on a daemon tool worker, and a definitive-after-start one is refused before it starts.
+- A workflow run held only by unproven cleanups (each of its tool workers is retained or has returned) does not stop exit. `ConsoleRuntime.dispose` closes every other owner and then reports `workflow_original_shutdown_unresolved`, and the app's exit runs its remaining owners before re-raising, logging any further failure it does not raise. A cancellation requested meanwhile is still re-raised, chained to the retained runs. A run whose custody is still live keeps stopping disposal before capacity closes.
+- A goal iteration that ends on it is uncertain, so it needs recovery.
+- The Release row follows the run's retained records, not how the run ended, and releases every slot the run still holds. A closed and reopened conversation finds it again by the card's persisted id.

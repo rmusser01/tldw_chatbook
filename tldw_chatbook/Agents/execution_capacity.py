@@ -9,9 +9,9 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from contextvars import ContextVar
+from contextvars import ContextVar, copy_context
 from dataclasses import dataclass
-from threading import Lock
+from threading import Event, Lock, Thread, current_thread
 from typing import Literal
 from uuid import uuid4
 
@@ -27,6 +27,14 @@ from .agent_models import WorkOrigin as WorkOrigin
 
 class CapacityRefused(RuntimeError):
     """A stable, body-free admission refusal reason."""
+
+
+class CleanupUnprovenRefused(CapacityRefused):
+    """The owner's earlier tool cleanup is unproven; its run must end."""
+
+    def __init__(self, label: str) -> None:
+        super().__init__("previous_tool_cleanup_unproven")
+        self.label = label
 
 
 def _integer(value: object, default: int) -> int:
@@ -84,6 +92,7 @@ class RuntimeCapacity:
         self.set_child_limits(max_child_executions, reserved_manual_children)
         self._closed = False
         self._owners: dict[str, ExecutionOwner] = {}
+        self._retained: list[UnprovenRetention] = []
 
     @classmethod
     def from_settings(cls) -> RuntimeCapacity:
@@ -201,6 +210,11 @@ class RuntimeCapacity:
         """Close admission before shutdown drains existing operations."""
         with self._lock:
             self._closed = True
+
+    def retained(self) -> tuple[UnprovenRetention, ...]:
+        """Return unproven cleanups whose resources are still held."""
+        with self._lock:
+            return tuple(self._retained)
 
     def snapshot(self) -> CapacitySnapshot:
         """Return detached metadata, including terminal owners still stopping."""
@@ -333,7 +347,13 @@ class ExecutionOwner:
             if self._root_finished:
                 raise CapacityRefused("execution_finished")
             if kind == "tool":
-                if any(op.kind == "tool" and op._stopping for op in self._operations):
+                stopping = [
+                    op for op in self._operations if op.kind == "tool" and op._stopping
+                ]
+                for op in stopping:
+                    if op.retention is not None:  # TASK-40716: end the run
+                        raise CleanupUnprovenRefused(op.retention.label)
+                if stopping:
                     raise CapacityRefused("previous_tool_still_running")
                 tools = [
                     op
@@ -371,6 +391,23 @@ class ExecutionOwner:
             outcome = self._drain_outcome
         self._invoke_callbacks((callback,), outcome)
 
+    def drain_state(self) -> Literal["proven", "unproven", "live"]:
+        """Whether this owner drained, can never drain proven, or may still return.
+
+        ``unproven`` covers an unproven drain and an owner whose remaining
+        operations are all retained unproven cleanups (TASK-40716).
+        """
+        with self.capacity._lock:
+            if self._drain_outcome is not None:
+                return "proven" if self._drain_outcome else "unproven"
+            if (
+                self._cleanup_unproven
+                and self._root_finished
+                and all(op.retention is not None for op in self._operations)
+            ):
+                return "unproven"
+            return "live"
+
     def mark_cleanup_unproven(self) -> None:
         """Make the eventual drain outcome uncertain without releasing capacity."""
         with self.capacity._lock:
@@ -405,6 +442,143 @@ class ExecutionOwner:
         return (), None
 
 
+class UnprovenRetention:
+    """One operation whose cleanup could not be proven (ADR-134, TASK-40716).
+
+    Its resource, scopes, storage leases and activity claim stay held until
+    restart (no proof path exists yet) and are never reused. Its run ends at once.
+    ``abandon`` returns only the tool-worker slot. Disposal stops waiting for it.
+    """
+
+    def __init__(self, operation: OwnedOperation, label: str) -> None:
+        self.operation = operation
+        self.label = label
+        self.abandoned = False
+        self._proven = Event()
+
+    @property
+    def run_id(self) -> str | None:
+        return self.operation.owner.run_id
+
+    @property
+    def proven(self) -> bool:
+        return self._proven.is_set()
+
+    def hold(self) -> None:
+        """Keep this worker's original scopes until restart or ``prove()``.
+
+        Callers hold on a daemon worker, so process exit ends the wait and a
+        held custody never delays exit. Custody is already entered here, so a
+        joined worker is reported and still holds: unwinding would release a
+        resource that may be live.
+        """
+        thread = current_thread()
+        if not thread.daemon:
+            logger.error(
+                "Unproven cleanup of {} is held on a joined thread; exit may wait",
+                self.label,
+            )
+        with _custody_lock:
+            _custody_threads.add(thread)
+        try:
+            self._proven.wait()
+        finally:
+            with _custody_lock:
+                _custody_threads.discard(thread)
+
+    def prove(self) -> None:
+        """Record a late cleanup proof; the held scopes then unwind normally."""
+        capacity = self.operation.owner.capacity
+        with capacity._lock:
+            if self in capacity._retained:
+                capacity._retained.remove(self)
+        self._proven.set()
+
+    def abandon(self) -> bool:
+        """Return the tool-worker slot; the resource stays held (ADR-155)."""
+        with self.operation.owner.capacity._lock:
+            if self.abandoned or self.proven:
+                return False
+            self.abandoned = True
+        self.operation.finish()
+        return True
+
+
+def cleanup_unproven_result(tool_name: str):
+    """End the run: this call's cleanup is unproven and its resources stay held."""
+    from .agent_models import RunTerminationReason, ToolResult
+
+    return ToolResult(
+        ok=False,
+        error=(
+            f"the cleanup of {tool_name} could not be proven, so its workspace "
+            "and storage stay held until you restart the app"
+        ),
+        dispatch_state="uncertain",
+        termination_reason=RunTerminationReason.CLEANUP_UNPROVEN,
+    )
+
+
+_custody_lock = Lock()
+_custody_threads: set[Thread] = set()
+
+
+def holds_unproven_custody(thread: Thread) -> bool:
+    """Whether ``thread`` is a worker holding an unproven cleanup's scopes."""
+    with _custody_lock:
+        return thread in _custody_threads
+
+
+def run_on_custody_thread(function, operation_of, poll_seconds: float = 0.1):
+    """Run ``function`` on a daemon worker so an unproven cleanup can hold it.
+
+    Returns its result, or raises ``CleanupUnprovenRefused`` as soon as the
+    operation from ``operation_of()`` is retained, leaving the daemon worker
+    holding the original scopes. The calling (pool) thread never holds.
+    """
+    box: dict = {}
+
+    def target() -> None:
+        try:
+            box["result"] = function()
+        except BaseException as error:  # noqa: BLE001 -- re-raised on the caller
+            box["error"] = error
+
+    worker = Thread(target=copy_context().run, args=(target,), daemon=True)
+    worker.start()
+    while worker.is_alive():
+        operation = operation_of()
+        retention = getattr(operation, "retention", None)
+        if retention is not None:
+            raise CleanupUnprovenRefused(retention.label)
+        worker.join(poll_seconds)
+    if "error" in box:
+        raise box["error"]
+    return box.get("result")
+
+
+def join_unless_retained(thread: Thread, poll_seconds: float = 0.1) -> bool:
+    """Join ``thread`` unless it holds unproven custody; True when it returned."""
+    while thread.is_alive():
+        if holds_unproven_custody(thread):
+            return False
+        thread.join(poll_seconds)
+    return True
+
+
+def wait_retired_unless_retained(calls, poll_seconds: float = 0.1) -> None:
+    """Wait for each call's ``retired`` event, except a retained unproven one.
+
+    Disposal records a retained call and stops waiting for it (TASK-40716).
+    """
+    for call in calls:
+        while not call.retired.wait(poll_seconds):
+            operation = getattr(call, "operation", None)
+            if operation is not None and operation.retention is not None:
+                logger.warning("Disposal leaves an unproven cleanup held until exit")
+                break
+
+
 class OwnedOperation:
     """Release only from the worker/driver finally or a failed start."""
 
@@ -412,10 +586,27 @@ class OwnedOperation:
         self.owner = owner
         self.kind = kind
         self._stopping = False
+        self.retention: UnprovenRetention | None = None
 
     def mark_stopping(self) -> None:
         with self.owner.capacity._lock:
             self._stopping = True
+
+    def retain_unproven(self, label: str) -> UnprovenRetention:
+        """Keep this operation's resource held because its cleanup is unproven.
+
+        The operation stays stopping and keeps its tool-worker slot until an
+        explicit ``abandon`` or restart. The owner's drain is unproven.
+        """
+        capacity = self.owner.capacity
+        with capacity._lock:
+            self._stopping = True
+            if self.owner._drain_outcome is None:
+                self.owner._cleanup_unproven = True
+            if self.retention is None:
+                self.retention = UnprovenRetention(self, label)
+                capacity._retained.append(self.retention)
+            return self.retention
 
     def finish(self) -> None:
         with self.owner.capacity._lock:

@@ -166,7 +166,7 @@ async def test_actual_child_joins_original_claim_before_its_row(
                 assert json.loads(receipt.read_text()) == {
                     "canonical_missing": True,
                     "completion_pending": True,
-                    "disposal_pending": True,
+                    "disposal_returned": True,
                     "lease_retained": True,
                 }
                 return
@@ -265,15 +265,17 @@ async def test_actual_child_joins_original_claim_before_its_row(
             monkeypatch.setattr(h.runtime, "_bounded_wait", observe_grace)
             disposal = asyncio.create_task(h.runtime.dispose(timeout_seconds=0))
             await asyncio.wait_for(grace_returned.wait(), 5)
-            done, _pending = await asyncio.wait({disposal}, timeout=0.1)
-            assert not done and not tree.retired.done()
+            # TASK-40716: disposal records the unproven turn and returns; the
+            # turn still never retires and keeps its scratch lease.
+            await asyncio.wait_for(disposal, 20)
+            assert not tree.retired.done()
             assert tree.scratch_lease is not None
             Path(os.environ["TASK8_ORDINARY_REQUIRED_RECEIPT"]).write_text(
                 json.dumps(
                     {
                         "canonical_missing": True,
                         "completion_pending": True,
-                        "disposal_pending": True,
+                        "disposal_returned": True,
                         "lease_retained": True,
                     }
                 )

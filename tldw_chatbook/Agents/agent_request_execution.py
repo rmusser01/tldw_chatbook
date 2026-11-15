@@ -23,6 +23,10 @@ if TYPE_CHECKING:
 #: Every tool-admission refusal (capacity or automatic budget) starts with this.
 TOOL_ADMISSION_REFUSED = "tool call refused: "
 
+#: A custody-bearing (SSH/Raw CLI) call with no timeout still runs on a daemon
+#: tool worker under this unfireable deadline, never on the run thread.
+_CUSTODY_DEADLINE_SECONDS = 100 * 365 * 24 * 3600.0
+
 
 def make_call_model(
     self,
@@ -597,7 +601,12 @@ def make_invoke_tool(
     """
     from tldw_chatbook.Agents import agent_service as runtime
 
-    from .execution_capacity import CapacityRefused, current_execution_owner
+    from .execution_capacity import (
+        CapacityRefused,
+        CleanupUnprovenRefused,
+        cleanup_unproven_result,
+        current_execution_owner,
+    )
 
     # Captured as the deps are built, which is immediately before the
     # loop records its own `started`. Being marginally early makes the
@@ -725,61 +734,65 @@ def make_invoke_tool(
                     outcome=runtime.TOOL_OUTCOME_CANCELLED,
                     dispatch_state="not_started",
                 )
+            if ssh_call or raw_cli_call:
+                # SSH/Raw CLI custody is held only on a daemon tool worker (TASK-40716).
+                return runtime.ToolResult(
+                    ok=False,
+                    error=(
+                        f"tool call not started: {call.name} (it needs SSH or Raw "
+                        "CLI custody, which a must-finish tool call cannot hold)"
+                    ),
+                    dispatch_state="not_started",
+                )
             try:
                 operation = owner.reserve_tool() if owner is not None else None
             except CapacityRefused as exc:
+                if isinstance(exc, CleanupUnprovenRefused):  # end the run (TASK-40716)
+                    return cleanup_unproven_result(exc.label)
                 return runtime.ToolResult.blocked(f"{TOOL_ADMISSION_REFUSED}{exc}")
             result = runtime.ToolResult(
                 ok=False, error=f"tool call failed: {call.name}"
             )
-            with (
-                ssh_call.activate(operation)
-                if ssh_call
-                else contextlib.nullcontext()
-            ):
+            try:
                 try:
-                    try:
-                        with (
-                            raw_cli_call.activate(operation)
-                            if raw_cli_call
-                            else contextlib.nullcontext()
-                        ):
-                            result = _invoke()
-                    except BaseException:  # noqa: BLE001 - protocol boundary
-                        # This branch runs synchronously after the approved
-                        # mutation has started.  Every terminal -- including
-                        # control-flow BaseExceptions raised by a provider --
-                        # must collapse to one scrubbed result instead of
-                        # escaping the agent loop or being mistaken for the
-                        # pre-start cooperative-cancel outcome above.
-                        result = runtime.ToolResult(
-                            ok=False,
-                            error=f"tool call failed: {call.name}",
-                            dispatch_state="settled",
-                        )
-                    return result
+                    result = _invoke()
+                except BaseException:  # noqa: BLE001 - protocol boundary
+                    # This branch runs synchronously after the approved
+                    # mutation has started.  Every terminal -- including
+                    # control-flow BaseExceptions raised by a provider --
+                    # must collapse to one scrubbed result instead of
+                    # escaping the agent loop or being mistaken for the
+                    # pre-start cooperative-cancel outcome above.
+                    result = runtime.ToolResult(
+                        ok=False,
+                        error=f"tool call failed: {call.name}",
+                        dispatch_state="settled",
+                    )
+                return result
+            finally:
+                try:
+                    if install_post_checkpoint is not None:
+                        install_post_checkpoint(call, result)
                 finally:
-                    try:
-                        if install_post_checkpoint is not None:
-                            install_post_checkpoint(call, result)
-                    finally:
-                        if operation is not None and ssh_call is None:
-                            operation.finish()
-                    self._notify_tool_terminal(
-                        run_id,
-                        call.call_id or call.name,
-                        call.name,
-                    )
-                    self._notify_tool_result_terminal(
-                        run_id,
-                        call.call_id or call.name,
-                        call.name,
-                        result,
-                    )
+                    if operation is not None:
+                        operation.finish()
+                self._notify_tool_terminal(
+                    run_id,
+                    call.call_id or call.name,
+                    call.name,
+                )
+                self._notify_tool_result_terminal(
+                    run_id,
+                    call.call_id or call.name,
+                    call.name,
+                    result,
+                )
 
         timeout = self.registry.timeout_for(call.name) or (
             config.budget.max_tool_call_seconds
         )
+        if not (timeout and timeout > 0) and (ssh_call or raw_cli_call):
+            timeout = _CUSTODY_DEADLINE_SECONDS  # never the run thread (TASK-40716)
         if timeout and timeout > 0:
             # TASK-25913: the loop only checks max_wall_seconds between
             # iterations, so a call left on its own ceiling could outlive
@@ -833,23 +846,17 @@ def make_invoke_tool(
         try:
             operation = owner.reserve_tool() if owner is not None else None
         except CapacityRefused as exc:
+            if isinstance(exc, CleanupUnprovenRefused):  # end the run (TASK-40716)
+                return cleanup_unproven_result(exc.label)
             return runtime.ToolResult(
                 ok=False,
                 error=f"{TOOL_ADMISSION_REFUSED}{exc}",
                 dispatch_state="not_started",
             )
         try:
-            with (
-                raw_cli_call.activate(operation)
-                if raw_cli_call
-                else contextlib.nullcontext(),
-                ssh_call.activate(operation)
-                if ssh_call
-                else contextlib.nullcontext(),
-            ):
-                return _invoke()
+            return _invoke()
         finally:
-            if operation is not None and (ssh_call is None or not ssh_call.finished):
+            if operation is not None:
                 operation.finish()
 
     check_owner = self.registry.resolve_owner_for_name("code_review_read")

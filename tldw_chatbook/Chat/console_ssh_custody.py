@@ -95,6 +95,8 @@ def capture_preparation_ssh(executor=None, *, io=None):
 class _PreparationSshCall(ModelSshCall):
     """Use the existing request/helper/terminal proof for a direct producer."""
 
+    name = "a remote SSH read"  # the label an unproven cleanup names (TASK-40716)
+
     def __init__(self, source):
         self.source = source
         self.sources = {source.binding_id: source}

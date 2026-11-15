@@ -1118,6 +1118,9 @@ async def test_unknown_peer_proof_keeps_original_model_worker_and_storage(
             "mode": mode,
             "held": True,
             "storage_live": True,
+            "run_ended": True,
+            "slot_released": True,
+            "disposal_returned": True,
         }
         return
 
@@ -1214,8 +1217,16 @@ for line in sys.stdin.buffer:
         if r.terminal is not None
     ]
     native, storage, worker = waiting[0]
-    assert worker.is_alive() and native.operation.owner._cleanup_unproven
-    assert storage.live and not native.finished and not h.finishes
+    # The run ends at once instead of refusing its later calls (TASK-40716);
+    # this daemon worker keeps holding the original storage.
+    await asyncio.wait_for(task, 20)
+    assert len(h.gateway.payloads) == 2, "a later model turn ran after the retention"
+    retention = native.operation.retention
+    assert retention is not None and native.operation.owner._cleanup_unproven
+    assert worker.is_alive() and worker.daemon
+    # The run's other operations may finish; the retained one never does.
+    assert storage.live and not native.finished
+    assert all(op is not native.operation for op, _, _ in h.finishes)
     assert ("db.agent_runs", h.database.db_path) in storage.sources
     assert h.case.runtime.execution_capacity.snapshot().tool_workers == 1
     assert native.requests and all(r.local_returned for r in native.requests)
@@ -1238,8 +1249,42 @@ for line in sys.stdin.buffer:
         assert not h.manager._native_acceptances
         # Actual test-owned infrastructure shutdown is not native proof/release.
         h.manager.close_all()
+    # The run's terminal card (its failed reply, which the explanation
+    # follows) offers the release; it returns only the slot and the original
+    # storage stays held.
+    from tldw_chatbook.Chat.console_unproven_cleanup import (
+        release_unproven_tool_slot,
+        unproven_cleanup_rows,
+    )
+
+    controller = h.rig.controller
+    messages = h.rig.store.messages_for_session(h.rig.session.id)
+    (row_id,) = unproven_cleanup_rows(controller, messages)
+    card = next(m for m in messages if m.id == row_id)
+    assert card.role.value == "assistant" and card.status == "failed"
+    stopped = f"cleanup of {native.name} could not be proven"
+    assert any(m.role.value == "system" and stopped in m.content for m in messages)
+    assert unproven_cleanup_rows(controller, messages) == {row_id: False}
+    assert release_unproven_tool_slot(controller, row_id)
+    assert not release_unproven_tool_slot(controller, row_id)
+    assert unproven_cleanup_rows(controller, messages) == {row_id: True}
+    assert retention.abandoned
+    assert h.case.runtime.execution_capacity.snapshot().tool_workers == 0
+    assert storage.live and worker.is_alive()
+    # Disposal stops waiting for the retained custody instead of hanging.
+    await asyncio.wait_for(h.case.runtime.dispose(timeout_seconds=0), 20)
+    assert storage.live and worker.is_alive()
     Path(os.environ["TASK8_SSH_RECEIPT"]).write_text(
-        json.dumps({"mode": mode, "held": True, "storage_live": True})
+        json.dumps(
+            {
+                "mode": mode,
+                "held": True,
+                "storage_live": True,
+                "run_ended": True,
+                "slot_released": True,
+                "disposal_returned": True,
+            }
+        )
     )
     os._exit(
         0
@@ -1257,6 +1302,121 @@ def enable_sessions(h, monkeypatch):
     registry = sessions.RemoteSessionRegistry()
     monkeypatch.setattr(sessions, "_REGISTRY", registry)
     return registry
+
+
+async def test_unproven_startup_instruction_read_holds_a_daemon_worker(
+    ssh_console, monkeypatch
+):
+    """TASK-40716: the startup SSH read keeps custody on a daemon worker.
+
+    It used to run on a joined pool thread, where the retention refused and
+    unwound the storage leases while the SSH request might still be live.
+    """
+    import json
+    import os
+    import subprocess
+    from pathlib import Path
+
+    from tldw_chatbook.Chat.console_chat_controller import (
+        list_project_instruction_bindings,
+    )
+    from tldw_chatbook.Chat.console_project_instructions import (
+        ProjectInstructionControlState,
+    )
+
+    h = ssh_console
+    if os.environ.get("TASK8_SSH_UNPROVEN_MODE") != "startup":
+        receipt = h.root / "startup-retention.json"
+        result = await asyncio.to_thread(
+            subprocess.run,
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "-q",
+                f"{__file__}::test_unproven_startup_instruction_read_holds_a_daemon_worker",
+                "--basetemp=" + str(h.root / "child"),
+            ],
+            env=dict(
+                os.environ,
+                TASK8_SSH_UNPROVEN_MODE="startup",
+                TASK8_SSH_RECEIPT=str(receipt),
+            ),
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode == 0, result.stdout[-6000:] + result.stderr[-2000:]
+        assert json.loads(receipt.read_text()) == {
+            "daemon": True,
+            "storage_live": True,
+            "run_ended": True,
+        }
+        return
+
+    selected = list_project_instruction_bindings(h.rig.session, h.rig.registry)[0]
+    h.rig.store.set_session_project_instruction_state(
+        h.rig.session.id,
+        ProjectInstructionControlState(
+            project_instructions_enabled=True,
+            working_folder_binding_id=selected.binding.binding_id,
+            working_folder_locator_fingerprint=selected.locator_fingerprint,
+        ),
+    )
+    h.rig.controller._confirm_project_instruction_dispatch = lambda notice: "proceed"
+    (h.root / "remote-workspace" / "AGENTS.md").write_text("Remote instructions.\n")
+    relay = h.root / "terminal-relay.py"
+    relay.write_text("""import json, sys
+for line in sys.stdin.buffer:
+    start = line.find(b"{")
+    if start >= 0:
+        frame = json.loads(line[start:])
+        if frame["outcome"] != "admitted":
+            frame["cleanup_proven"] = False
+        line = line[:start] + json.dumps(frame).encode() + b"\\n"
+    sys.stdout.buffer.write(line)
+    sys.stdout.buffer.flush()
+""")
+    h.fake.bin.write_text(
+        h.fake.bin.read_text().replace(
+            'exec sh -c "$remote_cmd"',
+            'sh -c "$remote_cmd" | "$SSH_RELAY_PYTHON" "$SSH_TERMINAL_RELAY"',
+        )
+    )
+    monkeypatch.setenv("SSH_RELAY_PYTHON", sys.executable)
+    monkeypatch.setenv("SSH_TERMINAL_RELAY", str(relay))
+
+    from tldw_chatbook.Agents.activation import _guard
+    from tldw_chatbook.Chat.console_ssh_custody import current_ssh_call
+
+    waiting = []
+    wait = threading.Event.wait
+
+    def observe_retention(event, timeout=None):
+        native = current_ssh_call()
+        if native is not None and timeout is None and native.operation._stopping:
+            waiting.append((native, _guard.context.get(), threading.current_thread()))
+        return wait(event, timeout)
+
+    monkeypatch.setattr(threading.Event, "wait", observe_retention)
+    task = h.submit()
+    await until(lambda: bool(waiting) or task.done())
+    assert waiting, "the startup read never held its unproven custody"
+    native, storage, worker = waiting[0]
+    await asyncio.wait_for(task, 20)
+    assert native.operation.retention is not None
+    assert worker.daemon and worker.is_alive()
+    # The leases and the agent_runs source stay held with the request.
+    assert storage.live and ("db.agent_runs", h.database.db_path) in storage.sources
+    receipt = {
+        "daemon": worker.daemon,
+        "storage_live": storage.live,
+        "run_ended": task.done(),
+    }
+    await asyncio.to_thread(
+        Path(os.environ["TASK8_SSH_RECEIPT"]).write_text, json.dumps(receipt)
+    )
+    os._exit(0)  # End only this deliberately retained test process.
 
 
 async def test_lost_cancel_keeps_actual_pending_terminal_until_reader_status(

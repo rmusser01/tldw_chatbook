@@ -493,7 +493,9 @@ async def reference_git_child(reference_host, monkeypatch, request):
     child = wrapper_dir / "child.py"
     child.write_text(
         "import os,time\nfrom pathlib import Path\n"
-        f"Path({str(entered)!r}).write_text(str(os.getpid()))\n"
+        # Publish pid files atomically: an exists() poll must never read them empty.
+        f"Path({str(entered)!r} + '.tmp').write_text(str(os.getpid()))\n"
+        f"os.replace({str(entered)!r} + '.tmp', {str(entered)!r})\n"
         f"while not Path({str(release)!r}).exists(): time.sleep(.01)\n"
     )
     wrapper = wrapper_dir / "git"
@@ -510,7 +512,9 @@ async def reference_git_child(reference_host, monkeypatch, request):
         f" while not Path({str(entered)!r}).exists(): pass\n"
         f"result=subprocess.run([{real_git!r},*args],capture_output=True)\n"
         "sys.stdout.buffer.write(result.stdout)\nsys.stderr.buffer.write(result.stderr)\n"
-        f"if held: Path({str(returned)!r}).write_text(str(os.getpid()))\n"
+        "if held:\n"
+        f" Path({str(returned)!r} + '.tmp').write_text(str(os.getpid()))\n"
+        f" os.replace({str(returned)!r} + '.tmp', {str(returned)!r})\n"
         "sys.exit(result.returncode)\n"
     )
     wrapper.chmod(0o700)
@@ -742,3 +746,67 @@ async def test_reference_timeout_retains_same_worker_for_late_tree_proof(
     with pytest.raises(asyncio.CancelledError):
         await task
     assert h.runtime.execution_capacity.snapshot().executions == ()
+
+
+@pytest.mark.parametrize("reference_git_child", ["diff"], indirect=True)
+async def test_unproven_reference_git_cleanup_holds_a_daemon_worker_not_the_send(
+    reference_git_child, monkeypatch
+):
+    """TASK-40716: the @git custody holds a daemon worker; the Send settles."""
+    from tldw_chatbook.Agents.execution_capacity import holds_unproven_custody
+    from tldw_chatbook.Notes.git_process_containment import ProcessTreeController
+    from tldw_chatbook.Workspaces.worktree_activity import WorktreeFootprint
+
+    w = reference_git_child
+    h = w.h
+    original_run = refs.run_git_reference
+
+    def short_run(*args, **kwargs):
+        return original_run(*args, **{**kwargs, "timeout": 1.0})
+
+    def stop_unavailable(controller, tree):
+        raise OSError("controlled stop unavailable")
+
+    async def proof_unavailable(controller, tree, *, timeout):  # noqa: ASYNC109
+        raise OSError("controlled observation unavailable")
+
+    monkeypatch.setattr(refs, "run_git_reference", short_run)
+    monkeypatch.setattr(ProcessTreeController, "terminate", stop_unavailable)
+    monkeypatch.setattr(ProcessTreeController, "kill", stop_unavailable)
+    monkeypatch.setattr(ProcessTreeController, "wait", proof_unavailable)
+    capacity = h.runtime.execution_capacity
+    retention = None
+    custody = []
+    try:
+        task = asyncio.create_task(
+            h.controller.submit_draft("read @staged", session_id=h.session.id)
+        )
+        h.tasks.append(task)
+        await asyncio.wait({task}, timeout=20)
+        assert task.done(), "the Send waited on the retained Git custody"
+        (retention,) = capacity.retained()
+        assert retention.label == "native Git"
+        custody = [t for t in threading.enumerate() if holds_unproven_custody(t)]
+        assert len(custody) == 1 and custody[0].daemon
+        await until(lambda: not h.runtime._preparation_reads)
+        # The slot and the opaque claim stay held; nothing reuses them.
+        assert capacity.snapshot().tool_workers == 1
+        with h.runtime.worktree_activity.prelaunch(
+            footprint=WorktreeFootprint(opaque=True)
+        ) as claim:
+            assert claim is None
+        # The reference is refused (raw text, no Git body), as for any
+        # unavailable reference source.
+        assert h.gateway.payloads == [[{"content": "read @staged", "role": "user"}]]
+        # A late proof lets the custody worker retire the operation, so the
+        # turn's owner drains (TASK-40716).
+        retention.prove()
+        custody[0].join(5)
+        assert not custody[0].is_alive()
+        await until(lambda: not capacity.snapshot().executions)
+    finally:
+        w.release.touch()
+        if retention is not None:
+            retention.prove()
+        for worker in custody:
+            worker.join(5)

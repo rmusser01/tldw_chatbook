@@ -3688,6 +3688,7 @@ class ConsoleChatController:
             0.001, float(library_initialization_timeout)
         )
         self._library_search_tasks: dict[str, asyncio.Task] = {}
+        self.run_terminal_rows: dict[str, str] = {}  # TASK-40716: row id -> run id
         self._preparation_outcomes: dict[str, ConsolePreparationOutcome] = {}
         self._prepared_send_continuations: dict[str, _PreparedSendContinuation] = {}
         # TASK-34350: sends held at the compaction threshold (Ask), and the
@@ -27197,6 +27198,8 @@ class ConsoleChatController:
         bookkeeping write, wrapped defensively like the file's other seams.
         """
         persisted = getattr(completed, "persisted_message_id", None)
+        if run_id and completed is not None:  # its card, for Release (TASK-40716)
+            self.run_terminal_rows[persisted or completed.id] = run_id
         if not run_id or persisted is None or self._agent_bridge is None:
             return
         try:

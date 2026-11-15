@@ -8,7 +8,7 @@ import json
 from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar, copy_context
 from pathlib import Path
-from threading import Event, Lock, get_ident
+from threading import Event, Lock, Thread, get_ident
 
 from tldw_chatbook.app_services import read_console_runtime
 from tldw_chatbook.Agents.activation import _guard, execution
@@ -24,6 +24,21 @@ from tldw_chatbook.Workspaces.change_tracking import (
 from tldw_chatbook.Workspaces.worktree_activity import WorktreeFootprint
 
 _current_undo = ContextVar("native_confirmed_undo", default=None)
+
+
+_UNPROVEN_UNDO = (
+    "Undo could not prove its cleanup. Its workspace stays held until you "
+    "restart the app."
+)
+
+
+def _settle(future, outcome):
+    if not future.done():
+        result, error = outcome
+        if error is None:
+            future.set_result(result)
+        else:
+            future.set_exception(error)
 
 
 class _UndoActivationRefused(RevertRefusedError):
@@ -278,8 +293,10 @@ class _UndoCall:
         except _UndoActivationRefused:
             self.finish_unentered()
         except BaseException:  # noqa: BLE001 -- scope or finish uncertainty retains the original call
-            self.retain_unknown()
-        self.retire()
+            # The scope already unwound: retain the call, never this pool thread.
+            self.retain_unknown(hold=False)
+        if self.operation.retention is None:
+            self.retire()
 
     def finish_unentered(self):
         """Retire metadata only after proven no-entry and positive scope unwind."""
@@ -287,11 +304,14 @@ class _UndoCall:
             with self.owner.activate():
                 self.operation.finish()
         except BaseException:  # noqa: BLE001 -- unknown finish return cannot retire an unused ticket
-            self.retain_unknown()
+            self.retain_unknown(hold=False)
 
-    def retain_unknown(self):
-        self.operation.mark_stopping()
-        Event().wait()  # No original settlement retry producer exists.
+    def retain_unknown(self, *, hold=True):
+        # No original settlement retry producer exists. The claim, scratch and
+        # storage stay held; only a daemon worker holding scopes waits (TASK-40716).
+        retention = self.operation.retain_unproven("Undo")
+        if hold:
+            retention.hold()
 
     def retire(self):
         self.owner.finish_root()
@@ -392,13 +412,31 @@ class _UndoCall:
 
     async def run_async(self, callback, *, marshal, current, publish=None):
         host_context = copy_context()
-        worker = asyncio.create_task(
-            asyncio.to_thread(
-                self.run, callback, marshal, current, publish, host_context
-            )
-        )
+        loop = asyncio.get_running_loop()
+        worker = loop.create_future()
+
+        def run():
+            try:
+                outcome = (
+                    self.run(callback, marshal, current, publish, host_context),
+                    None,
+                )
+            except BaseException as exc:  # noqa: BLE001 -- delivered to the awaiting caller
+                outcome = (None, exc)
+            try:
+                loop.call_soon_threadsafe(_settle, worker, outcome)
+            except RuntimeError:  # the app loop already closed
+                pass
+
+        # A daemon worker: an unproven cleanup holds its scopes, never a joined
+        # pool thread, so app exit never waits for it (TASK-40716).
+        Thread(target=copy_context().run, args=(run,), daemon=True).start()
         try:
-            return await asyncio.shield(worker)
+            while not worker.done():
+                if self.operation.retention is not None:
+                    raise RevertRefusedError(_UNPROVEN_UNDO)
+                await asyncio.wait({worker}, timeout=0.1)
+            return worker.result()
         except asyncio.CancelledError:
             await self.cancel_unused()
             # Consume the actual callback exception without interpreting it as drain.
@@ -435,7 +473,9 @@ class _UndoCall:
         except BaseException:  # noqa: BLE001 -- unknown scope exit retains original worker custody
             # Callback errors are handled inside. Scope/finish uncertainty is not
             # a no-effect refusal, even if the callback itself never entered.
-            self.retain_unknown()
+            # The scopes already unwound, so nothing is left for a worker to hold.
+            self.retain_unknown(hold=False)
+            raise RevertRefusedError(_UNPROVEN_UNDO) from None
         if error is not None and publish is None:
             raise error
         return result

@@ -3888,6 +3888,13 @@ def _settle_call(
             return _continuation_error(state)
     else:
         _append_tool_result(state.messages, call, content)
+    if record_result.termination_reason is RunTerminationReason.CLEANUP_UNPROVEN:
+        # Every run ends here: the call's resources stay held, so any
+        # later call would only be refused (TASK-40716).
+        state.add(STEP_ERROR, summary=f"Agent stopped: {record_result.error}.")
+        return _loop_outcome(
+            state, RUN_STUCK, termination_reason=RunTerminationReason.CLEANUP_UNPROVEN
+        )
     if automatic is not None and automatic.goal is not None:
         reason = record_result.termination_reason
         if record_result.dispatch_state == "uncertain":

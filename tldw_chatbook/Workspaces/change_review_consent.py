@@ -442,10 +442,13 @@ class ChangeReviewConsentService:
 
     def wait_closed(self) -> None:
         """Wait for actual callback, readiness handoff and worker retirement."""
+        from tldw_chatbook.Agents.execution_capacity import join_unless_retained
+
         self.begin_close()
         for worker in self._workers:
             if worker.ident is not None:
-                worker.join()
+                # A worker holding an unproven cleanup ends with the process.
+                join_unless_retained(worker)
 
     def _current_bindings(self, workspace_id: str) -> tuple[_FolderBinding, ...]:
         return tuple(

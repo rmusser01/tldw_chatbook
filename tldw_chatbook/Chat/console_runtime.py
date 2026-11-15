@@ -5969,21 +5969,34 @@ class ConsoleRuntime:
                 completion.result()
 
     async def _drain_ordinary_turns(self) -> bool:
-        """Observe original whole-tree completion beyond the shutdown grace."""
+        """Observe original whole-tree completion beyond the shutdown grace.
+
+        A turn kept only by unproven cleanup can never retire. It is recorded
+        and left held for process exit (TASK-40716).
+        """
         cancelled = False
+        left: set[Any] = set()
         while True:
             with self._execution_capacity_lock:
-                turns = tuple(self._ordinary_turns)
+                turns = tuple(t for t in self._ordinary_turns if t not in left)
             if not turns:
                 return cancelled
             for turn in turns:
                 completion = asyncio.wrap_future(turn.retired)
                 while not completion.done():
+                    if turn.unproven_only():
+                        logger.warning(
+                            "Console disposal leaves an unproven turn held until exit"
+                        )
+                        left.add(turn)
+                        break
                     try:
-                        await asyncio.shield(completion)
+                        # wait() never cancels the original retirement future.
+                        await asyncio.wait({completion}, timeout=0.1)
                     except asyncio.CancelledError:
                         cancelled = True
-                completion.result()
+                else:
+                    completion.result()
 
     async def _close_session_after_voice_drain(
         self,
@@ -6291,7 +6304,14 @@ class ConsoleRuntime:
                         wake_fence_error = error
             coordinator = getattr(self, "_workflow_coordinator", None)
             if coordinator is not None:
-                workflow_cancellation = await coordinator.close(_runtime_disposal=self)
+                from .console_workflow_runs import WorkflowShutdownRetained
+
+                try:
+                    workflow_cancellation = await coordinator.close(
+                        _runtime_disposal=self
+                    )
+                except WorkflowShutdownRetained as error:  # raised after the rest closes
+                    workflow_cancellation = error
             # Planning retains the same native primary and source until its
             # required terminal worker returns. Fence it before closing capacity.
             planning = tuple(

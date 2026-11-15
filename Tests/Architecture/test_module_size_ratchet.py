@@ -194,7 +194,10 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-06, TASK-39117 (owner size waiver): 2203 -> 2207 (+4) -- the
     # quit's idle close also covers the Workspace, Library Collections and
     # notifications stores.
-    "tldw_chatbook/app_lifecycle.py": 2207,
+    # 2026-11-14, TASK-40716 (owner rule: exact measurement, dated note):
+    # 2207 -> 2216 (+9) -- quit logs every app-owned shutdown failure it
+    # does not raise, so a Console shutdown error is never dropped.
+    "tldw_chatbook/app_lifecycle.py": 2216,
     # TASK-33011: TldwCli's screen navigation moved verbatim out of app.py
     # (NavigationMixin); governed there, so governed here.
     # TASK-34000.27 (2026-10-09): 1110 -> 1195 (+85), owner decision
@@ -265,7 +268,9 @@ _BUDGETS: dict[str, int] = {
     # 28,734 plus TASK-39159's +8, measured.
     # 2026-11-10, TASK-39155 (owner size waiver): 29183 -> 29184 (+1, exact),
     # a session close in progress counts as an explicit cancellation.
-    "tldw_chatbook/Chat/console_chat_controller.py": 28743,
+    # Raised for TASK-40716 unproven-cleanup retention, 2026-11-14: 28743 ->
+    # 28746 (+3, exact), each run's terminal row is remembered for Release.
+    "tldw_chatbook/Chat/console_chat_controller.py": 28746,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6298,
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.
@@ -696,7 +701,10 @@ _BUDGETS: dict[str, int] = {
     # old 8,353, and that overrun is not this task's to absorb, so the row
     # stays red until it is decomposed or re-pinned by its owner.
     # PR3299, 2026-10-31: user size waiver; exact integrated measurement.
-    "tldw_chatbook/Widgets/Console/console_transcript.py": 8534,
+    # Raised for TASK-40716 unproven-cleanup retention, 2026-11-14: 8534 ->
+    # 8556 (+22, exact), the Release tool slot row (row kind, two protected
+    # click classes, setter, row plan, lazy widget hook).
+    "tldw_chatbook/Widgets/Console/console_transcript.py": 8556,
     # TASK-33003 (Phase 3) ends at 7,764 measured, down from 7,802: .2 moved
     # the control-height rules to app CSS, .4/.5/.8 spent part of that.
     # TASK-33006.1 lowers it to 7,516: the Model view's field rows, Source
@@ -915,7 +923,10 @@ _BUDGETS: dict[str, int] = {
     # TASK-36944.2, 2026-11-03: +6 for the public `setting` Console reads.
     # TASK-36950.3/.4, 2026-11-13: _run_one's fleet and run-log tool closures
     # moved to agent_run_tools.py.
-    "tldw_chatbook/Agents/agent_service.py": 7677,
+    # 2026-11-15, TASK-40716 rebased onto dev ecad404bd4 (owner rule: raise by
+    # the change's own lines): 7677 -> 7686 (+9) -- the unproven-cleanup
+    # retention and immediate return in the tool-call wait.
+    "tldw_chatbook/Agents/agent_service.py": 7686,
     # 2026-10-31, PR #3259: explicit user size-limit waiver. Pin the
     # actual current-base N-32 file-body F6 integration at 9,541 lines.
     # TASK-36513, 2026-11-03 (size waiver per the burn-down brief: re-pin at
@@ -1064,7 +1075,12 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-15, TASK-40717 (owner rule: raise by the change's own lines):
     # 7043 -> 7047 (+4) -- startup skips workflow recovery with no workflow
     # history.
-    "tldw_chatbook/Chat/console_runtime.py": 7047,
+    # 2026-11-14, TASK-40716 (owner rule: raise by the change's own lines):
+    # 7043 -> 7048 (+5) -- dispose closes the other owners when a workflow
+    # run is held only by an unproven tool cleanup, then reports it.
+    # 2026-11-15, stacked on TASK-40717 and rebased onto dev e36c4953b1 (dev
+    # 7043): TASK-40717's +4 and TASK-40716's +20, so 7067 -- exact measurement.
+    "tldw_chatbook/Chat/console_runtime.py": 7067,
     # 2026-10-27 (TASK-33621.29 / TASK-33621.7, owner decision 2026-10-19,
     # "expand limits, never contort code"): +56 for the rewritten-tail
     # transition (ADR-337 amendment 2026-10-27). The proof itself lives in
