@@ -323,6 +323,45 @@ def _build_receipt(executable: Path) -> dict:
                 reader.join(timeout=1)
 
 
+def stop_is_due(
+    *,
+    now_s: float,
+    launched_at_s: float,
+    playing_at_s: float | None,
+    delay_s: float,
+    wait_for_playing: bool,
+) -> bool:
+    anchor = playing_at_s if wait_for_playing else launched_at_s
+    return anchor is not None and now_s - anchor >= delay_s
+
+
+def observed_playing(
+    blocks: list,
+    source: np.ndarray,
+    *,
+    launched_at_s: float,
+    now_s: float,
+) -> dict | None:
+    """Require recent post-launch loopback content, using the unchanged oracle."""
+    recent = [
+        (stamp, data) for stamp, data in blocks[-20:] if launched_at_s <= stamp <= now_s
+    ]
+    if not recent or now_s - recent[-1][0] > 0.5:
+        return None
+    return measure_match(np.concatenate([data for _, data in recent]), source)
+
+
+def bookmark_alignment(frame: int | None, source_end_s: float | None) -> dict:
+    """Compare saved progress with independently captured stopped content."""
+    if frame is None or source_end_s is None or not math.isfinite(source_end_s):
+        return {"bookmark_alignment": "unqualified", "bookmark_end_error_s": None}
+    error = frame / RATE - source_end_s
+    return {
+        "bookmark_alignment": "pass" if abs(error) <= 0.250 else "fail",
+        "bookmark_end_error_s": error,
+    }
+
+
 def saved_bookmark_frame(
     observations: list[ProgressObservation],
     *,
@@ -370,6 +409,7 @@ def run_case(
     offset: float,
     generation: int,
     stop_after: float | None = None,
+    padded: bool = False,
 ) -> dict:
     """Measure one bounded native run; all raw samples/output are disposable."""
     result = {
@@ -377,7 +417,14 @@ def run_case(
         "generation": generation,
         "duration_s": len(source) / RATE,
         "requested_start_s": offset,
-        "stop_after_launch_s": stop_after,
+        "stop_after_launch_s": stop_after if not padded else None,
+        "stop_after_playing_s": stop_after if padded else None,
+        "stop_after_s": stop_after,
+        "stop_clock": "observed_playing" if padded else "launch",
+        "capture_ready_timeout_s": 30 if padded else 8,
+        "playing_ready_timeout_s": 30 if padded else None,
+        "capture_lifetime_s": 45 if padded else 12,
+        "max_capture_blocks": 4500 if padded else 1800,
         "endpoint_loopback": "unqualified",
         "seek": "unqualified",
         "tail_coverage": "unqualified",
@@ -387,7 +434,9 @@ def run_case(
     }
     context = mp.get_context("spawn")
     receiver, sender = context.Pipe(duplex=False)
-    capture = context.Process(target=_capture_worker, args=(sender, 12.0), daemon=True)
+    capture = context.Process(
+        target=_capture_worker, args=(sender, result["capture_lifetime_s"]), daemon=True
+    )
     process = None
     reader = None
     blocks = []
@@ -395,12 +444,15 @@ def run_case(
     stop_at = None
     exited_at = None
     launched_at = None
+    playing_at = None
+    playing_ready_deadline = None
+    last_checked_blocks = 0
     capture_started = False
     try:
         capture.start()
         capture_started = True
         sender.close()
-        if not receiver.poll(8):
+        if not receiver.poll(result["capture_ready_timeout_s"]):
             result["reason"] = "capture_ready_timeout"
             return result
         ready = receiver.recv()
@@ -409,7 +461,9 @@ def run_case(
             return result
         # Independent pre-launch baseline; no output names or samples are saved.
         baseline_until = time.perf_counter() + 0.35
-        deadline = time.perf_counter() + len(source) / RATE + 6
+        deadline = (
+            time.perf_counter() + len(source) / RATE + 6 + (30.25 if padded else 0)
+        )
         while time.perf_counter() < deadline:
             while receiver.poll():
                 try:
@@ -421,7 +475,7 @@ def run_case(
                     return result
                 if message[0] == "block":
                     blocks.append((message[1], message[2]))
-                    if len(blocks) > 1800:
+                    if len(blocks) > result["max_capture_blocks"]:
                         result["reason"] = "capture_bound_exceeded"
                         return result
             now = time.perf_counter()
@@ -445,6 +499,9 @@ def run_case(
                     bufsize=0,
                 )
                 result["launched"] = True
+                if padded:
+                    playing_ready_deadline = time.perf_counter() + 30
+                    deadline = playing_ready_deadline + len(source) / RATE + 0.25 + 6
                 reader = threading.Thread(
                     target=_stats_pump,
                     args=(process.stderr, observations, generation),
@@ -453,9 +510,41 @@ def run_case(
                 reader.start()
             if process is not None:
                 if (
+                    padded
+                    and playing_at is None
+                    and len(blocks) - last_checked_blocks >= 4
+                ):
+                    last_checked_blocks = len(blocks)
+                    match = observed_playing(
+                        blocks,
+                        source,
+                        launched_at_s=launched_at,
+                        now_s=time.perf_counter(),
+                    )
+                    if match is not None:
+                        playing_at = time.perf_counter()
+                        result["playing_observed_at_s"] = playing_at
+                        result["playing_startup_wait_s"] = playing_at - launched_at
+                        result["playing_source_position_s"] = match["end_source_s"]
+                        deadline = playing_at + len(source) / RATE + 0.25 + 6
+                if (
+                    padded
+                    and playing_at is None
+                    and time.perf_counter() >= playing_ready_deadline
+                    and process.poll() is None
+                ):
+                    result["reason"] = "playing_ready_timeout"
+                    break
+                if (
                     stop_after is not None
                     and stop_at is None
-                    and now - launched_at >= stop_after
+                    and stop_is_due(
+                        now_s=time.perf_counter(),
+                        launched_at_s=launched_at,
+                        playing_at_s=playing_at,
+                        delay_s=stop_after,
+                        wait_for_playing=padded,
+                    )
                 ):
                     stop_at = time.perf_counter()
                     frame = saved_bookmark_frame(
@@ -484,8 +573,13 @@ def run_case(
                     break
             time.sleep(0.005)
         else:
-            result["reason"] = "playback_deadline"
-            result["process_exit"] = "fail"
+            result["reason"] = (
+                "playing_ready_timeout"
+                if padded and playing_at is None
+                else "playback_deadline"
+            )
+            if result["reason"] == "playback_deadline":
+                result["process_exit"] = "fail"
         if not blocks:
             result["reason"] = "no_loopback_samples"
             return result
@@ -531,12 +625,18 @@ def run_case(
                     else "fail"
                 )
         if measurement is None:
-            result["reason"] = "marker_unmatched"
+            result.setdefault("reason", "marker_unmatched")
             # Startup Stop may correctly prevent any marker; it still cannot
             # certify seek/tail or establish that capture saw the actual output.
             return result
         result["endpoint_loopback"] = "pass"
         result["measurement"] = measurement
+        if stop_after is not None:
+            result.update(
+                bookmark_alignment(
+                    result.get("saved_bookmark_frame"), measurement["end_source_s"]
+                )
+            )
         error = measurement["start_source_s"] - offset
         result["seek_error_s"] = error
         result["seek"] = "pass" if abs(error) <= 0.250 else "fail"
@@ -644,6 +744,7 @@ def run_matrix(
                 offset=offset,
                 generation=generation,
                 stop_after=stop_after,
+                padded=bool(tail_padding_ms),
             )
             run.update(
                 artifact,
@@ -652,7 +753,9 @@ def run_matrix(
                 generation=generation,
                 duration_s=duration,
                 requested_start_s=offset,
-                stop_after_launch_s=stop_after,
+                stop_after_launch_s=stop_after if not tail_padding_ms else None,
+                stop_after_playing_s=stop_after if tail_padding_ms else None,
+                stop_after_s=stop_after,
             )
             runs.append(run)
             if not tail_padding_ms or name != "stop_playing":
@@ -671,6 +774,7 @@ def run_matrix(
                         "post_stop_silence",
                         "post_stop_latency",
                         "bookmark",
+                        "bookmark_alignment",
                     )
                 )
                 and run.get("stop_process_latency_s", math.inf) <= STOP_BOUND_S
@@ -683,6 +787,7 @@ def run_matrix(
                     offset=frame / RATE,
                     generation=generation + 1,
                     stop_after=None,
+                    padded=True,
                 )
             else:
                 resume = {
@@ -697,6 +802,7 @@ def run_matrix(
                 duration_s=duration,
                 requested_start_s=frame / RATE if isinstance(frame, int) else None,
                 stop_after_launch_s=None,
+                stop_after_s=None,
                 resume_from_generation=generation,
                 resume_from_bookmark_frame=frame,
             )
@@ -716,7 +822,7 @@ def native_result(runs: list[dict]) -> str:
             )
         if run["case"] != "stop_startup":
             required.append(run.get("endpoint_loopback", "unqualified"))
-        if run["stop_after_launch_s"] is None:
+        if run.get("stop_after_s", run.get("stop_after_launch_s")) is None:
             required.extend(
                 run.get(key, "unqualified") for key in ("seek", "tail_coverage")
             )
@@ -730,8 +836,15 @@ def native_result(runs: list[dict]) -> str:
             )
             if run["case"] == "stop_playing":
                 required.append(run.get("bookmark", "unqualified"))
-            if run.get("stop_process_latency_s", math.inf) > STOP_BOUND_S:
-                required.append("fail")
+                required.append(run.get("bookmark_alignment", "unqualified"))
+            latency = run.get("stop_process_latency_s")
+            required.append(
+                "unqualified"
+                if latency is None or not math.isfinite(latency)
+                else "fail"
+                if latency > STOP_BOUND_S
+                else "pass"
+            )
     return (
         "fail"
         if "fail" in required
