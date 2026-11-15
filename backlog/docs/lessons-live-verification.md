@@ -12,6 +12,25 @@
 
 **What to do.** For an answer walkthrough with a reused fixture, confirm a paraphrase query returns the source with a vector score. If Backfill skips a fixture whose vector is missing, rebuild the fixture's index before interpreting the provider result.
 
+## A successful ffplay exit can precede the last observed content (TASK-41176, 2026-11-15)
+
+**Incident.** Article-listening qualification used low-volume seeded PCM WAVs and
+independent default-render WASAPI loopback correlation. Six matched natural runs
+returned exit 0 but lacked 30-73 ms of final content; a later unpadded run varied.
+The same 2.5 s content with 250 ms trailing silence recovered its content end to
+about 2 ms in paired controls. Pure full/truncated-WAV controls ruled out a
+deliberate generator fade or basic detector cutoff. No physical/listener evidence
+was claimed. The initial Windows Python 3.12 monotonic clock also reported zero
+stop latency because GetTickCount64 had 15.625 ms resolution; a QPC follow-up
+measured roughly 5 ms process return.
+
+**What to do.** Qualify final content independently of return code and last stats
+sample, retain failing and unmatched cases, and separate endpoint loopback from
+acoustic evidence. Check the actual stopwatch implementation/resolution before
+interpreting small lifecycle durations. A padded control supports drain research;
+it does not qualify a production workaround or another OS. Evidence:
+`Docs/Testing/watchlist-article-audio-qualification.md`.
+
 ## On Windows, bind the interpreter rather than the venv launcher; separate startup from fixture work (TASK-34569, 2026-11-08)
 
 **Incident.** A private Console approval probe treated the PID returned by the venv launcher as the Python interpreter PID. The interpreter was an actual child of that launcher. A guarded bootstrap with a held, authenticated interpreter handle and a nonce/PID acknowledgment reached normal closure. In the first App attempt with that ownership, workspace binding began with about 16 seconds left on a shared startup deadline and was censored there. Under a separate fixture phase, a later binding completed in about 27 seconds and exposed a real config identity refusal. Another launch hit its original startup deadline before the mounted-context marker, even though it had logged "on_mount completed in". That log is emitted before the end of the App's mount body.
