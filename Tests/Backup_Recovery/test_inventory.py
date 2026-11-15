@@ -40,6 +40,19 @@ def real_db(path):
     return path
 
 
+@pytest.fixture(autouse=True)
+def _no_installed_owners(monkeypatch):
+    """Each test starts from the base declarations, as a fresh process does.
+
+    install_adapters() registers process-wide, so an earlier test in the same
+    worker (test_restore_plan, test_data_groups, ...) made the media core
+    report a custom file "included" and hid an undeclared alias (TASK-41116).
+    """
+    from tldw_chatbook.Backup_Recovery import owner_registry
+
+    monkeypatch.setattr(owner_registry, "_adapters", {})
+
+
 def test_custom_db_and_disabled_features_are_not_external_or_unused(tmp_path):
     db = real_db(tmp_path / "outside" / "custom.db")
     config = config_file(
@@ -268,6 +281,18 @@ assert not discover((Path(sys.argv[1]),)).complete
         for p in tmp_path.rglob("*")
     }
     assert before == after
+
+
+def test_profile_without_data_resolves_every_core_dependency(tmp_path):
+    """TASK-41125: with no ChaChaNotes database to read, the builtin visual
+    identity owner declared no root item, so the core's edge to it dangled and
+    a backup preview of such a known profile failed dependency_unavailable."""
+    from tldw_chatbook.Backup_Recovery import owner_registry
+    from tldw_chatbook.Backup_Recovery.data_groups import resolve_inventory_groups
+
+    owner_registry.install_adapters()
+    items = discover((config_file(tmp_path),)).items
+    resolve_inventory_groups(items, None)
 
 
 def test_duplicate_registration_is_rejected(monkeypatch):

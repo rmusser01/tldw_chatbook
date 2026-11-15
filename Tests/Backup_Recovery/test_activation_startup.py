@@ -22,6 +22,16 @@ selector = Path(os.environ['TLDW_CONFIG_PATH'])
 data = selector.parent.parent / 'data'
 selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir="' + str(data) + '"\n')
 selector.chmod(0o600)
+# Compose config before the bind (TASK-41125): importing it reads
+# replacement_data_identity(), which refuses a bound activation that has no
+# committed restore journal, and this synthetic state writes none. Then close
+# the startup lease that import took, as test_activation_notes does, or the
+# first database open refuses with close_owners_before_scope_change.
+from tldw_chatbook import config
+from tldw_chatbook.Backup_Recovery import storage_admission as storage
+startup = storage._startups.pop((os.getpid(), str(bootstrap.default_bootstrap_root())), None)
+if startup is not None:
+    startup.close()
 root = bootstrap.default_bootstrap_root()
 authority = admission_authority(root)
 authority.register('profile', (selector.parent, data))
@@ -35,7 +45,14 @@ with authority.maintenance(('profile',), 2) as session:
 # Simulate the later executor's completed fence; activation requirements survive.
 (root / ('pending-' + bootstrap._key('restore') + '.json')).unlink()
 process_attempts = []
+# Every SQLite open runs the fixed private helper child (9c6dbd2bf0); it is
+# storage, not the execution these scripts forbid (as in test_activation_notes).
+from tldw_chatbook.DB import private_sqlite_process
+helper = str(Path(private_sqlite_process.__file__).with_name('private_sqlite_helper_entry.py').resolve())
 def prevent_execution(event, arguments):
+    if event == 'subprocess.Popen' and arguments[1] == [sys.executable, '-I', '-S', helper]:
+        assert arguments[3]['_TLDW_PRIVATE_SQLITE_PARENT_PID'] == str(os.getpid())
+        return
     if event in ('subprocess.Popen', 'os.posix_spawn', 'os.system'):
         process_attempts.append(event)
         raise PermissionError('test_process_execution_blocked')
