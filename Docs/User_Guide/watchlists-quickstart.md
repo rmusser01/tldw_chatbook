@@ -163,6 +163,3 @@ not need to recreate anything when moving between them.
 For deeper reference, see [Watchlists](watchlists.md),
 [Schedules](schedules.md), [Console agent runs and tools](console/agent-runs-and-tools.md),
 and the [MCP privacy boundary](mcp.md#watchlists-privacy-boundary).
-
-—
-*Verified against dev @ 9c0e6a397 — 2026-08-29*

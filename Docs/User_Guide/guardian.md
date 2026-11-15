@@ -119,6 +119,3 @@ The boundary is strict:
   `doomloop_hits_per_day`.
 - [Dreams](dreams.md) — the discovery side of the aggregate feed.
 - Decision record: `backlog/decisions/204-guardian-local-self-monitoring.md`.
-
-—
-*Verified against feat/guardian-local (Tasks 1–3, ADR-204) — 2026-09-29.*

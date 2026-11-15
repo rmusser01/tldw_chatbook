@@ -521,6 +521,9 @@ Four states, three of which you can store:
   resolves to from the level below. Only server and tool rows can be Inherit;
   the global default always holds a real value.
 
+A permission the app cannot read shows **Unknown** — in the matrix, Tools
+mode's State column and the inspector — and the call is refused.
+
 Precedence runs tool → server → global: an explicit tool entry beats its
 server's default, which beats the profile's global default. A row carrying its
 own explicit value is marked with **•** in the State cell, so an override is
@@ -593,7 +596,10 @@ tools plus anything discovered from a connected server — with a Schema
 column reading "form" or "raw" so you know before selecting whether a tool
 gets a typed form. Selecting a row opens its detail in the inspector on
 the right; when the tool is executable, a **Test Tool** button opens a
-panel to run it with arguments you choose.
+panel to run it with arguments you choose. The server you have selected
+lists first, here and in the Permissions matrix, and the inspector's **Open
+tool catalog** action for a server opens this list showing only that
+server's tools.
 
 Selecting a tool hides the readiness badge that normally sits at the top
 of the inspector (the "Pick a server, tool, or entry…" placeholder, or a
@@ -798,110 +804,3 @@ setting or a permission wins, and a restart sweep may mark the other
 instance's still-running jobs as interrupted. Detection is an advisory
 lock file (`.instance.lock`, inside the profile's data directory) that's
 never deleted once created — safe to ignore if you notice it.
-
----
-
-*Verified against a953e4c1e — 2026-08-04 (PR-5 live check). Verified
-against 9f90e17b8 — 2026-08-06 (PR-T3, docs pass against shipped
-code/tests: weak-match notice, always-reports toasts, live Audit
-refresh + argument names, the gated/logged Advanced panel, readable
-boolean fields — live check pending Task 9). Fix round I, 2026-08-06:
-"do anything else to cancel" on the Test Tool confirm now genuinely
-covers editing the argument form (it previously did not), and a
-background section load can no longer cancel an Advanced confirm you
-armed while it loaded — only your own actions cancel, as written.
-2026-08-07 (tasks 2740/2270/2870): opening Test Tool on a tool with
-only-checkbox or no arguments no longer crashes the app; the "Pick a
-server, tool, or entry…" placeholder now clears for Permissions-row,
-Audit-entry, and Finding detail exactly as it does for tool detail; and
-a permission the app could not read shows as "Unknown" (never a false
-"Off") in the matrix, the State column, and the inspector alike.
-Verified against ee68f42ed — 2026-08-08 (task-3240): documented the new
-Servers-mode "Tool gates" group (builtin registration switches, at last
-reachable from live navigation) and its two discoverability breadcrumbs.
-Docs pass 2026-08-15 (TASK-16174 fix wave, against the branch's code and
-tests, not a live screen): the "Agent built-ins" enumeration gained the
-eighth gate, `expand_document` — the pane renders one row per
-`_GATEABLE_BUILTINS` entry via `all_tool_gates()`, so the count follows
-that table. Docs pass 2026-08-16 (TASK-16688 AC#3, against code and tests,
-not a live screen): added "`expand_document` and the Library consent
-boundary" — expansion does not defer to `[console] direct_library_tools`
-(default on) but to its own `[tools] expand_document_enabled` gate
-(default off) plus the risk-tag Ask floor, and the raw-id read that
-implies is recorded with its mitigations. Docs pass 2026-09-10
-(task-32280, against code and tests, not a live screen): a card **Deny** now leaves an execution-log row
-of its own (it previously left none — the review hook refuses the call
-before the provider that was doing the recording ever runs), and the
-permissions-Off refusal moved to its own **Blocked (Off)** decision so it
-no longer shares the user's "Denied by you" bucket. Fix round, same day:
-every remaining producer of the bare "denied" token for a refusal the
-user did not make (MCP/local/virtual-CLI kill-switch paths, the Hub's Test
-Tool gate denial, a run stopped while a card was pending) now records the
-refuser that actually applies — **Blocked (kill switch)** is new; the rest
-land in the existing **Blocked (Off)** / **Denied (no decision)** buckets.
-Docs pass 2026-09-10 (task-32281, against code and tests, not a live
-screen): added "Exact-input allow rules" — the inspector now lists each
-stored rule with a Remove action, and the Permissions matrix marks a tool
-that carries one with a `≡` suffix. Fix round, same day: the card no
-longer offers this choice for a `mutates`/`process` tool (the risk floor
-makes such a rule inert), and an already-stored one is labelled "not in
-effect: risk floor" instead of being listed as if it were working. Docs pass 2026-09-10 (task-32284,
-against code and tests, not a live screen): the Tool gates rows are now
-buttons that state on/off in text under the tool's plain-language name
-(one copy table shared with the first-run wizard), and the old blanket
-"applies on next app restart" note is corrected — every gate here applies
-to the next Console agent run, with `web_deep_search`'s external-MCP
-publication the single next-client-launch exception. Fix round, same day:
-that exception now names its own precondition — the external-MCP half
-only applies when `[mcp] expose_local_tools` is on — and this control
-is corrected alongside `ask_user` as on by default (it was
-previously the only one credited). Docs pass 2026-09-10 (task-32291,
-against code and tests, not a live screen): added "Session approvals" —
-**This session** grants are now listed in the inspector's permission
-block with a per-row **Revoke**, and the Permissions matrix marks a tool
-holding one with a ` (session)` suffix; until this pass a session grant
-was invisible and could only be dropped by restarting the app. Docs pass
-2026-09-10 (task-32283, against code and tests, not a live screen): the
-selected server's own group now leads both Tools mode and the Permissions
-matrix, and **Open tool catalog** drills straight to that server rather
-than to the top of an unfiltered list. Docs pass 2026-09-10 (task-32286,
-against code and tests, not a live screen): the Tools-mode control
-is now a toggle button (it used to be a Checkbox plus a
-separate "Enabled"/"Disabled" label, which a bundle width escape hatch
-had clamped to a truncated seven-cell frame at wide terminal widths).*
-
-*Verified against `fix/approval-wave-c-hub` @ a999fcf6e6 and `fix/approval-wave-b-card` @ e7409210cc — 2026-09-10 (task-32290, against
-code and tests, not a live screen). Added "Permissions mode — Allow, Ask,
-Off": the four matrix states and the tool → server → global precedence, the
-Space cycle and the legend line verbatim (`_LEGEND_TEXT`,
-`mcp_permissions_mode.py`), the risk floor with the rule that an explicit
-tool-level Allow is never floored (`permission_store.resolve`), and the kill
-switch's real label and blast-radius line. Corrected the leftover
-"checkboxes" reading of the Tool gates rows, which are buttons.*
-
-*Docs pass 2026-09-11 (Qodo follow-ups: task-32277/32278/32279/32280/32281/
-32284/32286/32289/32291/32345, against code and tests, not a live screen):
-"Exact-input allow rules" now documents an inherited rule's `· from
-<profile>` row, the `≡` marker covering it too, and **Remove** deleting
-from the owning profile rather than the one under review; the Tools-mode
-master switch and the Servers-mode Tool gates rows now say their label
-flips immediately on press and reverts if the save is rejected, correcting
-this page's stale claim that the toggle only updated after a successful
-save; and "Permission continuity for built-in tools" now distinguishes a
-Stop-cancelled round (`Denied (no decision)`, same as any other unresolved
-round) from a headless round with no app wired, which writes no audit row
-at all.*
-
-*Docs pass 2026-09-27 (task-32956, against code and tests, not a live
-screen): the Console character tools now appear as local permission rows
-(listed, not runnable from Tools mode, gone when `[tools]
-character_tools_enabled` is off), and `character_save` is the one tool an
-explicit Allow does not un-floor (`permission_store.ALWAYS_ASK_TOOLS`); its
-card offers only Approve once / Deny, and Tool Pack exports now carry the
-character tools' rules instead of listing them as omitted.*
-
-*Docs pass 2026-09-27 (task-32955, against code and tests, not a live
-screen): "Character reads and the long-field guard" documents `[mcp]
-expose_character_tools`, the external character reads, and the
-`update_character` long-field guard (only while the reads are exposed) and
-server-mode refusal.*

@@ -577,28 +577,6 @@ in a full accent box.
   tab-related — see [Project skills](../library/skills.md#project-skills-skills).
   Turn it off with `[skills] project_skills_prompt_enabled = false`.
 
-—
-*Verified against dev @ ff435772c — 2026-07-31*
-*Verified against feat/workspace-create-modal @ 64a07a3d7 — 2026-08-17
-(task-18704: "New" now opens the shared "New Workspace" dialog — prefilled
-name, optional validated folder bindings with Browse…, a "Switch to this
-workspace" checkbox default on, and Escape/Cancel creating nothing —
-instead of instant "Workspace N" creation; the walkthrough split into
-create-and-switch / create-without-switching / cancel tasks to match).*
-*Verified against feat/project-skills-import @ 964cb04df — 2026-08-18
-(task-18705: a bound folder containing `.SKILLS/` now annotates its row
-"— contains N project skill(s)" in the dialog, and a chained import prompt
-follows workspace creation).*
-*Verified against feat/task-18310-activation-seam @ c9892736f — 2026-08-20
-(task-18310: a workspace activated from Settings or Library only updates
-the registry; Console now reconciles its own session against it on the
-next resume instead of staying stale until an in-Console switch, so the
-Default-workspace paragraph above gained a one-sentence note on that; the
-rest of this page's content unchanged from the prior stamp).*
-*Reconciled against the TASK-20937 native Workspace Tree and exclusive
-Default/unassigned ownership implementation — 2026-08-23. Additional
-same-cell terminal-client verification remains tracked by TASK-20937.6.*
-
 ## Archive, find, review and resume a saved chat
 
 In Console context → Conversations, choose **Archive this chat** to put an idle,

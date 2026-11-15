@@ -186,3 +186,6 @@ oracle for omitted private content) — the fingerprints were removed entirely.
   established start/finish pattern, interpolating only `db_path_str` and integer
   counters — no capture content, user text, or secrets; the failure wrap logs the
   exception CLASS only (ADR-096: exception values may contain decoded content).
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/console/context-and-rag.md`: Code-level pass (pure, gateway, migration and inspector suites), not a live-provider walkthrough.

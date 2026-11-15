@@ -43,4 +43,7 @@ Scope: only category changes inside Settings are guarded; leaving the Settings s
 Tests: `Tests/UI/test_settings_configuration_hub.py::test_theme_leave_with_unsaved_edits_{stay_keeps_category_and_edit,discard_clears_the_dirty_flag,save_writes_then_leaves}` (replacing `test_theme_dirty_flag_clears_when_leaving_the_category`), marked `@private_profile_test` so they run in a clean worktree.
 
 Files: `tldw_chatbook/UI/Screens/settings_screen.py`, `tldw_chatbook/Widgets/settings_theme_editor.py`, `Tests/UI/test_settings_configuration_hub.py`, `Docs/User_Guide/settings.md`.
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/settings.md`: Shipped-theme variables, the leave guard and the backup-pause state are covered by automated tests, not re-driven live.
 <!-- SECTION:NOTES:END -->

@@ -4,7 +4,8 @@ TASK-38969: the index's screen table and F-key lists stopped at F7 after F8
 Plugins and F9 Kanban shipped, and two captures still fetched fonts from
 cdnjs. TASK-38970: two pages lost their screenshots; every image link must
 resolve. TASK-40329: the README's destinations table drifted the same way,
-out of reach of the guide-only checks.
+out of reach of the guide-only checks. TASK-41101: pages carry no
+"Verified against" stamps; that record belongs in a task's notes.
 """
 
 from __future__ import annotations
@@ -171,6 +172,49 @@ def test_every_user_guide_image_link_resolves() -> None:
         if (broken := missing_local_links(page, IMAGE_LINK_RE))
     }
     assert not missing, f"User Guide image links name missing files: {missing}"
+
+
+# A verification stamp: "Verified against <ref> — <date>", "Re-stamped
+# against", "verified on <branch> from <sha>", "checked against <sha> on
+# <date>", with a date or an @sha within the next 200 characters (stamps wrap
+# across lines). Prose such as "is verified against a live call" has neither.
+STAMP_RE = re.compile(
+    r"(?i)\b(?:re-?)?(?:verified|stamped|checked)(?:\s+live)?\s+(?:against|on)\b"
+    r"(?=.{0,200}?(?:\b20\d\d-\d\d-\d\d\b|@\s*[0-9a-f]{7,}))"
+)
+#: Pages whose stamps other tasks remove: TASK-34100.15 AC#7 and
+#: TASK-33910.18 AC#4. Drop a name here when its task lands.
+STAMP_EXEMPT_PAGES = frozenset({
+    "First_Run_Setup.md",
+    "roleplay-chat-dictionaries.md",
+    "roleplay-chat-dictionaries/characters-and-personas.md",
+    "roleplay-chat-dictionaries/chat-dictionaries.md",
+    "roleplay-chat-dictionaries/lore-books.md",
+})
+
+
+def _stamp_lines(page: Path) -> list[int]:
+    text = page.read_text(encoding="utf-8")
+    flat = text.replace("\n", " ")
+    return [text.count("\n", 0, m.start()) + 1 for m in STAMP_RE.finditer(flat)]
+
+
+def test_user_guide_pages_carry_no_verified_against_stamps() -> None:
+    """CLAUDE.md and _template.md: no stamps on a page (TASK-41101)."""
+    pages = {str(page.relative_to(GUIDE)): page for page in sorted(GUIDE.rglob("*.md"))}
+    stamped = {
+        name: lines
+        for name, page in pages.items()
+        if name not in STAMP_EXEMPT_PAGES and (lines := _stamp_lines(page))
+    }
+    assert not stamped, (
+        "User Guide stamps (record verification in the task's Implementation "
+        f"Notes instead), page: lines: {stamped}"
+    )
+    landed = sorted(
+        name for name in STAMP_EXEMPT_PAGES if not _stamp_lines(pages[name])
+    )
+    assert not landed, f"Stamp-free now; remove from STAMP_EXEMPT_PAGES: {landed}"
 
 
 async def test_capture_driver_builds_its_gateway_on_the_uat_planner() -> None:

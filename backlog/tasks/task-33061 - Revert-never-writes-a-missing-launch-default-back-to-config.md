@@ -37,4 +37,7 @@ Critique #3 P2. revert_theme persists previous_launch_default unconditionally, s
 
 <!-- SECTION:NOTES:BEGIN -->
 revert_theme (theme_catalog.py) skips the launch-default write when previous_launch_default is not in app.available_themes (new helper launch_default_restorable); signature and (restored, caches_reloaded) return unchanged -- that case returns (True, True). The picker's _sync_revert_chip labels it '(launch unchanged)' and hides the chip (and its row) when the target is already active and the launch default would not change; the pending change is kept so a later Try/Use still merges into it. The two named pinning tests already held under the new contract and pass unchanged; test_revert_label_strips_control_characters_from_the_launch_default was updated (its hostile launch default is unregistered, so the label no longer names it). New: test_revert_never_writes_a_missing_launch_default_back (catalog), test_revert_leaves_a_missing_launch_default_alone and test_revert_chip_hides_when_it_would_change_nothing (picker).
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/settings.md`: Pinned by pilot tests, not driven live.
 <!-- SECTION:NOTES:END -->

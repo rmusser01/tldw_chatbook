@@ -70,7 +70,9 @@ with a **Save** / **Revert** action row at the bottom.
   action — you should hear your server's voice. Press **⏹** to stop.
 - **Speech Lab:** open **Lab** in the nav bar, switch the mode chip to
   **Speech**, pick **🎤 TTS Playground**, enter text, and press
-  **Generate**.
+  **Generate**. With OpenAI selected, its Model and Voice start on the exact
+  names you saved; a custom name shows as "*your-name* (no catalog check)"
+  and is sent unmodified.
 
 ## Worked example: pocket-tts
 
@@ -203,34 +205,3 @@ custom endpoint — the request fails at speak time.
 - The Speech Lab (playground, voice profiles, audiobooks): [Lab](lab.md) 🚧
 - Per-character voice assignment, in full: [Characters & Personas ▸ Voice &
   Speech](roleplay-chat-dictionaries/characters-and-personas.md#voice--speech)
-
-—
-*Verified against dev @ 265dbd687 — 2026-08-04 (labels quoted from
-`speech_tts_settings_panel.py`; keyless/passthrough behavior shipped in
-TASK-2260, PR #1332). Verified against 0c24f50d9 — 2026-08-06 (voice
-profiles slice 3, task 6 live check: default voice profile set and saved
-through Settings ▸ Speech & TTS ▸ Global defaults; a real OpenAI Console
-speak with no character active used the default profile's voice, not the
-global axes voice; deleting that profile made speech refuse with the
-"Use global voice?" dialog naming the default voice, not a character
-voice; a fresh Settings open resolved the picker straight to the real
-profile list with no false "unavailable"). Verified against dev @
-7f23e0263 — 2026-08-06 (voice profiles slice 4: per-character voices
-section added; labels cross-checked against
-`stts_screen.py`'s `SPEECH_RAIL_SECTIONS` ("🗣️ Voice Profiles"),
-`speech_playground_pane.py` / `STTS_Window.py` ("Save result as profile"),
-and `stts_profile_library.py` / `personas_character_tts_widget.py` /
-`personas_screen.py` for the "No catalog check" / "no catalog check"
-copy — this page's own default-profile precedence bullet above was not
-re-verified live in this pass). Re-verified live 2026-08-11 with the
-TASK-15420 fix: a Console 🔊 speak with an exact custom model AND custom
-voice name reached a mock OpenAI-compatible server at a custom Base URL
-with both passed through unmodified (between roughly 2026-07-26 and this
-fix, an internal model-route allowlist rejected any non-official model
-name on the Console path before the request was sent, so this page's
-Model-value instruction did not work there). Re-verified live 2026-08-11
-with the TASK-15421 fix: the Speech Lab playground now seeds its Model and
-Voice controls from your saved exact selection — a custom name appears as
-"*your-name* (no catalog check)", stays selected, and Generate sends it
-unmodified (previously the playground silently generated with
-`tts-1`/`alloy` regardless of your saved settings).*

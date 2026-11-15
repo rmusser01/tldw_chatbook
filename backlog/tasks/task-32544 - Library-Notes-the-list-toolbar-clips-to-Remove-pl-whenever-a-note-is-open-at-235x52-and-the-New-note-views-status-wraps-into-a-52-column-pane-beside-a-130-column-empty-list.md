@@ -54,4 +54,7 @@ AC#2 -- the New note view fills the work pane, but it is not a `view`: the canva
 Live: 235x52, note open -> 'New folder  Add to folder  Move note' / 'Remove placement', whole (wave4-caps/layout/layout-10-remove-placement-after, before: layout-00-remove-pl). New note view -> the status line 'Ready · Next: Press Blank note, or choose a template.' on ONE line in a ~122-column work pane beside a 64-column list (layout-11-new-note-235-after, before: layout-01-new-note-52).
 
 Files: Widgets/Library/library_notes_canvas.py, UI/Screens/library_screen.py, Tests/UI/test_library_notes_w4_layout.py.
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/library/notes.md`: Post-merge re-walk captures `wave4-caps/layout/layout-32-postmerge-note-open-235`, `layout-33` … `layout-36-postmerge-*`, `layout-37-postmerge-sort-reason-235`.
 <!-- SECTION:NOTES:END -->

@@ -46,4 +46,7 @@ Two non-obvious bits. (1) The closed `Select` does NOT ellipsize: `SelectCurrent
 Test-harness note worth keeping: `app.export_screenshot()` returns SVG in which every space is `&#160;` and each styled run is its own `<text>` element, so `assert "some sentence" in app.export_screenshot()` fails against a screen that paints the sentence perfectly. The pre-existing check in `test_approval_row_information_budget.py` only ever looked for a single word, which hid this.
 
 Modified: `tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py`, `tldw_chatbook/Agents/raw_shell_tool_provider.py`, `tldw_chatbook/css/components/_agentic_terminal.tcss` (+ regenerated `tldw_chatbook/css/tldw_cli_modular.tcss`), `Tests/UI/test_chat_approval_card.py`, `Tests/UI/test_approval_row_information_budget.py`, `Tests/UI/test_console_mcp_approval.py` (the Select-width / row-height / tooltip pins this change owns).
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/mcp.md and console/agent-runs-and-tools.md`: Docs pass (including the 2026-09-11 Qodo docs pass recorded as 32290 Lane D part 2) against code and tests, not a live screen.
 <!-- SECTION:NOTES:END -->

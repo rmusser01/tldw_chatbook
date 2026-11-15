@@ -305,3 +305,6 @@ byte-identical to base; pruning suite 8/8 (the detached-reader pin that
 caught the load-bearing release, back green with the faithful restore);
 adjacent set 160 passed + the 3 known pre-existing; `probe_a_timing.py`
 5/20/100 all pass; ruff clean.
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/console.md`: Not re-checked live: shipped tests plus isolated 400/500-message mounted probes only.

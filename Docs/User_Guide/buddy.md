@@ -77,8 +77,6 @@ while Buddy has focus:
 
 The saved position is clamped to the available terminal area. If a drag selects
 terminal text, try the keyboard controls and check your terminal's mouse handling.
-Earlier native-terminal UAT verified movement, resizing, and saved geometry;
-that does not certify every terminal or browser-hosted terminal transport.
 
 ## Use voice with Buddy
 
@@ -265,21 +263,7 @@ native Buddy archives; save a Petdex import as a Buddy before using this convers
 | Speech recognition is wrong | Stop dictation, edit the draft before sending, and retry with background audio paused. An animation cannot validate transcript accuracy. |
 | Buddy remains busy after completion | Check whether another run, tool, approval, or voice session is active. If none is active, record the status and reproduction steps; closing Buddy does not cancel Console work. |
 
-## Verification scope and related guides
-
-The Buddy-to-character workflow above was verified with mounted UI and real local
-publication tests on `codex/buddy-import-design`; see the
-[conversion verification record](../superpowers/reviews/2026-09-07-buddy-character-conversion-verification.md).
-
-Petdex URL acquisition, reviewed drafts, native export/reimport and offline character
-conversion were verified separately; see the [Petdex verification record](../superpowers/reviews/2026-09-07-petdex-import-verification.md).
-
-The earlier setup and voice guidance was checked against Chatbook `dev` **307df6c79** on **2026-09-07**
-using current controls, existing mounted UI coverage, and recorded September 5
-Migu UAT. It is not a claim that every instruction was re-executed in a fresh
-physical session for this documentation update. Native dragging and local Kokoro
-readback were previously exercised; provider-specific realtime behavior requires
-its own configured voice test.
+## Related guides
 
 - [First-run setup](First_Run_Setup.md)
 - [Characters and Personas](roleplay-chat-dictionaries/characters-and-personas.md)

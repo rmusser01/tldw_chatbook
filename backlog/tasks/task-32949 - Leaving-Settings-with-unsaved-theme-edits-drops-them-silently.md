@@ -38,4 +38,7 @@ Done as part of the Qodo review fixes on `feat/theme-picker-pr3` (Qodo 410099892
 - **Related:** a name-only edit now marks the editor modified (Qodo 4100998919), so it is covered too.
 - **Tests (`Tests/UI/test_settings_theme_picker_screen.py`):** there is one pilot test per choice (no edits, Stay, Discard, Save, and refused plus pending Save), driven through the hook the app awaits. That the app awaits this hook for every route is already pinned route-agnostically in `Tests/UI/test_screen_navigation.py` (`test_navigation_confirms_with_outgoing_screen_and_honors_veto`). There is no separate pilot per entry surface, because all of them converge on that one handler. Those navigation tests are CI-only in a clean worktree (`RecoveryRequired`, identical failure set at HEAD).
 - **Files:** `tldw_chatbook/UI/Screens/settings_screen.py`, `Tests/UI/test_settings_theme_picker_screen.py`, `Docs/User_Guide/settings.md`.
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/settings.md`: R43: pinned by pilot and unit tests, not driven live.
 <!-- SECTION:NOTES:END -->

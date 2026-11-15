@@ -128,3 +128,6 @@ Modified: `tldw_chatbook/UI/Research_Workspace_Modules/source_list.py`,
 `test_research_source_receipt.py`; `Docs/User_Guide/research_workspace.md`
 (stamp). Added: `Tests/UI/test_research_slot_pool_growth.py` (8 tests).
 47/47 research-UI tests pass; preflight green.
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/research_workspace.md`: The full pytest suite was not run.
