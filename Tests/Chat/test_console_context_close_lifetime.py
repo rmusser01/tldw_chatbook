@@ -96,9 +96,9 @@ async def test_close_waits_for_existing_original_context_native_retirement(
         assert read is not None and read.session_id == session_id
         held.append(read)
         loop.call_soon_threadsafe(entered.set)
-        assert release.wait(
-            20
-        ), "candidate cleanup never released original native query"
+        assert release.wait(20), (
+            "candidate cleanup never released original native query"
+        )
 
     def bounded_return(frame, value):
         if frame.f_locals.get("self") is runtime:
@@ -260,9 +260,9 @@ async def test_original_context_read_refuses_admission_during_session_close(tmp_
                 await controller.context_control_presentation_inputs(session_id)
             except RuntimeError:
                 refused = True
-            assert (
-                refused and not admitted
-            ), f"closing context admitted {len(admitted)} native handle observations; refused={refused}"
+            assert refused and not admitted, (
+                f"closing context admitted {len(admitted)} native handle observations; refused={refused}"
+            )
         finally:
             hooks.release.set()
             await _cleanup(

@@ -25,27 +25,27 @@ Reason: no new storage/schema, permissions, source/ownership, cache, service or 
 
 ## Task1: Attribute validation and CI failures
 
-- [ ] Retrieve the original failing job assertions and group their causes.
-- [ ] Compare exact test/product owners against currentdevcc6006fcf59328353004206bba8724c399216749.
-- [ ] Run the three original test_console_tab_publication_read_barrier parameter cases serially under a genuine native-private profile.
-- [ ] Reproduce the relevant structural, UI and performance contracts on current sources. Keep original node IDs and failing output.
-- [ ] For every current red, record the data flow and minimal hypothesis, apply the smallest root fix, then rerun that contract and its connected checks. No change for an already-fixed historical cause.
+- [x] Retrieve the original failing job assertions and group their causes.
+- [x] Compare exact test/product owners against currentdevcc6006fcf59328353004206bba8724c399216749.
+- [x] Run the three original test_console_tab_publication_read_barrier parameter cases serially under a genuine native-private profile.
+- [x] Reproduce the relevant structural, UI and performance contracts on current sources. Keep original node IDs and failing output.
+- [x] For every current red, record the data flow and minimal hypothesis, apply the smallest root fix, then rerun that contract and its connected checks. No change for an already-fixed historical cause.
 
 ## Task2: Measure and reduce one current Console cost
 
-- [ ] Restore only the existing guarded six-return journey, remove unsupported historical experimental modes, and qualify observer code targets without replacing callables.
-- [ ] Wait for tests and other owned resource-heavy commands to finish. Run one plain current baseline and a separate diagnostic with original-code wall/CPU spans plus main-thread samples.
-- [ ] Rank costs within navigation-to-input and navigation-to-complete-attachment boundaries; distinguish nested CPU work from waits and queues.
-- [ ] Append the selected root cause, exact files, smallest correction, causal RED test and ADR ruling here before product editing.
-- [ ] Implement the bounded correction; run the causal GREEN and connected source/ownership/custom/cancellation controls.
-- [ ] Freeze product hashes and run serial matched before/after cohorts. Preserve all journeys, exact exits, guard counts and unfavorable measurements; do not infer a global speedup from one removed call.
+- [x] Restore only the existing guarded six-return journey, remove unsupported historical experimental modes, and qualify observer code targets without replacing callables.
+- [x] Wait for tests and other owned resource-heavy commands to finish. Run one plain current baseline and a separate diagnostic with original-code wall/CPU spans plus main-thread samples.
+- [x] Rank costs within navigation-to-input and navigation-to-complete-attachment boundaries; distinguish nested CPU work from waits and queues.
+- [x] Append the selected root cause, exact files, smallest correction, causal RED test and ADR ruling here before product editing.
+- [x] Implement the bounded correction; run the causal GREEN and connected source/ownership/custom/cancellation controls.
+- [x] Freeze product hashes and run serial matched before/after cohorts. Preserve all journeys, exact exits, guard counts and unfavorable measurements; do not infer a global speedup from one removed call.
 
 ## Task3: Review and publish
 
-- [ ] Run scoped lint/format checks, generated-artifact checks where affected, and diffcheck.
-- [ ] Independently review source, safety preservation and measurement claims; address required findings with checks.
-- [ ] Record the CI-failure inventory, validation results, profile comparison and limits; update Backlog notes and ACs honestly.
-- [ ] Push the new branch, open and attach its PR, and verify remote head plus autoMergeRequest=null.
+- [x] Run scoped lint/format checks, generated-artifact checks where affected, and diffcheck.
+- [x] Independently review source, safety preservation and measurement claims; address required findings with checks.
+- [x] Record the CI-failure inventory, validation results, profile comparison and limits; update Backlog notes and ACs honestly.
+- [x] Push the new branch, open and attach its PR, and verify remote head plus autoMergeRequest=null.
 - [ ] Address newly exposed failures in the new PR's relevant CI, retaining targeted local verification and reporting any external blocks.
 
 ## Investigation ledger
@@ -133,3 +133,13 @@ Before product edit, replace the rejected zero-call test with the amortized work
 
 - Native bucket experiment: RED15000 original callbacks; GREEN1500 maximum across ten distinct shapes. Seven connected checks pass, including cache bounds, node collection, reparenting/id/class/source-reparse and live pseudo/component semantics. Full-screen upstream parity passes85.65s. Independent source review finds no new Critical/Important issues and confirms the derived bucket storage stays bounded by parsed associations under the existing cache lifetime.
 - Isolated synthetic miss benchmark: native bucket median round mean0.318ms versus original0.816ms (900 misses across9 rounds per process). This is not an app or terminal latency claim. The rejected identity dictionary remains recorded separately at1.157ms.
+
+## Final evidence and deviations
+
+The native comparison attempted A2/C1/C2/A3 with identical sampled headless harnesses and exact source inventories; only the intended CSS module differs. A2 and both candidate cohorts complete six returns. A3 completes one and times out during its second attachment, so comparison.json deliberately reports qualified:false, retains partial results, omits arm aggregates and exits1. This is failed comparison qualification, not a passing latency control; no overall Console speedup is established. The verified improvement is bounded candidate work and the synthetic candidate-LRU misses with warm parsed buckets, excluding initial construction. Draft results qualify the posted key through attachment, not cross-navigation draft continuity; focus is explicitly set by the harness.
+
+Final native/CSS contracts:10passed in15.37s. Native-bucket full-screen upstream parity:1passed in85.65s. Existing cache/source/class/pseudo controls, original three tab controls, context controls,179 readiness/P0 checks and unchanged startup/module-size ratchets pass in the recorded targeted runs. No full suite was run. Pinned Ruff0.16.6 F gate passes; ratchet1090<=1105. Fourteen modified Python files add no lint findings; nine selected files pass pinned formatting. The ambient Ruff0.4.5 results were version mismatches, resolved by using the already-pinned tool in an isolated folder. Exact executed harness bytes were saved before cosmetic formatting; AST equality is verified. Twelve safety-module hashes are unchanged; the two intentional changes strengthen native Close.
+
+Independent source review and the subsequent parsed-bucket review found no Critical/Important issues. Evidence review required complete file-set/head/flag/runtime validation and precise scope claims; those are implemented. All35 exact receipt-owned native roots were removed and independently checked absent; no owned process remained and the real profile was excluded. The isolated lint tool was removed; shared dependencies were unchanged.
+
+PR3572 is open with auto-merge off. Required remote CI is queued, so Backlog remains In Progress despite recorded local acceptance evidence. Checking executed remote results is the remaining publication follow-up; do not equate local checks with a remote green result.

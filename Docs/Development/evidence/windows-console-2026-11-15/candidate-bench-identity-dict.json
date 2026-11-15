@@ -1,0 +1,21 @@
+{
+  "head": "80710424ceebe3c545160fa368dfe344f9c83f78",
+  "source_sha256": "47ad80c2093962008306c7eba817d155587cc63680a36b7acd9e260a44fd4477",
+  "harness_sha256": "6b7e39f1f0b605cdcdc387bcc66b45b1eb7ed2f438f7a17b69c11d2d6e4f35f0",
+  "rules": 500,
+  "indexes_per_rule": 3,
+  "misses_per_round": 100,
+  "round_mean_ms": [
+    1.002874,
+    1.153329,
+    1.323667,
+    1.168367,
+    1.356983,
+    1.05889,
+    1.016796,
+    1.172481,
+    1.157077
+  ],
+  "median_round_mean_ms": 1.157077,
+  "scope": "Synthetic cold candidate union and existing filter/sort; not application latency."
+}

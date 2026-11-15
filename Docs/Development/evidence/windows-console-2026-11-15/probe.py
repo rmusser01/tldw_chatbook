@@ -266,9 +266,9 @@ with user_fixture_default_owner():
             }
         )
         report.pop("pending_resume", None)
-        assert (
-            composer.draft_text() == before + "z"
-        ), "posted draft key was not retained"
+        assert composer.draft_text() == before + "z", (
+            "posted draft key was not retained"
+        )
         assert app.screen._console_attach_reconciled, "attachment incomplete"
 
     async def main():

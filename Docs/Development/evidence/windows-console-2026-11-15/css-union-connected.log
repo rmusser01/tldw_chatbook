@@ -1,0 +1,449 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+..F...                                                                   [100%]
+================================== FAILURES ===================================
+___________ test_fastpath_computes_identical_styles_for_every_node ____________
+
+self = <Coroutine test_fastpath_computes_identical_styles_for_every_node>
+
+    def runtest(self) -> None:
+        self.obj = wrap_in_sync(
+            # https://github.com/pytest-dev/pytest-asyncio/issues/596
+            self.obj,  # type: ignore[has-type]
+        )
+>       super().runtest()
+
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:508: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:773: in inner
+    _loop.run_until_complete(task)
+C:\Python312\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x000001D3C30B86B0>, 'request': <FixtureRequest for <Coroutine test_fastpath_computes_identical_styles_for_every_node>>}
+request = <FixtureRequest for <Coroutine test_fastpath_computes_identical_styles_for_every_node>>
+work = WindowsPath('C:/Users/GDesktop-1/.tmp-pr3166-final-0415db5092c0/temp/pytest-of-GDesktop-1/pytest-0/test_fastpath_computes_identic0/private-profile-process')
+profile = WindowsPath('C:/Users/GDesktop-1/.tmp-pr3166-final-0415db5092c0/temp/pytest-of-GDesktop-1/pytest-0/test_fastpath_computes_identic0/private-profile-process/profile')
+environment = {'ALLUSERSPROFILE': 'C:\\ProgramData', 'APPDATA': 'C:\\Users\\GDesktop-1\\AppData\\Roaming', 'ASL.LOG': 'Destination=file', 'BROWSER_USE_ACCESS_EXECUTOR_ID': '["e3d3b149-666e-40a4-989c-5f4a4a8fbcc6","native-browser-plugin"]', ...}
+name = 'PYTEST_ADDOPTS', marker = None, timeout = 300.0, armed = 0.0
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        global _awaiting
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            # pytest-timeout's signal method, where there is one (not Windows).
+            own_timeout = (
+                signal.getsignal(signal.SIGALRM) if hasattr(signal, "SIGALRM") else None
+            )
+            if _STACKS_PATH and callable(own_timeout):
+    
+                def note_then_time_out(signum, frame):
+                    __tracebackhide__ = True
+                    with contextlib.suppress(Exception):
+                        _note_stacks(_STACKS_PATH, "when its own timeout fired")
+                    own_timeout(signum, frame)
+    
+                # pytest-timeout resets SIGALRM itself when the test ends.
+                signal.signal(signal.SIGALRM, note_then_time_out)
+            result = function(*args, **kwargs)
+            if not inspect.isawaitable(result):
+                return result
+            _awaiting = result
+            try:
+                return await result
+            finally:
+                _awaiting = None
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER",
+            "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT",
+            "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        # The signal method arms ITIMER_REAL for this test: what is left of it
+        # is the real budget, setup already having spent some.
+        armed = (
+            signal.getitimer(signal.ITIMER_REAL)[0]
+            if hasattr(signal, "getitimer")
+            else 0.0
+        )
+        child_timeout, wait = _child_deadlines(
+            min(armed or timeout, timeout),
+            # A test with no timeout of its own leaves any armed timer alone.
+            _extend_own_alarm(armed) if timeout > 0 else 0.0,
+        )
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        stacks = work / "stacks.txt"
+        environment[_CHILD_STACKS] = str(stacks)
+        coverage_plugin = request.config.pluginmanager.getplugin("_cov")
+        coverage_controller = getattr(coverage_plugin, "cov_controller", None)
+        coverage_args = []
+        coverage_file = work / ".coverage"
+        if coverage_controller is not None:
+            # Keep each child's data private; the parent retains its report gate.
+            environment["COVERAGE_FILE"] = str(coverage_file)
+            for name in tuple(environment):
+                if name.startswith("COV_CORE_"):
+                    environment.pop(name)
+            coverage_args = [
+                "-p",
+                "pytest_cov.plugin",
+                "--cov-report=",
+                "--cov-fail-under=0",
+            ]
+            sources = coverage_controller.cov_source
+            coverage_args += (
+                [f"--cov={source}" for source in sources] if sources else ["--cov"]
+            )
+            config_file = coverage_controller.cov.config.config_file
+            if config_file:
+                coverage_args += [f"--cov-config={config_file}"]
+            if coverage_controller.cov.config.branch:
+                coverage_args += ["--cov-branch"]
+            if coverage_plugin.options.cov_context:
+                coverage_args += [
+                    f"--cov-context={coverage_plugin.options.cov_context}"
+                ]
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable,
+                "-m",
+                "pytest",
+                request.node.nodeid,
+                "-p",
+                "pytest_asyncio.plugin",
+                "-p",
+                "pytest_timeout",
+                "-q",
+                f"--timeout={child_timeout}",
+                f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                *coverage_args,
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                exited = await _exited_within(process, wait)
+                asked = not exited and hasattr(signal, "SIGUSR1")
+                if asked:
+                    # Past its own limit and still running (a teardown or an
+                    # exit that cannot finish): ask where before ending it.
+                    # Half the reserve for its dump leaves half for the kill
+                    # and this report, before the parent's own limit.
+                    with contextlib.suppress(ProcessLookupError):
+                        process.send_signal(signal.SIGUSR1)
+                    await _exited_within(process, _PARENT_RESERVE_SECONDS / 2)
+            finally:
+                killed = process.returncode is None
+                if killed:
+                    process.kill()
+                    await process.wait()
+        if coverage_controller is not None and coverage_file.is_file():
+            # pytest-cov combines parallel files for serial and xdist reports.
+            parent_file = Path(
+                coverage_controller.topdir, coverage_controller.cov.config.data_file
+            ).resolve()
+            with NamedTemporaryFile(
+                prefix=parent_file.name + ".", dir=parent_file.parent, delete=False
+            ) as output:
+                output.write(coverage_file.read_bytes())
+        if process.returncode:
+            if exited:
+                ending = ""
+            elif killed:
+                ending = f"(killed: still running after {wait:.0f}s"
+                ending += "; asked for its stacks first)\n" if asked else ")\n"
+            elif (
+                asked
+                and process.returncode == -signal.SIGUSR1
+                and _child_finished(report)
+            ):
+                # Its session had ended and interpreter shutdown had already
+                # put the handler back to the default (TASK-35027).
+                ending = (
+                    f"(still running after {wait:.0f}s; its test had ended "
+                    "and it was exiting when the ask for its stacks ended it)\n"
+                )
+            elif asked and process.returncode == -signal.SIGUSR1:
+                # No handler yet (still starting up, or the module imported
+                # off the main thread): the signal's default action ended it.
+                ending = (
+                    f"(still running after {wait:.0f}s; ended by the ask for "
+                    "its stacks before it could answer)\n"
+                )
+            elif asked:
+                ending = (
+                    f"(still running after {wait:.0f}s; asked for its stacks, "
+                    "it then exited by itself)\n"
+                )
+            else:
+                # Exited by itself just as the wait ended, before any ask
+                # (and always so where there is no SIGUSR1, e.g. Windows).
+                ending = f"(exited by itself just after the {wait:.0f}s wait ended)\n"
+            dumps = (
+                stacks.read_text(encoding="utf-8", errors="replace")
+                if stacks.is_file()
+                else ""
+            )
+>           pytest.fail(
+                f"{log}\n"
+                + ending
+                + f"{_child_failure_report(report)}\n"
+                + (f"--- child stacks at its deadline ---\n{dumps}" if dumps else "")
+                + "--- child log tail ---\n"
+                # A kill can land between two writes of one character.
+                + log.read_text(encoding="utf-8", errors="replace")[-16000:]
+            )
+E           Failed: C:\Users\GDesktop-1\.tmp-pr3166-final-0415db5092c0\temp\pytest-of-GDesktop-1\pytest-0\test_fastpath_computes_identic0\private-profile-process\pytest.log
+E           --- child failure: textual.pilot.WaitForScreenTimeout: Timed out while waiting for widgets to process pending messages.
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000020C0949AA50>
+E           request = <FixtureRequest for <Coroutine test_fastpath_computes_identical_styles_for_every_node>>
+E           
+E               @pytest.mark.ui
+E               @pytest.mark.asyncio
+E               @private_profile_test
+E               async def test_fastpath_computes_identical_styles_for_every_node(
+E                   monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+E               ) -> None:
+E                   """Every node on every toured screen resolves to the same rules both ways.
+E               
+E                   This is the fidelity check. A specificity or source-order regression in the
+E                   fast path shows up here as a differing rule map, naming the node.
+E                   """
+E                   _scratch_env(monkeypatch)
+E                   from tldw_chatbook.app import TldwCli
+E                   from tldw_chatbook.Utils.textual_css_fastpath import (
+E                       install_stylesheet_fastpath,
+E                       is_installed,
+E                   )
+E               
+E                   install_stylesheet_fastpath()
+E                   assert is_installed(), "fast path failed to install"
+E               
+E                   patched_apply = Stylesheet.apply
+E                   upstream_apply = getattr(patched_apply, "__wrapped__", None)
+E                   assert upstream_apply is not None, "fast path did not record the upstream apply"
+E               
+E                   app = TldwCli()
+E                   async with app.run_test(size=(170, 48)) as pilot:
+E                       for _ in range(20):
+E                           await asyncio.sleep(0.05)
+E           >               await pilot.pause()
+E           
+E           Tests\Performance\test_textual_css_fastpath.py:160: 
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E           ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\pilot.py:542: in pause
+E               await self._wait_for_screen()
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E           
+E           self = <Pilot app=TldwCli(title='tldw chatbook', classes={'-dark-mode', '-wide-viewport'}, pseudo_classes={'nocolor', 'focus', 'dark'})>
+E           timeout = 30.0
+E           
+E               async def _wait_for_screen(self, timeout: float = 30.0) -> bool:
+E                   """Wait for the current screen and its children to have processed all pending events.
+E               
+E                   Args:
+E                       timeout: A timeout in seconds to wait.
+E               
+E                   Returns:
+E                       `True` if all events were processed. `False` if an exception occurred,
+E                       meaning that not all events could be processed.
+E               
+E                   Raises:
+E                       WaitForScreenTimeout: If the screen and its children didn't finish processing within the timeout.
+E                   """
+E                   try:
+E                       screen = self.app.screen
+E                   except Exception:
+E                       return False
+E                   children = [self.app, *screen.walk_children(with_self=True)]
+E                   count = 0
+E                   count_zero_event = asyncio.Event()
+E               
+E                   def decrement_counter() -> None:
+E                       """Decrement internal counter, and set an event if it reaches zero."""
+E                       nonlocal count
+E                       count -= 1
+E                       if count == 0:
+E                           # When count is zero, all messages queued at the start of the method have been processed
+E                           count_zero_event.set()
+E               
+E                   # Increase the count for every successful call_later
+E                   for child in children:
+E                       if child.call_later(decrement_counter):
+E                           count += 1
+E               
+E                   if count:
+E                       # Wait for the count to return to zero, or a timeout, or an exception
+E                       wait_for = [
+E                           asyncio.create_task(count_zero_event.wait()),
+E                           asyncio.create_task(self.app._exception_event.wait()),
+E                       ]
+E                       _, pending = await asyncio.wait(
+E                           wait_for,
+E                           timeout=timeout,
+E                           return_when=asyncio.FIRST_COMPLETED,
+E                       )
+E               
+E                       for task in pending:
+E                           task.cancel()
+E               
+E                       timed_out = len(wait_for) == len(pending)
+E                       if timed_out:
+E           >               raise WaitForScreenTimeout(
+E                               "Timed out while waiting for widgets to process pending messages."
+E                           )
+E           E               textual.pilot.WaitForScreenTimeout: Timed out while waiting for widgets to process pending messages.
+E           
+E           ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\pilot.py:524: WaitForScreenTimeout
+E           --- child log tail ---
+E           llel init task 'notes_service' completed in 13.386s
+E           2026-11-15 12:42:47.096 | INFO     | tldw_chatbook.DB.base_db:__init__:1140 - LibraryCollectionsDB initialized with path: C:\Users\GDesktop-1\.tmp-pr3166-final-0415db5092c0\temp\pytest-of-GDesktop-1\pytest-0\test_fastpath_computes_identic0\private-profile-process\profile\home\.local\share\tldw_cli\default_user\tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E           2026-11-15 12:42:48.466 | INFO     | tldw_chatbook.DB.base_db:__init__:1140 - WorkspaceDB initialized with path: C:\Users\GDesktop-1\.tmp-pr3166-final-0415db5092c0\temp\pytest-of-GDesktop-1\pytest-0\test_fastpath_computes_identic0\private-profile-process\profile\home\.local\share\tldw_cli\default_user\tldw_chatbook_workspaces.db [Client: tldw_cli_local_instance_v1]
+E           2026-11-15 12:42:51.283 | INFO     | tldw_chatbook.DB.base_db:__init__:1140 - SubscriptionsDB initialized with path: C:\Users\GDesktop-1\.tmp-pr3166-final-0415db5092c0\temp\pytest-of-GDesktop-1\pytest-0\test_fastpath_computes_identic0\private-profile-process\profile\home\.local\share\tldw_cli\default_user\tldw_chatbook_subscriptions.db [Client: tldw_cli_local_instance_v1]
+E           2026-11-15 12:42:51.903 | INFO     | tldw_chatbook.DB.base_db:__init__:1140 - ClientNotificationsDB initialized with path: C:\Users\GDesktop-1\.tmp-pr3166-final-0415db5092c0\temp\pytest-of-GDesktop-1\pytest-0\test_fastpath_computes_identic0\private-profile-process\profile\home\.local\share\tldw_cli\default_user\tldw_chatbook_notifications.db [Client: tldw_cli_local_instance_v1]
+E           2026-11-15 12:42:52.113 | INFO     | tldw_chatbook.DB.base_db:__init__:1140 - EventStateRepository initialized with path: C:\Users\GDesktop-1\.tmp-pr3166-final-0415db5092c0\temp\pytest-of-GDesktop-1\pytest-0\test_fastpath_computes_identic0\private-profile-process\profile\home\.local\share\tldw_cli\default_user\tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-11-15 12:42:52.113 | INFO     | tldw_chatbook.DB.base_db:__init__:1140 - SyncStateRepository initialized with path: C:\Users\GDesktop-1\.tmp-pr3166-final-0415db5092c0\temp\pytest-of-GDesktop-1\pytest-0\test_fastpath_computes_identic0\private-profile-process\profile\home\.local\share\tldw_cli\default_user\tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-11-15 12:42:52.944 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:73 - Scheduling schema migrated to version 2 (missed_count column)
+E           2026-11-15 12:42:53.173 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:58 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E           2026-11-15 12:42:53.357 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E           2026-11-15 12:42:53.544 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:63 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E           2026-11-15 12:42:53.741 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:68 - Scheduling schema migrated to version 6 (task_incidents)
+E           2026-11-15 12:42:53.912 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E           2026-11-15 12:42:53.912 | INFO     | tldw_chatbook.DB.base_db:__init__:1140 - ScheduledTasksDB initialized with path: C:\Users\GDesktop-1\.tmp-pr3166-final-0415db5092c0\temp\pytest-of-GDesktop-1\pytest-0\test_fastpath_computes_identic0\private-profile-process\profile\home\.local\share\tldw_cli\default_user\tldw_chatbook_scheduled_tasks.db [Client: default]
+E           2026-11-15 12:43:02.742 | DEBUG    | tldw_chatbook.app:__init__:1489 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E           2026-11-15 12:43:02.742 | DEBUG    | tldw_chatbook.app:__init__:1492 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E           2026-11-15 12:43:03.186 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3131 - Opened/Reopened SQLite connection db_sha256=dade5a6f2e01 thread=61356
+E           2026-11-15 12:43:03.672 | DEBUG    | tldw_chatbook.Evals.config_loader:_load_config:115 - Loaded evaluation configuration from C:\Users\GDesktop-1\.tmp-pr3166-final-0415db5092c0\temp\pytest-of-GDesktop-1\pytest-0\test_fastpath_computes_identic0\private-profile-process\profile\config\eval_overrides.yaml
+E           2026-11-15 12:43:04.200 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:619 - Created EvalsDB schema version 7
+E           2026-11-15 12:43:04.201 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:247 - EvalsDB initialized with path: C:\Users\GDesktop-1\.tmp-pr3166-final-0415db5092c0\temp\pytest-of-GDesktop-1\pytest-0\test_fastpath_computes_identic0\private-profile-process\profile\home\.local\share\tldw_cli\default_user\evals.db
+E           2026-11-15 12:43:04.201 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E           2026-11-15 12:43:07.198 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:125 - Registered worker handler: MiscWorkerHandler
+E           2026-11-15 12:43:07.198 | INFO     | tldw_chatbook.app:_init_worker_handlers:2236 - Worker handler registry initialized with all handlers
+E           2026-11-15 12:43:07.198 | INFO     | tldw_chatbook.app:__init__:1676 - === STARTUP TIMING SUMMARY ===
+E           2026-11-15 12:43:07.199 | INFO     | tldw_chatbook.app:__init__:1677 - Total initialization time: 38.240 seconds
+E           2026-11-15 12:43:07.199 | INFO     | tldw_chatbook.app:__init__:1683 -   basic_init: 4.304s (11.3%)
+E           2026-11-15 12:43:07.199 | INFO     | tldw_chatbook.app:__init__:1683 -   attribute_init: 0.000s (0.0%)
+E           2026-11-15 12:43:07.199 | INFO     | tldw_chatbook.app:__init__:1683 -   parallel_init: 13.387s (35.0%)
+E           2026-11-15 12:43:07.199 | INFO     | tldw_chatbook.app:__init__:1696 -     - notes_service: 13.386s (100.0% of parallel_init)
+E           2026-11-15 12:43:07.199 | INFO     | tldw_chatbook.app:__init__:1696 -     - media_db: 3.268s (24.4% of parallel_init)
+E           2026-11-15 12:43:07.199 | INFO     | tldw_chatbook.app:__init__:1696 -     - prompts_service: 2.134s (15.9% of parallel_init)
+E           2026-11-15 12:43:07.199 | INFO     | tldw_chatbook.app:__init__:1696 -     - providers_models: 0.003s (0.0% of parallel_init)
+E           2026-11-15 12:43:07.199 | INFO     | tldw_chatbook.app:__init__:1700 - ==============================
+E           2026-11-15 12:43:08.779 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3131 - Opened/Reopened SQLite connection db_sha256=dade5a6f2e01 thread=62988
+E           2026-11-15 12:43:08.780 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:22104 - Started outermost transaction on thread 62988.
+E           2026-11-15 12:43:08.780 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:22169 - Transaction (outermost) committed successfully on thread 62988.
+E           2026-11-15 12:43:08.780 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_close_connection_handle:3510 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=dade5a6f2e01 thread=62988.
+E           2026-11-15 12:43:08.781 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_close_connection_handle:3516 - WAL checkpoint TRUNCATE executed db_sha256=dade5a6f2e01.
+E           2026-11-15 12:43:08.783 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_close_connection_handle:3543 - Closed SQLite connection db_sha256=dade5a6f2e01 thread=62988.
+E           2026-11-15 12:43:08.857 | DEBUG    | tldw_chatbook.app:on_mount:3358 - Notes-sync start gate: no configuration evidence; runtime not constructed this boot.
+E           2026-11-15 12:44:20 [WARNING ] tldw_chatbook.app_service_wiring:665 - Independent Buddy installation/migration deferred; existing choices retained
+E           
+E           ------------------------------ Captured log call ------------------------------
+E           INFO     root:Client_Media_DB_v2.py:1110 Initializing Database object for path: C:\Users\GDesktop-1\.tmp-pr3166-final-0415db5092c0\temp\pytest-of-GDesktop-1\pytest-0\test_fastpath_computes_identic0\private-profile-process\profile\home\.local\share\tldw_cli\default_user\tldw_chatbook_media_v2.db [Client ID: tldw_cli_local_instance_v1]
+E           INFO     root:Client_Media_DB_v2.py:2281 Checking DB schema. Current version: 0. Code supports: 9
+E           INFO     root:Client_Media_DB_v2.py:2324 Applying migration: Initial schema creation (v0 → v1)
+E           INFO     root:Client_Media_DB_v2.py:1583 Applying initial schema (Version 1) to DB: C:\Users\GDesktop-1\.tmp-pr3166-final-0415db5092c0\temp\pytest-of-GDesktop-1\pytest-0\test_fastpath_computes_identic0\private-profile-process\profile\home\.local\share\tldw_cli\default_user\tldw_chatbook_media_v2.db...
+E           INFO     root:Client_Media_DB_v2.py:1668 [Schema V1] Core Schema V1 (incl. version update) applied and committed successfully for DB: C:\Users\GDesktop-1\.tmp-pr3166-final-0415db5092c0\temp\pytest-of-GDesktop-1\pytest-0\test_fastpath_computes_identic0\private-profile-process\profile\home\.local\share\tldw_cli\default_user\tldw_chatbook_media_v2.db.
+E           INFO     root:Client_Media_DB_v2.py:1677 [Schema V1] FTS Tables created successfully.
+E           INFO     root:Client_Media_DB_v2.py:2338 Successfully migrated to version 1
+E           INFO     root:Client_Media_DB_v2.py:2324 Applying migration: Add chunking configuration support (v1 → v2)
+E           INFO     root:Client_Media_DB_v2.py:1833 Applying migration from version 1 to 2 (chunking support) to DB: C:\Users\GDesktop-1\.tmp-pr3166-final-0415db5092c0\temp\pytest-of-GDesktop-1\pytest-0\test_fastpath_computes_identic0\private-profile-process\profile\home\.local\share\tldw_cli\default_user\tldw_chatbook_media_v2.db...
+E           INFO     root:Client_Media_DB_v2.py:1897 [Migration v1->v2] Chunking configuration migration applied successfully.
+E           INFO     root:Client_Media_DB_v2.py:2338 Successfully migrated to version 2
+E           INFO     root:Client_Media_DB_v2.py:2324 Applying migration: Add local reading progress store (v2 → v3)
+E           INFO     root:Client_Media_DB_v2.py:1915 Applying migration from version 2 to 3 (reading progress store) to DB: C:\Users\GDesktop-1\.tmp-pr3166-final-0415db5092c0\temp\pytest-of-GDesktop-1\pytest-0\test_fastpath_computes_identic0\private-profile-process\profile\home\.local\share\tldw_cli\default_user\tldw_chatbook_media_v2.db...
+E           INFO     root:Client_Media_DB_v2.py:1927 [Migration v2->v3] ReadingProgress migration applied successfully.
+E           INFO     root:Client_Media_DB_v2.py:2338 Successfully migrated to version 3
+E           INFO     root:Client_Media_DB_v2.py:2324 Applying migration: Add local read-it-later store (v3 → v4)
+E           INFO     root:Client_Media_DB_v2.py:1944 Applying migration from version 3 to 4 (read-it-later store) to DB: C:\Users\GDesktop-1\.tmp-pr3166-final-0415db5092c0\temp\pytest-of-GDesktop-1\pytest-0\test_fastpath_computes_identic0\private-profile-process\profile\home\.local\share\tldw_cli\default_user\tldw_chatbook_media_v2.db...
+E           INFO     root:Client_Media_DB_v2.py:1958 [Migration v3->v4] MediaReadItLaterState migration applied successfully.
+E           INFO     root:Client_Media_DB_v2.py:2338 Successfully migrated to version 4
+E           INFO     root:Client_Media_DB_v2.py:2324 Applying migration: Add persisted STT provenance (v4 → v5)
+E           INFO     root:Client_Media_DB_v2.py:2338 Successfully migrated to version 5
+E           INFO     root:Client_Media_DB_v2.py:2324 Applying migration: Add chunk engine version stamp to UnvectorizedMediaChunks (v5 → v6)
+E           INFO     root:Client_Media_DB_v2.py:2338 Successfully migrated to version 6
+E           INFO     root:Client_Media_DB_v2.py:2324 Applying migration: Rebuild ChunkingTemplates with uuid/tags/is_builtin/version/deleted, convert rows, seed six server built-ins (v6 → v7)
+E           INFO     root:Client_Media_DB_v2.py:2081 [Migration v6->v7] Dropping old seed 'academic_paper'; the six built-ins re-seed it
+E           INFO     root:Client_Media_DB_v2.py:2081 [Migration v6->v7] Dropping old seed 'code_documentation'; the six built-ins re-seed it
+E           INFO     root:Client_Media_DB_v2.py:2115 [Migration v6->v7] ChunkingTemplates rebuild applied successfully.
+E           INFO     root:Client_Media_DB_v2.py:2338 Successfully migrated to version 7
+E           INFO     root:Client_Media_DB_v2.py:2324 Applying migration: Add the engine-version census covering index to UnvectorizedMediaChunks (v7 → v8)
+E           INFO     root:Client_Media_DB_v2.py:2338 Successfully migrated to version 8
+E           INFO     root:Client_Media_DB_v2.py:2324 Applying migration: Add four active-media partial indexes so the stats-free planner stops sorting the whole library per list render (v8 → v9)
+E           INFO     root:Client_Media_DB_v2.py:2338 Successfully migrated to version 9
+E           INFO     root:Client_Media_DB_v2.py:2340 Database schema fully migrated to version 9
+E           INFO     tldw_chatbook.Notes.Notes_Library:Notes_Library.py:99 NotesInteropService: Verified base directory: C:\Users\GDesktop-1\.tmp-pr3166-final-0415db5092c0\temp\pytest-of-GDesktop-1\pytest-0\test_fastpath_computes_identic0\private-profile-process\profile\home\.local\share\tldw_cli\default_user
+E           INFO     tldw_chatbook.Notes.Notes_Library:Notes_Library.py:113 NotesInteropService initialized with unified DB template: C:\Users\GDesktop-1\.tmp-pr3166-final-0415db5092c0\temp\pytest-of-GDesktop-1\pytest-0\test_fastpath_computes_identic0\private-profile-process\profile\home\.local\share\tldw_cli\default_user\tldw_chatbook_ChaChaNotes.db
+E           INFO     root:app.py:1444 App __init__: Determined initial tab value: chat
+E           INFO     root:app.py:1543 Assigned prompts_interop.get_db_instance() to self.prompts_db
+E           INFO     root:app.py:2344 Splash screen enabled: False
+E           INFO     tldw_chatbook.diagnostics.app:persistent_diagnostics.py:275 event=app_started component=app
+E           INFO     root:Logging_Config.py:846 --- _setup_logging START (from Logging_Config.py) ---
+E           INFO     root:Logging_Config.py:858 Loguru: All pre-existing sinks removed.
+E           INFO     root:Logging_Config.py:887 Loguru: Configured to forward its messages to standard Python logging system.
+E           ---------------------------- Captured log teardown ----------------------------
+E           INFO     tldw_chatbook.Prompt_Management.Prompts_Interop:Logging_Config.py:665 Shutting down Prompts Interop Library for DB: C:\Users\GDesktop-1\.tmp-pr3166-final-0415db5092c0\temp\pytest-of-GDesktop-1\pytest-0\test_fastpath_computes_identic0\private-profile-process\profile\home\.local\share\tldw_cli\default_user\tldw_chatbook_prompts.db.
+E           INFO     tldw_chatbook.Prompt_Management.Prompts_Interop:Logging_Config.py:665 Prompts Interop Library shut down.
+E           ============================== warnings summary ===============================
+E           Tests/Performance/test_textual_css_fastpath.py::test_fastpath_computes_identical_styles_for_every_node
+E             C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+E               warn(
+E           
+E           Tests/Performance/test_textual_css_fastpath.py::test_fastpath_computes_identical_styles_for_every_node
+E             C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydub\utils.py:14: DeprecationWarning: 'audioop' is deprecated and slated for removal in Python 3.13
+E               import audioop
+E           
+E           -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+E           - generated xml file: C:\Users\GDesktop-1\.tmp-pr3166-final-0415db5092c0\temp\pytest-of-GDesktop-1\pytest-0\test_fastpath_computes_identic0\private-profile-process\pytest.xml -
+E           ============================ slowest 25 durations =============================
+E           118.71s call     Tests/Performance/test_textual_css_fastpath.py::test_fastpath_computes_identical_styles_for_every_node
+E           2.40s setup    Tests/Performance/test_textual_css_fastpath.py::test_fastpath_computes_identical_styles_for_every_node
+E           
+E           (1 durations < 1s hidden.  Use -vv to show these durations.)
+E           =========================== short test summary info ===========================
+E           FAILED Tests/Performance/test_textual_css_fastpath.py::test_fastpath_computes_identical_styles_for_every_node
+E           1 failed, 2 warnings in 123.20s (0:02:03)
+
+Tests\private_profile.py:405: Failed
+============================== warnings summary ===============================
+Tests/Performance/test_textual_css_fastpath.py::test_upstream_apply_still_has_the_shape_the_fastpath_assumes
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED Tests/Performance/test_textual_css_fastpath.py::test_fastpath_computes_identical_styles_for_every_node
+1 failed, 5 passed, 1 warning in 368.23s (0:06:08)

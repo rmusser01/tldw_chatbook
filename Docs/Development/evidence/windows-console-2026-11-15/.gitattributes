@@ -2,3 +2,8 @@
 * -text
 *.py text eol=lf
 *.md text eol=lf
+*.json linguist-generated=true
+*.log linguist-generated=true
+*.patch linguist-generated=true
+*.pstats linguist-generated=true
+*.txt linguist-generated=true

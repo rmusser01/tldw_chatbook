@@ -25620,3 +25620,9 @@ An expiry-only assertion must establish the coordinator-free render precondition
 
 **What to do.** When you add a `credential_*` issue that only discloses something left out by design, list it in `credential_policies.MANUAL_CREDENTIAL_ISSUES`, and prove the archive with a real Replace restore, not only with capture and preview tests.
 
+## Qualify tool versions and bytes before a Windows performance comparison (TASK-35679.1, 2026-11-15)
+
+**Incident.** The shared environment had Ruff 0.4.5, while CI pins 0.16.6. The old binary reported F811/ASYNC101 failures; the pinned binary passed the actual F gate and ratchet without product changes. A separate Console comparison then rejected baseline source maps because a checkout changed one module from CRLF to LF. Raw Windows evidence would also have lost its recorded digests through Git newline conversion. Both failed qualifications are retained under `Docs/Development/evidence/windows-console-2026-11-15/`.
+
+**What to do.** Check the workflow's tool pin before interpreting lint failures. Freeze exact executed source/harness bytes and raw artifact hashes before the first cohort; verify complete file inventories across arms. Keep failed controls visible rather than normalizing them into a claimed speedup. In this incident, warm-index candidate misses improved, but the final native baseline timed out, so the whole-journey comparison remains unqualified.
+

@@ -1,0 +1,107 @@
+{
+  "ruff": "ruff 0.16.6",
+  "base": "cc6006fcf59328353004206bba8724c399216749",
+  "files": {
+    "Tests/CI/test_console_p0_regression_gate.py": {
+      "introduced": 0,
+      "existing": 0,
+      "codes": []
+    },
+    "Tests/Chat/test_console_context_close_lifetime.py": {
+      "introduced": 0,
+      "existing": 0,
+      "codes": []
+    },
+    "Tests/Chat/test_console_context_presentation_reads.py": {
+      "introduced": 0,
+      "existing": 0,
+      "codes": []
+    },
+    "Tests/Packaging/test_console_interaction_import_closure.py": {
+      "introduced": 0,
+      "existing": 0,
+      "codes": []
+    },
+    "Tests/Performance/test_textual_css_fastpath.py": {
+      "introduced": 0,
+      "existing": 0,
+      "codes": []
+    },
+    "Tests/UI/modal_wide_tier_registry.py": {
+      "introduced": 0,
+      "existing": 0,
+      "codes": []
+    },
+    "Tests/UI/test_console_send_ready_attachment.py": {
+      "introduced": 0,
+      "existing": 2,
+      "codes": [
+        "ASYNC109"
+      ]
+    },
+    "Tests/UI/test_console_tab_publication_read_barrier.py": {
+      "introduced": 0,
+      "existing": 1,
+      "codes": [
+        "ASYNC109"
+      ]
+    },
+    "tldw_chatbook/Chat/console_context_repository.py": {
+      "introduced": 0,
+      "existing": 0,
+      "codes": []
+    },
+    "tldw_chatbook/Chat/console_preparation_reads.py": {
+      "introduced": 0,
+      "existing": 0,
+      "codes": []
+    },
+    "tldw_chatbook/Chat/console_runtime.py": {
+      "introduced": 0,
+      "existing": 3,
+      "codes": [
+        "ASYNC110",
+        "B010"
+      ]
+    },
+    "tldw_chatbook/Provider_Contract/provider_endpoint_contract.py": {
+      "introduced": 0,
+      "existing": 0,
+      "codes": []
+    },
+    "tldw_chatbook/Provider_Contract/provider_setup_facts.py": {
+      "introduced": 0,
+      "existing": 0,
+      "codes": []
+    },
+    "tldw_chatbook/Utils/textual_css_fastpath.py": {
+      "introduced": 0,
+      "existing": 2,
+      "codes": [
+        "B010",
+        "B905"
+      ]
+    }
+  },
+  "executed_harness": {
+    "probe.py": {
+      "exact_snapshot_sha256": "3ec101cce032a8f0c6be53625f114968bae09b018ddf85b5aafc78b679a170b1",
+      "current_ast_equal": true
+    },
+    "run_probe.py": {
+      "exact_snapshot_sha256": "660be6b80469360f5031d9fec15ad2c28e329bc2d7f245148b256a63b7677528",
+      "current_ast_equal": true
+    },
+    "return_observer.py": {
+      "exact_snapshot_sha256": "18371a301bc410c7f4ffc659effbe60eb880e005c1d61eaa4db8d97d0434e260",
+      "current_ast_equal": true
+    }
+  },
+  "safety_modules": {
+    "unchanged": 12,
+    "intentional_close_fixes": [
+      "tldw_chatbook/Chat/console_preparation_reads.py",
+      "tldw_chatbook/Chat/console_context_repository.py"
+    ]
+  }
+}

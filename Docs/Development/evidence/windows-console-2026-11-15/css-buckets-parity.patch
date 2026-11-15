@@ -1,0 +1,123 @@
+diff --git a/Tests/Performance/test_textual_css_fastpath.py b/Tests/Performance/test_textual_css_fastpath.py
+index 4af8787f59..986c08fed6 100644
+--- a/Tests/Performance/test_textual_css_fastpath.py
++++ b/Tests/Performance/test_textual_css_fastpath.py
+@@ -93,8 +93,8 @@ def test_upstream_apply_still_has_the_shape_the_fastpath_assumes() -> None:
+     )
+ 
+ 
+-def test_cold_candidate_union_keeps_each_rule_without_python_hash_callbacks() -> None:
+-    """Shared indexes keep distinct rules once without identity-hash overhead."""
++def test_cold_candidate_unions_hash_each_subject_index_only_once() -> None:
++    """Different live shapes reuse bucket hashes while keeping every rule."""
+     from tldw_chatbook.Utils.textual_css_fastpath import _ordered_candidates
+ 
+     sheet = Stylesheet()
+@@ -104,7 +104,19 @@ def test_cold_candidate_union_keeps_each_rule_without_python_hash_callbacks() ->
+     # Build upstream's index before measuring only our cold candidate union.
+     assert sheet.rules_map
+     assert all(hash(rule) == id(rule) for rule in rules)
+-    node = SimpleNamespace(_selector_names={".a", ".b", ".c"}, ancestors=())
++    nodes = [
++        SimpleNamespace(
++            _selector_names={".a", ".b", ".c"},
++            ancestors=(
++                SimpleNamespace(
++                    _css_type_names=frozenset({"Container"}),
++                    id=None,
++                    classes={f"shape-{i}"},
++                ),
++            ),
++        )
++        for i in range(10)
++    ]
+     calls = 0
+ 
+     def entered(_code, _offset):
+@@ -118,14 +130,17 @@ def test_cold_candidate_union_keeps_each_rule_without_python_hash_callbacks() ->
+     try:
+         monitor.register_callback(tool, monitor.events.PY_START, entered)
+         monitor.set_local_events(tool, code, monitor.events.PY_START)
+-        candidates = _ordered_candidates(sheet, node)
++        for node in nodes:
++            candidates = _ordered_candidates(sheet, node)
++            assert [id(rule) for rule in candidates] == [id(rule) for rule in rules]
+     finally:
+         monitor.set_local_events(tool, code, 0)
+         monitor.register_callback(tool, monitor.events.PY_START, None)
+         monitor.free_tool_id(tool)
+ 
+-    assert [id(rule) for rule in candidates] == [id(rule) for rule in rules]
+-    assert calls == 0, f"cold union called Python RuleSet.__hash__ {calls} times"
++    assert calls <= 3 * len(
++        rules
++    ), f"subject buckets repeated Python hashes {calls} times"
+ 
+ 
+ @pytest.mark.ui
+diff --git a/tldw_chatbook/Utils/textual_css_fastpath.py b/tldw_chatbook/Utils/textual_css_fastpath.py
+index f0192d9103..f36da2d54d 100644
+--- a/tldw_chatbook/Utils/textual_css_fastpath.py
++++ b/tldw_chatbook/Utils/textual_css_fastpath.py
+@@ -97,7 +97,7 @@ __all__ = ["install_stylesheet_fastpath", "is_installed"]
+ _MARKER = "_tldw_ordered_candidate_fastpath"
+ 
+ #: Per-stylesheet cache: ``(rules_map, {id(rule): position}, {id(rule):
+-#: requirements}, bounded candidate LRU)``. Keyed on the ``rules_map`` *object*,
++#: requirements}, bounded candidate LRU, prehashed subject buckets)``. Keyed on the ``rules_map`` *object*,
+ #: of which we hold a
+ #: strong reference: Textual sets ``_rules_map = None`` on every path that
+ #: changes ``_rules`` (``parse``, ``reparse``, ``add_source``), so a surviving
+@@ -177,16 +177,20 @@ def _ordered_candidates(stylesheet: Stylesheet, node: Any) -> list | None:
+     rules_map = stylesheet.rules_map
+ 
+     cached = getattr(stylesheet, _CACHE_ATTR, None)
+-    if cached is not None and cached[0] is rules_map:
++    if cached is not None and len(cached) == 5 and cached[0] is rules_map:
+         index = cached[1]
+         requirements = cached[2]
+         candidate_cache = cached[3]
++        rule_buckets = cached[4]
+     else:
+         index = {id(rule): position for position, rule in enumerate(rules)}
+         requirements = {}
+         candidate_cache = OrderedDict()
++        rule_buckets = {}
+         setattr(
+-            stylesheet, _CACHE_ATTR, (rules_map, index, requirements, candidate_cache)
++            stylesheet,
++            _CACHE_ATTR,
++            (rules_map, index, requirements, candidate_cache, rule_buckets),
+         )
+ 
+     # Cache only candidate selection, never resolved styles. Live selector and
+@@ -199,19 +203,21 @@ def _ordered_candidates(stylesheet: Stylesheet, node: Any) -> list | None:
+         candidate_cache.move_to_end(key)
+         return candidate_cache[key]
+ 
+-    # RuleSet.__hash__ returns id(self). Use that identity directly so shared
+-    # indexes do not repeatedly call its Python callback for the same rule.
+-    candidates = {
+-        id(rule): rule
+-        for name in rules_map.keys() & selector_names
+-        for rule in rules_map[name]
+-    }
++    # Hash each parsed subject bucket once. Native set unions reuse its hashes
++    # across different live ancestor shapes; no node or match result is stored.
++    buckets = []
++    for name in rules_map.keys() & selector_names:
++        bucket = rule_buckets.get(name)
++        if bucket is None:
++            bucket = rule_buckets[name] = set(rules_map[name])
++        buckets.append(bucket)
++    candidates = set().union(*buckets)
+ 
+     # Each comma alternative must be statically impossible before dropping the
+     # rule. An unrelated bare subject in one alternative must not keep a scoped
+     # rule alive for every node of another alternative's type.
+     surviving = []
+-    for rule in candidates.values():
++    for rule in candidates:
+         rule_id = id(rule)
+         rule_requirements = requirements.get(rule_id)
+         if rule_requirements is None:
