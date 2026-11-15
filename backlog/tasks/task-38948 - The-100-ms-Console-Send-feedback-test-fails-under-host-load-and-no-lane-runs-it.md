@@ -1,11 +1,11 @@
 ---
 id: TASK-38948
 title: "The 100 ms Console Send-feedback test fails under host load, and no lane runs it"
-status: In Progress
+status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-05 21:35
-updated_date: 2026-11-12 23:40
+updated_date: 2026-11-15 02:05
 labels:
 - follow-up
 - console
@@ -41,7 +41,7 @@ These alone runs were at higher load than most of the whole-file runs, so they c
 - [x] #1 On a host loaded below its CPU count, the test passes 10 of 10 runs alone and in its file at -n 4, with the median and maximum of all three intervals recorded
 - [x] #2 Under heavy load the test either still passes 10 of 10, or reports a miss together with the measured loop lag instead of failing as a product regression; the choice is recorded in the notes
 - [x] #3 A temporary delay of about 150 ms before the Sending paint makes the test fail (negative control)
-- [ ] #4 The test runs on a PR lane, with the measured lane time recorded (about 27-49 s for both cases serially at load 50 on dev)
+- [x] #4 The test runs on a PR lane, with the measured lane time recorded (about 27-49 s for both cases serially at load 50 on dev)
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -358,4 +358,9 @@ AC#1 is met on that tree. AC#4 remains open pending hosted qualification and re-
 **Dev-push watch committed (2026-11-12 restack).** The step "Watch the 100 ms Send-feedback nodes" is the last step of `library-shell-dev` in `.github/workflows/derived-artifacts.yml` (first shard only, the UI lane's flags; not in the required aggregate), pinned by `Tests/CI/test_derived_artifacts_workflow.py::test_library_shell_runs_by_node_on_dev_pushes_only_and_is_never_required`.
 **Round-13 closeout (2026-11-12): re-gating stays with AC#4.** The dev-push watch ("Watch the 100 ms Send-feedback nodes", last step of `library-shell-dev`) exists only in the round-13 stack (8b633d0101); origin/dev has no `library-shell-dev` job yet, so no CI run has executed it. Once the watch shows both nodes passing on dev pushes (the owner's 2026-11-10 ruling: "Re-gate it once it passes on CI"), put both nodes back on the UI census tail, drop the watch step and its pin in `Tests/CI/test_derived_artifacts_workflow.py`, and tick AC#4 with the lane time.
 **AC#1 status after the round-13 restack (2026-11-12, coordinator).** AC#1 stays ticked on dev's 2026-11-12 "Mounted-ready qualification" evidence above. The round-13 paint-reorder runs that read "AC#1 is not met" were taken at load 21-28 on 18 CPUs, outside AC#1's condition (a host loaded below its CPU count), so they do not contradict the tick. The reorder lowers the Sending loop CPU (median 45 → 32 ms); the dev-push watch step keeps measuring both nodes on CI, and re-gating them on the PR lane (AC#4) waits for that evidence.
+**Round-14 closeout (2026-11-15): re-gated (AC#4).**
+- **CI evidence (read-only `gh`).** The dev-push step "Watch the 100 ms Send-feedback nodes" (last step of `library-shell-dev`, shard 1) ran on every dev push run since round 13 that got that far: 8 runs, all on GitHub-hosted `ubuntu-latest`. Both nodes passed every time: 16 of 16 cases, and no run reported a warning, so no wall-time miss was excused by the load rule. Runs (dev sha, job): 43382155356 (beab5c1e4e, 131820810195), 43459564126 (1455ceeb96, 132028314724), 43550992066 (531acb8cdc, 132315460447), 43580475705 (c1e9d12c2d, 132404948495), 43595178351 (14e13291aa, 132449604860), 43606724854 (1c14f0e942, 132485917637), 43620765153 (d46f753d82, 132528147905), 43651742917 (bf0006bb47, 132625894029; the run was later cancelled, this job had finished). Call times: `[enter]` 4.93-6.45 s, `[send-button]` 3.58-4.90 s; 15.3-20.4 s of pytest session for both. The earlier pushes (4b90eb860b, 26b2e677dd) were cancelled before the job ran.
+- **Lane.** Both nodes are appended at the UI census tail (`MINIMUM_FILES` 2138; no re-deal). Serially with the UI lane's flags through run.sh, two runs at load 34: `[enter]` 8.24 / 6.75 s of call, `[send-button]` 6.29 / 5.33 s, 23.3 / 20.7 s for both; each run reported one warning (the load rule: wall time not enforced at load 34 on 18 CPUs). On CI they run on the PR runners, now self-hosted since #3529.
+- **The watch step stays**, by the coordinator's instruction for this closeout (the round-13 note above planned to drop it). Its pin, `Tests/CI/test_derived_artifacts_workflow.py::test_library_shell_runs_by_node_on_dev_pushes_only_and_is_never_required`, now asserts that both nodes are census entries (not the file whole) instead of that they are absent. Red with the two census lines removed (`assert False` at the new check), green with them. `Tests/CI` at `-n 4`: 1244 passed, 1 skipped (load 35-44). Census checker: OK, 2138 entries, floor 2138.
+- **Files.** `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, `Tests/CI/test_derived_artifacts_workflow.py`.
 <!-- SECTION:NOTES:END -->

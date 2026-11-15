@@ -3088,3 +3088,9 @@ Tests/UI/test_library_collection_reader_journeys.py::test_collections_focus_retr
 # refused at load is listed in Settings with its reason and Edit fixes it
 # (private profile, ~15 s serial).
 Tests/UI/test_settings_custom_endpoint_default.py::test_settings_lists_a_refused_endpoint_with_its_reason_and_edit_fixes_it
+# TASK-38948 (2026-11-15): the 100 ms Send-feedback nodes return to the PR lane
+# after passing 16 of 16 cases in eight dev-push watch runs (2026-11-13..15);
+# serially with the lane's flags 6.3-8.2 s and 5.3-6.3 s of call, 20.7-23.3 s
+# for both (load 34). The dev-push watch step stays.
+Tests/UI/test_console_received_intent_feedback.py::test_actual_send_paints_sending_and_accepts_input_within_100ms[enter]
+Tests/UI/test_console_received_intent_feedback.py::test_actual_send_paints_sending_and_accepts_input_within_100ms[send-button]
