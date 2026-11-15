@@ -10,7 +10,11 @@ from types import FunctionType, ModuleType
 from typing import Any
 
 from tldw_chatbook.Backup_Recovery import bootstrap, profile_paths
-from tldw_chatbook.Backup_Recovery.admission_runtime import RecoveryAdmissionGuard
+from tldw_chatbook.Backup_Recovery.admission_runtime import (
+    RecoveryAdmissionGuard,
+    callable_source_current as callable_source_current,
+    capture_callable_source as capture_callable_source,
+)
 
 
 class AgentActivationRequired(PermissionError):
@@ -159,37 +163,6 @@ def selected_sources(service: object) -> tuple:
 def raw_cli_storage_execution(source):
     """Retain the exact source tuple already selected by the Raw CLI call."""
     return _guard.execution(source, resolve=lambda _: source.sources)
-
-
-def capture_callable_source(function):
-    return (
-        function,
-        function.__code__,
-        function.__defaults__,
-        function.__kwdefaults__,
-        tuple((function.__kwdefaults__ or {}).items()),
-        function.__closure__,
-        tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
-    )
-
-
-def callable_source_current(record):
-    function, code, defaults, kwdefaults, entries, closure, cells = record
-    return (
-        type(function) is FunctionType
-        and function.__code__ is code
-        and function.__defaults__ is defaults
-        and function.__kwdefaults__ is kwdefaults
-        and (
-            kwdefaults is None
-            or len(kwdefaults) == len(entries)
-            and all(
-                key in kwdefaults and kwdefaults[key] is value for key, value in entries
-            )
-        )
-        and function.__closure__ is closure
-        and all(cell.cell_contents is value for cell, value in cells)
-    )
 
 
 def _explicit_writer_root(service):

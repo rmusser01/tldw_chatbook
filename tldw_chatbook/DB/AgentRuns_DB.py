@@ -37,6 +37,7 @@ from tldw_chatbook.DB.console_execution_owner import (
 )
 from tldw_chatbook.Provider_Contract.sampling_params import params_to_dict
 
+from . import console_execution_owner as _execution_owner_module
 from . import store_kernel as _store_kernel
 from .base_db import BaseDB
 from .private_sqlite import connect_private_sqlite
@@ -3624,7 +3625,7 @@ _RUN_LOG_PROBE_OWNER_METHODS = (
     "__enter__",
     "__exit__",
 )
-_EXECUTION_OWNER_GLOBALS = ConsoleExecutionOwner.require_current.__globals__
+_EXECUTION_OWNER_GLOBALS = vars(_execution_owner_module)
 
 
 def _stock_execution_owner(database: AgentRunsDB) -> ConsoleExecutionOwner | None:

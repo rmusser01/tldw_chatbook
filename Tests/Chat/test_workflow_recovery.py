@@ -6,15 +6,31 @@ from types import SimpleNamespace
 import pytest
 
 from Tests.DB.test_workflow_runs import planned
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from Tests.agent_runs_owner import owned_agent_runs_db
 
 pytestmark = pytest.mark.bootstrap_profile
 
 
-def test_service_constructor_is_passive_and_rejects_untrusted_audit(tmp_path):
+@pytest.fixture
+def open_workflow_db(request):
+    from tldw_chatbook.DB.console_execution_owner import ConsoleExecutionOwner
+
+    def open_db(path):
+        owner = ConsoleExecutionOwner.acquire(path)
+        request.addfinalizer(owner.close)
+        db = owned_agent_runs_db(path, execution_owner=owner)
+        request.addfinalizer(db.close)
+        return db
+
+    return open_db
+
+
+def test_service_constructor_is_passive_and_rejects_untrusted_audit(
+    open_workflow_db, tmp_path
+):
     from tldw_chatbook.Agents.workflow_run_service import WorkflowRunService
 
-    with closing(AgentRunsDB(tmp_path / "runs.db")) as db:
+    with closing(open_workflow_db(tmp_path / "runs.db")) as db:
         snapshot = planned(db, tmp_path)
         service = WorkflowRunService(db, SimpleNamespace(workspace_registry=None))
         assert service.get(snapshot.id) == snapshot
@@ -26,6 +42,7 @@ def test_service_constructor_is_passive_and_rejects_untrusted_audit(tmp_path):
 
 @pytest.mark.asyncio
 async def test_service_offload_dispatches_the_owned_named_operation(
+    open_workflow_db,
     tmp_path, monkeypatch
 ):
     import functools
@@ -34,7 +51,7 @@ async def test_service_offload_dispatches_the_owned_named_operation(
     from Tests.Agents.test_workflow_run_service import _history_persistence
     from tldw_chatbook.Agents.workflow_run_service import WorkflowRunService
 
-    with closing(AgentRunsDB(tmp_path / "dispatch.db")) as db:
+    with closing(open_workflow_db(tmp_path / "dispatch.db")) as db:
         snapshot = planned(db, tmp_path)
         service = WorkflowRunService(db, _history_persistence(tmp_path))
         original = service.get
@@ -61,6 +78,7 @@ async def test_service_offload_dispatches_the_owned_named_operation(
 
 @pytest.mark.asyncio
 async def test_finite_cancelled_workflow_callback_keeps_actual_db_owner_until_drain(
+    open_workflow_db,
     tmp_path,
     monkeypatch,
 ):
@@ -70,7 +88,7 @@ async def test_finite_cancelled_workflow_callback_keeps_actual_db_owner_until_dr
 
     from tldw_chatbook.Agents.workflow_run_service import WorkflowRunService
 
-    db = AgentRunsDB(tmp_path / "finite.db")
+    db = open_workflow_db(tmp_path / "finite.db")
     from Tests.Agents.test_workflow_run_service import _history_persistence
 
     snapshot = planned(db, tmp_path)
@@ -113,6 +131,7 @@ async def test_finite_cancelled_workflow_callback_keeps_actual_db_owner_until_dr
 
 
 def test_clean_resume_is_cas_idempotent_inert_and_preserves_spend(
+    open_workflow_db,
     tmp_path, monkeypatch
 ):
     from tldw_chatbook.Agents import run_log
@@ -125,7 +144,7 @@ def test_clean_resume_is_cas_idempotent_inert_and_preserves_spend(
     from Tests.Agents.test_workflow_run_service import _history_persistence
     from tldw_chatbook.Agents.workflow_run_service import WorkflowRunService
 
-    with closing(AgentRunsDB(tmp_path / "resume.db")) as db:
+    with closing(open_workflow_db(tmp_path / "resume.db")) as db:
         (tmp_path / "source.py").write_text("original")
         snapshot = planned(db, tmp_path)
         import json
@@ -196,12 +215,13 @@ def test_clean_resume_is_cas_idempotent_inert_and_preserves_spend(
 
 @pytest.mark.asyncio
 async def test_actual_startup_owner_projects_workflows_once_before_ready(
+    open_workflow_db,
     tmp_path, monkeypatch
 ):
     from tldw_chatbook.Chat.console_fleet_wake import ConsoleFleetWakeCoordinator
     from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 
-    db = AgentRunsDB(tmp_path / "startup.db")
+    db = open_workflow_db(tmp_path / "startup.db")
     snapshot = planned(db, tmp_path)
     controller = SimpleNamespace(
         _agent_bridge=SimpleNamespace(runs_db=db),
@@ -262,6 +282,7 @@ async def test_actual_startup_owner_projects_workflows_once_before_ready(
     ],
 )
 async def test_startup_scopes_historical_protection_and_reconciliation_releases_it(
+    open_workflow_db,
     tmp_path,
     monkeypatch,
     closed,
@@ -296,7 +317,7 @@ async def test_startup_scopes_historical_protection_and_reconciliation_releases_
     )
     root = tmp_path / "project"
     root.mkdir()
-    db = AgentRunsDB(tmp_path / "recovery-protection.db")
+    db = open_workflow_db(tmp_path / "recovery-protection.db")
     snapshot = db.workflow_runs.create(make_workflow_request(root), launch_id="start")
     data = plan_data(root)
     from tldw_chatbook.Agents.workflow_run_service import _workflow_root_identity

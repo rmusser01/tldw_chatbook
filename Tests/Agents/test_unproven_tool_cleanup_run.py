@@ -7,7 +7,7 @@ reason naming the unproven cleanup, and the user can return its tool slot.
 """
 
 import time
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -283,7 +283,18 @@ def test_host_return_is_visible_only_with_its_decided_durability():
     assert member.host_returned and member.durable is False
 
 
-def _unwrapped_dispatch(tmp_path, monkeypatch, path, owner):
+@pytest.fixture
+def dispatch_db(tmp_path):
+    from Tests.agent_runs_owner import owned_agent_runs_db
+    from tldw_chatbook.DB.console_execution_owner import ConsoleExecutionOwner
+
+    path = tmp_path / "runs.db"
+    with ConsoleExecutionOwner.acquire(path) as owner:
+        with closing(owned_agent_runs_db(path, client_id="t", execution_owner=owner)) as db:
+            yield db
+
+
+def _unwrapped_dispatch(db, monkeypatch, path, owner):
     """`invoke_tool` for a calculator call on the definitive or no-timeout path."""
     from tldw_chatbook.Agents.agent_models import RunBudget
     from tldw_chatbook.Agents.agent_service import AgentService
@@ -292,7 +303,6 @@ def _unwrapped_dispatch(tmp_path, monkeypatch, path, owner):
         ToolCatalogRegistry,
         ToolExecutionPolicy,
     )
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     registry = ToolCatalogRegistry()
     registry.register_provider(BuiltinToolProvider())
@@ -309,7 +319,7 @@ def _unwrapped_dispatch(tmp_path, monkeypatch, path, owner):
             lambda _name: ToolExecutionPolicy.DEFINITIVE_AFTER_START,
         )
     service = AgentService(
-        db=AgentRunsDB(tmp_path / "runs.db", client_id="t"),
+        db=db,
         registry=registry,
         chat_call=lambda **_kwargs: pytest.fail("no model call"),
     )
@@ -328,7 +338,7 @@ def _unwrapped_dispatch(tmp_path, monkeypatch, path, owner):
 
 @pytest.mark.parametrize("path", ["definitive_after_start", "no_timeout"])
 def test_a_retained_cleanup_ends_the_run_on_the_unwrapped_dispatch_paths(
-    tmp_path, monkeypatch, path
+    dispatch_db, monkeypatch, path
 ):
     """Calls that skip the timeout wrapper must end the run too, not continue."""
     from tldw_chatbook.Agents.agent_models import ToolCall
@@ -336,7 +346,7 @@ def test_a_retained_cleanup_ends_the_run_on_the_unwrapped_dispatch_paths(
     capacity = RuntimeCapacity()
     owner = capacity.begin_execution(origin=WorkOrigin.MANUAL, conversation_id="c")
     owner.reserve_tool().retain_unproven("fs_read")
-    invoke_tool, invoked = _unwrapped_dispatch(tmp_path, monkeypatch, path, owner)
+    invoke_tool, invoked = _unwrapped_dispatch(dispatch_db, monkeypatch, path, owner)
     result = invoke_tool(ToolCall(name="calculator", args={"expression": "2+2"}))
     assert result.termination_reason is RunTerminationReason.CLEANUP_UNPROVEN
     assert "cleanup of fs_read could not be proven" in result.error
@@ -360,7 +370,7 @@ class _CustodyCall:
 
 
 @pytest.mark.parametrize("path", ["definitive_after_start", "no_timeout"])
-def test_custody_bearing_calls_never_hold_the_run_thread(tmp_path, monkeypatch, path):
+def test_custody_bearing_calls_never_hold_the_run_thread(dispatch_db, monkeypatch, path):
     """Custody may only be held on a daemon tool worker, by construction."""
     from tldw_chatbook.Agents.agent_models import ToolCall
     from tldw_chatbook.Tools import workspace_tool_executor
@@ -371,7 +381,7 @@ def test_custody_bearing_calls_never_hold_the_run_thread(tmp_path, monkeypatch, 
     )
     capacity = RuntimeCapacity()
     owner = capacity.begin_execution(origin=WorkOrigin.MANUAL, conversation_id="c")
-    invoke_tool, invoked = _unwrapped_dispatch(tmp_path, monkeypatch, path, owner)
+    invoke_tool, invoked = _unwrapped_dispatch(dispatch_db, monkeypatch, path, owner)
     result = invoke_tool(ToolCall(name="calculator", args={"expression": "2+2"}))
     if path == "definitive_after_start":
         # Refused before start: nothing ran and no custody was entered.

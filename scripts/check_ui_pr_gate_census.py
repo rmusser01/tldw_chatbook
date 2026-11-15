@@ -1298,6 +1298,10 @@ MINIMUM_FILES = 2317
 MINIMUM_FILES = 2323
 # Include the seven incoming Plugin review and restore selectors.
 MINIMUM_FILES = 2330
+# Retain the 2,330 existing shard positions and all 35 incoming Workspace selectors.
+MINIMUM_FILES = 2365
+# The round-14 rebase keeps all 2,432 disjoint selectors (PR #3345).
+MINIMUM_FILES = 2432
 
 
 MINIMUM_FILES = 2038

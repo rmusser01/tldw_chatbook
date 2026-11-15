@@ -1,100 +1,27 @@
-"""App-owned Console runtime holder (task-15860, headless wake — Task 1).
+"""App-owned Console runtime holder for headless wake (TASK-15860).
 
-**This module changes WHO constructs the Console runtime objects, and nothing else.** It is the "pure
-ownership move" the owner made a staging condition for design A
-(`.superpowers/sdd/2026-08-14-headless-wake/DECISIONS.md`, owner answer (3)): separately reviewable
-and separately revertable from the semantics work that follows it.
+One lazy runtime on `app.console_runtime` owns the chat store and persistence,
+provider gateway, agent bridge and its AgentRunsDB, and chat controller. Fleet
+attention registers beside bridge construction and wake coordination inside
+the controller. The process-memory raw CLI refusal stash survives screen and
+controller replacement. Read-only accessors never construct missing services.
 
-## What it owns
+Navigation detaches only the exact mounted view. Its timers stay view-owned,
+and its disposal clears the enumerated `CONSOLE_VIEW_HOOK_SLOTS`, never the
+turn or its pending decisions. Incoming screens attach before the outgoing
+screen unmounts, so stale detach calls leave the new claim intact. Visibility,
+including covering modals, controls decision answerability (TASK-31520).
 
-One `ConsoleRuntime` per app owns the four objects `ChatScreen` used to build for itself:
+A newly created or detached runtime uses the viewless hooks. The three
+non-None defaults retain the unseen wake mark, decline user priority without
+a composer, and supply a display name. An in-progress wake re-arms its
+delivery UI hook on the next attachment. App exit refuses new wakes, then
+retires the controller before closing the gateway. Explicit user cancellation
+keeps its own turn boundary.
 
-- the `ConsoleChatStore` (with its `ChatPersistenceService`),
-- the `ConsoleProviderGateway`,
-- the `ConsoleAgentBridge` and the sibling `AgentRunsDB` file it is keyed
-  off, together with the `register_fleet_attention` fan-out registration
-  that `FleetDrainFanout.register`'s contract requires to sit next to
-  bridge construction (the wake coordinator's own registration travels
-  inside `ConsoleChatController.__init__`, so it moves with the
-  controller),
-- the `ConsoleChatController`.
-
-It also owns the process-memory raw CLI refusal stash bank so an exact draft survives replacement of
-the screen/controller that received the refusal.
-
-Each is built lazily, on first `ensure_*` call, from parameters the calling view supplies — the same
-parameters, in the same order, the screen's own `_ensure_*` methods passed before this module
-existed.
-
-## The lifetime landing (this file's second half)
-
-The runtime now **survives the screen's unmount**, and teardown is split in two:
-
-| Call | When | What it does |
-|---|---|---|
-| `leave_console_runtime` | every navigation AWAY from Console | detaches only that exact view claim and clears its disposable projections |
-| `dispose_console_runtime` | app exit (`_shutdown_app_owned_lifecycles`) | the permanent form — `controller.shutdown()` then `gateway.aclose()`, exactly the order `on_unmount` used to run |
-
-No turn is cancelled by `leave_console`: runtime custody and pending decisions outlive navigation.
-App disposal and explicit user cancellation remain the domain shutdown boundaries.
-
-TASK-31520 reuses and suspends Console during ordinary navigation. Actual visibility, including
-covering modals, controls decision answerability.
-
-## The view seam
-
-`attach_view` / `detach_view` are the ONE place a screen's callables meet the runtime, over the
-single enumerated `CONSOLE_VIEW_HOOK_SLOTS` list — set on attach, restored to viewless defaults on
-detach, same list both ways. They **replace** Task 1's `ConsoleRuntime.view` stand-in, which
-"protected" the overlapping-screens window by building a second runtime (i.e. by reproducing
-dispose-at-unmount). The real ordering is now explicit: `_complete_screen_navigation` constructs and
-`restore_state`s the INCOMING screen before `switch_screen` unmounts the outgoing one, so the
-incoming screen's `attach_view` runs FIRST and claims the runtime, and the outgoing screen's later
-`detach_view`/`leave_console` finds a different claimant and does nothing at all.
-
-Screen-owned TIMERS (transcript sync, fleet survivor tick, cost TTL) are not runtime state and are
-not in that list: they stay screen-owned and stay stopped at unmount.
-
-## What "viewless" MEANS (Task 4)
-
-The lifetime landing made every slot CLEARABLE; this one makes each cleared value semantically right,
-and says why next to it (`why` on each `ConsoleViewHookSlot`). Three slots are not `None`:
-`wake_conversation_in_view` (whose read site reads unwired as IN VIEW and would clear the ◈ mark for
-a delivery nobody could have seen), `wake_user_priority_probe` (no composer, so no user claim) and
-`_global_user_display_name` (called with no guard). Everywhere else `None` is kept only because the
-production read site's own guard makes it inert — or, for the two skill confirms,
-fail-closed-at-once.
-
-A runtime is viewless in two ways, and both are covered: after a detach, and from BIRTH
-(`ensure_chat_controller` with nothing attached — the wake-at-launch shape). `delivery_ui_hook` gets
-a third guarantee: it is re-armed by the next attach if a wake is still delivering, because a Console
-opened mid-delivery would otherwise never repaint the turn.
-
-## Why an app attribute rather than a global
-
-`app.console_runtime` follows `app.console_image_edit_operations` (`app.py`, Phase 1 of
-`TldwCli.__init__`): constructed on the app, and re-created lazily by the screen when a test's app
-object never had one (`ChatScreen._h3_image_edit_registry` is the shape copied here). Screens are
-never cached (`app.py` `_create_navigation_screen`), so anything that must outlive a navigation
-cannot live on one.
-
-## The wake gate (was: "still deliberately unchanged")
-
-- `_attempt` gates on `_disposed`: app exit refuses a wake; navigation does
-  not mutate the controller's cancellation event or pending decisions.
-
-## Continuity (task-15860 Task 3, landed)
-
-The store this holds is now the SINGLE source of truth for Console message history. `ChatScreen`'s
-`ScreenStateStore` snapshot no longer carries `sessions`, `messages_by_session` or
-`active_session_id`: it carries view state only (image view modes, task-resume projection, RAG source
-scope, staged live-work launch). Task 0's P3b executed why — with the runtime app-owned but the
-snapshot still carrying history, a wake turn that ran while Console was unmounted persisted four rows
-to ChaChaNotes and the returning user saw the two that predated the snapshot.
-
-Concretely: `_restore_native_console_state` no longer calls `ConsoleChatStore.restore_state`, so a
-returning view reads the live store it left behind — tree, active leaf, drafts, pending attachments
-and all.
+The live ConsoleChatStore owns message history, trees, drafts and attachments.
+Screen snapshots restore view state only, so a returning screen sees rows
+written by headless wake while it was away (TASK-15860, Tasks 3 and 4).
 """
 
 from __future__ import annotations
@@ -733,21 +660,13 @@ def _library_provider_for_app(
 ) -> Any | None:
     """Build one Library provider from frozen authority and app services.
 
-    The single builder for both Console entry points.
-    `ConsoleLibraryActivityController.build_provider` used to hold a
-    byte-for-byte copy of this body and delegates here instead
-    (TASK-32892 P0-1): the copies drifted when 5dd1077df6 retired
-    `LocalLibraryToolService`'s `collections_service` parameter and updated only
-    one of them, and because `ensure_chat_controller` binds THIS function over
-    whatever the screen passed, the stale copy was the one every shipped run
-    called -- raising `TypeError` on the default configuration and costing the
-    agent all 24 Library tools behind one swallowed warning.
+    Both Console entry points use this builder. Sharing it prevents the
+    provider-signature drift that disabled the Library tools (TASK-32892 P0-1).
 
     Args:
         app: Application instance whose local service attributes are read live.
         turn_context: Immutable production turn context, if available.
-        **activity_kwargs: Provider activity-capture bindings, when a view owns
-            one (`activity_attempt_id` / `activity_sink`).
+        **activity_kwargs: View-owned activity attempt and sink bindings.
 
     Returns:
         Configured provider, or ``None`` without a turn context.
@@ -852,48 +771,26 @@ def viewless_user_display_name() -> str:
 
 
 def viewless_conversation_in_view(conversation_id: str, session_id: str) -> bool:
-    """A runtime with no view is watching nothing. Always `False`.
+    """Keep unattended wakes unseen (TASK-15860, TASK-15971).
 
-    task-15860 Task 4, and the reason this function exists rather than a
-    `None`: `ConsoleFleetWakeCoordinator._conversation_in_view` reads an
-    UNWIRED probe as **in view** (the pre-screen rig's documented
-    clear-on-delivery), so a viewless default of `None` makes a wake that
-    nobody could possibly have watched commit as "seen" and CLEARS the
-    `FLEET_UNSEEN` ◈ mark. task-15971's whole point is the opposite: the
-    user must be able to learn that a supervisor turn ran and landed
-    while they were elsewhere.
+    The wake coordinator treats an unwired probe as in view and clears its
+    unseen mark. Returning False preserves the mark with no displayed chat.
 
     Args:
-        conversation_id: The delivered conversation (unused — no view
-            means no conversation is displayed).
-        session_id: The session the wake turn ran in (unused, same
-            reason).
-
-    Returns:
-        False, always.
+        conversation_id: Delivered conversation, unused without a view.
+        session_id: Wake session, unused without a view.
     """
     return False
 
 
 def viewless_user_priority_probe(session_id: str) -> bool:
-    """A runtime with no view has no user claim. Always `False`.
+    """Decline a user-priority claim when no composer is attached.
 
-    `_attempt`'s user-wins-ties gate asks the view whether the user is
-    mid-thought (a non-empty composer draft). With no view there is no
-    composer, so no user can hold a claim and a wake must not defer.
-
-    `None` happens to produce the same outcome today, because `_attempt`
-    guards with `callable(probe)` — but only by accident of that guard's
-    direction. The sibling probe above uses the OPPOSITE convention for
-    an unwired slot (uncertainty defers toward the badge), so leaving
-    this one's correctness resting on a `callable()` check one line of
-    someone else's refactor away is not a default, it is a coincidence.
+    The wake's tie-break checks for a nonempty composer draft. Return False
+    explicitly so the default does not depend on the caller's callable check.
 
     Args:
-        session_id: The session a wake would fire into (unused).
-
-    Returns:
-        False, always.
+        session_id: Wake session, unused without a composer.
     """
     return False
 
@@ -7089,16 +6986,12 @@ def ensure_console_runtime(app: Any, *, view: Any | None = None) -> ConsoleRunti
     need lazy construction.
 
     Args:
-        app: The app object to read/attach the runtime on. `None` is
-            tolerated — a detached runtime is returned rather than raising,
-            because the screen's own accessors are reached from bare
-            `ChatScreen.__new__` fixtures.
-        view: The `ChatScreen` asking. The SAME runtime is shared across
-            views now (it outlives every one of them); a new view simply
-            claims it through `attach_view`, which opens a fresh visit.
+        app: App that owns the runtime. Bare-screen fixtures may pass None and
+            use a detached fallback.
+        view: Optional screen to claim the shared runtime for a new visit.
 
     Returns:
-        ConsoleRuntime: The runtime `view` should use.
+        The runtime for this app and view.
     """
     runtime = getattr(app, CONSOLE_RUNTIME_ATTR, None)
     try:

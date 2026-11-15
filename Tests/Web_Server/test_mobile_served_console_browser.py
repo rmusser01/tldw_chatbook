@@ -331,7 +331,12 @@ async def test_terminal_resize_receipt_waits_for_native_layout():
         assert not _terminal_resize_settled(mixed, previous)
         async with asyncio.timeout(5):
             await completed.wait()
-        settled = _terminal_layout_receipt(app, composer.region)
+            # The signal can precede another queued native layout.
+            while True:
+                settled = _terminal_layout_receipt(app, composer.region)
+                if _terminal_resize_settled(settled, previous):
+                    break
+                await asyncio.sleep(0.01)
         assert settled["layout_size"] == [70, 20]
         assert settled["composer_region"][1] == 19
         assert _terminal_resize_settled(settled, previous)

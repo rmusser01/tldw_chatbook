@@ -17,6 +17,11 @@ from typing import Callable, ContextManager
 
 from loguru import logger
 
+from tldw_chatbook.Backup_Recovery.admission_runtime import (
+    capture_method_sources,
+    direct_wrapped_callable,
+)
+
 from .run_log_format import RunLogRecord, encode_record
 
 #: F3 (Qodo #3): CLAUDE.md mandates "env vars -> config.toml -> defaults",
@@ -1112,7 +1117,7 @@ _RUN_LOG_PROBE_SOURCE = (
             tuple((function.__kwdefaults__ or {}).items()),
             function.__closure__,
             tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
-            vars(function).get("__wrapped__"),
+            direct_wrapped_callable(function),
         )
         for _owner, _name, descriptor in (
             *(
@@ -1149,44 +1154,19 @@ _RUN_LOG_PROBE_SOURCE = (
 
 
 # Definition-time callbacks for the fixed native scratch composition.
-_RUN_LOG_SCRATCH_ORIGINAL = (
+_RUN_LOG_SCRATCH_ORIGINAL = capture_method_sources(
     RunLogWriter,
-    tuple(
-        (
-            name,
-            function,
-            tuple(
-                (
-                    callback,
-                    callback.__code__,
-                    callback.__defaults__,
-                    callback.__kwdefaults__,
-                    tuple((callback.__kwdefaults__ or {}).items()),
-                    callback.__closure__,
-                    tuple(
-                        (cell, cell.cell_contents)
-                        for cell in (callback.__closure__ or ())
-                    ),
-                )
-                for callback in (function, wrapped)
-                if callback is not None
-            ),
-            wrapped,
-        )
-        for name in (
-            "bind",
-            "_bind_under_scope",
-            "_migrate_legacy_dir",
-            "_segment_path",
-            "_write_bytes",
-            "append",
-            "_append_under_scope",
-            "write_manifest",
-            "_write_manifest_under_scope",
-            "close",
-            "_close_under_scope",
-        )
-        for function in (getattr(RunLogWriter, name),)
-        for wrapped in (getattr(function, "__wrapped__", None),)
+    (
+        "bind",
+        "_bind_under_scope",
+        "_migrate_legacy_dir",
+        "_segment_path",
+        "_write_bytes",
+        "append",
+        "_append_under_scope",
+        "write_manifest",
+        "_write_manifest_under_scope",
+        "close",
+        "_close_under_scope",
     ),
 )

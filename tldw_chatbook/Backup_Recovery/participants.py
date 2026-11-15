@@ -15,12 +15,12 @@ from tldw_chatbook import DB as store_registry
 from .models import Inventory
 
 
-def _method(instance, name):
-    value = inspect.getattr_static(instance, name, None)
-    return value.__func__ if type(value) is staticmethod else value
-
-
 def _methods_unchanged(instance, record):
+    from .admission_runtime import (
+        callable_source_current,
+        direct_wrapped_callable,
+    )
+
     owner, methods = record
     if (
         type(instance) is not owner
@@ -28,26 +28,13 @@ def _methods_unchanged(instance, record):
         is not object.__getattribute__
     ):
         return False
-    for name, function, versions, wrapped in methods:
+    for name, descriptor, function, versions, wrapped in methods:
         if (
-            _method(instance, name) is not function
-            or getattr(function, "__wrapped__", None) is not wrapped
+            inspect.getattr_static(instance, name, None) is not descriptor
+            or direct_wrapped_callable(function) is not wrapped
+            or any(not callable_source_current(version) for version in versions)
         ):
             return False
-        for callback, code, defaults, kwdefaults, items, closure, cells in versions:
-            if (
-                callback.__code__ is not code
-                or callback.__defaults__ is not defaults
-                or callback.__kwdefaults__ is not kwdefaults
-                or len(callback.__kwdefaults__ or {}) != len(items)
-                or any(
-                    (callback.__kwdefaults__ or {}).get(key) is not value
-                    for key, value in items
-                )
-                or callback.__closure__ is not closure
-                or any(cell.cell_contents is not value for cell, value in cells)
-            ):
-                return False
     return True
 
 
@@ -58,6 +45,8 @@ def native_scratch_writer(writer):
         _SCRATCH_ADMISSION_ORIGINAL,
         ConsoleScratchSnapshot,
     )
+
+    from .admission_runtime import same_bound_callable
 
     if not _methods_unchanged(writer, _RUN_LOG_SCRATCH_ORIGINAL):
         return None
@@ -72,7 +61,7 @@ def native_scratch_writer(writer):
     manager, snapshot = access.func.__self__, access.args[0]
     if (
         not _methods_unchanged(manager, _SCRATCH_ADMISSION_ORIGINAL)
-        or access.func.__func__ is not _SCRATCH_ADMISSION_ORIGINAL[0].lease
+        or not same_bound_callable(access.func, manager.lease)
         or type(snapshot) is not ConsoleScratchSnapshot
     ):
         return None

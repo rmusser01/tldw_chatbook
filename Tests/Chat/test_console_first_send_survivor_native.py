@@ -23,6 +23,8 @@ network_guard.install()
 real_profile_guard.install()
 
 async def exercise():
+    from dataclasses import replace
+
     from Tests.Agents.test_agent_service import fence
     from Tests.Chat.test_console_agent_bridge import SUBAGENT_PROMPT_PREFIX
     from Tests.Chat.test_console_skill_substitution import _RecordingGateway
@@ -33,6 +35,9 @@ async def exercise():
     from tldw_chatbook.Agents.execution_capacity import current_execution_owner
     from tldw_chatbook.Chat import console_configuration_preparation as preparation
     from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
+    from tldw_chatbook.Chat.console_library_destination import resolve_console_destination
+    from tldw_chatbook.Chat.console_provider_endpoints import DEFAULT_LLAMACPP_BASE_URL
+    from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
     from tldw_chatbook.Chat.console_ordinary_tree import current_ordinary_tree
     from tldw_chatbook.Chat.console_received_intent import ConsoleReceivedTurnIntent
 
@@ -56,6 +61,17 @@ async def exercise():
         def __init__(self):
             super().__init__()
             self.parent_calls = 0
+
+        async def resolve_for_send(self, selection):
+            resolution = ConsoleProviderResolution(
+                provider='llama_cpp',
+                base_url=selection.base_url or DEFAULT_LLAMACPP_BASE_URL,
+                model=selection.explicit_model or 'm',
+                ready=True,
+                readiness_key='llama_cpp',
+                execution_key='llama_cpp',
+            )
+            return replace(resolution, resolved_destination=resolve_console_destination(resolution))
 
         async def stream_chat(self, resolution, messages, **kwargs):
             self.payloads.append(messages)

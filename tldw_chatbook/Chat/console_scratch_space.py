@@ -17,6 +17,8 @@ from typing import Callable, Iterator
 
 from loguru import logger
 
+from tldw_chatbook.Backup_Recovery.admission_runtime import capture_method_sources
+
 
 @dataclass(frozen=True, slots=True)
 class ConsoleScratchSnapshot:
@@ -471,47 +473,22 @@ class ConsoleScratchSpaceManager:
 
 
 # Definition-time callbacks for the fixed native scratch composition.
-_SCRATCH_ADMISSION_ORIGINAL = (
+_SCRATCH_ADMISSION_ORIGINAL = capture_method_sources(
     ConsoleScratchSpaceManager,
-    tuple(
-        (
-            name,
-            function,
-            tuple(
-                (
-                    callback,
-                    callback.__code__,
-                    callback.__defaults__,
-                    callback.__kwdefaults__,
-                    tuple((callback.__kwdefaults__ or {}).items()),
-                    callback.__closure__,
-                    tuple(
-                        (cell, cell.cell_contents)
-                        for cell in (callback.__closure__ or ())
-                    ),
-                )
-                for callback in (function, wrapped)
-                if callback is not None
-            ),
-            wrapped,
-        )
-        for name in (
-            "snapshot",
-            "lease",
-            "is_live",
-            "close",
-            "tombstone_all",
-            "wait_for_cleanup",
-            "dispose",
-            "_matching_record_locked",
-            "_identity_matches",
-            "_check_process",
-            "_tombstone_locked",
-            "_schedule_cleanup_locked",
-            "_cleanup_worker_main",
-            "_cleanup_record",
-        )
-        for function in (getattr(ConsoleScratchSpaceManager, name),)
-        for wrapped in (getattr(function, "__wrapped__", None),)
+    (
+        "snapshot",
+        "lease",
+        "is_live",
+        "close",
+        "tombstone_all",
+        "wait_for_cleanup",
+        "dispose",
+        "_matching_record_locked",
+        "_identity_matches",
+        "_check_process",
+        "_tombstone_locked",
+        "_schedule_cleanup_locked",
+        "_cleanup_worker_main",
+        "_cleanup_record",
     ),
 )

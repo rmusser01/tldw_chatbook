@@ -9,15 +9,79 @@ handoff into native workers.
 """
 
 import asyncio
+import inspect
 import os
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
+from types import FunctionType, MethodType
 
 from .activation import execution_scope
 from .storage_admission import acquire_storage
+
+
+def capture_callable_source(function):
+    return (
+        function,
+        function.__code__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        tuple((function.__kwdefaults__ or {}).items()),
+        function.__closure__,
+        tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+    )
+
+
+def callable_source_current(record):
+    function, code, defaults, kwdefaults, entries, closure, cells = record
+    return (
+        type(function) is FunctionType
+        and function.__code__ is code
+        and function.__defaults__ is defaults
+        and function.__kwdefaults__ is kwdefaults
+        and (
+            kwdefaults is None
+            or len(kwdefaults) == len(entries)
+            and all(
+                key in kwdefaults and kwdefaults[key] is value for key, value in entries
+            )
+        )
+        and function.__closure__ is closure
+        and all(cell.cell_contents is value for cell, value in cells)
+    )
+
+
+def direct_wrapped_callable(function: FunctionType) -> object:
+    """Read the original wrapper slot without invoking the callback."""
+    return vars(function).get("__wrapped__")
+
+
+def same_bound_callable(left: object, right: object) -> bool:
+    """Match plain callables or both parts of an actual bound method."""
+    return left is right or (
+        type(left) is MethodType
+        and type(right) is MethodType
+        and left.__self__ is right.__self__
+        and left.__func__ is right.__func__
+    )
+
+
+def capture_method_sources(owner: type, names: tuple[str, ...]) -> tuple:
+    """Retain the exact installed descriptors and direct callback records."""
+    methods = []
+    for name in names:
+        descriptor = inspect.getattr_static(owner, name)
+        function = getattr(owner, name)
+        wrapped = direct_wrapped_callable(function)
+        sources = tuple(
+            capture_callable_source(callback)
+            for callback in (function, wrapped)
+            if callback is not None
+        )
+        methods.append((name, descriptor, function, sources, wrapped))
+    return owner, tuple(methods)
 
 
 def execution_identity() -> "tuple[int, int, asyncio.Task[object] | None]":

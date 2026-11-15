@@ -173,6 +173,7 @@ async def test_a_temporary_chat_closed_during_agent_setup_ends_the_turn_closed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     owned_console_databases,
+    request: pytest.FixtureRequest,
     setup: str,
 ) -> None:
     """TASK-39155: a temporary chat's agent reply sets up (chain creation,
@@ -189,13 +190,17 @@ async def test_a_temporary_chat_closed_during_agent_setup_ends_the_turn_closed(
         ConsoleRunStatus,
     )
     from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+    from tldw_chatbook.DB.console_execution_owner import ConsoleExecutionOwner
 
     db, store, controller, gateway = _controller(tmp_path)
     owned_console_databases(db, controller)
     session = store.create_session(session_id="temporary", title="Temporary", ephemeral=True)
     gateway.deferred_dispatch_boundary = True
+    runs_path = tmp_path / "temporary-runs.sqlite"
+    owner = ConsoleExecutionOwner.acquire(runs_path)
+    request.addfinalizer(owner.close)
     runs = owned_agent_runs_db(
-        tmp_path / "temporary-runs.sqlite", client_id="temporary-close"
+        runs_path, client_id="temporary-close", execution_owner=owner
     )
     controller._agent_bridge = ConsoleAgentBridge(
         agent_runs_db=runs, store=store, provider_gateway=gateway

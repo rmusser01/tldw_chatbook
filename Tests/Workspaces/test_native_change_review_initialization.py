@@ -48,6 +48,7 @@ def native_initializer(tmp_path, monkeypatch):
     finally:
         service.shutdown(timeout=5)
         asyncio.run(runtime.dispose())
+        assert app.local_workspace_db.close_idle_connections()
 
 
 @pytest.mark.parametrize("cause", ["lazy", "settings"])

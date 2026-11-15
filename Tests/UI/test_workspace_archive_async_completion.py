@@ -128,7 +128,11 @@ async def test_late_existing_resume_keeps_authority_through_token_preparation(
     superseded,
 ):
     session = SimpleNamespace(id="existing", persisted_conversation_id="saved")
-    store = SimpleNamespace(active_session_id="prior", sessions=lambda: [session])
+    store = SimpleNamespace(
+        active_session_id="prior",
+        sessions=lambda: [session],
+        resolve_saved_session=AsyncMock(return_value=session),
+    )
     chat = SimpleNamespace(store=store, switch_session=Mock())
     current = [True]
 
@@ -177,6 +181,7 @@ async def test_late_existing_resume_keeps_authority_through_token_preparation(
     result = await ConsoleWorkspaceController._resume_console_workspace_conversation(
         host, "saved", preserve_persisted_scope=True, resume_if=lambda: current[0]
     )
+    store.resolve_saved_session.assert_awaited_once_with("saved", cleanup_owner=None)
     if superseded:
         assert result is None
         chat.switch_session.assert_not_called()

@@ -195,6 +195,16 @@ def test_native_scratch_writer_retains_exact_manager_and_generation(
             with monkeypatch.context() as fault:
                 fault.setitem(writer.__dict__, "append", lambda **_kwargs: None)
                 assert native_scratch_writer(writer) is None
+            with monkeypatch.context() as fault:
+                fault.setitem(RunLogWriter._write_bytes.__kwdefaults__, "sync", True)
+                assert native_scratch_writer(writer) is None
+            with monkeypatch.context() as fault:
+                fault.setattr(
+                    ConsoleScratchSpaceManager,
+                    "_identity_matches",
+                    staticmethod(ConsoleScratchSpaceManager._identity_matches),
+                )
+                assert native_scratch_writer(writer) is None
             assert native_scratch_writer(writer) == (manager, snapshot)
         assert not tuple(snapshot.root.iterdir())
     finally:

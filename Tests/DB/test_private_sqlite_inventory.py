@@ -572,8 +572,8 @@ def _assert_detached_normalization_source(source: str, module: str) -> None:
     expected = {
         "detached_layout": {
             "_normalize_sqlite": "eff395f259323b2638e538ee166142c727c6256368c53e8d9230fe99c0496d61",
-            "_owner_items": "20d53c491c4cd3b357686705830adb580bbb0168fefd0789ef219f9e45f071c3",
-            "produce_detached_archive": "6aaa5ba9c691944a740445aae8d2299e12ad09a4c0ecb55e7204adf2a29c2d7c",
+            "_owner_items": "84c74d0707a648707dbaf0612df8b20954434d642fc748bd9678ad58fb376f81",
+            "produce_detached_archive": "5b1e9f58aecfc57fb26c47615e8d9f2dd084c09d32838769f655c9a785b381f5",
         },
         "sqlite_validation": {
             "normalize_detached_candidate": "0958fde34420ac25689ef1b9162c3dc1e3e3401ad71b2b3a4de924c8a0d3093b",
