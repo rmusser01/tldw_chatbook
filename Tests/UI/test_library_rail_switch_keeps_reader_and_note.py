@@ -660,7 +660,7 @@ async def test_controller_hosted_media_sync_re_requests_an_armed_list_entry_focu
     queue the re-request after the recompose too. Without the binding the
     probe finds nothing and no re-request is queued.
     """
-    from tldw_chatbook.UI.Library_Modules.canvas_sync import _sync_library_canvas
+    from types import SimpleNamespace
 
     host, profile = _host(tmp_path)
     async with host.run_test(size=SIZE) as pilot:
@@ -676,7 +676,9 @@ async def test_controller_hosted_media_sync_re_requests_an_armed_list_entry_focu
         screen._library_pending_list_entry_focus = True
         generation = screen._library_list_entry_focus_generation
 
-        _sync_library_canvas(screen._media_controller, "media")
+        screen._media_controller.handle_library_media_select_clear(
+            SimpleNamespace(stop=lambda: None)
+        )
         await _until(
             pilot,
             lambda: bool(requested),
