@@ -78,6 +78,8 @@ namespace = {
     # run_controls returns for any other type. The real poll_source imports
     # chat_screen, which the teardown check below forbids.
     "ChatScreen": type("ChatScreen", (), {}),
+    # The phased sync yields between its phases with this module constant.
+    "_CONSOLE_SYNC_PHASE_YIELD_SECONDS": 0.001,
     "run_controls": SimpleNamespace(
         poll_source=lambda _owner: None,
         PreparingPollChanged=type("PreparingPollChanged", (RuntimeError,), {}),
