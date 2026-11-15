@@ -3289,3 +3289,7 @@ Tests/UI/test_console_internals_decomposition.py::test_console_run_inspector_mcp
 # TASK-41307: the Console-wide held tool slots chip and its list's Release
 # (6 tests, 15 s serially at load 15).
 Tests/UI/test_console_held_tool_slots.py
+# TASK-41037: gate each mounted RAG-only restore scope without an index.
+Tests/UI/test_console_archive_recovery_flow.py::test_native_rag_only_lifecycle_matrix_without_index[True-False-chat_only]
+Tests/UI/test_console_archive_recovery_flow.py::test_native_rag_only_lifecycle_matrix_without_index[False-True-workspace_only]
+Tests/UI/test_console_archive_recovery_flow.py::test_native_rag_only_lifecycle_matrix_without_index[True-True-chat_and_workspace]

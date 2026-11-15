@@ -1140,6 +1140,8 @@ MINIMUM_FILES = 2243
 # MCP-row nodes and the held tool slots files at the tail. The floor is the
 # measured entry count.
 MINIMUM_FILES = 2251
+# TASK-41037: append three RAG-only archive recovery restore scopes.
+MINIMUM_FILES = 2254
 
 
 def read_census(path: Path) -> list[str]:
