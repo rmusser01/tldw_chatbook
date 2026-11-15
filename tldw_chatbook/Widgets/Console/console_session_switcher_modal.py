@@ -79,7 +79,10 @@ _TITLE_LIMIT = 64
 _SUBTITLE_LIMIT = 120
 _ROW_BUILD_BATCH_SIZE = 5
 _RENDER_TINT_PAIR_LIMIT = 128
-_NATIVE_TEXTUAL_VERSION = textual.__version__
+try:
+    _NATIVE_TEXTUAL_VERSION = textual.__version__
+except Exception:  # no dist-info (frozen build): the native backdrop stays off
+    _NATIVE_TEXTUAL_VERSION = None
 _NATIVE_TEXTUAL_GETATTR = textual.__getattr__
 _NATIVE_BACKGROUND_PROCESS = getattr(
     BackgroundScreen.process_segments, "__func__", None

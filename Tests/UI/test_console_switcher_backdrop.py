@@ -254,6 +254,25 @@ def test_import_with_foreign_native_method_stays_usable(monkeypatch):
     assert namespace["_NATIVE_BACKDROP_SUPPORTED"] is False
 
 
+def test_import_without_textual_dist_info_keeps_native_backdrop(monkeypatch):
+    """A build lacking Textual's metadata must still import the switcher."""
+    import importlib.metadata
+    import runpy
+
+    import textual
+
+    from tldw_chatbook.Widgets.Console import console_session_switcher_modal as module
+
+    def missing(_name):
+        raise importlib.metadata.PackageNotFoundError("textual")
+
+    if "__version__" in vars(textual):  # an earlier monkeypatch can pin it
+        monkeypatch.delattr(textual, "__version__")
+    monkeypatch.setattr(importlib.metadata, "version", missing)
+    namespace = runpy.run_path(module.__file__)
+    assert namespace["_NATIVE_BACKDROP_SUPPORTED"] is False
+
+
 @pytest.mark.parametrize("change", ["version", "unsupported", "process", "render"])
 def test_unknown_native_version_shape_or_method_stays_native(monkeypatch, change):
     import textual
