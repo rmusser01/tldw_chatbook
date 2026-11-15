@@ -256,20 +256,33 @@ def _stats_pump(pipe, observations, generation: int) -> None:
 
 def resolve_ffplay(explicit: str | None) -> Path:
     """Prefer real Chocolatey payloads to shims; explicit paths must be absolute."""
+    default_install = (
+        Path(os.environ.get("ProgramData", "C:/ProgramData")) / "chocolatey"
+    )
+    install = Path(os.environ.get("ChocolateyInstall", str(default_install)))
     if explicit:
         path = Path(explicit)
         if not path.is_absolute() or not path.is_file():
             raise ValueError("ffplay_requires_existing_absolute_path")
-        return path.resolve()
-    if os.name == "nt":
-        root = Path(os.environ.get("ProgramData", "C:/ProgramData")) / "chocolatey/lib"
-        candidates = sorted(root.glob("ffmpeg*/tools/**/ffplay.exe"))
-        if candidates:
-            return candidates[0].resolve()
-    resolved = shutil.which("ffplay")
-    if not resolved or "chocolatey/bin" in resolved.replace("\\", "/").lower():
-        raise ValueError("real_ffplay_not_found_supply_absolute_path")
-    return Path(resolved).resolve()
+    else:
+        candidates = (
+            sorted((install / "lib").glob("ffmpeg*/tools/**/ffplay.exe"))
+            if os.name == "nt"
+            else []
+        )
+        found = candidates[0] if candidates else shutil.which("ffplay")
+        if not found:
+            raise ValueError("real_ffplay_not_found_supply_absolute_path")
+        path = Path(found)
+    # Normalize links and '..' before checking every entry path. A shim's
+    # launcher PID does not establish ownership of its real playback child.
+    resolved = path.resolve()
+    if resolved.parent in {
+        (default_install / "bin").resolve(),
+        (install / "bin").resolve(),
+    }:
+        raise ValueError("ffplay_shim_refused_supply_real_payload_path")
+    return resolved
 
 
 def _build_receipt(executable: Path) -> dict:
