@@ -199,20 +199,19 @@ def test_default_config_second_chat_reaches_provider_while_first_reply_runs(
     first = facts["captures"][0]
     assert facts["first_agent_eligible"] and first["agent_eligible"], why
     assert facts["first_runs"] == [["primary", "done"]], why
-    if surface == "default":
-        # Nothing the light surface offers is undeclarable: both chats run,
-        # their provider calls open at once.
+    if surface in ("default", "writable"):
+        # Nothing the light surface offers is undeclarable or writes the
+        # project: both chats run, their provider calls open at once.
         assert not first["opaque"], why
         assert facts["second"][0] is True, why
         assert facts["concurrent"], why
-    elif surface == "writable":
-        # The light surface offers no local write tool, so the maximum counts
-        # none, and its real composition still binds and replies (first_runs).
-        # The agent run-log root (the first writable binding) is still a
-        # declared project write, so the second chat stays busy here.
-        assert not first["opaque"], why
+    if surface == "writable":
+        # No local write tool is offered, so the maximum counts none; the run
+        # log's per-run directory is private storage, not a project write.
+        # The real composition still binds and replies (first_runs).
         assert first["local_writes"] == [], why
-    else:
+        assert not any(path.endswith("project") for path in first["writes"]), why
+    elif surface == "full_tools":
         # Full agent tools still count Canvas and chatbook's MCP tools up front.
         assert first["opaque"], why
         assert "canvas" in first["other_providers"], why

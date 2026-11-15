@@ -770,13 +770,18 @@ class OrdinaryTurn:
 
         Sub-agents and skill installs/scripts declare no footprint, so the claim
         widens when the turn actually uses one (TASK-40715). Never waits: another
-        live claim refuses with ``worktree_activity_busy``. An already-OPAQUE
-        claim already covers the effect, even after the turn sealed: fleet
-        children outlive their parent's submission.
+        live claim refuses with ``worktree_activity_busy``. The turn's sources
+        and runtime must still be current; an already-OPAQUE claim then covers
+        the effect even after the turn sealed (fleet children outlive their
+        parent's submission).
         """
+        self.check()
+        if self.runtime._disposed or self.controller._disposed:
+            raise CapacityRefused("ordinary_turn_closed")
         if self.footprint.opaque:
             return
-        self._require_open()
+        if self.sealed:
+            raise CapacityRefused("ordinary_turn_closed")
         try:
             footprint = self.activity.widen_to_opaque(
                 self.claim, owner=self.owner, footprint=self.footprint
@@ -787,13 +792,9 @@ class OrdinaryTurn:
             raise CapacityRefused("worktree_activity_busy")
         self.footprint = footprint
 
-    def _require_open(self):
-        self.check()
-        if self.sealed or self.runtime._disposed or self.controller._disposed:
-            raise CapacityRefused("ordinary_turn_closed")
-
     def attach(self, owner):
-        self._require_open()
+        if self.sealed:
+            raise CapacityRefused("ordinary_turn_closed")  # no child joins late
         self.widen()
         for source in self.snapshot_sources:
             try:

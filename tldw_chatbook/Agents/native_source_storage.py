@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import threading
 from contextlib import ExitStack, contextmanager
@@ -27,10 +28,17 @@ def _retained_source_stack(tree, databases):
     Inside this thread's own outer retention of the same tree, a handle opened
     here belongs to the outer stack's operation owner, which closes it later
     (``operation_owned_connection`` defers to the outermost owner). So a nested
-    stack checks no handles; the outer one checks them when it exits.
+    stack checks no handles; the outer one checks them when it exits. Nesting
+    is per asyncio task: another task's retention held across an await on the
+    same loop thread is not an outer stack of this one.
     """
+    try:
+        task = asyncio.current_task()
+    except RuntimeError:  # no running loop on this thread
+        task = None
     held = vars(_RETAINED_ON_THREAD).setdefault("trees", [])
-    nested = tree in held
+    key = (tree, task)
+    nested = key in held
     locals_and_handles = []
     for database in dict.fromkeys(db for db in databases if db is not None):
         if nested or getattr(database, "is_memory_db", False):
@@ -41,7 +49,7 @@ def _retained_source_stack(tree, databases):
             locals_and_handles.append((local, getattr(local, "conn", None)))
     cleanup = [False]
     body_error = None
-    held.append(tree)
+    held.append(key)
     try:
         with tree.retain_source_scope(_cleanup_state=cleanup):
             try:
@@ -68,7 +76,7 @@ def _retained_source_stack(tree, databases):
                     )
                 cleanup[0] = True
     finally:
-        held.remove(tree)
+        held.remove(key)
 
 
 class _AgentSources:

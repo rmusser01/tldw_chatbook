@@ -508,8 +508,10 @@ def _capture_maximum(tree, *, hook_read=None):
         scope = WorktreeScope(scratch.root, True, capture_directory_chain(scratch.root))
         reads.append(scope)
         writes.append(scope)
-    if tree.source is not None and tree.source.root is not None:
-        writes.append(WorktreeScope(tree.source.root, True, tree.source.root_identity))
+    # The run log's per-run `.<dir>/<run_id>` directory under `tree.source.root`
+    # (the first writable binding, else scratch) is private storage, outside
+    # the footprint conflict (owner decision 2026-11-14, ADR-285): only tools
+    # declare project writes.
     if tree.reference is not None:
         opaque |= tree.reference.opaque
         reads.extend(

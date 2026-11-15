@@ -387,13 +387,23 @@ async def test_light_surface_fixed_at_capture_cannot_widen_at_reply(
         await task
 
 
-async def test_fleet_child_runs_a_script_after_its_parent_and_the_claim_then_retires(
-    ordinary_host, monkeypatch
+async def _eventually(probe, seconds=20):
+    try:
+        await asyncio.wait_for(until(probe), seconds)
+    except TimeoutError:
+        return False
+    return True
+
+
+@pytest.mark.parametrize("change", ["none", "rebound"])
+async def test_fleet_child_script_after_its_parent_runs_only_while_the_turn_is_current(
+    ordinary_host, monkeypatch, change
 ):
     """A fleet child outlives its parent's submission (sealed turn).
 
-    Its ``run_skill_script`` still runs under the turn's widened claim, and
-    once the child returns the turn retires: another chat's Send is accepted.
+    Its ``run_skill_script`` runs under the turn's widened claim, and once the
+    child returns the turn retires: another chat's Send is accepted. After the
+    chat's conversation is rebound, the same call is refused.
     """
     from Tests.Chat.test_console_agent_bridge import SUBAGENT_PROMPT_PREFIX
     from Tests.console_provider_doubles import provider_resolution
@@ -403,11 +413,17 @@ async def test_fleet_child_runs_a_script_after_its_parent_and_the_claim_then_ret
     h = ordinary_host
     acting = _chat(h)
     effects = []
-    h.bridge._skills_service = _ScriptSkills(
-        lambda: effects.append((_turn(h, acting).sealed, _turn(h, acting).footprint.opaque))
-    )
+    parent_finished, described, latched = (threading.Event() for _ in range(3))
+
+    class Skills(_ScriptSkills):
+        async def describe_skill_script(self, *args, **kwargs):
+            # The script call is under way; hold it until the test is ready.
+            described.set()
+            assert await asyncio.to_thread(latched.wait, 20)
+            return await super().describe_skill_script(*args, **kwargs)
+
+    h.bridge._skills_service = Skills(lambda: effects.append(True))
     h.controller.set_pending_skill_script = lambda *args, **kwargs: None
-    parent_finished = threading.Event()
     child_payloads = []
 
     class Gateway(_RecordingGateway):
@@ -437,6 +453,7 @@ async def test_fleet_child_runs_a_script_after_its_parent_and_the_claim_then_ret
                 yield "parent done"
 
     _install(h, Gateway())
+    tree = None
     try:
         result = await asyncio.wait_for(
             h.controller.submit_draft("spawn chat", session_id=acting.id), 30
@@ -446,13 +463,127 @@ async def test_fleet_child_runs_a_script_after_its_parent_and_the_claim_then_ret
         assert tree.sealed and tree.footprint.opaque
         with pytest.raises(CapacityRefused, match="ordinary_turn_closed"):
             tree.attach(object())  # no new child joins a sealed turn
+        parent_finished.set()
+        assert await _eventually(described.is_set), "the child never ran its script"
+        if change == "rebound":
+            h.store.rebind_persisted_conversation(acting.id, None)
+        latched.set()
+        assert await _eventually(lambda: tree.retired.done()), (
+            "the turn's claim outlived its child"
+        )
+        script_result = str(child_payloads[-1][-1])
     finally:
         parent_finished.set()
-    await asyncio.wait_for(until(lambda: len(child_payloads) == 2), 20)
-    assert effects == [(True, True)], (
-        "the child's script did not run after its parent sealed: "
-        + str(child_payloads[1][-1])
+        latched.set()
+        if tree is not None and not tree.retired.done():
+            # Fail here, not in teardown: disposal waits for every turn.
+            tree.retired.set_result(None)
+            h.runtime._ordinary_turns.discard(tree)
+    if change == "none":
+        assert effects == [True], "the child's script did not run: " + script_result
+        result = await h.controller.submit_draft("other chat", session_id=_chat(h).id)
+        assert result.accepted, "the turn's claim outlived its child"
+    else:
+        assert effects == [], "the script ran after its turn stopped being current"
+        assert "Tool result for run_skill_script: ERROR" in script_result
+
+
+async def test_widened_turn_refuses_a_skill_install_after_runtime_disposal(
+    ordinary_host, monkeypatch
+):
+    """An OPAQUE claim covers the effect, but not a disposed runtime."""
+    import tldw_chatbook.Skills_Interop.skill_remote_fetch as fetch
+    from Tests.Chat.test_console_agent_bridge import (
+        SUBAGENT_PROMPT_PREFIX,
+        _install_skills_service,
     )
-    await asyncio.wait_for(until(lambda: tree.retired.done()), 20)
-    result = await h.controller.submit_draft("other chat", session_id=_chat(h).id)
-    assert result.accepted, "the turn's claim outlived its child"
+
+    monkeypatch.setenv("TLDW_AGENTS_AUTOWAKE_ENABLED", "false")
+    h = ordinary_host
+    effects, payloads = [], []
+    confirming, latched = threading.Event(), threading.Event()
+
+    async def install(url, *, scope_service, **kwargs):
+        effects.append(True)
+        return {"name": "demo"}
+
+    def confirm(url, session_id=None):
+        confirming.set()
+        assert latched.wait(20)
+        return True
+
+    monkeypatch.setattr(fetch, "install_skill_from_url", install)
+    h.bridge._skills_service = _install_skills_service()
+    h.controller.request_skill_install_confirm = confirm
+
+    class Gateway(_RecordingGateway):
+        async def stream_chat(self, resolution, messages, **kwargs):
+            system = str(messages[0].get("content", "")) if messages else ""
+            if system.startswith(SUBAGENT_PROMPT_PREFIX):
+                yield "child done"
+                return
+            payloads.append(messages)
+            if len(payloads) == 1:
+                yield fence(SPAWN_TOOL_NAME, {"task": "CHILD-TASK widen the turn"})
+            elif len(payloads) == 2:
+                yield fence("install_skill", {"url": "https://github.com/o/r"})
+            else:
+                yield "parent done"
+
+    _install(h, Gateway())
+    chat = _chat(h)
+    task = asyncio.create_task(h.controller.submit_draft("install chat", session_id=chat.id))
+    h.tasks.append(task)
+    try:
+        assert await _eventually(confirming.is_set), "no install confirmation"
+        assert _turn(h, chat).footprint.opaque, "the spawn did not widen the claim"
+        disposal = asyncio.create_task(h.runtime.dispose())
+        assert await _eventually(lambda: h.runtime._disposed, 10)
+    finally:
+        latched.set()
+    await asyncio.wait_for(disposal, 30)
+    assert effects == [], "the install ran after the runtime was disposed"
+
+
+async def test_retained_source_stack_defers_handles_only_to_its_own_task():
+    """A nested retention skips its handle check only inside the same task.
+
+    Another task's retention of the same tree, held across an await on this
+    loop thread, is not an outer stack: a handle the second task keeps still
+    fails its own check.
+    """
+    from contextlib import contextmanager
+
+    from tldw_chatbook.Agents.native_source_storage import _retained_source_stack
+
+    class Tree:
+        @contextmanager
+        def retain_source_scope(self, *, _cleanup_state=None):
+            yield
+
+    class Database:
+        def __init__(self):
+            self._local = threading.local()
+
+    tree, database = Tree(), Database()
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def held_retention():
+        with _retained_source_stack(tree, (database,)):
+            entered.set()
+            await release.wait()
+
+    holder = asyncio.create_task(held_retention())
+    await entered.wait()
+    try:
+        with pytest.raises(RuntimeError, match="did not return"):
+            with _retained_source_stack(tree, (database,)):
+                database._local.conn = object()  # this task keeps a handle
+    finally:
+        database._local.conn = None
+        release.set()
+    await holder
+    with _retained_source_stack(tree, (database,)):
+        with _retained_source_stack(tree, (database,)):
+            database._local.conn = object()  # the outer stack's owner closes it
+        database._local.conn = None
