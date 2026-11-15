@@ -1548,14 +1548,21 @@ class BackupRestoreScreen(Screen):
             rows.append(
                 "Supported credential coverage is checked during capture. Any unavailable scopes require a new explicit review."
             )
+        elif any(
+            item.owner == "personal_context.repository" and item.status == "included"
+            for item in preview.items
+        ):
+            rows.append(self.service.issue_message("personal_context_backup_key_excluded"))
         rows.extend(
             f"{item.owner}: {item.status}" + (f" — {item.path}" if item.path else "")
             for item in preview.items
         )
         rows.extend(
-            # TASK-40132: refused live plugins say why and what to do.
+            # TASK-40132/40134: refused live plugins and a Personal Context first
+            # link in flight say why and what to do.
             f"{issue}: {self.service.issue_message(issue)}"
-            if issue == "plugin_writers_active"
+            if issue
+            in {"plugin_writers_active", "personal_context_first_link_in_progress"}
             else issue
             for issue in preview.issues
         )
@@ -1841,11 +1848,12 @@ class BackupRestoreScreen(Screen):
             )
         )
         for code in codes:
+            label = "Acknowledge omission: " + code
+            if code.startswith("credential_personal_context_link_keys_excluded:"):
+                label += " — " + self.service.issue_message(code.split(":", 1)[0])
             await area.mount(
                 Checkbox(
-                    Text("Acknowledge omission: " + code),
-                    name=code,
-                    classes="backup-acknowledge-credential",
+                    Text(label), name=code, classes="backup-acknowledge-credential"
                 )
             )
 
@@ -2506,7 +2514,15 @@ class BackupRestoreScreen(Screen):
             ("Preserve", plan.preserve),
         ):
             rows.extend(f"{label}: {key} → {path}" for key, path in entries)
-        rows.extend(f"Issue: {issue}" for issue in plan.issues)
+        rows.extend(
+            f"Issue: {issue}"
+            + (
+                f" — {self.service.issue_message(issue)}"
+                if issue == "personal_context_not_restored"
+                else ""
+            )
+            for issue in plan.issues
+        )
         rows.extend(
             f"Additional safety-copy source: {key}" for key in plan.safety_scope
         )

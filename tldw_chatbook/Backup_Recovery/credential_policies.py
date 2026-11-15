@@ -9,12 +9,16 @@ class SQLiteCredentialColumn:
     owner: str
     table: str
     column: str
-    kind: Literal["config", "headers", "auth", "url", "citation"]
+    kind: Literal["config", "headers", "auth", "url", "citation", "personal_context"]
     identity: str = "id"
 
 
 CITATION_OWNER = "db.chachanotes.primary"
 CITATION_SERVICE = "tldw_chatbook.citation-provenance.v1"
+# TASK-40134: the column names the keyring account of the profile key; the
+# name is not a secret, so exclude mode keeps it as it is.
+PERSONAL_CONTEXT_OWNER = "personal_context.repository"
+PERSONAL_CONTEXT_SERVICE = "tldw_chatbook.personal_context"
 
 SQLITE_CREDENTIAL_COLUMNS = (
     *(
@@ -45,6 +49,9 @@ SQLITE_CREDENTIAL_COLUMNS = (
     SQLiteCredentialColumn("db.subscriptions", "url_snapshots", "url", "url"),
     SQLiteCredentialColumn(
         "research.local", "research_runs", "provider_overrides_json", "config"
+    ),
+    SQLiteCredentialColumn(
+        PERSONAL_CONTEXT_OWNER, "profile_meta", "key_account", "personal_context"
     ),
 )
 

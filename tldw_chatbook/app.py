@@ -2634,14 +2634,14 @@ class TldwCli(
     ) -> None:
         """Restore exact protected Personal Context Sync collaborators after restart."""
 
-        from .Personal_Context.link_key_custody import (
-            KeyringPersonalContextLinkKeyCustodian,
-        )
+        from .Personal_Context.link_key_custody import KeyringPersonalContextLinkKeyCustodian
         from .Personal_Context.link_service import (
             PersonalContextLinkService,
             authenticate_legacy_completed_link_artifacts,
             cleanup_completed_link_artifacts,
         )
+        from .Personal_Context.recovery import require_sync_allowed
+        require_sync_allowed()  # TASK-40134: no unreviewed restore resumes sync
 
         link = self.sync_state_repository.get_personal_context_link_state(
             server_profile_id=server_profile_id,

@@ -1119,6 +1119,11 @@ async def _run_personal_context_link(app) -> None:
             server_profile_id=str(server_profile_id),
             authenticated_principal_id=scope.get("authenticated_principal_id"),
         )
+        if existing is not None:
+            from .Personal_Context.recovery import require_sync_allowed
+
+            # TASK-40134: before the staged-key reads and activation below.
+            require_sync_allowed()
         recovered_apply = False
         if existing is not None and existing["state"] == "applying":
             binding = PersonalContextLinkService._key_binding(existing)

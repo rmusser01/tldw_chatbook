@@ -147,13 +147,9 @@ their own owner and that capture refuses. None is a heuristic match:
 | personal_context.interview_drafts | `<user data>/tldw_chatbook_personal_context_interviews.db` and its `-wal`, `-shm`, `-journal` | `_LocalSQLite`, installed by `Backup_Recovery/config_adapter.py` | intentionally excluded | refused (`personal_context_interview_drafts_excluded`) |
 
 `personal_context.repository` (`<user data>/tldw_chatbook_personal_context.db` and its
-sidecars) is not an exclusion. Owner decision (2026-11-06): capture it, with key custody
-designed so a restore can read it, in its own design task. Until that lands the same
-class declares it with `excluded=False`: present files are explicit `unsupported` rows
-under that owner (they block a complete preview, but no longer as owner `unknown`),
-absent files are `unused`, and capture is refused
-(`personal_context_repository_capture_unsupported`). Neither Personal Context owner has
-a selectable backup group.
+sidecars) is not an exclusion: since TASK-40134 it is a captured owner in its own
+selectable "Personal Context" group, described in "Personal Context backup owner
+(TASK-40134)" at the end of this file. The interview drafts have no group.
 
 ## SQLite owner registry cross-check
 
@@ -3362,7 +3358,7 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | sqlite:db.workspace_project_index | tldw_chatbook/DB/Workspace_Project_Index_DB | _PRIVATE_FILE | sqlite/installed exclusion (`ProjectIndexCacheDeclaration`) |
 | sqlite:library.legacy_recovery | tldw_chatbook/Library/collections_legacy_recovery | _READ_ONLY_URI | sqlite/unsupported |
 | sqlite:personal_context.interview_drafts | tldw_chatbook/Personal_Context/interview_draft_repository | _PRIVATE_FILE | sqlite/installed exclusion (`_LocalSQLite`) |
-| sqlite:personal_context.repository | tldw_chatbook/Personal_Context/repository | _PRIVATE_AND_READ_ONLY | sqlite/explicit unsupported declaration (`_LocalSQLite`, `excluded=False`) |
+| sqlite:personal_context.repository | tldw_chatbook/Personal_Context/repository | _PRIVATE_AND_READ_ONLY | sqlite/runtime owner; no backup authority (backup uses `recovery.personal_context.repository`, TASK-40134) |
 | sqlite:plugins.registry | tldw_chatbook/Plugins/registry | _PRIVATE_MEMORY_AND_READ_ONLY | sqlite/plugins runtime owner; no backup authority (backup uses `recovery.plugins.registry`) |
 | sqlite:recovery.operations.dreams | tldw_chatbook/DB/recovery_dreams_guardian | _PRIVATE_AND_READ_ONLY | sqlite/operational-recovery-qualified |
 | sqlite:recovery.operations.guardian | tldw_chatbook/DB/recovery_dreams_guardian | _PRIVATE_AND_READ_ONLY | sqlite/operational-recovery-qualified |
@@ -3866,9 +3862,9 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Notes/notes_sync_coordinator.py | NotesSyncRootCoordinator.__init__ | secure_private_directory | 2 | unsupported | notes |
 | tldw_chatbook/Notes/notes_sync_coordinator.py | NotesSyncRootCoordinator.try_acquire | open_private_text_append_stream | 2 | unsupported | notes |
 | tldw_chatbook/Personal_Context/interview_draft_repository.py | InterviewDraftRepository._connect | connect_private_sqlite | 1 | unsupported | personal_context.interview_drafts |
-| tldw_chatbook/Personal_Context/repository.py | PersonalContextRepository._connect | connect_private_sqlite | 1 | unsupported | personal_context.repository |
-| tldw_chatbook/Personal_Context/repository.py | profile_presence_hint | connect_private_sqlite | 1 | unsupported | personal_context.repository |
-| tldw_chatbook/Personal_Context/repository.py | release_first_link_freeze_for_recovery | connect_private_sqlite | 1 | unsupported | personal_context.repository |
+| tldw_chatbook/Personal_Context/repository.py | PersonalContextRepository._connect | connect_private_sqlite | 1 | qualified | personal_context.repository; captured through recovery.personal_context.repository (TASK-40134) |
+| tldw_chatbook/Personal_Context/repository.py | profile_presence_hint | connect_private_sqlite | 1 | qualified | personal_context.repository; captured through recovery.personal_context.repository (TASK-40134) |
+| tldw_chatbook/Personal_Context/repository.py | release_first_link_freeze_for_recovery | connect_private_sqlite | 1 | qualified | personal_context.repository; captured through recovery.personal_context.repository (TASK-40134) |
 | tldw_chatbook/Actor_Packs/contracts.py | _validate_portrait | open | 1 | memory | PIL-BytesIO decode; no-independent-file |
 | tldw_chatbook/Actor_Packs/importer.py | _portrait_review | open | 1 | memory | PIL-BytesIO decode; no-independent-file |
 | tldw_chatbook/Actor_Packs/importer.py | _section_image | open | 1 | memory | PIL-BytesIO decode; no-independent-file |
@@ -4029,3 +4025,44 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Notes/note_frontmatter.py | _dump | safe_dump | 1 | memory | yaml value serialization (no stream); no-independent-file |
 | tldw_chatbook/Plugins/adapters/vendor.py | _branch_instruction | safe_dump | 1 | memory | yaml value serialization (no stream); no-independent-file |
 | tldw_chatbook/Plugins/adapters/vendor.py | _integrated_instruction | safe_dump | 1 | memory | yaml value serialization (no stream); no-independent-file |
+
+## Personal Context backup owner (TASK-40134)
+
+Owner decisions 2026-11-06 ("Capture it") and 2026-11-10 ("Approve all 11", spec
+`Docs/superpowers/specs/2026-11-10-personal-context-backup-key-custody-design.md`).
+`Personal_Context/recovery.py` installs `personal_context.repository`, a
+`_SQLiteDeclaration` over `<user data>/tldw_chatbook_personal_context.db`, in the
+selectable `personal_context` group ("Personal Context").
+
+| Path or record | Preview status | Capture |
+| --- | --- | --- |
+| `tldw_chatbook_personal_context.db` | included (optional default: absent is `unused`) | SQLite backup route through `recovery.personal_context.repository`; committed WAL frames fold in; exact catalog is one of the nine v9 layouts in `REPOSITORY_SCHEMAS` (TASK-40133; three come from databases the v7 build migrated), version read from `personal_context_schema`. Ciphertext rows, device-only records included (decision 8). Failing validation is `unsupported`. |
+| `-wal`, `-shm` | `sqlite.transient`, intentionally excluded | folded into the copy |
+| a `first_link_freeze` or `first_link_rebaseline_commit` row | the database and a `:first_link` marker are `unavailable`; issue `personal_context_first_link_in_progress` | refused before copying (decision 7); a partial backup omits it |
+| the profile key (`profile_meta.key_account` names its keyring account) | — | `include`/`rollback` only: a `personal_context` credential record (service `tldw_chatbook.personal_context`, not remappable), written only after the key authenticates the captured copy's manifest; `credential_manual_recovery_required` like the citation key. An empty reference, a removed profile or a recovery marker carries no record. `exclude` (the default) never reads it and never rewrites the database: the reference is not a secret, and the preview says the key is not in the backup. |
+| link keys (device wrapping key, staged integrity keys, dataset staging keys) | — | never captured (decision 5); `include` mode discloses them as `credential_personal_context_link_keys_excluded:<id>`, like skill-trust keys |
+
+**Restore.** Until readable restores ship (TASK-40135), `restore_plan.plan_restore`
+never plans the repository for publication in replace or isolated mode, the group
+is not offered for restore, the live database is preserved byte-for-byte, the
+archive keeps its copy, and the plan carries `personal_context_not_restored`.
+`relocate` refuses as a second line. The owner is activation-required: every
+restore binds it. Personal Context sync (`app._load_personal_context_sync_runtime`)
+loads only when `execution_allowed` passes for `personal_context.repository` and
+`runtime.sync_state` (`recovery.require_sync_allowed`), and so do the link service's `resume` and `resume_after_local_activation` and the Settings link flow for a stored link, before any state or keyring read. Settings' review approves
+only `personal_context.repository`, and only for a generation whose restore plan
+published neither owner; otherwise it shows `personal_context_restored_link_state`, and `personal_context_restore_review_unavailable` when the review cannot be read while the gate is closed.
+It never approves `config` or `runtime.sync_state` (TASK-40137), so sync stays off.
+Detached import refuses the repository by name
+(`detached_owner_unavailable:personal_context.repository`): it carries no key.
+Manual (inert) extraction never offers or writes credential material.
+
+| Registry owner | Source module | Existing policy | Recovery cohort/status |
+| --- | --- | --- | --- |
+| sqlite:recovery.personal_context.repository | tldw_chatbook/Personal_Context/recovery | _PRIVATE_AND_READ_ONLY | sqlite/Personal Context backup owner (centralized backup and recovery capture allowed) |
+
+| Module | Producer symbol | Call | Count | Classification | Resolver / adapter cohort |
+| --- | --- | --- | --- | --- | --- |
+| tldw_chatbook/Personal_Context/recovery.py | _Repository.capture | copy_private_sqlite | 1 | qualified | personal_context.repository |
+| tldw_chatbook/Personal_Context/recovery.py | _Repository.validate | connect_private_sqlite | 1 | qualified | personal_context.repository; read-only catalog validation and first-link check |
+

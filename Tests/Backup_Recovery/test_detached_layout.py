@@ -901,3 +901,19 @@ def test_actor_pack_persona_images_are_validated_in_a_detached_source(
         for row in manifest["files"]
         if row["owner_id"] == "persona.actor_packs"
     ] == [hashlib.sha256(data).hexdigest()]
+
+
+@pytest.mark.parametrize("suffix", ["", "-wal"])
+def test_detached_import_refuses_the_personal_context_repository_by_name(
+    tmp_path, suffix
+):
+    """TASK-40134 AC#11: detached import carries no credentials, so the repository
+    is refused by name and never imported without its key."""
+    source, root, _old = _base_profile(tmp_path)
+    (root / ("tldw_chatbook_personal_context.db" + suffix)).write_bytes(b"ciphertext")
+    work = (tmp_path / "work").absolute()
+    with pytest.raises(
+        ValueError, match="detached_owner_unavailable:personal_context.repository"
+    ):
+        _layout().produce_detached_archive(source.absolute(), work, Event())
+    assert not any(work.rglob("*.zip")) if work.exists() else True

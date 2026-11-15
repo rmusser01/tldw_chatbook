@@ -623,4 +623,6 @@ def test_first_link_current_guard_preserves_v1_and_blocks_v2_before_custody(
         action(blocked, remote, plan)
     assert sql_state(blocked) == before
     assert blocked._require_keys() == keys_before
-    assert memory_protector.load(blocked._profile_ref) == keys_before
+    with blocked._connect() as connection:
+        account = connection.execute("SELECT key_account FROM profile_meta").fetchone()
+    assert memory_protector.load(account[0]) == keys_before

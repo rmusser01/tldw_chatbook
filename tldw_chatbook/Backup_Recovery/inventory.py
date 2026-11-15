@@ -771,6 +771,14 @@ def discover(
         for item in result.items
     ):
         issues.add("plugin_writers_active")
+    # TASK-40134: likewise, a first link in flight refuses Personal Context by name.
+    if any(
+        item.owner == "personal_context.repository"
+        and item.logical_id.endswith(":first_link")
+        and item.status == "unavailable"
+        for item in result.items
+    ):
+        issues.add("personal_context_first_link_in_progress")
     return replace(
         result,
         complete=result.complete and not issues,

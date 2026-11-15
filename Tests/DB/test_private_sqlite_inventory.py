@@ -807,14 +807,15 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # rows and archive-relative payload topology under the existing owner.
         # C90 checks only disposable Chroma candidate metadata, retaining WAL visibility.
         # C99/B41 read and copy the plugin registry for backup (TASK-40132).
+        # C100/B42 validate and copy the Personal Context repository (TASK-40134).
         # C08/C09 were the legacy settings window's VACUUM and integrity
         # workers; they left with the window (TASK-33244).
-        for number in range(1, 100) if number not in {8, 9, 10, 75, 97}
+        for number in range(1, 101) if number not in {8, 9, 10, 75, 97}
     ]
     assert [row["id"] for row in backup_rows] == [
         # B04-B09 were that window's six-owner bulk backup loop (TASK-33244).
         f"B{number:02d}"
-        for number in range(1, 42)
+        for number in range(1, 43)
         if number not in {4, 5, 6, 7, 8, 9, 10, 11, 12, 16, 34}
     ]
 
@@ -1419,7 +1420,7 @@ def test_backup_and_restore_rows_explicitly_opt_into_centralized_backup() -> Non
             "backup_connection_to_private": 3,
             "backup_open_connections_to_private": 2,
             "backup_profile_migration_boundary": 1,
-            "copy_private_sqlite": 23,
+            "copy_private_sqlite": 24,
             "migrate_profile_store_to_candidate": 1,
         }
     )
@@ -1564,6 +1565,7 @@ def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> No
         ('tldw_chatbook/Notifications/recovery', '_NotificationsAdapter.capture', "copy_private_sqlite"): 1,
         ('tldw_chatbook/Notifications/recovery', '_EventsAdapter.capture', "copy_private_sqlite"): 1,
         ("tldw_chatbook/Plugins/backup", "_Plugins.capture", "copy_private_sqlite"): 1,
+        ('tldw_chatbook/Personal_Context/recovery', '_Repository.capture', "copy_private_sqlite"): 1,  # TASK-40134
     })
     actual_calls: Counter[tuple[str, str, str]] = Counter()
     for source_path in PRODUCTION_ROOT.rglob("*.py"):
@@ -1820,6 +1822,7 @@ def test_core_recovery_factory_exactly_matches_registered_backup_authority():
         'recovery.recovered_media',
         'recovery.rag_indexing',
         'recovery.plugins.registry',  # TASK-40132
+        'recovery.personal_context.repository',  # TASK-40134
     }
     assert {a.backup_owner_id for a in adapters} | installed_domain_authority == {
         name for name, policy in SQLITE_OWNER_REGISTRY.items() if policy.recovery_capture_allowed

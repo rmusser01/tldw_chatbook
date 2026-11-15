@@ -299,3 +299,96 @@ def test_selected_absence_does_not_borrow_another_owner_or_unavailable_status(
         for row in case.target.items))
     with pytest.raises(ValueError, match="target_owner_unclassified|target_owner_mismatch"):
         case.review(target)
+
+
+def _personal_context_archive(tmp_path, data):
+    from Tests.Backup_Recovery.test_restore_plan import sealed
+
+    document = _document(("config", "personal_context.repository")).model_dump(mode="json")
+    for row in document["owners"]:
+        if row["owner_id"] == "personal_context.repository":
+            row["schema_version"] = 9
+    for row in document["files"]:
+        row.update(
+            relative_path="config.toml"
+            if row["owner_id"] == "config"
+            else "tldw_chatbook_personal_context.db",
+            size=len(data),
+            sha256=hashlib.sha256(data).hexdigest(),
+        )
+    return sealed(
+        tmp_path, data=data, mutate=lambda doc: (doc.clear(), doc.update(document))
+    )
+
+
+@pytest.mark.parametrize("mode", ["replace", "isolated"])
+def test_restore_plans_keep_personal_context_out_and_say_so(tmp_path, mode):
+    """TASK-40134 AC#5: until readable restores ship, no plan publishes the
+    repository, even for Everything; replace preserves the live copy as it is,
+    the archive keeps its copy, and the plan says Personal Context is not restored."""
+    from tldw_chatbook.Backup_Recovery.archive_reader import verify_sealed
+    from tldw_chatbook.Backup_Recovery.models import FileMetadata, Inventory, StorageItem
+    from tldw_chatbook.Backup_Recovery.restore_groups import available_group_ids
+    from tldw_chatbook.Backup_Recovery.restore_plan import plan_restore
+
+    data = b'[general]\nusers_name="default_user"\n'
+    archive = _personal_context_archive(tmp_path, data)
+    assert "personal_context" not in available_group_ids(verify_sealed(archive))
+    if mode == "replace":
+        live = tmp_path / "live"
+        live.mkdir(mode=0o700)
+        profile = hashlib.sha256(str(live / "config.toml").encode()).hexdigest()[:24]
+        items = []
+        for owner, name, content in (
+            ("config", "config.toml", data),
+            ("personal_context.repository", "tldw_chatbook_personal_context.db", b"live"),
+        ):
+            path = live / name
+            path.write_bytes(content)
+            path.chmod(0o600)
+            key = "profile:" + profile + ":" + owner
+            items.append(
+                StorageItem(
+                    owner,
+                    key,
+                    path,
+                    "included",
+                    () if owner == "config" else ("profile:" + profile + ":config",),
+                    metadata=FileMetadata(
+                        1, key, name, None, "file", 0o600, path.stat().st_mtime_ns, "private"
+                    ),
+                )
+            )
+        repository = items[1].path
+        before = (repository.read_bytes(), repository.stat().st_ino)
+        plan = plan_restore(
+            archive,
+            mode="replace",
+            destinations={"root:config": live, "root:personal_context.repository": live},
+            target=Inventory(tuple(items), True, "independent-local-review", ()),
+            profile_names={"profile": "default_user"},
+        )
+        assert (items[1].logical_id, repository) in plan.preserve
+        assert repository not in dict(plan.retire).values()
+        assert (repository.read_bytes(), repository.stat().st_ino) == before
+    else:
+        restored = tmp_path / "restored"
+        plan = plan_restore(
+            archive,
+            mode="isolated",
+            destinations={
+                "root:config": restored / "config",
+                "root:personal_context.repository": restored / "data",
+                "profile:profile:paths.data_dir": restored / "data",
+            },
+            target=None,
+            profile_names={"profile": "restored"},
+        )
+    restored_keys = [key for key, _ in plan.restore]
+    assert "profile:profile:config" in restored_keys
+    assert not [key for key in restored_keys if "personal_context" in key]
+    assert "personal_context_not_restored" in plan.issues
+    assert any(
+        row.owner_id == "personal_context.repository"
+        for row in verify_sealed(archive).files
+    )

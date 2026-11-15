@@ -899,3 +899,138 @@ def test_native_capture_snapshot_is_self_contained_without_changing_source_wal(
         )
     assert source.read_bytes() == before
     assert before[18:20] == b"\x02\x02"
+
+
+# TASK-40134: the Personal Context profile key as a credential record. The
+# keyring is the in-process SecureKeyring dict from the Personal Context tests,
+# reached only through a patched credential store; nothing touches the OS keyring.
+
+
+def _personal_context_stage(tmp_path, backend):
+    import shutil
+
+    from Tests.Architecture.test_backup_owner_inventory import _device_only_record
+    from tldw_chatbook.Personal_Context.key_protector import KeyringProfileKeyProtector
+    from tldw_chatbook.Personal_Context.repository import PersonalContextRepository
+    from tldw_chatbook.Personal_Context.service import PersonalContextService
+
+    live = tmp_path / "live"
+    live.mkdir(mode=0o700)
+    source = live / "tldw_chatbook_personal_context.db"
+    repository = PersonalContextRepository(
+        source, key_protector=KeyringProfileKeyProtector(backend)
+    )
+    PersonalContextService(repository).create_profile()
+    repository.commit_record_version(
+        _device_only_record(repository), expected_version_id=None
+    )
+    staging = tmp_path / "stage"
+    staging.mkdir(mode=0o700)
+    staged = staging / source.name
+    shutil.copyfile(source, staged)
+    staged.chmod(0o600)
+    with closing(sqlite3.connect(staged)) as connection:
+        (account,) = connection.execute("SELECT key_account FROM profile_meta").fetchone()
+    item = StorageItem(
+        "personal_context.repository",
+        "profile:p:personal_context.repository",
+        staged,
+        "included",
+        (),
+    )
+    return staging, staged, account, Inventory((item,), True, "scope", ())
+
+
+@pytest.mark.parametrize("key", ["matching", "other_database"])
+def test_included_profile_key_is_recorded_only_once_it_opens_the_captured_copy(
+    tmp_path, monkeypatch, key
+):
+    """AC#3: include mode records the key as a ``personal_context`` record after it
+    authenticates the captured copy; a different key with the same key_version
+    under that account is never written."""
+    import hashlib
+
+    from Tests.Personal_Context.test_key_protector import SecureKeyring
+    from tldw_chatbook.Personal_Context.key_protector import (
+        KeyringProfileKeyProtector,
+        ProfileKeyMaterial,
+    )
+
+    backend = SecureKeyring()
+    staging, staged, account, inv = _personal_context_stage(tmp_path, backend)
+    entry = ("tldw_chatbook.personal_context", account)
+    if key == "other_database":
+        KeyringProfileKeyProtector(backend).replace(
+            account, ProfileKeyMaterial(b"o" * 32, b"p" * 32)
+        )
+    stored = backend.values[entry]
+    before = hashlib.sha256(staged.read_bytes()).hexdigest()
+    monkeypatch.setattr(
+        credentials, "_credential_store", lambda: SimpleNamespace(_keyring=backend)
+    )
+
+    issues = process_credentials(staging, inv, mode="include", encrypted=True)
+
+    records = json.loads((staging / "credential-recovery.json").read_text())["records"]
+    (record,) = [row for row in records if row["kind"] == "personal_context"]
+    assert (record["service"], record["username"], record["remappable"]) == (
+        "tldw_chatbook.personal_context",
+        account,
+        False,
+    )
+    link_keys = "credential_personal_context_link_keys_excluded:" + inv.items[0].logical_id
+    if key == "matching":
+        assert record["status"] == "captured" and record["value"] == stored
+        assert set(issues) == {
+            "credential_manual_recovery_required:" + record["id"],
+            link_keys,
+        }
+        assert [row["id"] for row in credentials._material(staging)] == [record["id"]]
+        plan = plan_credential_scopes(staging)
+        assert json.loads(plan[record["id"]])["action"] == "retain"
+    else:
+        assert record["status"] == "unreadable" and "value" not in record
+        assert set(issues) == {"credential_unreadable:" + record["id"], link_keys}
+    assert hashlib.sha256(staged.read_bytes()).hexdigest() == before
+    assert backend.values[entry] == stored
+
+
+@pytest.mark.parametrize("reference", ["named", "empty"])
+def test_profile_key_reference_survives_exclusion_and_empty_carries_no_key(
+    tmp_path, monkeypatch, reference
+):
+    """AC#4: exclude mode reads no key and keeps the database byte-for-byte, its
+    reference included; an empty reference carries no key record in any mode."""
+    import hashlib
+
+    from Tests.Personal_Context.test_key_protector import SecureKeyring
+
+    backend = SecureKeyring()
+    staging, staged, account, inv = _personal_context_stage(tmp_path, backend)
+    if reference == "empty":
+        with closing(sqlite3.connect(staged)) as connection, connection:
+            connection.execute("UPDATE profile_meta SET key_account = ''")
+    before = staged.read_bytes()
+    monkeypatch.setattr(
+        credentials,
+        "_credential_store",
+        lambda: pytest.fail("exclude mode read the Personal Context key"),
+    )
+
+    assert process_credentials(staging, inv, mode="exclude", encrypted=False) == ()
+    assert staged.read_bytes() == before
+    assert not (staging / "credential-recovery.json").exists()
+    with closing(sqlite3.connect(staged)) as connection:
+        assert connection.execute("SELECT key_account FROM profile_meta").fetchone() == (
+            account if reference == "named" else "",
+        )
+    if reference == "empty":
+        monkeypatch.setattr(
+            credentials, "_credential_store", lambda: SimpleNamespace(_keyring=backend)
+        )
+        process_credentials(staging, inv, mode="include", encrypted=True)
+        records = json.loads((staging / "credential-recovery.json").read_text())
+        assert not [r for r in records["records"] if r["kind"] == "personal_context"]
+        assert hashlib.sha256(staged.read_bytes()).digest() == hashlib.sha256(
+            before
+        ).digest()

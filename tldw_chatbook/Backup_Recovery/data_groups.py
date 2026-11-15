@@ -116,6 +116,12 @@ BACKUP_GROUPS = (
         "External files",
         "Files in explicitly selected external folders.",
     ),
+    BackupGroup(
+        "personal_context",
+        "Personal Context",
+        "Your encrypted Personal Context profile. Its key is included only when the "
+        "backup includes credentials.",
+    ),
 )
 
 # Keep this exhaustive for shipped durable adapters. Runtime locks, caches,
@@ -197,6 +203,7 @@ _GROUP_OWNERS = {
     "chatbooks": ("chatbooks.registry", "chatbooks.archives"),
     "models": ("models.artifacts",),
     "external_files": ("external.files",),
+    "personal_context": ("personal_context.repository",),
 }
 _OWNER_GROUPS = {
     owner: group_id for group_id, owners in _GROUP_OWNERS.items() for owner in owners

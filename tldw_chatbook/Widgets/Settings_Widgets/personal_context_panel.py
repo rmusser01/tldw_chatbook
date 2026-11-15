@@ -35,6 +35,13 @@ from tldw_profile_core import (
 )
 
 from ...Personal_Context.export_service import ExportRequest, RecoveryExportRequest
+from ...Personal_Context.recovery import (
+    RESTORED_LINK_STATE,
+    REVIEW_AVAILABLE,
+    REVIEW_UNAVAILABLE,
+    approve_restore_review,
+    restore_review,
+)
 from ...Personal_Context.runtime_policy import AgentAuthority
 from ...Personal_Context.service import (
     PersonalContextService,
@@ -86,6 +93,24 @@ _COLLISION_COPY = (
     "A record with the same kind and subject is already active in this scope. "
     "Change the kind or subject, or archive the other record."
 )
+
+
+_RESTORE_REVIEW_COPY = {
+    REVIEW_AVAILABLE: (
+        "This profile was restored from a backup. Choose Review restored profile "
+        "to confirm Personal Context on this device. Sync with your home server "
+        "stays off after a restore."
+    ),
+    RESTORED_LINK_STATE: (
+        "Personal Context sync is off because this profile was restored together "
+        "with saved sync state, which could resume the old device's link. Sync "
+        "stays off; the profile stays usable on this device."
+    ),
+    REVIEW_UNAVAILABLE: (
+        "Personal Context sync is off: the restore review for this profile could "
+        "not be read. Reopen this page later to check again; the profile stays usable here."
+    ),
+}
 
 
 def _bounded_label(value: object, *, limit: int = 80) -> str:
@@ -199,6 +224,7 @@ class PersonalContextSettingsPanel(Vertical):
         self._link_launcher = link_launcher
         self._load_generation = 0
         self._proposal_review: PersonalContextProposalReviewModal | None = None
+        self._restore_review: str | None = None
 
     def on_mount(self) -> None:
         self.load_records(retry_locked=True)
@@ -246,7 +272,16 @@ class PersonalContextSettingsPanel(Vertical):
         except Exception:
             self.app.call_from_thread(self._apply_load_error, generation)
             return
-        self.app.call_from_thread(self._apply_snapshot, generation, snapshot, service)
+        path = self._repository_path(service)
+        review = None if path is None else restore_review(path)
+        self.app.call_from_thread(
+            self._apply_snapshot, generation, snapshot, service, review
+        )
+
+    @staticmethod
+    def _repository_path(service) -> Path | None:
+        """The open repository's file; a locked or absent service shows no review."""
+        return getattr(getattr(service, "_repository", None), "db_path", None)
 
     def _require_service(self, *, retry_locked: bool = False) -> PersonalContextService:
         if self._service is None:
@@ -271,13 +306,18 @@ class PersonalContextSettingsPanel(Vertical):
         generation: int,
         snapshot: PersonalContextSettingsSnapshot,
         service: PersonalContextService | None = None,
+        review: str | None = None,
     ) -> None:
         if generation != self._load_generation:
             return
         if service is not None:
             self._service = service
+        review_changed = review != self._restore_review
+        self._restore_review = review
         self.load_failed = False
         self.snapshot = snapshot
+        if review_changed:
+            self.refresh(recompose=True)
         scope_ids = {scope.scope.scope_id for scope in snapshot.scopes}
         if self.selected_scope_id not in scope_ids | {_ALL_SCOPES}:
             self.selected_scope_id = _ALL_SCOPES
@@ -544,6 +584,17 @@ class PersonalContextSettingsPanel(Vertical):
             "Review profile, collision, and workspace outcomes before linking to your home server.",
             classes="settings-inline-guidance",
         )
+        if self._restore_review is not None:
+            # TASK-40134: a restored profile never resumes its old link here.
+            yield Static(
+                _RESTORE_REVIEW_COPY[self._restore_review],
+                id="personal-context-restore-review-copy",
+                classes="settings-inline-guidance",
+            )
+            if self._restore_review == REVIEW_AVAILABLE:
+                yield Button(
+                    "Review restored profile", id="personal-context-restore-review"
+                )
         yield Button(
             "Link to home server",
             id="personal-context-link-server",
@@ -881,6 +932,11 @@ class PersonalContextSettingsPanel(Vertical):
             self.action_run_interview()
         elif button_id == "personal-context-link-server":
             self.action_link_server()
+        elif button_id == "personal-context-restore-review":
+            path = self._repository_path(self._service)
+            self._run_mutation(
+                lambda: approve_restore_review(path), "Restored profile reviewed."
+            )
         elif button_id.startswith("personal-context-proposal-"):
             self._review_proposal_index(button_id)
         elif button_id.startswith("personal-context-record-"):

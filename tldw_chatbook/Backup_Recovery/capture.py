@@ -375,6 +375,7 @@ def _capture_under_maintenance(
             "unsupported_owner",
             # Every plugin item is then unavailable, so partial capture omits it.
             "plugin_writers_active",
+            "personal_context_first_link_in_progress",
         }
     ):
         raise CaptureReviewRequired(

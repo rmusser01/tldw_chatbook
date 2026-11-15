@@ -416,6 +416,10 @@ class PersonalContextLinkService:
     async def resume(self) -> PersonalContextLinkReceipt:
         """Resume only the safe server-completion half of an interrupted link."""
 
+        from .recovery import require_sync_allowed
+
+        # TASK-40134: a restored link resumes nothing before its review.
+        require_sync_allowed()
         state = self._state.get_personal_context_link_state(**self._scope)
         if state is None:
             raise ValueError("personal_context_link_missing")
@@ -430,6 +434,9 @@ class PersonalContextLinkService:
     ) -> PersonalContextLinkReceipt:
         """Advance an authenticated staged-key recovery, then complete the server."""
 
+        from .recovery import require_sync_allowed
+
+        require_sync_allowed()  # TASK-40134, as in resume()
         if type(rebaseline_version) is not int or rebaseline_version < 1:
             raise ValueError("personal_context_rebaseline_version_invalid")
         state = self._state.get_personal_context_link_state(**self._scope)

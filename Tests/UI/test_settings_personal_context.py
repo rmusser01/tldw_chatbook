@@ -2228,3 +2228,51 @@ async def test_export_and_deleted_labels_keep_literal_metadata(monkeypatch):
             deleted.plain
             == f"Deleted · [bold]retired[/bold]   · Updated {NOW.isoformat()}"
         )
+
+
+class _RestoredProfileService(_ProfileServiceStub):
+    _repository = SimpleNamespace(db_path="restored-personal-context.db")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("review", ["available", "link_state", "unavailable"])
+async def test_restored_profile_review_never_claims_sync_resumes(
+    monkeypatch, review
+) -> None:
+    """TASK-40134 AC#10: Settings offers the Personal Context review only when it
+    can approve it, its copy keeps sync off, and a restore that brought back link
+    state shows a named reason instead."""
+    import tldw_chatbook.Widgets.Settings_Widgets.personal_context_panel as module
+    from tldw_chatbook.Personal_Context import recovery
+
+    state = {
+        "available": recovery.REVIEW_AVAILABLE,
+        "link_state": recovery.RESTORED_LINK_STATE,
+        "unavailable": recovery.REVIEW_UNAVAILABLE,
+    }[review]
+    reviewed: list[str] = []
+    monkeypatch.setattr(module, "restore_review", lambda path: None if reviewed else state)
+    monkeypatch.setattr(module, "approve_restore_review", lambda path: reviewed.append(path))
+    panel = PersonalContextSettingsPanel(_RestoredProfileService(_ready_snapshot()))
+
+    class _PanelHost(ConsolidatedCSSApp):
+        def compose(self):
+            yield panel
+
+    host = _PanelHost()
+    async with host.run_test(size=(100, 40)) as pilot:
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        copy = str(panel.query_one("#personal-context-restore-review-copy", Static).render())
+        assert "sync" in copy.lower() and "off" in copy
+        assert "resume" not in copy.replace("resume the old device", "")
+        buttons = panel.query("#personal-context-restore-review")
+        if review != "available":
+            assert ("saved sync state" if review == "link_state" else "could not be read") in copy
+            assert not buttons
+            return
+        await pilot.click("#personal-context-restore-review")
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        assert reviewed == ["restored-personal-context.db"]
+        assert not panel.query("#personal-context-restore-review-copy")

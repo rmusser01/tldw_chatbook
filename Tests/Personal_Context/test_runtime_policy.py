@@ -160,6 +160,9 @@ def test_locked_bootstrap_returns_fail_closed_facade_without_key_replacement(
 
 class FailingCreationProtector:
     def load_or_create(self, _profile_ref):
+        raise AssertionError("an empty database never loads or creates a key")
+
+    def create(self, _profile_ref):
         raise ProfileLockedError("unavailable")
 
     def load(self, _profile_ref):
@@ -169,15 +172,20 @@ class FailingCreationProtector:
         raise AssertionError
 
 
-def test_locked_bootstrap_does_not_claim_an_empty_profile_is_present(tmp_path) -> None:
-    locked = bootstrap_personal_context_service(
+def test_bootstrap_does_not_claim_an_empty_profile_is_present(tmp_path) -> None:
+    # TASK-40133: an empty database holds no key, so it is absent, not locked;
+    # a keyring that cannot store one fails the creation itself.
+    service = bootstrap_personal_context_service(
         db_path=tmp_path / "personal-context.db",
         key_protector=FailingCreationProtector(),
     )
 
-    status = locked.status()
-    assert status.locked is True
+    status = service.status()
+    assert status.locked is False
     assert status.profile_present is False
+    with pytest.raises(ProfileLockedError):
+        service.create_profile()
+    assert service.status().profile_present is False
 
 
 @pytest.mark.parametrize(

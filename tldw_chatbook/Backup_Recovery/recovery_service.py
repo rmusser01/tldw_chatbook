@@ -173,6 +173,26 @@ _ISSUE_MESSAGES = {
         "lists them and removes them when you confirm; or restore without the "
         "Tools and skills group."
     ),
+    # TASK-40134: Personal Context, told before anything is written.
+    "personal_context_first_link_in_progress": (
+        "Personal Context is in the middle of linking to your home server, so it "
+        "is not copied. Finish linking, or retry an interrupted link, in Settings "
+        "> Personal Context, then back up again. A partial backup without Personal "
+        "Context is available now."
+    ),
+    "personal_context_backup_key_excluded": (
+        "Personal Context: database only. Its key is not in this backup, so the "
+        "copy is readable only on this device, and only until Personal Context is "
+        "linked or removed. To include the key, back up with credentials."
+    ),
+    "personal_context_not_restored": (
+        "Personal Context will not be restored: your current Personal Context "
+        "profile stays exactly as it is, and the backup keeps its copy."
+    ),
+    "credential_personal_context_link_keys_excluded": (
+        "Personal Context's link keys are left out: the device wrapping key, staged "
+        "integrity keys and dataset staging keys stay in this device's keyring."
+    ),
 }
 
 
@@ -576,6 +596,12 @@ class RecoveryService:
                         }
                     )
                     for row in doc.dependency_groups
+                    # Credential material is never offered for manual extraction.
+                    if not any(
+                        files_by_id.get(key) is not None
+                        and files_by_id[key].owner_id == "recovery.credentials"
+                        for key in row.members
+                    )
                 ),
                 "required_capabilities": doc.required_capabilities,
                 "exclusions": tuple(

@@ -39,6 +39,10 @@ class ProfileLockedError(RuntimeError):
     reason_code = "profile_locked"
 
 
+class ProfileKeyMaterialInvalidError(ProfileLockedError):
+    """A stored entry was read but is not profile key material."""
+
+
 @dataclass(frozen=True, slots=True)
 class ProfileKeyMaterial:
     """Separate per-profile confidentiality and canonical-integrity keys."""
@@ -61,7 +65,15 @@ class ProfileKeyProtector(Protocol):
 
     def load_or_create(self, profile_ref: str) -> ProfileKeyMaterial: ...
 
+    def create(self, profile_ref: str) -> ProfileKeyMaterial:
+        """Store fresh material in an unused account; never adopt an entry."""
+        ...
+
     def load(self, profile_ref: str) -> ProfileKeyMaterial: ...
+
+    def exists(self, profile_ref: str) -> bool:
+        """Whether the account holds any entry; raises if the store is unavailable."""
+        ...
 
     def replace(self, profile_ref: str, material: ProfileKeyMaterial) -> None: ...
 
@@ -80,7 +92,7 @@ def _serialize_material(material: ProfileKeyMaterial) -> bytes:
 
 def _deserialize_material(payload: bytes) -> ProfileKeyMaterial:
     if len(payload) != 65 or payload[0] < 1:
-        raise ProfileLockedError("Profile key material is invalid.")
+        raise ProfileKeyMaterialInvalidError("Profile key material is invalid.")
     return ProfileKeyMaterial(payload[1:33], payload[33:65], payload[0])
 
 
@@ -105,12 +117,22 @@ class InMemoryProfileKeyProtector:
         profile_ref = _normalized_ref(profile_ref)
         return self._materials.setdefault(profile_ref, _new_material())
 
+    def create(self, profile_ref: str) -> ProfileKeyMaterial:
+        profile_ref = _normalized_ref(profile_ref)
+        if profile_ref in self._materials:
+            raise ProfileLockedError("Profile key account is already in use.")
+        material = self._materials[profile_ref] = _new_material()
+        return material
+
     def load(self, profile_ref: str) -> ProfileKeyMaterial:
         profile_ref = _normalized_ref(profile_ref)
         try:
             return self._materials[profile_ref]
         except KeyError:
             raise ProfileLockedError("Profile key material is unavailable.") from None
+
+    def exists(self, profile_ref: str) -> bool:
+        return _normalized_ref(profile_ref) in self._materials
 
     def replace(self, profile_ref: str, material: ProfileKeyMaterial) -> None:
         self._materials[_normalized_ref(profile_ref)] = material
@@ -158,6 +180,23 @@ class KeyringProfileKeyProtector:
             ) from exc
         return material
 
+    def exists(self, profile_ref: str) -> bool:
+        profile_ref = _normalized_ref(profile_ref)
+        try:
+            return self._keyring.get_password(_KEYRING_SERVICE, profile_ref) is not None
+        except Exception as exc:
+            raise ProfileLockedError(
+                "The secure profile keyring is unavailable."
+            ) from exc
+
+    def create(self, profile_ref: str) -> ProfileKeyMaterial:
+        if self.exists(profile_ref):
+            raise ProfileLockedError("Profile key account is already in use.")
+        profile_ref = _normalized_ref(profile_ref)
+        material = _new_material()
+        self.replace(profile_ref, material)
+        return material
+
     def load(self, profile_ref: str) -> ProfileKeyMaterial:
         material = self._read(_normalized_ref(profile_ref))
         if material is None:
@@ -195,15 +234,19 @@ class KeyringProfileKeyProtector:
             ) from exc
         if payload is None:
             return None
-        if not payload.startswith(_KEYRING_PREFIX):
-            raise ProfileLockedError("Profile key material is invalid.")
-        try:
-            decoded = base64.b64decode(
-                payload.removeprefix(_KEYRING_PREFIX), validate=True
-            )
-        except (ValueError, TypeError) as exc:
-            raise ProfileLockedError("Profile key material is invalid.") from exc
-        return _deserialize_material(decoded)
+        return decode_keyring_material(payload)
+
+
+def decode_keyring_material(payload: object) -> ProfileKeyMaterial:
+    """Decode one stored keyring value; anything else is invalid material."""
+
+    if not isinstance(payload, str) or not payload.startswith(_KEYRING_PREFIX):
+        raise ProfileKeyMaterialInvalidError("Profile key material is invalid.")
+    try:
+        decoded = base64.b64decode(payload.removeprefix(_KEYRING_PREFIX), validate=True)
+    except (ValueError, TypeError) as exc:
+        raise ProfileKeyMaterialInvalidError("Profile key material is invalid.") from exc
+    return _deserialize_material(decoded)
 
 
 class PassphraseProfileKeyProtector:

@@ -74,6 +74,7 @@ def install_adapters() -> tuple[OwnerAdapter, ...]:
                 "Workspaces",
                 "Writing_Interop",
                 "runtime_policy",
+                "Personal_Context",
             )
         ),
     )

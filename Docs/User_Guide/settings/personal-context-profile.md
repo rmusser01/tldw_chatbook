@@ -349,9 +349,22 @@ Personal Context merge or resolution action in Settings.
   bounded status and IDs, not profile values or raw interview answers.
 - Backups: encrypted interview drafts stay on this device and are never
   included in a backup; a backup preview lists them as excluded. The Personal
-  Context database itself cannot be backed up yet: a preview lists it as
-  unsupported, so a backup of a profile that has used Personal Context is
-  reported as incomplete.
+  Context database is backed up in its own **Personal Context** group, as the
+  encrypted file it is, device-only records included. Its key goes into the
+  backup only when the backup includes credentials, which also encrypts the
+  backup. Without credentials the preview says the key is not in the backup: that
+  copy is readable only on this device, and only until Personal Context is linked
+  or removed. The keys that link this device to your home server always stay on
+  this device. While a first link is in progress, the database is not copied, and
+  the preview says to finish linking and back up again.
+- Restores: restoring Personal Context is not available yet. Every restore leaves
+  your current Personal Context profile exactly as it is, and the restore review
+  says so before anything is written. After any restore, Personal Context sync
+  stays off. Settings > Personal Context shows **Review restored profile** when
+  the restore did not bring back saved sync state; reviewing confirms the profile
+  on this device but does not turn sync back on. When the restore did bring back
+  sync state, or when the review cannot be read, Settings says sync stays off
+  and why.
 - Encryption does not hide all metadata, such as object counts and update
   timing. Under `server_trusted_v1`, the authorized home server can decrypt
   syncable content and re-encrypt it with its own keys. HTTPS protects that
