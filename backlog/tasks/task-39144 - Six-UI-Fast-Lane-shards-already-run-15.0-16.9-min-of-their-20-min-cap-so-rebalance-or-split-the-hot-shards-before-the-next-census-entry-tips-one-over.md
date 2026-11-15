@@ -1,21 +1,24 @@
 ---
 id: TASK-39144
-title: "Six UI Fast Lane shards already run 15.0-16.9 min of their 20 min cap, so rebalance or split the hot shards before the next census entry tips one over"
+title: >-
+  Six UI Fast Lane shards already run 15.0-16.9 min of their 20 min cap, so
+  rebalance or split the hot shards before the next census entry tips one over
 status: In Progress
-assignee: ['@claude']
+assignee:
+  - '@claude'
 created_date: 2026-11-07 02:28
-updated_date: '2026-11-15 06:20'
+updated_date: '2026-11-15T17:20:00Z'
 labels:
-- follow-up
-- ci
-- tests
-priority: medium
-references:
-- scripts/ui_pr_gate_census.txt
-- scripts/check_ui_pr_gate_census.py
-- scripts/ui_lane_shard_replay.py
-- .github/workflows/derived-artifacts.yml
+  - follow-up
+  - ci
+  - tests
 dependencies: []
+references:
+  - scripts/ui_pr_gate_census.txt
+  - scripts/check_ui_pr_gate_census.py
+  - scripts/ui_lane_shard_replay.py
+  - .github/workflows/derived-artifacts.yml
+priority: medium
 ---
 
 ## Description
@@ -224,3 +227,22 @@ Per shard (minutes, slowest finished job; runs as above):
 - **No margin left.** At 38 the floor (12.97) is the target, so the next tail entries need another shard-count decision; the census header says so.
 - **Checks** (run.sh, 2026-11-15). Census checker: OK, 2145 entries, floor 2145. `Tests/CI` at `-n 4`: 1640 passed, 1 skipped (load 44-48); its shard-count statements pin derives 38 shards, 50 eligible test jobs, 31 runners and 32 with perf-guard from the workflow. Size ratchets (module, screen, Library modules), serial: 282 passed. Preflight passed.
 
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+created: 2026-11-15T10:07:00Z
+
+---
+
+2026-11-15 local follow-up (TASK-37360/40969/1378.3): routed27 verified cases, preserving all2034 inherited selectors; census/floor2061. Preserved historical476.64 pytest-minute envelope with explicit proportional reserve, charged new Windows cases raw23.09995min.37-shard ideal13.50649 exceeds13.3;38 after34swaps max13.22248. UImaxparallel18 and deadlines unchanged; third scheduling wave recorded.104 checker/replay +9 final count/aggregation guards pass. Portableweights/calibration/reproducer: Docs/superpowers/qa/2026-11-14-textual-pattern-followups/ci/README.md. No push/newmatrixrun; actual post-change CI observation remains open under this task.
+
+---
+
+created: 2026-11-15T17:20:00Z
+
+---
+
+PR #3569 rebase onto dev 2ff0e9a5e5f (2026-11-15): preserved all 2076 incoming selectors plus the same 27 PR cases, census/floor 2103. The 42 incoming selectors are explicitly charged from pinned task evidence: 1823.4 seconds plus a separately identified conservative 42.8-second reserve, totaling 1866.2 seconds. Combined model 530.843283 minutes makes 39 shards impossible at the 13.3-minute target; 40 shards after 61 swaps reach max 13.287801 minutes. Concurrency remains 18, deadlines unchanged. Twelve targeted count, coverage, workflow and incoming-lane guards pass; both portable replays match. Prior 38-shard artifacts and census are archived separately. Current evidence: Docs/superpowers/qa/2026-11-14-textual-pattern-followups/ci/README.md. Actual post-change CI observation remains open; modeled headroom is not a completed CI run.
+
+---
+<!-- COMMENTS:END -->

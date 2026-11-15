@@ -418,6 +418,51 @@ class SpeechTTSPanelDraftSnapshot:
             _validated_pipeline_voice_draft_copy(self.pipeline_voice_original),
         )
 
+    def has_unsaved_changes(self) -> bool:
+        """Return whether any non-secret global value differs from its baseline."""
+        try:
+            if (
+                self.state.defaults.snapshot()
+                != self.original_state.defaults.snapshot()
+            ):
+                return True
+        except GlobalSpeechTTSValidationError:
+            if self.state.defaults != self.original_state.defaults:
+                return True
+
+        # `default_profile_id` is a distinct precedence rung, deliberately not
+        # part of `TTSPreferencesSnapshot` (see build_global_speech_tts_save_
+        # proposal's own comment) -- `.snapshot()` above cannot see it, so it
+        # must be compared explicitly or picking a default profile alone would
+        # look like "no changes" and never enable Save.
+        if (
+            self.state.defaults.default_profile_id
+            != self.original_state.defaults.default_profile_id
+        ):
+            return True
+
+        for provider_id in BUILT_IN_TTS_PROVIDER_ORDER:
+            try:
+                proposal = build_global_speech_tts_save_proposal(
+                    self.original_state,
+                    self.state,
+                    configure_provider=provider_id,
+                )
+            except GlobalSpeechTTSValidationError:
+                if (
+                    self.state.providers[provider_id]
+                    != self.original_state.providers[provider_id]
+                ):
+                    return True
+                continue
+            if proposal.settings or proposal.delete_setting_keys:
+                return True
+        return (
+            self.realtime_draft.snapshot() != self.realtime_original.snapshot()
+            or self.pipeline_voice_draft.snapshot()
+            != self.pipeline_voice_original.snapshot()
+        )
+
     def unsaved_field_count(self) -> int:
         """Count this draft's fields that differ from saved (TASK-33002.4).
 

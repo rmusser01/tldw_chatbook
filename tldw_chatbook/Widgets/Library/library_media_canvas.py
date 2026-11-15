@@ -214,6 +214,46 @@ def _media_row_label_rest(
     return f" {visible_title}\n    {detail}"
 
 
+class LibraryMediaResults(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
+    """Own replaceable browse results while the filter remains mounted."""
+
+    def __init__(self, canvas: LibraryMediaCanvas) -> None:
+        super().__init__(id="library-media-results")
+        self.canvas = canvas
+
+    def compose(self) -> ComposeResult:
+        """Render the current result controls, rows, and preview."""
+        yield from self.canvas._compose_results()
+
+
+class LibraryMediaScopeRow(Horizontal):
+    """Reconcile the conditional scope action without replacing the filter."""
+
+    def __init__(self, canvas: LibraryMediaCanvas) -> None:
+        super().__init__(id="library-media-scope-row", classes="h-auto")
+        self.canvas = canvas
+        self._scope = (canvas.canvas.scope_line, canvas.canvas.scope_clearable)
+
+    def sync_state(self, canvas: LibraryMediaCanvasState) -> None:
+        """Publish scope changes against this owner's pending display snapshot."""
+        scope = (canvas.scope_line, canvas.scope_clearable)
+        if scope != self._scope:
+            self._scope = scope
+            self.refresh(recompose=True)
+
+    def compose(self) -> ComposeResult:
+        """Render the applied scope and its conditional Clear action."""
+        scope_line, scope_clearable = self._scope
+        yield Static(
+            scope_line,
+            id="library-media-scope-line",
+            classes="library-media-scope-line",
+            markup=False,
+        )
+        if scope_clearable:
+            yield self.canvas._scope_clear_button()
+
+
 class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
     """Render the Library media list with a type filter and preview.
 
@@ -307,6 +347,8 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # collaborator`, because a missed one has no runtime symptom short
         # of a silently dead control.
         self.actions = actions
+        self._filter_edited = False
+        self._filter_hydrating = False
         self.pager = pager
         self.type_options = (
             canvas.type_options if type_options is None else type_options
@@ -446,6 +488,9 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
     @on(Input.Changed, "#library-media-filter")
     def handle_library_media_filter_changed(self, event: Input.Changed) -> None:
         """Route the filter box's debounce tick to the media controller."""
+        self.query_one("#library-media-filter-clear", Button).disabled = not bool(
+            event.value
+        )
         if self.actions is not None:
             self.actions.handle_library_media_filter_changed(event)
 
@@ -625,7 +670,52 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.can_rename_speakers = can_rename_speakers
         self.media_db = media_db
         self.speaker_rename_media_id = speaker_rename_media_id
-        self.refresh(recompose=True)
+        field = self.query_one("#library-media-filter", Input)
+        # The applied query can lag behind native edits (including raw spaces).
+        # Once edited, the retained Input owns its draft; explicit Clear writes
+        # it through the controller. Results must never restore an older query.
+        if not self._filter_edited and field.value != canvas.query:
+            self._filter_hydrating = True
+            try:
+                with field.prevent(Input.Changed):
+                    field.value = canvas.query
+            finally:
+                self._filter_hydrating = False
+        title_count = pager.title_count if pager is not None else canvas.count
+        self.query_one("#library-media-title", Static).update(
+            "Media" if title_count is None else f"Media ({title_count})"
+        )
+        self.query_one(
+            "#library-media-review-sets", Button
+        ).display = not canvas.select_mode
+        scope_row = self.query_one("#library-media-scope-row", LibraryMediaScopeRow)
+        scope_row.display = bool(canvas.scope_line)
+        scope_row.sync_state(canvas)
+        self.query_one("#library-media-filter-clear", Button).disabled = not bool(
+            field.value
+        )
+        self.results.refresh(recompose=True)
+
+    @property
+    def results(self) -> LibraryMediaResults:
+        """Return the mounted owner whose recompose publishes result children."""
+        return self.query_one(LibraryMediaResults)
+
+    def _track_filter_edit(self) -> None:
+        """Claim the native draft synchronously, before queued Changed events."""
+        if not self._filter_hydrating:
+            self._filter_edited = True
+
+    @staticmethod
+    def _scope_clear_button() -> Button:
+        """Build the applied scope's conditional recovery action."""
+        return Button(
+            "Clear",
+            id="library-media-scope-clear",
+            classes="library-canvas-action",
+            compact=True,
+            tooltip="Clear the filter and type this line states.",
+        )
 
     # ---- Task 8 (meeting diarization spec): inline speaker rename ---------
     _SPEAKER_INPUT_PREFIX = "library-media-speaker-input-"
@@ -1006,17 +1096,6 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         )
         title = "Media" if title_count is None else f"Media ({title_count})"
         select_mode = getattr(self.canvas, "select_mode", False)
-        fresh_zero = (
-            self.pager is not None
-            and title_count == 0
-            and not self.canvas.rows
-            and not select_mode
-            and not self.canvas.delete_receipt_count
-            and not self.stale_action_reason
-            and not self.mutation_action_reason
-            and not self.pager.status_copy
-            and not self.pager.retry_visible
-        )
         # task-28243: the "Sets" picker opener lives on the TITLE row, not the
         # action toolbar -- that toolbar already overflows the narrow items
         # pane (task-28025) and one more button pushed a squeezed Button into
@@ -1057,32 +1136,13 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # build_library_media_browse_state and can only ever agree with them.
         # A state built by the legacy ``build_library_media_state`` carries no
         # scope_line; an empty Static would just spend a row saying nothing.
-        if self.canvas.scope_line:
-            scope_row = Horizontal(id="library-media-scope-row")
-            scope_row.add_class("h-auto")
-            with scope_row:
-                # Width comes from `.library-media-scope-line` (1fr +
-                # ellipsis), not an inline style: an auto-width Static
-                # pushed its own Clear off the pane edge once the Reader
-                # narrowed Items.
-                yield Static(
-                    self.canvas.scope_line,
-                    id="library-media-scope-line",
-                    classes="library-media-scope-line",
-                    markup=False,
-                )
-                if self.canvas.scope_clearable:
-                    yield Button(
-                        "Clear",
-                        id="library-media-scope-clear",
-                        classes="library-canvas-action",
-                        compact=True,
-                        tooltip="Clear the filter and type this line states.",
-                    )
+        scope_row = LibraryMediaScopeRow(self)
+        scope_row.display = bool(self.canvas.scope_line)
+        yield scope_row
         filter_row = Horizontal(classes="ds-toolbar")
         filter_row.add_class("h-auto")
         with filter_row:
-            yield Input(
+            field = Input(
                 value=self.canvas.query,
                 # task-31274: say that keywords match too. Kept to 14 cells
                 # because Textual word-wraps the placeholder and paints only
@@ -1095,6 +1155,8 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 tooltip="Filter by title, content or keyword",
                 id="library-media-filter",
             )
+            self.watch(field, "value", self._track_filter_edit, init=False)
+            yield field
             clear_filter = Button(
                 "Clear filter",
                 id="library-media-filter-clear",
@@ -1102,6 +1164,25 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             )
             clear_filter.disabled = not bool(self.canvas.query)
             yield clear_filter
+        yield LibraryMediaResults(self)
+
+    def _compose_results(self) -> ComposeResult:
+        """Render replaceable results without rebuilding the editing controls."""
+        title_count = (
+            self.pager.title_count if self.pager is not None else self.canvas.count
+        )
+        select_mode = getattr(self.canvas, "select_mode", False)
+        fresh_zero = (
+            self.pager is not None
+            and title_count == 0
+            and not self.canvas.rows
+            and not select_mode
+            and not self.canvas.delete_receipt_count
+            and not self.stale_action_reason
+            and not self.mutation_action_reason
+            and not self.pager.status_copy
+            and not self.pager.retry_visible
+        )
         if fresh_zero:
             yield Static(
                 self.canvas.empty_copy,

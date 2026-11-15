@@ -1370,7 +1370,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: restore parked focus on, and the rail-sync docstring says when it
     #: recomposes: 38169 -> 38177 lines (measured).
     #: 2026-11-13 restack: both stacked, measured 38188 lines, 1377 methods.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38188, 1377),
+    #: 2026-11-15, PR #3569 CI resync: retain Media filter/results ownership
+    #: with TASK-40293 empty-page landing after results completion. Exact
+    #: combined size 38,183 lines / 1,377 methods; no ceiling increases.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38183, 1377),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

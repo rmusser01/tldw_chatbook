@@ -20711,6 +20711,16 @@ its newest edit. Synchronous canvas admission, activation-time target/config
 capture, and master-only projection fixed both mounted reproductions. Queue
 ownership starts after admission; test the event boundary before it as well.
 
+**TASK-37360, 2026-11-15.** Retaining the Media filter initially passed three
+mounted tests, but marking its draft only in `Input.Changed` left the same gap.
+A native value watcher forced an older browse publication before that queued
+message: the first typed `P` became an empty string. Claiming the editing draft
+in a synchronous Textual value watcher, with an explicit initial-hydration guard,
+made that regression pass. The final cases also accept a real older result
+before the newer append/backspace/space debounce fires; a case that only releases
+an already-superseded result would miss this boundary. See
+`Tests/UI/test_library_media_filter_typing.py`.
+
 ## A retained Select still has queued index-based activation stages
 
 **TASK-32794, 2026-09-18.** Keeping MCP Tools' server Select mounted repaired

@@ -1,0 +1,110 @@
+[
+  {
+    "Source": ".test-tmp/textual-37360/targeted/result.xml",
+    "Name": "test_a_dirty_form_filtered_off_the_page_saves_to_the_reader_item_after_trash_back",
+    "Class": "Tests.UI.test_library_media_reader_controls_in_list_view",
+    "Time": "26.257",
+    "node": "Tests/UI/test_library_media_reader_controls_in_list_view.py::test_a_dirty_form_filtered_off_the_page_saves_to_the_reader_item_after_trash_back",
+    "ci_seconds": 9.17,
+    "ratio": 0.3492402026126366
+  },
+  {
+    "Source": ".test-tmp/textual-37360/targeted/result.xml",
+    "Name": "test_edit_metadata_save_in_the_list_view_writes_the_reader_item_not_row_0",
+    "Class": "Tests.UI.test_library_media_reader_controls_in_list_view",
+    "Time": "21.841",
+    "node": "Tests/UI/test_library_media_reader_controls_in_list_view.py::test_edit_metadata_save_in_the_list_view_writes_the_reader_item_not_row_0",
+    "ci_seconds": 8.44,
+    "ratio": 0.3864291928025273
+  },
+  {
+    "Source": ".test-tmp/textual-37360/targeted/result.xml",
+    "Name": "test_move_to_trash_in_the_list_view_names_and_deletes_the_reader_item",
+    "Class": "Tests.UI.test_library_media_reader_controls_in_list_view",
+    "Time": "23.201",
+    "node": "Tests/UI/test_library_media_reader_controls_in_list_view.py::test_move_to_trash_in_the_list_view_names_and_deletes_the_reader_item",
+    "ci_seconds": 9.110000000000001,
+    "ratio": 0.3926554889875437
+  },
+  {
+    "Source": ".test-tmp/textual-37360/targeted/result.xml",
+    "Name": "test_the_items_filter_never_moves_the_reader_off_a_dirty_form",
+    "Class": "Tests.UI.test_library_media_editor_dirty_escape_extended",
+    "Time": "26.639",
+    "node": "Tests/UI/test_library_media_editor_dirty_escape_extended.py::test_the_items_filter_never_moves_the_reader_off_a_dirty_form",
+    "ci_seconds": 9.41,
+    "ratio": 0.35324148804384553
+  },
+  {
+    "Source": ".test-tmp/textual-37360/targeted/result.xml",
+    "Name": "test_canonical_classes_defined_only_in_owning_sheet",
+    "Class": "Tests.UI.test_component_pattern_governance",
+    "Time": "113.477",
+    "node": "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet",
+    "ci_seconds": 41.15,
+    "ratio": 0.3626285502789111
+  },
+  {
+    "Source": ".test-tmp/textual-37360/targeted/result.xml",
+    "Name": "test_dimension_literal_ratchet",
+    "Class": "Tests.UI.test_component_pattern_governance",
+    "Time": "23.626",
+    "node": "Tests/UI/test_component_pattern_governance.py::test_dimension_literal_ratchet",
+    "ci_seconds": 4.1,
+    "ratio": 0.17353762803690848
+  },
+  {
+    "Source": ".test-tmp/textual-37360/targeted/result.xml",
+    "Name": "test_python_style_ratchet",
+    "Class": "Tests.UI.test_component_pattern_governance",
+    "Time": "125.417",
+    "node": "Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet",
+    "ci_seconds": 48.88,
+    "ratio": 0.38973982793401213
+  },
+  {
+    "Source": ".test-tmp/textual-37360/targeted/result.xml",
+    "Name": "test_sheet_size_ceiling",
+    "Class": "Tests.UI.test_component_pattern_governance",
+    "Time": "17.213",
+    "node": "Tests/UI/test_component_pattern_governance.py::test_sheet_size_ceiling",
+    "ci_seconds": 5.52,
+    "ratio": 0.32068785220472895
+  },
+  {
+    "Source": ".test-tmp/textual-40969/compatibility-context-01/result.xml",
+    "Name": "test_console_memory_controls_mount_stage_and_fit_narrow_settings",
+    "Class": "Tests.UI.test_settings_context_memory_controls",
+    "Time": "80.510",
+    "node": "Tests/UI/test_settings_context_memory_controls.py::test_console_memory_controls_mount_stage_and_fit_narrow_settings",
+    "ci_seconds": 11.549999999999999,
+    "ratio": 0.14346043969693204
+  },
+  {
+    "Source": ".test-tmp/textual-40969/compatibility-context-01/result.xml",
+    "Name": "test_console_memory_save_blocks_invalid_trigger_target_pair",
+    "Class": "Tests.UI.test_settings_context_memory_controls",
+    "Time": "67.749",
+    "node": "Tests/UI/test_settings_context_memory_controls.py::test_console_memory_save_blocks_invalid_trigger_target_pair",
+    "ci_seconds": 11.52,
+    "ratio": 0.17003941017579596
+  },
+  {
+    "Source": ".test-tmp/textual-40969/compatibility-context-01/result.xml",
+    "Name": "test_console_memory_save_routes_normalized_values_to_console_section",
+    "Class": "Tests.UI.test_settings_context_memory_controls",
+    "Time": "66.186",
+    "node": "Tests/UI/test_settings_context_memory_controls.py::test_console_memory_save_routes_normalized_values_to_console_section",
+    "ci_seconds": 11.16,
+    "ratio": 0.16861571933641553
+  },
+  {
+    "Source": ".test-tmp/textual-40969/compatibility-context-01/result.xml",
+    "Name": "test_remaining_stale_events_keep_latest_edit_and_invalid_draft",
+    "Class": "Tests.UI.test_settings_remaining_input_event_origin",
+    "Time": "55.905",
+    "node": "Tests/UI/test_settings_remaining_input_event_origin.py::test_remaining_stale_events_keep_latest_edit_and_invalid_draft",
+    "ci_seconds": 11.59,
+    "ratio": 0.20731598247026203
+  }
+]

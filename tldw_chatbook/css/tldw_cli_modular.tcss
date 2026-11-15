@@ -11250,7 +11250,8 @@ ResponseRulesModal .rr-actions Button {
 }
 
 
-#library-media-canvas > .ds-toolbar {
+#library-media-canvas > .ds-toolbar,
+#library-media-results > .ds-toolbar {
     width: $ds-width-full;
     min-width: $ds-size-0;
     max-width: $ds-width-full;
@@ -11258,7 +11259,9 @@ ResponseRulesModal .rr-actions Button {
 
 
 #library-media-canvas > .ds-toolbar > .library-canvas-action,
-#library-media-canvas > .ds-toolbar > .library-toolbar-count {
+#library-media-canvas > .ds-toolbar > .library-toolbar-count,
+#library-media-results > .ds-toolbar > .library-canvas-action,
+#library-media-results > .ds-toolbar > .library-toolbar-count {
     width: auto;
     min-width: $ds-size-0;
 }

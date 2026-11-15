@@ -630,7 +630,14 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-12: re-measured after the rebase onto dev 4b90eb860b: 35,023.
     # 2026-11-12, TASK-40318: the archive receipt moved to
     # UI/Settings_Modules/workspace_archive.py (-3): 35,020.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 34993,  # 2026-11-05: +27, a save that writes a koboldcpp endpoint off /api/v1/generate is refused (TASK-36516, owner waiver); 2026-11-06: +74, the stale model, endpoint and provider echo checks (TASK-38975, +7) and one pane at a time at 70 columns and below, with "/" showing the rail (TASK-38953, +67) (owner waiver); 2026-11-10: +36 (exact measurement), a focus the user moves during a same-category pane rebuild or before a landing's deferred focus is kept (TASK-39169) (owner waiver); 2026-11-10: +17 (exact measurement), review r13p-rev1: Textual's focus reset is told from a user's move, and a removed control lands on its rail row (TASK-39169) (owner waiver); 2026-11-10: +5 (exact measurement), review r13p-rev2: a region removes inside its batch and a pane-opener origin counts (TASK-39169) (owner waiver); 2026-11-12, restack onto dev e0186fa10a: dev's 35,852 (+1) plus round 13's +59, measured (owner waiver)
+    # 2026-11-15, TASK-1378.3 rebase onto dev 2ff0e9a5e5: Speech ownership
+    # and context-memory changes remain -199; archive receipt remains -3.
+    # Exact combined measurement: 34,821, with no new size allowance.
+    # 2026-11-15, CI resync onto cc6006fcf5: incoming custom-endpoint recovery
+    # is another -2; exact combined measurement 34,819, with no new allowance.
+    # 2026-11-16, resync onto 713fa22f: incoming manual-sync extraction
+    # reduces the combined source by25 more lines; exact pin34,794.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 34794,  # 2026-11-05: +27, a save that writes a koboldcpp endpoint off /api/v1/generate is refused (TASK-36516, owner waiver); 2026-11-06: +74, the stale model, endpoint and provider echo checks (TASK-38975, +7) and one pane at a time at 70 columns and below, with "/" showing the rail (TASK-38953, +67) (owner waiver); 2026-11-10: +36 (exact measurement), a focus the user moves during a same-category pane rebuild or before a landing's deferred focus is kept (TASK-39169) (owner waiver); 2026-11-10: +17 (exact measurement), review r13p-rev1: Textual's focus reset is told from a user's move, and a removed control lands on its rail row (TASK-39169) (owner waiver); 2026-11-10: +5 (exact measurement), review r13p-rev2: a region removes inside its batch and a pane-opener origin counts (TASK-39169) (owner waiver); 2026-11-12, restack onto dev e0186fa10a: dev's 35,852 (+1) plus round 13's +59, measured (owner waiver)
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
@@ -1107,7 +1114,7 @@ _BUDGETS: dict[str, int] = {
     # (ADR-337 amendment 2026-11-06): the planner cuts a rewritten tail into
     # links, and the writer validates and writes each link in dispatch binding.
     "tldw_chatbook/Chat/console_trace_service.py": 6739,
-    "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": 6108,
+    "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": 6085,
     "tldw_chatbook/Notes/notes_sync_executor.py": 6007,
     "tldw_chatbook/MCP/unified_control_plane_service.py": 6049,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
@@ -1292,7 +1299,9 @@ def test_every_module_of_the_guard_size_has_a_row() -> None:
 #: Providers & Models' save, revert, unsaved, render and scope arms 230, then
 #: its every other arm through the panels' optional members (plus Speech's
 #: unsaved count and Overview's share of the subscription poll) 202.
-_SETTINGS_CATEGORY_COMPARISON_CEILING = 202
+#: TASK-1378.3 moves bounded Speech category routing, leaving runtime and
+#: safe retained-storage ownership on the screen: 194.
+_SETTINGS_CATEGORY_COMPARISON_CEILING = 194
 
 
 @lru_cache(maxsize=1)

@@ -3376,6 +3376,12 @@ with stray left-edge border fragments), and padding 0 1 so the full
     min-height: $ds-size-0;
 }
 
+#library-media-results {
+    width: $ds-width-full;
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
+}
+
 #library-media-type-filter {
     width: auto;
     min-width: $ds-size-0;

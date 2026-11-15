@@ -869,13 +869,15 @@ jobs:
     # one hung test's report room under the cap (~15.4 + 3.3 of 20).
     # TASK-35834 (2026-10-20) introduced thirteen shards: its measured replay
     # plus 110s setup and 15% variance projected <=1000s below the 1020s target.
-    # Current UI lane: 38 shards (TASK-39144, owner decision relayed
-    # 2026-11-15: "38 shards, 19 at once". 36 came from the owner decision of
-    # 2026-11-07 ("36 shards, 18 at once"); round 14's 111 tail entries put the
-    # census at about 493 worst-case pytest min, a 13.7-min floor a shard at
-    # 36, so no re-deal of 36 kept every job 5 min under the cap).
-    # At most 19 UI jobs run at once, so the 38 still run in two waves; one
-    # more peak runner than at 18, and no timeout grows.
+    # Current UI lane: 40 shards (TASK-39144; PR3569 resync onto cc6006fc).
+    # Recovered upstream 25-run / 867-green-job weights and all 111 documented
+    # charges give 492.943 pytest min; our 27 Windows cases add 23.100.
+    # At 39 the 13.232 ideal floor exceeds upstream's 13.0 target. Rebalancing
+    # 40 takes 36 swaps: max 12.998, projected 14.818 hosted / 13.578 self-hosted
+    # at upstream's median model offsets. These are estimates, not guarantees.
+    # At most 19 UI jobs run at once; 40 adds a third scheduling wave.
+    # Exact inputs/reproduction: Docs/superpowers/qa/
+    # 2026-11-14-textual-pattern-followups/ci/resync-cc6006fc/. No timeout grows.
     # Complete duration rows let replay charge function selectors by node.
     name: UI Fast Lane
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
@@ -886,7 +888,7 @@ jobs:
       fail-fast: false
       max-parallel: 19
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40]
 
     steps:
       - uses: actions/checkout@v4

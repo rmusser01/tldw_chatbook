@@ -756,7 +756,10 @@ class SpeechTTSSettingsPanel(Vertical):
             original_state: GlobalSpeechTTSState,
             configure_provider: str,
             snapshot: SpeechTTSPanelDraftSnapshot,
+            *,
+            owner: SpeechTTSSettingsPanel,
         ) -> None:
+            self.owner = owner
             self.is_modified = is_modified
             self.state = deepcopy(state)
             self.original_state = deepcopy(original_state)
@@ -784,6 +787,9 @@ class SpeechTTSSettingsPanel(Vertical):
         draft_snapshot: SpeechTTSPanelDraftSnapshot | None = None,
         config_snapshot: Mapping[str, Any] | None = None,
         audio_cpp_result_cleanup_pending: Callable[[], bool] | None = None,
+        draft_snapshot_published: Callable[
+            [SpeechTTSSettingsPanel, SpeechTTSPanelDraftSnapshot], None
+        ] | None = None,
         audio_cpp_result_cleanup_mounted: (
             Callable[[SpeechTTSSettingsPanel], None] | None
         ) = None,
@@ -910,6 +916,7 @@ class SpeechTTSSettingsPanel(Vertical):
         # pending, collection must not read the still-mounted stale value.
         self._custom_id_rebuild_pending: set[str] = set()
         self._audio_cpp_scan_revision = 0
+        self._draft_snapshot_published = draft_snapshot_published
         self._audio_cpp_result_cleanup_pending = audio_cpp_result_cleanup_pending or (
             lambda: False
         )
@@ -1042,6 +1049,13 @@ class SpeechTTSSettingsPanel(Vertical):
             pipeline_voice_draft=self._pipeline_voice_draft,
             pipeline_voice_original=self._pipeline_voice_original,
         )
+
+    def capture_draft_snapshot(self) -> SpeechTTSPanelDraftSnapshot:
+        """Capture pending controls and synchronously publish the safe projection."""
+        snapshot = self.draft_snapshot()
+        if self._draft_snapshot_published is not None:
+            self._draft_snapshot_published(self, snapshot)
+        return snapshot
 
     def restore_draft_snapshot(
         self,
@@ -3916,54 +3930,13 @@ class SpeechTTSSettingsPanel(Vertical):
         self._pipeline_voice_draft.pipeline_aec_enabled = bool(aec.value)
 
     def has_unsaved_changes(self) -> bool:
-        """Return whether any non-secret global value differs from its baseline."""
-        self._collect_visible_state()
-        try:
-            if (
-                self.state.defaults.snapshot()
-                != self.original_state.defaults.snapshot()
-            ):
-                return True
-        except GlobalSpeechTTSValidationError:
-            if self.state.defaults != self.original_state.defaults:
-                return True
-
-        # `default_profile_id` is a distinct precedence rung, deliberately not
-        # part of `TTSPreferencesSnapshot` (see build_global_speech_tts_save_
-        # proposal's own comment) -- `.snapshot()` above cannot see it, so it
-        # must be compared explicitly or picking a default profile alone would
-        # look like "no changes" and never enable Save.
-        if (
-            self.state.defaults.default_profile_id
-            != self.original_state.defaults.default_profile_id
-        ):
-            return True
-
-        for provider_id in BUILT_IN_TTS_PROVIDER_ORDER:
-            try:
-                proposal = build_global_speech_tts_save_proposal(
-                    self.original_state,
-                    self.state,
-                    configure_provider=provider_id,
-                )
-            except GlobalSpeechTTSValidationError:
-                if (
-                    self.state.providers[provider_id]
-                    != self.original_state.providers[provider_id]
-                ):
-                    return True
-                continue
-            if proposal.settings or proposal.delete_setting_keys:
-                return True
-        return (
-            self._realtime_draft.snapshot() != self._realtime_original.snapshot()
-            or self._pipeline_voice_draft.snapshot()
-            != self._pipeline_voice_original.snapshot()
-        )
+        """Capture pending mounted edits and use the snapshot's dirty policy."""
+        return self.capture_draft_snapshot().has_unsaved_changes()
 
     def _announce_draft_state(self) -> None:
         """Publish the latest safe draft snapshot to the Settings shell."""
-        is_modified = self.has_unsaved_changes()
+        snapshot = self.capture_draft_snapshot()
+        is_modified = snapshot.has_unsaved_changes()
         self._sync_audio_cpp_handoff(draft_modified=is_modified)
         self._refresh_status_rows()
         self.post_message(
@@ -3972,7 +3945,8 @@ class SpeechTTSSettingsPanel(Vertical):
                 self.state,
                 self.original_state,
                 self.configure_provider,
-                self.draft_snapshot(),
+                snapshot,
+                owner=self,
             )
         )
 
@@ -4050,7 +4024,7 @@ class SpeechTTSSettingsPanel(Vertical):
         """Validate locally and post one atomic ordinary-save proposal."""
         if self._fence_audio_cpp_result_cleanup():
             return None
-        self._collect_visible_state()
+        self.capture_draft_snapshot()
         if self._latest_request_id is not None:
             self._set_result("A global Speech & TTS save is already in progress.")
             return None
@@ -5295,6 +5269,7 @@ class SpeechTTSSettingsPanel(Vertical):
                     self.original_state,
                     self.configure_provider,
                     self.draft_snapshot(),
+                    owner=self,
                 )
             )
             return True
@@ -5930,6 +5905,8 @@ class SpeechTTSSettingsPanel(Vertical):
 
         if self._fence_audio_cpp_result_cleanup():
             return
+
+        self.capture_draft_snapshot()
 
         references = self._managed_refs_from_values(
             self.state.providers["audio_cpp"]
