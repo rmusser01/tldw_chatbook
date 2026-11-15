@@ -3,6 +3,7 @@ id: TASK-35577
 title: The ProductionApp tests the conftest fix unmasked run green
 status: To Do
 created_date: 2026-10-19 15:02
+updated_date: '2026-11-15 02:25'
 dependencies: []
 labels:
 - follow-up
@@ -36,3 +37,5 @@ These files run in no PR lane (only the manually dispatched backup-recovery qual
 - [ ] #2 The tests that save config run on a fresh per-test profile, as test_provider_selection_ownership.py does, so they pass in a shared pytest process
 - [ ] #3 The surrogate-pattern guard passes with no allowlist entry added without a recorded review
 <!-- AC:END -->
+
+**2026-11-15 (round-14 closeout).** `Tests/ProductionApp/test_backup_restore_composition.py` was recorded red at dev 26b2e677dd in TASK-40711's notes: 2 failed, 1 error, with the same command on the base tree. It is still this task's; no new task was filed for it.

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-11-12 19:36
-updated_date: 2026-11-13 15:53
+updated_date: '2026-11-15 02:25'
 labels:
 - follow-up
 - tests
@@ -146,3 +146,10 @@ Found in round 13 of the 2026-10-23 burn-down (send stream, TASK-38948's coverin
 - **Runs at `-n 4`, load 25-39.**
   - Archive cards, `test_prune_safe_select.py` and the two Watchlists `PruneSafeSelect` users: 126 passed, 8 failed. The 8 are the Watchlists RecoveryRequired failures already seen with the change reverted.
   - Stock skill-trust file: 15 passed, 2 failed (`[send_enter]`, `[send_button]`, as before).
+
+**2026-11-15 (round-14 closeout): stays In Progress.** AC#1's CI half and AC#2 are not met: these reds remain at the stack top c7d4a41717, each now owned elsewhere.
+- `test_console_command_popup.py::test_enter_with_popup_closed_sends_normally` and both `test_console_visit_dispatch_dedupe.py` nodes: TASK-41139.
+- `test_app_wiring_held_pointer_currentness.py[skill]`, `test_console_managed_received_acceptance.py` (11.0 s against its 10 s custody bound) and `test_console_skill_discovery_genuine_capture.py` (3 failed, 6 passed through run.sh at the stack top; the stale `vars(...)` pin): TASK-41140.
+- Stock skill-trust `[send_enter]` / `[send_button]` ("Cold Send did not reach original configuration SQL"): the behaviour TASK-34563.35 implements (a stock cold Send received before trust construction), so they wait on it.
+- The stock `Select` exit-fence exposure found in review r14ti-rev1: TASK-41141.
+Close this task when those land and the lanes' first CI runs are read.
