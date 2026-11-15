@@ -20,14 +20,17 @@ from qualification import (
     StatsReader,
     _write_wav,
     artifact_receipt,
+    bookmark_alignment,
     marker_signal,
     measure_match,
     parse_stats_position,
     native_result,
+    observed_playing,
     resolve_ffplay,
     run_matrix,
     saved_bookmark_frame,
     select_fresh,
+    stop_is_due,
 )
 
 
@@ -293,6 +296,62 @@ class CliTests(unittest.TestCase):
             self.assertNotIn("executable", receipt)
 
 
+class PhaseTests(unittest.TestCase):
+    def test_padded_stop_countdown_waits_for_playing_instead_of_launch(self):
+        self.assertFalse(
+            stop_is_due(
+                now_s=20,
+                launched_at_s=0,
+                playing_at_s=None,
+                delay_s=0.7,
+                wait_for_playing=True,
+            )
+        )
+        self.assertFalse(
+            stop_is_due(
+                now_s=20,
+                launched_at_s=0,
+                playing_at_s=19.5,
+                delay_s=0.7,
+                wait_for_playing=True,
+            )
+        )
+        self.assertTrue(
+            stop_is_due(
+                now_s=20.3,
+                launched_at_s=0,
+                playing_at_s=19.5,
+                delay_s=0.7,
+                wait_for_playing=True,
+            )
+        )
+        self.assertTrue(
+            stop_is_due(
+                now_s=1,
+                launched_at_s=0,
+                playing_at_s=None,
+                delay_s=0.7,
+                wait_for_playing=False,
+            )
+        )
+
+    def test_playing_requires_recent_postlaunch_source_matched_loopback(self):
+        source = marker_signal(2.5)
+        blocks = [(10.2, np.repeat(source[4800:14400, None], 2, axis=1))]
+        self.assertIsNotNone(
+            observed_playing(blocks, source, launched_at_s=10, now_s=10.3)
+        )
+        self.assertIsNone(observed_playing(blocks, source, launched_at_s=10, now_s=11))
+        self.assertIsNone(
+            observed_playing(blocks, source, launched_at_s=10.5, now_s=10.6)
+        )
+        self.assertIsNone(
+            observed_playing(
+                [(10.2, np.zeros((9600, 2)))], source, launched_at_s=10, now_s=10.3
+            )
+        )
+
+
 class ResolutionTests(unittest.TestCase):
     def test_explicit_default_and_custom_chocolatey_shims_are_refused(self):
         with tempfile.TemporaryDirectory() as scratch:
@@ -319,6 +378,16 @@ class ResolutionTests(unittest.TestCase):
 
 
 class BookmarkTests(unittest.TestCase):
+    def test_bookmark_must_align_with_independently_matched_stopped_end(self):
+        self.assertEqual(bookmark_alignment(24000, 0.749)["bookmark_alignment"], "pass")
+        self.assertAlmostEqual(
+            bookmark_alignment(24000, 0.749)["bookmark_end_error_s"], -0.249
+        )
+        self.assertEqual(bookmark_alignment(24000, 0.751)["bookmark_alignment"], "fail")
+        self.assertEqual(
+            bookmark_alignment(None, 0.75)["bookmark_alignment"], "unqualified"
+        )
+
     def test_fresh_current_generation_bookmark_becomes_one_content_frame(self):
         values = [ProgressObservation(1.25, 9.9, 4), ProgressObservation(2.7, 9.95, 3)]
         self.assertEqual(
@@ -332,6 +401,15 @@ class BookmarkTests(unittest.TestCase):
 
 
 class MatrixTests(unittest.TestCase):
+    def test_censored_stop_missing_latency_is_unqualified_but_measured_overrun_fails(
+        self,
+    ):
+        censored = {"case": "stop_playing", "stop_after_launch_s": 0.7}
+        self.assertEqual(native_result([censored]), "unqualified")
+        self.assertEqual(
+            native_result([dict(censored, stop_process_latency_s=1.6)]), "fail"
+        )
+
     def test_missing_bookmark_logical_eof_or_unreaped_stop_cannot_launch_resume(self):
         for changed in [
             {"saved_bookmark_frame": None, "bookmark": "unqualified"},
@@ -352,6 +430,7 @@ class MatrixTests(unittest.TestCase):
                     "capture_reaped": True,
                     "saved_bookmark_frame": 19200,
                     "bookmark": "pass",
+                    "bookmark_alignment": "pass",
                     "stop_process_latency_s": 0.01,
                 }
                 result.update(changed)
@@ -377,7 +456,7 @@ class MatrixTests(unittest.TestCase):
         calls = []
 
         def capture_boundary(
-            executable, wav, source, *, offset, generation, stop_after
+            executable, wav, source, *, offset, generation, stop_after, padded=False
         ):
             calls.append(
                 (
@@ -398,6 +477,7 @@ class MatrixTests(unittest.TestCase):
                 "capture_reaped": True,
                 "saved_bookmark_frame": 19200,
                 "bookmark": "pass",
+                "bookmark_alignment": "pass",
                 "stop_process_latency_s": 0.01,
             }
 
