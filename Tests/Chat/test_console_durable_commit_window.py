@@ -146,11 +146,17 @@ async def test_a_chat_closed_during_its_native_commit_never_reads_as_an_owner_ch
             assert all(row.id != "session-1" for row in store.sessions())
         assert gateway.calls == 0
         if move == "close":
-            assert result.visible_copy == "Response stopped.", result
-            assert result.blocker is None and result.terminal_status is not (
-                ConsoleRunStatus.BLOCKED
+            # TASK-40312: the copy every other close path reports (the
+            # temporary-chat case below); the saved reply keeps its text.
+            assert result.visible_copy == "Session closed.", result
+            assert result.blocker is None and result.terminal_status is (
+                ConsoleRunStatus.STOPPED
             ), result
-            assert controller.run_state_for("session-1").status is ConsoleRunStatus.STOPPED
+            state = controller.run_state_for("session-1")
+            assert (state.status, state.visible_copy) == (
+                ConsoleRunStatus.STOPPED,
+                "Session closed.",
+            ), state
             assert attention == [], attention
         else:
             assert result.terminal_status is ConsoleRunStatus.BLOCKED, result

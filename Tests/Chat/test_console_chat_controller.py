@@ -12139,7 +12139,7 @@ class TestUserPromptSubmitHooks:
     def _engine(tmp_path, code):
         import sys
 
-        from tldw_chatbook.Agents.run_hooks import RunHooksEngine, load_hooks_config
+        from tldw_chatbook.Agents.run_hooks import load_hooks_config
 
         config = load_hooks_config(
             {

@@ -189,6 +189,8 @@ BOUNDARY_CALL_ROUTE_CLASSIFICATION: dict[str, str] = {
             "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.delete_message_subtree::call:db:soft_delete_message_subtree",
             "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.restore_message_subtree::call:db:restore_message_subtree",
             "tldw_chatbook/Chat/console_subtree_delete.py::write_subtree_delete::call:persistence:delete_message_subtree",
+            # TASK-40313: a refused turn tombstones the reply row its save wrote.
+            "tldw_chatbook/Chat/console_prompt_mixin_service.py::ConsolePromptMixinService._discard_refused_reply::call:persistence:delete_message_subtree",
             "tldw_chatbook/Sync_Interop/chat_sync_source.py::CharactersRAGDBChatSyncSource.delete_chat_message::call:db:soft_delete_message",
         },
         "visibility/ownership-only",
@@ -3472,6 +3474,17 @@ def _bound_method_argument_actions(
     call: ast.Call,
     qualname: str,
 ) -> set[str]:
+    # TASK-40313: ``partial(<receiver>.<mutator>, ...)`` hands the mutator to
+    # an owned runner (``_run_owned_save``); it is a call of that mutator.
+    if (
+        _attribute_chain(call.func) in {("partial",), ("functools", "partial")}
+        and call.args
+        and isinstance(call.args[0], ast.Attribute)
+    ):
+        action = _boundary_action_for_receiver(
+            call.args[0].attr, call.args[0].value, qualname
+        )
+        return set() if action is None else {action}
     if (
         not isinstance(call.func, ast.Attribute)
         or (
@@ -3766,7 +3779,7 @@ def test_inventory_document_exists_and_names_the_contract() -> None:
     assert "ADR-337" in inventory
     assert "Hard deletion" in inventory
     assert "Generated and dynamic SQL" in inventory
-    assert "43 live SQL sink identities and 65 boundary call" in inventory
+    assert "43 live SQL sink identities and 66 boundary call" in inventory
     all_classifications = (
         *DIRECT_SQL_ROUTE_CLASSIFICATION.values(),
         *BOUNDARY_CALL_ROUTE_CLASSIFICATION.values(),
@@ -3776,10 +3789,10 @@ def test_inventory_document_exists_and_names_the_contract() -> None:
         for classification in CLASSIFICATIONS
     } == {
         "model-visible": 67,
-        "visibility/ownership-only": 13,
+        "visibility/ownership-only": 14,
         "presentation-only": 28,
     }
-    assert "67 model-visible, 13 visibility/ownership-only, and 28" in inventory
+    assert "67 model-visible, 14 visibility/ownership-only, and 28" in inventory
     for phrase in (
         "generation settlement",
         "Edit and regeneration replacement",
@@ -4081,6 +4094,32 @@ def commit():
     ) == {
         "call:persistence:fork_console_conversation_bundle",
         "call:persistence:promote_console_conversation_bundle",
+    }
+
+
+def test_partial_of_a_mutator_counts_as_its_call() -> None:
+    """TASK-40313: a mutator handed to an owned runner through
+    ``functools.partial`` is that mutator's route; a non-mutator is not."""
+    tree = ast.parse(
+        """
+async def discard():
+    await self._run_owned_save(
+        partial(self.persistence.delete_message_subtree, message_id=message_id)
+    )
+    functools.partial(self.db.soft_delete_message, message_id, 1)
+    partial(self.persistence.save_pending_assistant, conversation_id)
+    partial(widget.delete_message_subtree)
+"""
+    )
+    function = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "discard"
+    )
+
+    assert _function_boundary_actions(function, "Owner.discard") == {
+        "call:persistence:delete_message_subtree",
+        "call:db:soft_delete_message",
     }
 
 

@@ -635,6 +635,10 @@ RECOVERED_SUITES_TARGETS = (
     # TASK-39153: the Library ingest flow file (bootstrap_profile since
     # TASK-39141, 13 tests), which ran on no lane.
     "Tests/integration/test_library_ingest_flow.py",
+    # TASK-40316: the regenerate variant-stream file (bootstrap_profile, 19
+    # tests), which pins that a failed regenerate keeps the prior answer and
+    # ran on no lane.
+    "Tests/Chat/test_console_variant_stream.py",
 )
 #: Deselected 2026-11-12: red on dev e0186fa10a (console_send_diagnostic
 #: ContextVar token reset across contexts), owned by TASK-33621.36 AC#3; remove when fixed.

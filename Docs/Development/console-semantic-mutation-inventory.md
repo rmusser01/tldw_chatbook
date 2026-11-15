@@ -24,9 +24,9 @@ that coordinator.
   generation provenance, legacy exchange capture, or trajectory diagnostics.
   These values do not change the provider-neutral message envelope.
 
-The structural test records 43 live SQL sink identities and 65 boundary call
-identities: 67 model-visible, 13 visibility/ownership-only, and 28
-presentation-only identities in total. These are route-layer identities, not 108
+The structural test records 43 live SQL sink identities and 66 boundary call
+identities: 67 model-visible, 14 visibility/ownership-only, and 28
+presentation-only identities in total. These are route-layer identities, not 109
 distinct user actions; a public action appears once at its boundary and again at
 the SQL sink it reaches.
 
@@ -57,7 +57,7 @@ user-facing ownership chain and must be reviewed when a route changes.
 | Voice pair promotion | model-visible | `ChatPersistenceService.commit_completed_voice_pair` | inserts the completed USER/assistant pair with `add_message` |
 | Agent chat fork copy | model-visible | `ChatConversationService.copy_conversation_active_path` | re-inserts the source's active path into the target conversation with `add_message` |
 | Prompt mix-in attempt | model-visible (pending row) plus presentation-only (marker) | `ChatPersistenceService.save_conversation_mixin_attempt`; `console_prompt_mixins._mark_assistant`, `write_fork_state` | creates the pending assistant row through `create_message`; writes only the `metadata_json` mix-in attempt marker |
-| Message and subtree soft delete, including Sync tombstones | visibility/ownership-only | `ConsoleChatStore.delete_message`; classic/persona delete APIs; `CharactersRAGDBChatSyncSource.delete_chat_message` | retained semantic bytes and semantic-revision lineage stay unchanged; only tombstone visibility/ownership state and graph epoch advance |
+| Message and subtree soft delete, including Sync tombstones | visibility/ownership-only | `ConsoleChatStore.delete_message`; classic/persona delete APIs; `CharactersRAGDBChatSyncSource.delete_chat_message`; a refused turn's saved reply row (`ConsolePromptMixinService._discard_refused_reply`) | retained semantic bytes and semantic-revision lineage stay unchanged; only tombstone visibility/ownership state and graph epoch advance |
 | Console Delete Undo (subtree undelete) | visibility/ownership-only | `restore_deleted_subtree` / off-loop `restore_subtree_off_loop` → `ChatPersistenceService.restore_message_subtree` → `CharactersRAGDB.restore_message_subtree` | clears exactly the tombstones one subtree delete wrote, version-checked; semantic bytes were never touched, so only visibility and graph epoch change |
 | Usage, feedback/ranking, message UI metadata | presentation-only | `ConsoleChatStore.set_message_usage`, `ConsoleChatStore.set_message_feedback`, `ConsoleChatStore.set_message_metadata`; classic ranking; DB feedback helper | local/version-neutral metadata or restricted `update_message` call |
 | Reasoning/tool trajectory diagnostics | presentation-only | `ConsoleChatStore.write_trajectory_rows`; `ChatPersistenceService.write_trajectory_rows`; `LibraryActivityContribution.write`, `LibraryPreparationContribution.write` | `message_trajectory_metadata`; tool/reasoning payload is diagnostic and is not replayed into provider kwargs |
@@ -337,6 +337,7 @@ FTS and Sync-log triggers are derived indexes/logs, not canonical semantic owner
 - `tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore.transition_dispatch_recovery_for_retry::call:dispatch:cas_state` — model-visible
 - `tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore.write_trajectory_rows::call:persistence:write_trajectory_rows` — presentation-only
 - `tldw_chatbook/Chat/console_subtree_delete.py::write_subtree_delete::call:persistence:delete_message_subtree` — visibility/ownership-only
+- `tldw_chatbook/Chat/console_prompt_mixin_service.py::ConsolePromptMixinService._discard_refused_reply::call:persistence:delete_message_subtree` — visibility/ownership-only
 - `tldw_chatbook/Chatbooks/chatbook_importer.py::ChatbookImporter._import_conversations_with_database::call:db:add_message` — model-visible
 - `tldw_chatbook/Chatbooks/chatbook_importer.py::ChatbookImporter._import_conversations_with_database::call:db:add_message_with_semantic_sidecars` — model-visible
 - `tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB._add_message_with_semantic_sidecars::call:db:set_message_generation_metadata` — presentation-only

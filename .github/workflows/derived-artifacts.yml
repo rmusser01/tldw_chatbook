@@ -1457,6 +1457,8 @@ jobs:
       # controller node are bootstrap_profile and follow the goal recovery file.
       # Then TASK-39163's automatic Library preparation file (bootstrap_profile).
       # TASK-39153 appends the Library ingest flow file (bootstrap_profile, 13 tests).
+      # Round 14: TASK-40316 appends the regenerate variant-stream file
+      # (bootstrap_profile, 19 tests), on no lane before.
       # test_closed_loop_pending_submit_is_emergency_detachment: deselected
       # 2026-11-12: red on dev e0186fa10a (console_send_diagnostic ContextVar
       # token reset across contexts), owned by TASK-33621.36 AC#3; remove when fixed.
@@ -1496,6 +1498,7 @@ jobs:
             Tests/Chat/test_console_chat_controller.py::test_review_hook_gives_a_mutating_builtin_the_mutation_effect \
             Tests/Chat/test_console_automatic_library_preparation.py \
             Tests/integration/test_library_ingest_flow.py \
+            Tests/Chat/test_console_variant_stream.py \
             --deselect="Tests/Chat/test_console_automatic_library_preparation.py::test_closed_loop_pending_submit_is_emergency_detachment" \
             --storage-lease-guard \
             --timeout=180 \

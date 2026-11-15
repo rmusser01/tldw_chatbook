@@ -1,5 +1,6 @@
 """Saved results and uncertain attempts are discovered without attention badges."""
 
+import asyncio
 import threading
 
 import pytest
@@ -15,7 +16,11 @@ from Tests.Chat.test_console_fleet_wake import (
     _survivor,
     _terminal_subagent_run,
 )
+from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Chat.console_conversation_hydration import (
+    console_messages_from_conversation_tree,
+)
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleRunStatus
 from tldw_chatbook.Chat.console_fleet_wake import ConsoleFleetWakeCoordinator
 
@@ -262,9 +267,11 @@ async def test_a_wake_whose_owner_moves_during_its_reply_save_is_refused(rig, mo
             assert getattr(outcome, "visible_copy", outcome) == "Session closed.", outcome
             assert outcome.terminal_status is not ConsoleRunStatus.BLOCKED, outcome
             row = chacha.get_connection().execute(
-                "SELECT conversation_id, content FROM messages WHERE id=?", (saved[0],)
+                "SELECT conversation_id, content, deleted FROM messages WHERE id=?",
+                (saved[0],),
             ).fetchone()
-            assert tuple(row) == (session.id, ""), row
+            # TASK-40313: the refused save's row is tombstoned, not left live.
+            assert tuple(row) == (session.id, "", 1), tuple(row)
             return
 
         refused = "The chat changed while the reply was being saved; response was not sent."
@@ -288,8 +295,98 @@ async def test_a_wake_whose_owner_moves_during_its_reply_save_is_refused(rig, mo
         first = store.get_message(saved[0])
         assert first.persisted_message_id is None, "the moved save was adopted"
         row = chacha.get_connection().execute(
-            "SELECT conversation_id, content FROM messages WHERE id=?", (saved[0],)
+            "SELECT conversation_id, content, deleted FROM messages WHERE id=?",
+            (saved[0],),
         ).fetchone()
-        assert tuple(row) == (session.id, ""), row
+        assert tuple(row) == (session.id, "", 1), tuple(row)
     finally:
         await close_rig(rig)
+
+
+def _reopened_reply_states(chacha, conversation_id):
+    """Each assistant row's generation state as a reopened chat hydrates it."""
+    tree = ChatConversationService(chacha).get_conversation_tree(
+        conversation_id, depth_cap=10_000, root_limit=10_000
+    )
+    return {
+        node.persisted_message_id: node.assistant_generation_state
+        for node in console_messages_from_conversation_tree(tree, db=chacha)
+        if node.role is ConsoleMessageRole.ASSISTANT
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["automatic", "manual"])
+async def test_a_refused_attempt_leaves_no_pending_reply_when_reopened(rig, path):
+    """TASK-40313: both pre-provider saves write an empty ``accepted`` reply
+    row; a refusal after the save (the chat rebound meanwhile) left that row
+    behind, and a reopened chat read it as "Response accepted; waiting for
+    dispatch.". Automatic: a wake's pending reply save (TASK-39159). Manual:
+    a regenerate's mix-in attempt save, whose ``pending_assistant`` row it is."""
+    chacha, _, runs_db, store, session, _, _, controller = rig
+    persistence = store.persistence
+    entered, release = threading.Event(), threading.Event()
+    saved: list[str] = []
+    turn = None
+    try:
+        if path == "manual":
+            first = await controller.submit_draft("hello", session_id=session.id)
+            real_attempt = persistence.save_conversation_mixin_attempt
+
+            def held_attempt(conversation_id, **kwargs):
+                real_attempt(conversation_id, **kwargs)
+                saved.append(kwargs["batch"].assistant_message_id)
+                entered.set()
+                release.wait(10)
+
+            persistence.save_conversation_mixin_attempt = held_attempt
+            turn = asyncio.create_task(
+                controller.regenerate_message(first.assistant_message_id)
+            )
+        else:
+            real_reply = persistence.save_pending_assistant
+
+            def held_reply(conversation_id, message_id, *args):
+                real_reply(conversation_id, message_id, *args)
+                saved.append(message_id)
+                entered.set()
+                release.wait(10)
+
+            persistence.save_pending_assistant = held_reply
+            _parent, run_id = _terminal_subagent_run(runs_db, session.id)
+            replacement(rig).on_fleet_drained(
+                _drain(session.id, _survivor(run_id, session_id=session.id))
+            )
+        try:
+            assert await _settle(entered.is_set), "the reply row was never saved"
+            store.rebind_persisted_conversation(session.id, None)
+            store.rebind_persisted_conversation(session.id, session.id)
+        finally:
+            release.set()
+        if turn is not None:
+            result = await asyncio.wait_for(turn, 10)
+            assert result.visible_copy == (
+                "Mix-in attempt could not be saved; response was not sent."
+            ), result
+        else:
+            refused = (
+                "The chat changed while the reply was being saved; "
+                "response was not sent."
+            )
+            assert await _settle(
+                lambda: any(
+                    row.content == refused
+                    for row in store.messages_for_session(session.id)
+                )
+            ), "the moved wake was not refused"
+        (refused_id,) = saved
+        assert store.get_message(refused_id).persisted_message_id is None
+        states = _reopened_reply_states(chacha, session.id)
+        assert refused_id not in states, states
+        assert "accepted" not in states.values(), states
+    finally:
+        release.set()
+        if turn is not None and not turn.done():
+            turn.cancel()
+        await close_rig(rig)
+
