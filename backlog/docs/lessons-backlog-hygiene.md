@@ -3,6 +3,12 @@
 Mechanical traps in the task board and the plumbing around it. Cheap to avoid once
 known, expensive to rediscover. Every entry states the incident that produced it.
 
+## A "shrink by N lines" criterion goes stale when another PR moves part of the code first (TASK-36950.3, 2026-11-13)
+
+**Incident.** TASK-36950.3's AC #2 asked for `_run_one` to be "at least 1,800 lines shorter". The architecture review had measured the fleet closures at about 1,900 lines on 7a5e2513c5. Before the Phase 4 base, d4733e97a5, an unrelated workflow commit, had already moved about 450 lines of `_launch_fleet_child`'s body into `AgentService` methods. Moving every fleet closure at the base could then remove only about 1,607 lines. The implementer had to stop with NEEDS_CONTEXT, and the coordinator ruled to fold TASK-36950.4's run-log tools into the same PR to reach the number.
+
+**What to do.** Before starting a task whose criterion is a size delta measured at an older sha, re-measure the named pieces at your base. Add up what the scoped move can remove at most, including the lines that must stay behind (constructor call, late-bound assignments). If that total is below the target, ask for a ruling before writing code. `git log <filing-sha>..<base> -- <file>` shows who moved what.
+
 ## PowerShell validation errors need terminating semantics (TASK-35644, 2026-10-19)
 
 **Incident.** Cleanup of 20 exact completed diagnostic roots used the unsupported
