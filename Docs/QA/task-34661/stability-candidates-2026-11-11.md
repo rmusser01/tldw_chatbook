@@ -1542,3 +1542,54 @@ were 54.35, 106.34 and 83.48 ms. Extended gaps were 331.40, 326.84 and
 generation-two collection. The 50/100 ms limits and production source
 were preserved. TASK-31966 remains open. All three runs and 62 verified
 hashes are local under `/private/tmp/pr3536-resume-phases-dqlvFKPS`.
+
+### Audit of work before first transcript sync
+
+Three fresh Terminal profiles used the same frozen source, sealed corpus,
+120×50 viewport, two Active priming switches, and cold open of
+`perf-00000`. Added private call-through timestamps captured the
+character visual refresh and the remaining Console projection calls.
+The analyzer counted each outermost call once on the resume task.
+One-minute host load ranged from 31.17 to 83.19 on 18 CPUs.
+
+| Elapsed milliseconds | R1 | R2 replacement | R3 |
+| --- | ---: | ---: | ---: |
+| Full sync before transcript sync | 763.74 | 754.77 | 486.95 |
+| Inspector dictionary and world-book awaits | 342.27 | 378.27 | 193.09 |
+| Character visual refresh | 135.88 | 162.12 | 126.41 |
+| Other named calls | 99.40 | 86.13 | 77.52 |
+| Time between named calls | 186.19 | 128.25 | 89.93 |
+| Return to usable viewport | 2516.01 | 2669.39 | 1955.00 |
+
+The two summaries populate Inspector rows and action state. Deferring
+them would require pending state and fences at publication for the
+active session, data authority, and newer attach or detach actions. Their
+awaits covered 9.9–14.2% of cold-open wall time. They overlapped
+53–141 ms of switcher paint, so the full await durations cannot be counted
+as savings. Avatar resolution accounted for 124–157 ms in the separate
+character visual refresh, which also owns radio and live expression
+updates. Even counting that entire path along with the summaries would
+put the combined observed windows at 16.3%, 19.0% and 20.2% across the
+three runs before any overlap or cost of deferral.
+
+The other named work includes tab publication, checked configuration
+projection and roleplay refresh dispatch. Their existing authority,
+readiness and durability responsibilities remain on the activation
+path. The trace accounts for 71–123 ms of the gaps between named calls
+as overlapping native layout, paint or collection. The remaining gaps
+are unassigned. Using the earlier 20% screen as a reference for a
+material improvement, the audit found too little movable Inspector
+work to justify a candidate and paired run.
+
+All three complete traces verified exact identity, focus, oldest and
+tail frames, and ordinary retirement with zero private DB descriptors.
+The cold observations lasted the full 13 seconds, including 7.47–9.51
+seconds after scrolling. Busy paint passed the 100 ms limit in each
+run. Original loop gaps were 177.53, 201.09 and 137.13 ms. The extended
+gaps were 313.33, 334.13 and 310.15 ms after scrolling, with 270–286 ms of
+main-thread generation-two collection overlap. The 50 ms limit remains
+unmet. The initial R2 attempt reached the intended Active chat but the
+observer captured no timing sample. It retired with zero private DB
+descriptors, and its receipts were kept before a fresh-profile repeat.
+TASK-31966 stays open. The complete and incomplete traces and 80 verified
+hashes are local under `/private/tmp/pr3536-inspector-audit-CL8BfeVQ`.
