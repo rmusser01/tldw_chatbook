@@ -213,7 +213,9 @@ async def test_contended_write_never_paints_a_success_receipt(tmp_path):
     sink = logger.add(
         lambda message: warnings.append(dict(message.record)),
         level="WARNING",
-        filter=lambda record: record["name"].endswith("library_screen"),
+        filter=lambda record: record["name"].endswith(
+            ("library_screen", "library_media_controller")
+        ),
     )
     try:
         with other.transaction(immediate=True) as held:

@@ -154,24 +154,36 @@ lines of ``library_prompts_controller.py``'s 4,998 rather than at 8-9k.
 
 3. **8 source-census exclusions** -- the shape recipe §3 records as "a
    hardcoded-file-path census, not a monkeypatch bypass, ships red", here in
-   its ``inspect.getsource`` spelling.
+   its ``inspect.getsource`` spelling. At wave 7,
    ``test_library_multiselect_media.py::test_every_media_mutation_claims_
-   the_interlock_at_one_audited_seam`` asserts that the source of
-   ``LibraryScreen._claim_library_media_mutation`` contains the flag-claim
+   the_interlock_at_one_audited_seam`` asserted that the source of
+   ``LibraryScreen._claim_library_media_mutation`` contained the flag-claim
    assignment (``bulk_delete_in_flight`` set to ``True`` on
    ``self._media_state``) AND, for each of SIX named
    handlers, ``"_claim_library_media_mutation" in inspect.getsource(handler)``
-   -- assertions a one-line delegator's source empties. It also asserts that
-   ``inspect.getsource(library_screen_module)`` contains EXACTLY ONE
+   -- assertions a one-line delegator's source empties. It also asserted that
+   ``inspect.getsource(library_screen_module)`` contained EXACTLY ONE
    whitespace-tolerant regex match for that flag-claim assignment, and one
-   for the shared worker-group literal; both sites live
+   for the shared worker-group literal; both sites lived
    inside ``_claim_library_media_mutation`` (``library_screen.py:15062``/
-   ``:15066`` at this wave's tip; task 3 retargeted seam and guard together),
-   which this exclusion keeps in place, so both counts stay at 1.
+   ``:15066`` at that wave's tip; task 3 retargeted seam and guard together),
+   which this exclusion kept in place, so both counts stayed at 1.
    ``test_review_set_walker.py:1292`` (``inspect.getsource(
-   LibraryScreen.handle_library_media_row)``) is the eighth. Five of the
-   eight are independently excluded as unbound-fake-self anyway;
-   ``handle_library_media_edit_save`` is excluded by this class alone.
+   LibraryScreen.handle_library_media_row)``) was the eighth. Five of the
+   eight were independently excluded as unbound-fake-self anyway;
+   ``handle_library_media_edit_save`` was excluded by this class alone.
+   **Today** (TASK-36952.3.2 moved the seam and four of the six handlers to
+   this class), the guard reads the source of
+   ``LibraryMediaController._claim_library_media_mutation`` and of
+   ``LibraryMediaController``'s ``handle_library_media_bulk_delete_confirm``,
+   ``handle_library_media_bulk_delete_undo``,
+   ``handle_library_media_delete_confirm`` and
+   ``handle_library_media_edit_save``; it still reads the two Trash handlers
+   (``handle_library_media_trash_restore``,
+   ``handle_library_media_trash_delete_confirm``) on ``LibraryScreen``. Its
+   two regex counts run over the screen module's source plus this module's,
+   and each finds exactly one site, both inside this class's
+   ``_claim_library_media_mutation``.
 
 4. **4 module-globals-coupling exclusions** (recipe §3's oldest shape,
    restated as the eighth numbered shape's mechanical census). The census ran
@@ -473,10 +485,10 @@ edit save. Their two group-(e) callbacks are gone, and the screen's
 ``_local_source_counts`` is bound as a getter instead. ``LibraryScreen``
 keeps a delegator for 17 of the 24. The one-claim-site guard
 (``test_every_media_mutation_claims_the_interlock_at_one_audited_seam``)
-now counts this module's source, so no prose here may spell the flag-claim
-assignment or the worker-group keyword literally: its whitespace-tolerant
-regex counts docstrings too, and item 3 above did spell the claim twice
-until this slice reworded it.
+now counts the screen module's source plus this one's, so no prose here may
+spell the flag-claim assignment or the worker-group keyword literally: its
+whitespace-tolerant regex counts docstrings too, and item 3 above did spell
+the claim twice until this slice reworded it.
 """
 from __future__ import annotations
 
