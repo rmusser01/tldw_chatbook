@@ -1070,8 +1070,9 @@ and points here.
 An OpenAI-compatible endpoint's path is its API base, so a documented base
 whose `v1` is not the last part, such as `https://api.deepinfra.com/v1/openai`
 or Cloudflare's `https://gateway.ai.cloudflare.com/v1/<account>/<gateway>/compat`,
-is accepted; `/v1/completions` is the legacy text route, not a base, and is
-refused:
+is accepted. A path that ends in, or runs past, an API route is not a base and
+is refused: `/completions` (the legacy text route), `/chat`, `/embeddings`,
+`/responses`, or `/chat/completions` with more after it:
 
 | Family | Behavior |
 |---|---|
@@ -1157,7 +1158,7 @@ This page's **Custom endpoints** disclosure, under **Advanced**, manages them. E
 |---|---|
 | **Rename** | Changes the display name only — the slug (the id conversations reference) never changes. |
 | **Edit** | Rewrites **Endpoint**, **Env var**, and **Models**. Existing conversations re-resolve the URL on their next send. |
-| **Delete** | Blocked while any conversation still uses the entry: the status line names them and reveals **Detach references**, which keeps each conversation's current endpoint as conversation-only and then deletes the entry. Switching those conversations' provider first also unblocks it. Detach is refused, and nothing changes, when any conversation would keep an endpoint its new provider refuses (the entry's URL, or the conversation's own). For an OpenAI-compatible base only a named endpoint accepts (such as `/v1/openai`), the status line says those conversations would lose their endpoint and the entry keeps working, so switch their provider first. For an endpoint that both readings refuse (such as one with a query), it says to fix it with **Edit**, or switch those conversations' provider, then delete the entry. |
+| **Delete** | Blocked while any conversation still uses the entry: the status line names them and reveals **Detach references**, which keeps each conversation's current endpoint as conversation-only and then deletes the entry. Switching those conversations' provider first also unblocks it. Detach is refused, and nothing changes, when any conversation would keep an endpoint its new provider refuses (the entry's URL, or the conversation's own). For an OpenAI-compatible base only a named endpoint accepts (such as `/v1/openai`), the status line says those conversations would lose their endpoint and the entry keeps working, so switch their provider first. For an entry URL that both readings refuse (such as one with a query), it says to fix it with **Edit**, or switch those conversations' provider, then delete the entry. When only some conversations' own endpoints are refused (the entry's URL is fine), Edit cannot help, so it says to switch those conversations to another provider, then delete the entry. |
 
 An entry can also be your saved default provider. Settings then names it by
 its display name, and its readiness is the family's readiness plus the

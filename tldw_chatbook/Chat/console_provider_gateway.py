@@ -4702,14 +4702,20 @@ class ConsoleProviderGateway:
             # endpoint authority (an edited entry re-resolves on the next
             # send), so a stale session-pinned URL never outranks the entry;
             # every other provider keeps session-selection precedence.
-            effective_base_url = effective_provider_endpoint(
-                identity.readiness_key,
-                custom_entry.base_url
-                if custom_entry is not None and not selection.base_url_is_pinned
-                else selection.base_url,
+            effective_base_url = console_own_table_endpoint(
+                identity.execution_key,
+                app_config,
+                effective_provider_endpoint(
+                    identity.readiness_key,
+                    custom_entry.base_url
+                    if custom_entry is not None and not selection.base_url_is_pinned
+                    else selection.base_url,
+                    provider_settings,
+                    custom_endpoint=custom_entry is not None,
+                ),
                 provider_settings,
-                custom_endpoint=custom_entry is not None,
-            ) or console_own_table_endpoint(identity.execution_key, app_config)
+                selection.base_url,
+            )
 
         # TASK-40300: the endpoint contract decides, before the unsaved guard,
         # as readiness does; a refused custom entry never falls back to its

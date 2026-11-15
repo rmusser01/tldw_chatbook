@@ -3187,6 +3187,13 @@ def test_the_approval_summary_never_calls_an_mlx_host_the_contract_refuses(host)
         # Nothing configured: the adapter's own default, never unpinned.
         ("openai", {"openai": {"api_key": "sk-not-a-real-key-0000"}}, {}, "https://api.openai.com/v1"),
         ("together", {"together": {"api_key": "not-a-real-key-0000"}}, {}, "https://api.together.xyz/v1"),
+        # Review r14ep-rev4 M-2: chat_with_google never reads a top-level [google].
+        (
+            "google",
+            {"google": {"api_key": "not-a-real-key-0000"}},
+            {"google": {"api_base_url": "http://127.0.0.1:9/v1beta"}},
+            "https://generativelanguage.googleapis.com/v1beta",
+        ),
     ],
 )
 def test_the_approval_summary_pins_the_endpoint_it_checked(provider, api_settings, extra, pinned):
@@ -3194,6 +3201,25 @@ def test_the_approval_summary_pins_the_endpoint_it_checked(provider, api_setting
     call is pinned to, not whatever the adapter reads (review r14ep-rev3 I-1:
     always pinned)."""
     resolution, _out, calls = _summary_calls(provider, api_settings, **extra)
+
+    assert resolution.active is True
+    assert [call["api_base_url"] for call in calls] == [pinned]
+
+
+@pytest.mark.parametrize(
+    ("user", "pinned"),
+    [
+        ({}, "http://127.0.0.1:8080/v1"),
+        ({"api_settings": {"local_mlx_lm": {"port": 9000}}}, "http://127.0.0.1:9000/v1"),
+    ],
+)
+def test_the_approval_summary_pins_mlx_host_and_port_not_its_api_url(user, pinned):
+    """Review r14ep-rev4 C-1: the summary pinned ``[api_settings.local_mlx_lm]
+    api_url``, the shipped placeholder MLX-LM ignores."""
+    from tldw_chatbook.config import _merge_user_config_over_shipped_defaults
+
+    api_settings = _merge_user_config_over_shipped_defaults(user)["api_settings"]
+    resolution, _out, calls = _summary_calls("local_mlx_lm", api_settings)
 
     assert resolution.active is True
     assert [call["api_base_url"] for call in calls] == [pinned]
@@ -3330,21 +3356,30 @@ class _ReferencingStore:
         self.replaced.append((session_id, settings))
 
 
+_KEEPS_WORKING = "'Box' keeps working"
+_FIX_WITH_EDIT = "Fix it with Edit"
+_OWN_URL = "keep their own endpoint URL"
+
+
 @pytest.mark.parametrize(
-    ("family", "base_url", "session_url", "keeps_working"),
+    ("family", "base_url", "session_url", "says"),
     [
-        ("openai_compatible", "https://api.deepinfra.com/v1/openai", None, True),
-        ("openai_compatible", "https://gateway.ai.cloudflare.com/v1/acct123/gw1/compat", None, True),
-        ("openai_compatible", "http://127.0.0.1:8000/v1?token=not-a-real-secret", None, False),
+        ("openai_compatible", "https://api.deepinfra.com/v1/openai", None, _KEEPS_WORKING),
+        ("openai_compatible", "https://gateway.ai.cloudflare.com/v1/acct123/gw1/compat", None, _KEEPS_WORKING),
+        ("openai_compatible", "http://127.0.0.1:8000/v1?token=not-a-real-secret", None, _FIX_WITH_EDIT),
         # Review r14ep-rev3 I-2: only the OpenAI-compatible family was checked,
         # and only the entry's URL, not the one each conversation keeps.
-        ("ollama", "http://127.0.0.1:11434?token=not-a-real-secret", None, False),
-        ("llama_cpp", "http://127.1:8080", None, False),
-        ("openai_compatible", "http://127.0.0.1:8000/v1", "https://api.deepinfra.com/v1/openai", True),
+        ("ollama", "http://127.0.0.1:11434?token=not-a-real-secret", None, _FIX_WITH_EDIT),
+        ("llama_cpp", "http://127.1:8080", None, _FIX_WITH_EDIT),
+        ("openai_compatible", "http://127.0.0.1:8000/v1", "https://api.deepinfra.com/v1/openai", _KEEPS_WORKING),
+        # Review r14ep-rev4 M-1: the entry is fine; Edit cannot fix a
+        # conversation's own URL.
+        ("openai_compatible", "http://127.0.0.1:8000/v1", "http://127.1:8000/v1", _OWN_URL),
+        ("ollama", "http://127.0.0.1:11434", "http://127.1:11434", _OWN_URL),
     ],
 )
 def test_detach_refuses_to_move_conversations_onto_a_url_the_custom_provider_refuses(
-    family, base_url, session_url, keeps_working
+    family, base_url, session_url, says
 ):
     """TASK-40300 review r14ep-rev2 M-e (coordinator ruling): Detach moves an
     entry's conversations to the family provider, each with the endpoint it
@@ -3364,10 +3399,9 @@ def test_detach_refuses_to_move_conversations_onto_a_url_the_custom_provider_ref
 
     assert store.replaced == []
     copy = caught.value.user_copy
-    assert copy.startswith("Detach blocked: 'Box'")
-    assert ("'Box' keeps working" in copy) is keeps_working
-    assert ("Fix it with Edit" in copy) is not keeps_working
-    assert "deepinfra" not in copy and "not-a-real-secret" not in copy
+    assert copy.startswith("Detach blocked:") and "'Box'" in copy
+    assert [phrase for phrase in (_KEEPS_WORKING, _FIX_WITH_EDIT, _OWN_URL) if phrase in copy] == [says]
+    assert "deepinfra" not in copy and "not-a-real-secret" not in copy and "127.1" not in copy
 
 
 def test_detach_moves_conversations_whose_own_url_the_custom_provider_accepts(monkeypatch):
@@ -3441,7 +3475,16 @@ _OWN_TABLE_ADAPTERS = [
     ("aphrodite", ("api_settings", "aphrodite_api", "api_url")),
     ("oobabooga", ("api_settings", "ooba_api", "api_ip")),
     ("custom_2", ("custom_openai_api_2", "api_ip")),
+    # Review r14ep-rev4 I-a.
+    ("local_llm", ("api_settings", "local-llm", "api_ip")),
 ]
+
+
+def _merged(user):
+    """``user`` merged over the shipped template, as every config view is."""
+    from tldw_chatbook.config import _merge_user_config_over_shipped_defaults
+
+    return _merge_user_config_over_shipped_defaults(user)
 
 
 async def _assert_refused_without_a_request(provider, config):
@@ -3460,6 +3503,22 @@ async def _assert_refused_without_a_request(provider, config):
     assert seen == []
 
 
+async def _assert_ready_and_pinned(provider, config, pinned):
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_console_settings_readiness,
+    )
+
+    settings = ConsoleSessionSettings(provider=provider, model="m")
+    seen: list[str] = []
+
+    readiness = build_console_settings_readiness(settings, app_config=config, environ={})
+    resolution = await _resolve_endpoint_send(settings, config, False, seen)
+
+    assert readiness.label == "Ready", readiness
+    assert resolution.ready is True, resolution.visible_copy
+    assert [s for s in seen if s.startswith("adapter:")] == [f"adapter:{pinned}"]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("shape", sorted(_CONTRACT_REFUSED_BASES))
 @pytest.mark.parametrize(("provider", "path"), _OWN_TABLE_ADAPTERS)
@@ -3468,55 +3527,91 @@ async def test_console_never_sends_to_a_refused_endpoint_in_the_adapters_own_tab
 ):
     """Review r14ep-rev3 I-3: with the refused URL only in
     ``[api_settings.aphrodite_api] api_url``, ``[api_settings.ooba_api]
-    api_ip`` or Custom OpenAI API 2's ``api_ip``, readiness and the send were
-    Ready with no endpoint, and the adapter POSTed to it."""
+    api_ip``, Custom OpenAI API 2's ``api_ip`` or Local LLM's ``api_ip``,
+    readiness and the send were Ready with no endpoint, and the adapter
+    POSTed to it."""
     config = _nested(path, _with_path(provider, _CONTRACT_REFUSED_BASES[shape]))
 
     await _assert_refused_without_a_request(provider, config)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("host", ["127.1", "-bad.corp", "bücher.example", "localhost.."])
-async def test_console_never_sends_to_a_refused_mlx_host(host):
-    """Review r14ep-rev3 follow-up: MLX-LM builds its endpoint from
-    ``[api_settings.local_mlx_lm] host`` and ``port``, which Console never
-    read, so ``host = "127.1"`` was sent to."""
-    await _assert_refused_without_a_request(
-        "mlx_lm", {"api_settings": {"local_mlx_lm": {"host": host, "port": 8080}}}
+@pytest.mark.parametrize(("provider", "path"), _OWN_TABLE_ADAPTERS)
+async def test_console_checks_and_pins_an_endpoint_in_the_adapters_own_table(
+    provider, path
+):
+    """Review r14ep-rev3 I-3: a config that sets only the adapter's own table
+    keeps working; the send is pinned to the endpoint Console checked."""
+    await _assert_ready_and_pinned(
+        provider, _nested(path, "http://127.0.0.1:5000/v1"), "http://127.0.0.1:5000/v1"
     )
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("provider", "config", "pinned"),
+    ("provider", "table"),
     [
-        *(
-            (provider, _nested(path, "http://127.0.0.1:5000/v1"), "http://127.0.0.1:5000/v1")
-            for provider, path in _OWN_TABLE_ADAPTERS[:2]
-        ),
-        (
-            "custom_2",
-            _nested(("custom_openai_api_2", "api_ip"), "http://127.0.0.1:5000/v1/chat/completions"),
-            "http://127.0.0.1:5000/v1/chat/completions",
-        ),
-        ("mlx_lm", {"api_settings": {"local_mlx_lm": {"port": 9000}}}, "http://127.0.0.1:9000/v1"),
-        ("mlx_lm", {"api_settings": {}}, "http://127.0.0.1:8080/v1"),
+        ("aphrodite", "aphrodite"),
+        ("oobabooga", "oobabooga"),
+        ("custom_2", "custom_2"),
+        ("local_llm", "local-llm"),
+        ("tabbyapi", "tabbyapi"),
+        ("koboldcpp", "koboldcpp"),
     ],
 )
-async def test_console_checks_and_pins_an_endpoint_in_the_adapters_own_table(
-    provider, config, pinned
-):
-    """Review r14ep-rev3 I-3: a config that sets only the adapter's own table
-    (or, for MLX-LM, nothing) keeps working; the send is pinned to the
-    endpoint Console checked, the one the adapter read before."""
-    seen: list[str] = []
+async def test_own_table_adapters_keep_their_shipped_endpoint(provider, table):
+    """Review r14ep-rev4 C-1: on the shipped template, as a real config is
+    built, each adapter keeps the endpoint it was pinned to before."""
+    config = _merged({})
 
-    resolution = await _resolve_endpoint_send(
-        ConsoleSessionSettings(provider=provider, model="m"), config, False, seen
+    await _assert_ready_and_pinned(provider, config, config["api_settings"][table]["api_url"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("user", "pinned"),
+    [
+        ({}, "http://127.0.0.1:8080/v1"),
+        ({"api_settings": {"local_mlx_lm": {"host": "localhost", "port": 9000}}}, "http://localhost:9000/v1"),
+    ],
+)
+async def test_mlx_sends_to_its_own_host_and_port_never_the_shipped_api_url(user, pinned):
+    """Review r14ep-rev4 C-1: round 4b pinned ``[api_settings.local_mlx_lm]
+    api_url``, which the shipped template sets to a placeholder and MLX-LM
+    ignores, so every MLX send went there. Console checks and pins the URL MLX-LM
+    builds from its host and port, or its 8080 default."""
+    config = _merged(user)
+    assert config["api_settings"]["local_mlx_lm"]["api_url"] != pinned
+
+    await _assert_ready_and_pinned("mlx_lm", config, pinned)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("host", ["127.1", "-bad.corp", "bücher.example", "localhost.."])
+async def test_console_never_sends_to_a_refused_mlx_host(host):
+    """Review r14ep-rev3 follow-up and rev4 C-1: MLX-LM builds its endpoint from
+    ``[api_settings.local_mlx_lm] host`` and ``port``, so ``host = "127.1"``
+    is refused even with the shipped ``api_url`` merged in."""
+    await _assert_refused_without_a_request(
+        "mlx_lm", _merged({"api_settings": {"local_mlx_lm": {"host": host, "port": 8080}}})
     )
 
-    assert resolution.ready is True, resolution.visible_copy
-    assert f"adapter:{pinned}" in seen
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("legacy", ["http://127.1:8000/v1", "http://127.0.0.1:8000/v1"])
+async def test_huggingface_console_checks_and_pins_its_legacy_table(legacy):
+    """Review r14ep-rev4 M-4: with ``[api_settings.huggingface] api_base_url``
+    blank, Console checked the built-in URL and left the call unpinned, and
+    the adapter posted to ``huggingface_api.api_base_url``."""
+    config = _merged(
+        {"api_settings": {"huggingface": {"api_base_url": "", "api_key": "hf_notarealkey0000000000"}}}
+    )
+    config["huggingface_api"] = {"api_base_url": legacy, "use_router_url_format": False}
+
+    if legacy == "http://127.1:8000/v1":
+        await _assert_refused_without_a_request("huggingface", config)
+    else:
+        await _assert_ready_and_pinned("huggingface", config, legacy)
 
 
 def test_a_refused_entry_renames_and_counts_but_offers_no_duplicate():

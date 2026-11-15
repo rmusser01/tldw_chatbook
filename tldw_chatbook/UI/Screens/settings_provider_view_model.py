@@ -519,6 +519,14 @@ def _detach_refusal(entry: CustomEndpointEntry, urls: list[str | None]) -> str:
     if entry.family != "openai_compatible" or any(
         endpoint_refusal(provider, url or "", custom_endpoint=True) for url in refused
     ):
+        if entry.base_url not in refused:
+            # Review r14ep-rev4 M-1: only conversations' own URLs are refused,
+            # which Edit cannot change.
+            return (
+                f"Detach blocked: some '{name}' conversations keep their own "
+                "endpoint URL, which Console refuses. Switch those conversations "
+                "to another provider, then delete it."
+            )
         return (
             f"Detach blocked: '{name}' conversations would move to an endpoint "
             "URL Console refuses. Fix it with Edit, or switch those "

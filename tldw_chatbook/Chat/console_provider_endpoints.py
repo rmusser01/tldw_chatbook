@@ -237,8 +237,10 @@ CONDITIONAL_BASE_URL_EXECUTION_KEYS = frozenset(
 #: config raw, so a schemeless endpoint readiness reads as http:// went as
 #: typed. Every primary send pins the resolved base for them; shared by the
 #: gateway kwargs builders and the trace verifier's reconstruction (r11g-rev3).
-#: MLX-LM joins them (TASK-40300 review r14ep-rev3 follow-up): it builds its
-#: endpoint from its own host and port.
+#: MLX-LM joins them (TASK-40300 review r14ep-rev3 follow-up and rev4 C-1):
+#: Console checks and pins the URL MLX-LM builds from its own ``host`` and
+#: ``port`` (``http://127.0.0.1:8080/v1`` when unset), never the ``api_url``
+#: in its table, which the adapter ignores.
 CONFIG_READING_LOCAL_EXECUTION_KEYS = frozenset(
     {"aphrodite", "koboldcpp", "local_mlx_lm", "oobabooga", "tabbyapi"}
 )
@@ -249,7 +251,6 @@ CONFIG_READING_LOCAL_EXECUTION_KEYS = frozenset(
 _ADAPTER_OWN_ENDPOINTS: dict[str, tuple[tuple[str, ...], ...]] = {
     "openai": (("openai_api", "api_base_url"),),
     "anthropic": (("anthropic_api", "api_base_url"),),
-    "google": (("google", "api_base_url"),),
     "huggingface": (("huggingface_api", "api_base_url"),),
     "local-llm": (
         ("api_settings", "local-llm", "api_url"),
@@ -262,6 +263,11 @@ _ADAPTER_OWN_ENDPOINTS: dict[str, tuple[tuple[str, ...], ...]] = {
     "tabbyapi": (("api_settings", "tabby_api", "api_url"),),
     "koboldcpp": (("api_settings", "koboldcpp", "api_url"),),
 }
+
+
+#: Adapters that always build their endpoint themselves (MLX-LM's host and
+#: port) and ignore any URL in their ``api_settings`` table.
+ADAPTER_ONLY_ENDPOINT_KEYS = frozenset({"mlx_lm", "local_mlx_lm"})
 
 
 def adapter_own_endpoint(
@@ -287,7 +293,7 @@ def adapter_own_endpoint(
             value = value.get(key) if isinstance(value, Mapping) else None
         if isinstance(value, str) and value.strip():
             return _effective_contract_endpoint(dispatch, value.strip())
-    if dispatch in {"mlx_lm", "local_mlx_lm"}:
+    if dispatch in ADAPTER_ONLY_ENDPOINT_KEYS:
         api_settings = app_config.get("api_settings")
         table = api_settings.get(dispatch) if isinstance(api_settings, Mapping) else None
         table = table if isinstance(table, Mapping) else {}
@@ -299,31 +305,43 @@ def adapter_own_endpoint(
 #: Console execution keys besides ``CONFIG_READING_LOCAL_EXECUTION_KEYS``
 #: whose adapter reads a table Console's own lookup misses (review r14ep-rev3
 #: and its follow-up: Local LLM's ``api_ip``, Custom OpenAI API 2's top-level
-#: ``api_ip``).
-_OWN_TABLE_CONSOLE_KEYS = frozenset({"local-llm", "custom-openai-api-2"})
+#: ``api_ip``; rev4 M-4: HuggingFace's ``huggingface_api``).
+_OWN_TABLE_CONSOLE_KEYS = frozenset({"local-llm", "custom-openai-api-2", "huggingface"})
 
 
 def console_own_table_endpoint(
-    execution_key: str, app_config: Mapping[str, object]
+    execution_key: str,
+    app_config: Mapping[str, object],
+    resolved: str | None,
+    provider_settings: Mapping[str, object],
+    selected: str | None = None,
 ) -> str | None:
-    """The endpoint a local adapter reads from its own table on a Console send.
+    """The endpoint a Console send uses, so its send and readiness check it.
 
-    Console's send and readiness check it when the provider's
-    ``api_settings`` table has none, so ``[api_settings.ooba_api] api_ip``
-    is checked and pinned rather than sent to unchecked (TASK-40300 review
-    r14ep-rev3 I-3). Refusing instead would break a working config that
-    sets only the adapter's own table.
+    Normally ``resolved``. An adapter that reads its own table when nothing is
+    pinned uses that table's endpoint instead when neither the chat nor the
+    provider's ``api_settings`` table sets one, so ``[api_settings.ooba_api]
+    api_ip`` is checked and pinned rather than sent to unchecked (TASK-40300
+    review r14ep-rev3 I-3; refusing would break a config that sets only that
+    table). MLX-LM always uses its own host and port (rev4 C-1).
 
     Args:
         execution_key: Console's resolved adapter key.
         app_config: The loaded configuration.
+        resolved: The endpoint Console resolved for the provider.
+        provider_settings: The provider's ``api_settings`` table.
+        selected: The chat's own endpoint, if any.
 
     Returns:
-        That endpoint, or None for any other adapter.
+        The endpoint the send uses, or None.
     """
-    if execution_key in CONFIG_READING_LOCAL_EXECUTION_KEYS | _OWN_TABLE_CONSOLE_KEYS:
+    if execution_key in ADAPTER_ONLY_ENDPOINT_KEYS:
         return adapter_own_endpoint(execution_key, app_config)
-    return None
+    if execution_key in CONFIG_READING_LOCAL_EXECUTION_KEYS | _OWN_TABLE_CONSOLE_KEYS and not (
+        selected or first_configured_endpoint(provider_settings)
+    ):
+        return adapter_own_endpoint(execution_key, app_config) or resolved
+    return resolved
 
 
 def adapter_api_base_url(execution_key: str, base_url: str | None) -> str | None:

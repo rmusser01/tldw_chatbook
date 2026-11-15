@@ -2003,8 +2003,10 @@ def build_console_settings_readiness(
             )
             if provider_key in {"llama_cpp", "local_llamacpp"}
             else effective_provider_endpoint(provider_key, None, provider_settings)
-            or console_own_table_endpoint(identity.execution_key, app_config)
         )
+    checked_url = console_own_table_endpoint(
+        identity.execution_key, app_config, checked_url, provider_settings, base_url
+    )
     endpoint_error = (
         endpoint_refusal(provider_key, checked_url, custom_endpoint=entry is not None)
         if checked_url

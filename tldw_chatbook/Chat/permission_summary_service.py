@@ -141,6 +141,7 @@ def _summary_endpoint(config: Mapping, dispatch: str) -> Optional[str]:
     OpenAI API, Oobabooga and MLX-LM sent to refused URLs).
     """
     from tldw_chatbook.Chat.console_provider_endpoints import (
+        ADAPTER_ONLY_ENDPOINT_KEYS,
         adapter_api_base_url,
         adapter_own_endpoint,
         effective_provider_endpoint,
@@ -156,7 +157,9 @@ def _summary_endpoint(config: Mapping, dispatch: str) -> Optional[str]:
     except Exception:  # noqa: BLE001 -- a malformed table means no summary
         return None
     effective = (
-        None if first_configured_endpoint(settings) else adapter_own_endpoint(dispatch, config)
+        None
+        if first_configured_endpoint(settings) and dispatch not in ADAPTER_ONLY_ENDPOINT_KEYS
+        else adapter_own_endpoint(dispatch, config)
     ) or effective_provider_endpoint(dispatch, None, settings)
     if not effective or endpoint_refusal(dispatch, effective):
         return None
