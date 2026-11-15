@@ -1,0 +1,1242 @@
+{
+  "schema_version": 1,
+  "plain_first_returns": [
+    {
+      "packet": {
+        "file": "plain-before-1.json",
+        "sha256": "b9a87809bfe5ab74e44d47b45c8bec426773563a23a0fb7930631b089cc56725"
+      },
+      "samples": {
+        "file": "plain-before-1-samples.json",
+        "sha256": "5738c5bbc71c6a0bd5698ce03e7ca75dcda492385e424420e420c12c2b405913"
+      },
+      "revision": "7dbeff56aba6032f43aba2f4bbab803d3f133471",
+      "first_return": {
+        "iteration": 0,
+        "resume_to_input_ms": 279.5559999940451,
+        "resume_to_attach_ms": 3299.104499979876,
+        "input_ms": 29.13849998731166,
+        "max_loop_overshoot_ms": 219.10489999572746,
+        "draft_retained": true,
+        "prior_draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 3328.0386999831535
+      },
+      "main_thread_samples": 200,
+      "iocp_poll_samples": 176,
+      "iocp_poll_percent": 88.0,
+      "inclusive_frame_samples": {
+        "textual_screen_resume": 8,
+        "stylesheet_update_nodes": 9,
+        "subscription_starter": 0,
+        "execution_allowed": 0,
+        "storage_initializing": 0
+      },
+      "top_sampled_stacks": [
+        {
+          "count": 176,
+          "top_five_frames": [
+            [
+              "C:\\Python312\\Lib\\asyncio\\windows_events.py",
+              "_poll",
+              774
+            ],
+            [
+              "C:\\Python312\\Lib\\asyncio\\windows_events.py",
+              "select",
+              445
+            ],
+            [
+              "C:\\Python312\\Lib\\asyncio\\base_events.py",
+              "_run_once",
+              1961
+            ],
+            [
+              "C:\\Python312\\Lib\\asyncio\\base_events.py",
+              "run_forever",
+              645
+            ],
+            [
+              "C:\\Python312\\Lib\\asyncio\\windows_events.py",
+              "run_forever",
+              322
+            ]
+          ]
+        },
+        {
+          "count": 1,
+          "top_five_frames": [
+            [
+              "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\css\\stylesheet.py",
+              "apply",
+              505
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\.codex\\worktrees\\console-validation-performance\\tldw_tui\\tldw_chatbook\\Utils\\textual_css_fastpath.py",
+              "apply",
+              311
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\css\\stylesheet.py",
+              "update_nodes",
+              724
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\app.py",
+              "update_styles",
+              2523
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\dom.py",
+              "update_node_styles",
+              1813
+            ]
+          ]
+        },
+        {
+          "count": 1,
+          "top_five_frames": [
+            [
+              "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\css\\stylesheet.py",
+              "apply",
+              470
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\.codex\\worktrees\\console-validation-performance\\tldw_tui\\tldw_chatbook\\Utils\\textual_css_fastpath.py",
+              "apply",
+              311
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\css\\stylesheet.py",
+              "_process_component_classes",
+              624
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\css\\stylesheet.py",
+              "apply",
+              607
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\.codex\\worktrees\\console-validation-performance\\tldw_tui\\tldw_chatbook\\Utils\\textual_css_fastpath.py",
+              "apply",
+              311
+            ]
+          ]
+        },
+        {
+          "count": 1,
+          "top_five_frames": [
+            [
+              "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\message_pump.py",
+              "_parent",
+              149
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\dom.py",
+              "ancestors",
+              1252
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\.codex\\worktrees\\console-validation-performance\\tldw_tui\\tldw_chatbook\\Utils\\textual_css_fastpath.py",
+              "_ancestor_names",
+              149
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\.codex\\worktrees\\console-validation-performance\\tldw_tui\\tldw_chatbook\\Utils\\textual_css_fastpath.py",
+              "_ordered_candidates",
+              200
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\.codex\\worktrees\\console-validation-performance\\tldw_tui\\tldw_chatbook\\Utils\\textual_css_fastpath.py",
+              "apply",
+              300
+            ]
+          ]
+        },
+        {
+          "count": 1,
+          "top_five_frames": [
+            [
+              "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\css\\stylesheet.py",
+              "_check_rule",
+              440
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\css\\stylesheet.py",
+              "apply",
+              548
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\.codex\\worktrees\\console-validation-performance\\tldw_tui\\tldw_chatbook\\Utils\\textual_css_fastpath.py",
+              "apply",
+              311
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\css\\stylesheet.py",
+              "update_nodes",
+              724
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\app.py",
+              "update_styles",
+              2523
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "packet": {
+        "file": "plain-after-3.json",
+        "sha256": "9ac323e010fd514247f166dfed5bb6e2eba81314f077bd3c1d887cb4eaf2d0e0"
+      },
+      "samples": {
+        "file": "plain-after-3-samples.json",
+        "sha256": "d67d2bec7605b182dbe86f9ac1ee879efb13319098fbd701398b09d0d3c904fa"
+      },
+      "revision": "ea5a104807a53c2ba69c2434f6a4a1b22118b139",
+      "first_return": {
+        "iteration": 0,
+        "resume_to_input_ms": 476.3399999937974,
+        "resume_to_attach_ms": 4924.460099980934,
+        "input_ms": 77.30159998754971,
+        "max_loop_overshoot_ms": 367.7243999845814,
+        "draft_retained": true,
+        "prior_draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 4952.804000000469
+      },
+      "main_thread_samples": 292,
+      "iocp_poll_samples": 257,
+      "iocp_poll_percent": 88.01369863013699,
+      "inclusive_frame_samples": {
+        "textual_screen_resume": 12,
+        "stylesheet_update_nodes": 13,
+        "subscription_starter": 0,
+        "execution_allowed": 0,
+        "storage_initializing": 0
+      },
+      "top_sampled_stacks": [
+        {
+          "count": 257,
+          "top_five_frames": [
+            [
+              "C:\\Python312\\Lib\\asyncio\\windows_events.py",
+              "_poll",
+              774
+            ],
+            [
+              "C:\\Python312\\Lib\\asyncio\\windows_events.py",
+              "select",
+              445
+            ],
+            [
+              "C:\\Python312\\Lib\\asyncio\\base_events.py",
+              "_run_once",
+              1961
+            ],
+            [
+              "C:\\Python312\\Lib\\asyncio\\base_events.py",
+              "run_forever",
+              645
+            ],
+            [
+              "C:\\Python312\\Lib\\asyncio\\windows_events.py",
+              "run_forever",
+              322
+            ]
+          ]
+        },
+        {
+          "count": 3,
+          "top_five_frames": [
+            [
+              "C:\\Python312\\Lib\\asyncio\\windows_events.py",
+              "recv",
+              487
+            ],
+            [
+              "C:\\Python312\\Lib\\asyncio\\proactor_events.py",
+              "_loop_self_reading",
+              804
+            ],
+            [
+              "C:\\Python312\\Lib\\asyncio\\events.py",
+              "_run",
+              88
+            ],
+            [
+              "C:\\Python312\\Lib\\asyncio\\base_events.py",
+              "_run_once",
+              1999
+            ],
+            [
+              "C:\\Python312\\Lib\\asyncio\\base_events.py",
+              "run_forever",
+              645
+            ]
+          ]
+        },
+        {
+          "count": 2,
+          "top_five_frames": [
+            [
+              "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\css\\stylesheet.py",
+              "apply",
+              557
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\.codex\\worktrees\\console-validation-performance\\tldw_tui\\tldw_chatbook\\Utils\\textual_css_fastpath.py",
+              "apply",
+              311
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\css\\stylesheet.py",
+              "update_nodes",
+              724
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\app.py",
+              "update_styles",
+              2523
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\dom.py",
+              "update_node_styles",
+              1813
+            ]
+          ]
+        },
+        {
+          "count": 2,
+          "top_five_frames": [
+            [
+              "C:\\Users\\GDesktop-1\\.codex\\worktrees\\console-validation-performance\\tldw_tui\\tldw_chatbook\\Utils\\textual_css_fastpath.py",
+              "_ordered_candidates",
+              222
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\.codex\\worktrees\\console-validation-performance\\tldw_tui\\tldw_chatbook\\Utils\\textual_css_fastpath.py",
+              "apply",
+              300
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\css\\stylesheet.py",
+              "update_nodes",
+              724
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\app.py",
+              "update_styles",
+              2523
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\dom.py",
+              "update_node_styles",
+              1813
+            ]
+          ]
+        },
+        {
+          "count": 1,
+          "top_five_frames": [
+            [
+              "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\reactive.py",
+              "__get__",
+              299
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\widget.py",
+              "<lambda>",
+              393
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\dom.py",
+              "<genexpr>",
+              1895
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\dom.py",
+              "has_pseudo_classes",
+              1895
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\css\\model.py",
+              "check",
+              164
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "packet": {
+        "file": "plain-after-4.json",
+        "sha256": "f4310b7e5328257fb29234170431a1ffd87ebae550a3ee2abce8137919b16345"
+      },
+      "samples": {
+        "file": "plain-after-4-samples.json",
+        "sha256": "ebe9879c27d27d196bedc5bd15b130801479dc84babf16dcfbeccd142746506f"
+      },
+      "revision": "ea5a104807a53c2ba69c2434f6a4a1b22118b139",
+      "first_return": {
+        "iteration": 0,
+        "resume_to_input_ms": 439.7501000203192,
+        "resume_to_attach_ms": 4021.9142000132706,
+        "input_ms": 75.58510001399554,
+        "max_loop_overshoot_ms": 332.82780001172796,
+        "draft_retained": true,
+        "prior_draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 4025.3568000043742
+      },
+      "main_thread_samples": 238,
+      "iocp_poll_samples": 208,
+      "iocp_poll_percent": 87.39495798319328,
+      "inclusive_frame_samples": {
+        "textual_screen_resume": 12,
+        "stylesheet_update_nodes": 12,
+        "subscription_starter": 0,
+        "execution_allowed": 0,
+        "storage_initializing": 0
+      },
+      "top_sampled_stacks": [
+        {
+          "count": 208,
+          "top_five_frames": [
+            [
+              "C:\\Python312\\Lib\\asyncio\\windows_events.py",
+              "_poll",
+              774
+            ],
+            [
+              "C:\\Python312\\Lib\\asyncio\\windows_events.py",
+              "select",
+              445
+            ],
+            [
+              "C:\\Python312\\Lib\\asyncio\\base_events.py",
+              "_run_once",
+              1961
+            ],
+            [
+              "C:\\Python312\\Lib\\asyncio\\base_events.py",
+              "run_forever",
+              645
+            ],
+            [
+              "C:\\Python312\\Lib\\asyncio\\windows_events.py",
+              "run_forever",
+              322
+            ]
+          ]
+        },
+        {
+          "count": 2,
+          "top_five_frames": [
+            [
+              "C:\\Python312\\Lib\\asyncio\\windows_events.py",
+              "recv",
+              487
+            ],
+            [
+              "C:\\Python312\\Lib\\asyncio\\proactor_events.py",
+              "_loop_self_reading",
+              804
+            ],
+            [
+              "C:\\Python312\\Lib\\asyncio\\events.py",
+              "_run",
+              88
+            ],
+            [
+              "C:\\Python312\\Lib\\asyncio\\base_events.py",
+              "_run_once",
+              1999
+            ],
+            [
+              "C:\\Python312\\Lib\\asyncio\\base_events.py",
+              "run_forever",
+              645
+            ]
+          ]
+        },
+        {
+          "count": 1,
+          "top_five_frames": [
+            [
+              "C:\\Python312\\Lib\\logging\\__init__.py",
+              "flush",
+              1144
+            ],
+            [
+              "C:\\Python312\\Lib\\logging\\__init__.py",
+              "emit",
+              1164
+            ],
+            [
+              "C:\\Python312\\Lib\\logging\\__init__.py",
+              "emit",
+              1280
+            ],
+            [
+              "C:\\Python312\\Lib\\logging\\handlers.py",
+              "emit",
+              75
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\.codex\\worktrees\\console-validation-performance\\tldw_tui\\tldw_chatbook\\Logging_Config.py",
+              "emit",
+              300
+            ]
+          ]
+        },
+        {
+          "count": 1,
+          "top_five_frames": [
+            [
+              "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\widget.py",
+              "is_scrollable",
+              2582
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\css\\stylesheet.py",
+              "update_nodes",
+              725
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\app.py",
+              "update_styles",
+              2523
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\dom.py",
+              "update_node_styles",
+              1813
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\screen.py",
+              "_on_screen_resume",
+              1480
+            ]
+          ]
+        },
+        {
+          "count": 1,
+          "top_five_frames": [
+            [
+              "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\css\\model.py",
+              "__hash__",
+              249
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\css\\stylesheet.py",
+              "apply",
+              500
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\.codex\\worktrees\\console-validation-performance\\tldw_tui\\tldw_chatbook\\Utils\\textual_css_fastpath.py",
+              "apply",
+              311
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\css\\stylesheet.py",
+              "update_nodes",
+              724
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\app.py",
+              "update_styles",
+              2523
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "packet": {
+        "file": "plain-before-2.json",
+        "sha256": "0989d4243a546636c7a28f8215e6779046cc171f6dd6c2393f3a08a1909935e5"
+      },
+      "samples": {
+        "file": "plain-before-2-samples.json",
+        "sha256": "f244a9e9299bbcd73c587e24cd277862e31514794352e5b912a27ad286865aa3"
+      },
+      "revision": "7dbeff56aba6032f43aba2f4bbab803d3f133471",
+      "first_return": {
+        "iteration": 0,
+        "resume_to_input_ms": 486.25149999861605,
+        "resume_to_attach_ms": 2564.6301000087988,
+        "input_ms": 94.98100000200793,
+        "max_loop_overshoot_ms": 360.00269997748546,
+        "draft_retained": true,
+        "prior_draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 2570.584200002486
+      },
+      "main_thread_samples": 148,
+      "iocp_poll_samples": 117,
+      "iocp_poll_percent": 79.05405405405405,
+      "inclusive_frame_samples": {
+        "textual_screen_resume": 14,
+        "stylesheet_update_nodes": 14,
+        "subscription_starter": 0,
+        "execution_allowed": 0,
+        "storage_initializing": 0
+      },
+      "top_sampled_stacks": [
+        {
+          "count": 117,
+          "top_five_frames": [
+            [
+              "C:\\Python312\\Lib\\asyncio\\windows_events.py",
+              "_poll",
+              774
+            ],
+            [
+              "C:\\Python312\\Lib\\asyncio\\windows_events.py",
+              "select",
+              445
+            ],
+            [
+              "C:\\Python312\\Lib\\asyncio\\base_events.py",
+              "_run_once",
+              1961
+            ],
+            [
+              "C:\\Python312\\Lib\\asyncio\\base_events.py",
+              "run_forever",
+              645
+            ],
+            [
+              "C:\\Python312\\Lib\\asyncio\\windows_events.py",
+              "run_forever",
+              322
+            ]
+          ]
+        },
+        {
+          "count": 2,
+          "top_five_frames": [
+            [
+              "C:\\Python312\\Lib\\asyncio\\windows_events.py",
+              "recv",
+              487
+            ],
+            [
+              "C:\\Python312\\Lib\\asyncio\\proactor_events.py",
+              "_loop_self_reading",
+              804
+            ],
+            [
+              "C:\\Python312\\Lib\\asyncio\\events.py",
+              "_run",
+              88
+            ],
+            [
+              "C:\\Python312\\Lib\\asyncio\\base_events.py",
+              "_run_once",
+              1999
+            ],
+            [
+              "C:\\Python312\\Lib\\asyncio\\base_events.py",
+              "run_forever",
+              645
+            ]
+          ]
+        },
+        {
+          "count": 2,
+          "top_five_frames": [
+            [
+              "C:\\Python312\\Lib\\threading.py",
+              "wait",
+              355
+            ],
+            [
+              "C:\\Python312\\Lib\\threading.py",
+              "wait",
+              655
+            ],
+            [
+              "C:\\Python312\\Lib\\threading.py",
+              "start",
+              999
+            ],
+            [
+              "C:\\Python312\\Lib\\concurrent\\futures\\thread.py",
+              "_adjust_thread_count",
+              203
+            ],
+            [
+              "C:\\Python312\\Lib\\concurrent\\futures\\thread.py",
+              "submit",
+              180
+            ]
+          ]
+        },
+        {
+          "count": 1,
+          "top_five_frames": [
+            [
+              "C:\\Python312\\Lib\\_weakrefset.py",
+              "_remove",
+              39
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\rich\\text.py",
+              "divide",
+              1115
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\document\\_wrapped_document.py",
+              "get_sections",
+              420
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\document\\_wrapped_document.py",
+              "location_to_offset",
+              351
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\widgets\\_text_area.py",
+              "_recompute_cursor_offset",
+              912
+            ]
+          ]
+        },
+        {
+          "count": 1,
+          "top_five_frames": [
+            [
+              "C:\\Users\\GDesktop-1\\.codex\\worktrees\\console-validation-performance\\tldw_tui\\tldw_chatbook\\Utils\\textual_css_fastpath.py",
+              "_ordered_candidates",
+              210
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\.codex\\worktrees\\console-validation-performance\\tldw_tui\\tldw_chatbook\\Utils\\textual_css_fastpath.py",
+              "apply",
+              300
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\css\\stylesheet.py",
+              "update_nodes",
+              724
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\app.py",
+              "update_styles",
+              2523
+            ],
+            [
+              "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\dom.py",
+              "update_node_styles",
+              1813
+            ]
+          ]
+        }
+      ]
+    }
+  ],
+  "diagnostic_first_returns": [
+    {
+      "packet": {
+        "file": "diagnostic-baseline-diagnostic.json",
+        "sha256": "ab629ac5984db590a88a6c8c7c5668115175bb8b64552a6564814448ad232ce7"
+      },
+      "revision": "7dbeff56aba6032f43aba2f4bbab803d3f133471",
+      "first_return_window": {
+        "navigate_wall_seconds": 224576.2146209,
+        "attachment_poll_returned_wall_seconds": 224580.6559942,
+        "wall_ms": 4441.373300011037
+      },
+      "original_subscription_and_admission_sync_spans": [
+        [
+          "startup",
+          "execution_allowed",
+          205.21990000270307,
+          109.375
+        ],
+        [
+          "startup",
+          "execution_allowed",
+          1673.034400009783,
+          109.375
+        ],
+        [
+          "startup",
+          "execution_allowed",
+          354.45340001024306,
+          125.0
+        ],
+        [
+          "startup",
+          "execution_allowed",
+          159.32649999740534,
+          93.75
+        ],
+        [
+          "startup",
+          "execution_allowed",
+          190.11290001799352,
+          125.0
+        ],
+        [
+          "console-resume-2",
+          "execution_allowed",
+          637.1606000175234,
+          125.0
+        ],
+        [
+          "console-resume-2",
+          "TldwCli.boot_worker_starters.<locals>.start_subscriptions_fts_backfill",
+          637.4921999813523,
+          125.0
+        ]
+      ],
+      "first_return_resume_stylesheet_sync_spans": [
+        [
+          "console-resume-0",
+          "Stylesheet.update_nodes",
+          274.24040000187233,
+          265.625
+        ],
+        [
+          "console-resume-0",
+          "Screen._on_screen_resume",
+          276.9074000243563,
+          265.625
+        ],
+        [
+          "console-resume-0",
+          "Stylesheet.update_nodes",
+          1.7489000165369362,
+          0.0
+        ],
+        [
+          "console-resume-0",
+          "Stylesheet.update_nodes",
+          3.8872000004630536,
+          0.0
+        ],
+        [
+          "console-resume-0",
+          "Stylesheet.update_nodes",
+          2.272299985634163,
+          15.625
+        ],
+        [
+          "console-resume-0",
+          "Stylesheet.update_nodes",
+          1.5439999988302588,
+          0.0
+        ],
+        [
+          "console-resume-0",
+          "Stylesheet.update_nodes",
+          0.6418999982997775,
+          0.0
+        ],
+        [
+          "console-resume-0",
+          "Stylesheet.update_nodes",
+          0.7831999973859638,
+          0.0
+        ],
+        [
+          "console-resume-0",
+          "Stylesheet.update_nodes",
+          1.3510000135283917,
+          0.0
+        ],
+        [
+          "console-resume-0",
+          "Stylesheet.update_nodes",
+          1.6376000130549073,
+          0.0
+        ]
+      ],
+      "worker_spans_overlapping_first_return_plus_selected_subscription": [
+        {
+          "kind": "readiness",
+          "function": "ConsoleReadinessConfigProjection.for_screen.<locals>.read_current",
+          "start_stage": "console-resume-0",
+          "return_stage": "console-resume-0",
+          "thread_id": 58048,
+          "start_wall_seconds": 224576.6915343,
+          "return_wall_seconds": 224577.5711738,
+          "full_wall_ms": 879.6395000244956,
+          "full_thread_cpu_ms": 156.25,
+          "overlap_first_return_ms": 879.6395000244956,
+          "metadata": {}
+        },
+        {
+          "kind": "context_native",
+          "function": "read_context_presentation_inputs.<locals>.finite.<locals>.native",
+          "start_stage": "console-resume-0",
+          "return_stage": "console-resume-0",
+          "thread_id": 60548,
+          "start_wall_seconds": 224577.5737021,
+          "return_wall_seconds": 224577.9440738,
+          "full_wall_ms": 370.371700002579,
+          "full_thread_cpu_ms": 78.125,
+          "overlap_first_return_ms": 370.371700002579,
+          "metadata": {
+            "callback_qualname": "read_context_presentation_inputs.<locals>.probe",
+            "database_scope_count": 1
+          }
+        },
+        {
+          "kind": "readiness",
+          "function": "ConsoleReadinessConfigProjection.for_screen.<locals>.read_current",
+          "start_stage": "console-resume-0",
+          "return_stage": "console-resume-0",
+          "thread_id": 35876,
+          "start_wall_seconds": 224578.2697852,
+          "return_wall_seconds": 224579.7972719,
+          "full_wall_ms": 1527.4866999825463,
+          "full_thread_cpu_ms": 140.625,
+          "overlap_first_return_ms": 1527.4866999825463,
+          "metadata": {}
+        },
+        {
+          "kind": "context_native",
+          "function": "read_context_presentation_inputs.<locals>.finite.<locals>.native",
+          "start_stage": "console-resume-0",
+          "return_stage": "console-resume-0",
+          "thread_id": 58048,
+          "start_wall_seconds": 224580.0499776,
+          "return_wall_seconds": 224580.2442664,
+          "full_wall_ms": 194.2888000048697,
+          "full_thread_cpu_ms": 62.5,
+          "overlap_first_return_ms": 194.2888000048697,
+          "metadata": {
+            "callback_qualname": "read_context_presentation_inputs.<locals>.probe",
+            "database_scope_count": 1
+          }
+        },
+        {
+          "kind": "workspace",
+          "function": "ConsoleWorkspaceController.prepare_console_workspace_reconciliation.<locals>.read",
+          "start_stage": "console-resume-0",
+          "return_stage": "console-resume-0",
+          "thread_id": 11044,
+          "start_wall_seconds": 224580.0969346,
+          "return_wall_seconds": 224580.5885156,
+          "full_wall_ms": 491.580999980215,
+          "full_thread_cpu_ms": 234.375,
+          "overlap_first_return_ms": 491.580999980215,
+          "metadata": {}
+        }
+      ],
+      "first_key_attachment_phase_flags": {
+        "_console_attach_reconciled": false,
+        "_console_attach_sync_complete": false,
+        "_console_attach_runtime_reconciled": false,
+        "_console_attach_view_started": true,
+        "_console_attach_reconcile_running": true,
+        "_console_resume_after_reconcile": true,
+        "_console_attach_resume_in_progress": false,
+        "_console_sync_in_progress": true,
+        "_console_sync_requested": false,
+        "_console_control_bar_replay_whole_sync": false,
+        "_console_attach_reconcile_retry_exhausted": false
+      },
+      "first_key_attachment_tasks": [
+        {
+          "task_id": 1772336937280,
+          "done": false,
+          "cancelled": false,
+          "await_chain": [
+            {
+              "function": "Worker._run",
+              "id": 1772314496800,
+              "line": 370
+            },
+            {
+              "function": "Worker.run",
+              "id": 1772416277696,
+              "line": 354
+            },
+            {
+              "function": "Worker._run_async",
+              "id": 1772410856032,
+              "line": 339
+            },
+            {
+              "function": "ChatScreen._reconcile_console_after_attach",
+              "id": 1772350503328,
+              "line": 15285
+            },
+            {
+              "function": "ChatScreen._sync_native_console_chat_ui",
+              "id": 1772413576240,
+              "line": 17719
+            },
+            {
+              "function": "ConsoleCharacterContextController.refresh_presentation_if_scope_changed",
+              "id": 1772350805408,
+              "line": 1162
+            },
+            {
+              "function": "ConsoleCharacterContextController._check_recent_batch",
+              "id": 1772350413440,
+              "line": 1616
+            },
+            {
+              "function": "ConsoleCharacterContextController._await_database_work",
+              "id": 1772350805104,
+              "line": 903
+            },
+            {
+              "function": "run_preparation_read",
+              "id": 1772410522688,
+              "line": 288
+            },
+            {
+              "awaitable_type": "FutureIter",
+              "id": 1772340398640
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "packet": {
+        "file": "diagnostic-after-diagnostic.json",
+        "sha256": "57295ce235bf1d01552ebbef5256912c6dcb5769b358d949189faac60b58ecd9"
+      },
+      "revision": "ea5a104807a53c2ba69c2434f6a4a1b22118b139",
+      "first_return_window": {
+        "navigate_wall_seconds": 228635.7017498,
+        "attachment_poll_returned_wall_seconds": 228641.9536081,
+        "wall_ms": 6251.858300005551
+      },
+      "original_subscription_and_admission_sync_spans": [
+        [
+          "startup",
+          "execution_allowed",
+          86.40920001198538,
+          78.125
+        ],
+        [
+          "startup",
+          "execution_allowed",
+          2217.4220999877434,
+          109.375
+        ],
+        [
+          "startup",
+          "execution_allowed",
+          263.9341999893077,
+          109.375
+        ],
+        [
+          "startup",
+          "execution_allowed",
+          439.32229999336414,
+          125.0
+        ],
+        [
+          "startup",
+          "execution_allowed",
+          97.09339999244548,
+          93.75
+        ],
+        [
+          "console-resume-1",
+          "TldwCli.boot_worker_starters.<locals>.start_subscriptions_fts_backfill",
+          7.308300002478063,
+          0.0
+        ]
+      ],
+      "first_return_resume_stylesheet_sync_spans": [
+        [
+          "console-resume-0",
+          "Stylesheet.update_nodes",
+          435.8357999881264,
+          328.125
+        ],
+        [
+          "console-resume-0",
+          "Screen._on_screen_resume",
+          441.14989999798127,
+          359.375
+        ],
+        [
+          "console-resume-0",
+          "Stylesheet.update_nodes",
+          2.0025999983772635,
+          0.0
+        ],
+        [
+          "console-resume-0",
+          "Stylesheet.update_nodes",
+          1.368099998217076,
+          15.625
+        ],
+        [
+          "console-resume-0",
+          "Stylesheet.update_nodes",
+          2.3130000045057386,
+          0.0
+        ],
+        [
+          "console-resume-0",
+          "Stylesheet.update_nodes",
+          1.5380999830085784,
+          0.0
+        ],
+        [
+          "console-resume-0",
+          "Stylesheet.update_nodes",
+          0.6101000180933625,
+          0.0
+        ],
+        [
+          "console-resume-0",
+          "Stylesheet.update_nodes",
+          1.812300004530698,
+          0.0
+        ],
+        [
+          "console-resume-0",
+          "Stylesheet.update_nodes",
+          1.4690000098198652,
+          0.0
+        ],
+        [
+          "console-resume-0",
+          "Stylesheet.update_nodes",
+          1.0594000050332397,
+          0.0
+        ]
+      ],
+      "worker_spans_overlapping_first_return_plus_selected_subscription": [
+        {
+          "kind": "readiness",
+          "function": "ConsoleReadinessConfigProjection.for_screen.<locals>.read_current",
+          "start_stage": "leave-console",
+          "return_stage": "console-resume-0",
+          "thread_id": 3432,
+          "start_wall_seconds": 228635.2517313,
+          "return_wall_seconds": 228638.4707457,
+          "full_wall_ms": 3219.0144000051077,
+          "full_thread_cpu_ms": 218.75,
+          "overlap_first_return_ms": 2768.9958999981172,
+          "metadata": {}
+        },
+        {
+          "kind": "context_native",
+          "function": "read_context_presentation_inputs.<locals>.finite.<locals>.native",
+          "start_stage": "console-resume-0",
+          "return_stage": "console-resume-0",
+          "thread_id": 27856,
+          "start_wall_seconds": 228638.4737823,
+          "return_wall_seconds": 228638.6646474,
+          "full_wall_ms": 190.86510001216084,
+          "full_thread_cpu_ms": 93.75,
+          "overlap_first_return_ms": 190.86510001216084,
+          "metadata": {
+            "callback_qualname": "read_context_presentation_inputs.<locals>.probe",
+            "database_scope_count": 1
+          }
+        },
+        {
+          "kind": "readiness",
+          "function": "ConsoleReadinessConfigProjection.for_screen.<locals>.read_current",
+          "start_stage": "console-resume-0",
+          "return_stage": "console-resume-0",
+          "thread_id": 77620,
+          "start_wall_seconds": 228639.7022571,
+          "return_wall_seconds": 228640.7082577,
+          "full_wall_ms": 1006.0005999985151,
+          "full_thread_cpu_ms": 187.5,
+          "overlap_first_return_ms": 1006.0005999985151,
+          "metadata": {}
+        },
+        {
+          "kind": "context_native",
+          "function": "read_context_presentation_inputs.<locals>.finite.<locals>.native",
+          "start_stage": "console-resume-0",
+          "return_stage": "console-resume-0",
+          "thread_id": 72844,
+          "start_wall_seconds": 228640.7426815,
+          "return_wall_seconds": 228641.1777161,
+          "full_wall_ms": 435.0345999991987,
+          "full_thread_cpu_ms": 62.5,
+          "overlap_first_return_ms": 435.0345999991987,
+          "metadata": {
+            "callback_qualname": "read_context_presentation_inputs.<locals>.probe",
+            "database_scope_count": 1
+          }
+        },
+        {
+          "kind": "workspace",
+          "function": "ConsoleWorkspaceController.prepare_console_workspace_reconciliation.<locals>.read",
+          "start_stage": "console-resume-0",
+          "return_stage": "console-resume-0",
+          "thread_id": 12388,
+          "start_wall_seconds": 228640.8198478,
+          "return_wall_seconds": 228641.9290462,
+          "full_wall_ms": 1109.1983999940567,
+          "full_thread_cpu_ms": 296.875,
+          "overlap_first_return_ms": 1109.1983999940567,
+          "metadata": {}
+        },
+        {
+          "kind": "readiness",
+          "function": "ConsoleReadinessConfigProjection.for_screen.<locals>.read_current",
+          "start_stage": "console-resume-0",
+          "return_stage": "console-resume-1",
+          "thread_id": 7988,
+          "start_wall_seconds": 228641.94364,
+          "return_wall_seconds": 228645.6461866,
+          "full_wall_ms": 3702.5465999904554,
+          "full_thread_cpu_ms": 281.25,
+          "overlap_first_return_ms": 9.968099999241531,
+          "metadata": {}
+        },
+        {
+          "kind": "subscription_admission_and_backfill",
+          "function": "run_preparation_read.<locals>.invoke",
+          "start_stage": "console-resume-1",
+          "return_stage": "console-resume-2",
+          "thread_id": 12388,
+          "start_wall_seconds": 228650.9335313,
+          "return_wall_seconds": 228655.0339505,
+          "full_wall_ms": 4100.419199996395,
+          "full_thread_cpu_ms": 875.0,
+          "overlap_first_return_ms": 0,
+          "metadata": {
+            "callback_qualname": "_start_subscriptions_fts_backfill_worker.<locals>.backfill.<locals>.invoke"
+          }
+        }
+      ],
+      "first_key_attachment_phase_flags": {
+        "_console_attach_reconciled": false,
+        "_console_attach_sync_complete": false,
+        "_console_attach_runtime_reconciled": false,
+        "_console_attach_view_started": true,
+        "_console_attach_reconcile_running": false,
+        "_console_resume_after_reconcile": true,
+        "_console_attach_resume_in_progress": false,
+        "_console_sync_in_progress": true,
+        "_console_sync_requested": true,
+        "_console_control_bar_replay_whole_sync": true,
+        "_console_attach_reconcile_retry_exhausted": false
+      },
+      "first_key_attachment_tasks": []
+    }
+  ],
+  "limits": [
+    "Main-thread stacks are sampled, stage-aggregated observations without individual timestamps or worker stacks. Counts are not milliseconds and absence is not proof that background work did not overlap.",
+    "Inclusive frame counts overlap each other. Top-stack counts retain exact source paths and line numbers from retained sample packets.",
+    "The diagnostic selected subscription UI call occurs in resume 2 before the correction; the candidate background callback starts in resume 1 after the first return. These diagnostic first returns therefore do not overlap that selected work.",
+    "The plain first returns lack worker timelines. Their worsening cannot be assigned uniquely to subscription admission, native preparation, or CSS work.",
+    "Diagnostic worker overlap is temporal overlap, not proof of critical-path ownership. Full CPU measurements cannot be prorated to the clipped first-return window, and overlapping worker durations must not be added.",
+    "First-key await snapshots sample only one instant and cannot explain the entire attachment interval. The async-generator await-chain boundary can hide deeper workspace preparation.",
+    "Before/after diagnostics differ in prior-draft harness assertions; EOL qualification identifies historical product-byte differences. Unrelated host processes leave host-wide contention uncontrolled.",
+    "The four qualified plain processes complete 24 returns but supply only two first-return observations per arm. Aggregate medians do not erase first-return worsening or establish a global latency improvement."
+  ]
+}

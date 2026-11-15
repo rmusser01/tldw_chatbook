@@ -1,0 +1,462 @@
+{
+  "order": [
+    "before-1",
+    "after-3",
+    "after-4",
+    "before-2"
+  ],
+  "changed_product_files": [
+    "tldw_chatbook/app.py",
+    "tldw_chatbook/app_boot_workers.py",
+    "tldw_chatbook/app_service_wiring.py"
+  ],
+  "cohorts": {
+    "before-1": {
+      "head": "7dbeff56aba6032f43aba2f4bbab803d3f133471",
+      "qualified": true,
+      "outcome": "complete",
+      "exit_code": 0,
+      "timed_out": false,
+      "completed_returns": 6,
+      "expected_returns": 6,
+      "samples": [
+        {
+          "iteration": 0,
+          "resume_to_input_ms": 279.5559999940451,
+          "resume_to_attach_ms": 3299.104499979876,
+          "input_ms": 29.13849998731166,
+          "max_loop_overshoot_ms": 219.10489999572746,
+          "draft_retained": true,
+          "prior_draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 3328.0386999831535
+        },
+        {
+          "iteration": 1,
+          "resume_to_input_ms": 82.10610001697205,
+          "resume_to_attach_ms": 3055.1670000131708,
+          "input_ms": 39.38299999572337,
+          "max_loop_overshoot_ms": 100.91559999273159,
+          "draft_retained": true,
+          "prior_draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 3086.6796000045724
+        },
+        {
+          "iteration": 2,
+          "resume_to_input_ms": 105.17689998960122,
+          "resume_to_attach_ms": 4801.2459999881685,
+          "input_ms": 55.62440000358038,
+          "max_loop_overshoot_ms": 188.7888000055682,
+          "draft_retained": true,
+          "prior_draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 4824.8586999834515
+        },
+        {
+          "iteration": 3,
+          "resume_to_input_ms": 206.50899998145178,
+          "resume_to_attach_ms": 4984.249400004046,
+          "input_ms": 132.3046999750659,
+          "max_loop_overshoot_ms": 110.58769997907802,
+          "draft_retained": true,
+          "prior_draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 5009.93479997851
+        },
+        {
+          "iteration": 4,
+          "resume_to_input_ms": 76.79519997327588,
+          "resume_to_attach_ms": 3743.425599997863,
+          "input_ms": 10.97270002355799,
+          "max_loop_overshoot_ms": 131.83090000529774,
+          "draft_retained": true,
+          "prior_draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 3755.0248999905307
+        },
+        {
+          "iteration": 5,
+          "resume_to_input_ms": 136.80949999252334,
+          "resume_to_attach_ms": 4969.436299987137,
+          "input_ms": 6.912000011652708,
+          "max_loop_overshoot_ms": 98.55679998872802,
+          "draft_retained": true,
+          "prior_draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 4999.857199989492
+        }
+      ],
+      "pending_resume": null,
+      "failure": null,
+      "guards": {
+        "blocked_network_attempts": 0,
+        "real_profile_refusals": 0,
+        "observer_threads_stopped": true,
+        "product_sources_unchanged": true,
+        "css_unchanged": true
+      },
+      "medians_ms": {
+        "resume_to_input_ms": 120.99319999106228,
+        "resume_to_attach_ms": 4272.335799993016,
+        "input_ms": 34.260749991517514,
+        "max_loop_overshoot_ms": 121.20929999218788
+      }
+    },
+    "after-3": {
+      "head": "ea5a104807a53c2ba69c2434f6a4a1b22118b139",
+      "qualified": true,
+      "outcome": "complete",
+      "exit_code": 0,
+      "timed_out": false,
+      "completed_returns": 6,
+      "expected_returns": 6,
+      "samples": [
+        {
+          "iteration": 0,
+          "resume_to_input_ms": 476.3399999937974,
+          "resume_to_attach_ms": 4924.460099980934,
+          "input_ms": 77.30159998754971,
+          "max_loop_overshoot_ms": 367.7243999845814,
+          "draft_retained": true,
+          "prior_draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 4952.804000000469
+        },
+        {
+          "iteration": 1,
+          "resume_to_input_ms": 57.49689997173846,
+          "resume_to_attach_ms": 3301.490499987267,
+          "input_ms": 6.243400013772771,
+          "max_loop_overshoot_ms": 71.77629999932833,
+          "draft_retained": true,
+          "prior_draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 3328.356799989706
+        },
+        {
+          "iteration": 2,
+          "resume_to_input_ms": 67.96159999794327,
+          "resume_to_attach_ms": 3447.255999984918,
+          "input_ms": 14.632499980507419,
+          "max_loop_overshoot_ms": 85.99389999289997,
+          "draft_retained": true,
+          "prior_draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 3482.1838999923784
+        },
+        {
+          "iteration": 3,
+          "resume_to_input_ms": 91.62170000490732,
+          "resume_to_attach_ms": 3474.5540999865625,
+          "input_ms": 47.717199980979785,
+          "max_loop_overshoot_ms": 236.59929999848828,
+          "draft_retained": true,
+          "prior_draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 3490.048600011505
+        },
+        {
+          "iteration": 4,
+          "resume_to_input_ms": 99.10419999505393,
+          "resume_to_attach_ms": 2497.400699998252,
+          "input_ms": 13.260699983220547,
+          "max_loop_overshoot_ms": 191.93949998589233,
+          "draft_retained": true,
+          "prior_draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 2520.118899992667
+        },
+        {
+          "iteration": 5,
+          "resume_to_input_ms": 197.01370000257157,
+          "resume_to_attach_ms": 3586.1319999967236,
+          "input_ms": 7.797600002959371,
+          "max_loop_overshoot_ms": 157.78310000314377,
+          "draft_retained": true,
+          "prior_draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 3625.135300011607
+        }
+      ],
+      "pending_resume": null,
+      "failure": null,
+      "guards": {
+        "blocked_network_attempts": 0,
+        "real_profile_refusals": 0,
+        "observer_threads_stopped": true,
+        "product_sources_unchanged": true,
+        "css_unchanged": true
+      },
+      "medians_ms": {
+        "resume_to_input_ms": 95.36294999998063,
+        "resume_to_attach_ms": 3460.9050499857403,
+        "input_ms": 13.946599981863983,
+        "max_loop_overshoot_ms": 174.86129999451805
+      }
+    },
+    "after-4": {
+      "head": "ea5a104807a53c2ba69c2434f6a4a1b22118b139",
+      "qualified": true,
+      "outcome": "complete",
+      "exit_code": 0,
+      "timed_out": false,
+      "completed_returns": 6,
+      "expected_returns": 6,
+      "samples": [
+        {
+          "iteration": 0,
+          "resume_to_input_ms": 439.7501000203192,
+          "resume_to_attach_ms": 4021.9142000132706,
+          "input_ms": 75.58510001399554,
+          "max_loop_overshoot_ms": 332.82780001172796,
+          "draft_retained": true,
+          "prior_draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 4025.3568000043742
+        },
+        {
+          "iteration": 1,
+          "resume_to_input_ms": 138.20469999336638,
+          "resume_to_attach_ms": 4258.95779998973,
+          "input_ms": 58.910899999318644,
+          "max_loop_overshoot_ms": 49.00239998823963,
+          "draft_retained": true,
+          "prior_draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 4279.236600006698
+        },
+        {
+          "iteration": 2,
+          "resume_to_input_ms": 96.81429999182001,
+          "resume_to_attach_ms": 1777.6056999864522,
+          "input_ms": 49.773899983847514,
+          "max_loop_overshoot_ms": 39.378800021950155,
+          "draft_retained": true,
+          "prior_draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 1786.7332999885548
+        },
+        {
+          "iteration": 3,
+          "resume_to_input_ms": 105.1488000084646,
+          "resume_to_attach_ms": 3433.3580000093207,
+          "input_ms": 58.79569999524392,
+          "max_loop_overshoot_ms": 31.182500009890646,
+          "draft_retained": true,
+          "prior_draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 3458.0971999967005
+        },
+        {
+          "iteration": 4,
+          "resume_to_input_ms": 96.34560000267811,
+          "resume_to_attach_ms": 2259.6137000073213,
+          "input_ms": 53.4336999990046,
+          "max_loop_overshoot_ms": 51.52839998481795,
+          "draft_retained": true,
+          "prior_draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 2281.8094000103883
+        },
+        {
+          "iteration": 5,
+          "resume_to_input_ms": 218.24039999046363,
+          "resume_to_attach_ms": 3784.1972000023816,
+          "input_ms": 46.91830000956543,
+          "max_loop_overshoot_ms": 139.7960000031162,
+          "draft_retained": true,
+          "prior_draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 3816.3438999908976
+        }
+      ],
+      "pending_resume": null,
+      "failure": null,
+      "guards": {
+        "blocked_network_attempts": 0,
+        "real_profile_refusals": 0,
+        "observer_threads_stopped": true,
+        "product_sources_unchanged": true,
+        "css_unchanged": true
+      },
+      "medians_ms": {
+        "resume_to_input_ms": 121.67675000091549,
+        "resume_to_attach_ms": 3608.777600005851,
+        "input_ms": 56.11469999712426,
+        "max_loop_overshoot_ms": 50.26539998652879
+      }
+    },
+    "before-2": {
+      "head": "7dbeff56aba6032f43aba2f4bbab803d3f133471",
+      "qualified": true,
+      "outcome": "complete",
+      "exit_code": 0,
+      "timed_out": false,
+      "completed_returns": 6,
+      "expected_returns": 6,
+      "samples": [
+        {
+          "iteration": 0,
+          "resume_to_input_ms": 486.25149999861605,
+          "resume_to_attach_ms": 2564.6301000087988,
+          "input_ms": 94.98100000200793,
+          "max_loop_overshoot_ms": 360.00269997748546,
+          "draft_retained": true,
+          "prior_draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 2570.584200002486
+        },
+        {
+          "iteration": 1,
+          "resume_to_input_ms": 102.93559997808188,
+          "resume_to_attach_ms": 3735.882299981313,
+          "input_ms": 51.76699999719858,
+          "max_loop_overshoot_ms": 63.896600011503324,
+          "draft_retained": true,
+          "prior_draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 3758.3364000020083
+        },
+        {
+          "iteration": 2,
+          "resume_to_input_ms": 103.30489999614656,
+          "resume_to_attach_ms": 3588.6067999817897,
+          "input_ms": 54.255800001556054,
+          "max_loop_overshoot_ms": 353.83820001152344,
+          "draft_retained": true,
+          "prior_draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 3596.750600001542
+        },
+        {
+          "iteration": 3,
+          "resume_to_input_ms": 47.8986999951303,
+          "resume_to_attach_ms": 3247.601199982455,
+          "input_ms": 3.7663999828509986,
+          "max_loop_overshoot_ms": 77.91350001934916,
+          "draft_retained": true,
+          "prior_draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 3277.464799990412
+        },
+        {
+          "iteration": 4,
+          "resume_to_input_ms": 149.72430001944304,
+          "resume_to_attach_ms": 3630.492399999639,
+          "input_ms": 87.77179999742657,
+          "max_loop_overshoot_ms": 85.59970001806505,
+          "draft_retained": true,
+          "prior_draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 3682.742800010601
+        },
+        {
+          "iteration": 5,
+          "resume_to_input_ms": 274.3921000219416,
+          "resume_to_attach_ms": 4443.644500017399,
+          "input_ms": 56.53370000072755,
+          "max_loop_overshoot_ms": 186.45670000114478,
+          "draft_retained": true,
+          "prior_draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 4480.473200004781
+        }
+      ],
+      "pending_resume": null,
+      "failure": null,
+      "guards": {
+        "blocked_network_attempts": 0,
+        "real_profile_refusals": 0,
+        "observer_threads_stopped": true,
+        "product_sources_unchanged": true,
+        "css_unchanged": true
+      },
+      "medians_ms": {
+        "resume_to_input_ms": 126.5146000077948,
+        "resume_to_attach_ms": 3609.5495999907143,
+        "input_ms": 55.3947500011418,
+        "max_loop_overshoot_ms": 136.02820000960492
+      }
+    }
+  },
+  "qualified": true,
+  "arms": {
+    "a": {
+      "returns": 12,
+      "medians_ms": {
+        "resume_to_input_ms": 120.99319999106228,
+        "resume_to_attach_ms": 3683.187349990476,
+        "input_ms": 53.01139999937732,
+        "max_loop_overshoot_ms": 121.20929999218788
+      },
+      "worst_ms": {
+        "resume_to_input_ms": 486.25149999861605,
+        "resume_to_attach_ms": 4984.249400004046,
+        "input_ms": 132.3046999750659,
+        "max_loop_overshoot_ms": 360.00269997748546
+      },
+      "first_returns_ms": {
+        "resume_to_input_ms": [
+          279.5559999940451,
+          486.25149999861605
+        ],
+        "resume_to_attach_ms": [
+          3299.104499979876,
+          2564.6301000087988
+        ],
+        "input_ms": [
+          29.13849998731166,
+          94.98100000200793
+        ],
+        "max_loop_overshoot_ms": [
+          219.10489999572746,
+          360.00269997748546
+        ]
+      }
+    },
+    "b": {
+      "returns": 12,
+      "medians_ms": {
+        "resume_to_input_ms": 102.12650000175927,
+        "resume_to_attach_ms": 3460.9050499857403,
+        "input_ms": 48.74554998241365,
+        "max_loop_overshoot_ms": 112.89494999800809
+      },
+      "worst_ms": {
+        "resume_to_input_ms": 476.3399999937974,
+        "resume_to_attach_ms": 4924.460099980934,
+        "input_ms": 77.30159998754971,
+        "max_loop_overshoot_ms": 367.7243999845814
+      },
+      "first_returns_ms": {
+        "resume_to_input_ms": [
+          476.3399999937974,
+          439.7501000203192
+        ],
+        "resume_to_attach_ms": [
+          4924.460099980934,
+          4021.9142000132706
+        ],
+        "input_ms": [
+          77.30159998754971,
+          75.58510001399554
+        ],
+        "max_loop_overshoot_ms": [
+          367.7243999845814,
+          332.82780001172796
+        ]
+      }
+    }
+  },
+  "limits": [
+    "Four attempted processes, six intended returns each; incomplete cohorts prevent arm aggregation.",
+    "Two processes per arm are insufficient for significance or a general speed claim.",
+    "Source hashing warms filesystem caches; not OS-cold or historical startup evidence.",
+    "Identical stack-sampled headless journeys use a periodic traceback thread; these are not uninstrumented terminal-paint timings.",
+    "The harness explicitly focuses the composer before posting its draft key; automatic arrival focus is not qualified.",
+    "draft_retained checks the posted key through attachment; prior_draft_retained separately checks continuity across navigation.",
+    "Native background workloads elsewhere on this host are uncontrolled; our processes are serialized but the host is not exclusive.",
+    "Instrumented discovery and earlier failed or rejected runs remain separate; this summary retains every cohort in the selected order."
+  ]
+}

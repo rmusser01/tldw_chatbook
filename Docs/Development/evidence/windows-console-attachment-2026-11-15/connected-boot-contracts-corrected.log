@@ -1,0 +1,125 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+...F.................                                                    [100%]
+================================== FAILURES ===================================
+_______ test_actor_pack_boot_retains_physical_outcome[owned_lifecycles] _______
+
+tmp_path = WindowsPath('C:/Users/GDesktop-1/.tmp-pr3166-final-86e5b6116a61/temp/pytest-of-GDesktop-1/pytest-0/test_actor_pack_boot_retains_p0')
+case = 'owned_lifecycles'
+
+    @pytest.mark.parametrize('case', ['owned_lifecycles', 'direct_unmount', 'queued', 'custom_result', 'custom_error'])
+    def test_actor_pack_boot_retains_physical_outcome(tmp_path, case):
+>       _run(tmp_path, 'actor_boot_owned', case, script=_SCRIPT, timeout=60)
+
+Tests\Backup_Recovery\test_actor_pack_boot_physical_ownership.py:219: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+tmp_path = WindowsPath('C:/Users/GDesktop-1/.tmp-pr3166-final-86e5b6116a61/temp/pytest-of-GDesktop-1/pytest-0/test_actor_pack_boot_retains_p0')
+route = 'actor_boot_owned', outcome = 'owned_lifecycles'
+
+    def _run(
+        tmp_path,
+        route,
+        outcome,
+        *,
+        script=_SCRIPT,
+        timeout=45,
+        installed_package=None,
+        expect_restart=False,
+    ):
+        root = tmp_path.resolve()
+        test_root = Path(__file__).resolve().parents[2]
+        for name in ("home", "config", "data"):
+            (root / name).mkdir(mode=0o700)
+        environment = os.environ.copy()
+        environment.update(
+            HOME=str(root / "home"),
+            USERPROFILE=str(root / "home"),
+            XDG_CONFIG_HOME=str(root / "config"),
+            XDG_DATA_HOME=str(root / "data"),
+            TLDW_CONFIG_PATH=str(root / "config" / "config.toml"),
+            TLDW_TEST_MODE="1",
+            TLDW_DISABLE_CONFIG_WATCH="1",
+        )
+        cwd = test_root
+        if installed_package is not None:
+            installed = Path(installed_package).resolve()
+            environment.update(
+                PYTHONNOUSERSITE="1",
+                PYTHONPATH=os.pathsep.join((str(installed), str(test_root))),
+                TLDW_TEST_INSTALLED_PACKAGE=str(installed),
+            )
+            cwd = root
+        log = root / "restart-output.log"
+        deadline = time.monotonic() + timeout
+        # A fresh Windows process inherits the old process's output handles. Files
+        # let the original process exit without waiting for EOF from its descendant.
+        if expect_restart:
+            from Tests.Backup_Recovery.restart_observation import wait_for_restart
+    
+            receipt = root / "home" / "restart-process.json"
+        try:
+            with log.open("w", encoding="utf-8") as output:
+                result = subprocess.run(
+                    [sys.executable, "-X", "utf8", "-c", script, route, outcome],
+                    cwd=cwd,
+                    env=environment,
+                    stdout=output,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    timeout=timeout,
+                    check=False,
+                )
+                if expect_restart:
+                    assert result.returncode == 0, log.read_text()[-7000:]
+                    fresh_code = wait_for_restart(receipt, deadline)
+                    assert fresh_code in (None, 0), log.read_text()[-7000:]
+        except BaseException as primary:
+            if expect_restart:
+                try:
+                    # A parent may fail after spawning and before its normal exit.
+                    # Never wait for a missing receipt or signal an unproved PID.
+                    if receipt.exists():
+                        wait_for_restart(receipt, time.monotonic())
+                except TimeoutError:
+                    pass  # The observer retires the verified child at this deadline.
+                except BaseException as cleanup:  # noqa: BLE001 - retain the original test failure.
+                    primary.add_note("restart_cleanup_error:" + type(cleanup).__name__)
+            raise
+        stdout = log.read_text(encoding="utf-8", errors="replace")
+        stderr = ""
+>       assert result.returncode == 0, stderr[-6000:] + stdout[-1000:]
+E       AssertionError: f thread=76428.[0m
+E         Traceback (most recent call last):
+E           File "<string>", line 206, in <module>
+E           File "C:\Python312\Lib\asyncio\runners.py", line 195, in run
+E             return runner.run(main)
+E                    ^^^^^^^^^^^^^^^^
+E           File "C:\Python312\Lib\asyncio\runners.py", line 118, in run
+E             return self._loop.run_until_complete(task)
+E                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           File "C:\Python312\Lib\asyncio\base_events.py", line 691, in run_until_complete
+E             return future.result()
+E                    ^^^^^^^^^^^^^^^
+E           File "<string>", line 164, in exercise
+E           File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\app_lifecycle.py", line 749, in _shutdown_app_owned_lifecycles
+E             await close_project_index_service(self)
+E           File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Workspaces\project_index\runtime.py", line 325, in close_project_index_service
+E             raise asyncio.CancelledError
+E         asyncio.exceptions.CancelledError
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe', '-X', 'utf8', '...    print('retired and reopened')\n\nasyncio.run(exercise())\n", 'actor_boot_owned', 'owned_lifecycles'], returncode=1).returncode
+
+Tests\Backup_Recovery\test_home_citation_retirement.py:341: AssertionError
+============================== warnings summary ===============================
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED Tests/Backup_Recovery/test_actor_pack_boot_physical_ownership.py::test_actor_pack_boot_retains_physical_outcome[owned_lifecycles]
+1 failed, 20 passed, 1 warning in 255.67s (0:04:15)

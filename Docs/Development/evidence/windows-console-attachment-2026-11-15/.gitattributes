@@ -1,0 +1,10 @@
+# Preserve hashes and arbitrary raw Windows output as data on every checkout.
+* -text -whitespace
+# Executed harness bytes are part of the receipts, including native CRLF.
+*.py -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+*.md text eol=lf whitespace=blank-at-eol,blank-at-eof,space-before-tab
+*.json linguist-generated=true
+*.log linguist-generated=true
+*.patch linguist-generated=true
+*.pstats linguist-generated=true
+*.txt linguist-generated=true

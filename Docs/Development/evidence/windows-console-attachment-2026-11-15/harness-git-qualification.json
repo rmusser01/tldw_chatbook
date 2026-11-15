@@ -1,0 +1,40 @@
+{
+  "profiled_product_commit": "ea5a104807a53c2ba69c2434f6a4a1b22118b139",
+  "receipt": "plain-before-1-exit.json",
+  "harness_blobs": [
+    {
+      "path": "Docs/Development/evidence/windows-console-attachment-2026-11-15/probe.py",
+      "staged_git_blob_oid": "52e8372fbdcb3337f42538625826a1a17a597bb6",
+      "staged_sha256": "924827e36745272e3d8e11945d95d24918e7fb66ea71ad327900688d5365d9e2",
+      "worktree_sha256": "924827e36745272e3d8e11945d95d24918e7fb66ea71ad327900688d5365d9e2",
+      "receipt_sha256": "924827e36745272e3d8e11945d95d24918e7fb66ea71ad327900688d5365d9e2",
+      "matches": true
+    },
+    {
+      "path": "Docs/Development/evidence/windows-console-attachment-2026-11-15/return_observer.py",
+      "staged_git_blob_oid": "13f8b091439f70883565a964a90d32bee693c06a",
+      "staged_sha256": "90ad582157d885b72c1760a96713fd7063957f9a0b8549bffce471d917cb82ea",
+      "worktree_sha256": "90ad582157d885b72c1760a96713fd7063957f9a0b8549bffce471d917cb82ea",
+      "receipt_sha256": "90ad582157d885b72c1760a96713fd7063957f9a0b8549bffce471d917cb82ea",
+      "matches": true
+    },
+    {
+      "path": "Docs/Development/evidence/windows-console-attachment-2026-11-15/attachment_state.py",
+      "staged_git_blob_oid": "ec2a479288bf8b96152cbde33f1272f459ac0c7c",
+      "staged_sha256": "e14685458773f19d75a286a2203be46f8c31af5a95ac6e03d37f14e7dfeeb3b1",
+      "worktree_sha256": "e14685458773f19d75a286a2203be46f8c31af5a95ac6e03d37f14e7dfeeb3b1",
+      "receipt_sha256": "e14685458773f19d75a286a2203be46f8c31af5a95ac6e03d37f14e7dfeeb3b1",
+      "matches": true
+    },
+    {
+      "path": "Docs/Development/evidence/windows-console-attachment-2026-11-15/run_probe.py",
+      "staged_git_blob_oid": "f1a490a98352a2d715ec6c54992b767553ad71d2",
+      "staged_sha256": "8e0c63a556a36779b4b5ac0e2e0e2369397a054737ed2d4a9e5566e6650c10c4",
+      "worktree_sha256": "8e0c63a556a36779b4b5ac0e2e0e2369397a054737ed2d4a9e5566e6650c10c4",
+      "receipt_sha256": "8e0c63a556a36779b4b5ac0e2e0e2369397a054737ed2d4a9e5566e6650c10c4",
+      "matches": true
+    }
+  ],
+  "all_match": true,
+  "product_logical_diff_from_profiled_commit": false
+}

@@ -1,0 +1,21 @@
+{
+  "head": "7dbeff56aba6032f43aba2f4bbab803d3f133471",
+  "source_diff_sha256": "0edeb8259d44f0398d15f872f6dfb489c901aebde4a10b0ffce7a193824e5db9",
+  "private_child_node": null,
+  "command": [
+    "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-X",
+    "utf8",
+    "-m",
+    "Tests.windows_private_fixture_runner",
+    "Tests/Backup_Recovery/test_subscriptions_boot_physical_ownership.py::test_subscription_boot_admission_and_callback_contract[thread]",
+    "Tests/Backup_Recovery/test_actor_pack_boot_physical_ownership.py::test_actor_pack_boot_retains_physical_outcome[owned_lifecycles]",
+    "-q",
+    "-o",
+    "addopts=",
+    "--timeout=180"
+  ],
+  "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-8a1eddf94f23",
+  "exit_code": 0,
+  "seconds": 67.4210000000021
+}

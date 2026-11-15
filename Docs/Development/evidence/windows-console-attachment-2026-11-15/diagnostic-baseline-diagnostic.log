@@ -1,0 +1,837 @@
+[32m2026-11-15 14:02:59.952[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.config[0m:[36m<module>[0m:[36m155[0m - [34m[1mCRITICAL DEBUG: config.py module is being imported/executed NOW.[0m
+[32m2026-11-15 14:03:00.456[0m | [1mINFO    [0m | [36mtldw_chatbook.config[0m:[36m_load_cli_config_bootstrap_unlocked[0m:[36m4212[0m - [1mAttempting to load CLI config from: C:\Users\GDesktop-1\.tmp-windows-perf-35eb5c548259\config\config.toml[0m
+[32m2026-11-15 14:03:00.492[0m | [1mINFO    [0m | [36mtldw_chatbook.config[0m:[36m_load_cli_config_bootstrap_unlocked[0m:[36m4233[0m - [1mSuccessfully loaded and merged CLI config from C:\Users\GDesktop-1\.tmp-windows-perf-35eb5c548259\config\config.toml[0m
+[32m2026-11-15 14:03:00.493[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.config[0m:[36m_load_cli_config_bootstrap_unlocked[0m:[36m4318[0m - [34m[1mload_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'console_ssh', 'hooks', 'skills', 'tamagotchi', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'session_summary', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'sync', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', 'first_run'][0m
+[32m2026-11-15 14:03:00.493[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.config[0m:[36m_load_cli_config_bootstrap_unlocked[0m:[36m4322[0m - [34m[1m  'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'databricks', 'together', 'fireworks', 'cerebras', 'sambanova', 'nvidia', 'deepinfra', 'nebius', 'novita', 'minimax', 'mimo', 'tokenhub', 'byteplus', 'stepfun', 'vercel', 'zenmux', 'kilo', 'siliconflow', 'baseten', 'gmi', 'ollama_cloud', 'upstage', 'arcee', 'qianfan', 'nous', 'venice', 'meta', 'azure', 'wandb', 'cloudflare', 'opencode_zen', 'commandcode', 'strata', 'polystrata', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm'][0m
+[32m2026-11-15 14:03:00.690[0m | [1mINFO    [0m | [36mtldw_chatbook.config[0m:[36m_load_settings_uncached[0m:[36m2010[0m - [1mDetermined ACTUAL_PROJECT_ROOT for general paths: C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook[0m
+[32m2026-11-15 14:03:00.690[0m | [1mINFO    [0m | [36mtldw_chatbook.config[0m:[36m_load_settings_uncached[0m:[36m2013[0m - [1mDetermined APP_COMPONENT_ROOT for config files: C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook[0m
+[32m2026-11-15 14:03:00.696[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.config[0m:[36m_load_settings_uncached[0m:[36m2036[0m - [34m[1mload_settings: Configuration loaded from disk (cache miss or forced reload)[0m
+[32m2026-11-15 14:03:01.293[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.config[0m:[36m_load_settings_uncached[0m:[36m3601[0m - [34m[1mEnsured chat dictionaries folder exists: C:\Users\GDesktop-1\.tmp-windows-perf-35eb5c548259\home\.local\share\tldw_cli\default_user\chat_dicts[0m
+[32m2026-11-15 14:03:01.294[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.config[0m:[36m_load_settings_uncached[0m:[36m3633[0m - [34m[1mload_settings: Configuration cached for future use[0m
+[32m2026-11-15 14:03:01.294[0m | [1mINFO    [0m | [36mtldw_chatbook.config[0m:[36m<module>[0m:[36m8578[0m - [1mDefault API Endpoint (from config.py global scope): openai[0m
+[32m2026-11-15 14:03:02.743[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.Utils.optional_deps[0m:[36m<module>[0m:[36m1581[0m - [34m[1mSkipping auto-initialization in test environment[0m
+[32m2026-11-15 14:03:06.472[0m | [1mINFO    [0m | [36mtldw_chatbook.Evals.task_loader[0m:[36m<module>[0m:[36m36[0m - [1mHuggingFace evaluation datasets are unavailable. Install with: pip install datasets[0m
+[32m2026-11-15 14:03:13.158[0m | [1mINFO    [0m | [36mtldw_chatbook.app[0m:[36m__init__[0m:[36m1308[0m - [1mLoaded app_config - strip_thinking_tags: True[0m
+[32m2026-11-15 14:03:13.835[0m | [1mINFO    [0m | [36mtldw_chatbook.app[0m:[36m_init_providers_models[0m:[36m2123[0m - [1mSuccessfully retrieved providers_models. Count: 63. Keys: ['OpenAI', 'Anthropic', 'Cohere', 'DeepSeek', 'Groq', 'Google', 'HuggingFace', 'MistralAI', 'Moonshot', 'OpenRouter', 'QwenCloud', 'ZAI', 'Databricks', 'Together', 'Fireworks', 'Cerebras', 'SambaNova', 'NVIDIA', 'DeepInfra', 'Nebius', 'Novita', 'MiniMax', 'MiMo', 'TokenHub', 'BytePlus', 'StepFun', 'Vercel', 'ZenMux', 'Kilo', 'SiliconFlow', 'Baseten', 'GMI', 'OllamaCloud', 'Upstage', 'Arcee', 'Qianfan', 'Nous', 'Venice', 'Meta', 'Azure', 'WandB', 'Cloudflare', 'OpenCodeZen', 'CommandCode', 'Llama_cpp', 'Strata', 'PolyStrata', 'koboldcpp', 'Oobabooga', 'Ollama', 'vLLM', 'Custom', 'Custom_2', 'TabbyAPI', 'Aphrodite', 'local-llm', 'local_llamacpp', 'local_llamafile', 'local_ollama', 'local_vllm', 'local_onnx', 'local_transformers', 'local_mlx_lm'][0m
+[32m2026-11-15 14:03:13.838[0m | [1mINFO    [0m | [36mtldw_chatbook.app[0m:[36m__init__[0m:[36m1418[0m - [1mParallel init task 'providers_models' completed in 0.001s[0m
+[32m2026-11-15 14:03:14.011[0m | [1mINFO    [0m | [36mtldw_chatbook.app[0m:[36m_init_notes_service[0m:[36m2091[0m - [1mUnified ChaChaNotes DB file path: C:\Users\GDesktop-1\.tmp-windows-perf-35eb5c548259\home\.local\share\tldw_cli\default_user\tldw_chatbook_ChaChaNotes.db[0m
+[32m2026-11-15 14:03:14.011[0m | [1mINFO    [0m | [36mtldw_chatbook.app[0m:[36m_init_notes_service[0m:[36m2095[0m - [1mNotes for user 'default_user' will use the unified DB: C:\Users\GDesktop-1\.tmp-windows-perf-35eb5c548259\home\.local\share\tldw_cli\default_user\tldw_chatbook_ChaChaNotes.db[0m
+[32m2026-11-15 14:03:14.207[0m | [1mINFO    [0m | [36mtldw_chatbook.Prompt_Management.Prompts_Interop[0m:[36minitialize_interop[0m:[36m123[0m - [1mInitializing Prompts Interop Library. DB Path: C:\Users\GDesktop-1\.tmp-windows-perf-35eb5c548259\home\.local\share\tldw_cli\default_user\tldw_chatbook_prompts.db, Client ID: tldw_tui_client_v1[0m
+[32m2026-11-15 14:03:14.207[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.Prompts_DB[0m:[36m__init__[0m:[36m410[0m - [1mInitializing PromptsDatabase object for path: C:\Users\GDesktop-1\.tmp-windows-perf-35eb5c548259\home\.local\share\tldw_cli\default_user\tldw_chatbook_prompts.db [Client ID: tldw_tui_client_v1][0m
+[32m2026-11-15 14:03:14.351[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.Prompts_DB[0m:[36m_get_thread_connection[0m:[36m562[0m - [34m[1mOpened/Reopened SQLite connection to C:\Users\GDesktop-1\.tmp-windows-perf-35eb5c548259\home\.local\share\tldw_cli\default_user\tldw_chatbook_prompts.db [Client: tldw_tui_client_v1, Thread: ThreadPoolExecutor-0_1][0m
+[32m2026-11-15 14:03:14.354[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.Prompts_DB[0m:[36m_initialize_schema[0m:[36m1140[0m - [1mChecking DB schema. Current: 0, Code supports: 6[0m
+[32m2026-11-15 14:03:14.355[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.Prompts_DB[0m:[36m_initialize_schema[0m:[36m1175[0m - [1mApplying migration: Initial prompts schema (v0 -> v1)[0m
+[32m2026-11-15 14:03:14.355[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.Prompts_DB[0m:[36m_apply_schema_v1[0m:[36m828[0m - [1mApplying initial schema (Version 1) to DB: C:\Users\GDesktop-1\.tmp-windows-perf-35eb5c548259\home\.local\share\tldw_cli\default_user\tldw_chatbook_prompts.db...[0m
+[32m2026-11-15 14:03:14.496[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.Prompts_DB[0m:[36mtransaction[0m:[36m749[0m - [34m[1mStarted transaction.[0m
+[32m2026-11-15 14:03:14.496[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.Prompts_DB[0m:[36m_apply_schema_v1[0m:[36m839[0m - [34m[1m[Schema V1] Applying Core Schema + Version Update...[0m
+[32m2026-11-15 14:03:14.505[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.Prompts_DB[0m:[36m_apply_schema_v1[0m:[36m841[0m - [34m[1m[Schema V1] Core Schema script (incl. version update) executed.[0m
+[32m2026-11-15 14:03:14.506[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.Prompts_DB[0m:[36m_apply_schema_v1[0m:[36m865[0m - [34m[1m[Schema V1] Prompts table structure validated.[0m
+[32m2026-11-15 14:03:14.506[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.Prompts_DB[0m:[36mtransaction[0m:[36m753[0m - [34m[1mCommitted transaction.[0m
+[32m2026-11-15 14:03:14.506[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.Prompts_DB[0m:[36m_apply_schema_v1[0m:[36m874[0m - [1m[Schema V1] Core Schema V1 applied and committed for DB: C:\Users\GDesktop-1\.tmp-windows-perf-35eb5c548259\home\.local\share\tldw_cli\default_user\tldw_chatbook_prompts.db.[0m
+[32m2026-11-15 14:03:14.506[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.Prompts_DB[0m:[36m_apply_schema_v1[0m:[36m878[0m - [34m[1m[Schema V1] Applying FTS Tables...[0m
+[32m2026-11-15 14:03:14.508[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.Prompts_DB[0m:[36m_apply_schema_v1[0m:[36m881[0m - [1m[Schema V1] FTS Tables created successfully.[0m
+[32m2026-11-15 14:03:14.508[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.Prompts_DB[0m:[36m_initialize_schema[0m:[36m1175[0m - [1mApplying migration: Add structured prompt metadata columns (v1 -> v2)[0m
+[32m2026-11-15 14:03:14.509[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.Prompts_DB[0m:[36m_apply_migration_v1_to_v2[0m:[36m892[0m - [1mApplying prompts migration from version 1 to 2 for DB: C:\Users\GDesktop-1\.tmp-windows-perf-35eb5c548259\home\.local\share\tldw_cli\default_user\tldw_chatbook_prompts.db...[0m
+[32m2026-11-15 14:03:14.593[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m__init__[0m:[36m2879[0m - [1mInitializing CharactersRAGDB db_sha256=c75119005f11 [Client ID: tldw_cli_local_instance_v1][0m
+[32m2026-11-15 14:03:14.651[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.Prompts_DB[0m:[36mtransaction[0m:[36m749[0m - [34m[1mStarted transaction.[0m
+[32m2026-11-15 14:03:14.653[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.Prompts_DB[0m:[36mtransaction[0m:[36m753[0m - [34m[1mCommitted transaction.[0m
+[32m2026-11-15 14:03:14.654[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.Prompts_DB[0m:[36m_apply_migration_v1_to_v2[0m:[36m928[0m - [1mPrompts migration to version 2 applied successfully for DB: C:\Users\GDesktop-1\.tmp-windows-perf-35eb5c548259\home\.local\share\tldw_cli\default_user\tldw_chatbook_prompts.db.[0m
+[32m2026-11-15 14:03:14.654[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.Prompts_DB[0m:[36m_initialize_schema[0m:[36m1175[0m - [1mApplying migration: Add prompt artifact type (v2 -> v3)[0m
+[32m2026-11-15 14:03:14.654[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.Prompts_DB[0m:[36m_apply_migration_v2_to_v3[0m:[36m939[0m - [1mApplying prompts migration from version 2 to 3 for DB: C:\Users\GDesktop-1\.tmp-windows-perf-35eb5c548259\home\.local\share\tldw_cli\default_user\tldw_chatbook_prompts.db...[0m
+[32m2026-11-15 14:03:14.765[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_get_thread_connection[0m:[36m3131[0m - [34m[1mOpened/Reopened SQLite connection db_sha256=c75119005f11 thread=76272[0m
+[32m2026-11-15 14:03:14.887[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.Prompts_DB[0m:[36mtransaction[0m:[36m749[0m - [34m[1mStarted transaction.[0m
+[32m2026-11-15 14:03:14.888[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.Prompts_DB[0m:[36mtransaction[0m:[36m753[0m - [34m[1mCommitted transaction.[0m
+[32m2026-11-15 14:03:14.888[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.Prompts_DB[0m:[36m_initialize_schema[0m:[36m1175[0m - [1mApplying migration: Add retained Prompt history index (v3 -> v4)[0m
+[32m2026-11-15 14:03:14.888[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.Prompts_DB[0m:[36m_apply_migration_v3_to_v4[0m:[36m974[0m - [1mApplying prompts migration from version 3 to 4 for DB: C:\Users\GDesktop-1\.tmp-windows-perf-35eb5c548259\home\.local\share\tldw_cli\default_user\tldw_chatbook_prompts.db...[0m
+[32m2026-11-15 14:03:14.955[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22104[0m - [34m[1mStarted outermost transaction on thread 76272.[0m
+[32m2026-11-15 14:03:14.955[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_initialize_schema[0m:[36m8584[0m - [1mChecking DB schema 'rag_char_chat_schema'. Current version: 0. Code supports: 86[0m
+[32m2026-11-15 14:03:14.955[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_apply_schema_v4[0m:[36m4119[0m - [1mApplying schema Version 4 for 'rag_char_chat_schema' to DB: db_sha256=c75119005f11...[0m
+[32m2026-11-15 14:03:14.982[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:15.006[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_apply_schema_v4[0m:[36m4160[0m - [34m[1m[rag_char_chat_schema V4] Full schema script executed.[0m
+[32m2026-11-15 14:03:15.007[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_apply_schema_v4[0m:[36m4167[0m - [1m[rag_char_chat_schema V4] Schema 4 applied and version confirmed for DB: db_sha256=c75119005f11.[0m
+[32m2026-11-15 14:03:15.009[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enrich_default_assistant_card_if_bare[0m:[36m4431[0m - [34m[1m[task-2451] Default Assistant enrichment UPDATE affected 1 row(s) in DB: db_sha256=c75119005f11.[0m
+[32m2026-11-15 14:03:15.010[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v4_to_v5[0m:[36m4452[0m - [1mMigrating schema from V4 to V5 for 'rag_char_chat_schema' in DB: db_sha256=c75119005f11...[0m
+[32m2026-11-15 14:03:15.020[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:15.042[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v4_to_v5[0m:[36m4462[0m - [34m[1m[rag_char_chat_schema V4→V5] Migration script executed.[0m
+[32m2026-11-15 14:03:15.042[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v4_to_v5[0m:[36m4471[0m - [1m[rag_char_chat_schema V4→V5] Migration completed successfully for DB: db_sha256=c75119005f11.[0m
+[32m2026-11-15 14:03:15.042[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v5_to_v6[0m:[36m4505[0m - [1mMigrating schema from V5 to V6 for 'rag_char_chat_schema' in DB: db_sha256=c75119005f11...[0m
+[32m2026-11-15 14:03:15.065[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:15.067[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v5_to_v6[0m:[36m4513[0m - [34m[1m[rag_char_chat_schema V5→V6] Migration script executed.[0m
+[32m2026-11-15 14:03:15.068[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v5_to_v6[0m:[36m4522[0m - [1m[rag_char_chat_schema V5→V6] Migration completed successfully for DB: db_sha256=c75119005f11.[0m
+[32m2026-11-15 14:03:15.068[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v6_to_v7[0m:[36m4556[0m - [1mMigrating schema from V6 to V7 for 'rag_char_chat_schema' in DB: db_sha256=c75119005f11...[0m
+[32m2026-11-15 14:03:15.083[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:15.089[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v6_to_v7[0m:[36m4564[0m - [34m[1m[rag_char_chat_schema V6→V7] Migration script executed.[0m
+[32m2026-11-15 14:03:15.089[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v6_to_v7[0m:[36m4573[0m - [1m[rag_char_chat_schema V6→V7] Migration completed successfully for DB: db_sha256=c75119005f11.[0m
+[32m2026-11-15 14:03:15.090[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v7_to_v8[0m:[36m8498[0m - [1mMigrating schema from V7 to V8 for 'rag_char_chat_schema' in DB: db_sha256=c75119005f11...[0m
+[32m2026-11-15 14:03:15.099[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+INFO:root:Initializing Database object for path: C:\Users\GDesktop-1\.tmp-windows-perf-35eb5c548259\home\.local\share\tldw_cli\default_user\tldw_chatbook_media_v2.db [Client ID: tldw_cli_local_instance_v1]
+[32m2026-11-15 14:03:15.113[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v7_to_v8[0m:[36m8506[0m - [34m[1m[rag_char_chat_schema V7→V8] Migration script executed.[0m
+[32m2026-11-15 14:03:15.113[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v7_to_v8[0m:[36m8515[0m - [1m[rag_char_chat_schema V7→V8] Migration completed successfully for DB: db_sha256=c75119005f11.[0m
+[32m2026-11-15 14:03:15.113[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v8_to_v9[0m:[36m4607[0m - [1mMigrating schema from V8 to V9 for 'rag_char_chat_schema' in DB: db_sha256=c75119005f11...[0m
+[32m2026-11-15 14:03:15.122[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:15.132[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v8_to_v9[0m:[36m4615[0m - [34m[1m[rag_char_chat_schema V8→V9] Migration script executed.[0m
+[32m2026-11-15 14:03:15.133[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v8_to_v9[0m:[36m4624[0m - [1m[rag_char_chat_schema V8→V9] Migration completed successfully for DB: db_sha256=c75119005f11.[0m
+[32m2026-11-15 14:03:15.133[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v9_to_v10[0m:[36m4658[0m - [1mMigrating schema from V9 to V10 for 'rag_char_chat_schema' in DB: db_sha256=c75119005f11...[0m
+[32m2026-11-15 14:03:15.165[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:15.167[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v9_to_v10[0m:[36m4666[0m - [34m[1m[rag_char_chat_schema V9→V10] Migration script executed.[0m
+[32m2026-11-15 14:03:15.167[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v9_to_v10[0m:[36m4675[0m - [1m[rag_char_chat_schema V9→V10] Migration completed successfully for DB: db_sha256=c75119005f11.[0m
+[32m2026-11-15 14:03:15.168[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v10_to_v11[0m:[36m4709[0m - [1mMigrating schema from V10 to V11 for 'rag_char_chat_schema' in DB: db_sha256=c75119005f11...[0m
+[32m2026-11-15 14:03:15.176[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.Prompts_DB[0m:[36mtransaction[0m:[36m749[0m - [34m[1mStarted transaction.[0m
+[32m2026-11-15 14:03:15.178[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.Prompts_DB[0m:[36mtransaction[0m:[36m753[0m - [34m[1mCommitted transaction.[0m
+[32m2026-11-15 14:03:15.179[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.Prompts_DB[0m:[36m_initialize_schema[0m:[36m1175[0m - [1mApplying migration: Add local Console Prompt Draft Shelf (v4 -> v5)[0m
+[32m2026-11-15 14:03:15.179[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.Prompts_DB[0m:[36m_apply_migration_v4_to_v5[0m:[36m1038[0m - [1mApplying prompts migration from version 4 to 5.[0m
+[32m2026-11-15 14:03:15.181[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:15.191[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v10_to_v11[0m:[36m4717[0m - [34m[1m[rag_char_chat_schema V10→V11] Migration script executed.[0m
+[32m2026-11-15 14:03:15.191[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v10_to_v11[0m:[36m4726[0m - [1m[rag_char_chat_schema V10→V11] Migration completed successfully for DB: db_sha256=c75119005f11.[0m
+[32m2026-11-15 14:03:15.191[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v11_to_v12[0m:[36m4760[0m - [1mMigrating schema from V11 to V12 for 'rag_char_chat_schema' in DB: db_sha256=c75119005f11...[0m
+[32m2026-11-15 14:03:15.199[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:15.215[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v11_to_v12[0m:[36m4768[0m - [34m[1m[rag_char_chat_schema V11→V12] Migration script executed.[0m
+[32m2026-11-15 14:03:15.216[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v11_to_v12[0m:[36m4777[0m - [1m[rag_char_chat_schema V11→V12] Migration completed successfully for DB: db_sha256=c75119005f11.[0m
+[32m2026-11-15 14:03:15.216[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v12_to_v13[0m:[36m4803[0m - [1mMigrating schema from V12 to V13 for 'rag_char_chat_schema' in DB: db_sha256=c75119005f11...[0m
+[32m2026-11-15 14:03:15.223[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:15.288[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v12_to_v13[0m:[36m4811[0m - [34m[1m[rag_char_chat_schema V12→V13] Migration script executed.[0m
+[32m2026-11-15 14:03:15.288[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v12_to_v13[0m:[36m4819[0m - [1m[rag_char_chat_schema V12→V13] Migration completed successfully for DB: db_sha256=c75119005f11.[0m
+[32m2026-11-15 14:03:15.288[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v13_to_v14[0m:[36m4844[0m - [1mMigrating schema from V13 to V14 for 'rag_char_chat_schema' in DB: db_sha256=c75119005f11...[0m
+INFO:root:Checking DB schema. Current version: 0. Code supports: 9
+INFO:root:Applying migration: Initial schema creation (v0 → v1)
+INFO:root:Applying initial schema (Version 1) to DB: C:\Users\GDesktop-1\.tmp-windows-perf-35eb5c548259\home\.local\share\tldw_cli\default_user\tldw_chatbook_media_v2.db...
+[32m2026-11-15 14:03:15.303[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:15.316[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v13_to_v14[0m:[36m4852[0m - [34m[1m[rag_char_chat_schema V13→V14] Migration script executed.[0m
+[32m2026-11-15 14:03:15.317[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v13_to_v14[0m:[36m4860[0m - [1m[rag_char_chat_schema V13→V14] Migration completed successfully for DB: db_sha256=c75119005f11.[0m
+[32m2026-11-15 14:03:15.317[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v14_to_v15[0m:[36m4885[0m - [1mMigrating schema from V14 to V15 for 'rag_char_chat_schema' in DB: db_sha256=c75119005f11...[0m
+[32m2026-11-15 14:03:15.346[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:15.347[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.Prompts_DB[0m:[36mtransaction[0m:[36m749[0m - [34m[1mStarted transaction.[0m
+[32m2026-11-15 14:03:15.349[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.Prompts_DB[0m:[36mtransaction[0m:[36m753[0m - [34m[1mCommitted transaction.[0m
+[32m2026-11-15 14:03:15.349[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.Prompts_DB[0m:[36m_initialize_schema[0m:[36m1175[0m - [1mApplying migration: Add literal mix-in artifact type (v5 -> v6)[0m
+[32m2026-11-15 14:03:15.355[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v14_to_v15[0m:[36m4893[0m - [34m[1m[rag_char_chat_schema V14→V15] Migration script executed.[0m
+[32m2026-11-15 14:03:15.355[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v14_to_v15[0m:[36m4901[0m - [1m[rag_char_chat_schema V14→V15] Migration completed successfully for DB: db_sha256=c75119005f11.[0m
+[32m2026-11-15 14:03:15.355[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v15_to_v16[0m:[36m4927[0m - [1mMigrating schema from V15 to V16 for 'rag_char_chat_schema' in DB: db_sha256=c75119005f11...[0m
+[32m2026-11-15 14:03:15.365[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:15.368[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v15_to_v16[0m:[36m4970[0m - [34m[1m[rag_char_chat_schema V15→V16] Migration script executed.[0m
+[32m2026-11-15 14:03:15.368[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v15_to_v16[0m:[36m4980[0m - [1m[rag_char_chat_schema V15→V16] Migration completed successfully for DB: db_sha256=c75119005f11.[0m
+[32m2026-11-15 14:03:15.368[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v16_to_v17[0m:[36m5006[0m - [1mMigrating schema from V16 to V17 for 'rag_char_chat_schema' in DB: db_sha256=c75119005f11...[0m
+[32m2026-11-15 14:03:15.377[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:15.378[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v16_to_v17[0m:[36m5021[0m - [34m[1m[rag_char_chat_schema V16→V17] Migration script executed.[0m
+[32m2026-11-15 14:03:15.378[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v16_to_v17[0m:[36m5029[0m - [1m[rag_char_chat_schema V16→V17] Migration completed successfully for DB: db_sha256=c75119005f11.[0m
+[32m2026-11-15 14:03:15.378[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v17_to_v18[0m:[36m5057[0m - [1mMigrating schema from V17 to V18 for 'rag_char_chat_schema' in DB: db_sha256=c75119005f11...[0m
+[32m2026-11-15 14:03:15.387[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:15.397[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v17_to_v18[0m:[36m5072[0m - [34m[1m[rag_char_chat_schema V17→V18] Migration script executed.[0m
+[32m2026-11-15 14:03:15.397[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v17_to_v18[0m:[36m5080[0m - [1m[rag_char_chat_schema V17→V18] Migration completed successfully for DB: db_sha256=c75119005f11.[0m
+[32m2026-11-15 14:03:15.397[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v18_to_v19[0m:[36m8441[0m - [1mMigrating schema from V18 to V19 for 'rag_char_chat_schema' in DB: db_sha256=c75119005f11...[0m
+[32m2026-11-15 14:03:15.407[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:15.409[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v18_to_v19[0m:[36m8456[0m - [34m[1m[rag_char_chat_schema V18→V19] Migration script executed.[0m
+[32m2026-11-15 14:03:15.409[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v18_to_v19[0m:[36m8464[0m - [1m[rag_char_chat_schema V18→V19] Migration completed successfully for DB: db_sha256=c75119005f11.[0m
+[32m2026-11-15 14:03:15.409[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v19_to_v20[0m:[36m5108[0m - [1mMigrating schema from V19 to V20 for 'rag_char_chat_schema' in DB: db_sha256=c75119005f11...[0m
+[32m2026-11-15 14:03:15.449[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:15.461[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v19_to_v20[0m:[36m5128[0m - [34m[1m[rag_char_chat_schema V19→V20] Migration script executed.[0m
+[32m2026-11-15 14:03:15.462[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v19_to_v20[0m:[36m5136[0m - [1m[rag_char_chat_schema V19→V20] Migration completed successfully for DB: db_sha256=c75119005f11.[0m
+[32m2026-11-15 14:03:15.462[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v20_to_v21[0m:[36m5164[0m - [1mMigrating schema from V20 to V21 for 'rag_char_chat_schema' in DB: db_sha256=c75119005f11...[0m
+[32m2026-11-15 14:03:15.473[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+INFO:root:[Schema V1] Core Schema V1 (incl. version update) applied and committed successfully for DB: C:\Users\GDesktop-1\.tmp-windows-perf-35eb5c548259\home\.local\share\tldw_cli\default_user\tldw_chatbook_media_v2.db.
+[32m2026-11-15 14:03:15.474[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_skip_already_applied_add_column[0m:[36m3994[0m - [1m[rag_char_chat_schema V20→V21] world_book_entries.priority already present; skipping the ADD COLUMN (idempotent replay).[0m
+INFO:root:[Schema V1] FTS Tables created successfully.
+INFO:root:Successfully migrated to version 1
+INFO:root:Applying migration: Add chunking configuration support (v1 → v2)
+INFO:root:Applying migration from version 1 to 2 (chunking support) to DB: C:\Users\GDesktop-1\.tmp-windows-perf-35eb5c548259\home\.local\share\tldw_cli\default_user\tldw_chatbook_media_v2.db...
+[32m2026-11-15 14:03:15.476[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v20_to_v21[0m:[36m5184[0m - [34m[1m[rag_char_chat_schema V20→V21] Migration script executed.[0m
+[32m2026-11-15 14:03:15.477[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v20_to_v21[0m:[36m5192[0m - [1m[rag_char_chat_schema V20→V21] Migration completed successfully for DB: db_sha256=c75119005f11.[0m
+[32m2026-11-15 14:03:15.477[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v21_to_v22[0m:[36m5214[0m - [1mMigrating schema from V21 to V22 for 'rag_char_chat_schema' in DB: db_sha256=c75119005f11...[0m
+[32m2026-11-15 14:03:15.488[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:15.489[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_skip_already_applied_add_column[0m:[36m3994[0m - [1m[rag_char_chat_schema V21→V22] world_book_entries.regex already present; skipping the ADD COLUMN (idempotent replay).[0m
+[32m2026-11-15 14:03:15.491[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v21_to_v22[0m:[36m5229[0m - [34m[1m[rag_char_chat_schema V21→V22] Migration script executed.[0m
+[32m2026-11-15 14:03:15.491[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v21_to_v22[0m:[36m5235[0m - [1m[rag_char_chat_schema V21→V22] Migration completed successfully for DB: db_sha256=c75119005f11.[0m
+[32m2026-11-15 14:03:15.491[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v22_to_v23[0m:[36m5257[0m - [1mMigrating schema from V22 to V23 for 'rag_char_chat_schema' in DB: db_sha256=c75119005f11...[0m
+[32m2026-11-15 14:03:15.501[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:15.503[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v22_to_v23[0m:[36m5272[0m - [34m[1m[rag_char_chat_schema V22→V23] Migration script executed.[0m
+[32m2026-11-15 14:03:15.503[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v22_to_v23[0m:[36m5278[0m - [1m[rag_char_chat_schema V22→V23] Migration completed successfully for DB: db_sha256=c75119005f11.[0m
+[32m2026-11-15 14:03:15.504[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v23_to_v24[0m:[36m5301[0m - [1mMigrating schema from V23 to V24 for 'rag_char_chat_schema' in DB: db_sha256=c75119005f11...[0m
+[32m2026-11-15 14:03:15.542[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:15.547[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v23_to_v24[0m:[36m5316[0m - [34m[1m[rag_char_chat_schema V23→V24] Migration script executed.[0m
+[32m2026-11-15 14:03:15.547[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v23_to_v24[0m:[36m5322[0m - [1m[rag_char_chat_schema V23→V24] Migration completed successfully for DB: db_sha256=c75119005f11.[0m
+[32m2026-11-15 14:03:15.548[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.Prompts_DB[0m:[36mtransaction[0m:[36m749[0m - [34m[1mStarted transaction.[0m
+[32m2026-11-15 14:03:15.549[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v24_to_v25[0m:[36m5345[0m - [1mMigrating schema from V24 to V25 for 'rag_char_chat_schema' in DB: db_sha256=c75119005f11...[0m
+[32m2026-11-15 14:03:15.554[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.Prompts_DB[0m:[36mtransaction[0m:[36m753[0m - [34m[1mCommitted transaction.[0m
+[32m2026-11-15 14:03:15.556[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.Prompts_DB[0m:[36m_initialize_schema[0m:[36m1189[0m - [34m[1mVerified FTS tables exist after migrations.[0m
+[32m2026-11-15 14:03:15.556[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.Prompts_DB[0m:[36m_initialize_schema[0m:[36m1195[0m - [1mDatabase schema initialized/migrated to version 6.[0m
+[32m2026-11-15 14:03:15.556[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.Prompts_DB[0m:[36m__init__[0m:[36m462[0m - [34m[1mPromptsDatabase initialization completed successfully for C:\Users\GDesktop-1\.tmp-windows-perf-35eb5c548259\home\.local\share\tldw_cli\default_user\tldw_chatbook_prompts.db[0m
+[32m2026-11-15 14:03:15.557[0m | [1mINFO    [0m | [36mtldw_chatbook.Prompt_Management.Prompts_Interop[0m:[36minitialize_interop[0m:[36m130[0m - [1mPrompts Interop Library initialized successfully.[0m
+[32m2026-11-15 14:03:15.557[0m | [1mINFO    [0m | [36mtldw_chatbook.app[0m:[36m_init_prompts_service[0m:[36m2139[0m - [1mPrompts Interop Service initialized with DB: C:\Users\GDesktop-1\.tmp-windows-perf-35eb5c548259\home\.local\share\tldw_cli\default_user\tldw_chatbook_prompts.db[0m
+[32m2026-11-15 14:03:15.560[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:15.563[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v24_to_v25[0m:[36m5360[0m - [34m[1m[rag_char_chat_schema V24→V25] Migration script executed.[0m
+[32m2026-11-15 14:03:15.563[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v24_to_v25[0m:[36m5366[0m - [1m[rag_char_chat_schema V24→V25] Migration completed successfully for DB: db_sha256=c75119005f11.[0m
+[32m2026-11-15 14:03:15.563[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v25_to_v26[0m:[36m5390[0m - [1mMigrating schema from V25 to V26 for 'rag_char_chat_schema' in DB: db_sha256=c75119005f11...[0m
+[32m2026-11-15 14:03:15.574[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.Prompts_DB[0m:[36mclose_connection[0m:[36m588[0m - [34m[1mClosed connection for thread ThreadPoolExecutor-0_1.[0m
+[32m2026-11-15 14:03:15.574[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:15.574[0m | [1mINFO    [0m | [36mtldw_chatbook.app[0m:[36m__init__[0m:[36m1418[0m - [1mParallel init task 'prompts_service' completed in 1.739s[0m
+[32m2026-11-15 14:03:15.585[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v25_to_v26[0m:[36m5405[0m - [34m[1m[rag_char_chat_schema V25→V26] Migration script executed.[0m
+[32m2026-11-15 14:03:15.586[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v25_to_v26[0m:[36m5411[0m - [1m[rag_char_chat_schema V25→V26] Migration completed successfully for DB: db_sha256=c75119005f11.[0m
+[32m2026-11-15 14:03:15.597[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:15.648[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+INFO:root:[Migration v1->v2] Chunking configuration migration applied successfully.
+[32m2026-11-15 14:03:15.660[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 3 on thread 76272.[0m
+INFO:root:Successfully migrated to version 2
+INFO:root:Applying migration: Add local reading progress store (v2 → v3)
+INFO:root:Applying migration from version 2 to 3 (reading progress store) to DB: C:\Users\GDesktop-1\.tmp-windows-perf-35eb5c548259\home\.local\share\tldw_cli\default_user\tldw_chatbook_media_v2.db...
+[32m2026-11-15 14:03:15.669[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v28_to_v29[0m:[36m5598[0m - [1mMigrating schema from V28 to V29 for 'rag_char_chat_schema' in DB: db_sha256=c75119005f11...[0m
+[32m2026-11-15 14:03:15.678[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:15.683[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v28_to_v29[0m:[36m5613[0m - [34m[1m[rag_char_chat_schema V28→V29] Migration script executed.[0m
+[32m2026-11-15 14:03:15.684[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v28_to_v29[0m:[36m5621[0m - [1m[rag_char_chat_schema V28→V29] Migration completed successfully for DB: db_sha256=c75119005f11.[0m
+[32m2026-11-15 14:03:15.684[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v29_to_v30[0m:[36m5648[0m - [1mMigrating schema from V29 to V30 for 'rag_char_chat_schema' in DB: db_sha256=c75119005f11...[0m
+[32m2026-11-15 14:03:15.693[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:15.700[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v29_to_v30[0m:[36m5668[0m - [34m[1m[rag_char_chat_schema V29→V30] Migration script executed.[0m
+[32m2026-11-15 14:03:15.700[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v29_to_v30[0m:[36m5692[0m - [1m[rag_char_chat_schema V29→V30] Migration completed successfully for DB: db_sha256=c75119005f11.[0m
+[32m2026-11-15 14:03:15.700[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v30_to_v31[0m:[36m5719[0m - [1mMigrating schema from V30 to V31 for 'rag_char_chat_schema' in DB: db_sha256=c75119005f11...[0m
+[32m2026-11-15 14:03:15.708[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:15.715[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v30_to_v31[0m:[36m5739[0m - [34m[1m[rag_char_chat_schema V30→V31] Migration script executed.[0m
+[32m2026-11-15 14:03:15.715[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v30_to_v31[0m:[36m5763[0m - [1m[rag_char_chat_schema V30→V31] Migration completed successfully for DB: db_sha256=c75119005f11.[0m
+[32m2026-11-15 14:03:15.716[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v31_to_v32[0m:[36m5796[0m - [1mMigrating schema from V31 to V32 for 'rag_char_chat_schema' in DB: db_sha256=c75119005f11...[0m
+[32m2026-11-15 14:03:15.717[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enrich_default_assistant_card_if_bare[0m:[36m4431[0m - [34m[1m[task-2451] Default Assistant enrichment UPDATE affected 0 row(s) in DB: db_sha256=c75119005f11.[0m
+[32m2026-11-15 14:03:15.718[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v31_to_v32[0m:[36m5822[0m - [1m[rag_char_chat_schema V31→V32] Migration completed successfully for DB: db_sha256=c75119005f11.[0m
+[32m2026-11-15 14:03:15.726[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:15.761[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+INFO:root:[Migration v2->v3] ReadingProgress migration applied successfully.
+INFO:root:Successfully migrated to version 3
+INFO:root:Applying migration: Add local read-it-later store (v3 → v4)
+INFO:root:Applying migration from version 3 to 4 (read-it-later store) to DB: C:\Users\GDesktop-1\.tmp-windows-perf-35eb5c548259\home\.local\share\tldw_cli\default_user\tldw_chatbook_media_v2.db...
+[32m2026-11-15 14:03:15.781[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:15.798[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:15.811[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:15.831[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:15.846[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:15.890[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+INFO:root:[Migration v3->v4] MediaReadItLaterState migration applied successfully.
+INFO:root:Successfully migrated to version 4
+INFO:root:Applying migration: Add persisted STT provenance (v4 → v5)
+[32m2026-11-15 14:03:15.900[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:15.905[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v41_to_v42[0m:[36m6142[0m - [1mMigrating schema from V41 to V42 for 'rag_char_chat_schema' in DB: db_sha256=c75119005f11...[0m
+[32m2026-11-15 14:03:15.908[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v41_to_v42[0m:[36m6206[0m - [1m[rag_char_chat_schema V41→V42] conversations.console_project_context_json already present; applying the version bump only.[0m
+[32m2026-11-15 14:03:15.909[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v42_to_v43[0m:[36m6256[0m - [1mMigrating schema from V42 to V43 for 'rag_char_chat_schema' in DB: db_sha256=c75119005f11...[0m
+[32m2026-11-15 14:03:15.920[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:15.926[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v42_to_v43[0m:[36m6395[0m - [1m[rag_char_chat_schema V42→V43] Migration completed successfully for DB: db_sha256=c75119005f11.[0m
+[32m2026-11-15 14:03:15.927[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v43_to_v44[0m:[36m6425[0m - [1mMigrating schema from V43 to V44 for 'rag_char_chat_schema' in DB: db_sha256=c75119005f11...[0m
+[32m2026-11-15 14:03:15.938[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:15.958[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v43_to_v44[0m:[36m6465[0m - [1m[rag_char_chat_schema V43→V44] Migration completed successfully for DB: db_sha256=c75119005f11.[0m
+[32m2026-11-15 14:03:15.959[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v44_to_v45[0m:[36m6534[0m - [1mActor Pack schema migration started: chachanotes_v44_to_v45[0m
+[32m2026-11-15 14:03:15.970[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:15.975[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v44_to_v45[0m:[36m6567[0m - [1mActor Pack schema migration completed: chachanotes_v44_to_v45[0m
+[32m2026-11-15 14:03:15.976[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v45_to_v46[0m:[36m6611[0m - [1mMigrating schema from V45 to V46 for 'rag_char_chat_schema' in DB: db_sha256=c75119005f11...[0m
+[32m2026-11-15 14:03:15.986[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:16.002[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v45_to_v46[0m:[36m6657[0m - [1m[rag_char_chat_schema V45→V46] Migration completed successfully for DB: db_sha256=c75119005f11. Purged 0 unreachable sync_log row(s) of 1.[0m
+[32m2026-11-15 14:03:16.002[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v46_to_v47[0m:[36m6699[0m - [1mMigrating schema from V46 to V47 for 'rag_char_chat_schema' in DB: db_sha256=c75119005f11...[0m
+[32m2026-11-15 14:03:16.032[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:16.035[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v46_to_v47[0m:[36m6734[0m - [1m[rag_char_chat_schema V46→V47] Migration completed successfully for DB: db_sha256=c75119005f11.[0m
+INFO:root:Successfully migrated to version 5
+INFO:root:Applying migration: Add chunk engine version stamp to UnvectorizedMediaChunks (v5 → v6)
+[32m2026-11-15 14:03:16.050[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:16.070[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v48_to_v49[0m:[36m6886[0m - [1mMigrating schema from V48 to V49 for 'rag_char_chat_schema' in DB: db_sha256=c75119005f11...[0m
+[32m2026-11-15 14:03:16.080[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:16.082[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v48_to_v49[0m:[36m6921[0m - [1m[rag_char_chat_schema V48→V49] Migration completed successfully for DB: db_sha256=c75119005f11.[0m
+[32m2026-11-15 14:03:16.082[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v49_to_v50[0m:[36m6969[0m - [1mMigrating schema from V49 to V50 for 'rag_char_chat_schema' in DB: db_sha256=c75119005f11...[0m
+[32m2026-11-15 14:03:16.091[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:16.092[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v49_to_v50[0m:[36m7003[0m - [1m[rag_char_chat_schema V49→V50] Migration completed successfully for DB: db_sha256=c75119005f11.[0m
+[32m2026-11-15 14:03:16.100[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:16.117[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:16.141[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v52_to_v53[0m:[36m7130[0m - [1mMigrating schema from V52 to V53 for 'rag_char_chat_schema' in DB: db_sha256=c75119005f11...[0m
+[32m2026-11-15 14:03:16.158[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:16.159[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v52_to_v53[0m:[36m7190[0m - [1m[rag_char_chat_schema V52→V53] Migration completed for DB: db_sha256=c75119005f11 (examined 0, compacted 0, skipped 0 unreadable).[0m
+[32m2026-11-15 14:03:16.168[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+INFO:root:Successfully migrated to version 6
+INFO:root:Applying migration: Rebuild ChunkingTemplates with uuid/tags/is_builtin/version/deleted, convert rows, seed six server built-ins (v6 → v7)
+[32m2026-11-15 14:03:16.189[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:16.200[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:16.263[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:16.296[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:16.359[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:16.377[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:16.388[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:16.400[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:16.462[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+INFO:root:[Migration v6->v7] Dropping old seed 'academic_paper'; the six built-ins re-seed it
+INFO:root:[Migration v6->v7] Dropping old seed 'code_documentation'; the six built-ins re-seed it
+INFO:root:[Migration v6->v7] ChunkingTemplates rebuild applied successfully.
+INFO:root:Successfully migrated to version 7
+INFO:root:Applying migration: Add the engine-version census covering index to UnvectorizedMediaChunks (v7 → v8)
+[32m2026-11-15 14:03:16.488[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:16.581[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:16.592[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+INFO:root:Successfully migrated to version 8
+INFO:root:Applying migration: Add four active-media partial indexes so the stats-free planner stops sorting the whole library per list render (v8 → v9)
+[32m2026-11-15 14:03:16.622[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 3 on thread 76272.[0m
+[32m2026-11-15 14:03:16.631[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 3 on thread 76272.[0m
+[32m2026-11-15 14:03:16.646[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:16.661[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:16.743[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+INFO:root:Successfully migrated to version 9
+INFO:root:Database schema fully migrated to version 9
+[32m2026-11-15 14:03:16.745[0m | [1mINFO    [0m | [36mtldw_chatbook.app[0m:[36m_init_media_db[0m:[36m2165[0m - [1mMedia_DB_v2 initialized successfully for client 'tldw_cli_local_instance_v1' at C:\Users\GDesktop-1\.tmp-windows-perf-35eb5c548259\home\.local\share\tldw_cli\default_user\tldw_chatbook_media_v2.db[0m
+[32m2026-11-15 14:03:16.745[0m | [1mINFO    [0m | [36mtldw_chatbook.RAG_Search.ingestion_indexing[0m:[36minstall_media_ingest_hook[0m:[36m1583[0m - [1mRAG lifecycle-indexing hooks installed on media DB[0m
+[32m2026-11-15 14:03:16.754[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:16.767[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:16.797[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:16.870[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:16.878[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.Client_Media_DB_v2[0m:[36mget_distinct_media_types[0m:[36m7213[0m - [1mDistinct media types loaded (result_count=%s, include_deleted=%s, include_trash=%s).[0m
+[32m2026-11-15 14:03:16.878[0m | [1mINFO    [0m | [36mtldw_chatbook.app[0m:[36m_init_media_db[0m:[36m2188[0m - [1mPre-fetched 1 media types for UI.[0m
+[32m2026-11-15 14:03:16.882[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:16.912[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:16.913[0m | [1mINFO    [0m | [36mtldw_chatbook.app[0m:[36m__init__[0m:[36m1418[0m - [1mParallel init task 'media_db' completed in 3.075s[0m
+[32m2026-11-15 14:03:16.930[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:16.938[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:17.000[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:17.009[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:17.022[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:17.031[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:17.044[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:17.055[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:17.066[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:17.092[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:17.116[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:17.137[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_initialize_schema[0m:[36m8727[0m - [1mDatabase schema 'rag_char_chat_schema' successfully initialized/migrated to version 86.[0m
+[32m2026-11-15 14:03:17.144[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m22169[0m - [34m[1mTransaction (outermost) committed successfully on thread 76272.[0m
+[32m2026-11-15 14:03:17.145[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m__init__[0m:[36m2902[0m - [34m[1mCharactersRAGDB initialization completed successfully db_sha256=c75119005f11[0m
+[32m2026-11-15 14:03:17.234[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+    SELECT id, name, extensions, deleted
+      FROM character_cards
+     WHERE CASE WHEN json_valid(extensions)
+                THEN json_extract(extensions, '$."tldw/builtin_id"')
+           END = 'samira'
+     ORDER BY id
+     LIMIT 1
+... Params: None[0m
+[32m2026-11-15 14:03:17.239[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): SELECT * FROM visual_identity_packs
+             WHERE owner_user_id = 0 AND source_kind = 'builtin' ORDER BY id... Params: None[0m
+[32m2026-11-15 14:03:20.311[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+    SELECT id, name, extensions, deleted
+      FROM character_cards
+     WHERE CASE WHEN json_valid(extensions)
+                THEN json_extract(extensions, '$."tldw/builtin_id"')
+           END = 'samira'
+     ORDER BY id
+     LIMIT 1
+... Params: None[0m
+[32m2026-11-15 14:03:20.312[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): SELECT * FROM visual_identity_packs
+             WHERE owner_user_id = 0 AND source_kind = 'builtin' ORDER BY id... Params: None[0m
+[32m2026-11-15 14:03:20.410[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.Character_Chat.Character_Chat_Lib[0m:[36mextract_json_from_image_file[0m:[36m1499[0m - [34m[1mAttempting character-card metadata extraction (source_type=stream).[0m
+[32m2026-11-15 14:03:20.420[0m | [1mINFO    [0m | [36mtldw_chatbook.Character_Chat.Character_Chat_Lib[0m:[36mextract_json_from_image_file[0m:[36m1582[0m - [1mCharacter-card image metadata decoded successfully.[0m
+[32m2026-11-15 14:03:20.421[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): SELECT name FROM character_cards... Params: None[0m
+[32m2026-11-15 14:03:20.489[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22104[0m - [34m[1mStarted outermost transaction on thread 76272.[0m
+[32m2026-11-15 14:03:20.498[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36madd_character_card[0m:[36m9128[0m - [34m[1mAdded character card 'Samira “Sammy” Vadem' with ID: 2.[0m
+[32m2026-11-15 14:03:20.532[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m22169[0m - [34m[1mTransaction (outermost) committed successfully on thread 76272.[0m
+[32m2026-11-15 14:03:22.930[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22104[0m - [34m[1mStarted outermost transaction on thread 76272.[0m
+[32m2026-11-15 14:03:22.934[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                    INSERT INTO visual_identity_packs(
+                        owner_user_id, title, description, status,
+                        active_version_id, default_expression_key, source_kind,
+                        source_context_json
+                    ) VALUES (?, ?, ?, ?, NULL, ?, ?,... Params: (0, Samira Visual Identity Reactions, Bundled Samira reaction pack., active, neutral, builtin, {"pack_content_sha256":"5993ec841ca635d99ca83691c3ac284db1b14bff35978c72edad12df...<134 chars>)[0m
+[32m2026-11-15 14:03:22.939[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_pack_versions(
+                    pack_id, owner_user_id, version_number,
+                    default_expression_key, manifest_json
+                ) VALUES (?, ?, ?, ?, ?)
+                ... Params: (1, 0, 1, neutral, {"assets":[{"bytes":124374,"content_type":"image/webp","display_label":"Admirati...<21318 chars>)[0m
+[32m2026-11-15 14:03:22.943[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 1, 1, custom:admiration, admiration, Admiration, admiration.webp, characters/samira/expressions/admiration.webp, image/webp, 124374, e4e0bd9c4390ab5bfc4528e3917898e980a292a3fd369948fa35e305a656a43...[0m
+[32m2026-11-15 14:03:22.948[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 1, 1, custom:amusement, amusement, Amusement, amusement.webp, characters/samira/expressions/amusement.webp, image/webp, 116566, 3c8b8396a2bfe922fc9b284c266fa6b69ccffe154f33f216ae263f247209db87, 10...[0m
+[32m2026-11-15 14:03:22.951[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 1, 1, angry, anger, Angry, anger.webp, characters/samira/expressions/anger.webp, image/webp, 103190, ef430345759b483d9a9f902c2fd7672e82f776819fc0e86e080b2b4f4df71863, 1024, 1024, {"date":"2026-08-...[0m
+[32m2026-11-15 14:03:22.957[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 1, 1, custom:annoyance, annoyance, Annoyance, annoyance.webp, characters/samira/expressions/annoyance.webp, image/webp, 99586, df80df074ba564dcf2e7c148eeac820aa88e91d4483af25da272702010c21ddf, 102...[0m
+[32m2026-11-15 14:03:22.960[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 1, 1, custom:approval, approval, Approval, approval.webp, characters/samira/expressions/approval.webp, image/webp, 110568, fa2d37e72019f70ac8d91b6e1aab9b1cc9cde92c4d5c5cf264bc822085092000, 1024, 1...[0m
+[32m2026-11-15 14:03:22.963[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 1, 1, custom:caring, caring, Caring, caring.webp, characters/samira/expressions/caring.webp, image/webp, 112332, 15321e616d850d8e29fb274fc2b4d0d42cc50f33da9e5d2320481572c7f11fa4, 1024, 1024, {"dat...[0m
+[32m2026-11-15 14:03:22.967[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 1, 1, confused, confusion, Confused, confusion.webp, characters/samira/expressions/confusion.webp, image/webp, 94366, b5b44aa1dcb63f847128af27e08b34353dd83f6f3b5fa80122b735380882139f, 1024, 1024, ...[0m
+[32m2026-11-15 14:03:22.972[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 1, 1, custom:curiosity, curiosity, Curiosity, curiosity.webp, characters/samira/expressions/curiosity.webp, image/webp, 108502, fa2529ed53c6111e8f65b497052331bd9c1ecccd2c3a76c3996f0f9dfb1f1435, 10...[0m
+[32m2026-11-15 14:03:22.977[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 1, 1, custom:desire, desire, Desire, desire.webp, characters/samira/expressions/desire.webp, image/webp, 108374, 6289a92eb65ddd89fc79780cfe757cc850e871c30dc2070e506212d7709f429a, 1024, 1024, {"dat...[0m
+[32m2026-11-15 14:03:22.981[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 1, 1, custom:disappointment, disappointment, Disappointment, disappointment.webp, characters/samira/expressions/disappointment.webp, image/webp, 103404, b8cc8dcc02be951a83847896a457ba3d81601d83596...[0m
+[32m2026-11-15 14:03:22.985[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 1, 1, custom:disapproval, disapproval, Disapproval, disapproval.webp, characters/samira/expressions/disapproval.webp, image/webp, 107672, 68cec62bce8bd7fa38dc55262ec6f7b3e7cda4985057a6317c4a21c088...[0m
+[32m2026-11-15 14:03:22.988[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 1, 1, custom:disgust, disgust, Disgust, disgust.webp, characters/samira/expressions/disgust.webp, image/webp, 104458, 9581ffcfbd80b6ce6663ba4bfd93e7d7b5c23422b1670ba83d8f923333c7e7bc, 1024, 1024, ...[0m
+[32m2026-11-15 14:03:22.991[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 1, 1, custom:embarrassment, embarrassment, Embarrassment, embarrassment.webp, characters/samira/expressions/embarrassment.webp, image/webp, 123528, 0e14ea0c7aacdcee80038239a2aca414da0c62d7bb6ae279...[0m
+[32m2026-11-15 14:03:22.994[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 1, 1, excited, excitement, Excited, excitement.webp, characters/samira/expressions/excitement.webp, image/webp, 122702, 1a39674704d87061cbf5627024eb6a283fb7ebfc90c2390674a40a1748495768, 1024, 1024...[0m
+[32m2026-11-15 14:03:22.998[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 1, 1, custom:fear, fear, Fear, fear.webp, characters/samira/expressions/fear.webp, image/webp, 89260, a08c9f5790f42e32d3d912f50a017a33cd464bf336aa8dbf872cbaa4b95c793e, 1024, 1024, {"date":"2026-08...[0m
+[32m2026-11-15 14:03:23.003[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 1, 1, custom:gratitude, gratitude, Gratitude, gratitude.webp, characters/samira/expressions/gratitude.webp, image/webp, 96122, 885a8c26586c2ea21a92695bc1dc66e0f6b7f299871fcbc67f496e47a19055b8, 102...[0m
+[32m2026-11-15 14:03:23.007[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 1, 1, custom:grief, grief, Grief, grief.webp, characters/samira/expressions/grief.webp, image/webp, 96140, 77f34582ff166094c1df30c9829a054e93d1d350e5060c3cce3914a0ed1d0bd8, 1024, 1024, {"date":"20...[0m
+[32m2026-11-15 14:03:23.011[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 1, 1, happy, joy, Happy, joy.webp, characters/samira/expressions/joy.webp, image/webp, 109900, cee25e3275dbe469d336282db4e1f086954a586cc689ddf475a13786c62c4419, 1024, 1024, {"date":"2026-08-15","s...[0m
+[32m2026-11-15 14:03:23.016[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 1, 1, custom:love, love, Love, love.webp, characters/samira/expressions/love.webp, image/webp, 110070, 438c623e093d3a5b23a23c10c515165449cc50ab70257a0b22cd4a852e336328, 1024, 1024, {"date":"2026-0...[0m
+[32m2026-11-15 14:03:23.020[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 1, 1, custom:nervousness, nervousness, Nervousness, nervousness.webp, characters/samira/expressions/nervousness.webp, image/webp, 110252, 20d50c313033aa5e775204e6b0723bdf45b0bb19807285baf660a28349...[0m
+[32m2026-11-15 14:03:23.023[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 1, 1, neutral, neutral, Neutral, neutral.webp, characters/samira/expressions/neutral.webp, image/webp, 105884, 6d8ba7ecf1f19dd5e7c2a5a11e9337dd2ce26897140aff6fe4e77b91bfdf1463, 1024, 1024, {"date"...[0m
+[32m2026-11-15 14:03:23.027[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 1, 1, custom:optimism, optimism, Optimism, optimism.webp, characters/samira/expressions/optimism.webp, image/webp, 99296, 51c6daf4826ac5bf02df788ab9a9df1b7829bc78638780f51c7aaa433f14de36, 1024, 10...[0m
+[32m2026-11-15 14:03:23.031[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 1, 1, custom:pride, pride, Pride, pride.webp, characters/samira/expressions/pride.webp, image/webp, 117252, e3acea2811dde9c245441ca9b0d75df7f61d7534ecf82b3e789d6396f927f5d7, 1024, 1024, {"date":"2...[0m
+[32m2026-11-15 14:03:23.034[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 1, 1, custom:realization, realization, Realization, realization.webp, characters/samira/expressions/realization.webp, image/webp, 130864, 4fd28c3b74a1a8d910f37fb5428454e9e2f748aedbfbfe1f05baeac651...[0m
+[32m2026-11-15 14:03:23.038[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 1, 1, custom:relief, relief, Relief, relief.webp, characters/samira/expressions/relief.webp, image/webp, 107880, e1ec4ec69f28a8284a815c1ab0b90c50117fb3e5adb3bc2cfe997082600250e1, 1024, 1024, {"dat...[0m
+[32m2026-11-15 14:03:23.041[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 1, 1, custom:remorse, remorse, Remorse, remorse.webp, characters/samira/expressions/remorse.webp, image/webp, 112130, 5d47e0353cbc9ac46cfdcef8a25101e356ed0ec4262ce50d2dc9dd1724802cc3, 1024, 1024, ...[0m
+[32m2026-11-15 14:03:23.045[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 1, 1, sad, sadness, Sad, sadness.webp, characters/samira/expressions/sadness.webp, image/webp, 111878, 691d89cdd897d2810198de2e5617afcbf28a994bc43e5ff06b4fad0a2452f68c, 1024, 1024, {"date":"2026-0...[0m
+[32m2026-11-15 14:03:23.049[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 1, 1, surprised, surprise, Surprised, surprise.webp, characters/samira/expressions/surprise.webp, image/webp, 120366, 30f109dc5bb2becb2963ae21fcf3b712872a1c3e57d12f6c847607a99600cc37, 1024, 1024, ...[0m
+[32m2026-11-15 14:03:23.052[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 1, 1, thinking, thinking, Thinking, thinking.webp, characters/samira/expressions/thinking.webp, image/webp, 101528, 3a5d990716e14245b1e545bff457b9fcd37eb308a544cd342ae06e8f0e4738a4, 1024, 1024, {"...[0m
+[32m2026-11-15 14:03:23.055[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 1, 1, custom:speaking, speaking, Speaking, speaking.webp, characters/samira/expressions/speaking.webp, image/webp, 100372, 448d807796618cbaaa7b897b1fcdd2fc67bf81bc5d0f01466b25af735f503c55, 1024, 1...[0m
+[32m2026-11-15 14:03:23.059[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 1, 1, custom:error, error, Error, error.webp, characters/samira/expressions/error.webp, image/webp, 107276, 0671be46cd874c4f0076d8cce637279b60b5320606c97d4853901d45d9ff3b9f, 1024, 1024, {"date":"2...[0m
+[32m2026-11-15 14:03:23.064[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                UPDATE visual_identity_packs
+                   SET active_version_id = ?, updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ? AND owner_user_id = ?
+                ... Params: (1, 1, 0)[0m
+[32m2026-11-15 14:03:23.068[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+            SELECT *
+              FROM visual_identity_bindings
+             WHERE owner_user_id = ?
+               AND actor_kind = ?
+               AND actor_id = ?
+               AND status = ?
+            ... Params: (0, character, 2, active)[0m
+[32m2026-11-15 14:03:23.071[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_bindings(
+                    owner_user_id, actor_kind, actor_id, pack_id, active_version_id
+                ) VALUES (?, ?, ?, ?, ?)
+                ... Params: (0, character, 2, 1, 1)[0m
+[32m2026-11-15 14:03:23.082[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:23.086[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                SELECT *
+                  FROM visual_identity_bindings
+                 WHERE owner_user_id = ?
+                   AND actor_kind = ?
+                   AND actor_id = ?
+                   AND status = ?
+                ... Params: (0, character, 2, active)[0m
+[32m2026-11-15 14:03:23.090[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                SELECT *
+                  FROM visual_identity_packs
+                 WHERE id = ? AND owner_user_id = ? AND status = ?
+                ... Params: (1, 0, active)[0m
+[32m2026-11-15 14:03:23.099[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+            SELECT pack_id
+              FROM visual_identity_pack_versions
+             WHERE id = ? AND owner_user_id = ?
+            ... Params: (1, 0)[0m
+[32m2026-11-15 14:03:23.105[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+            SELECT pack_id
+              FROM visual_identity_pack_versions
+             WHERE id = ? AND owner_user_id = ?
+            ... Params: (1, 0)[0m
+[32m2026-11-15 14:03:23.113[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                SELECT *
+                  FROM visual_identity_pack_versions
+                 WHERE id = ? AND owner_user_id = ?
+                ... Params: (1, 0)[0m
+[32m2026-11-15 14:03:23.120[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+            SELECT pack_id
+              FROM visual_identity_pack_versions
+             WHERE id = ? AND owner_user_id = ?
+            ... Params: (1, 0)[0m
+[32m2026-11-15 14:03:23.123[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                SELECT *
+                  FROM visual_identity_assets
+                 WHERE pack_version_id = ?
+                   AND owner_user_id = ?
+                   AND deleted = 0
+                 ORDER BY original_expression_key, id
+                ... Params: (1, 0)[0m
+[32m2026-11-15 14:03:23.127[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m22169[0m - [34m[1mTransaction (outermost) committed successfully on thread 76272.[0m
+[32m2026-11-15 14:03:23.192[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22104[0m - [34m[1mStarted outermost transaction on thread 76272.[0m
+[32m2026-11-15 14:03:23.198[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:23.199[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m22169[0m - [34m[1mTransaction (outermost) committed successfully on thread 76272.[0m
+[32m2026-11-15 14:03:23.201[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.Character_Chat.Character_Chat_Lib[0m:[36mextract_json_from_image_file[0m:[36m1499[0m - [34m[1mAttempting character-card metadata extraction (source_type=stream).[0m
+[32m2026-11-15 14:03:23.202[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.Character_Chat.Character_Chat_Lib[0m:[36mextract_json_from_image_file[0m:[36m1547[0m - [34m[1mFound trailing character-card metadata.[0m
+[32m2026-11-15 14:03:23.202[0m | [1mINFO    [0m | [36mtldw_chatbook.Character_Chat.Character_Chat_Lib[0m:[36mextract_json_from_image_file[0m:[36m1582[0m - [1mCharacter-card image metadata decoded successfully.[0m
+[32m2026-11-15 14:03:25.487[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22104[0m - [34m[1mStarted outermost transaction on thread 76272.[0m
+[32m2026-11-15 14:03:25.491[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:25.494[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 3 on thread 76272.[0m
+[32m2026-11-15 14:03:25.498[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): SELECT name FROM character_cards... Params: None[0m
+[32m2026-11-15 14:03:25.503[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:25.507[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36madd_character_card[0m:[36m9128[0m - [34m[1mAdded character card 'pixel-migu' with ID: 3.[0m
+[32m2026-11-15 14:03:25.517[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 2 on thread 76272.[0m
+[32m2026-11-15 14:03:25.522[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+            SELECT *
+              FROM visual_identity_bindings
+             WHERE owner_user_id = ?
+               AND actor_kind = ?
+               AND actor_id = ?
+               AND status = ?
+            ... Params: (0, character, 3, active)[0m
+[32m2026-11-15 14:03:25.528[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                    INSERT INTO visual_identity_packs(
+                        owner_user_id, title, description, status,
+                        active_version_id, default_expression_key, source_kind,
+                        source_context_json
+                    ) VALUES (?, ?, ?, ?, NULL, ?, ?,... Params: (0, pixel-migu expressions, Bundled pixel-migu expression pack., active, neutral, builtin, {"pack_content_sha256":"f207b3cc495ac4c8d6285d07a5ef4db28009babad164cdbe26df0f8f...<127 chars>)[0m
+[32m2026-11-15 14:03:25.532[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_pack_versions(
+                    pack_id, owner_user_id, version_number,
+                    default_expression_key, manifest_json
+                ) VALUES (?, ?, ?, ?, ?)
+                ... Params: (2, 0, 1, neutral, {"assets":[{"bytes":850,"content_type":"image/png","display_label":"Angry","dura...<6500 chars>)[0m
+[32m2026-11-15 14:03:25.535[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 2, 2, angry, angry, Angry, angry.png, characters/pixel_migu/expressions/angry.png, image/png, 850, a6ccc3163d24ea9213240a89190e5d50d83bba767f4113fefe4be75e653dab74, 128, 128, {}, 0, 1, None, None,...[0m
+[32m2026-11-15 14:03:25.538[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 2, 2, custom:celebrate, celebrate, Celebrate, celebrate.png, characters/pixel_migu/expressions/celebrate.png, image/png, 961, 5f1ac059a7e1e9e9dbee8ebb42f74b6843695e29c5468e444ba56a33ba5997c9, 128,...[0m
+[32m2026-11-15 14:03:25.542[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 2, 2, confused, confused, Confused, confused.png, characters/pixel_migu/expressions/confused.png, image/png, 742, c5ca5356c5fb84905eb09b01bb946d904b268b8cc2d146c6cdc74a8fb5033e5f, 128, 128, {}, 0,...[0m
+[32m2026-11-15 14:03:25.546[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 2, 2, custom:error, error, Error, error.png, characters/pixel_migu/expressions/error.png, image/png, 775, 8ac9307758b27deb703a65e1b337719292f3df73f4df23fccd54d1d73599b01d, 128, 128, {}, 0, 1, None...[0m
+[32m2026-11-15 14:03:25.550[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 2, 2, excited, excited, Excited, excited.png, characters/pixel_migu/expressions/excited.png, image/png, 972, 9f678b9f94e7524461668e9d5ced2dc056ceb286b7aef4f1ef4e022c1c3abee4, 128, 128, {}, 0, 1, N...[0m
+[32m2026-11-15 14:03:25.554[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 2, 2, happy, happy, Happy, happy.png, characters/pixel_migu/expressions/happy.png, image/png, 987, 0e352ee0d3f3a2747a968f27ee7110954b06d35031278187f975b48f45ad3f75, 128, 128, {}, 0, 1, None, None,...[0m
+[32m2026-11-15 14:03:25.557[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 2, 2, custom:listening, listening, Listening, listening.png, characters/pixel_migu/expressions/listening.png, image/png, 739, 47b435150107c07f3a1115bad54d2d87d8011cf8779a561535e498b9197f355f, 128,...[0m
+[32m2026-11-15 14:03:25.561[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 2, 2, custom:love, love, Love, love.png, characters/pixel_migu/expressions/love.png, image/png, 917, 4e7cc1eadf40f286fcb1db9c6e8d3eff690509584730015b91bd1a3b93d3b39c, 128, 128, {}, 0, 1, None, Non...[0m
+[32m2026-11-15 14:03:25.565[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 2, 2, neutral, neutral, Neutral, neutral.png, characters/pixel_migu/expressions/neutral.png, image/png, 602, 39712f2f62b92805a0a0716fa9964b1da1fd37acd4a9cf0e4cd400a28443044d, 128, 128, {}, 0, 1, N...[0m
+[32m2026-11-15 14:03:25.569[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 2, 2, sad, sad, Sad, sad.png, characters/pixel_migu/expressions/sad.png, image/png, 771, 354b770b0c7f06ef4ae380c5699cd18f90bea186d118ce7a16397bae94fbe85e, 128, 128, {}, 0, 1, None, None, 0)[0m
+[32m2026-11-15 14:03:25.572[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 2, 2, custom:skeptical, skeptical, Skeptical, skeptical.png, characters/pixel_migu/expressions/skeptical.png, image/png, 754, c47d8032bf9cbf15c50726494b8f656be9be2b9565a5eab07966a56e66efda17, 128,...[0m
+[32m2026-11-15 14:03:25.575[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 2, 2, custom:sleepy, sleepy, Sleepy, sleepy.png, characters/pixel_migu/expressions/sleepy.png, image/png, 759, 51391c70bc16d3769d830f626c9b8f2ffe7f724d1b218b9596c9a5dbe60bad13, 128, 128, {}, 0, 1,...[0m
+[32m2026-11-15 14:03:25.578[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 2, 2, custom:speaking, speaking, Speaking, speaking.png, characters/pixel_migu/expressions/speaking.png, image/png, 766, 43487434b123b26a76fbb8c7699bf475729f6f7255e1eed329e53641cea88e0b, 128, 128,...[0m
+[32m2026-11-15 14:03:25.582[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 2, 2, surprised, surprised, Surprised, surprised.png, characters/pixel_migu/expressions/surprised.png, image/png, 799, 4d71976aa8a448688447a95bbc0bd6e447a6858cde91f000be2b260cc2d0eb76, 128, 128, {...[0m
+[32m2026-11-15 14:03:25.585[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 2, 2, thinking, thinking, Thinking, thinking.png, characters/pixel_migu/expressions/thinking.png, image/png, 810, 1014e946024ad0673d2c90760ff49bf4c3b39fbd0ee62e50fd3814f53f188790, 128, 128, {}, 0,...[0m
+[32m2026-11-15 14:03:25.588[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 2, 2, custom:thumbs_up, thumbs_up, Thumbs Up, thumbs_up.png, characters/pixel_migu/expressions/thumbs_up.png, image/png, 730, edf47d0b22c732470b7d61294f383d0eba16d1e355835abe413aafd7da629c97, 128,...[0m
+[32m2026-11-15 14:03:25.591[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 2, 2, custom:type, type, Type, type.png, characters/pixel_migu/expressions/type.png, image/png, 786, c10c750ecf92c1a89bee52459ff647afcc924ceaf7995c6ac3d54358db0f8a31, 128, 128, {}, 0, 1, None, Non...[0m
+[32m2026-11-15 14:03:25.594[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_assets(
+                    owner_user_id, pack_id, pack_version_id, expression_key,
+                    original_expression_key, display_label, source_filename,
+                    storage_relpath, content_type, bytes, sha256, width, height,
+            ... Params: (0, 2, 2, custom:wave, wave, Wave, wave.png, characters/pixel_migu/expressions/wave.png, image/png, 792, 82ae93a991cf6d8045df294fb8d3ce9610bdbb1a754563824f18912c0e9d6828, 128, 128, {}, 0, 1, None, Non...[0m
+[32m2026-11-15 14:03:25.598[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                UPDATE visual_identity_packs
+                   SET active_version_id = ?, updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ? AND owner_user_id = ?
+                ... Params: (2, 2, 0)[0m
+[32m2026-11-15 14:03:25.601[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+            SELECT *
+              FROM visual_identity_bindings
+             WHERE owner_user_id = ?
+               AND actor_kind = ?
+               AND actor_id = ?
+               AND status = ?
+            ... Params: (0, character, 3, active)[0m
+[32m2026-11-15 14:03:25.603[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                INSERT INTO visual_identity_bindings(
+                    owner_user_id, actor_kind, actor_id, pack_id, active_version_id
+                ) VALUES (?, ?, ?, ?, ?)
+                ... Params: (0, character, 3, 2, 2)[0m
+[32m2026-11-15 14:03:25.611[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22073[0m - [34m[1mEntered nested transaction level 3 on thread 76272.[0m
+[32m2026-11-15 14:03:25.614[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                SELECT *
+                  FROM visual_identity_bindings
+                 WHERE owner_user_id = ?
+                   AND actor_kind = ?
+                   AND actor_id = ?
+                   AND status = ?
+                ... Params: (0, character, 3, active)[0m
+[32m2026-11-15 14:03:25.617[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                SELECT *
+                  FROM visual_identity_packs
+                 WHERE id = ? AND owner_user_id = ? AND status = ?
+                ... Params: (2, 0, active)[0m
+[32m2026-11-15 14:03:25.620[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+            SELECT pack_id
+              FROM visual_identity_pack_versions
+             WHERE id = ? AND owner_user_id = ?
+            ... Params: (2, 0)[0m
+[32m2026-11-15 14:03:25.624[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+            SELECT pack_id
+              FROM visual_identity_pack_versions
+             WHERE id = ? AND owner_user_id = ?
+            ... Params: (2, 0)[0m
+[32m2026-11-15 14:03:25.626[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                SELECT *
+                  FROM visual_identity_pack_versions
+                 WHERE id = ? AND owner_user_id = ?
+                ... Params: (2, 0)[0m
+[32m2026-11-15 14:03:25.631[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+            SELECT pack_id
+              FROM visual_identity_pack_versions
+             WHERE id = ? AND owner_user_id = ?
+            ... Params: (2, 0)[0m
+[32m2026-11-15 14:03:25.635[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3699[0m - [34m[1mExecuting SQL (script=False): 
+                SELECT *
+                  FROM visual_identity_assets
+                 WHERE pack_version_id = ?
+                   AND owner_user_id = ?
+                   AND deleted = 0
+                 ORDER BY original_expression_key, id
+                ... Params: (2, 0)[0m
+[32m2026-11-15 14:03:25.636[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m22169[0m - [34m[1mTransaction (outermost) committed successfully on thread 76272.[0m
+INFO:tldw_chatbook.Notes.Notes_Library:NotesInteropService: Verified base directory: C:\Users\GDesktop-1\.tmp-windows-perf-35eb5c548259\home\.local\share\tldw_cli\default_user
+INFO:tldw_chatbook.Notes.Notes_Library:NotesInteropService initialized with unified DB template: C:\Users\GDesktop-1\.tmp-windows-perf-35eb5c548259\home\.local\share\tldw_cli\default_user\tldw_chatbook_ChaChaNotes.db
+[32m2026-11-15 14:03:25.642[0m | [1mINFO    [0m | [36mtldw_chatbook.app[0m:[36m_init_notes_service[0m:[36m2107[0m - [1mNotesInteropService successfully initialized for user 'default_user'.[0m
+[32m2026-11-15 14:03:25.642[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_close_connection_handle[0m:[36m3510[0m - [34m[1mAttempting WAL checkpoint (TRUNCATE) before close db_sha256=c75119005f11 thread=76272.[0m
+[32m2026-11-15 14:03:25.651[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_close_connection_handle[0m:[36m3516[0m - [34m[1mWAL checkpoint TRUNCATE executed db_sha256=c75119005f11.[0m
+[32m2026-11-15 14:03:25.656[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_close_connection_handle[0m:[36m3543[0m - [34m[1mClosed SQLite connection db_sha256=c75119005f11 thread=76272.[0m
+[32m2026-11-15 14:03:25.657[0m | [1mINFO    [0m | [36mtldw_chatbook.app[0m:[36m__init__[0m:[36m1418[0m - [1mParallel init task 'notes_service' completed in 11.825s[0m
+INFO:root:App __init__: Determined initial tab value: chat
+[32m2026-11-15 14:03:26.125[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.base_db[0m:[36m__init__[0m:[36m1140[0m - [1mLibraryCollectionsDB initialized with path: C:\Users\GDesktop-1\.tmp-windows-perf-35eb5c548259\home\.local\share\tldw_cli\default_user\tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1][0m
+[32m2026-11-15 14:03:27.293[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.base_db[0m:[36m__init__[0m:[36m1140[0m - [1mWorkspaceDB initialized with path: C:\Users\GDesktop-1\.tmp-windows-perf-35eb5c548259\home\.local\share\tldw_cli\default_user\tldw_chatbook_workspaces.db [Client: tldw_cli_local_instance_v1][0m
+[32m2026-11-15 14:03:28.573[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.base_db[0m:[36m__init__[0m:[36m1140[0m - [1mSubscriptionsDB initialized with path: C:\Users\GDesktop-1\.tmp-windows-perf-35eb5c548259\home\.local\share\tldw_cli\default_user\tldw_chatbook_subscriptions.db [Client: tldw_cli_local_instance_v1][0m
+[32m2026-11-15 14:03:28.952[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.base_db[0m:[36m__init__[0m:[36m1140[0m - [1mClientNotificationsDB initialized with path: C:\Users\GDesktop-1\.tmp-windows-perf-35eb5c548259\home\.local\share\tldw_cli\default_user\tldw_chatbook_notifications.db [Client: tldw_cli_local_instance_v1][0m
+[32m2026-11-15 14:03:29.086[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.base_db[0m:[36m__init__[0m:[36m1140[0m - [1mEventStateRepository initialized with path: C:\Users\GDesktop-1\.tmp-windows-perf-35eb5c548259\home\.local\share\tldw_cli\default_user\tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1][0m
+[32m2026-11-15 14:03:29.086[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.base_db[0m:[36m__init__[0m:[36m1140[0m - [1mSyncStateRepository initialized with path: C:\Users\GDesktop-1\.tmp-windows-perf-35eb5c548259\home\.local\share\tldw_cli\default_user\tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1][0m
+[32m2026-11-15 14:03:29.528[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.Scheduling.db.migrations.v1_to_v2[0m:[36mmigrate[0m:[36m73[0m - [34m[1mScheduling schema migrated to version 2 (missed_count column)[0m
+[32m2026-11-15 14:03:29.611[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.Scheduling.db.migrations.v2_to_v3[0m:[36mmigrate[0m:[36m58[0m - [34m[1mScheduling schema migrated to version 3 (timeout_seconds column)[0m
+[32m2026-11-15 14:03:29.708[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.Scheduling.db.migrations.v3_to_v4[0m:[36mmigrate[0m:[36m137[0m - [34m[1mScheduling schema migrated to version 4 (automation runs/results)[0m
+[32m2026-11-15 14:03:29.794[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.Scheduling.db.migrations.v4_to_v5[0m:[36mmigrate[0m:[36m63[0m - [34m[1mScheduling schema migrated to version 5 (scheduled_task_runs)[0m
+[32m2026-11-15 14:03:29.928[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.Scheduling.db.migrations.v5_to_v6[0m:[36mmigrate[0m:[36m68[0m - [34m[1mScheduling schema migrated to version 6 (task_incidents)[0m
+[32m2026-11-15 14:03:30.014[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.Scheduling.db.migrations.v6_to_v7[0m:[36mmigrate[0m:[36m107[0m - [34m[1mScheduling schema migrated to version 7 (automation_results server_id unique index)[0m
+[32m2026-11-15 14:03:30.014[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.base_db[0m:[36m__init__[0m:[36m1140[0m - [1mScheduledTasksDB initialized with path: C:\Users\GDesktop-1\.tmp-windows-perf-35eb5c548259\home\.local\share\tldw_cli\default_user\tldw_chatbook_scheduled_tasks.db [Client: default][0m
+[32m2026-11-15 14:03:34.160[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.app[0m:[36m__init__[0m:[36m1489[0m - [34m[1mULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media'][0m
+[32m2026-11-15 14:03:34.160[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.app[0m:[36m__init__[0m:[36m1492[0m - [34m[1mULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>[0m
+INFO:root:Assigned prompts_interop.get_db_instance() to self.prompts_db
+[32m2026-11-15 14:03:34.364[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_get_thread_connection[0m:[36m3131[0m - [34m[1mOpened/Reopened SQLite connection db_sha256=c75119005f11 thread=65756[0m
+[32m2026-11-15 14:03:34.571[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.Evals.config_loader[0m:[36m_load_config[0m:[36m115[0m - [34m[1mLoaded evaluation configuration from C:\Users\GDesktop-1\.tmp-windows-perf-35eb5c548259\config\eval_overrides.yaml[0m
+[32m2026-11-15 14:03:34.989[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.Evals_DB[0m:[36m_create_schema[0m:[36m619[0m - [1mCreated EvalsDB schema version 7[0m
+[32m2026-11-15 14:03:34.989[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.Evals_DB[0m:[36m__init__[0m:[36m247[0m - [1mEvalsDB initialized with path: C:\Users\GDesktop-1\.tmp-windows-perf-35eb5c548259\home\.local\share\tldw_cli\default_user\evals.db[0m
+[32m2026-11-15 14:03:34.989[0m | [1mINFO    [0m | [36mtldw_chatbook.Evals.task_loader[0m:[36m__init__[0m:[36m98[0m - [1mTaskLoader initialized[0m
+[32m2026-11-15 14:03:36.791[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.Event_Handlers.worker_handlers.base_handler[0m:[36mregister[0m:[36m125[0m - [34m[1mRegistered worker handler: MiscWorkerHandler[0m
+[32m2026-11-15 14:03:36.791[0m | [1mINFO    [0m | [36mtldw_chatbook.app[0m:[36m_init_worker_handlers[0m:[36m2236[0m - [1mWorker handler registry initialized with all handlers[0m
+[32m2026-11-15 14:03:36.791[0m | [1mINFO    [0m | [36mtldw_chatbook.app[0m:[36m__init__[0m:[36m1676[0m - [1m=== STARTUP TIMING SUMMARY ===[0m
+[32m2026-11-15 14:03:36.792[0m | [1mINFO    [0m | [36mtldw_chatbook.app[0m:[36m__init__[0m:[36m1677[0m - [1mTotal initialization time: 25.186 seconds[0m
+[32m2026-11-15 14:03:36.792[0m | [1mINFO    [0m | [36mtldw_chatbook.app[0m:[36m__init__[0m:[36m1683[0m - [1m  basic_init: 2.190s (8.7%)[0m
+[32m2026-11-15 14:03:36.792[0m | [1mINFO    [0m | [36mtldw_chatbook.app[0m:[36m__init__[0m:[36m1683[0m - [1m  attribute_init: 0.000s (0.0%)[0m
+[32m2026-11-15 14:03:36.792[0m | [1mINFO    [0m | [36mtldw_chatbook.app[0m:[36m__init__[0m:[36m1683[0m - [1m  parallel_init: 11.843s (47.0%)[0m
+[32m2026-11-15 14:03:36.792[0m | [1mINFO    [0m | [36mtldw_chatbook.app[0m:[36m__init__[0m:[36m1696[0m - [1m    - notes_service: 11.825s (99.8% of parallel_init)[0m
+[32m2026-11-15 14:03:36.792[0m | [1mINFO    [0m | [36mtldw_chatbook.app[0m:[36m__init__[0m:[36m1696[0m - [1m    - media_db: 3.075s (26.0% of parallel_init)[0m
+[32m2026-11-15 14:03:36.792[0m | [1mINFO    [0m | [36mtldw_chatbook.app[0m:[36m__init__[0m:[36m1696[0m - [1m    - prompts_service: 1.739s (14.7% of parallel_init)[0m
+[32m2026-11-15 14:03:36.792[0m | [1mINFO    [0m | [36mtldw_chatbook.app[0m:[36m__init__[0m:[36m1696[0m - [1m    - providers_models: 0.001s (0.0% of parallel_init)[0m
+[32m2026-11-15 14:03:36.792[0m | [1mINFO    [0m | [36mtldw_chatbook.app[0m:[36m__init__[0m:[36m1700[0m - [1m==============================[0m
+INFO:root:Splash screen enabled: False
+[32m2026-11-15 14:03:38.863[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_get_thread_connection[0m:[36m3131[0m - [34m[1mOpened/Reopened SQLite connection db_sha256=c75119005f11 thread=73004[0m
+[32m2026-11-15 14:03:38.863[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m22104[0m - [34m[1mStarted outermost transaction on thread 73004.[0m
+[32m2026-11-15 14:03:38.864[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m22169[0m - [34m[1mTransaction (outermost) committed successfully on thread 73004.[0m
+[32m2026-11-15 14:03:38.864[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_close_connection_handle[0m:[36m3510[0m - [34m[1mAttempting WAL checkpoint (TRUNCATE) before close db_sha256=c75119005f11 thread=73004.[0m
+[32m2026-11-15 14:03:38.865[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_close_connection_handle[0m:[36m3516[0m - [34m[1mWAL checkpoint TRUNCATE executed db_sha256=c75119005f11.[0m
+[32m2026-11-15 14:03:38.867[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_close_connection_handle[0m:[36m3543[0m - [34m[1mClosed SQLite connection db_sha256=c75119005f11 thread=73004.[0m
+[32m2026-11-15 14:03:38.879[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.app[0m:[36mon_mount[0m:[36m3358[0m - [34m[1mNotes-sync start gate: no configuration evidence; runtime not constructed this boot.[0m
+INFO:tldw_chatbook.diagnostics.app:event=app_started component=app
+INFO:root:--- _setup_logging START (from Logging_Config.py) ---
+INFO:root:Loguru: All pre-existing sinks removed.
+INFO:root:Loguru: Configured to forward its messages to standard Python logging system.
+2026-11-15 14:04:28 [WARNING ] tldw_chatbook.app_service_wiring:665 - Independent Buddy installation/migration deferred; existing choices retained
+--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.

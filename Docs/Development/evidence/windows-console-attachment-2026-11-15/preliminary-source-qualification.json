@@ -1,0 +1,79 @@
+{
+  "path": "tldw_chatbook/app_startup.py",
+  "baseline_sha256": "f3f89314b2bf1e2de7b4d5441329a23128a76036f0442bce46e2f5d46724e8bb",
+  "candidate_sha256": "f2bc1a52204aaa133f9c5ebc46dfe32f194f7d8df54e92b8917d77a3f683cd54",
+  "excluded_from_matched_aggregate": [
+    "after-1",
+    "after-2"
+  ],
+  "replacement_cohorts_preregistered": [
+    "after-3",
+    "after-4"
+  ],
+  "reason": "Unchanged startup file has a line-ending-only source mismatch. Preserve preliminary results; repeat with exact baseline bytes before comparison.",
+  "source_blob": {
+    "revision": "7dbeff56aba6032f43aba2f4bbab803d3f133471",
+    "path": "tldw_chatbook/app_startup.py",
+    "sha256": "f2bc1a52204aaa133f9c5ebc46dfe32f194f7d8df54e92b8917d77a3f683cd54"
+  },
+  "normalized_bytes_equal": true,
+  "baseline_normalized_sha256": "f2bc1a52204aaa133f9c5ebc46dfe32f194f7d8df54e92b8917d77a3f683cd54",
+  "candidate_normalized_sha256": "f2bc1a52204aaa133f9c5ebc46dfe32f194f7d8df54e92b8917d77a3f683cd54",
+  "manifest_inputs": {
+    "before-1": {
+      "file": "plain-before-1-sources-before.json",
+      "sha256": "3c36b750fb0069d3eb0c95bcd77a1e02664545d96b9feb33533a10bb9672f046",
+      "count": 3012
+    },
+    "after-1": {
+      "file": "plain-after-1-sources-before.json",
+      "sha256": "509b9b128ac02ee2475caa67804373e972e9583baceb37c409005e9a0e727147",
+      "count": 3013
+    },
+    "after-2": {
+      "file": "plain-after-2-sources-before.json",
+      "sha256": "509b9b128ac02ee2475caa67804373e972e9583baceb37c409005e9a0e727147",
+      "count": 3013
+    }
+  },
+  "full_deltas": {
+    "after-1": {
+      "tldw_chatbook/app.py": {
+        "baseline": "3f4cb21b5152bbc8298cee2394e52303d56c8f762be5bb9ad5cb0e80583bcbe1",
+        "candidate": "593fedf9ec3a186981710d14a6146fc7b242bd81dd09ab636c043ac5194923b7"
+      },
+      "tldw_chatbook/app_boot_workers.py": {
+        "baseline": null,
+        "candidate": "33cec96a40f27baa12a3189e272fe4c639a69521868710abc650f3f6f5758d85"
+      },
+      "tldw_chatbook/app_service_wiring.py": {
+        "baseline": "f02b6720e77486bb1ee3f0d59678a2bea1e78f88cea9797f0b6bd67f963881d7",
+        "candidate": "04f9db4f5407c53f20e5083ce7d4a89512a0cfdf6007fcb29df245745cdd1fab"
+      },
+      "tldw_chatbook/app_startup.py": {
+        "baseline": "f3f89314b2bf1e2de7b4d5441329a23128a76036f0442bce46e2f5d46724e8bb",
+        "candidate": "f2bc1a52204aaa133f9c5ebc46dfe32f194f7d8df54e92b8917d77a3f683cd54"
+      }
+    },
+    "after-2": {
+      "tldw_chatbook/app.py": {
+        "baseline": "3f4cb21b5152bbc8298cee2394e52303d56c8f762be5bb9ad5cb0e80583bcbe1",
+        "candidate": "593fedf9ec3a186981710d14a6146fc7b242bd81dd09ab636c043ac5194923b7"
+      },
+      "tldw_chatbook/app_boot_workers.py": {
+        "baseline": null,
+        "candidate": "33cec96a40f27baa12a3189e272fe4c639a69521868710abc650f3f6f5758d85"
+      },
+      "tldw_chatbook/app_service_wiring.py": {
+        "baseline": "f02b6720e77486bb1ee3f0d59678a2bea1e78f88cea9797f0b6bd67f963881d7",
+        "candidate": "04f9db4f5407c53f20e5083ce7d4a89512a0cfdf6007fcb29df245745cdd1fab"
+      },
+      "tldw_chatbook/app_startup.py": {
+        "baseline": "f3f89314b2bf1e2de7b4d5441329a23128a76036f0442bce46e2f5d46724e8bb",
+        "candidate": "f2bc1a52204aaa133f9c5ebc46dfe32f194f7d8df54e92b8917d77a3f683cd54"
+      }
+    }
+  },
+  "baseline_is_CRLF_bytes": true,
+  "candidate_is_LF_bytes": true
+}
