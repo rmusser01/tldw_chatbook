@@ -106,15 +106,15 @@ class RuleHelperPool:
                 lease.cancel_acceptance("shutdown")
                 lease.release_unused()
 
-    async def wait_for_cleanup(self, timeout: float | None = None) -> None:
+    async def wait_for_cleanup(self, abandon_after: float | None = None) -> None:
         """Wait for physical finalizers, even if retained asyncio tasks were cancelled.
 
         Args:
-            timeout: Seconds to wait before abandoning the helpers still out
-                (logged by count and purpose); ``None`` waits for all of them.
+            abandon_after: Seconds to wait before abandoning the helpers still
+                out (logged by count and purpose); ``None`` waits for all of them.
         """
         try:
-            async with asyncio.timeout(timeout):
+            async with asyncio.timeout(abandon_after):
                 while self.unsettled_count:
                     await asyncio.sleep(0.01)
         except TimeoutError:
