@@ -23,6 +23,9 @@ from textual.widgets import Button, Static
 
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.Media import LocalMediaReadingService, MediaReadingScopeService
+from tldw_chatbook.UI.Library_Modules.library_media_controller import (
+    LibraryMediaController,
+)
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_library_shell import (
@@ -115,8 +118,10 @@ async def _run_bulk_delete(screen, media_ids: tuple[str, ...]) -> None:
     """Drive the worker body exactly as ``handle_library_media_bulk_delete_confirm``
     does: arm the interlock and open the mutation fence first."""
     screen._media_state.bulk_delete_in_flight = True
-    screen._begin_library_media_mutation()
-    await LibraryScreen._delete_library_media_selection(screen, media_ids)
+    screen._media_controller._begin_library_media_mutation()
+    await LibraryMediaController._delete_library_media_selection(
+        screen._media_controller, media_ids
+    )
 
 
 @pytest.mark.asyncio
@@ -267,7 +272,7 @@ async def test_rows_still_open_while_the_page_sits_behind_the_stale_gate(tmp_pat
             target = screen_media_ids(screen)[1]
 
             # Exactly the state a committed bulk delete leaves behind.
-            screen._begin_library_media_mutation()
+            screen._media_controller._begin_library_media_mutation()
             controller.reconcile_committed_mutation(remove_ids=())
             screen._media_state.mutation_scope = None
             screen._media_state.mutation_authority = None
@@ -312,7 +317,7 @@ async def test_retry_paints_a_new_reason_every_time_the_refresh_fails(tmp_path):
             controller = screen._library_media_browse_controller
 
             # Stale the page exactly as a committed mutation does.
-            screen._begin_library_media_mutation()
+            screen._media_controller._begin_library_media_mutation()
             controller.reconcile_committed_mutation(remove_ids=())
             screen._media_state.mutation_scope = None
             screen._media_state.mutation_authority = None

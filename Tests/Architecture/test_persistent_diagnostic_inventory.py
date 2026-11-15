@@ -201,10 +201,10 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
             "operation",
             "type(exc).__name__",
         ),
-        "in bulk delete": (),
-        "Failed to restore a Library media item in bulk-delete undo": (
-            "type(exc).__name__",
-        ),
+        # "in bulk delete" and "Failed to restore a Library media item in
+        # bulk-delete undo" moved to
+        # UI/Library_Modules/library_media_controller.py with their bodies
+        # (TASK-36952.3.2); see that owner's entry below.
         "Failed to persist the Library ingest backend": (),
         "Failed to persist Library ingest options": (),
         # "Failed to restore a Library note" moved to
@@ -218,6 +218,14 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         # reviewed diagnostic may change metadata, not start capturing
         # exceptions.
         "Failed to restore a Library note": ("type(exc).__name__",),
+    },
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": {
+        # TASK-36952.3.2: moved here from library_screen.py with the bulk
+        # delete and Undo workers, unchanged.
+        "in bulk delete": (),
+        "Failed to restore a Library media item in bulk-delete undo": (
+            "type(exc).__name__",
+        ),
     },
     # "canvas sync failed" was dropped from this registry in 51533602c4
     # (TASK-32089): that diagnostic now deliberately keeps its traceback

@@ -26,6 +26,9 @@ from textual.widgets.option_list import Option
 
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.Media import LocalMediaReadingService, MediaReadingScopeService
+from tldw_chatbook.UI.Library_Modules.library_media_controller import (
+    LibraryMediaController,
+)
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Library.library_media_state import (
     LIBRARY_MEDIA_TRASH_EMPTY_COPY,
@@ -3225,24 +3228,24 @@ def _bind_trash_mutation_seams(fake):
     fake._sync_library_media_browse_state = lambda *_args: events.append(("sync",))
     fake._sync_library_media_viewer_mutation_gate = lambda: None
     fake._begin_library_media_mutation = types.MethodType(
-        LibraryScreen._begin_library_media_mutation, fake
+        LibraryMediaController._begin_library_media_mutation, fake
     )
     # task-31220: the one seam every mutation handler claims the shared
     # write interlock through.
     fake._claim_library_media_mutation = types.MethodType(
-        LibraryScreen._claim_library_media_mutation, fake
+        LibraryMediaController._claim_library_media_mutation, fake
     )
     fake._library_media_backing_id = types.MethodType(
-        LibraryScreen._library_media_backing_id, fake
+        LibraryMediaController._library_media_backing_id, fake
     )
     fake._required_library_media_backing_id = types.MethodType(
-        LibraryScreen._required_library_media_backing_id, fake
+        LibraryMediaController._required_library_media_backing_id, fake
     )
     fake._library_media_mutation_summary = types.MethodType(
-        LibraryScreen._library_media_mutation_summary, fake
+        LibraryMediaController._library_media_mutation_summary, fake
     )
     fake._complete_library_media_mutation = types.MethodType(
-        LibraryScreen._complete_library_media_mutation, fake
+        LibraryMediaController._complete_library_media_mutation, fake
     )
     if fake._media_state.bulk_delete_in_flight:
         fake._begin_library_media_mutation()
@@ -3669,7 +3672,7 @@ def test_media_trash_completion_refreshes_the_page_it_fenced():
         "updated_at": None,
     }
 
-    LibraryScreen._complete_library_media_mutation(
+    LibraryMediaController._complete_library_media_mutation(
         restore,
         committed=True,
         upsert_items=(restored_summary,),
@@ -3694,7 +3697,7 @@ def test_media_trash_completion_refreshes_the_page_it_fenced():
         total=1,
         in_flight=True,
     )
-    LibraryScreen._complete_library_media_mutation(permanent, committed=True)
+    LibraryMediaController._complete_library_media_mutation(permanent, committed=True)
 
     assert permanent._media_state.bulk_delete_in_flight is False
     assert not any(event[0] == "mark-stale" for event in permanent._mutation_events)
@@ -3831,7 +3834,7 @@ async def test_media_trash_permanent_delete_uses_only_scope_service_target_seam(
         _run_library_service_call=LibraryScreen._run_library_service_call,
     )
     fake._complete_library_media_mutation = types.MethodType(
-        LibraryScreen._complete_library_media_mutation, fake
+        LibraryMediaController._complete_library_media_mutation, fake
     )
 
     claim = _trash_mutation_claim(target)
@@ -3940,7 +3943,7 @@ async def test_media_trash_permanent_failure_keeps_fresh_row_and_skips_refresh()
         ),
     )
     fake._complete_library_media_mutation = types.MethodType(
-        LibraryScreen._complete_library_media_mutation, fake
+        LibraryMediaController._complete_library_media_mutation, fake
     )
 
     await LibraryScreen._permanently_delete_library_media_from_trash(fake, claim)
@@ -4184,7 +4187,7 @@ def _restore_fake(*, db, trash_records, media_records, media_count):
         _source_record_id=LibraryScreen._source_record_id,
     )
     fake._notify_library_media_delete_warning = types.MethodType(
-        LibraryScreen._notify_library_media_delete_warning, fake
+        LibraryMediaController._notify_library_media_delete_warning, fake
     )
     return _bind_trash_mutation_seams(fake)
 

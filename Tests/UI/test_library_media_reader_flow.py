@@ -1045,8 +1045,10 @@ async def test_bulk_deleting_the_open_reader_item_clears_the_reader():
         assert screen._media_state.reader_session.loaded_id == row_0_id
 
         screen._media_state.bulk_delete_in_flight = True
-        screen._begin_library_media_mutation()
-        await LibraryScreen._delete_library_media_selection(screen, (row_0_id,))
+        screen._media_controller._begin_library_media_mutation()
+        await LibraryMediaController._delete_library_media_selection(
+            screen._media_controller, (row_0_id,)
+        )
         await _wait_for_condition(
             pilot,
             lambda: screen._media_state.delete_receipt_ids == (row_0_id,),
@@ -1110,8 +1112,8 @@ async def test_delete_selects_following_row_then_previous_then_empty():
         )
 
         screen._media_state.bulk_delete_in_flight = True
-        screen._begin_library_media_mutation()
-        await screen._delete_library_media_item(middle_id)
+        screen._media_controller._begin_library_media_mutation()
+        await screen._media_controller._delete_library_media_item(middle_id)
         await _wait_for_condition(
             pilot,
             lambda: screen._media_state.delete_receipt_ids == (middle_id,),
@@ -1128,8 +1130,8 @@ async def test_delete_selects_following_row_then_previous_then_empty():
         )
 
         screen._media_state.bulk_delete_in_flight = True
-        screen._begin_library_media_mutation()
-        await screen._delete_library_media_item(following_id)
+        screen._media_controller._begin_library_media_mutation()
+        await screen._media_controller._delete_library_media_item(following_id)
         assert screen._media_state.reader_session.selected_id == previous_id
         await _wait_for_detail_call(service, previous_backing_id)
         service.release(previous_backing_id)
@@ -1140,8 +1142,8 @@ async def test_delete_selects_following_row_then_previous_then_empty():
         )
 
         screen._media_state.bulk_delete_in_flight = True
-        screen._begin_library_media_mutation()
-        await screen._delete_library_media_item(previous_id)
+        screen._media_controller._begin_library_media_mutation()
+        await screen._media_controller._delete_library_media_item(previous_id)
         assert screen._media_state.reader_session.selected_id is None
         assert screen._media_state.reader_session.loaded_id is None
         assert screen._media_state.detail is None
@@ -1276,10 +1278,10 @@ async def test_progress_loads_from_service_when_detail_has_no_embedded_progress(
         _run_library_service_call=run_service_call,
     )
     fake._required_library_media_backing_id = MethodType(
-        LibraryScreen._required_library_media_backing_id, fake
+        LibraryMediaController._required_library_media_backing_id, fake
     )
     fake._library_media_backing_id = MethodType(
-        LibraryScreen._library_media_backing_id, fake
+        LibraryMediaController._library_media_backing_id, fake
     )
     detail = {"id": 1, "content": "No embedded progress"}
 

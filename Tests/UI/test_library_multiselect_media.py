@@ -16,6 +16,9 @@ from textual.widgets import Button, Static
 
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.Media import LocalMediaReadingService, MediaReadingScopeService
+from tldw_chatbook.UI.Library_Modules import (
+    library_media_controller as library_media_controller_module,
+)
 from tldw_chatbook.UI.Library_Modules.library_media_controller import (
     LibraryMediaController,
 )
@@ -82,21 +85,21 @@ def _bind_media_mutation_seams(fake):
     fake._sync_library_media_browse_state = lambda *_args: events.append(("sync",))
     fake._sync_library_media_viewer_mutation_gate = lambda: None
     fake._begin_library_media_mutation = types.MethodType(
-        LibraryScreen._begin_library_media_mutation, fake
+        LibraryMediaController._begin_library_media_mutation, fake
     )
     # task-31220: the one seam every mutation handler claims the shared
     # write interlock through.
     fake._claim_library_media_mutation = types.MethodType(
-        LibraryScreen._claim_library_media_mutation, fake
+        LibraryMediaController._claim_library_media_mutation, fake
     )
     fake._required_library_media_backing_id = types.MethodType(
-        LibraryScreen._required_library_media_backing_id, fake
+        LibraryMediaController._required_library_media_backing_id, fake
     )
     fake._library_media_mutation_summary = types.MethodType(
-        LibraryScreen._library_media_mutation_summary, fake
+        LibraryMediaController._library_media_mutation_summary, fake
     )
     fake._complete_library_media_mutation = types.MethodType(
-        LibraryScreen._complete_library_media_mutation, fake
+        LibraryMediaController._complete_library_media_mutation, fake
     )
     # task-31237: the delete path resets the content Find bar through the
     # one ``_close_library_media_find`` seam (collapsed, no query, first
@@ -162,7 +165,7 @@ def _media_fake(
         LibraryScreen._notify_library_media_selection_discarded, fake
     )
     fake._cancel_library_media_bulk_delete = types.MethodType(
-        LibraryScreen._cancel_library_media_bulk_delete, fake
+        LibraryMediaController._cancel_library_media_bulk_delete, fake
     )
     # task-31271 seam (b): entering select mode lands focus on a row, and
     # the canvas sync's whole-screen fallback schedules that follow-up.
@@ -266,7 +269,7 @@ async def test_export_selected_builds_ids_scope():
 
     fake._open_library_export_canvas = _open
     event = SimpleNamespace(stop=lambda: None)
-    await LibraryScreen.handle_library_media_export_selected(fake, event)
+    await LibraryMediaController.handle_library_media_export_selected(fake, event)
     assert fake._opened == [ExportScope(kind="media", ids=("1", "2", "3"))]
 
 
@@ -281,7 +284,7 @@ async def test_export_selected_empty_is_noop_not_whole_source():
 
     fake._open_library_export_canvas = _open
     event = SimpleNamespace(stop=lambda: None)
-    await LibraryScreen.handle_library_media_export_selected(fake, event)
+    await LibraryMediaController.handle_library_media_export_selected(fake, event)
     assert fake._opened == []
 
 
@@ -961,7 +964,7 @@ def test_delete_selected_arms_confirmation():
     fake.refresh = lambda **k: setattr(fake, "_refreshed", fake._refreshed + 1)
     fake._media_state.row_selection.select_all(["1", "2"])
     event = SimpleNamespace(stop=lambda: None)
-    LibraryScreen.handle_library_media_delete_selected(fake, event)
+    LibraryMediaController.handle_library_media_delete_selected(fake, event)
     assert fake._media_state.confirming_bulk_delete is True
     assert fake._refreshed == 1  # canvas sync fallback (fake has no widgets)
     # task-3020 AC2: the footer must be explicitly re-registered here --
@@ -974,7 +977,7 @@ def test_delete_selected_noop_when_nothing_selected():
     fake = _media_fake(select_mode=True)
     fake.refresh = lambda **k: setattr(fake, "_refreshed", fake._refreshed + 1)
     event = SimpleNamespace(stop=lambda: None)
-    LibraryScreen.handle_library_media_delete_selected(fake, event)
+    LibraryMediaController.handle_library_media_delete_selected(fake, event)
     assert fake._media_state.confirming_bulk_delete is False
     assert fake._refreshed == 0
 
@@ -983,7 +986,7 @@ def test_bulk_delete_cancel_clears_confirming_flag():
     fake = _media_fake(select_mode=True, confirming_bulk_delete=True)
     fake.refresh = lambda **k: setattr(fake, "_refreshed", fake._refreshed + 1)
     event = SimpleNamespace(stop=lambda: None)
-    LibraryScreen.handle_library_media_bulk_delete_cancel(fake, event)
+    LibraryMediaController.handle_library_media_bulk_delete_cancel(fake, event)
     assert fake._media_state.confirming_bulk_delete is False
     assert fake._footer_registrations == 1
     assert fake._refreshed == 1
@@ -1001,7 +1004,7 @@ def test_bulk_delete_confirm_reads_selection_and_kicks_worker():
     worker_calls = []
     fake.run_worker = lambda coro, **k: worker_calls.append(coro)
     event = SimpleNamespace(stop=lambda: None)
-    LibraryScreen.handle_library_media_bulk_delete_confirm(fake, event)
+    LibraryMediaController.handle_library_media_bulk_delete_confirm(fake, event)
     assert len(worker_calls) == 1
     asyncio.run(worker_calls[0])
     assert delete_calls == [("1", "3")]  # sorted, read synchronously
@@ -1032,14 +1035,14 @@ def test_bulk_delete_confirm_second_press_while_in_flight_is_noop():
     fake.run_worker = lambda coro, **k: worker_calls.append((coro, k))
     event = SimpleNamespace(stop=lambda: None)
 
-    LibraryScreen.handle_library_media_bulk_delete_confirm(fake, event)
+    LibraryMediaController.handle_library_media_bulk_delete_confirm(fake, event)
     assert len(worker_calls) == 1
     assert fake._media_state.bulk_delete_in_flight is True
 
     # Second press before the first worker has had any chance to run
     # (and clear the flag in its own ``finally``) -- must be a complete
     # no-op: no second worker, no second coroutine even constructed.
-    LibraryScreen.handle_library_media_bulk_delete_confirm(fake, event)
+    LibraryMediaController.handle_library_media_bulk_delete_confirm(fake, event)
     assert len(worker_calls) == 1
 
     worker_calls[0][0].close()  # avoid a "coroutine never awaited" warning
@@ -1056,7 +1059,7 @@ def test_bulk_delete_confirm_uses_exclusive_worker_group():
     fake.run_worker = lambda coro, **k: worker_calls.append((coro, k))
     event = SimpleNamespace(stop=lambda: None)
 
-    LibraryScreen.handle_library_media_bulk_delete_confirm(fake, event)
+    LibraryMediaController.handle_library_media_bulk_delete_confirm(fake, event)
 
     assert len(worker_calls) == 1
     _coro, kwargs = worker_calls[0]
@@ -1078,7 +1081,7 @@ def test_bulk_delete_confirm_allowed_again_after_in_flight_flag_clears():
     fake.run_worker = lambda coro, **k: worker_calls.append((coro, k))
     event = SimpleNamespace(stop=lambda: None)
 
-    LibraryScreen.handle_library_media_bulk_delete_confirm(fake, event)
+    LibraryMediaController.handle_library_media_bulk_delete_confirm(fake, event)
     assert len(worker_calls) == 1
     worker_calls[0][0].close()
 
@@ -1087,7 +1090,7 @@ def test_bulk_delete_confirm_allowed_again_after_in_flight_flag_clears():
     fake._media_state.confirming_bulk_delete = True
     fake._media_state.row_selection.select_all(["2"])
 
-    LibraryScreen.handle_library_media_bulk_delete_confirm(fake, event)
+    LibraryMediaController.handle_library_media_bulk_delete_confirm(fake, event)
     assert len(worker_calls) == 2
     worker_calls[1][0].close()
 
@@ -1097,7 +1100,7 @@ def test_bulk_delete_confirm_empty_selection_is_noop():
     fake.refresh = lambda **k: setattr(fake, "_refreshed", fake._refreshed + 1)
     fake.run_worker = lambda coro, **k: pytest.fail("must not start a worker")
     event = SimpleNamespace(stop=lambda: None)
-    LibraryScreen.handle_library_media_bulk_delete_confirm(fake, event)
+    LibraryMediaController.handle_library_media_bulk_delete_confirm(fake, event)
     assert fake._media_state.confirming_bulk_delete is False
     assert fake._refreshed == 1
 
@@ -1296,10 +1299,10 @@ def _bulk_delete_fake(*, db, records, counts, selected_ids):
         _source_record_id=LibraryScreen._source_record_id,
     )
     fake._library_media_backing_id = types.MethodType(
-        LibraryScreen._library_media_backing_id, fake
+        LibraryMediaController._library_media_backing_id, fake
     )
     fake._notify_library_media_delete_warning = types.MethodType(
-        LibraryScreen._notify_library_media_delete_warning, fake
+        LibraryMediaController._notify_library_media_delete_warning, fake
     )
     return _bind_media_mutation_seams(fake)
 
@@ -1326,11 +1329,11 @@ async def test_invalid_mutation_ids_never_reach_delete_service(tmp_path, media_i
         delete_media_item=delete_media_item
     )
 
-    await LibraryScreen._delete_library_media_selection(fake, (media_id,))
+    await LibraryMediaController._delete_library_media_selection(fake, (media_id,))
 
     assert calls == []
     with pytest.raises(ValueError, match="positive backing id"):
-        LibraryScreen._required_library_media_backing_id(fake, media_id)
+        LibraryMediaController._required_library_media_backing_id(fake, media_id)
 
 
 @pytest.mark.asyncio
@@ -1373,7 +1376,7 @@ async def test_delete_selection_soft_deletes_via_real_db_and_updates_records_and
     # A failed Undo from an EARLIER receipt must not colour this one.
     fake._media_state.delete_receipt_undo_failure = "1 of 1 \u00b7 stale"
 
-    await LibraryScreen._delete_library_media_selection(
+    await LibraryMediaController._delete_library_media_selection(
         fake, (delete_a_identity, delete_b_identity)
     )
 
@@ -1467,7 +1470,7 @@ async def test_delete_selection_partial_failure_keeps_select_mode_and_warns(
         selected_ids=[str(real_id), missing_id],
     )
 
-    await LibraryScreen._delete_library_media_selection(
+    await LibraryMediaController._delete_library_media_selection(
         fake, (str(real_id), missing_id)
     )
 
@@ -1541,11 +1544,11 @@ async def test_delete_selection_service_unavailable_keeps_selection_and_warns():
     )
     fake._media_state.row_selection.select_all(["1"])
     fake._notify_library_media_delete_warning = types.MethodType(
-        LibraryScreen._notify_library_media_delete_warning, fake
+        LibraryMediaController._notify_library_media_delete_warning, fake
     )
     _bind_media_mutation_seams(fake)
 
-    await LibraryScreen._delete_library_media_selection(fake, ("1",))
+    await LibraryMediaController._delete_library_media_selection(fake, ("1",))
 
     assert len(fake._local_source_records["media"]) == 1
     assert fake._local_source_counts["media"] == 1
@@ -1603,7 +1606,7 @@ async def test_undo_restores_items_via_real_db_and_updates_records_and_counts(
     # This receipt is a RETRY of a previously failed Undo.
     fake._media_state.delete_receipt_undo_failure = "2 of 2 \u00b7 database is locked"
 
-    await LibraryScreen._undo_library_media_bulk_delete(
+    await LibraryMediaController._undo_library_media_bulk_delete(
         fake, (undo_a_identity, undo_b_identity)
     )
 
@@ -1663,7 +1666,7 @@ async def test_undo_failure_turns_the_receipt_into_the_failed_state(tmp_path):
     )
     fake._media_state.delete_receipt_ids = ("1", "2")
 
-    await LibraryScreen._undo_library_media_bulk_delete(fake, ("1", "2"))
+    await LibraryMediaController._undo_library_media_bulk_delete(fake, ("1", "2"))
 
     # The receipt still names the ids a retry would restore...
     assert fake._media_state.delete_receipt_ids == ("1", "2")
@@ -1687,7 +1690,7 @@ async def test_undo_failure_reports_an_absent_restore_seam_as_its_reason(tmp_pat
     fake.app_instance.media_reading_scope_service = None
     fake._media_state.delete_receipt_ids = ("1",)
 
-    await LibraryScreen._undo_library_media_bulk_delete(fake, ("1",))
+    await LibraryMediaController._undo_library_media_bulk_delete(fake, ("1",))
 
     assert fake._media_state.delete_receipt_ids == ("1",)
     assert (
@@ -1718,7 +1721,7 @@ async def test_undo_reinserts_and_reselects_when_item_matches_active_scope(tmp_p
     fake._select_library_media_reader_row = select_restored
 
     identity = f"local:media:{media_id}"
-    await LibraryScreen._undo_library_media_bulk_delete(fake, (identity,))
+    await LibraryMediaController._undo_library_media_bulk_delete(fake, (identity,))
 
     assert selections == [((identity, "Visible"), {"immediate": True})]
     reconcile_index = next(
@@ -1748,7 +1751,7 @@ async def test_undo_succeeds_with_restored_outside_current_filter_message(tmp_pa
         (args, kwargs)
     )
 
-    await LibraryScreen._undo_library_media_bulk_delete(
+    await LibraryMediaController._undo_library_media_bulk_delete(
         fake, (f"local:media:{media_id}",)
     )
 
@@ -1775,7 +1778,7 @@ async def test_undo_partial_failure_narrows_receipt_and_warns(tmp_path):
     fake = _bulk_delete_fake(db=db, records=(), counts={"media": 0}, selected_ids=[])
     fake._media_state.delete_receipt_ids = (str(real_id), missing_id)
 
-    await LibraryScreen._undo_library_media_bulk_delete(
+    await LibraryMediaController._undo_library_media_bulk_delete(
         fake, (str(real_id), missing_id)
     )
 
@@ -1826,7 +1829,7 @@ async def test_undo_does_not_duplicate_a_record_already_present(tmp_path):
     )
     fake._media_state.delete_receipt_ids = (str(media_id),)
 
-    await LibraryScreen._undo_library_media_bulk_delete(fake, (str(media_id),))
+    await LibraryMediaController._undo_library_media_bulk_delete(fake, (str(media_id),))
 
     matching = [
         r for r in fake._local_source_records["media"] if r["id"] == str(media_id)
@@ -1904,10 +1907,10 @@ async def test_delete_confirm_refused_while_undo_in_flight_keeps_state_consisten
     fake._media_state.delete_receipt_ids = (str(receipt_a_id), str(receipt_b_id))
     fake._media_state.bulk_delete_in_flight = False
     fake._undo_library_media_bulk_delete = types.MethodType(
-        LibraryScreen._undo_library_media_bulk_delete, fake
+        LibraryMediaController._undo_library_media_bulk_delete, fake
     )
     fake._delete_library_media_selection = types.MethodType(
-        LibraryScreen._delete_library_media_selection, fake
+        LibraryMediaController._delete_library_media_selection, fake
     )
     worker_calls = []
     fake.run_worker = lambda coro, **k: worker_calls.append((coro, k))
@@ -1917,7 +1920,7 @@ async def test_delete_confirm_refused_while_undo_in_flight_keeps_state_consisten
     #    yet run -- mirroring how a real worker wouldn't have executed a
     #    single line of the coroutine body at the instant the button
     #    handler returns).
-    LibraryScreen.handle_library_media_bulk_delete_undo(
+    LibraryMediaController.handle_library_media_bulk_delete_undo(
         fake, SimpleNamespace(stop=lambda: None)
     )
     assert len(worker_calls) == 1
@@ -1928,7 +1931,7 @@ async def test_delete_confirm_refused_while_undo_in_flight_keeps_state_consisten
     #    scheduled, and -- because the guard is the very first line of
     #    the handler -- the selection/receipt/records are never even
     #    read, let alone mutated by this refused attempt.
-    LibraryScreen.handle_library_media_bulk_delete_confirm(
+    LibraryMediaController.handle_library_media_bulk_delete_confirm(
         fake, SimpleNamespace(stop=lambda: None)
     )
     assert len(worker_calls) == 1, "the delete press must not schedule a second worker"
@@ -1962,7 +1965,7 @@ async def test_delete_confirm_refused_while_undo_in_flight_keeps_state_consisten
     # 4. Only now that the flag has cleared is the still-armed delete
     #    selection allowed through -- proving the refusal above was a
     #    transient no-op, not a permanent lockout.
-    LibraryScreen.handle_library_media_bulk_delete_confirm(
+    LibraryMediaController.handle_library_media_bulk_delete_confirm(
         fake, SimpleNamespace(stop=lambda: None)
     )
     assert len(worker_calls) == 2
@@ -2022,7 +2025,7 @@ def test_undo_button_kicks_worker_with_receipt_ids():
     fake.run_worker = lambda coro, **k: worker_calls.append((coro, k))
     event = SimpleNamespace(stop=lambda: None)
 
-    LibraryScreen.handle_library_media_bulk_delete_undo(fake, event)
+    LibraryMediaController.handle_library_media_bulk_delete_undo(fake, event)
 
     assert len(worker_calls) == 1
     coro, kwargs = worker_calls[0]
@@ -2042,7 +2045,7 @@ def test_undo_button_noop_when_receipt_empty():
     fake.run_worker = lambda coro, **k: worker_calls.append((coro, k))
     event = SimpleNamespace(stop=lambda: None)
 
-    LibraryScreen.handle_library_media_bulk_delete_undo(fake, event)
+    LibraryMediaController.handle_library_media_bulk_delete_undo(fake, event)
 
     assert worker_calls == []
     assert fake._media_state.bulk_delete_in_flight is False
@@ -2054,7 +2057,7 @@ def test_undo_button_second_press_while_in_flight_is_noop():
     fake.run_worker = lambda coro, **k: worker_calls.append((coro, k))
     event = SimpleNamespace(stop=lambda: None)
 
-    LibraryScreen.handle_library_media_bulk_delete_undo(fake, event)
+    LibraryMediaController.handle_library_media_bulk_delete_undo(fake, event)
 
     assert worker_calls == []
 
@@ -2069,7 +2072,7 @@ def test_undo_button_refused_while_delete_confirm_in_flight():
     fake.run_worker = lambda coro, **k: worker_calls.append((coro, k))
     event = SimpleNamespace(stop=lambda: None)
 
-    LibraryScreen.handle_library_media_bulk_delete_undo(fake, event)
+    LibraryMediaController.handle_library_media_bulk_delete_undo(fake, event)
 
     assert worker_calls == []
     # The receipt is untouched -- the handler returned before reading it.
@@ -2083,7 +2086,7 @@ def test_dismiss_clears_receipt_without_restoring():
     )
     event = SimpleNamespace(stop=lambda: None)
 
-    LibraryScreen.handle_library_media_bulk_delete_receipt_dismiss(fake, event)
+    LibraryMediaController.handle_library_media_bulk_delete_receipt_dismiss(fake, event)
 
     assert fake._media_state.delete_receipt_ids == ()
     assert fake._refreshed == 1  # canvas sync fallback (fake has no widgets)
@@ -2131,14 +2134,14 @@ async def test_single_item_delete_also_arms_entry_focus_on_success(tmp_path):
         _arm_library_list_entry_focus=lambda: entry_focus_arm_calls.append(True),
     )
     fake._library_media_backing_id = types.MethodType(
-        LibraryScreen._library_media_backing_id, fake
+        LibraryMediaController._library_media_backing_id, fake
     )
     fake._notify_library_media_delete_warning = types.MethodType(
-        LibraryScreen._notify_library_media_delete_warning, fake
+        LibraryMediaController._notify_library_media_delete_warning, fake
     )
     _bind_media_mutation_seams(fake)
 
-    await LibraryScreen._delete_library_media_item(fake, str(media_id))
+    await LibraryMediaController._delete_library_media_item(fake, str(media_id))
 
     assert db.get_media_by_id(media_id, include_trash=True)["is_trash"] in {1, True}
     assert fake._media_state.view == "list"
@@ -2198,7 +2201,7 @@ def test_single_delete_confirm_claims_shared_flag_and_group():
     worker_calls = []
     fake.run_worker = lambda coro, **k: worker_calls.append((coro, k))
 
-    LibraryScreen.handle_library_media_delete_confirm(
+    LibraryMediaController.handle_library_media_delete_confirm(
         fake, SimpleNamespace(stop=lambda: None)
     )
 
@@ -2218,7 +2221,7 @@ def test_single_delete_confirm_refused_while_bulk_or_undo_in_flight():
     worker_calls = []
     fake.run_worker = lambda coro, **k: worker_calls.append((coro, k))
 
-    LibraryScreen.handle_library_media_delete_confirm(
+    LibraryMediaController.handle_library_media_delete_confirm(
         fake, SimpleNamespace(stop=lambda: None)
     )
 
@@ -2233,7 +2236,7 @@ def test_single_delete_confirm_empty_id_does_not_claim_flag():
     worker_calls = []
     fake.run_worker = lambda coro, **k: worker_calls.append((coro, k))
 
-    LibraryScreen.handle_library_media_delete_confirm(
+    LibraryMediaController.handle_library_media_delete_confirm(
         fake, SimpleNamespace(stop=lambda: None)
     )
 
@@ -2260,7 +2263,9 @@ def test_single_delete_arm_supersedes_stale_receipt():
         refresh=lambda **k: repaints.append("screen"),
     )
 
-    LibraryScreen.handle_library_media_delete(fake, SimpleNamespace(stop=lambda: None))
+    LibraryMediaController.handle_library_media_delete(
+        fake, SimpleNamespace(stop=lambda: None)
+    )
 
     assert repaints == ["viewer"]
 
@@ -2309,10 +2314,10 @@ def _single_delete_worker_fake(*, db, records, counts, selected_media_id):
         _source_record_id=LibraryScreen._source_record_id,
     )
     fake._library_media_backing_id = types.MethodType(
-        LibraryScreen._library_media_backing_id, fake
+        LibraryMediaController._library_media_backing_id, fake
     )
     fake._notify_library_media_delete_warning = types.MethodType(
-        LibraryScreen._notify_library_media_delete_warning, fake
+        LibraryMediaController._notify_library_media_delete_warning, fake
     )
     return _bind_media_mutation_seams(fake)
 
@@ -2346,7 +2351,7 @@ async def test_single_delete_leaves_receipt_and_undo_restores_via_bulk_seam(
         selected_media_id=str(media_id),
     )
 
-    await LibraryScreen._delete_library_media_item(fake, str(media_id))
+    await LibraryMediaController._delete_library_media_item(fake, str(media_id))
 
     assert db.get_media_by_id(media_id, include_trash=True)["is_trash"] in {1, True}
     assert fake._media_state.view == "list"
@@ -2362,11 +2367,11 @@ async def test_single_delete_leaves_receipt_and_undo_restores_via_bulk_seam(
     # shared flag, then the SAME bulk-undo coroutine runs (the interlock
     # test's capture-then-await pattern).
     fake._undo_library_media_bulk_delete = types.MethodType(
-        LibraryScreen._undo_library_media_bulk_delete, fake
+        LibraryMediaController._undo_library_media_bulk_delete, fake
     )
     worker_calls = []
     fake.run_worker = lambda coro, **k: worker_calls.append((coro, k))
-    LibraryScreen.handle_library_media_bulk_delete_undo(
+    LibraryMediaController.handle_library_media_bulk_delete_undo(
         fake, SimpleNamespace(stop=lambda: None)
     )
     assert len(worker_calls) == 1
@@ -2401,7 +2406,7 @@ async def test_single_delete_failure_leaves_no_receipt_and_clears_flag(tmp_path)
         selected_media_id="424242",
     )
 
-    await LibraryScreen._delete_library_media_item(fake, "424242")
+    await LibraryMediaController._delete_library_media_item(fake, "424242")
 
     assert fake._media_state.delete_receipt_ids == ()
     assert fake._media_state.bulk_delete_in_flight is False
@@ -2931,7 +2936,7 @@ def _claim_fake(*, begin_raises=None, worker_raises=None):
 
         fake._begin_library_media_mutation = _begin
     fake._claim_library_media_mutation = types.MethodType(
-        LibraryScreen._claim_library_media_mutation, fake
+        LibraryMediaController._claim_library_media_mutation, fake
     )
     return fake
 
@@ -3013,7 +3018,9 @@ def test_every_media_mutation_claims_the_interlock_at_one_audited_seam():
     there is now exactly ONE assignment of the flag, inside the seam whose
     own tests above prove it always releases.
     """
-    source = inspect.getsource(library_screen_module)
+    source = inspect.getsource(library_screen_module) + inspect.getsource(
+        library_media_controller_module
+    )
     # Final review M-2: not ``source.count`` -- neither black nor
     # ruff-format runs in this repo's preflight/CI, so a formatting change
     # (no spaces around ``=``, single quotes, a tuple-unpack assignment)
@@ -3028,13 +3035,13 @@ def test_every_media_mutation_claims_the_interlock_at_one_audited_seam():
     # ADR-055 rule this seam exists to enforce.
     assert len(re.findall(r"""group=['"]library_media_bulk_delete['"]""", source)) == 1
     assert "self._media_state.bulk_delete_in_flight = True" in inspect.getsource(
-        LibraryScreen._claim_library_media_mutation
+        LibraryMediaController._claim_library_media_mutation
     )
     for handler in (
-        LibraryScreen.handle_library_media_bulk_delete_confirm,
-        LibraryScreen.handle_library_media_bulk_delete_undo,
-        LibraryScreen.handle_library_media_delete_confirm,
-        LibraryScreen.handle_library_media_edit_save,
+        LibraryMediaController.handle_library_media_bulk_delete_confirm,
+        LibraryMediaController.handle_library_media_bulk_delete_undo,
+        LibraryMediaController.handle_library_media_delete_confirm,
+        LibraryMediaController.handle_library_media_edit_save,
         LibraryScreen.handle_library_media_trash_restore,
         LibraryScreen.handle_library_media_trash_delete_confirm,
     ):
@@ -3063,7 +3070,7 @@ async def test_media_edit_save_releases_the_interlock_when_its_warning_raises():
         media_id
     )
     fake._notify_library_media_edit_warning = types.MethodType(
-        LibraryScreen._notify_library_media_edit_warning, fake
+        LibraryMediaController._notify_library_media_edit_warning, fake
     )
 
     def _notify(message, **kwargs):
@@ -3072,7 +3079,7 @@ async def test_media_edit_save_releases_the_interlock_when_its_warning_raises():
     fake.app_instance.notify = _notify
 
     with pytest.raises(RuntimeError, match="shutting down"):
-        await LibraryScreen._save_library_media_edit(
+        await LibraryMediaController._save_library_media_edit(
             fake, "local:media:1", title="t", author="a", url="", keywords=[]
         )
 

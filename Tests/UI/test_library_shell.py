@@ -13589,10 +13589,14 @@ async def test_library_media_restore_refresh_makes_reappearing_facet_visible() -
             "last_modified": "2026-08-20T01:00:00Z",
         }
         screen._media_state.bulk_delete_in_flight = True
-        screen._begin_library_media_mutation()
+        screen._media_controller._begin_library_media_mutation()
         service.media_items = (*service.media_items, restored)
-        screen._complete_library_media_mutation(
-            upsert_items=(screen._library_media_mutation_summary("2", restored),)
+        screen._media_controller._complete_library_media_mutation(
+            upsert_items=(
+                screen._media_controller._library_media_mutation_summary(
+                    "2", restored
+                ),
+            )
         )
 
         await _wait_for_condition(
@@ -13720,10 +13724,10 @@ async def test_library_media_mutation_completion_after_unmount_only_reconciles()
 
             screen._sync_library_media_browse_state = record_sync
             screen._media_state.bulk_delete_in_flight = True
-            screen._begin_library_media_mutation()
+            screen._media_controller._begin_library_media_mutation()
             initial_syncs = len(sync_calls)
             mutation = asyncio.create_task(
-                screen._delete_library_media_item("local:media:1")
+                screen._media_controller._delete_library_media_item("local:media:1")
             )
             await _wait_for_condition(
                 pilot,

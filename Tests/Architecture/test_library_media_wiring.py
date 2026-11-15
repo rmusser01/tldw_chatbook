@@ -452,6 +452,33 @@ _MEDIA_CLUSTER_METHOD_NAMES: tuple[str, ...] = (
     "action_library_media_viewer_back",
     "handle_library_media_link_undo",
     "handle_library_media_reader_find",
+    # TASK-36952.3.2 (2026-11-15): the ADR-055 mutation interlock, bulk and
+    # single-item delete, Undo, the selection export and the edit save -- 24
+    # bodies.
+    "_begin_library_media_mutation",
+    "_cancel_library_media_bulk_delete",
+    "_claim_library_media_mutation",
+    "_complete_library_media_mutation",
+    "_delete_library_media_item",
+    "_delete_library_media_selection",
+    "_library_media_backing_id",
+    "_library_media_mutation_summary",
+    "_library_media_row_walk_leaves_dirty_form",
+    "_notify_library_media_delete_warning",
+    "_notify_library_media_edit_warning",
+    "_required_library_media_backing_id",
+    "_reset_library_media_reader_to_no_selection",
+    "_save_library_media_edit",
+    "_undo_library_media_bulk_delete",
+    "handle_library_media_bulk_delete_cancel",
+    "handle_library_media_bulk_delete_confirm",
+    "handle_library_media_bulk_delete_receipt_dismiss",
+    "handle_library_media_bulk_delete_undo",
+    "handle_library_media_delete",
+    "handle_library_media_delete_confirm",
+    "handle_library_media_delete_selected",
+    "handle_library_media_edit_save",
+    "handle_library_media_export_selected",
 )
 
 #: The names above that are ``@staticmethod`` on ``LibraryScreen``. Their
@@ -519,6 +546,14 @@ _MEDIA_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
         "_reset_library_media_search_on_mode_change",
         "_set_library_media_link_receipt",
         "_toggle_library_media_find",
+        # TASK-36952.3.2: 7 of its 24 movers, by the same census.
+        "_begin_library_media_mutation",
+        "_cancel_library_media_bulk_delete",
+        "_delete_library_media_item",
+        "_delete_library_media_selection",
+        "_notify_library_media_edit_warning",
+        "_save_library_media_edit",
+        "_undo_library_media_bulk_delete",
     }
 )
 
@@ -613,7 +648,7 @@ _MEDIA_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
     "size",
     # TASK-36952.3.1: `_toggle_library_media_find`, a mover, calls it
     "notify",
-    # -- shared shell state this cluster READS (getter-only accessors) (11)
+    # -- shared shell state this cluster READS (getter-only accessors) (12)
     "_library_canvas_projection_depth",
     "_library_compose_generation",
     "_library_list_entry_focus_deadline",
@@ -625,6 +660,8 @@ _MEDIA_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
     "_library_pending_list_entry_focus_anchor",
     "_library_pending_list_entry_media_return",
     "_local_source_records",
+    # TASK-36952.3.2: the three moved delete/Undo bodies adjust the Media count
+    "_local_source_counts",
     # task-32350 (critique #10 review, finding 10): THREE more screen names
     # are read by this controller and are deliberately NOT listed --
     # `_library_loaded`, `_library_lookup_error` and `_local_source_counts`,
@@ -634,6 +671,9 @@ _MEDIA_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
     # injection site (`library_screen.py`'s `LibraryMediaController(...)`
     # call) was outside the branch that needed them. Recorded here so the
     # list still reads as a complete account of this controller's reach.
+    # (TASK-36952.3.2 bound `_local_source_counts` above for its own movers;
+    # `_library_media_unfiltered_total` still reads all three through
+    # `self._screen`.)
     # -- shared shell state this cluster also WRITES (getter + setter) (5)
     "_library_canvas_resync_pending",
     "_library_list_entry_focus_timer",
@@ -675,16 +715,15 @@ _MEDIA_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
     "_library_open_choice_strip",
     "_library_workspace_depth_state",
     # -- named late-binding callables for the excluded media methods a mover
-    #    still calls (35; TASK-36952.3.1 moved 5 of them here: 30)
+    #    still calls (35; TASK-36952.3.1 moved 5 of them here: 30;
+    #    TASK-36952.3.2 moved 2 more: 28)
     "_arm_library_media_return_settlement",
     "_build_library_media_trash_state",
-    "_cancel_library_media_bulk_delete",
     "_capture_library_media_loaded_progress",
     "_clear_library_media_selection_for_scope_change",
     "_commit_library_media_return",
     "_exit_library_media_trash",
     "_library_media_analysis_provider_reason",
-    "_library_media_backing_id",
     "_library_media_content_matches",
     "_library_media_content_signature",
     "_library_media_focus_target_matches_receipt",
@@ -735,8 +774,10 @@ def test_media_cluster_method_names_are_genuinely_media_named() -> None:
     # press's "put the form on screen": viewer view + the form's tab).
     # 2026-11-15, TASK-36952.3.1: 147 -> 166, the 19 find / Escape label /
     # viewer-back / Console handoff bodies moved off the screen.
-    assert len(_MEDIA_CLUSTER_METHOD_NAMES) == 166, (
-        f"expected 166 moved names, got {len(_MEDIA_CLUSTER_METHOD_NAMES)}"
+    # 2026-11-15, TASK-36952.3.2: 166 -> 190, the 24 mutation-interlock,
+    # delete, Undo, export and edit-save bodies.
+    assert len(_MEDIA_CLUSTER_METHOD_NAMES) == 190, (
+        f"expected 190 moved names, got {len(_MEDIA_CLUSTER_METHOD_NAMES)}"
     )
     assert len(set(_MEDIA_CLUSTER_METHOD_NAMES)) == len(_MEDIA_CLUSTER_METHOD_NAMES), (
         "duplicate entries in _MEDIA_CLUSTER_METHOD_NAMES"
@@ -909,8 +950,10 @@ def test_media_controller_binds_every_name_its_moved_bodies_use() -> None:
 
     # 2026-11-15, TASK-36952.3.1: 92 -> 93. Five late-binding callbacks became
     # moved methods (-5); `notify` and five shell helpers were bound (+6).
-    assert len(_MEDIA_CONTROLLER_BOUND_NAMES) == 93, (
-        f"expected 93 bound names, got {len(_MEDIA_CONTROLLER_BOUND_NAMES)}"
+    # 2026-11-15, TASK-36952.3.2: 93 -> 92. Two late-binding callbacks became
+    # moved methods (-2); the `_local_source_counts` getter was bound (+1).
+    assert len(_MEDIA_CONTROLLER_BOUND_NAMES) == 92, (
+        f"expected 92 bound names, got {len(_MEDIA_CONTROLLER_BOUND_NAMES)}"
     )
     assert len(set(_MEDIA_CONTROLLER_BOUND_NAMES)) == len(
         _MEDIA_CONTROLLER_BOUND_NAMES
