@@ -523,10 +523,41 @@ ARCH_REVIEW_TARGETS = (
     "Tests/test_config_load_settings_table_guard.py",
     "Tests/Performance/test_boot_css_byte_budget.py",
     "Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet",
+    # Phase 3 of the program, sandboxed: before the TASK-39114 files.
+    # TASK-36953.1
+    "Tests/Architecture/test_server_service_client_protocols.py",
+    # TASK-36947.6
+    "Tests/Utils/test_doctor.py::test_run_doctor_uses_the_supplied_integrity_check",
+    "Tests/Utils/test_doctor.py::test_integrity_check_over_no_database_reports_it_unavailable",
+    "Tests/Utils/test_doctor.py::test_doctor_command_checks_the_services_bundle_database",
+    "Tests/MCP/test_local_runtime_delegate.py",
+    "Tests/Tools/test_document_expansion_tool.py::test_without_host_storage_every_source_reports_its_database_unavailable",
+    "Tests/Tools/test_note_tool_user_id.py::test_registrar_storage_is_resolved_at_call_time",
+    "Tests/Tools/test_note_tool_user_id.py::test_note_tools_without_a_host_database_report_it_unavailable",
+    "Tests/App/test_chachanotes_fts_backfill_worker.py",
+    # TASK-36948.3
+    "Tests/Backup_Recovery/test_unsaved_editors.py::test_console_unknown_draft_shape_refuses_instead_of_clean",
+    "Tests/Backup_Recovery/test_unsaved_editors.py::test_console_transition_and_send_stashes_are_not_reconciled",
     # TASK-39114: the private-SQLite registry and inventory files, red on no
-    # required lane before; last, because Tests/DB keeps the bootstrap profile.
+    # required lane before; after every sandboxed target, because Tests/DB
+    # keeps the bootstrap profile.
     "Tests/DB/test_private_sqlite.py",
     "Tests/DB/test_private_sqlite_inventory.py",
+    # Phase 3 of the program, bootstrap profile (module marker or Tests/DB):
+    # after every sandboxed target (TASK-32873).
+    # TASK-36947.2
+    "Tests/Architecture/test_application_services_bundle.py",
+    # TASK-36947.5
+    "Tests/Chat/test_console_initial_hook_review.py::test_console_runtime_reads_no_private_screen_attribute",
+    "Tests/Chat/test_console_initial_hook_review.py::test_private_screen_read_detector_catches_each_shape",
+    "Tests/Chat/test_console_initial_hook_review.py::test_every_view_seam_console_runtime_looks_up_exists_on_chat_screen",
+    # TASK-36949.3, TASK-36949.4
+    "Tests/DB/test_semantic_coordination_port.py",
+    "Tests/DB/test_chat_record_hashing_port.py",
+    # TASK-36949.6
+    "Tests/DB/test_chachanotes_v53_safe_capture_trim.py::test_v53_without_the_trimming_port_fails_closed_and_stays_v52",
+    "Tests/DB/test_chachanotes_v53_safe_capture_trim.py::test_fresh_database_opens_without_the_trimming_port",
+    "Tests/DB/test_chachanotes_bare_open_self_migration.py::test_a_bare_open_of_a_v52_safe_capture_fails_closed_and_stays_v52",
 )
 #: Owner decision (2026-11-06): suites runnable again after being red in no PR
 #: lane, in their own job, serial under --storage-lease-guard. Sandboxed suites
