@@ -28,8 +28,12 @@ def test_blocked_phase_returns_its_chat_without_a_restart(tmp_path):
     _run(tmp_path, "blocked_phase", "native", script=_SCRIPT, timeout=90)
 
 
-def test_phase_failing_with_a_live_worker_keeps_custody(tmp_path):
-    """A failure while a worker still runs keeps the original custody."""
+def test_phase_failing_with_a_live_worker_keeps_custody_until_reviewed(tmp_path):
+    """A failure while a worker still runs keeps the original custody, and
+    reconcile refuses it. Once the worker has returned, reconcile closes the
+    run as reviewed history and the chat gets its claim back; on dev 1455ceeb96
+    it kept refusing with `workflow_resources_still_live` because execution
+    runs have no planning preparation."""
     _run(tmp_path, "live_worker_failure", "native", script=_SCRIPT, timeout=90)
 
 
@@ -102,6 +106,7 @@ async def live_worker_failure(tmp_path):
     import asyncio
 
     from Tests.Chat.workflow_rig import WorkflowProvider, build_workflow_rig
+    from tldw_chatbook.Agents.goal_storage_lifetime import owned_goal_storage
     from tldw_chatbook.Agents.workflow_models import WorkflowExecutionRecovery
     from tldw_chatbook.Chat import console_workflow_wave
 
@@ -133,6 +138,7 @@ async def live_worker_failure(tmp_path):
         assert not [line for line in logged if "phase failed" in line], logged
         snapshot = await rig.coordinator.get(rig.workflow.id)
         assert snapshot.status == "recovery_required"
+        stored = await rig.service.call(rig.service.get, rig.workflow.id)
         try:
             await rig.coordinator.reconcile(
                 rig.workflow.id,
@@ -144,12 +150,34 @@ async def live_worker_failure(tmp_path):
             assert str(error) == "workflow_resources_still_live", error
         else:
             raise AssertionError("reconcile accepted a phase with a live worker")
+        # The refusal recorded nothing.
+        assert await rig.service.call(rig.service.get, rig.workflow.id) == stored
+        rig.provider_release()
+        await asyncio.wait_for(asyncio.gather(*waves, return_exceptions=True), 15)
+        closed = await rig.coordinator.reconcile(
+            rig.workflow.id,
+            expected_control_revision=snapshot.control_revision,
+            decision=WorkflowExecutionRecovery(reason="reviewed_prior_effects"),
+            command_id="reconcile-returned",
+        )
+        assert closed.status == "stopped"  # Closed history displays as stopped.
+        assert rig.workflow.id not in rig.coordinator._runs
+        service, db = rig.service, rig.service.db
+        with owned_goal_storage(service), db.connection() as conn:
+            row = conn.execute(
+                "SELECT status,recovery_reviewed_revision FROM workflow_runs WHERE id=?",
+                (rig.workflow.id,),
+            ).fetchone()
+        assert tuple(row) == ("closed", closed.control_revision)
+        sent = await rig.controller.submit_draft(
+            "A new turn after the reviewed phase", session_id="workflow-test-chat"
+        )
+        assert sent.accepted, sent
+        stream = rig.controller._active_stream_tasks.get("workflow-test-chat")
+        if stream is not None:
+            await asyncio.wait_for(asyncio.shield(stream), 15)
     finally:
         logger.remove(sink)
         rig.provider_release()
         await asyncio.wait_for(asyncio.gather(*waves, return_exceptions=True), 15)
-        try:
-            await rig.close()
-        except RuntimeError as error:
-            # Retained custody outlives this runtime by design.
-            assert str(error) == "workflow_original_shutdown_unresolved", error
+        await rig.close()

@@ -2415,14 +2415,32 @@ class ConsoleWorkflowCoordinator:
             revision = expected_control_revision
             run = self._runs.get(workflow_id)
             if run is not None:
-                if run.prepared is None or run.driver is None or not run.driver.done():
+                if run.driver is None or not run.driver.done():
                     raise ValueError("workflow_resources_still_live")
-                run.prepared.planning_recovery_return()
-                if run.prepared._planning_recovery_snapshot is None:
-                    recorded = await run.prepared.record_planning_recovery(
-                        expected_control_revision=revision
+                if run.prepared is None:
+                    # TASK-40718: a failed execution phase becomes reviewed
+                    # history once its native work has returned; the service
+                    # refuses while any of it may still be live.
+                    if (
+                        run.phase is None
+                        or run.control_unknown
+                        or run.control_return is not None
+                        and not run.control_return.is_set()
+                    ):
+                        raise ValueError("workflow_resources_still_live")
+                    recorded = await self.service.call(
+                        self.service.record_returned_execution,
+                        run.phase,
+                        expected_control_revision=revision,
                     )
                     revision = recorded.control_revision
+                else:
+                    run.prepared.planning_recovery_return()
+                    if run.prepared._planning_recovery_snapshot is None:
+                        recorded = await run.prepared.record_planning_recovery(
+                            expected_control_revision=revision
+                        )
+                        revision = recorded.control_revision
             await self.service.call(
                 self.service.resolve_recovery,
                 workflow_id,
@@ -2430,9 +2448,15 @@ class ConsoleWorkflowCoordinator:
                 decision=decision,
             )
             if run is not None:
-                run.prepared.planning_recovery_return()
+                if run.prepared is not None:
+                    run.prepared.planning_recovery_return()
                 if self._runs.get(workflow_id) is not run:
                     raise ValueError("workflow_runtime_changed")
+                if run.prepared is None:
+                    self.controller.store.release_received_turn(run.intake)
+                    self.controller._fleet_wake.release_automatic_primary(
+                        run.session_id, run.token
+                    )
                 self._runs.pop(workflow_id)
             await self._publish(workflow_id)
             return await self.get(workflow_id)
