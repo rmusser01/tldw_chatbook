@@ -163,6 +163,35 @@ def refuse_added_fetch_folders(items, archived) -> None:
         raise FetchRemovalRequired(tuple(sorted(members)))
 
 
+def fetch_removal_review(members: tuple[Path, ...], removal: str) -> str:
+    """The newer-download removal review, before ``removal`` is used.
+
+    Shared by the Backup screen (``removal`` is its button) and the recovery
+    CLI (its flag), so both give the same no-safety-copy warning (TASK-41106).
+    """
+    rows = [
+        "Newer plugin downloads. These folders were downloaded from a "
+        "repository after this backup was made (a source refresh, an update "
+        "check, an install or an update). Restoring Tools and skills removes "
+        "them. Installed plugins keep working.",
+        f"{removal} deletes the files below now, with no safety copy; a "
+        "rollback cannot bring them back. They are each download's git copy "
+        "(repository.git, content) and the copies of your git and SSH settings "
+        "it made (host-git-config, host-ssh-*). Your own git configuration and "
+        "~/.ssh are not touched.",
+        "Each folder's snapshot and its download record stay until you start "
+        "the restore, which moves them into the before-replacement safety copy "
+        "with the rest of your current data.",
+        "The restore is reviewed again after the removal.",
+    ]
+    for folder in dict.fromkeys(member.parent for member in members):
+        rows.append(f"Folder: {folder}")
+        rows.extend(
+            f"  Delete: {member.name}" for member in members if member.parent == folder
+        )
+    return "\n".join(rows)
+
+
 def remove_fetch_members(members: tuple[Path, ...]) -> None:
     """Delete exactly the reviewed fetch-folder members, with no safety copy.
 

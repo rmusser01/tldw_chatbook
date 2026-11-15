@@ -1253,6 +1253,98 @@ def test_replace_restore_lists_and_removes_a_fetch_folder_added_since_the_backup
 
 
 @platform_support.package_capture
+@pytest.mark.parametrize("flag", [False, True])
+def test_recovery_cli_lists_newer_plugin_downloads_and_removes_them_on_its_flag(
+    tmp_path, monkeypatch, capsys, flag
+):
+    """TASK-41106: ``tldw-chatbook recovery restore`` is the path for a user who
+    cannot start the app. Over a download folder the backup lacks, it lists the
+    folder's members and the Backup screen's no-safety-copy warning. Without
+    ``--remove-newer-plugin-downloads`` it refuses and names the flag and the
+    Backup screen; with it, typing ``remove`` deletes exactly those members and
+    the restore is reviewed again, now with nothing to remove."""
+    import builtins
+
+    from tldw_chatbook.Backup_Recovery import launcher, recovery_service
+    from tldw_chatbook.Backup_Recovery.restore_plan import RestorePlan
+    from tldw_chatbook.Plugins import backup
+
+    config, root = _plugin_root(tmp_path)
+    archived = {item.logical_id: item for item in _plugin_rows(config, root)[0].items}
+    added = root / "staging" / "zz-new"
+    for relative in ("snapshot/plugin.json", "repository.git/HEAD", "host-git-config"):
+        (added / relative).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        (added / relative).write_bytes(b"x")
+    reviews = []
+
+    class Service:
+        issue_code = staticmethod(recovery_service.issue_code)
+
+        def start_inspection(self, archive, *, password):
+            return "inspection"
+
+        def wait(self, operation):
+            return {"state": "succeeded"}
+
+        def summary(self, inspection):
+            return {"profile_ids": ("profile",)}
+
+        def preview_backup(self, configs, *, options):
+            return _plugin_rows(config, root)[0]
+
+        def preview_restore(self, inspection, *, target, **choices):
+            # The planner's own refusal, over the target inventory it was given.
+            reviews.append(target)
+            backup.refuse_added_fetch_folders(target.items, archived)
+            return RestorePlan("reviewed", "replace", (), (), (), "local")
+
+        def replacement_capability(self, plan):
+            return True, ""
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(recovery_service, "RecoveryService", lambda root: Service())
+    answers = iter(["remove", "cancel"])
+    monkeypatch.setattr(builtins, "input", lambda prompt: next(answers))
+    argv = [
+        "--control-root",
+        str(tmp_path / "control"),
+        "restore",
+        str(tmp_path / "backup.zip"),
+        "--replace",
+        "--target-config",
+        str(config),
+    ]
+    code = launcher.recovery_main(argv + ["--remove-newer-plugin-downloads"] * flag)
+    shown = capsys.readouterr().out
+    assert f"Folder: {added}" in shown
+    assert "  Delete: host-git-config\n  Delete: repository.git" in shown
+    assert "Delete: snapshot" not in shown
+    assert (
+        "--remove-newer-plugin-downloads deletes the files below now, with no "
+        "safety copy; a rollback cannot bring them back"
+    ) in shown
+    if not flag:
+        assert code == 1
+        assert "Recovery refused: plugin_fetch_removal_required" in shown
+        refusal = recovery_service.issue_message("plugin_fetch_removal_required")
+        assert refusal in shown
+        assert "--remove-newer-plugin-downloads" in refusal
+        assert "Backup screen" in refusal
+        assert sorted(path.name for path in added.iterdir()) == [
+            "host-git-config",
+            "repository.git",
+            "snapshot",
+        ]
+        return
+    # Reviewed again over a fresh target inventory; "cancel" then applies nothing.
+    assert code == 0 and len(reviews) == 2 and reviews[0] is not reviews[1]
+    assert "Newer plugin downloads removed. Reviewing restore again." in shown
+    assert sorted(path.name for path in added.iterdir()) == ["snapshot"]
+
+
+@platform_support.package_capture
 def test_restored_registry_matches_its_root_through_a_symlinked_data_dir(tmp_path):
     """M8: the registry names its root as the runtime owner resolves it, so a
     restore onto the same root reached through a linked data folder is in place,

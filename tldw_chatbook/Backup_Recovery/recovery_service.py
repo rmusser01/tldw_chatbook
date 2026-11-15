@@ -170,8 +170,10 @@ _ISSUE_MESSAGES = {
         "source refresh, an update check, an install or an update). Restoring "
         "Tools and skills removes those download folders, and they hold files a "
         "backup never includes. Review the restore on the Backup screen, which "
-        "lists them and removes them when you confirm; or restore without the "
-        "Tools and skills group."
+        "lists them and removes them when you confirm; or run tldw-chatbook "
+        "recovery restore again with --remove-newer-plugin-downloads, which lists "
+        "them and removes them when you type remove; or restore without the Tools "
+        "and skills group."
     ),
     # TASK-40134: Personal Context, told before anything is written.
     "personal_context_first_link_in_progress": (

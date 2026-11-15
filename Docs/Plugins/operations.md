@@ -173,7 +173,8 @@ Uninstalling a plugin does not remove these folders. **Review restore** on the
 Backup screen lists them (`plugin_fetch_removal_required`) and offers **Remove
 newer plugin downloads**, which deletes those files with no safety copy, so a
 rollback cannot bring them back; `~/.gitconfig` and `~/.ssh` themselves are not
-touched. An installed plugin keeps working from `snapshot/` and its fetch
+touched. `tldw-cli recovery restore` lists them the same way and removes them
+only with `--remove-newer-plugin-downloads` and a typed `remove`. An installed plugin keeps working from `snapshot/` and its fetch
 record, and the restore then moves each folder's `snapshot/` and record into the
 safety copy with the rest of the plugin state newer than the backup.
 

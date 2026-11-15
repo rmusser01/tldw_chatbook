@@ -2498,34 +2498,15 @@ class BackupRestoreScreen(Screen):
 
     def _fetch_removal_ready(self, revision, members):
         """List newer plugin download folders and what removing them deletes."""
+        from tldw_chatbook.Plugins.backup import fetch_removal_review
+
         if not self.is_mounted or revision != self._revision:
             return
         self._restore_plan = None
         self._fetch_removal = tuple(members)
-        folders = dict.fromkeys(member.parent for member in members)
-        rows = [
-            "Newer plugin downloads. These folders were downloaded from a "
-            "repository after this backup was made (a source refresh, an update "
-            "check, an install or an update). Restoring Tools and skills removes "
-            "them. Installed plugins keep working.",
-            "Remove newer plugin downloads deletes the files below now, with no "
-            "safety copy; a rollback cannot bring them back. They are each "
-            "download's git copy (repository.git, content) and the copies of your "
-            "git and SSH settings it made (host-git-config, host-ssh-*). Your own "
-            "git configuration and ~/.ssh are not touched.",
-            "Each folder's snapshot and its download record stay until you start "
-            "the restore, which moves them into the before-replacement safety "
-            "copy with the rest of your current data.",
-            "Review restore runs again after the removal.",
-        ]
-        for folder in folders:
-            rows.append(f"Folder: {folder}")
-            rows.extend(
-                f"  Delete: {member.name}"
-                for member in members
-                if member.parent == folder
-            )
-        self.query_one("#backup-restore-preview", Static).update("\n".join(rows))
+        self.query_one("#backup-restore-preview", Static).update(
+            fetch_removal_review(self._fetch_removal, "Remove newer plugin downloads")
+        )
         self.query_one("#backup-start-restore", Button).disabled = True
         button = self.query_one("#backup-remove-plugin-downloads", Button)
         button.display = True

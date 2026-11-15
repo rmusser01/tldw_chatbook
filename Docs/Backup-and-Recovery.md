@@ -299,8 +299,11 @@ rollback cannot bring them back; your own git configuration and `~/.ssh` are not
 touched. Each folder's `snapshot` and its download record stay until you start
 the restore, which moves them into the before-replacement safety copy with the
 rest of your current data. Installed plugins keep working. The review then runs
-again. (Uninstalling a plugin does not remove these folders. Restoring without
-**Tools and skills** leaves them alone.) After a restore, plugins stay off until plugin
+again. `tldw-cli recovery restore` lists the same folders, files and warning,
+then refuses (`plugin_fetch_removal_required`) unless you add
+`--remove-newer-plugin-downloads`; with it, typing `remove` deletes them the same
+way and the restore is reviewed again. (Uninstalling a plugin does not remove
+these folders. Restoring without **Tools and skills** leaves them alone.) After a restore, plugins stay off until plugin
 authority recovery completes: open **Plugins → Authority…** and unlock with the
 plugin passphrase the backup was made with. With plugins unchanged since the
 backup on the same computer, unlocking recovers them. On another computer at the

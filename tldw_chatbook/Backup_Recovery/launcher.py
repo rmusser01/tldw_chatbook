@@ -678,6 +678,12 @@ def _parser() -> argparse.ArgumentParser:
     restore.add_argument(
         "--safety-scope", action="append", default=[], metavar="LOGICAL_ID"
     )
+    restore.add_argument(
+        "--remove-newer-plugin-downloads",
+        action="store_true",
+        help="Delete the files of plugin downloads made since the backup, after "
+        "listing them, with no safety copy (TASK-41106).",
+    )
     recover = commands.add_parser("recover", allow_abbrev=False)
     recover.add_argument("operation")
     action = recover.add_mutually_exclusive_group()
@@ -770,17 +776,42 @@ def _restore(service, args) -> int:
         target = service.preview_backup((args.target_config,), options={})
     elif args.target_config is not None:
         raise ValueError("isolated_target_config_forbidden")
-    plan = service.preview_restore(
-        inspection,
-        mode=args.mode,
-        destinations=_pairs(args.destination, paths=True),
-        profile_names=_pairs(args.profile_name),
-        target=target,
-        acknowledged_credential_issues=tuple(args.acknowledge_credential_issue),
-        safety_scope=tuple(args.safety_scope),
-        data_groups=data_groups,
-        **target_choices,
+    from tldw_chatbook.Plugins.backup import (
+        FETCH_REMOVAL,
+        FetchRemovalRequired,
+        fetch_removal_review,
+        remove_fetch_members,
     )
+
+    def review():
+        return service.preview_restore(
+            inspection,
+            mode=args.mode,
+            destinations=_pairs(args.destination, paths=True),
+            profile_names=_pairs(args.profile_name),
+            target=target,
+            acknowledged_credential_issues=tuple(args.acknowledge_credential_issue),
+            safety_scope=tuple(args.safety_scope),
+            data_groups=data_groups,
+            **target_choices,
+        )
+
+    try:
+        plan = review()
+    except FetchRemovalRequired as error:
+        # TASK-41106: the Backup screen's removal review, on an explicit flag.
+        from .recovery_service import issue_message
+
+        print(fetch_removal_review(error.members, "--remove-newer-plugin-downloads"))
+        if not args.remove_newer_plugin_downloads:
+            print(issue_message(FETCH_REMOVAL))
+            raise
+        if input("Type remove to delete these files now: ").strip() != "remove":
+            return 0
+        remove_fetch_members(error.members)
+        print("Newer plugin downloads removed. Reviewing restore again.")
+        target = service.preview_backup((args.target_config,), options={})
+        plan = review()
     effective_groups = plan.effective_groups
     if plan.requested_groups is None:
         print("Requested groups: Everything (all available groups in this archive).")
