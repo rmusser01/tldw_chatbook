@@ -139,6 +139,7 @@ async def run_owned_db_call[**_CallParameters, _CallResult](
     operation: Callable[_CallParameters, _CallResult],
     /,
     *args: _CallParameters.args,
+    _read_only: bool = False,
     **kwargs: _CallParameters.kwargs,
 ) -> _CallResult:
     """Run a finite callback and retire only its newly opened worker handle.
@@ -147,7 +148,8 @@ async def run_owned_db_call[**_CallParameters, _CallResult](
     before its newly opened handle retires.
     Cancellation of the awaiting task does not close a handle still in use by
     its executor callback. Existing connections and memory/custom owners retain
-    their original lifetimes.
+    their original lifetimes. ``_read_only`` is ``operation_owned_connection``'s
+    ``read_only`` and is not passed to ``operation``.
     """
 
     def invoke() -> _CallResult:
@@ -168,7 +170,10 @@ async def run_owned_db_call[**_CallParameters, _CallResult](
             return operation(*args, **kwargs)
         from tldw_chatbook.Backup_Recovery.participants import core_operation
 
-        with operation_owned_connection(database), core_operation(database):
+        with (
+            operation_owned_connection(database, read_only=_read_only),
+            core_operation(database),
+        ):
             return operation(*args, **kwargs)
 
     return await asyncio.to_thread(invoke)

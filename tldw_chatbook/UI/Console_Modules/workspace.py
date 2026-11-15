@@ -3722,7 +3722,7 @@ class ConsoleWorkspaceController:
             elif bool(getattr(db, "is_memory_db", False)):
                 payload = list_conversations(**kwargs)
             else:
-                payload = await run_owned_db_call(db, list_conversations, **kwargs)
+                payload = await run_owned_db_call(db, list_conversations, _read_only=True, **kwargs)
             if inspect.isawaitable(payload):
                 payload = await payload
         except Exception as exc:  # noqa: BLE001 - History degrades independently

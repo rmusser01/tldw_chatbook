@@ -54,9 +54,10 @@ def test_history_page_retires_only_its_new_native_worker_handle(
             worker_connections.append(connection)
         return connection
 
-    def observed_close():
-        closes.append(get_ident())
-        return original_close()
+    def observed_close(*, checkpoint=True):
+        # A finite read leaves WAL truncation to SQLite (PR #3536 review M4).
+        closes.append((get_ident(), checkpoint))
+        return original_close(checkpoint=checkpoint)
 
     monkeypatch.setattr(database, "get_connection", observed_get)
     monkeypatch.setattr(database, "close_connection", observed_close)
@@ -105,7 +106,8 @@ def test_history_page_retires_only_its_new_native_worker_handle(
                         sqlite3.ProgrammingError, match="closed database"
                     ):
                         connection.execute("SELECT 1")
-                assert len(closes) == 1 and closes[0] != main_thread
+                [(thread, checkpoint)] = closes
+                assert thread != main_thread and checkpoint is False
         finally:
             if transaction is not None:
                 await asyncio.to_thread(transaction.__exit__, None, None, None)
@@ -190,8 +192,8 @@ def test_cancelled_history_waiter_does_not_close_a_running_native_read(
             connection.execute("SELECT * FROM missing_history_cancel_table")
         return original_search(*args, **kwargs)
 
-    def observed_close():
-        result = original_close()
+    def observed_close(*, checkpoint=True):
+        result = original_close(checkpoint=checkpoint)
         close_threads.append(get_ident())
         retired.set()
         return result
