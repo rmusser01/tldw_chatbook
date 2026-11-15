@@ -195,6 +195,50 @@ async def test_receipt_dispose_retains_busy_or_failed_native_owner(
 
 
 @pytest.mark.asyncio
+async def test_incomplete_agent_runs_retirement_never_skips_later_quit_teardown(
+    tmp_path,
+):
+    """PR #3536 review I1: the incomplete AgentRuns dispose propagated out of the
+    quit's console step, skipping every later owner and failing quit."""
+    from loguru import logger
+    from textual.app import App
+
+    from tldw_chatbook.app_lifecycle import LifecycleMixin
+
+    host = App()
+    host.chachanotes_db = SimpleNamespace(db_path=tmp_path / "chat.db")
+    host.conversation_local_marks_service = None
+    host._console_runtime_shutdown_task = None
+    runtime = host.console_runtime = ConsoleRuntime(
+        host, canvas_enabled_reader=lambda: False
+    )
+    runtime.ensure_activity_receipt_service()
+    connection = runtime._agent_runs_db._thread_local.conn
+    closed = []
+
+    async def aclose():
+        closed.append(True)
+
+    host._plugin_service = SimpleNamespace(aclose=aclose)
+    warnings = []
+    sink = logger.add(
+        lambda message: warnings.append(message.record["message"]), level="WARNING"
+    )
+    connection.execute("BEGIN")
+    try:
+        await LifecycleMixin._shutdown_console_runtime(host)
+    finally:
+        logger.remove(sink)
+        connection.rollback()
+        await runtime.dispose()
+    assert closed == [True], "a later quit owner was skipped"
+    assert (
+        "SQLite retirement incomplete at quit: sqlite_retirement_incomplete:AgentRuns"
+        in warnings
+    )
+
+
+@pytest.mark.asyncio
 async def test_receipt_dispose_does_not_revoke_a_foreign_managed_borrower(tmp_path):
     app, runtime = _runtime(tmp_path)
     runtime.ensure_activity_receipt_service()

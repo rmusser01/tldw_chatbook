@@ -43,6 +43,7 @@ from tldw_chatbook.config import (
     persist_cli_config_for_shutdown,
 )
 from tldw_chatbook.Constants import TAB_ARTIFACTS
+from tldw_chatbook.DB.base_db import SqliteRetirementIncomplete
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Navigation.shell_destinations import get_shell_destination
@@ -588,7 +589,13 @@ class LifecycleMixin:
                 await asyncio.shield(task)
             except asyncio.CancelledError as error:
                 cancellation = cancellation or error
-        task.result()
+            except SqliteRetirementIncomplete:
+                break  # Reported below.
+        try:
+            task.result()
+        except SqliteRetirementIncomplete as error:
+            # Later owners and quit go on; those handles close with the process.
+            logger.warning("SQLite retirement incomplete at quit: {}", error)
         if cancellation is not None:
             raise cancellation
         plugin_service = getattr(self, "_plugin_service", None)
@@ -860,6 +867,9 @@ class LifecycleMixin:
                 await self._retire_app_sqlite_handles()
             except asyncio.CancelledError as error:
                 cancellation = cancellation or error
+            except SqliteRetirementIncomplete as error:
+                # Never fail quit: those handles close with the process.
+                logger.warning("SQLite retirement incomplete at quit: {}", error)
             except BaseException as error:  # noqa: BLE001 - retain the existing shutdown error/cancellation precedence.
                 shutdown_error = error
 

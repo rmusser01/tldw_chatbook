@@ -6818,6 +6818,7 @@ class ConsoleRuntime:
                 logger.opt(exception=True).warning(
                     "Console runtime: Change Review shutdown failed at dispose."
                 )
+        from ..DB.base_db import SqliteRetirementIncomplete
         from .console_activity_receipts import retire_agent_runs_db
 
         receipt_retirement_incomplete = not await retire_agent_runs_db(runs_db)
@@ -6890,7 +6891,7 @@ class ConsoleRuntime:
         ):
             raise asyncio.CancelledError
         if receipt_retirement_incomplete:
-            raise RuntimeError("sqlite_retirement_incomplete:AgentRuns")
+            raise SqliteRetirementIncomplete("sqlite_retirement_incomplete:AgentRuns")
 
 
 def _attach(app: Any, runtime: ConsoleRuntime | None) -> None:

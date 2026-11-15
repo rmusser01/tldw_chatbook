@@ -13,6 +13,7 @@ async def retire_app_sqlite_handles(app: Any) -> None:
         _core_cached_connection,
         _repository_participant,
     )
+    from tldw_chatbook.DB.base_db import SqliteRetirementIncomplete
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
     from tldw_chatbook.DB.Evals_DB import EvalsDB
     from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
@@ -140,4 +141,6 @@ async def retire_app_sqlite_handles(app: Any) -> None:
         except Exception as error:  # noqa: BLE001 - settle independent owners; report categories only.
             incomplete.append(f"{name}:{type(error).__name__}")
     if incomplete:
-        raise RuntimeError("sqlite_retirement_incomplete:" + ",".join(incomplete))
+        raise SqliteRetirementIncomplete(
+            "sqlite_retirement_incomplete:" + ",".join(incomplete)
+        )

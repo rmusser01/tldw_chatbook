@@ -299,6 +299,38 @@ async def test_root_preserves_primary_shutdown_failure_and_native_handles(app, f
         assert connection.execute("SELECT 1").fetchone()[0] == 1
 
 
+async def test_root_logs_incomplete_retirement_and_quit_still_succeeds(app):
+    """PR #3536 review C1: a busy owner made `_shutdown` re-raise, so `App.run()`
+    ended in a traceback and dropped a pending recovery restart."""
+    from loguru import logger
+
+    class TextualBoundary:
+        async def _shutdown(self):
+            pass
+
+    class Application(LifecycleMixin, TextualBoundary):
+        async def _shutdown_app_owned_lifecycles(self):
+            pass
+
+    application = Application()
+    application.__dict__.update(vars(app))
+    connection = app.chachanotes_db._local.conn
+    connection.execute("BEGIN")
+    warnings = []
+    sink = logger.add(
+        lambda message: warnings.append(message.record["message"]), level="WARNING"
+    )
+    try:
+        await application._shutdown()
+    finally:
+        logger.remove(sink)
+    assert connection.in_transaction
+    assert (
+        "SQLite retirement incomplete at quit: sqlite_retirement_incomplete:Chat"
+        in warnings
+    )
+
+
 async def test_root_retires_only_after_native_shutdown_callbacks_finish(app):
     connections = [getattr(cache, attribute) for _, cache, attribute in _handles(app)]
 

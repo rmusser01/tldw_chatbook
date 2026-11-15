@@ -36,6 +36,13 @@ SEMANTIC_MUTATION_GUARD_FUNCTION = "console_semantic_mutation_authorized"
 TRACE_GC_DELETE_GUARD_FUNCTION = "console_trace_gc_delete_authorized"
 
 
+class SqliteRetirementIncomplete(RuntimeError):
+    """An owner stayed in use at quit; its handles close with the process (ADR225).
+
+    The message names owner categories only, never a path or a SQL body.
+    """
+
+
 # Thread-local, like the handles it governs (asyncio.to_thread copies
 # contextvars, which would leak an owner into another thread's handle).
 _OPERATION_OWNERS = threading.local()
