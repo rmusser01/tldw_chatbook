@@ -222,12 +222,14 @@ async def test_media_type_filter_keeps_selected_id_in_step_with_the_canvas():
         await pilot.pause()
         await pilot.pause()
 
-        canvas_state = screen._build_library_media_state()
+        canvas_state = screen._media_controller._build_library_media_state()
         assert canvas_state.selected_id != video_id  # the filter dropped it
         # The screen's own pointer must agree with what the canvas renders.
         assert screen._media_state.selected_media_id == canvas_state.selected_id
         # ...and the primary action must therefore open the visible item.
-        screen._open_library_media_viewer(screen._media_state.selected_media_id)
+        screen._media_controller._open_library_media_viewer(
+            screen._media_state.selected_media_id
+        )
         await pilot.pause()
         assert screen._media_state.selected_media_id == canvas_state.selected_id
 

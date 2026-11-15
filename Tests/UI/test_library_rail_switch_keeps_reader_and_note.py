@@ -551,7 +551,9 @@ async def test_programmatic_media_row_restore_keeps_reader_until_user_keys(tmp_p
             watched_screen = screen
 
             screen.set_focus(None)  # Framework/recompose focus-loss setup.
-            screen._restore_library_media_focus("#library-media-row-0")
+            screen._media_controller._restore_library_media_focus(
+                "#library-media-row-0"
+            )
             await _until(
                 pilot, lambda: restore_focus_handled, "the real restore focus event"
             )

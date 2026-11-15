@@ -62,7 +62,7 @@ def test_media_active_child_builder_honors_the_trash_view() -> None:
     screen._library_media_trash_records = ()
     screen._library_media_trash_total = 0
 
-    child = screen._build_library_media_active_child()
+    child = screen._media_controller._build_library_media_active_child()
 
     assert isinstance(child, LibraryMediaTrashCanvas), type(child).__name__
 
@@ -101,7 +101,7 @@ async def test_late_media_detail_arrival_cannot_clobber_the_trash_view() -> None
         assert screen._media_state.view == "trash"
 
         # The late worker continuation, fired exactly as the worker fires it.
-        screen._recompose_library_media_detail_if_unrendered()
+        screen._media_controller._recompose_library_media_detail_if_unrendered()
         for _ in range(10):
             await pilot.pause(0.02)
 

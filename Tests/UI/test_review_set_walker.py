@@ -1563,10 +1563,11 @@ def test_create_keeps_the_cap_warning_the_banner_cannot_carry(tmp_path):
 
 
 class _ReviewSelectedControllerFake:
-    """The one production hop the "Review selected" delegator makes.
+    """The controller seam the "Review selected" tests call directly.
 
     (wave-7 round-2 merge) ``handle_library_media_review_selected`` lives on
-    ``LibraryMediaController``; the screen keeps a one-line delegator. The
+    ``LibraryMediaController``. The screen's one-line delegator is gone
+    (Phase C task 3 moved the ``@on`` row to ``LibraryMediaCanvas``). The
     controller reaches the two state fields through its GENERATED shims, the
     worker through a group-(e) late-binding property, and ``run_worker`` as a
     framework service -- all three reproduced here so the REAL controller body

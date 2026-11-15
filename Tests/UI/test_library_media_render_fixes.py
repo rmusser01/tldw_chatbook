@@ -277,7 +277,7 @@ async def _switch_to_analysis(screen, pilot) -> None:
     screen._media_state.reader_session = set_mode(
         screen._media_state.reader_session, "analysis"
     )
-    screen._sync_library_media_viewer_or_recompose()
+    screen._media_controller._sync_library_media_viewer_or_recompose()
     await _wait_for_selector(screen, pilot, "#library-media-reader-mode-analysis")
     await pilot.pause()
 
@@ -649,7 +649,7 @@ async def test_a_scope_change_clears_the_armed_analyze_choice():
         _sync_library_canvas(screen, "media")
         await _wait_for_selector(screen, pilot, "#library-media-analyze-receipt")
 
-        screen._request_library_media_filter("beta")
+        screen._media_controller._request_library_media_filter("beta")
         await pilot.pause()
         assert screen._media_state.analyze_choice is None
         _sync_library_canvas(screen, "media")
@@ -1868,7 +1868,10 @@ async def test_media_filter_matches_a_keyword_absent_from_title_and_body():
         screen = await _open_media_list(host, pilot)
         await _apply_media_filter(screen, pilot, "day2")
 
-        titles = [row.title for row in screen._build_library_media_state().rows]
+        titles = [
+            row.title
+            for row in screen._media_controller._build_library_media_state().rows
+        ]
         assert titles == ["Opening remarks"], titles
         painted = _painted(host, screen.query_one("#library-media-list").region)
         assert "Opening remarks" in painted, painted
@@ -2228,7 +2231,7 @@ async def test_the_analysis_provider_is_resolved_only_on_the_tab_that_shows_it(
         await _open_first_reader_row(screen, pilot)
 
         calls.clear()
-        screen._sync_library_media_viewer_or_recompose()
+        screen._media_controller._sync_library_media_viewer_or_recompose()
         await pilot.pause()
         assert calls == [], (
             f"the Read tab resolved the analysis provider {len(calls)} time(s)"
@@ -2236,7 +2239,7 @@ async def test_the_analysis_provider_is_resolved_only_on_the_tab_that_shows_it(
 
         await _switch_to_analysis(screen, pilot)
         calls.clear()
-        screen._sync_library_media_viewer_or_recompose()
+        screen._media_controller._sync_library_media_viewer_or_recompose()
         await pilot.pause()
         assert len(calls) == 1, (
             f"the Analysis tab resolved the provider {len(calls)} times per sync"
@@ -2624,7 +2627,7 @@ async def _force_media_page_failure(host, screen, pilot, exc: BaseException):
 
     host.app_instance.media_reading_scope_service.search_media = _fails
     controller = screen._library_media_browse_controller
-    screen._request_library_media_page(1, focus_identity=None)
+    screen._media_controller._request_library_media_page(1, focus_identity=None)
     await _wait_for_condition(
         pilot,
         lambda: (
@@ -2732,7 +2735,7 @@ async def test_media_facet_failure_paints_the_same_callout():
             raise sqlite3.OperationalError("database is locked")
 
         host.app_instance.media_reading_scope_service.list_library_media_types = _fails
-        screen._request_library_media_facets()
+        screen._media_controller._request_library_media_facets()
         await _wait_for_condition(
             pilot,
             lambda: controller.facet_failure is not None and not controller.facet_loading,
@@ -2817,7 +2820,7 @@ async def test_changed_page_context_failure_is_not_a_repeated_retry():
 
         # A DIFFERENT page hits the same reason -- a changed context, never a
         # consecutive Retry of the one that just failed.
-        screen._request_library_media_page(2, focus_identity=None)
+        screen._media_controller._request_library_media_page(2, focus_identity=None)
         await _wait_for_condition(
             pilot,
             lambda: len(calls) >= 2,
@@ -2897,7 +2900,7 @@ async def test_facet_only_failure_leaves_the_row_supported_actions_live():
             raise sqlite3.OperationalError("database is locked")
 
         host.app_instance.media_reading_scope_service.list_library_media_types = _fails
-        screen._request_library_media_facets()
+        screen._media_controller._request_library_media_facets()
         await _wait_for_condition(
             pilot,
             lambda: (

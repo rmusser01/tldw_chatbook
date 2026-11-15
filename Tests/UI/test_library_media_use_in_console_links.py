@@ -309,7 +309,7 @@ async def test_media_use_in_console_links_on_use_journey():
         # The registry is back: the receipt still stands, so Undo it cleanly
         # before the next section (control: the sentence above removed
         # nothing).
-        screen._sync_library_media_viewer_or_recompose()
+        screen._media_controller._sync_library_media_viewer_or_recompose()
         await pilot.pause()
         await _wait_for_receipt(screen, pilot, LINKED_RECEIPT, app)
         await _press_undo(screen, pilot)
@@ -380,7 +380,7 @@ async def test_media_use_in_console_links_on_use_journey():
         # receipt, and no copy carries a raw id.
         registry.clear_active_workspace()
         screen._invalidate_library_workspace_depth_state()
-        screen._sync_library_media_viewer_or_recompose()
+        screen._media_controller._sync_library_media_viewer_or_recompose()
         await pilot.pause()
         await _wait_for_no_receipt(
             screen, pilot, "receipt painted with no active workspace"

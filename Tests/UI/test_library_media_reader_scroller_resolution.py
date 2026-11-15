@@ -224,14 +224,14 @@ async def test_match_scroll_moves_the_visible_scroller_after_a_mode_round_trip()
         )
 
         # rendered -> raw: builds and mounts the Raw view for the first time.
-        await screen._set_library_media_content_mode("raw")
+        await screen._media_controller._set_library_media_content_mode("raw")
         await pilot.pause()
         body = await _open_raw_view_ready(screen, pilot)
         raw_view = body.raw_view
         assert raw_view is not None
 
         # raw -> rendered: the Raw view stays MOUNTED (lifetime, not mode).
-        await screen._set_library_media_content_mode("rendered")
+        await screen._media_controller._set_library_media_content_mode("rendered")
         await pilot.pause()
         assert body.active_mode == "rendered"
         assert body.raw_view is raw_view, (
@@ -254,7 +254,7 @@ async def test_match_scroll_moves_the_visible_scroller_after_a_mode_round_trip()
             "there is nothing for a match scroll to move."
         )
 
-        screen._scroll_library_media_content_to_line(target_line)
+        screen._media_controller._scroll_library_media_content_to_line(target_line)
         await _wait_for_condition(
             pilot,
             lambda: markdown_scroll.scroll_y > 0,
@@ -363,7 +363,7 @@ async def test_match_scroll_resolves_the_real_scroller_and_maps_through_the_wrap
             f"(expected_row={expected_row}, max_scroll_y={raw_view.max_scroll_y})."
         )
 
-        screen._scroll_library_media_content_to_line(target_line)
+        screen._media_controller._scroll_library_media_content_to_line(target_line)
         # `scroll_to_source_line` calls `scroll_to(..., animate=False)`
         # without `immediate=True`, so Textual defers applying it to the
         # next screen refresh -- poll rather than assume one pump suffices.
