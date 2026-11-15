@@ -860,7 +860,8 @@ async def test_reset_after_restore_sets_plugins_aside_and_kept_data_reattaches(
             assert "sets the restored plugins aside" in consequence
             assert "keeps every saved-data folder where it is" in consequence
             assert "Nothing is deleted" in consequence
-            assert "keep using disk space until you remove them by hand" in consequence
+            # TASK-41107: package files move aside too, out of plugin storage.
+            assert "move there too and stop counting against plugin storage" in consequence
             assert "unlock instead: that keeps every plugin" in consequence
             reset.query_one("#plugin-reset-confirm", Button).press()
             await _until(lambda: "reset." in str(status.render()), "reset")

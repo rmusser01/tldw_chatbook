@@ -147,8 +147,9 @@ If the backup's passphrase is lost, **Reset authority…** keeps everything:
    plugin folder. Nothing is deleted, and every saved-data folder stays where it
    is. Backups leave the `reset-…` folder out (it holds the downloads' copies of
    your git and SSH settings), and a later restore leaves it in place. The
-   set-aside plugins' package files also stay in the plugin folder, unused, and
-   keep their disk space until you remove them by hand.
+   set-aside plugins' package files (`packages/`, `packages-revisions/`) move
+   there too, so they stop counting against the plugin storage limit; the
+   `reset-…` folder keeps its disk space until you delete it.
 3. Reinstall each plugin from its source. A plugin whose source is gone cannot
    come back this way.
 4. Manage plugin ▸ **Attach kept saved-data folder** lists the kept folders.
@@ -157,7 +158,11 @@ If the backup's passphrase is lost, **Reset authority…** keeps everything:
    the review shows its contents before you attach it.
 
 Outside a restore, reset still refuses setup while plugins are installed or
-saved data remains, and its confirmation says so.
+saved data remains, and its confirmation says so. With neither left, setup moves
+any downloads made under the old authority, with their download records, into a
+`reset-…` folder: the new authority cannot verify those records, and listing
+downloads (**Candidates…**) or downloading again would fail on them. Nothing is
+deleted.
 
 Each plugin download from a repository since the backup (a source refresh, an
 update check, an install or an update) leaves a download folder,

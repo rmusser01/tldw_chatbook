@@ -2184,9 +2184,18 @@ async def test_lost_passphrase_reset_sets_restored_plugins_aside_and_keeps_data(
     sets the restored registry, download records and downloads aside and
     deletes nothing; the plugin is reinstalled from its source and its kept
     saved-data folder is attached again after review."""
+    from tldw_chatbook.Plugins.retention import managed_usage
+
     service, install, installation, root, approved = await _restored_after_change(
         tmp_path, monkeypatch, native_package
     )
+    plugin_root = root.path.parent.parent
+    package_bytes = sum(
+        path.stat().st_size
+        for path in (plugin_root / "packages").rglob("*")
+        if path.is_file()
+    )
+    assert package_bytes and managed_usage(plugin_root) > package_bytes
     plugins = service("elsewhere")
     try:
         assert await plugins.authority_status() == "recovery_required"
@@ -2196,12 +2205,16 @@ async def test_lost_passphrase_reset_sets_restored_plugins_aside_and_keeps_data(
         assert await plugins.authority_status() == "needs_setup"
         await plugins.bootstrap("new passphrase")
         assert approved, "setup after the reset did not approve the restore"
-        plugin_root = root.path.parent.parent
         (aside,) = plugin_root.glob("reset-*")
         assert (aside / "registry.sqlite3").is_file()
         assert (aside / "acquisition-custody").is_dir()
         assert [path.name for path in (aside / "staging").iterdir()]
         assert not (plugin_root / "staging").exists()
+        # TASK-41107: the package bytes no registry names any more move aside
+        # with the rest, so plugin storage capacity stops counting them.
+        assert (aside / "packages" / installation).is_dir()
+        assert not (plugin_root / "packages").exists()
+        assert managed_usage(plugin_root) == 0
         assert (root.path / "notes.txt").read_bytes() == b"made by the plugin"
         # r14plg-rev1: the set-aside registry names the folder's former plugin.
         ((kept, former, _alias),) = await plugins.kept_data_folders()
@@ -2293,3 +2306,57 @@ async def test_unreadable_restore_witness_never_unlocks_adoption_or_setup(
         # Saved data never re-authenticated here, so a clean close refuses.
         with pytest.raises(PermissionError, match="root_authority_unavailable"):
             await plugins.aclose()
+
+
+@platform_support.managed_runtime
+@pytest.mark.asyncio
+@pytest.mark.timeout(300)
+async def test_setup_after_a_reset_outside_a_restore_keeps_downloads_listable(
+    tmp_path, monkeypatch, native_package
+):
+    """TASK-41108: with nothing installed, Reset authority… then setup works
+    outside a restore. Download records signed by the old authority used to stay
+    behind, and every listing (Candidates…) and every new download then failed
+    with ``acquisition custody invalid``. Setup now sets them aside with their
+    downloads, deleting nothing, and both keep working."""
+    from Tests.Plugins.acquisition_process_support import repository
+    from tldw_chatbook.Plugins import authority_store
+    from tldw_chatbook.Plugins.git_source import select_local_source
+    from tldw_chatbook.Plugins.service import PluginService
+    from tldw_chatbook.Plugins.source_service import SourceService
+
+    monkeypatch.setattr(
+        authority_store,
+        "is_secure_keyring_backend",
+        lambda candidate: isinstance(candidate, _FakeSecureKeyring),
+    )
+    keyring = _FakeSecureKeyring()
+    plugins = PluginService(
+        tmp_path / "profile",
+        workspace_lookup=lambda _: None,
+        marker_store_factory=lambda store: authority_store.KeyringPluginMarkerStore(
+            store, keyring_backend=keyring
+        ),
+    )
+    sources = SourceService(plugins)
+    source = select_local_source(repository(native_package(), tmp_path / "git-source"))
+    try:
+        await plugins.bootstrap("old passphrase")
+        destination = await plugins.acquisition_destination("op-old")
+        await plugins.acquire_snapshot(source, "op-old", destination)
+        assert [row["operation_id"] for row in await sources.list_persisted_candidates()]
+        reset = await plugins.review_authority_reset()
+        assert not reset.retained and not reset.restored
+        await plugins.reset_authority(reset)
+        await plugins.bootstrap("new passphrase")
+        assert await plugins.authority_status() == "ready"
+        assert await sources.list_persisted_candidates() == ()
+        (aside,) = (tmp_path / "profile" / "plugins").glob("reset-*")
+        assert len(list((aside / "acquisition-custody").iterdir())) == 1
+        assert (aside / "staging" / destination.parent.name / "snapshot").is_dir()
+        destination = await plugins.acquisition_destination("op-new")
+        await plugins.acquire_snapshot(source, "op-new", destination)
+        rows = await sources.list_persisted_candidates()
+        assert [row["operation_id"] for row in rows] == ["op-new"]
+    finally:
+        await plugins.aclose()

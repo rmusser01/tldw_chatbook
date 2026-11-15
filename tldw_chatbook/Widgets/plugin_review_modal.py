@@ -603,8 +603,8 @@ def reset_consequence(review) -> str:
             "sets the restored plugins aside (their registry, download records and "
             "downloads move to a reset-… folder inside the plugin folder) and keeps "
             "every saved-data folder where it is. Nothing is deleted. Their package "
-            "files stay in the plugin folder and keep using disk space until you "
-            "remove them by hand. Reinstall the plugins from their sources, then "
+            "files move there too and stop counting against plugin storage; the "
+            "reset-… folder keeps its disk space until you delete it. Reinstall the plugins from their sources, then "
             "attach their kept saved data in Manage plugin; a plugin whose source is "
             "gone cannot come back this way. If you still have the plugin passphrase "
             "this backup was made with, close this and unlock instead: that keeps "
@@ -615,7 +615,12 @@ def reset_consequence(review) -> str:
             "Setting authority up again is refused while plugins are installed or "
             "plugin saved data remains here."
         )
-    return "Afterwards, set authority up again with Authority…."
+    return (
+        "Afterwards, set authority up again with Authority…. Setup moves any "
+        "downloads made under the old authority, with their download records, into "
+        "a reset-… folder inside the plugin folder: the new authority cannot "
+        "verify them. Nothing is deleted."
+    )
 
 
 def reset_next_step(review) -> str:
