@@ -3326,6 +3326,47 @@ async def test_conversation_handoff_evidence_bundle_reaches_capture_as_real_cont
 
 @pytest.mark.asyncio
 @private_profile_test
+async def test_a_cut_conversation_excerpt_reads_as_partial_before_and_on_send(
+    request,
+):
+    """TASK-41102: Library cuts a long conversation at its 3,000-character
+    excerpt cap and sets ``body_truncated``; the staged strip and tray rows
+    and the context the model receives say the excerpt is partial."""
+    from Tests.UI.test_library_handoff_excerpts import _screen_with_conversation
+
+    payload = _screen_with_conversation(
+        "x" * 2994, "Later message."
+    )._selected_conversation_handoff_payload()
+    assert payload is not None and payload.body_truncated
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        screen = _active_console_screen(host)
+        await _wait_for_selector(screen, pilot, "#console-native-composer")
+        screen._stage_handoff_as_console_live_work(payload)
+        await _wait_for_selector(
+            screen, pilot, "#console-staged-source-primary-0", timeout=30
+        )
+        strip_row = screen.query_one("#console-staged-evidence-row-0", Static)
+        tray_row = screen.query_one("#console-staged-source-primary-0")
+        assert "Planning (partial excerpt)" in str(strip_row.renderable)
+        assert "Planning (partial excerpt)" in tray_row.label.plain
+        launch = screen._pending_console_launch_context
+        assert launch is not None
+
+    capture_app = with_alias_services(
+        SimpleNamespace(chachanotes_db=_ExistingChaChaDBDouble(conversation_ids={"chat-a"}))
+    )
+    result = await capture_console_staged_evidence_for_chat(
+        capture_app, launch, user_message="What did we plan?"
+    )
+    assert result.context is not None
+    assert "Planning (partial excerpt)" in result.context
+
+
+@pytest.mark.asyncio
+@private_profile_test
 async def test_console_send_blocked_reason_sendable_for_media_handoff_with_new_bundle(
     request,
 ):

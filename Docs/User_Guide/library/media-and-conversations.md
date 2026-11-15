@@ -615,7 +615,8 @@ or Assistant setting. The excerpt is the first 3,000 characters of its
 transcript, each message labelled with its sender, followed by the
 conversation's title, ID, message count, workspace, and last update. A longer
 conversation is cut at 3,000 characters and its later messages are left out;
-nothing on screen says so. When you send, the model receives the excerpt.
+Console's staged row then reads "*title* (partial excerpt)", and the model
+receives the excerpt under that same title.
 
 **Resume conversation** (keyboard: `c`) instead opens the original saved
 conversation and its active branch. **Restore and resume** first recovers
@@ -854,7 +855,8 @@ Global navigation keys live in the [guide index](../index.md).
   excerpt", "Stored text excerpt (truncated)", or "Metadata only (no stored
   text)". "Use as source" (conversations) sends the first 3,000 characters of
   its transcript, each message labelled with its sender; see
-  [Conversations](#conversations).
+  [Conversations](#conversations). In Console, a cut excerpt of either kind is
+  staged as "*title* (partial excerpt)", which the model sees too.
 - **No conversation delete here** — by design, this panel never modifies
   chats. Manage sessions from Console itself.
 - **"Media item is unavailable."** — the item was removed while you had it

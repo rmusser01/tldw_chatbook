@@ -16365,6 +16365,11 @@ class ChatScreen(BaseAppScreen):
         )
         snippet = _safe_text(source_text, max_length=4_000)
         title = _safe_text(payload.title) or "Untitled"
+        # TASK-41102: a cut excerpt says so on its staged row and to the model.
+        partial = bool(source_text) and (
+            len(str(source_text)) > 4_000
+            or (source_text == payload.body and payload.body_truncated)
+        )
         launch_payload: dict[str, Any] = {
             "target_id": _safe_text(payload.content_ref or payload.source_id or title),
             "item_type": _safe_text(payload.item_type),
@@ -16405,7 +16410,7 @@ class ChatScreen(BaseAppScreen):
                         evidence_id="S1",
                         source_id=_safe_text(payload.source_id) or "unknown",
                         source_type=_safe_text(payload.item_type) or "rag-result",
-                        title=title,
+                        title=f"{title} (partial excerpt)" if partial else title,
                         snippet=snippet or title,
                         authority_label=_safe_text(payload.runtime_backend) or "local",
                         content_ref=payload.content_ref,

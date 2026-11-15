@@ -1092,6 +1092,10 @@ MINIMUM_FILES = 2148
 # TASK-41139 (2026-11-15): append the popup-closed Send node and the visit
 # dispatch file at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 2150
+MINIMUM_FILES = 2147
+# TASK-41102 (2026-11-15): append the partial-excerpt node at the tail. The
+# floor is the measured entry count.
+MINIMUM_FILES = 2151
 
 
 def read_census(path: Path) -> list[str]:

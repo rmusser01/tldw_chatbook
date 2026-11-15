@@ -3116,3 +3116,6 @@ Tests/UI/test_backup_known_profiles.py
 # Console visit (bootstrap_profile).
 Tests/UI/test_console_command_popup.py::test_enter_with_popup_closed_sends_normally
 Tests/UI/test_console_visit_dispatch_dedupe.py
+# TASK-41102 (2026-11-15): a cut conversation excerpt reads as partial in the
+# staged strip and tray and in the model's context (private profile).
+Tests/UI/test_console_live_work_handoffs.py::test_a_cut_conversation_excerpt_reads_as_partial_before_and_on_send

@@ -1018,7 +1018,9 @@ followed by its title and ID; Library's Media reader ▸ Info says whether that
 excerpt is complete or truncated. A conversation ("Use as source") sends the
 first 3,000 characters of its transcript, each message labelled with its
 sender, followed by its title and ID; a longer conversation is cut there and
-its later messages are left out, with no notice. Other handoff kinds
+its later messages are left out. Whenever an excerpt was cut, its row in the
+staged-evidence strip and the Inspector's Sources tray reads "*title* (partial
+excerpt)", and the model receives it under that title. Other handoff kinds
 (skills, watchlists/collections snapshots, quizzes, personas) cannot
 reach the model at all yet: their Sources rows render **Listed — not
 sent** (expanding a row says so explicitly) instead of Ready, because

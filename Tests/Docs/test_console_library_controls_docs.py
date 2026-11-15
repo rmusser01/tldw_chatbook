@@ -38,6 +38,8 @@ DOC_CONTRACT: dict[str, tuple[str, ...]] = {
         "the first 3,000 characters of its transcript, each message labelled "
         "with its sender",
         "the first 500 characters of its stored text",
+        # TASK-41102: a cut excerpt is staged under a marked title.
+        "title (partial excerpt)",
     ),
     "Docs/User_Guide/settings/rag.md": (
         "does not grant automatic retrieval or assistant Library access",
@@ -66,6 +68,7 @@ DOC_CONTRACT: dict[str, tuple[str, ...]] = {
         "the first 3,000 characters of its transcript, each message labelled "
         "with its sender",
         "the first 500 characters of its stored text",
+        "title (partial excerpt)",
     ),
     "Docs/Development/Agent-Tools/local-library-tools.md": (
         "selector, not an enable switch",
