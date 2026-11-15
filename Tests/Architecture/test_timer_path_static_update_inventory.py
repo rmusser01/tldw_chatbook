@@ -1036,20 +1036,12 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
     # -- Widgets/Console/console_session_switcher_modal.py
     (
         "tldw_chatbook/Widgets/Console/console_session_switcher_modal.py",
-        "ConsoleSessionSwitcherModal._update_hints",
-        "hints",
+        "ConsoleSessionSwitcherModal._update_selected_detail",
+        "detail",
     ): (
         "NOT-PER-TICK: `_poll_active_projection` early-returns on its "
         "snapshot equality gate (generation + results + receipt state), "
         "so an unchanged tick reaches no DOM write."
-    ),
-    (
-        "tldw_chatbook/Widgets/Console/console_session_switcher_modal.py",
-        "ConsoleSessionSwitcherModal._update_selected_detail",
-        "detail",
-    ): (
-        "NOT-PER-TICK: behind the same projection-snapshot equality gate "
-        "as _update_hints above."
     ),
     # -- Widgets/Console/console_settings_field_row.py
     (
