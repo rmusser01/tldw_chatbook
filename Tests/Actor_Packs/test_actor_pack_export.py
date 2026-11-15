@@ -14,6 +14,8 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+from tldw_chatbook import __version__
+from tldw_chatbook.Actor_Packs import export as export_module
 from tldw_chatbook.Actor_Packs.contracts import (
     ZIP_COMPRESSION,
     ZIP_CREATE_SYSTEM,
@@ -38,7 +40,7 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
 from tldw_chatbook.Persona_Visual.repository import PersonaVisualRepository
 
-from .conftest import PNG_1X1, canonical_json
+from .conftest import GOLDEN_PRODUCER_VERSION, PNG_1X1, canonical_json
 
 PORTABLE_UUID = "123e4567-e89b-42d3-a456-426614174000"
 
@@ -557,6 +559,7 @@ def test_archive_bytes_are_deterministic_and_independently_readable(
             assert info.create_system == ZIP_CREATE_SYSTEM
             assert info.external_attr == ZIP_EXTERNAL_ATTR
         root = json.loads(archive.read("actor-pack.json"))
+        assert root["producer"] == {"name": "tldw_chatbook", "version": __version__}
         assert "actor-pack.json" not in {item["path"] for item in root["files"]}
         declared = {
             item["path"]: (item["bytes"], item["sha256"]) for item in root["files"]
@@ -578,8 +581,12 @@ def test_archive_bytes_are_deterministic_and_independently_readable(
 
 @pytest.mark.parametrize("actor_kind", ("character", "persona"))
 def test_archive_matches_independent_golden_bytes(
-    actor_kind: str,
+    actor_kind: str, monkeypatch
 ) -> None:
+    # The goldens carry a fixed producer version (TASK-41112): every release
+    # bump since they were cut (2c893cfc8d, 0.1.8.0 -> 0.1.8.1) moved the
+    # first member's bytes. The deterministic test above pins the real one.
+    monkeypatch.setattr(export_module, "__version__", GOLDEN_PRODUCER_VERSION)
     payload = canonical_json(
         {
             "schema": "tldw.actor/v1",
