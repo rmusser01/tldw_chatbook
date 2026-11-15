@@ -3886,3 +3886,49 @@ def test_dreams_resolves_a_custom_slot_to_its_handler(provider, handler, endpoin
     chat(messages_payload=[{"role": "user", "content": "hi"}], streaming=False)
 
     assert [call["api_endpoint"] for call in captured] == [handler]
+
+
+@pytest.mark.parametrize("session_url", [None, "http://127.0.0.1:8000/v1"])
+def test_detach_never_moves_conversations_to_an_unknown_family(session_url, monkeypatch):
+    """TASK-41144: an entry whose family Chatbook does not know (hand-written
+    in config.toml) moved its conversations to a provider named after the
+    family string, which no adapter serves, so every later send from them
+    failed. Detach now refuses with a reason; nothing moves or is deleted,
+    and the copy names the entry, never the family string or its URL."""
+    from tldw_chatbook.UI.Screens import settings_provider_view_model as view_model
+
+    deleted = []
+    monkeypatch.setattr(
+        view_model,
+        "delete_settings_from_cli_config",
+        lambda section, keys: deleted.append((section, keys)) or True,
+    )
+    store = _ReferencingStore(session_url)
+
+    with pytest.raises(view_model.DetachRefused) as caught:
+        view_model.detach_and_delete_entry(
+            _entry_config("http://127.0.0.1:8000/v1", family="vllm_native"), store, "custom-ep:box"
+        )
+
+    assert store.replaced == [] and deleted == []
+    copy = caught.value.user_copy
+    assert copy.startswith("Detach blocked:") and "'Box'" in copy
+    assert "vllm_native" not in copy and "127.0.0.1" not in copy
+
+
+def test_an_unknown_family_entry_with_no_conversations_still_deletes(monkeypatch):
+    """TASK-41144: with nothing to move, Detach only deletes the entry."""
+    from tldw_chatbook.UI.Screens import settings_provider_view_model as view_model
+
+    deleted = []
+    monkeypatch.setattr(
+        view_model,
+        "delete_settings_from_cli_config",
+        lambda section, keys: deleted.append((section, keys)) or True,
+    )
+
+    view_model.detach_and_delete_entry(
+        _entry_config("http://127.0.0.1:8000/v1", family="vllm_native"), None, "custom-ep:box"
+    )
+
+    assert deleted == [("custom_endpoints", ["box"])]
