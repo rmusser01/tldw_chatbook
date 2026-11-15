@@ -8555,6 +8555,15 @@ CI cycle. Inspect added logger statements with the checker's `--statements`
 mode, regenerate the reviewed inventory, and run the derived-artifact checks
 before pushing; passing feature and packaging tests does not cover that pin.
 
+**PR #3569 follow-up (2026-11-15).** The Speech ownership migration moved two
+unchanged constant `logger.debug` calls from SettingsScreen into its category
+panel. Forty-seven targeted rebase cases covered behavior and CI routing, but
+none checked the diagnostic owner artifact; preflight then failed before the
+behavior lanes could start. The statement review confirmed the same messages,
+levels and rejection conditions, with no arguments or sink change. Moving a
+diagnostic between files also requires the inventory check, even when its text
+and behavior are unchanged.
+
 **PR #3189 follow-up (2026-10-21).** All 16 behavior lanes passed, including
 ten UI shards and Console P0, before the aggregate rejected two unrefreshed
 owner rows. Two new bounded controller diagnostics and two unchanged Library
