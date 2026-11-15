@@ -46,6 +46,10 @@ nonempty Chroma/recovered-media/loose-voice layouts and populated unqualified
 embedding caches. External workspace locators stay unresolved pending review;
 old targets are not opened. Exact installed built-in artwork may supply validated
 ID/hash/reference dependencies; arbitrary custom assets cannot be substituted.
+Personal Context interview drafts stay on the original device; the review says
+so. Relocation stops if the profile holds Personal Context itself, because its
+key stays in the original device's keyring: make an encrypted backup with
+credentials there, then restore it with Replace.
 
 Windows keyring integration and inherited provider/API environment variables are
 disabled for this independent profile. Managed credentials are excluded from

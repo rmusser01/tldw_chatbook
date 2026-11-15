@@ -1694,3 +1694,53 @@ def test_personal_context_capture_refuses_a_first_link_in_flight(
         _capture_personal_context(tmp_path, monkeypatch, root)
     assert not (tmp_path / "stage" / path.name).exists()
 
+
+def test_no_reviewer_approves_the_shared_sync_owners():
+    """TASK-40137: after a restore, nothing approves `config` or
+    `runtime.sync_state`, and that is what keeps Notes and Chat sync and the
+    Personal Context link from resuming as the restored device. Once both are
+    approved, every Sync v2 route sends the restored `device_id` and cursors
+    (probe in TASK-40137's notes). By the owner's ruling (2026-11-12), the
+    only future approvers allowed are TASK-40139's sync-identity review (both
+    owners, with the rebind) and TASK-40711's config review (`config` alone).
+    Any approval, called or passed by reference, is counted here."""
+    from tldw_chatbook.MCP.recovery_activation import _OWNERS as mcp_owners
+    from tldw_chatbook.Personal_Context.recovery import OWNER as personal_context_owner
+    from tldw_chatbook.Plugins.backup import OWNER as plugins_owner
+    from tldw_chatbook.RAG_Search.activation import _REVIEW_OWNERS as rag_owners
+
+    calls = Counter()
+    for path in sorted((ROOT / "tldw_chatbook").rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        if "ActivationStore" not in text:
+            continue
+        tree = ast.parse(text)
+        called = {
+            id(node.func): node for node in ast.walk(tree) if isinstance(node, ast.Call)
+        }
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and node.attr == "approve":
+                call = called.get(id(node))
+                owner = (
+                    ", ".join(ast.unparse(arg) for arg in call.args[1:])
+                    if call
+                    else "<reference>"
+                )
+                calls[(path.relative_to(ROOT).as_posix(), owner)] += 1
+    assert calls == Counter(
+        {
+            ("tldw_chatbook/MCP/recovery_activation.py", "row.owner"): 1,
+            # review_pairing refuses any other owner than "notes.file_notes"
+            # (Notes/recovery_review.py:253).
+            ("tldw_chatbook/Notes/recovery_review.py", "owner"): 1,
+            # TASK-40134's restore review approves only the repository.
+            ("tldw_chatbook/Personal_Context/recovery.py", "OWNER"): 1,
+            ("tldw_chatbook/Plugins/backup.py", "OWNER"): 1,
+            ("tldw_chatbook/RAG_Search/activation.py", "owner"): 1,
+            ("tldw_chatbook/RAG_Search/model_recovery.py", "'models.artifacts'"): 1,
+            ("tldw_chatbook/Skills_Interop/recovery_activation.py", "'skills'"): 1,
+        }
+    )
+    assert {"config", "runtime.sync_state"}.isdisjoint(
+        {*mcp_owners, personal_context_owner, plugins_owner, *rag_owners}
+    )
