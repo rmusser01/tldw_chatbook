@@ -512,12 +512,15 @@ retiring downstream stores and scratch.
 A turn's claim is OPAQUE only for what the turn can actually reach (ADR-285, "Late
 opaque widening"). `spawn_subagent`, `install_skill` and `run_skill_script` widen
 the turn's own claim in place when called (`WorktreeActivity.widen_to_opaque`);
-other workspace activity refuses that one call with a tool error, never a wait;
-an already-OPAQUE claim covers it, including a fleet child's call after its
+other workspace activity refuses that one call with a tool error, never a wait.
+A disposed runtime or a changed session or binding refuses it too; otherwise an
+already-OPAQUE claim covers it, including a fleet child's call after its
 parent's turn sealed. The light/full tool surface is fixed at admission and the
 reply cannot widen it, so a light-surface turn does not count Canvas, chatbook's
 own MCP tools or the local tools the light surface does not offer (its file
-write tools among them). The
+write tools among them). The per-run run-log directory under the first writable
+binding is private storage and declares no project write, so two agent chats on
+the same writable project run at once until one of them really writes. The
 runtime's own app with no Personal Context service cached yet counts as bounded;
 a custom cached service stays OPAQUE.
 
