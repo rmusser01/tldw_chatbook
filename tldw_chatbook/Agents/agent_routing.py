@@ -430,6 +430,7 @@ def freeze_spawn_target(
     """Freeze execution and its configured/default or owned selected endpoint."""
     from tldw_chatbook.Chat.console_provider_endpoints import (
         DEFAULT_LLAMACPP_BASE_URL,
+        console_own_table_endpoint,
         effective_provider_endpoint,
     )
     from tldw_chatbook.Chat.console_provider_support import (
@@ -457,8 +458,14 @@ def freeze_spawn_target(
 
                     base_url = normalize_qwencloud_base_url(settings.get("api_base_url"))
                 else:
-                    base_url = effective_provider_endpoint(
-                        identity.readiness_key, None, settings
+                    # TASK-40300 review r14ep-rev5: the endpoint a Console send
+                    # to ``execution`` uses (MLX-LM's host and port, an
+                    # adapter's own table), not only Console's table.
+                    base_url = console_own_table_endpoint(
+                        execution,
+                        app_config,
+                        effective_provider_endpoint(identity.readiness_key, None, settings),
+                        settings,
                     )
                     record = RECORDS_BY_KEY.get(execution)
                     if base_url is None and record is not None:

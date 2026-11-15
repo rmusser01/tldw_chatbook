@@ -4397,6 +4397,9 @@ async def test_console_send_leaves_base_url_unpinned_in_default_case(
 
     The kwarg stays absent so each adapter keeps resolving its own default
     (including any legacy-section endpoint) exactly as before the fix.
+    HuggingFace is the exception (TASK-40300 review r14ep-rev5): its adapter
+    reads ``huggingface_api`` unpinned, whatever Console checked, so it is
+    always pinned to the endpoint Console checked.
     """
 
     calls: list[dict[str, object]] = []
@@ -4432,7 +4435,10 @@ async def test_console_send_leaves_base_url_unpinned_in_default_case(
         )
     ] == ["ok"]
 
-    assert "api_base_url" not in calls[0]
+    if provider_key == "huggingface":
+        assert calls[0]["api_base_url"] == resolution.base_url
+    else:
+        assert "api_base_url" not in calls[0]
 
 
 @pytest.mark.asyncio

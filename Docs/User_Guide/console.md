@@ -817,7 +817,8 @@ does an agent's sub-call, an approval summary or `/image`'s conversation
 context call. The provider's configured endpoint includes one in a table only
 its adapter reads, such as `[api_settings.aphrodite_api] api_url`,
 `[api_settings.ooba_api] api_ip` or HuggingFace's older `huggingface_api`
-table, when the provider's own table has none. For MLX-LM it is always the
+table (its `router_base_url` in router mode), when the provider's own table
+has none; Console sends HuggingFace to the address it checked. For MLX-LM it is always the
 address MLX-LM builds from its `host` and `port` (`http://127.0.0.1:8080/v1`
 when neither is set), which is where it sends; its `api_url` is not used. A
 custom endpoint whose base URL is one of these is not loaded,

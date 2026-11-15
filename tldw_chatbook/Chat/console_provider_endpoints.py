@@ -287,6 +287,11 @@ def adapter_own_endpoint(
     """
     from tldw_chatbook.provider_registry import RECORDS_BY_KEY
 
+    legacy_hf = app_config.get("huggingface_api")
+    if dispatch == "huggingface" and isinstance(legacy_hf, Mapping):
+        if _huggingface_router_mode(legacy_hf):
+            # Router mode reads the router base, as chat_with_huggingface does.
+            return effective_provider_endpoint(dispatch, None, legacy_hf)
     for path in _ADAPTER_OWN_ENDPOINTS.get(dispatch, ()):
         value: object = app_config
         for key in path:
@@ -377,7 +382,10 @@ def meaningful_adapter_base_url(execution_key: str, base_url: str | None) -> str
         return None
     if not isinstance(base_url, str) or not base_url.strip():
         return None
-    if base_url == builtin_provider_endpoint(execution_key):
+    # TASK-40300 review r14ep-rev5: HuggingFace is always pinned. Unpinned, its
+    # adapter reads ``huggingface_api`` (and, in router mode, its
+    # ``router_base_url``) whatever Console checked.
+    if base_url == builtin_provider_endpoint(execution_key) and execution_key != "huggingface":
         return None
     return base_url
 

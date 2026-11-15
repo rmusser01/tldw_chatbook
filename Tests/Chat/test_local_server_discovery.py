@@ -3614,6 +3614,132 @@ async def test_huggingface_console_checks_and_pins_its_legacy_table(legacy):
         await _assert_ready_and_pinned("huggingface", config, legacy)
 
 
+_HF_BUILTIN = "https://api-inference.huggingface.co/v1"
+
+
+def _hf_config(legacy, *, router=False, router_base_url="http://127.1:9000/hf"):
+    """A merged config whose HuggingFace table has no endpoint, with a legacy one."""
+    config = _merged(
+        {"api_settings": {"huggingface": {"api_base_url": "", "api_key": "hf_notarealkey0000000000"}}}
+    )
+    config["huggingface_api"] = {
+        "api_base_url": legacy,
+        "use_router_url_format": router,
+        "router_base_url": router_base_url,
+    }
+    return config
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("config", "chat_endpoint", "pinned"),
+    [
+        # The legacy URL is the built-in one: it was checked, then left unpinned.
+        (_hf_config(_HF_BUILTIN), None, _HF_BUILTIN),
+        # A chat endpoint equal to the built-in one went unpinned, so the
+        # adapter posted to a refused legacy URL.
+        (_hf_config("http://127.1:8000/v1"), _HF_BUILTIN, _HF_BUILTIN),
+        # Router mode reads the router base, which is checked and pinned.
+        (
+            _hf_config(_HF_BUILTIN, router=True, router_base_url="https://router.huggingface.co/hf-inference"),
+            None,
+            "https://router.huggingface.co/hf-inference",
+        ),
+    ],
+)
+async def test_huggingface_is_always_pinned_to_the_endpoint_console_checked(
+    config, chat_endpoint, pinned
+):
+    """Review r14ep-rev5: HuggingFace was unpinned whenever Console's endpoint
+    was the built-in one, and ``chat_with_huggingface`` then read
+    ``huggingface_api`` (or its ``router_base_url``) unchecked."""
+    settings = ConsoleSessionSettings(provider="huggingface", model="m", base_url=chat_endpoint)
+    seen: list[str] = []
+
+    resolution = await _resolve_endpoint_send(settings, config, chat_endpoint is not None, seen)
+
+    assert resolution.ready is True, resolution.visible_copy
+    assert [s for s in seen if s.startswith("adapter:")] == [f"adapter:{pinned}"]
+
+
+@pytest.mark.asyncio
+async def test_huggingface_router_mode_never_reaches_an_unchecked_router_base():
+    """Review r14ep-rev5: in router mode the adapter posted to a refused
+    ``huggingface_api.router_base_url`` while Console checked the built-in URL."""
+    await _assert_refused_without_a_request("huggingface", _hf_config(_HF_BUILTIN, router=True))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("ooba_api", "ready"), [("http://127.1:5000/v1", False), ("http://127.0.0.1:5000/v1", True)])
+async def test_a_blanked_shipped_endpoint_falls_back_to_the_adapters_own_table(ooba_api, ready):
+    """Review r14ep-rev5 (a): on the merged config, a user who blanks the shipped
+    ``[api_settings.oobabooga] api_url`` gets ``[api_settings.ooba_api] api_ip``,
+    checked and pinned."""
+    config = _merged({"api_settings": {"oobabooga": {"api_url": ""}, "ooba_api": {"api_ip": ooba_api}}})
+
+    if ready:
+        await _assert_ready_and_pinned("oobabooga", config, ooba_api)
+    else:
+        await _assert_refused_without_a_request("oobabooga", config)
+
+
+def _frozen_endpoint(config, provider):
+    from tldw_chatbook.Agents.agent_routing import SpawnTarget, freeze_spawn_target
+
+    return freeze_spawn_target(config, SpawnTarget(provider, "m", None, (), "preset")).base_url
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("user", "pinned"),
+    [
+        ({}, "http://127.0.0.1:8080/v1"),
+        ({"api_settings": {"local_mlx_lm": {"host": "localhost", "port": 9000}}}, "http://localhost:9000/v1"),
+    ],
+)
+async def test_a_sub_agent_frozen_on_mlx_posts_to_its_host_and_port(user, pinned):
+    """Review r14ep-rev5: ``freeze_spawn_target`` froze ``[api_settings.
+    local_mlx_lm] api_url``, the shipped placeholder, and a same-provider child,
+    which overlays the frozen endpoint on its own resolution, posted there."""
+    import dataclasses
+
+    config = _merged(user)
+    frozen = _frozen_endpoint(config, "local_mlx_lm")
+    pins: list[str] = []
+
+    def adapter(**kwargs):
+        pins.append(kwargs.get("api_base_url"))
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: config,
+        environ={},
+        http_client=_client(lambda request: httpx.Response(200, json=_openai_models_payload("m"))),
+        chat_api_call_fn=adapter,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="local_mlx_lm", explicit_model="m", streaming=False)
+    )
+    child = dataclasses.replace(resolution, base_url=frozen)
+    [c async for c in gateway.stream_chat(child, [{"role": "user", "content": "x"}])]
+
+    assert frozen == pinned
+    assert pins == [pinned]
+
+
+def test_a_sub_agent_target_freezes_the_endpoint_the_send_checks():
+    """Review r14ep-rev5: a frozen target took only Console's table, so an
+    adapter's own table and HuggingFace's legacy one were never frozen, and a
+    refused legacy URL froze as the built-in one."""
+    from tldw_chatbook.Agents.agent_routing import RoutingError
+
+    ooba = _merged({"api_settings": {"oobabooga": {"api_url": ""}, "ooba_api": {"api_ip": "http://127.0.0.1:5000/v1"}}})
+
+    assert _frozen_endpoint(ooba, "oobabooga") == "http://127.0.0.1:5000/v1"
+    with pytest.raises(RoutingError):
+        _frozen_endpoint(_hf_config("http://127.1:8000/v1"), "huggingface")
+
+
 def test_a_refused_entry_renames_and_counts_but_offers_no_duplicate():
     """TASK-40300 review r14ep-rev2 M-c: Rename checked the whole entry, so a
     refused one failed with its URL reason; the section count left it out."""
