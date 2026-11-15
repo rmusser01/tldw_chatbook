@@ -667,10 +667,12 @@ def verify_restored_keys(plan) -> tuple[str, ...]:
 def reencrypt_profile(repository, *, expected_damaged: int = 0) -> str:
     """TASK-40140: re-encrypt a profile so an old archive's key reads no live row.
 
-    The old account stays while any recovery copy exists: a retained copy may
-    name it, and its later rollback would then open nothing (ADR-126 decision 8).
-    Which trigger runs this (after a restore, or a Settings action) is the
-    owner's call; nothing calls it yet.
+    Owner decision 2026-11-13: confirming "Review restored profile" calls this
+    (``PersonalContextService.reencrypt_after_restore``). Owner decision
+    2026-11-14: the ``expected_damaged`` unreadable record versions the review
+    showed are removed in the same transaction; a different count refuses. The
+    old account stays while any recovery copy exists: a retained copy may name
+    it, and its later rollback would then open nothing (ADR-126 decision 8).
     """
     from tldw_chatbook.Backup_Recovery.recovery_copies import list_recovery_copies
     from tldw_chatbook.Backup_Recovery.service_storage import default_control_root

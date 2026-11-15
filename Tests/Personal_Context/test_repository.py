@@ -1965,6 +1965,16 @@ def test_reencryption_removes_the_damaged_versions_the_review_counted(
         expected_version_id=None,
     )
     target = "record-version-2" if damaged == "head" else "record-version-1"
+    # What points at the damaged version: a queued envelope (row, encrypted body
+    # and its head) and a quarantine note; a note naming no version stays.
+    outbox_id = repo.commit_outbox_body(
+        object_type="record",
+        object_id="record-1",
+        version_id=target,
+        body={"version": 1, "fixture": "queued"},
+    )
+    repo.quarantine_object("record", "record-1", target, "integrity_failure")
+    repo.quarantine_object("record", "record-1", None, "fixture_unversioned")
     _damage(db_path, target)
     data = db_path.read_bytes()
     repo = _keyring_repo(db_path, backend)
@@ -1982,6 +1992,23 @@ def test_reencryption_removes_the_damaged_versions_the_review_counted(
     rows = _rows(db_path)
     assert target not in {row["version_id"] for row in rows}
     assert all(_opens_with(row, key.encryption_key) for row in rows)
+    with closing(sqlite3.connect(db_path)) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM encrypted_outbox WHERE outbox_id = ?", (outbox_id,)
+        ).fetchone() == (0,)
+        assert connection.execute(
+            "SELECT COUNT(*) FROM encrypted_objects WHERE object_type = 'outbox' "
+            "AND object_id = ?",
+            (outbox_id,),
+        ).fetchone() == (0,)
+        assert connection.execute(
+            "SELECT COUNT(*) FROM object_heads WHERE object_type = 'outbox' "
+            "AND object_id = ?",
+            (outbox_id,),
+        ).fetchone() == (0,)
+        assert connection.execute(
+            "SELECT version_id, reason_code FROM quarantine WHERE object_id = 'record-1'"
+        ).fetchall() == [(None, "fixture_unversioned")]
     fresh = _keyring_repo(db_path, backend)
     assert fresh.damaged_record_versions() == 0
     if damaged == "head":

@@ -3,7 +3,7 @@ id: TASK-40135
 title: "A replace restore makes restored Personal Context records readable"
 status: Done
 created_date: 2026-11-10 17:13
-updated_date: '2026-11-13 20:30'
+updated_date: '2026-11-15 00:22'
 assignee:
 - '@claude'
 labels:
@@ -109,3 +109,6 @@ Files: `tldw_chatbook/Personal_Context/{recovery.py,key_protector.py}`, `tldw_ch
 - **Named refusals.** `personal_context_restore_changed`, `personal_context_key_account_in_use`, `personal_context_key_install_failed` and `personal_context_validation_unavailable` have messages, and are also listed in `known`. `restore_changed` tells the user to review the restore again. Test: `test_personal_context_restore_refusals_are_named`.
 - **Red on the previous head:** the four codes read `backup_operation_failed`, and both cannot-tell cases deleted or misreported.
 
+**2026-11-15, review r14pcc-rev2 fixes.**
+- **`known` entries.** The four `known` entries that `_ISSUE_MESSAGES` already returned are removed; they could never be reached.
+- **Finalize failure.** A new end-to-end case, `[finalize_fails-include]`, makes `finalize_candidate` fail inside `replace()`. `replace()` rolls back on its own. The test checks that the account this restore installed is gone, the live copy names its original account, and the original records read. Red under a temporary removal of the `_forget_personal_context_keys` call at that site.

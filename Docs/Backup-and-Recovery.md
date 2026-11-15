@@ -273,8 +273,10 @@ review** that counts what it will clear: device ids, dataset bindings and cursor
 pull cursors, remote heads, Personal Context links, unsent changes and saved Prepare
 results. **Clear sync identity and approve sync** clears all of them for every
 server profile, then approves the profile settings and the sync state together.
-Then **Prepare sync** again in Settings > Sync: it registers this device as a new
-one and downloads again (sync refuses to run until then). Changes that were queued
+Then prepare sync again: in Settings > Overview > **Advanced / Diagnostics**, choose
+**Switch Source / Server**, then **Activate Server** with the same server. That
+registers this device as a new one and downloads again (sync refuses to run until
+then). Changes that were queued
 but never sent are dropped from the queue (they stay in your local data). If the
 counts changed after they were shown, nothing is cleared; open **Restored
 profiles** again and review the new counts. If the sync state cannot be read, the

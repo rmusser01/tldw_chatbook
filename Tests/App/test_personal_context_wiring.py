@@ -195,7 +195,7 @@ def test_restored_link_resumes_nothing_before_its_review(monkeypatch) -> None:
     )
     asyncio.run(app_destinations._run_personal_context_link(app))
     assert reads == []
-    assert notices and "needs attention" in notices[0]
+    assert notices and "Linking waits for the restore reviews" in notices[0]
 
 
 def test_an_unreadable_restore_review_is_named_only_while_sync_is_off(
@@ -266,7 +266,9 @@ def test_no_link_starts_before_the_restore_reviews(monkeypatch) -> None:
     )
     asyncio.run(app_destinations._run_personal_context_link(app))
     assert touched == []
-    assert notices and "needs attention" in notices[0]
+    # Review r14pcc-rev2: the refusal names the pending reviews.
+    assert notices and "Linking waits for the restore reviews" in notices[0]
+    assert "Backup & Restore > Restored profiles" in notices[0]
 
 
 

@@ -1244,7 +1244,18 @@ async def _run_personal_context_link(app) -> None:
                 continue
             await coordinator.apply(result.plan_id, result.decisions)
             break
-    except Exception:
+    except Exception as error:
+        from .Personal_Context.recovery import SYNC_REVIEW_REQUIRED
+
+        if isinstance(error, ValueError) and str(error) == SYNC_REVIEW_REQUIRED:
+            # TASK-40139: name the pending restore reviews, not a generic error.
+            app.notify(
+                "Linking waits for the restore reviews: choose Review restored "
+                "profile in Settings > Personal Context, and review the sync "
+                "identity in Backup & Restore > Restored profiles.",
+                severity="warning",
+            )
+            return
         app.notify(
             "Profile linking needs attention. No profile content was shown; retry from Settings.",
             severity="error",

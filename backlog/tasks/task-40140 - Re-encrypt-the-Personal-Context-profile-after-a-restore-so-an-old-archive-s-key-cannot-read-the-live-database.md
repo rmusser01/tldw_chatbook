@@ -4,7 +4,7 @@ title: "Re-encrypt the Personal Context profile after a restore so an old archiv
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-14 23:18'
+updated_date: '2026-11-15 00:22'
 created_date: 2026-11-10 17:13
 labels:
 - follow-up
@@ -94,3 +94,7 @@ Files: `tldw_chatbook/Personal_Context/{repository_keys.py,key_protector.py,reco
   - **Why keeping it is safe.** The kept account holds only the old encryption key, which reads no row once the profile is re-encrypted, so keeping it does not weaken this task's goal.
   - **Proposed follow-up:** delete kept accounts when the last recovery copy is deleted.
 
+**2026-11-15, review r14pcc-rev2 fixes.**
+- **Outbox bodies go too.** `_remove_damaged` now selects each damaged version's `encrypted_outbox` (`outbox_id`, `envelope_version`). For each one it calls `PersonalContextRepository._shred_outbox_body`, which removes the encrypted body and its `object_heads` row, before it deletes the rows. `test_reencryption_removes_the_damaged_versions_the_review_counted` now seeds a `commit_outbox_body` and two quarantine notes, one versioned and one with no version. It checks that the outbox row, its body and its head are gone, the versioned note is gone and the version-less note stays. Red on the previous head: an orphan body remained (`(1,) == (0,)`).
+- **Copy.** One damaged record reads in the singular. When re-encryption refuses (for example the count changed), the panel reloads (`load_records`) so the current count shows before the next confirm. Test: `test_a_refused_review_reloads_the_damaged_count`. Red on the previous head (plural copy), and red under a temporary removal of the reload.
+- **Docstring.** `recovery.reencrypt_profile` names its caller (the review) and `expected_damaged`.

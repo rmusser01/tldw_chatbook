@@ -874,7 +874,10 @@ async def test_restored_profiles_sync_identity_review_shows_counts_then_approves
             assert screen.query("#backup-sync-identity-review"), "no sync review"
             review = _text(screen, "#backup-sync-identity-review")
             assert review.startswith("Sync identity review")
-            assert "Prepare sync again in Settings > Sync" in review
+            assert (
+                "Settings > Overview > Advanced / Diagnostics, choose Switch Source / "
+                "Server, then Activate Server with the same server" in review
+            )
             assert "registers this device as a new one" in review
             for line in (
                 "• Device ids: 1",
@@ -905,7 +908,10 @@ async def test_restored_profiles_sync_identity_review_shows_counts_then_approves
                     while not screen.query("#backup-sync-identity-review"):
                         await pilot.pause(0.02)
                 return
-            assert "Prepare sync again in Settings > Sync" in message
+            assert (
+                "Settings > Overview > Advanced / Diagnostics, choose Switch Source / "
+                "Server, then Activate Server with the same server" in message
+            )
             async with asyncio.timeout(10):
                 while screen.query("#backup-sync-identity-review"):
                     await pilot.pause(0.02)

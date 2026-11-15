@@ -385,7 +385,9 @@ Personal Context merge or resolution action in Settings.
   Sync with your server, for Notes and Chat too, stays off after a restore and
   never resumes as the old device: turn it back on with the **Sync identity
   review** in Backup & Restore > Restored profiles, which clears the restored
-  device identity first, then Prepare sync again in Settings > Sync. Until then
+  device identity first, then prepare sync again: in Settings > Overview >
+  **Advanced / Diagnostics**, choose **Switch Source / Server**, then **Activate
+  Server** with the same server. Until then
   Settings > Personal Context keeps saying sync is off and names that step. Link
   to home server waits for both reviews. If some records were damaged so that no
   key can read them, **Review restored profile** first says how many, and

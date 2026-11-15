@@ -337,12 +337,18 @@ class RepositoryKeyCustody:
             self._protector.delete(old_account)
         return account
 
-    @staticmethod
-    def _remove_damaged(connection, damaged) -> None:
+    def _remove_damaged(self, connection, damaged) -> None:
         """Drop unreadable record versions with what points at them: a head
-        (the record goes; it already reads under no key), queued envelopes and
-        quarantine notes. Readable history stays."""
+        (the record goes; it already reads under no key), queued envelopes with
+        their encrypted bodies and heads, and quarantine notes. Readable history
+        and notes that name no version stay."""
         for key in damaged:
+            for outbox_id, envelope_version in connection.execute(
+                "SELECT outbox_id, envelope_version FROM encrypted_outbox "
+                "WHERE object_type = ? AND object_id = ? AND version_id = ?",
+                key,
+            ).fetchall():
+                self._shred_outbox_body(connection, outbox_id, envelope_version)
             for table in ("object_heads", "encrypted_outbox", "quarantine"):
                 connection.execute(
                     f"DELETE FROM {table} WHERE object_type = ? "  # nosec B608 - fixed names

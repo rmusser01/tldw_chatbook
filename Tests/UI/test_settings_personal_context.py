@@ -2466,3 +2466,47 @@ async def test_sync_stays_named_off_until_the_sync_identity_review(monkeypatch) 
         assert "Backup & Restore > Restored profiles > Sync identity review" in copy
         assert not panel.query("#personal-context-restore-review")
 
+
+
+@pytest.mark.asyncio
+async def test_a_refused_review_reloads_the_damaged_count(monkeypatch) -> None:
+    """TASK-40140 (review r14pcc-rev2): one damaged record reads in the
+    singular; when re-encryption refuses (the count changed), the panel reloads
+    and shows the new count before the next confirm."""
+    import tldw_chatbook.Widgets.Settings_Widgets.personal_context_panel as module
+    from tldw_chatbook.Personal_Context import recovery
+
+    class _CountChanged(_RestoredProfileService):
+        def reencrypt_after_restore(self, *, expected_damaged: int = 0) -> str:
+            self.steps.append(("reencrypt", expected_damaged))
+            self.damaged = 2
+            raise RuntimeError("damaged records changed since review")
+
+    service = _CountChanged(_ready_snapshot(), damaged=1)
+    monkeypatch.setattr(module, "restore_review", lambda path: recovery.REVIEW_AVAILABLE)
+    monkeypatch.setattr(
+        module, "approve_restore_review", lambda path: service.steps.append("approve")
+    )
+    panel = PersonalContextSettingsPanel(service)
+
+    class _PanelHost(ConsolidatedCSSApp):
+        def compose(self):
+            yield panel
+
+    def damaged_line():
+        return str(
+            panel.query_one("#personal-context-restore-review-damaged", Static).render()
+        )
+
+    host = _PanelHost()
+    async with host.run_test(size=(100, 40)) as pilot:
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        assert damaged_line() == "1 damaged record can't be read and will be removed"
+        await pilot.click("#personal-context-restore-review")
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        assert service.steps == [("reencrypt", 1)]
+        assert damaged_line() == "2 damaged records can't be read and will be removed"

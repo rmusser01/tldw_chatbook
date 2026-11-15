@@ -648,6 +648,24 @@ try:
         'personal_context_restore_readable:' + next(
             key for key, path in plan.restore if path == target)], plan.issues
     assert target in {path for _, path in plan.restore}
+    if SCENARIO == 'finalize_fails':
+        # Review r14pcc-rev2: a finalize failure inside replace() rolls back on
+        # its own; the account this restore installed must go with it.
+        finalize = publication.finalize_candidate
+
+        def refused(*args, **kwargs):
+            raise ValueError('injected finalize failure')
+
+        publication.finalize_candidate = refused
+        reviewed(lambda ack: service.start_restore(
+            inspection, plan_for(ack), rollback_password=ROLLBACK), state='failed')
+        publication.finalize_candidate = finalize
+        assert account(live) == original_account
+        assert records(live) == ['record-after-backup', 'record-device-only']
+        assert {k for k in current['device'].values if k[0] == SERVICE} - set(before) == set()
+        assert {k: v for k, v in current['device'].values.items() if k in before} == before
+        print('retired and reopened')
+        raise SystemExit(0)
     if SCENARIO in ('finish', 'rollback'):
         # AC#9: interrupted after the key step, before publication completes.
         class Stop(Exception):
@@ -739,6 +757,7 @@ print('retired and reopened')
         ("no_keyring", "include"),
         ("isolated", "include"),
         ("isolated_elsewhere", "exclude"),
+        ("finalize_fails", "include"),
     ],
 )
 def test_replace_restore_makes_personal_context_readable_and_rolls_back(

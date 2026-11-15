@@ -11,7 +11,7 @@ labels:
 - recovery
 - personal-context
 - security
-updated_date: '2026-11-14 23:18'
+updated_date: '2026-11-15 00:22'
 priority: medium
 references:
 - tldw_chatbook/app.py
@@ -117,3 +117,6 @@ Files: `tldw_chatbook/Personal_Context/recovery.py`, `tldw_chatbook/Sync_Interop
 - **Race-free counts (minor 1).** `approve_sync_identity` holds `acquire_storage(state_path)` for the whole step. `clear_restored_identity(expected=shown)` compares the counts and clears inside one `BEGIN IMMEDIATE` transaction.
 - **Copy (minor 2).** Success and the review note say to Prepare sync again in Settings > Sync, which registers this device as a new one. `sync_once` refuses until then. `Docs/Backup-and-Recovery.md` says the same.
 
+**2026-11-15, review r14pcc-rev2 fixes.**
+- **The re-prepare path is real now.** Settings has no Sync category and no Prepare control. The one path that prepares Sync v2 again is Settings > Overview > Advanced / Diagnostics > **Switch Source / Server** > **Activate Server**. That runs `settings_screen._perform_runtime_source_switch`, which calls `sync_scope_service.prepare_sync_v2_profile_mode(profile_mode="local_first_sync")`; I checked this in the code. The review note, the success message (`_PREPARE_SYNC_STEP` in `backup_restore_screen.py`), `Docs/Backup-and-Recovery.md`, the User Guide and the two UI assertions now name it, "…then Activate Server with the same server".
+- **A gated link names the reviews.** A link refused by the restore gate (`SYNC_REVIEW_REQUIRED`) now says "Linking waits for the restore reviews: choose Review restored profile in Settings > Personal Context, and review the sync identity in Backup & Restore > Restored profiles." It used to show the generic "needs attention". Both wiring tests pin it; red on the previous head.

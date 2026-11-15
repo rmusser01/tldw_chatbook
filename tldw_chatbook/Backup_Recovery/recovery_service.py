@@ -329,11 +329,6 @@ def issue_code(error: Exception, *, kind: str = "") -> str:
         "recovery_operation_running",
         "recovered_review_changed",
         "recovered_asset_held",
-        # TASK-40135: also in _ISSUE_MESSAGES, which returns them first.
-        "personal_context_restore_changed",
-        "personal_context_key_account_in_use",
-        "personal_context_key_install_failed",
-        "personal_context_validation_unavailable",
     }
     if (
         isinstance(error, ValueError)

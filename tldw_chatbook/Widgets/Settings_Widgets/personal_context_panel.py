@@ -650,8 +650,12 @@ class PersonalContextSettingsPanel(Vertical):
             if self._restore_review in {REVIEW_AVAILABLE, RESTORED_LINK_STATE}:
                 if self._damaged_records:
                     yield Static(
-                        f"{self._damaged_records} damaged records can't be read "
-                        "and will be removed",
+                        (
+                            "1 damaged record can't be read and will be removed"
+                            if self._damaged_records == 1
+                            else f"{self._damaged_records} damaged records can't "
+                            "be read and will be removed"
+                        ),
                         id="personal-context-restore-review-damaged",
                         classes="settings-inline-guidance",
                         markup=False,
@@ -1005,7 +1009,13 @@ class PersonalContextSettingsPanel(Vertical):
                 # TASK-40140, owner decision 2026-11-13: re-encrypt first, so a
                 # failure leaves the profile readable and the review offered.
                 # Owner decision 2026-11-14: the damaged records shown go too.
-                service.reencrypt_after_restore(expected_damaged=damaged)
+                try:
+                    service.reencrypt_after_restore(expected_damaged=damaged)
+                except BaseException:
+                    # A refusal (say, the count changed) reloads the review, so
+                    # the current count shows before the next confirm.
+                    self.app.call_from_thread(self.load_records)
+                    raise
                 approve_restore_review(path)
 
             self.notify("Re-encrypting the restored profile under a new key…")

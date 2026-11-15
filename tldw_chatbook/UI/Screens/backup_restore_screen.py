@@ -33,6 +33,12 @@ from .backup_restore_state import (
 )
 
 _RETAINED_CREDENTIAL_REVIEW = "credential_isolated_retention_required"
+# TASK-40139: the only path that re-prepares Sync v2 (settings_screen
+# `_perform_runtime_source_switch` -> `prepare_sync_v2_profile_mode`).
+_PREPARE_SYNC_STEP = (
+    "in Settings > Overview > Advanced / Diagnostics, choose Switch Source / "
+    "Server, then Activate Server with the same server"
+)
 # TASK-40139: what the sync-identity review clears, as shown before confirming.
 _SYNC_IDENTITY_COUNTS = (
     ("device_ids", "Device ids"),
@@ -978,8 +984,9 @@ class BackupRestoreScreen(Screen):
                         "Context) stays off after a restore, because the restored "
                         "sync state would act as the device the backup came from. "
                         "Approving clears that identity for every server profile and "
-                        "approves server sync; then Prepare sync again in Settings > "
-                        "Sync, which registers this device as a new one and downloads "
+                        "approves server sync. Then prepare sync again: "
+                        + _PREPARE_SYNC_STEP
+                        + ", which registers this device as a new one and downloads "
                         "again. Changes queued but never sent are dropped from the "
                         "queue. It clears:\n"
                         + "\n".join(
@@ -1123,8 +1130,9 @@ class BackupRestoreScreen(Screen):
         try:
             self.service.approve_sync_identity(shown)
             message = (
-                "Sync identity cleared and server sync approved. Prepare sync again "
-                "in Settings > Sync; it registers this device as a new one."
+                "Sync identity cleared and server sync approved. Prepare sync again: "
+                + _PREPARE_SYNC_STEP
+                + "; it registers this device as a new one."
             )
         except (OSError, ValueError, RuntimeError, sqlite3.Error) as error:
             code = self.service.issue_code(error)
