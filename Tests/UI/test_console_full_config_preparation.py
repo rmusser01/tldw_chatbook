@@ -639,3 +639,56 @@ async def test_explicit_settings_refreshes_after_a_retired_old_config_read(tmp_p
             await asyncio.gather(opener, return_exceptions=True)
         await asyncio.gather(*tasks, return_exceptions=True)
         database.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mode", "expected", "reads"),
+    [("explicit", True, 2), ("passive", False, 1), ("always-expired", False, 2)],
+)
+async def test_settings_rechecks_only_one_late_native_display(
+    tmp_path, monkeypatch, mode, expected, reads
+):
+    from tldw_chatbook.UI.Console_Modules import console_spend_projection as spend
+
+    database, store, _controller, screen, tasks = _screen(tmp_path)
+    projection = spend.ConsoleReadinessConfigProjection.for_screen(screen)
+    session = store.active_session_id
+    origin = store.capture_console_settings_origin(session)
+    clock = [1.0]
+    observed = []
+    main = threading.get_ident()
+    old_main, old_thread = sys.getprofile(), threading.getprofile()
+
+    # Advance only the display clock between the stock read and publication.
+    monkeypatch.setattr(spend, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+
+    def observe(frame, event, result):
+        if (
+            event == "return"
+            and frame.f_code is projection.read_current.__code__
+            and isinstance(result, spend.ConsoleReadinessConfigRead)
+        ):
+            proof = result._display_proof
+            assert threading.get_ident() != main and proof is not None
+            observed.append(proof)
+            if len(observed) == 1 or mode == "always-expired":
+                clock[0] += projection.max_age
+
+    def current():
+        return store.capture_console_settings_origin(session) == origin
+
+    threading.setprofile_all_threads(observe)
+    try:
+        kwargs = {} if mode == "passive" else {"retry_busy_if_current": current}
+        assert await projection.warm(**kwargs) is expected
+        assert len(observed) == reads
+        proof = projection._display_proof
+        assert proof is not None and proof.at == observed[-1].at
+        assert (clock[0] - proof.at < projection.max_age) is expected
+        assert current() and not projection.pending and not projection._reads
+    finally:
+        threading.setprofile_all_threads(old_thread)
+        sys.setprofile(old_main)
+        await asyncio.gather(*tasks, return_exceptions=True)
+        database.close()

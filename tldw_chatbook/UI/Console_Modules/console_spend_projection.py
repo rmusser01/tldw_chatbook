@@ -236,6 +236,7 @@ class _DisplayReadAttempt:
     runtime: Any
     entered: threading.Event | None
     busy: bool = False
+    display_proof: _CheckedDisplayProof | None = None
 
 
 class ConsoleReadinessConfigProjection:
@@ -637,6 +638,18 @@ class ConsoleReadinessConfigProjection:
         ):
             # Only the explicit owner may continue an authentic busy read.
             self.run(lambda: None, life=ahead, _wait_for_config=True)
+            attempt = await self._wait_for_refresh(wait_unadmitted=True)
+        if (
+            attempt is not None
+            and not self.pending
+            and attempt.display_proof is not None
+            and attempt.display_proof is self._display_proof
+            and time.monotonic() - attempt.display_proof.at >= self.max_age
+            and _same_readiness_key(attempt.key, key)
+            and explicit_owner_current(attempt)
+        ):
+            # This was our own read, but it aged out before Settings could use it.
+            self.run(lambda: None, life=ahead, _wait_for_config=True)
             await self._wait_for_refresh(wait_unadmitted=True)
         return (
             _same_readiness_key(key, self._key())
@@ -826,6 +839,8 @@ class ConsoleReadinessConfigProjection:
                 self.at = proof.at
                 _checked_display_proofs.add(published)
                 self._display_proof = published
+                if attempt is not None:
+                    attempt.display_proof = published
             self._retry_delay = 0.0
             installed = True
             retry = False
