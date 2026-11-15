@@ -73,6 +73,9 @@ Exact evidence freshness and a bounded plan format also needed explicit rules.
    not a claim of filesystem isolation or multi-process scheduling.
    Opaque-capable native work acquires a runtime-wide opaque-effect reservation
    before root-specific claims, since its cwd does not bound its effects.
+   (Amended 2026-11-13 for ordinary Console turns: sub-agents and skill
+   installs/scripts widen the turn's own claim when used; see "Late opaque
+   widening" at the end of this ADR.)
    Restriction state is run/task-bound even when providers are shared.
 6. Workflow time policy charges the union of active execution intervals and
    excludes only durably quiescent approval/capacity waits. Alive/unknown cleanup
@@ -579,6 +582,9 @@ opaque; stock declarations distinguish confined paths from private control-plane
 effects. Selected-profile DENY may be projected by the existing by-key resolver
 (ASK remains reachable). Real final composition must fit that captured maximum;
 declaration metadata grants neither tool permission nor dispatch authority.
+
+Amended 2026-11-13 (TASK-40715): sub-agent spawn and skill install/script
+reachability no longer enter this maximum; see "Late opaque widening".
 
 ### Pure declaration correction (controller accepted)
 
@@ -1338,3 +1344,26 @@ This supersedes the sentences above that let unproven cleanup "hold disposal ind
 - A workflow run held only by unproven cleanups (each of its tool workers is retained or has returned) does not stop exit. `ConsoleRuntime.dispose` closes every other owner and then reports `workflow_original_shutdown_unresolved`, and the app's exit runs its remaining owners before re-raising, logging any further failure it does not raise. A cancellation requested meanwhile is still re-raised, chained to the retained runs. A run whose custody is still live keeps stopping disposal before capacity closes.
 - A goal iteration that ends on it is uncertain, so it needs recovery.
 - The Release row follows the run's retained records, not how the run ended, and releases every slot the run still holds. A closed and reopened conversation finds it again by the card's persisted id.
+
+## Late opaque widening for undeclarable turn effects (TASK-40715), 2026-11-13
+
+Owner decision, 2026-11-13. Every ordinary Console agent turn was OPAQUE up front because `spawn_subagent` (`max_subagents` 2, not configurable) and, with a skills service, `install_skill` and `run_skill_script` were reachable. An opaque claim conflicts with every other claim in the runtime, so while one chat's agent reply ran, Send in any other chat, character chats included, was refused "Workspace activity is busy".
+
+Decision. Reachability of these three tools no longer makes the ordinary maximum OPAQUE. The turn's own claim upgrades to OPAQUE in place when the turn actually uses one:
+
+- `spawn_subagent`, and every other child launch through the same reservation (skill forks, Code Review children, continuations): at `OrdinaryTurn.attach`, before the child's row, client, model or thread.
+- `install_skill` and `run_skill_script`: after the user's confirmation and before the effect.
+
+`WorktreeActivity.widen_to_opaque` performs the upgrade under the activity lock. It never waits. If any other live claim, recovery protection or workflow window exists, it refuses, and that one tool call returns a tool error naming the busy workspace; the turn carries on. Two widening turns therefore cannot deadlock: each refuses the other. A widened claim is an ordinary OPAQUE claim: it conflicts with every other claim runtime-wide until it retires, and it never narrows. The turn's sources and runtime must still be current for every such call: a disposed runtime or controller, or a changed session, binding, workspace or conversation, refuses it (the tool error says the chat changed). A claim that is already OPAQUE (widened, or OPAQUE up front) then covers the effect even after the submission sealed the turn: fleet children outlive it, and their `run_skill_script` goes through the parent's widening. No new child attaches to a sealed turn. A holder of the claim's pre-widening bounded footprint stays valid, because OPAQUE covers it (`validate_claim` accepts the recorded `widened_from` footprint).
+
+Scope. This supersedes, for these three tools only, Decision 5's "acquires a runtime-wide opaque-effect reservation before root-specific claims", the Task8D2 contract's "cannot silently expand" and Task 8D1's "bounded claims cannot be upgraded" (Change Review borrowing still cannot upgrade a bounded claim). Everything else that is OPAQUE stays up front: MCP-eligible sessions, hooks, Change Review, plugin-owned skills, references, SSH and remote roots, pending captures and unknown providers.
+
+COST. A spawn, install or script is refused while other workspace activity runs (another chat's turn, a workflow window or startup recovery protection), where before the other chat's Send was refused. The undeclarable effect's coverage is decided at its call, so a turn's claim can change shape after admission.
+
+Owner decision, 2026-11-14 (the default-config terms). A real-app probe showed a default first Send still OPAQUE through three terms whose tools the default light tool surface (Full agent tools off) does not offer:
+
+- Canvas and chatbook's own MCP tools: the ordinary maximum counts only tools the turn's tool surface offers. Admission fixes the light/full choice before capture, and a `$`-mention draft always counts as full, because it may bind a skill. The reply honours a light admission even if the live choice has since turned full (for example, agent work arriving in that chat), so a turn cannot widen from light to full after its claim was taken. On the light surface, Canvas no longer marks the maximum OPAQUE, `builtin:tldw_chatbook` MCP rows no longer count, and the local maximum keeps only the local tools the light surface offers (`ask_user` and `LIGHT_SURFACE_LOCAL_OPT_INS`), so its write tools no longer add the writable bindings' write scopes. With Full agent tools on, all of these still count up front as before. Composition is unchanged; the light surface's allow-list already keeps the other tools from dispatch. Local tools the light surface does not offer get no receiving record, so the tree also refuses them at dispatch, and a writable root needs write coverage only when a reachable local tool writes.
+
+Owner decision, 2026-11-14 (the run-log root). A send's agent sources pick the first writable folder binding (else scratch) as the run-log root, and the maximum used to declare a write over that whole root (`tree.source.root`), so two agent turns on the same writable project always collided. The per-run `.<dir>/<run_id>` run-log directory is private storage, outside the worktree footprint conflict, and no longer enters the maximum. The maximum declares only what the turn's tools can write: writable bindings get write scopes when a reachable tool writes, and real file writes still widen or conflict as above. Nothing else read that declaration: local root coverage now follows the reachable write tools, the spill directory and the built-in sandbox are under scratch, the run-log writer checks its own root identity and allowed roots, and Change Review is OPAQUE up front when enabled. The run-log root stays declared as a read, since a goal's binding filter can otherwise drop it. Because the run log now writes outside the claim, it never creates, writes or migrates through a link: a linked `.<dir>`, run directory or legacy `<dir>` disables or skips that step, and `.gitignore` is written only when no entry, not even a dangling link, exists.
+- Personal context: the stock service touches only private profile storage (its encrypted database and the OS keyring), not worktree files, so it is bounded. "Stock" comes from runtime registration and current state, never from code or function identity (ADR-356 rule 4). The runtime's own app with nothing cached yet bootstraps the stock service, and its publication still refuses a non-stock result under a bounded claim. A cached service must itself be stock. A replaced or custom service stays OPAQUE.
+

@@ -335,7 +335,14 @@ def _prepare_native_reply(
     # TASK-34100.5.3: plain chat's light surface. Beyond what the plan
     # discloses, the runtime tools' closures are not even built, so a
     # model naming one anyway has nothing to dispatch.
-    light_surface = self.light_surface_for(
+    from .console_ordinary_tree import current_ordinary_tree
+
+    # TASK-40715: a turn admitted on the light surface stays light; its claim
+    # did not count the full surface's tools.
+    captured = current_ordinary_tree()
+    light_surface = (
+        captured is not None and captured.light_surface
+    ) or self.light_surface_for(
         turn_skill_bindings, session_id=session_id, conversation_id=conversation_id
     )
     if light_surface:
@@ -822,6 +829,24 @@ def _prepare_native_reply(
             ),
         )
 
+    def widen_ordinary_turn(name: str) -> native_host.ToolResult | None:
+        # TASK-40715: skill installs and scripts declare no footprint, so this
+        # turn's claim widens to OPAQUE only when it actually runs one.
+        if ordinary_tree is None:
+            return None
+        from tldw_chatbook.Agents.execution_capacity import CapacityRefused
+        from tldw_chatbook.Agents.ordinary_tree import widen_refusal
+
+        try:
+            ordinary_tree.widen()
+        except CapacityRefused as refused:
+            return native_host.ToolResult(ok=False, error=widen_refusal(name, refused))
+        except RuntimeError:  # check(): the chat or its binding changed
+            return native_host.ToolResult(
+                ok=False, error=widen_refusal(name, "ordinary_turn_changed")
+            )
+        return None
+
     install_skill_tool = None
     if self._skills_service is not None and request_skill_install_confirm is not None:
         scope = self._skills_service
@@ -877,7 +902,9 @@ def _prepare_native_reply(
                 automatic_work = current_automatic_work()
                 if automatic_work is not None:
                     automatic_work.check()
-                refusal = goal_tool_refusal("install_skill")
+                refusal = goal_tool_refusal("install_skill") or widen_ordinary_turn(
+                    "install_skill"
+                )
                 if refusal is not None:
                     return refusal
                 result = native_host.asyncio.run(
@@ -1028,7 +1055,9 @@ def _prepare_native_reply(
                 if automatic_work is not None:
                     automatic_work.check()
                 check_current_task_call(task_call)
-                refusal = goal_tool_refusal("run_skill_script")
+                refusal = goal_tool_refusal("run_skill_script") or widen_ordinary_turn(
+                    "run_skill_script"
+                )
                 if refusal is not None:
                     return refusal
                 if scratch_root is not None and scratch_lease is not None:

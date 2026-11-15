@@ -139,6 +139,16 @@ async def admit_ordinary_turn(
             )
             tree.reference.capture_authority()
             tree.reference.ordinary_tree = tree
+        if agent_eligible:
+            from .console_skill_resolver import MENTION_SIGIL
+
+            # A `$skill` draft may bind the full surface, so it never counts light.
+            light = getattr(controller._agent_bridge, "light_surface_for", None)
+            tree.light_surface = bool(
+                MENTION_SIGIL not in text
+                and callable(light)
+                and light(session_id=session.id)
+            )
         footprint = _capture_maximum(tree, hook_read=hook_read)
         tree.check_local_sources()
         tree.admit(footprint)
@@ -434,6 +444,7 @@ def _capture_maximum(tree, *, hook_read=None):
         evaluate_tool_policy,
         parse_persona_policy_from_rules,
     )
+    from tldw_chatbook.MCP.builtin_tool_policy import BUILTIN_MCP_SERVER_KEY
     from tldw_chatbook.Workspaces.change_review_consent import ChangeReviewState
 
     configuration = tree.configuration
@@ -447,10 +458,16 @@ def _capture_maximum(tree, *, hook_read=None):
     automatic = current_automatic_work()
     goal = automatic.goal if automatic is not None else None
     goal_scope = goal.goal.request.tool_scope if goal is not None else None
+    from tldw_chatbook.Agents import plain_chat_tool_surface as surface
+
+    # The light surface keeps only these local tools (TASK-40715); the rest
+    # are composed but never offered, so they grant no maximum or record.
+    light_local = frozenset(
+        (*surface.LIGHT_SURFACE_TOOL_NAMES, *surface.LIGHT_SURFACE_LOCAL_OPT_INS)
+    )
     catalog_allowed = lambda source, name: (
         goal_scope is None or f"{source}:{name}" in goal_scope.catalog_tools
-    )
-    runtime_allowed = lambda name: goal is None or goal.permits_runtime(name)
+    ) and not (tree.light_surface and source == "local" and name not in light_local)
     tree.catalog_permits = lambda source, name: (
         advertised(name) and catalog_allowed(source, name)
     )
@@ -479,7 +496,9 @@ def _capture_maximum(tree, *, hook_read=None):
                 )
                 if tree.mcp_source_maximum is None
                 else any(
-                    tree.catalog_permits("mcp", row[3]) for row in sources.values()
+                    tree.catalog_permits("mcp", row[3])
+                    and not (tree.light_surface and row[1] == BUILTIN_MCP_SERVER_KEY)
+                    for row in sources.values()
                 )
             )
         )
@@ -489,8 +508,10 @@ def _capture_maximum(tree, *, hook_read=None):
         scope = WorktreeScope(scratch.root, True, capture_directory_chain(scratch.root))
         reads.append(scope)
         writes.append(scope)
-    if tree.source is not None and tree.source.root is not None:
-        writes.append(WorktreeScope(tree.source.root, True, tree.source.root_identity))
+    # The run log's per-run `.<dir>/<run_id>` directory under `tree.source.root`
+    # (the first writable binding, else scratch) is private storage, outside
+    # the footprint conflict (owner decision 2026-11-14, ADR-285): only tools
+    # declare project writes.
     if tree.reference is not None:
         opaque |= tree.reference.opaque
         reads.extend(
@@ -542,19 +563,8 @@ def _capture_maximum(tree, *, hook_read=None):
     if tree.agent_eligible:
         opaque |= _capture_personal_source(tree)
         opaque |= _capture_other_providers(tree)
-        budget = configuration.tool_configuration.get("agent_run_budget_maximum")
-        opaque |= bool(
-            budget is not None
-            and budget.max_subagents
-            and advertised("spawn_subagent")
-            and runtime_allowed("spawn_subagent")
-        )
-        bridge = tree.controller._agent_bridge
-        if bridge._skills_service is not None:
-            import os
-
-            opaque |= bool(os.name != "nt" and runtime_allowed("run_skill_script"))
-            opaque |= bool(runtime_allowed("install_skill"))
+        # Sub-agents and skill installs/scripts widen the claim when actually
+        # used (OrdinaryTurn.widen, TASK-40715); availability alone is bounded.
         if configuration.tool_configuration.get("local_tools_enabled"):
             from tldw_chatbook.Agents import local_tool_provider as local
             from tldw_chatbook.MCP.permission_store import (
@@ -646,6 +656,13 @@ def _capture_maximum(tree, *, hook_read=None):
                 and (goal_bindings is None or goal_bindings[binding.binding_id])
             ):
                 writes.append(scope)
+    if tree.source is not None and tree.source.root is not None:
+        # The run log's root is picked from every binding; a goal may have
+        # dropped it above. Keep it declared, as a read (its per-run directory
+        # is private storage).
+        scope = WorktreeScope(tree.source.root, True, tree.source.root_identity)
+        if scope not in reads:
+            reads.append(scope)
     return WorktreeFootprint(tuple(reads), tuple(writes), opaque)
 
 
@@ -707,7 +724,12 @@ def _capture_personal_source(tree):
     tree.personal_service = getattr_static(tree.app, "_personal_context_service", None)
     if tree.personal_getter is None:
         return False
-    tree.personal_native = _capture_personal_service(tree, tree.personal_service)
+    # The runtime's own app with nothing cached yet bootstraps the stock service,
+    # which touches only private profile storage; publication rechecks what it
+    # registers (TASK-40715). A cached service must itself be stock.
+    tree.personal_native = (
+        tree.personal_service is None and tree.app is tree.runtime._app
+    ) or _capture_personal_service(tree, tree.personal_service)
     return not tree.personal_native
 
 
@@ -867,7 +889,7 @@ def _capture_other_providers(tree):
             for name in tool_catalog.CANVAS_RESERVED_TOOL_NAMES
             if tree.catalog_permits("canvas", name)
         )
-        opaque = True
+        opaque = not tree.light_surface  # Canvas is not on the light surface.
     if tree.personal_getter is not None and not tree.session.ephemeral:
         tree.other_maximum["personal-context"] = frozenset(
             name

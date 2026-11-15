@@ -199,6 +199,7 @@ class _ClaimState:
     footprint: WorktreeFootprint
     custody: WorktreeActivityClaim
     members: dict[str, _OwnerState] = field(default_factory=dict)
+    widened_from: WorktreeFootprint | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -470,21 +471,64 @@ class WorktreeActivity:
         if not owner.is_admitted:
             raise ValueError("activity claim owner is not admitted")
         with self._lock:
-            state = (
-                self._claims.get(claim.id)
-                if type(claim) is WorktreeActivityClaim
-                else None
+            self._held_state(claim, owner, footprint)
+
+    def _held_state(self, claim, owner, footprint) -> _ClaimState:
+        """Return the live claim state under ``self._lock``, or refuse custody."""
+        state = (
+            self._claims.get(claim.id) if type(claim) is WorktreeActivityClaim else None
+        )
+        member = state.members.get(claim.id) if state is not None else None
+        if (
+            state is None
+            or state.custody is not claim
+            # A widened claim still covers its original bounded footprint.
+            or (
+                footprint != state.footprint
+                and (state.widened_from is None or footprint != state.widened_from)
             )
-            member = state.members.get(claim.id) if state is not None else None
-            if (
-                state is None
-                or state.custody is not claim
-                or state.footprint != footprint
-                or member is None
-                or member.owner is not owner
-                or member.drained is not None
+            or member is None
+            or member.owner is not owner
+            or member.drained is not None
+        ):
+            raise ValueError("live original activity claim custody required")
+        return state
+
+    def widen_to_opaque(
+        self,
+        claim: WorktreeActivityClaim,
+        *,
+        owner: ExecutionOwner,
+        footprint: WorktreeFootprint,
+    ) -> WorktreeFootprint | None:
+        """Upgrade a live bound claim to OPAQUE in place, or refuse; never wait.
+
+        For an effect whose footprint is only known when the turn performs it
+        (ADR-285, TASK-40715). Any other claim, recovery protection or workflow
+        window refuses, so two widening owners cannot deadlock on each other.
+        """
+        if not owner.is_admitted:
+            raise ValueError("activity claim owner is not admitted")
+        self._prune_recovery()
+        with self._lock:
+            state = self._held_state(claim, owner, footprint)
+            if state.footprint.opaque:
+                return state.footprint
+            widened = WorktreeFootprint(
+                state.footprint.reads, state.footprint.writes, opaque=True
+            )
+            others = [s.footprint for key, s in self._claims.items() if key != claim.id]
+            if any(
+                widened._conflicts(protected)
+                for protected in (
+                    *others,
+                    *self._recovery.values(),
+                    *(fence.footprint for fence in self._waves.values()),
+                )
             ):
-                raise ValueError("live original activity claim custody required")
+                return None
+            state.widened_from, state.footprint = state.footprint, widened
+        return widened
 
     def validate_opaque_claim(
         self, claim: WorktreeActivityClaim, *, owner: ExecutionOwner

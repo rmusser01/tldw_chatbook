@@ -241,17 +241,16 @@ class AgentRunTools:
                 )
             if not isinstance(exc, CapacityRefused):
                 raise
-            return (
-                None,
-                None,
-                SpawnAdmissionRefusal(
-                    ok=False,
-                    error=(
-                        f"runtime sub-agent limit reached ({exc}); wait for running "
-                        "agents and cleanup to finish, then retry"
-                    ),
-                ),
-            )
+            if str(exc) == "worktree_activity_busy":
+                from .ordinary_tree import widen_refusal
+
+                error = widen_refusal(SPAWN_TOOL_NAME, exc)
+            else:
+                error = (
+                    f"runtime sub-agent limit reached ({exc}); wait for running "
+                    "agents and cleanup to finish, then retry"
+                )
+            return None, None, SpawnAdmissionRefusal(ok=False, error=error)
 
     def _launch_fleet_child(
         self,

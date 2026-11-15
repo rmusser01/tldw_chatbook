@@ -12,16 +12,24 @@ from tldw_chatbook.app_services import (
     read_workspace_registry,
 )
 from .activation import _sources, captured_sources, execution
-from tldw_chatbook.DB.base_db import operation_owned_connection
+from tldw_chatbook.DB.base_db import _OPERATION_OWNERS, operation_owned_connection
 from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
 
 
 @contextmanager
 def _retained_source_stack(tree, databases):
-    """Retain the original tree until native scopes and handles return."""
+    """Retain the original tree until native scopes and handles return.
+
+    A database whose operation this thread already owns (an outer
+    ``operation_owned_connection``, per thread like the handles) is not checked
+    here: a handle opened inside belongs to that owner, which closes it when it
+    ends. That covers a nested activation, including one inside ``asyncio.run``
+    on a fleet child's thread.
+    """
+    owned = getattr(_OPERATION_OWNERS, "ids", ())
     locals_and_handles = []
     for database in dict.fromkeys(db for db in databases if db is not None):
-        if getattr(database, "is_memory_db", False):
+        if id(database) in owned or getattr(database, "is_memory_db", False):
             continue
         namespace = vars(database)
         local = namespace.get("_local") or namespace.get("_thread_local")

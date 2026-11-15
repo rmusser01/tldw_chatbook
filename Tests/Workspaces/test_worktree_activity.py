@@ -194,6 +194,65 @@ def test_opaque_conflicts_runtime_wide_even_on_disjoint_roots(
     assert activity.try_acquire(owner=begin(), footprint=second) is None
 
 
+def test_widen_upgrades_own_claim_in_place_or_refuses_without_waiting(tmp_path, native):
+    """TASK-40715: a bounded claim widens to OPAQUE only when nothing else runs."""
+    _, begin = native
+    a, b = tmp_path / "a", tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    activity = WorktreeActivity()
+    bounded = WorktreeFootprint(reads=(_scope(a, "file"),))
+    owner = begin()
+    claim = activity.try_acquire(owner=owner, footprint=bounded)
+    other_owner = begin()
+    other = activity.try_acquire(
+        owner=other_owner, footprint=WorktreeFootprint(reads=(_scope(b, "file"),))
+    )
+    assert other is not None, "disjoint bounded turns run together"
+
+    assert activity.widen_to_opaque(claim, owner=owner, footprint=bounded) is None
+    activity.validate_claim(claim, owner=owner, footprint=bounded)
+    other.settle(durable=True)
+    other_owner.finish_root()
+
+    widened = activity.widen_to_opaque(claim, owner=owner, footprint=bounded)
+    assert widened == WorktreeFootprint(reads=bounded.reads, opaque=True)
+    assert activity.widen_to_opaque(claim, owner=owner, footprint=widened) == widened
+    activity.validate_claim(claim, owner=owner, footprint=bounded)
+    activity.validate_claim(claim, owner=owner, footprint=widened)
+    assert (
+        activity.try_acquire(
+            owner=begin(), footprint=WorktreeFootprint(reads=(_scope(b, "file"),))
+        )
+        is None
+    ), "a widened claim conflicts runtime-wide"
+
+
+def test_widen_refuses_recovery_protection_and_foreign_custody(tmp_path, native):
+    _, begin = native
+    activity = WorktreeActivity()
+    bounded = WorktreeFootprint(reads=(_scope(tmp_path, "file"),))
+    owner = begin()
+    claim = activity.try_acquire(owner=owner, footprint=bounded)
+    activity.protect_recovery("wf", WorktreeFootprint())
+    assert activity.widen_to_opaque(claim, owner=owner, footprint=bounded) is None
+    activity.release_recovery("wf")
+    with pytest.raises(ValueError):
+        activity.widen_to_opaque(claim, owner=begin(), footprint=bounded)
+
+
+def test_never_widened_claim_refuses_a_missing_footprint(tmp_path, native):
+    # A claim that never widened has no pre-widening footprint to match None.
+    _, begin = native
+    activity = WorktreeActivity()
+    owner = begin()
+    claim = activity.try_acquire(
+        owner=owner, footprint=WorktreeFootprint(reads=(_scope(tmp_path, "file"),))
+    )
+    with pytest.raises(ValueError):
+        activity.validate_claim(claim, owner=owner, footprint=None)
+
+
 @pytest.mark.parametrize("settle_first", [False, True])
 def test_release_needs_positive_drain_and_durable_settlement(
     tmp_path, native, settle_first
