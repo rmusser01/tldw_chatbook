@@ -43,21 +43,31 @@ async def test_equal_hidden_mode_copy_keeps_visual_and_layout(size, monkeypatch)
         assert mode.display is False and screen.focused is focused
 
         controller = screen._ensure_console_chat_controller()
-        for state, text, visible in (
-            (ConsoleRunStatus.STREAMING, "Native run in progress.", True),
-            (ConsoleRunStatus.COMPLETED, "Native run complete.", False),
+        # Dev projects live streaming as send-activity copy (077e5bfa09);
+        # a terminal state keeps its own visible copy for the mode bar.
+        for state, text, shown, visible in (
+            (
+                ConsoleRunStatus.STREAMING,
+                "Native run in progress.",
+                "Waiting for reply…",
+                True,
+            ),
+            (
+                ConsoleRunStatus.COMPLETED,
+                "Native run complete.",
+                "Native run complete.",
+                False,
+            ),
         ):
             controller._set_run_state(ConsoleRunState(state, text))
             count = len(updates)
             screen._sync_console_mode_bar()
             assert len(updates) == count + 1
-            assert f"Run: {text}" in mode.content
-            assert screen.query_one("#console-run-chip").display is visible
+            assert f"Run: {shown}" in mode.content
+            # Dev folded the run chip into the status line's "run" segment.
+            assert chips.segment_visible("run") is visible
             if visible:
-                assert (
-                    str(screen.query_one("#console-run-chip").render())
-                    == f"Run: {text}"
-                )
+                assert chips.segment_text("run") == f"Run: {shown}"
             screen._sync_console_mode_bar()
             assert len(updates) == count + 1
         assert len(projections) == 7
