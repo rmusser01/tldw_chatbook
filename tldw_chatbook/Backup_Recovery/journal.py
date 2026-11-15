@@ -7,6 +7,7 @@ import json
 import stat
 from collections.abc import Iterable, Mapping
 from contextlib import contextmanager
+from itertools import chain
 from pathlib import Path
 from typing import Literal
 
@@ -630,6 +631,17 @@ class _Event(_Evidence):
         "directory_metadata_applied",
     ]
     evidence: dict
+
+
+def _identity(info: os.stat_result) -> tuple:
+    return (
+        info.st_dev,
+        info.st_ino,
+        info.st_mode,
+        info.st_size,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
+    )
 
 
 def _encoded(record: _Event) -> bytes:
@@ -1516,9 +1528,20 @@ def parse_event_records(
         or "\0" in operation_id
     ):
         raise ValueError("operation_id_invalid")
-    records = []
-    previous = ""
-    for index, (name, value) in enumerate(members):
+    return _extend_records(operation_id, [], members, historical=historical)
+
+
+def _extend_records(
+    operation_id: str,
+    accepted: list[_Event],
+    members: Iterable[tuple[str, dict]],
+    *,
+    historical: bool = False,
+) -> list[_Event]:
+    """Parse the members that follow ``accepted`` exactly as a full parse would."""
+    records = list(accepted)
+    previous = hashlib.sha256(_encoded(records[-1])).hexdigest() if records else ""
+    for index, (name, value) in enumerate(members, start=len(records)):
         if index >= MAX_EVENTS:
             raise ValueError("journal_limit")
         if name != f"{index:06d}.json":
@@ -1575,6 +1598,11 @@ class Journal:
             if info.st_uid != os.geteuid() or info.st_mode & 0o077:
                 raise ValueError("journal_not_private")
             self._identity = info.st_dev, info.st_ino
+        # TASK-40310: the members last read and the events they parsed to, and
+        # each record this journal flushed with the identity it had then.
+        self._members: list[tuple[str, str]] = []
+        self._events: list[_Event] = []
+        self._flushed: dict[str, tuple] = {}
 
     @contextmanager
     def _locked(self, *, exclusive: bool):
@@ -1611,13 +1639,33 @@ class Journal:
         )
         if len(names) > MAX_EVENTS:
             raise ValueError("journal_limit")
-        return parse_event_records(
-            self.operation_id,
-            (
-                (name, _read(parent, name, max_bytes=RECOVERY_RECORD_BYTES))
-                for name in names
-            ),
-        )
+        # Every record is read and checked on every call. Parsing is a pure
+        # function of the ordered members, so only the members from the first
+        # one that differs from the last read are parsed again (TASK-40310).
+        # Members compare as JSON text: dict equality would take 1 for 1.0 or
+        # true, which the strict parse refuses.
+        members: list[tuple[str, str]] = []
+
+        def read():
+            for name in names:
+                value = _read(parent, name, max_bytes=RECOVERY_RECORD_BYTES)
+                members.append((name, json.dumps(value)))
+                yield name, value
+
+        stream = read()
+        same = 0
+        for member in stream:
+            if same < len(self._members) and members[-1] == self._members[same]:
+                same += 1
+                continue
+            records = _extend_records(
+                self.operation_id, self._events[:same], chain((member,), stream)
+            )
+            break
+        else:
+            records = self._events[:same]
+        self._members, self._events = members, records
+        return list(records)
 
     def record(self, event: str, evidence: Mapping[str, object]) -> None:
         """Flush one strictly typed exclusive record; failed writes remain evidence."""
@@ -1657,42 +1705,37 @@ class Journal:
         parent: int, name: str, expected: dict, *, max_bytes: int = MAX_RECORD
     ) -> None:
         """Reestablish durability of a complete but possibly unflushed record."""
-
-        def identity(info):
-            return (
-                info.st_dev,
-                info.st_ino,
-                info.st_mode,
-                info.st_size,
-                info.st_mtime_ns,
-                info.st_ctime_ns,
-            )
-
         fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
         try:
             before = os.fstat(fd)
             if _read(parent, name, max_bytes=max_bytes) != expected:
                 raise ValueError("durable_record_changed")
             named = os.stat(name, dir_fd=parent, follow_symlinks=False)
-            if identity(named) != identity(before):
+            if _identity(named) != _identity(before):
                 raise ValueError("durable_record_changed")
             flush_file(fd)
-            if identity(os.fstat(fd)) != identity(before) or identity(
+            if _identity(os.fstat(fd)) != _identity(before) or _identity(
                 os.stat(name, dir_fd=parent, follow_symlinks=False)
-            ) != identity(before):
+            ) != _identity(before):
                 raise ValueError("durable_record_changed")
         finally:
             os.close(fd)
 
     def _flush_records(self, parent: int) -> None:
-        """Revalidate and flush accepted history under the held journal lock."""
+        """Revalidate and flush accepted history under the held journal lock.
+
+        A record this journal already flushed is skipped while its file identity
+        and its parsed record are both unchanged (TASK-40310).
+        """
         for row in self._records(parent):
+            name = f"{row.sequence:06d}.json"
+            seen = _identity(os.stat(name, dir_fd=parent, follow_symlinks=False)), row
+            if self._flushed.get(name) == seen:
+                continue
             self._flush_record(
-                parent,
-                f"{row.sequence:06d}.json",
-                row.model_dump(),
-                max_bytes=RECOVERY_RECORD_BYTES,
+                parent, name, row.model_dump(), max_bytes=RECOVERY_RECORD_BYTES
             )
+            self._flushed[name] = seen
         flush_directory(parent)
 
     def _append(self, parent: int, event: str, evidence: Mapping[str, object]) -> None:

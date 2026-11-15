@@ -294,6 +294,10 @@ print('NATIVE_NESTED_PERSONA_LATER_COMPLETE',flush=True)
 """
 
 
+#: A child that uses no CPU this long is hung, however loaded the host is.
+_HANG_SECONDS = 60
+
+
 def _prepare_native(tmp_path):
     for label in ("source", "target"):
         home = tmp_path / label
@@ -310,18 +314,30 @@ def _prepare_native(tmp_path):
         "persona-capture",
         timeout=480 if sys.platform == "win32" else 120,
     )
+    # TASK-40306: two whole-profile replaces (the credential review aborts the
+    # first), built by every xdist worker. On a loaded host the child outlasted
+    # its old 150 s while busy, so it now fails only once it uses no CPU.
     _child(
         tmp_path / "target",
         _REPLACE,
         "persona-replacement",
-        timeout=600 if sys.platform == "win32" else 150,
+        timeout=600,
+        idle=_HANG_SECONDS,
     )
-    _child(
-        tmp_path / "target",
-        _REOPEN,
-        "persona-reopen",
-        timeout=300 if sys.platform == "win32" else 90,
-    )
+    try:
+        _child(
+            tmp_path / "target",
+            _REOPEN,
+            "persona-reopen",
+            timeout=300 if sys.platform == "win32" else 90,
+        )
+    except AssertionError as failure:
+        # TASK-40306: one reopen failed `database is locked` on add_note under
+        # load and its thread record was lost with the basetemp; keep it.
+        record = tmp_path / "target" / "persona-note-write.log"
+        if record.is_file():
+            failure.add_note(record.read_text(encoding="utf-8")[-6000:])
+        raise
     return tmp_path / "target"
 
 
@@ -331,14 +347,16 @@ def _prepare_native(tmp_path):
 def test_native_nested_persona_pack_survives_reopen_and_later_rollback(tmp_path):
     started = time.monotonic()
     home = _prepare_native(tmp_path)
-    later_timeout = 900 if sys.platform == "win32" else 150
-    if sys.platform == "linux":
+    later_timeout = 900
+    if sys.platform != "win32":
         # Reuse unspent setup allowance within the original 860s child budget;
         # reserve the final 90s reopen and 120s capture observations.
         later_timeout = started + 860 - time.monotonic() - (90 + 120)
         if later_timeout <= 0:
             raise TimeoutError("persona_rollback_test_budget_exhausted")
-    output = _child(home, _LATER, "persona-later", timeout=later_timeout)
+    output = _child(
+        home, _LATER, "persona-later", timeout=later_timeout, idle=_HANG_SECONDS
+    )
     assert "NATIVE_NESTED_PERSONA_LATER_COMPLETE" in output
     output = _child(
         home,

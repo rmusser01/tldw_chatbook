@@ -26,6 +26,8 @@ PR_TEST_RUNNER = (
     "github.event.pull_request.head.repo.full_name == github.repository && "
     "vars.CI_TEST_RUNNER || 'ubuntu-latest' }}"
 )
+#: The push-to-dev-only jobs' condition (library-shell-dev, backup-owner-suites-dev).
+DEV_PUSH = "github.event_name == 'push' && github.ref == 'refs/heads/dev'"
 LANES = (
     "github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && "
     "(inputs.pr != '' || github.ref != 'refs/heads/dev'))"
@@ -476,6 +478,10 @@ ARCHITECTURE_GUARD_TARGETS = (
     # TASK-39116 review r13b-rev2: the detached layout's persona.actor_packs
     # validation (both cases, ~25 s serial); the rest of that file is unlaned.
     "Tests/Backup_Recovery/test_detached_layout.py::test_actor_pack_persona_images_are_validated_in_a_detached_source",
+    # TASK-40310 review r14bk-rev1: the restore journal's record-count and
+    # warm-cache refusal pins (~1 s); the rest of their file runs on dev pushes.
+    "Tests/Backup_Recovery/test_publication_crashes.py::test_append_and_flush_handle_each_record_once",
+    "Tests/Backup_Recovery/test_publication_crashes.py::test_cached_journal_history_still_refuses_changed_records",
     # TASK-39060: whole, now that its persona/workspace boundary is green.
     "Tests/test_persistent_diagnostic_boundary.py",
     # TASK-39061: the shared log sanitizer.
@@ -665,6 +671,35 @@ RECOVERED_SUITES_TARGETS = (
 #: ContextVar token reset across contexts), owned by TASK-33621.36 AC#3; remove when fixed.
 RECOVERED_SUITES_DESELECTED = (
     "Tests/Chat/test_console_automatic_library_preparation.py::test_closed_loop_pending_submit_is_emergency_detachment",
+)
+#: TASK-40307: the Backup_Recovery owner suites, whole, on pushes to dev only.
+BACKUP_OWNER_SUITE_TARGETS = (
+    "Tests/Backup_Recovery/test_builtin_later_snapshot.py",
+    "Tests/Backup_Recovery/test_created_persona_subtree_rollback.py",
+    "Tests/Backup_Recovery/test_complete_roundtrip.py",
+    "Tests/Backup_Recovery/test_later_rollback_credential_ui.py",
+    "Tests/Backup_Recovery/test_restore_plan.py",
+    "Tests/Backup_Recovery/test_detached_layout.py",
+    "Tests/Backup_Recovery/test_inventory.py",
+    "Tests/Backup_Recovery/test_inventory_unused_owners.py",
+    "Tests/Backup_Recovery/test_visual_identity_restore.py",
+    "Tests/Backup_Recovery/test_capture_service.py",
+    "Tests/Backup_Recovery/test_config_sibling_capture.py",
+    "Tests/Backup_Recovery/test_core_owners.py",
+    "Tests/Backup_Recovery/test_operational_owners.py",
+    "Tests/Backup_Recovery/test_publication_crashes.py",
+)
+#: Red at dev 26b2e677dd, outside TASK-40306's five files; TASK-40307's notes
+#: give each node's first error. Remove a node when it is fixed.
+BACKUP_OWNER_SUITES_DESELECTED = (
+    "Tests/Backup_Recovery/test_complete_roundtrip.py::test_two_known_profiles_complete_capture_preserves_native_state_and_resumes",
+    "Tests/Backup_Recovery/test_complete_roundtrip.py::test_two_captured_profiles_plan_shared_concrete_roots_for_isolated_restore",
+    "Tests/Backup_Recovery/test_complete_roundtrip.py::test_two_captured_profiles_restore_and_open_with_native_content",
+    "Tests/Backup_Recovery/test_later_rollback_credential_ui.py::test_f9_later_rollback_requires_explicit_credential_review",
+    "Tests/Backup_Recovery/test_inventory.py::test_normal_config_and_pure_resolvers_agree",
+    "Tests/Backup_Recovery/test_inventory.py::test_fresh_process_discovery_imports_no_bootstrap_or_services_and_changes_nothing",
+    "Tests/Backup_Recovery/test_inventory.py::test_custom_db_and_disabled_features_are_not_external_or_unused",
+    "Tests/Backup_Recovery/test_core_owners.py::test_factory_discovery_and_schema_policy_are_runtime_independent",
 )
 DREAMS_ADMISSION_TARGETS = (
     "Tests/Dreams/test_boot_dispatch_admission.py",
@@ -1495,6 +1530,80 @@ def test_recovered_suites_lane_is_one_serial_guarded_minimal_python_312_job() ->
     assert others == []
 
 
+def test_backup_owner_suites_run_on_dev_pushes_only_and_are_never_required() -> None:
+    """TASK-40307 (owner decision 2026-11-12, "Push-to-dev job only").
+
+    The Backup_Recovery owner suites run whole on each push to dev and on no
+    pull request, like library-shell-dev; a red run never reaches the
+    required aggregate. The fast-lane install plus hypothesis and
+    pytest-xdist, four workers, a step budget inside the job's cap, and no
+    file listed whole by another step.
+    """
+    workflow = _workflow("derived-artifacts.yml")
+    jobs = workflow["jobs"]
+    job = jobs["backup-owner-suites-dev"]
+
+    assert job["name"] == "Backup_Recovery owner suites (push to dev)"
+    assert job["needs"] == ["preflight"]
+    assert job["if"] == DEV_PUSH == jobs["library-shell-dev"]["if"]
+    required = jobs["derived-artifacts"]
+    assert "backup-owner-suites-dev" not in required["needs"]
+    assert not any(
+        "backup-owner-suites-dev" in str(step.get("if", "")) + str(step.get("run", ""))
+        for step in required["steps"]
+    )
+    assert not job.get("continue-on-error", False)
+    assert job["runs-on"] == "ubuntu-latest"
+    assert "strategy" not in job
+    assert len(job["steps"]) == 4
+    setup = next(
+        step for step in job["steps"] if step.get("uses") == "actions/setup-python@v5"
+    )
+    assert setup["with"]["python-version"] == "3.12"
+    install = _named_step(job, "Install fast-lane dependencies")["run"]
+    fast = _named_step(jobs["pr-fast-lane"], "Install fast-lane dependencies")
+    assert shlex.split(install) == [*shlex.split(fast["run"]), "hypothesis", "pytest-xdist"]
+    step = _named_step(job, "Run the Backup_Recovery owner suites")
+    assert "if" not in step
+    assert 0 < step["timeout-minutes"] < job["timeout-minutes"]
+    assert tuple(shlex.split(step["run"].replace("\\\n", " "), comments=True)) == (
+        "pytest",
+        *BACKUP_OWNER_SUITE_TARGETS,
+        *(f"--deselect={node}" for node in BACKUP_OWNER_SUITES_DESELECTED),
+        "-n",
+        "4",
+        "--timeout=300",
+        "--tb=short",
+    )
+    assert len(set(BACKUP_OWNER_SUITE_TARGETS)) == len(BACKUP_OWNER_SUITE_TARGETS)
+    for target in BACKUP_OWNER_SUITE_TARGETS:
+        assert "::" not in target and (PROJECT_ROOT / target).is_file()
+    for node in BACKUP_OWNER_SUITES_DESELECTED:
+        assert node.split("::", 1)[0] in BACKUP_OWNER_SUITE_TARGETS
+    # No other step lists one of these files whole; single nodes may run on
+    # PRs elsewhere.
+    others = [
+        f"{key}: {candidate['name']}"
+        for key, other in jobs.items()
+        if key != "backup-owner-suites-dev"
+        for candidate in other.get("steps", ())
+        if set(BACKUP_OWNER_SUITE_TARGETS)
+        & set(_pytest_targets(str(candidate.get("run", ""))))
+    ]
+    assert others == []
+    # Single nodes of these files guard PRs from architecture-guards: the
+    # detached layout's actor-pack check and the restore journal's pins.
+    for node in (
+        "Tests/Backup_Recovery/test_detached_layout.py::"
+        "test_actor_pack_persona_images_are_validated_in_a_detached_source",
+        "Tests/Backup_Recovery/test_publication_crashes.py::"
+        "test_append_and_flush_handle_each_record_once",
+        "Tests/Backup_Recovery/test_publication_crashes.py::"
+        "test_cached_journal_history_still_refuses_changed_records",
+    ):
+        assert node in ARCHITECTURE_GUARD_TARGETS
+
+
 def test_dreams_tracking_lane_is_one_serial_minimal_python_312_job() -> None:
     """TASK-34929: the Dreams tracking tests run, whole, on every pull request.
 
@@ -1594,12 +1703,14 @@ def test_architecture_guards_lane_is_one_serial_minimal_python_312_job() -> None
     # Bare names: a parametrized test runs every case from its function id.
     assert all("[" not in name for name in listed)
     assert listed == defined - {"test_cli_prints_the_real_source_census_and_enforces_it"}
-    # Each target runs once: no other PR-lane step lists its file.
+    # Each target runs once: no other PR-lane step lists its file. A
+    # push-to-dev job is no PR lane (TASK-40307: backup-owner-suites-dev runs
+    # test_detached_layout whole on dev pushes, where this job never runs).
     files = {target.split("::", 1)[0] for target in ARCHITECTURE_GUARD_TARGETS}
     others = [
         f"{key}: {candidate['name']}"
         for key, other in workflow["jobs"].items()
-        if key != "architecture-guards"
+        if key != "architecture-guards" and other.get("if") != DEV_PUSH
         for candidate in other.get("steps", ())
         if files & {
             target.split("::", 1)[0]

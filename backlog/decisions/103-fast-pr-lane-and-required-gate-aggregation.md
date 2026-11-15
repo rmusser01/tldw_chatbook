@@ -506,3 +506,17 @@ response-rule restore selectors alone completed in 25m46s before Canvas tests.
 Those unchanged selectors now run as a third P0 profile with the same 180-second
 per-test deadline and 35-minute job limit. This adds one more eligible job;
 all existing selectors remain exactly once across the three required profiles.
+
+2026-11-12 (TASK-40307; owner decision 2026-11-12, "Push-to-dev job only"): a
+job of its own, `backup-owner-suites-dev` ("Backup_Recovery owner suites (push
+to dev)"), runs the 13 Backup_Recovery owner suites that ran on no lane (27 of
+their nodes had gone red on dev unseen, TASK-40306) and the restore-journal
+file, whole, with 11 red nodes deselected by name, on every push to dev and
+never on a pull request, like `library-shell-dev`. It is not in the required
+check's `needs`, so no PR runner and no PR verdict: the counts above are
+unchanged (30 concurrent test runners, 31 with perf-guard, 48 eligible test
+jobs per PR). A dev push starts one more job, about 40 runner-minutes. It runs
+`-n 4` (the fast-lane install line plus hypothesis and pytest-xdist): serially
+its two rollback files alone would take over an hour. Three local runs took
+31-43 min at load 22-57 on a shared 18-core host, so its step cap is 50 min
+and its job cap 55; the first CI runs should set both.

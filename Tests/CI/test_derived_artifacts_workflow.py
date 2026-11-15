@@ -128,6 +128,9 @@ def test_workflow_has_one_fast_prerequisite_and_one_required_aggregator():
         # TASK-39153 (owner decision 2026-11-10): Tests/UI/test_library_shell.py
         # by node on pushes to dev; never a PR job, never in the aggregate.
         "library-shell-dev",
+        # TASK-40307 (owner decision 2026-11-12, "Push-to-dev job only"): the
+        # Backup_Recovery owner suites on pushes to dev; never a PR job.
+        "backup-owner-suites-dev",
     ]
 
 

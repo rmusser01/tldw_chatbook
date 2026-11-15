@@ -194,7 +194,6 @@ def test_native_character_visual_identity_restores_with_fresh_passive_read(tmp_p
             for key, leaf in (
                 ("chachanotes_db_path", "notes.db"),
                 ("media_db_path", "media.db"),
-                ("research_db_path", "research.db"),
                 ("prompts_db_path", "prompts.db"),
             )
         )

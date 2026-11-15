@@ -1291,6 +1291,8 @@ jobs:
             Tests/Persona_Buddy/test_controller_failure_logging.py \
             Tests/Architecture/test_backup_owner_inventory.py \
             Tests/Backup_Recovery/test_detached_layout.py::test_actor_pack_persona_images_are_validated_in_a_detached_source \
+            Tests/Backup_Recovery/test_publication_crashes.py::test_append_and_flush_handle_each_record_once \
+            Tests/Backup_Recovery/test_publication_crashes.py::test_cached_journal_history_still_refuses_changed_records \
             Tests/test_persistent_diagnostic_boundary.py \
             Tests/Utils/test_log_sanitizer.py \
             Tests/Architecture/test_no_undefined_module_globals.py \
@@ -1838,4 +1840,72 @@ jobs:
             "Tests/UI/test_console_received_intent_feedback.py::test_actual_send_paints_sending_and_accepts_input_within_100ms[send-button]" \
             --timeout=180 \
             --durations=0 --durations-min=0 \
+            --tb=short
+
+  backup-owner-suites-dev:
+    needs: [preflight]
+    # TASK-40307 (owner decision 2026-11-12, "Push-to-dev job only"): the
+    # Backup_Recovery owner suites ran on no lane, so 27 of their nodes went
+    # red on dev unseen (TASK-40306). They run whole on every push to dev and
+    # never on a pull request, like library-shell-dev: PRs pay nothing, and a
+    # red shows on the dev push right after the merge. NOT in the aggregate's
+    # needs and not a required context. A newer push to dev cancels the run
+    # (the workflow's concurrency rule). The test_detached_layout node and the
+    # two TASK-40310 journal nodes stay in architecture-guards, so PRs run them.
+    #
+    # Every suite here is sandboxed (no bootstrap_profile node) and runs its
+    # heavy work in child processes with their own HOME, so they share one
+    # runner at -n 4; serially the persona and builtin rollback files alone
+    # take over an hour. The install line adds hypothesis (test_restore_plan)
+    # and pytest-xdist to the fast-lane line.
+    # The deselected nodes were red at dev 26b2e677dd outside TASK-40306's five
+    # files (drift, local-profile refusals and fixed child budgets); TASK-40307
+    # lists each one's first error. Remove a line when its node is fixed.
+    # timeout-minutes: three local runs of this step took 30.6-42.9 min (-n 4,
+    # load 22-57 on a shared 18-core host); the persona rollback test alone
+    # takes 9.6 min of it. Re-read the first CI runs before tightening a cap.
+    name: Backup_Recovery owner suites (push to dev)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install fast-lane dependencies
+        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2 hypothesis pytest-xdist
+
+      - name: Run the Backup_Recovery owner suites
+        timeout-minutes: 50
+        run: |
+          pytest \
+            Tests/Backup_Recovery/test_builtin_later_snapshot.py \
+            Tests/Backup_Recovery/test_created_persona_subtree_rollback.py \
+            Tests/Backup_Recovery/test_complete_roundtrip.py \
+            Tests/Backup_Recovery/test_later_rollback_credential_ui.py \
+            Tests/Backup_Recovery/test_restore_plan.py \
+            Tests/Backup_Recovery/test_detached_layout.py \
+            Tests/Backup_Recovery/test_inventory.py \
+            Tests/Backup_Recovery/test_inventory_unused_owners.py \
+            Tests/Backup_Recovery/test_visual_identity_restore.py \
+            Tests/Backup_Recovery/test_capture_service.py \
+            Tests/Backup_Recovery/test_config_sibling_capture.py \
+            Tests/Backup_Recovery/test_core_owners.py \
+            Tests/Backup_Recovery/test_operational_owners.py \
+            Tests/Backup_Recovery/test_publication_crashes.py \
+            --deselect="Tests/Backup_Recovery/test_complete_roundtrip.py::test_two_known_profiles_complete_capture_preserves_native_state_and_resumes" \
+            --deselect="Tests/Backup_Recovery/test_complete_roundtrip.py::test_two_captured_profiles_plan_shared_concrete_roots_for_isolated_restore" \
+            --deselect="Tests/Backup_Recovery/test_complete_roundtrip.py::test_two_captured_profiles_restore_and_open_with_native_content" \
+            --deselect="Tests/Backup_Recovery/test_later_rollback_credential_ui.py::test_f9_later_rollback_requires_explicit_credential_review" \
+            --deselect="Tests/Backup_Recovery/test_inventory.py::test_normal_config_and_pure_resolvers_agree" \
+            --deselect="Tests/Backup_Recovery/test_inventory.py::test_fresh_process_discovery_imports_no_bootstrap_or_services_and_changes_nothing" \
+            --deselect="Tests/Backup_Recovery/test_inventory.py::test_custom_db_and_disabled_features_are_not_external_or_unused" \
+            --deselect="Tests/Backup_Recovery/test_core_owners.py::test_factory_discovery_and_schema_policy_are_runtime_independent" \
+            -n 4 \
+            --timeout=300 \
             --tb=short

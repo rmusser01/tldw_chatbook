@@ -838,8 +838,12 @@ def test_shipped76_archive_stages_installed_schema_without_changing_source(
         owner.schema_policy().versions
     )
     after, restored_messages, restored_indexes = _checkpoint_state(path)
+    # Columns later migrations add (agent_chat_start_attempt_id, then
+    # mixin_snapshot_schema_version in 7970fbcada) are NULL on old receipts.
+    added = set(after[0]) - set(before[0])
+    assert "agent_chat_start_attempt_id" in added
     for row in after:
-        assert row.pop("agent_chat_start_attempt_id") is None
+        assert {row.pop(column) for column in added} == {None}, added
     assert after == before
     assert restored_messages == messages
     assert all(index in restored_indexes for index in indexes)
