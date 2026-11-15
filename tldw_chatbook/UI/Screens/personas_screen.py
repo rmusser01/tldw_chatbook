@@ -16857,6 +16857,7 @@ class PersonasScreen(BaseAppScreen):
         contextual shortcut hints render through the per-screen
         ``AppFooterStatus`` (upstream task-264 channel, restored on rebase).
         """
+        self._console_handoff_readiness_gate = None  # Poll rechecks (TASK-40322)
         self._update_title()
         self._sync_inspector_console_actions()
         self._sync_local_character_actions()

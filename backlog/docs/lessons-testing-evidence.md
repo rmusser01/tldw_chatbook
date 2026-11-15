@@ -6,6 +6,23 @@
 
 **What to do.** Watch the loop without adding turns to it (see "Observe loop turns without generating ready work", PR3496). A macOS pass says nothing about a spin: on Linux, check the loop thread's CPU (`time.thread_time()`) or its turn count. `test_the_busy_sampler_lets_an_idle_loop_sleep` pins it for the idle-heap sampler.
 
+## A worker cancelled before its first step never runs its coroutine's `finally` (TASK-40324, 2026-11-12)
+
+**Incident.** `test_stock_console_skill_setup_has_original_owned_lifetime[app_closing]` hung to its 240 s bound now and then: 7 of 20 four-wide runs at load 50-65. A 60 s watch printing every busy task's awaits named it. The test task was in `App._close_all`, waiting for ChatScreen's pump, and that pump was in `ConsoleReadinessConfigProjection.warm()` -> `_settled.wait()`. `on_shutdown_request` cancels every worker, and under `run_test` (no eager task factory) a readiness refresh worker can be cancelled before `_refresh` takes a step. Its `finally`, the only place that set `_settled`, never ran. Settling from the worker task's done-callback (as `raw_cli.py`'s `cancel_unstarted` does) made it 20 of 20.
+
+Three traps cost a run each while finding it:
+- `pytest node node node -n 4` collects 4 tests and xdist runs the duplicated node id once. Repeat a node with separate processes.
+- Textual redirects `sys.stdout` inside `run_test`, so a diagnostic that prints and then `os._exit`s shows nothing. Write to fd 1 (`os.write(1, ...)`).
+- A coroutine walker that follows `cr_await` stops at an async context manager's `__aexit__` (it awaits an `asend` object). Continue from `frame.f_locals['self'].gen`.
+
+**What to do.** Settlement that a waiter depends on belongs in a done-callback on the worker's task, not only in the work coroutine's `finally`. Test it by cancelling the task before its first step, without an eager factory. To find a hang, dump the awaits of every non-idle task (skip pumps in `_get_message` and timers) and fail within a bound.
+
+## A re-export breaks every `vars(module)` globals pin on the moved function (TASK-40323, 2026-11-12)
+
+**Incident.** 064d5cb014 (TASK-39147) moved `run_preparation_read` into `Backup_Recovery.runtime_producer_lifetime`; `Chat.console_preparation_reads` re-exports it. Three no-lane skill controls checked that the read's `invoke` frame had `vars(console_preparation_reads)` as its globals. 14 of 17 stock skill-trust cases failed at once, as did the managed received acceptance and held-pointer controls, with a bare `AssertionError` swallowed inside a monitor callback (`invalid = ['AssertionError:']`). Recording the failing line (`traceback.extract_tb`) named the pin.
+
+**What to do.** Pin a function's globals as `function.__globals__`, not as `vars(<the module you imported it from>)`. When a sys.monitoring control fails with an empty `AssertionError`, record the line before reading the product.
+
 ## A process-wide `os.close` spy also counts another thread's closes, so a profile change moved a "pin count" (TASK-39114, 2026-11-10)
 
 **Incident.** `test_migration_immutable_failure_retains_complete_destination[True]` monkeypatched `os.close` and expected 6 closes after a failed view close, "Admission also owns two directory pins for a file-backed view." It failed `assert 4 == 6` on dev. A first-parent bisect over 905 commits (a `git archive` tree per step, one 4 s node) named 5a915a43e5, a test-only commit that moved `Tests/DB` to the bootstrap profile. Stacks recorded in the spy showed the two missing closes came from the `chatbook-storage-admission` hold thread (`admission._lock` and `native_files.pinned_directory`), which a per-test profile's admission happened to run in that window. The cleanup under test closed the same 4 descriptors under both profiles.

@@ -1,4 +1,7 @@
-"""Review regression: cancelled preprocessing must retain native helper capacity."""
+"""Review regression: cancelled preprocessing must retain native helper capacity.
+
+Also TASK-40325: app exit abandons a helper that never answers, after a bound.
+"""
 
 import asyncio
 import time
@@ -146,11 +149,13 @@ async def test_retired_transport_waiting_in_executor_never_calls_adapter(monkeyp
         blocker = run_in_executor(executor, occupy)
         while not occupied.is_set():
             await asyncio.sleep(0)
+        # Queue the helper behind the blocker, whichever executor it names
+        # (its own daemon threads since TASK-40325).
         monkeypatch.setattr(
             loop,
             "run_in_executor",
-            lambda selected, function, *args: run_in_executor(
-                executor if selected is None else selected, function, *args
+            lambda _selected, function, *args: run_in_executor(
+                executor, function, *args
             ),
         )
         lease = pool.try_acquire(
@@ -178,3 +183,74 @@ async def test_retired_transport_waiting_in_executor_never_calls_adapter(monkeyp
             await blocker
             await await_settlement(pool)
     assert lease.physical_settled and calls == [] and usage == []
+
+
+_HUNG_HELPER_EXIT_SCRIPT = r"""
+import asyncio, os, threading, time
+from loguru import logger
+from Tests import network_guard, real_profile_guard
+network_guard.install()
+real_profile_guard.install()
+warnings = []
+logger.add(warnings.append, level="WARNING", format="{message}")
+
+
+async def main():
+    from Tests.Chat.response_rules_fixtures import source
+    from Tests.Chat.test_console_provider_gateway import _auxiliary_request
+    from tldw_chatbook.Chat import console_runtime
+    from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
+    from tldw_chatbook.Chat.response_rules.resources import RuleHelperPool
+
+    runtime = console_runtime.ConsoleRuntime(app=None)
+    pool = RuleHelperPool(
+        usage_sink=lambda *_args: None, current=lambda _origin: True, clock=time.monotonic
+    )
+    runtime.set_rule_helper_pool(pool)
+    started = threading.Event()
+
+    def adapter(**_kwargs):
+        started.set()
+        threading.Event().wait()  # The provider never answers.
+
+    lease = pool.try_acquire(source(), purpose="checking", deadline=time.monotonic() + 30)
+    asyncio.create_task(
+        ConsoleProviderGateway(chat_api_call_fn=adapter).complete_auxiliary(
+            _auxiliary_request(), rule_lease=lease
+        )
+    )
+    assert await asyncio.to_thread(started.wait, 30)
+    bound = getattr(console_runtime, "RULE_HELPER_EXIT_WAIT_SECONDS", 5.0)
+    # The whole exit, interpreter included, gets the bound plus 15 s.
+    watchdog = threading.Timer(
+        bound + 15, lambda: (print("exit_still_waiting", flush=True), os._exit(4))
+    )
+    watchdog.daemon = True
+    watchdog.start()
+    began = time.monotonic()
+    await runtime.dispose(timeout_seconds=0)
+    waited = time.monotonic() - began
+    assert bound <= waited < bound + 10, waited
+    assert pool.unsettled_count == 1 and not lease.physical_settled
+    assert [w for w in warnings if "response_rule_helpers_abandoned_at_exit count=1" in w]
+    print("retired and reopened", flush=True)
+
+
+asyncio.run(main())
+"""
+
+
+def test_exit_abandons_a_helper_that_never_answers_after_its_bound(tmp_path):
+    """TASK-40325: quit is not held hostage by a provider that never replies.
+
+    Before, dispose polled the pool with no bound, and asyncio.run then joined
+    the helper's executor thread, so the process never exited.
+    """
+    from Tests.Backup_Recovery.test_home_citation_retirement import _run
+
+    launch = (
+        "from Tests.Chat.test_response_rules_preparation_custody import "
+        "_HUNG_HELPER_EXIT_SCRIPT; "
+        "exec(compile(_HUNG_HELPER_EXIT_SCRIPT, '<hung-rule-helper-exit>', 'exec'))"
+    )
+    _run(tmp_path, "rule-helper", "hung", script=launch, timeout=90)

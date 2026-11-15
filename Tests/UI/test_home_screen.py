@@ -33,7 +33,7 @@ from tldw_chatbook.UI.Screens import home_screen as home_screen_module
 from tldw_chatbook.UI.Screens.home_screen import HomeScreen
 from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 from Tests.private_profile import private_profile_test
-from Tests.UI.app_factory import _build_test_app
+from Tests.UI.app_factory import _build_test_app, set_runtime_source_state
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 
 
@@ -303,13 +303,16 @@ async def test_home_system_status_groups_runtime_readiness_and_work_state():
 @pytest.mark.asyncio
 async def test_home_screen_status_row_surfaces_server_auth_state():
     app = _build_test_app()
-    app.runtime_policy.state = RuntimeSourceState(
-        active_source="server",
-        active_server_id="primary",
-        server_configured=True,
-        server_reachability="reachable",
-        server_auth_state="session_invalid",
-        last_known_server_label="Primary Server",
+    set_runtime_source_state(
+        app,
+        RuntimeSourceState(
+            active_source="server",
+            active_server_id="primary",
+            server_configured=True,
+            server_reachability="reachable",
+            server_auth_state="session_invalid",
+            last_known_server_label="Primary Server",
+        ),
     )
     host = HomeHarness(app)
 

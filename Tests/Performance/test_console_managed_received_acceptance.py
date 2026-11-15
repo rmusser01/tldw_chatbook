@@ -410,6 +410,13 @@ async def exercise():
                         observed["denied"] += 1
                 elif code is codes["hook"]:
                     parent = frame.f_back
+                    # 077e5bfa09 (ADR-230 decision 3): the received snapshot
+                    # reads through HookPermissions.authority_read.
+                    if (
+                        parent is not None
+                        and parent.f_code is HookPermissions.authority_read.__code__
+                    ):
+                        parent = parent.f_back
                     if (
                         parent is None
                         or parent.f_code is not snapshot_code
@@ -496,10 +503,13 @@ async def exercise():
                         type(context_run.__self__) is contextvars.Context
                         and context_run.__name__ == "run"
                     )
+                    # 064d5cb014 (TASK-39147) moved run_preparation_read out of
+                    # console_preparation_reads, which re-exports it.
                     assert (
                         type(request) is FunctionType
                         and request.__code__ is invoke_code
-                        and request.__globals__ is vars(read_source)
+                        and request.__globals__
+                        is read_source.run_preparation_read.__globals__
                     )
                     read = dict(zip(request.__code__.co_freevars, request.__closure__))[
                         "read"

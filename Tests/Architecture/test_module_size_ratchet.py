@@ -370,7 +370,9 @@ _BUDGETS: dict[str, int] = {
     # toasts with category-only logs (TASK-38228) and the full-page title
     # guard (TASK-33910.37): +9 (16,869 -> 16,878); set to
     # the measurement after the 2026-11-12 rebase.
-    "tldw_chatbook/UI/Screens/personas_screen.py": 16878,
+    # 2026-11-14, TASK-40322 (owner size waiver): clearing the stale poll
+    # gate (+1, 16,878 -> 16,879).
+    "tldw_chatbook/UI/Screens/personas_screen.py": 16879,
     # Roleplay frame B1: recipient ceiling for the moved header code (spec 5.4).
     # Roleplay frame B1 (TASK-33910.2), owner decision 2026-10-04 ("expand the
     # limits"), applied 2026-10-09: the final-review fix that puts a name and a
@@ -1080,7 +1082,9 @@ _BUDGETS: dict[str, int] = {
     # run is held only by an unproven tool cleanup, then reports it.
     # 2026-11-15, stacked on TASK-40717 and rebased onto dev e36c4953b1 (dev
     # 7043): TASK-40717's +4 and TASK-40716's +20, so 7067 -- exact measurement.
-    "tldw_chatbook/Chat/console_runtime.py": 7067,
+    # 2026-11-15, TASK-40325 (owner size waiver): the bounded app exit on a
+    # hung rule helper, +11 over dev 2ff0e9a5e5's 7,067; exact measurement.
+    "tldw_chatbook/Chat/console_runtime.py": 7078,
     # 2026-10-27 (TASK-33621.29 / TASK-33621.7, owner decision 2026-10-19,
     # "expand limits, never contort code"): +56 for the rewritten-tail
     # transition (ADR-337 amendment 2026-10-27). The proof itself lives in

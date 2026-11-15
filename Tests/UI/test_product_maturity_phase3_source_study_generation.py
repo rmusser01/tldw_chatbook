@@ -12,6 +12,7 @@ import pytest
 from textual.widgets import Button, Static
 
 from Tests.app_module_patches import patch_app_global
+from Tests.UI.app_factory import set_runtime_source_state
 from Tests.UI.test_destination_shells import (
     StaticLibraryConversationScopeService,
     StaticLibraryMediaScopeService,
@@ -152,8 +153,7 @@ def _set_runtime_backend(app: TldwCli, source: str) -> None:
         active_source=source,
         server_configured=source == "server",
     )
-    app.runtime_policy.state = state
-    app._publish_runtime_policy_projection(state)
+    set_runtime_source_state(app, state)
 
 
 @asynccontextmanager

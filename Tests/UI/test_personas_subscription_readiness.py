@@ -19,7 +19,11 @@ from Tests.UI.test_personas_workbench import (
 )
 from tldw_chatbook.LLM_Calls import anthropic_subscription as subscription
 
-pytestmark = pytest.mark.usefixtures("stub_characters")
+# TASK-40322: the mounted footer's Tamagotchi reads config in compose
+# (`AppFooterStatus._build_tamagotchi` -> `get_cli_setting`), which the per-test
+# config sandbox refuses with `RecoveryRequired: raw_source_selection_changed`;
+# keep the collection-time profile, as the other mounted readiness files do.
+pytestmark = [pytest.mark.usefixtures("stub_characters"), pytest.mark.bootstrap_profile]
 
 
 @pytest.fixture

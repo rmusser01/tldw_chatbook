@@ -65,6 +65,9 @@ async def test_shutdown_retains_native_helper_physical_cleanup():
         release.set()
         if "disposal" in locals():
             await disposal
+            # TASK-40325: a helper that answers inside the exit bound settles
+            # its lease before dispose returns.
+            assert lease.physical_settled and pool.unsettled_count == 0
         with pytest.raises(asyncio.CancelledError):
             await task
         await await_settlement(pool)

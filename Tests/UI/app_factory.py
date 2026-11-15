@@ -30,6 +30,8 @@ from Tests.app_module_patches import patch_app_global
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.config import load_settings, save_setting_to_cli_config
 from tldw_chatbook.runtime_policy import RuntimeSourceState
+from tldw_chatbook.runtime_policy.bootstrap import RuntimePolicyContext
+from tldw_chatbook.runtime_policy.source_state import RuntimeSourceStateStore
 
 # Every user-data dir handed to a TldwCli built here; drained (rmtree'd) by the
 # root conftest's autouse cleanup after each test.
@@ -240,6 +242,17 @@ def swap_app_aliases(app, **aliases) -> None:
     app._publish_application_services()
 
 
+def set_runtime_source_state(app, state: RuntimeSourceState) -> None:
+    """Commit ``state`` to a factory app's real runtime policy, as the app does.
+
+    The context's ``state`` is read-only; a commit saves it to the sandboxed
+    store and publishes the app's projection.
+    """
+    context = app.runtime_policy
+    if not context.commit_state(state, expected_revision=context.snapshot()[1]):
+        raise RuntimeError("runtime policy commit was rejected")
+
+
 async def drain_created_runtimes() -> None:
     """Retire factory-app Console workers before their owned DBs and locks."""
     from tldw_chatbook.Chat.console_runtime import dispose_console_runtime
@@ -391,10 +404,16 @@ def _build_test_app(
     subscriptions_patcher.start()
     _active_service_patches.append(subscriptions_patcher)
 
+    # TASK-40321: the real context type, over a store in this app's sandbox.
+    # Console's stock skill read leaves the UI loop only for a real
+    # `RuntimePolicyContext` (`UI/Console_Modules/skill.py`); a stand-in kept
+    # every factory app's discovery on the loop. Tests change the state with
+    # `set_runtime_source_state`, which commits like the shipped app.
     def fake_runtime_policy(app):
-        context = SimpleNamespace(
-            state=RuntimeSourceState(active_source="local", server_configured=True),
-            persist=lambda: None,
+        context = RuntimePolicyContext(
+            RuntimeSourceState(active_source="local", server_configured=True),
+            RuntimeSourceStateStore(user_data_dir / "runtime_policy.json"),
+            publish=app._publish_runtime_policy_projection,
         )
         app.runtime_policy = context
         app._publish_runtime_policy_projection(context.state)

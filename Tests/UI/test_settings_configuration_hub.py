@@ -32,6 +32,7 @@ from textual.widgets import (
 )
 
 from Tests.private_profile import is_private_profile_child, private_profile_test
+from Tests.UI.app_factory import set_runtime_source_state
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
@@ -3320,10 +3321,13 @@ async def test_settings_manual_sync_run_requires_confirmation_with_pending_count
             )
 
     app = _build_test_app()
-    app.runtime_policy.state = RuntimeSourceState(
-        active_source="server",
-        active_server_id="server-main",
-        server_configured=True,
+    set_runtime_source_state(
+        app,
+        RuntimeSourceState(
+            active_source="server",
+            active_server_id="server-main",
+            server_configured=True,
+        ),
     )
     app.manual_sync_control_service = FakeManualSyncControl()
     host = DestinationHarness(app, "settings")
@@ -3474,10 +3478,13 @@ async def test_settings_notes_adoption_controls_resolve_and_resume_enrollment(
             )
 
     app = _build_test_app()
-    app.runtime_policy.state = RuntimeSourceState(
-        active_source="server",
-        active_server_id="server-main",
-        server_configured=True,
+    set_runtime_source_state(
+        app,
+        RuntimeSourceState(
+            active_source="server",
+            active_server_id="server-main",
+            server_configured=True,
+        ),
     )
     app.manual_sync_control_service = FakeManualSyncControl()
     host = DestinationHarness(app, "settings")
@@ -3563,10 +3570,13 @@ async def test_settings_mixed_conflicts_display_and_resolve_same_adoption_review
             )
 
     app = _build_test_app()
-    app.runtime_policy.state = RuntimeSourceState(
-        active_source="server",
-        active_server_id="server-main",
-        server_configured=True,
+    set_runtime_source_state(
+        app,
+        RuntimeSourceState(
+            active_source="server",
+            active_server_id="server-main",
+            server_configured=True,
+        ),
     )
     app.manual_sync_control_service = FakeManualSyncControl()
     host = DestinationHarness(app, "settings")
@@ -3705,11 +3715,14 @@ async def test_settings_overview_renders_server_sync_workspace_contracts_in_diag
             )
 
     app = _build_test_app()
-    app.runtime_policy.state = RuntimeSourceState(
-        active_source="server",
-        active_server_id="server-main",
-        server_configured=True,
-        last_known_server_label="Main Server",
+    set_runtime_source_state(
+        app,
+        RuntimeSourceState(
+            active_source="server",
+            active_server_id="server-main",
+            server_configured=True,
+            last_known_server_label="Main Server",
+        ),
     )
     app.workspace_registry_service = FakeWorkspaceRegistry()
     app.acp_runtime_session_state = ACPRuntimeSessionState(

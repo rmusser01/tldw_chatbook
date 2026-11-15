@@ -40,7 +40,8 @@ where `SelectCurrent` exists but its `#label` child does not.
 
 The fix here is deliberately *not* a catch-and-carry-on. It is gated on
 `_pruning`/`_closing`, which mean "Textual has already committed to removing
-this widget from the DOM". A pruning widget is never painted again, so
+this widget from the DOM", and on `App._exit`, past which Textual mounts
+nothing (TASK-40323). A pruning widget is never painted again, so
 declining to initialise it loses nothing: there is no stale-placeholder
 failure mode, because there is no surface left to be stale. Any *other* way
 of arriving at a half-composed `Select` is a different bug and still raises
@@ -53,6 +54,7 @@ every region" shape — should use this class instead of `Select`.
 
 from __future__ import annotations
 
+from textual.message_pump import NoActiveAppError
 from textual.widgets import Select
 
 __all__ = ["PruneSafeSelect", "PruneSafeSelectCompatibilityError"]
@@ -122,12 +124,14 @@ _require_internals(Select, _GUARDED_METHODS, "method")
 
 
 class PruneSafeSelect(Select):
-    """A `Select` that declines to touch its children once it is pruning.
+    """A `Select` that declines to touch its children once it is retired.
 
     Behaviourally identical to `textual.widgets.Select` in every state
-    except `_pruning`/`_closing`, where the two mount-time steps that reach
-    into children stop doing so rather than raising `NoMatches`. Non-DOM
-    state (`_value`) is still kept in sync — see `_watch_value`.
+    except retired (`_pruning`, `_closing`, or the app's `App._exit` set),
+    where the two mount-time steps that reach into children stop doing so
+    rather than raising `NoMatches`. Non-DOM state (`_value`) is still kept
+    in sync, but `Select.Changed` is not posted while retired -- see
+    `_watch_value`.
 
     CSS is unaffected: Textual's type selectors match against every base
     class that inherits CSS (`DOMNode._css_bases`), so an existing
@@ -153,19 +157,41 @@ class PruneSafeSelect(Select):
         super().__init__(*args, **kwargs)
         _require_internals(self, _GUARDED_FLAGS, "attribute")
 
+    def _retired(self) -> bool:
+        """Pruning, closing, or past the app's mount fence (`App._exit`).
+
+        TASK-40323: once `App._exit` is set (`App.exit`, and first thing in
+        `TldwCli._shutdown`), `Widget.mount_all` mounts nothing, so a `Select`
+        composing then gets no children but `_on_mount` still runs. Terminal
+        like the other two: Textual never resets `_exit` (only tests clear
+        it), and the app never paints again. Outside any app (a value set
+        before mount) there is no fence, so stock behaviour applies.
+        """
+        if self._pruning or self._closing:
+            return True
+        try:
+            return self.app._exit
+        except NoActiveAppError:
+            return False
+
     def _setup_options_renderables(self) -> None:
-        """Skip the `query_one(SelectOverlay)` rebuild while pruning.
+        """Skip the `query_one(SelectOverlay)` rebuild once retired.
 
         Reached from `_on_mount` and from `set_options`. The overlay is a
         child mounted by `Select.compose`, so on a pruned-mid-compose
-        `Select` it may not exist at all.
+        `Select`, or one composed after the app's exit began, it may not
+        exist at all. `set_options` still stores the options first.
         """
-        if self._pruning or self._closing:
+        if self._retired():
             return
         super()._setup_options_renderables()
 
     def _watch_value(self, value) -> None:
-        """Skip only the DOM half of the watcher while pruning.
+        """Skip only the DOM half of the watcher while retired.
+
+        Retired means `_pruning`, `_closing`, or `App._exit` set. The DOM
+        half includes posting `Select.Changed`, so no `Changed` is posted
+        while retired.
 
         This is the exact crash site of TASK-1960. Upstream's `_watch_value`
         guards `query_one(SelectCurrent)` but neither the `#label` lookup one
@@ -183,8 +209,10 @@ class PruneSafeSelect(Select):
         worse state to hand to anything that reads the shadow — `_on_mount`
         does, via `_init_selected_option(self._value)`.
 
-        Not painting is safe because `_pruning`/`_closing` are terminal in
-        Textual 8.2.8: `App._prune` posts `Prune()` -> `_close_messages` ->
+        Not painting is safe because all three are terminal in Textual 8.2.8.
+        `App._exit` is never reset by Textual (only tests clear it), and past
+        it nothing mounts or paints. For `_pruning`/`_closing`:
+        `App._prune` posts `Prune()` -> `_close_messages` ->
         `_message_loop_exit`, which unregisters the node, and the only reset
         (`App._register`, `app.py:3662`) requires re-registering this exact
         instance — which never happens here, since every Watchlists `Select`
@@ -195,7 +223,7 @@ class PruneSafeSelect(Select):
         back and never re-fires. If this class ever survives such an upgrade,
         that revival path needs an explicit repaint, not just this sync.
         """
-        if self._pruning or self._closing:
+        if self._retired():
             # The one non-DOM statement of `Select._watch_value`.
             self._value = value
             return
