@@ -47,6 +47,7 @@ from ...Library.collections_capture_models import (
 from ...Library.library_shell_state import LIBRARY_ROW_BROWSE_COLLECTIONS
 from ...Third_Party.textual_fspicker import FileSave
 from ...Utils.adaptive_reader_state import (
+    AdaptiveReaderEffectiveLayout,
     list_holds_the_stage,
     resolve_adaptive_reader_layout,
 )
@@ -244,14 +245,24 @@ class LibraryCollectionsController:
         if width <= 0 or not self._library_adaptive_reader_allocation_is_current(shell):
             return
         previous = self._library_collections_reader_layout
-        if (
-            previous.reader_width == 0
-            and previous.library_width == 0
-            and previous.items_width == 0
-        ):
+        if not (previous.reader_width or previous.library_width or previous.items_width):
             previous = None
+        layout = self._resolve_library_collections_reader_layout(
+            width, previous=previous, priority=priority
+        )
+        shell.sync_layout(layout)
+        self._library_collections_reader_layout = layout
+
+    def _resolve_library_collections_reader_layout(
+        self,
+        width: int,
+        *,
+        previous: AdaptiveReaderEffectiveLayout | None = None,
+        priority: Literal["library", "items"] | None = None,
+    ) -> AdaptiveReaderEffectiveLayout:
+        """Resolve the Collections reader layout for ``width`` shell cells."""
         capture_controller = self._library_collections_capture_controller
-        layout = resolve_adaptive_reader_layout(
+        return resolve_adaptive_reader_layout(
             width,
             self._library_collections_reader_preferences,
             LIBRARY_COLLECTIONS_READER_PROFILE,
@@ -265,26 +276,22 @@ class LibraryCollectionsController:
                 and capture_controller.state.selected_identity is not None
             ),
         )
-        screen = self._screen
-        retry = screen._library_collections_focus_retry
-        screen._library_collections_focus_retry = None
-        # r14ls-rev2/rev3: a first visit composes this shell with the width-0
-        # layout, so the route's restore found its rail row disabled and
-        # parked focus on a grip; retry that id now the rail is open -- only
-        # while focus is still on that very grip, never a user's own.
-        parked = (
-            previous is None
-            and retry is not None
-            and retry[1] in (shell.library_grip, shell.items_grip)
-            and screen.focused is retry[1]
-        )
-        shell.sync_layout(layout)
-        self._library_collections_reader_layout = layout
-        if parked:
-            chain = screen.focus_chain
-            targets = [target for target in screen.query(retry[0]) if target in chain]
-            if targets:
-                screen.set_focus(targets[0], scroll_visible=False)
+
+    def _seed_library_collections_reader_layout(self) -> AdaptiveReaderEffectiveLayout:
+        """TASK-41130: a first visit composes from the screen's measured width.
+
+        The width-0 placeholder closed and disabled the Library pane in the
+        first frame, so the route's focus restore could not land on the
+        Collections row. The shell's first layout sync still refines it.
+        """
+        layout = self._library_collections_reader_layout
+        width = self._screen.size.width
+        if width > 0 and not (
+            layout.reader_width or layout.library_width or layout.items_width
+        ):
+            layout = self._resolve_library_collections_reader_layout(width)
+            self._library_collections_reader_layout = layout
+        return layout
 
     def _mirror_library_collections_reader_preference(
         self,

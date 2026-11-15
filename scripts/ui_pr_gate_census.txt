@@ -3089,8 +3089,11 @@ Tests/UI/test_library_collection_reader_journeys.py::test_rail_press_recomposes_
 # mid-recompose is rebuilt by the next, identical one.
 Tests/UI/test_library_collection_reader_journeys.py::test_a_pane_repaint_cancelled_mid_recompose_is_rebuilt_by_the_next
 # TASK-40328 review r14ls-rev3 (2026-11-13): the Collections first-visit
-# focus retry never moves a user's own focus.
-Tests/UI/test_library_collection_reader_journeys.py::test_collections_focus_retry_never_moves_a_users_own_focus
+# focus retry never moves a user's own focus. TASK-41130 (2026-11-15) renames
+# it in place: the first frame is composed from the measured width, so the
+# retry is gone and this node pins that frame instead (32.0 s call / 51.9 s
+# serial at load 82-92).
+Tests/UI/test_library_collection_reader_journeys.py::test_collections_first_frame_opens_the_library_pane
 # TASK-40300 review r14ep-rev1 (2026-11-13, owner decision): a custom endpoint
 # refused at load is listed in Settings with its reason and Edit fixes it
 # (private profile, ~15 s serial).
