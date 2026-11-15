@@ -3042,8 +3042,8 @@ def test_every_media_mutation_claims_the_interlock_at_one_audited_seam():
         LibraryMediaController.handle_library_media_bulk_delete_undo,
         LibraryMediaController.handle_library_media_delete_confirm,
         LibraryMediaController.handle_library_media_edit_save,
-        LibraryScreen.handle_library_media_trash_restore,
-        LibraryScreen.handle_library_media_trash_delete_confirm,
+        LibraryMediaController.handle_library_media_trash_restore,
+        LibraryMediaController.handle_library_media_trash_delete_confirm,
     ):
         assert "_claim_library_media_mutation" in inspect.getsource(handler), (
             handler.__name__

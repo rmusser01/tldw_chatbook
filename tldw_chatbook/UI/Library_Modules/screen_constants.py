@@ -576,3 +576,17 @@ _MEDIA_VIEW_VIEWER = "viewer"
 # notice, the receipt-fields guard) cannot drift apart from one another.
 _ANALYZE_ORIGIN_MEDIA = "media"
 _ANALYZE_ORIGIN_IMPORT = "import"
+
+
+# --- relocated from ``library_screen.py`` by TASK-36952.3.4: the two Trash
+# --- failure copies the moved Trash bodies read as bare module globals,
+# --- moved verbatim (comment included). ``library_screen.py`` imports them
+# --- back, as it does the four wave-7 constants above.
+
+# task-31220 (Qodo review round, PR #2412 #3): the copy each Trash mutation
+# releases its controller claim with. Named once because both the worker
+# body's own pre-commit failure and the claim seam's rollback (a fence or
+# ``run_worker`` that refused before any worker ran) mean the same thing to
+# the person looking at the row: nothing happened to it.
+_TRASH_PERMANENT_DELETE_FAILURE_COPY = "Could not delete this media item permanently."
+_TRASH_RESTORE_FAILURE_COPY = "Could not restore this media item."
