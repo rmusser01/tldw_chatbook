@@ -1,0 +1,4 @@
+# Preserve receipt/manifest hashes and raw Windows output on every checkout.
+* -text
+*.py text eol=lf
+*.md text eol=lf
