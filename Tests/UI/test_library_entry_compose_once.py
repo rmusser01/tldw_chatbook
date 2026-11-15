@@ -1791,7 +1791,9 @@ async def test_replace_canvas_child_repairs_current_route_after_remove_race(
         active_screen._media_state.selected_media_id = "local:media:1"
         active_screen._media_state.view = "viewer"
         active_screen._media_state.detail = _two_media_items()[0]
-        replacement = active_screen._build_library_media_active_child()
+        replacement = (
+            active_screen._media_controller._build_library_media_active_child()
+        )
         generation = active_screen._library_snapshot_state_generation
         route_key = active_screen._library_entry_route_key()
         canvas_host = active_screen.query_one("#library-canvas")
@@ -1917,7 +1919,9 @@ async def test_replace_canvas_child_repairs_owner_after_mount_failure(
         active_screen._media_state.selected_media_id = "local:media:1"
         active_screen._media_state.view = "viewer"
         active_screen._media_state.detail = _two_media_items()[0]
-        replacement = active_screen._build_library_media_active_child()
+        replacement = (
+            active_screen._media_controller._build_library_media_active_child()
+        )
         generation = active_screen._library_snapshot_state_generation
         route_key = active_screen._library_entry_route_key()
         canvas_host = active_screen.query_one("#library-canvas")

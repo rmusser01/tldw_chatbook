@@ -2782,7 +2782,7 @@ def test_action_library_media_bulk_delete_cancel_dismisses_confirmation():
     refresh_calls = []
     screen.refresh = lambda recompose=False: refresh_calls.append(recompose)
 
-    screen.action_library_media_bulk_delete_cancel()
+    screen._media_controller.action_library_media_bulk_delete_cancel()
 
     assert screen._media_state.confirming_bulk_delete is False
     # ``_sync_library_canvas`` fails closed to a full recompose here (no

@@ -1563,10 +1563,11 @@ def test_create_keeps_the_cap_warning_the_banner_cannot_carry(tmp_path):
 
 
 class _ReviewSelectedControllerFake:
-    """The one production hop the "Review selected" delegator makes.
+    """The controller seam the "Review selected" tests call directly.
 
     (wave-7 round-2 merge) ``handle_library_media_review_selected`` lives on
-    ``LibraryMediaController``; the screen keeps a one-line delegator. The
+    ``LibraryMediaController``. The screen's one-line delegator is gone
+    (Phase C task 3 moved the ``@on`` row to ``LibraryMediaCanvas``). The
     controller reaches the two state fields through its GENERATED shims, the
     worker through a group-(e) late-binding property, and ``run_worker`` as a
     framework service -- all three reproduced here so the REAL controller body
@@ -1637,11 +1638,11 @@ def test_review_selected_handler_shares_the_one_id_coercion():
         _review_selected_worker=worker,
         run_worker=lambda work, **kwargs: started.append({"work": work, **kwargs}),
     )
-    fake._media_controller = _ReviewSelectedControllerFake(fake)
+    # TASK-36952.2: the controller seam is called directly, not through an
+    # attribute on the fake screen.
+    controller = _ReviewSelectedControllerFake(fake)
 
-    fake._media_controller.handle_library_media_review_selected(
-        SimpleNamespace(stop=lambda: None)
-    )
+    controller.handle_library_media_review_selected(SimpleNamespace(stop=lambda: None))
 
     assert captured["ids"] == (7, 3)
     assert len(started) == 1, started
@@ -1662,10 +1663,10 @@ def test_review_selected_handler_starts_nothing_when_no_id_coerces():
         _review_selected_worker=lambda backing_ids: "unused",
         run_worker=lambda work, **kwargs: started.append({"work": work, **kwargs}),
     )
-    fake._media_controller = _ReviewSelectedControllerFake(fake)
+    # TASK-36952.2: the controller seam is called directly, not through an
+    # attribute on the fake screen.
+    controller = _ReviewSelectedControllerFake(fake)
 
-    fake._media_controller.handle_library_media_review_selected(
-        SimpleNamespace(stop=lambda: None)
-    )
+    controller.handle_library_media_review_selected(SimpleNamespace(stop=lambda: None))
 
     assert started == []

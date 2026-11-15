@@ -127,7 +127,7 @@ async def _apply_query(screen, pilot, query: str, *, rows: int) -> None:
     box = await _wait_for_selector(screen, pilot, "#library-media-filter")
     box.value = query
     await pilot.pause()
-    screen._request_library_media_filter(query)
+    screen._media_controller._request_library_media_filter(query)
     browse = screen._library_media_browse_controller
     await _wait_for_condition(
         pilot,

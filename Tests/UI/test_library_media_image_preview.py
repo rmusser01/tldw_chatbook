@@ -263,7 +263,7 @@ def test_preview_cache_evicts_oldest_image_and_related_session_state() -> None:
     screen._media_state.preview_loading[first_id] = 1
 
     for index in range(1, 22):
-        screen._cache_library_media_preview(
+        screen._media_controller._cache_library_media_preview(
             f"local:media:{index}", Image.new("RGB", (1, 1))
         )
 

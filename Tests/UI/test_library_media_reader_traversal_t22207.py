@@ -377,9 +377,13 @@ async def test_stale_failure_after_selection_moved_on_paints_no_error():
         canonical_c, backing_c, title_c = _row_identity(
             screen.query_one("#library-media-row-2", Button)
         )
-        screen._select_library_media_reader_row(canonical_b, title_b, immediate=True)
+        screen._media_controller._select_library_media_reader_row(
+            canonical_b, title_b, immediate=True
+        )
         await _wait_for_detail_call(service, backing_b)
-        screen._select_library_media_reader_row(canonical_c, title_c, immediate=True)
+        screen._media_controller._select_library_media_reader_row(
+            canonical_c, title_c, immediate=True
+        )
         await _wait_for_detail_call(service, backing_c)
 
         with _count_body_builds() as counts:

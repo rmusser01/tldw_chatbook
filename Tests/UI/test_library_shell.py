@@ -11117,7 +11117,7 @@ async def test_library_media_generate_analysis_dispatches_and_persists():
             # task-28007 AC#5: the action is composed disabled while no
             # provider resolves, so the patched-ready resolution has to
             # reach the viewer before the press can land.
-            screen._sync_library_media_viewer_or_recompose()
+            screen._media_controller._sync_library_media_viewer_or_recompose()
             await pilot.pause()
             generate = screen.query_one("#library-media-analysis-generate", Button)
             assert generate.disabled is False
@@ -11192,7 +11192,7 @@ async def test_library_media_generate_analysis_without_provider_notifies_and_ski
             # task-28007 AC#5: the refusal is now stated at the control
             # BEFORE the click -- a disabled Button swallows press() -- so
             # the handler's surviving post-click guard is exercised directly.
-            screen._sync_library_media_viewer_or_recompose()
+            screen._media_controller._sync_library_media_viewer_or_recompose()
             await pilot.pause()
             generate = screen.query_one("#library-media-analysis-generate", Button)
             assert generate.disabled is True
@@ -11789,10 +11789,10 @@ async def test_library_shell_media_viewer_inplace_teardown_contains_child_query_
         await controls.remove()
         assert screen.query_one("#library-media-viewer") is viewer
 
-        screen.handle_library_media_content_search_submitted(
+        screen._media_controller.handle_library_media_content_search_submitted(
             Input.Submitted(search_input, "setup")
         )
-        screen._advance_library_media_content_match(1)
+        screen._media_controller._advance_library_media_content_match(1)
 
         body = viewer.query_one(
             "#library-media-viewer-content", LibraryMediaContentBody
@@ -11800,7 +11800,7 @@ async def test_library_shell_media_viewer_inplace_teardown_contains_child_query_
         await body.remove()
         assert screen.query_one("#library-media-viewer") is viewer
 
-        await screen._set_library_media_content_mode("raw")
+        await screen._media_controller._set_library_media_content_mode("raw")
 
 
 @pytest.mark.asyncio
@@ -11984,7 +11984,7 @@ async def test_library_shell_media_viewer_detail_arrival_does_not_reparse_render
 
         # A detail arrival for the detail already on screen must not recompose.
         parses_before = len(markdown_updates)
-        screen._recompose_library_media_detail_if_unrendered()
+        screen._media_controller._recompose_library_media_detail_if_unrendered()
         await pilot.pause()
         await pilot.pause()
         assert len(markdown_updates) == parses_before
@@ -12002,7 +12002,7 @@ async def test_library_shell_media_viewer_detail_arrival_does_not_reparse_render
         updated_detail["content"] = f"{updated_detail['content']}\n\nFresh detail"
         screen._media_state.detail = updated_detail
         screen._media_state.composed_detail = None
-        screen._recompose_library_media_detail_if_unrendered()
+        screen._media_controller._recompose_library_media_detail_if_unrendered()
         await pilot.pause()
         await pilot.pause()
         assert len(markdown_updates) == parses_before + 1
@@ -13107,7 +13107,9 @@ async def test_library_media_initial_error_is_unknown_and_retry_is_unique() -> N
         assert str(screen.query_one("#library-media-title", Static).renderable) == (
             "Media (2)"
         )
-        screen._focus_library_media_page_control("#library-media-next")
+        screen._media_controller._focus_library_media_page_control(
+            "#library-media-next"
+        )
         assert getattr(screen.focused, "id", None) == "library-media-type-filter"
 
 
@@ -13310,7 +13312,7 @@ async def test_library_media_stale_page_disables_actions_across_recompose() -> N
 
         screen._media_state.delete_receipt_ids = ("local:media:1",)
         app.media_reading_scope_service = DoubleShrinkLibraryMediaScopeService(media)
-        screen._request_library_media_page(3, focus_identity=None)
+        screen._media_controller._request_library_media_page(3, focus_identity=None)
         await _wait_for_condition(
             pilot,
             lambda: (
@@ -13603,7 +13605,7 @@ async def test_library_media_newer_page_and_facet_generations_win() -> None:
             assert screen._build_library_media_state().rows == ()
 
             screen._request_library_media_type("audio", focus_identity=None)
-            screen._request_library_media_facets()
+            screen._media_controller._request_library_media_facets()
             await _wait_for_condition(
                 pilot,
                 lambda: (
@@ -36296,7 +36298,7 @@ async def test_background_recompose_restores_focus_on_a_filtered_empty_media_lis
         screen.query_one("#library-row-browse-media").press()
         await _wait_for_selector(screen, pilot, "#library-media-row-0")
 
-        screen._request_library_media_filter("no-such-media-anywhere")
+        screen._media_controller._request_library_media_filter("no-such-media-anywhere")
         await _wait_for_condition(
             pilot,
             lambda: not screen.query(".library-media-row")

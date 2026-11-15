@@ -1476,8 +1476,11 @@ def test_budget_is_not_left_slack_after_a_wave(rel_path: str) -> None:
 #: this count was 416 there too).
 _LIBRARY_INIT_LAMBDAS = 416
 #: Measured at dev 26b2e677dd by `_unbound_class_calls` over Tests/**/*.py:
-#: 724 in 59 files.
-#: - 602 calls: 594 on the class, public handlers included (the review's 370
+#: 724 in 59 files. TASK-36952.2 lowered it to 722 (still 59 files): the two
+#: `LibraryScreen.handle_library_media_reader_more(fake, ...)` calls now call
+#: the media controller. Every other media site still reaches a body that
+#: lives on the screen.
+#: - 600 calls: 592 on the class, public handlers included (the review's 370
 #:   named private `_x(fake_self, ...)` calls only), and 8 `.__wrapped__(...)`.
 #:   60 of them call static or class-method helpers (no fake self) and 3 are
 #:   `LibraryScreen.__new__(LibraryScreen)` constructions.
@@ -1490,7 +1493,7 @@ _LIBRARY_INIT_LAMBDAS = 416
 #: them later, 16 `_press(fake, LibraryScreen.x)` (with the fake) and 2
 #: `asyncio.to_thread(LibraryScreen.x, ...)` (a static helper called with a
 #: service); and a class held in a variable.
-_LIBRARY_UNBOUND_TEST_CALLS = 724
+_LIBRARY_UNBOUND_TEST_CALLS = 722
 
 
 def _library_init_lambdas() -> int:

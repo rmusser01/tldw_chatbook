@@ -869,7 +869,7 @@ async def test_media_trash_collapse_choices_survive_filter_and_page_refresh() ->
             lambda: not screen._media_state.reader_layout.items_open,
             message="Items grip did not collapse the Items pane.",
         )
-        screen._request_library_media_trash_page(
+        screen._media_controller._request_library_media_trash_page(
             2, focus_identity="#library-media-trash-next"
         )
         await _wait_for_condition(
@@ -945,7 +945,7 @@ async def test_media_trash_compact_pane_priority_survives_page_and_filter_refres
         await pilot.pause()
         assert screen._media_state.reader_layout.library_open is True
         assert screen._media_state.reader_layout.items_open is False
-        screen._request_library_media_trash_page(
+        screen._media_controller._request_library_media_trash_page(
             2, focus_identity="#library-media-trash-next"
         )
         await _wait_for_condition(
@@ -1245,7 +1245,7 @@ async def test_compact_media_stale_and_retry_actions_remain_truthful() -> None:
             app.media_reading_scope_service = DoubleShrinkLibraryMediaScopeService(
                 media
             )
-            screen._request_library_media_page(3, focus_identity=None)
+            screen._media_controller._request_library_media_page(3, focus_identity=None)
             await _wait_for_condition(
                 pilot,
                 lambda: (

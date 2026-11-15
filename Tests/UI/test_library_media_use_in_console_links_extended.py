@@ -203,7 +203,7 @@ async def test_an_item_outside_the_depth_state_sample_links_from_u_and_c():
 
         # Reader `c` on item 52 (no row), opened by id as the Search deep link
         # and the ingest "Open in Library" fallback do.
-        screen._navigate_to_media("52")
+        screen._media_controller._navigate_to_media("52")
         await _wait_for_condition(
             pilot,
             lambda: screen._media_state.reader_session.loaded_id == "local:media:52"

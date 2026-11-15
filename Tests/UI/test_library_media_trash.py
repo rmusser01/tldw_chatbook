@@ -726,7 +726,7 @@ async def test_media_trash_entry_requests_one_independent_initial_page():
                 ),
                 message="Normal Media type scope never applied.",
             )
-            screen._request_library_media_filter("Interview")
+            screen._media_controller._request_library_media_filter("Interview")
             await _wait_for_condition(
                 pilot,
                 lambda: (
@@ -1014,7 +1014,7 @@ async def test_media_trash_filter_retry_page_and_type_use_applied_scope():
         calls_before_bound = len(feed.calls)
         long_input = Input(id="library-media-trash-search")
         long_event = Input.Submitted(long_input, "x" * 201)
-        screen.handle_library_media_trash_search_submitted(long_event)
+        screen._media_controller.handle_library_media_trash_search_submitted(long_event)
         await pilot.pause()
         assert len(feed.calls) == calls_before_bound
         assert controller.state.applied_result.scope == MediaTrashScope()
@@ -1026,7 +1026,7 @@ async def test_media_trash_filter_retry_page_and_type_use_applied_scope():
         )
 
         failed_input = Input(id="library-media-trash-search")
-        screen.handle_library_media_trash_search_submitted(
+        screen._media_controller.handle_library_media_trash_search_submitted(
             Input.Submitted(failed_input, "failed")
         )
         await _wait_for_condition(
@@ -1045,7 +1045,7 @@ async def test_media_trash_filter_retry_page_and_type_use_applied_scope():
         # Validation remains a Search-owned concern even when a prior
         # failed browse target is still retained for a later Retry.
         calls_before_failed_bound = len(feed.calls)
-        screen.handle_library_media_trash_search_submitted(
+        screen._media_controller.handle_library_media_trash_search_submitted(
             Input.Submitted(long_input, "y" * 201)
         )
         await pilot.pause()
@@ -1058,7 +1058,7 @@ async def test_media_trash_filter_retry_page_and_type_use_applied_scope():
         )
 
         retry = Button("Retry", id="library-media-trash-retry")
-        screen.handle_library_media_trash_retry(Button.Pressed(retry))
+        screen._media_controller.handle_library_media_trash_retry(Button.Pressed(retry))
         await _wait_for_condition(
             pilot,
             lambda: len(feed.calls) == calls_before_bound + 2,
@@ -1070,7 +1070,9 @@ async def test_media_trash_filter_retry_page_and_type_use_applied_scope():
         # After that second failure, Next derives from the visible applied
         # All-Trash page, never the failed query draft.
         next_button = Button("Next", id="library-media-trash-next")
-        screen.handle_library_media_trash_next(Button.Pressed(next_button))
+        screen._media_controller.handle_library_media_trash_next(
+            Button.Pressed(next_button)
+        )
         await _wait_for_condition(
             pilot,
             lambda: (
@@ -1088,7 +1090,7 @@ async def test_media_trash_filter_retry_page_and_type_use_applied_scope():
         option_list = OptionList(id="library-media-trash-type-choices")
         option = Option("audio")
         option.choice_value = "audio"
-        screen.handle_library_media_trash_type_choice(
+        screen._media_controller.handle_library_media_trash_type_choice(
             OptionList.OptionSelected(option_list, option, 0)
         )
         await _wait_for_condition(
@@ -1671,7 +1673,7 @@ async def test_media_trash_focus_recovers_after_suppressed_canvas_sync(monkeypat
             message="Real Tab did not leave Search after a suppressed sync.",
         )
         assert screen._notes_state.focus_intent_generation > older_generation
-        screen._focus_library_media_trash_after_paint(
+        screen._media_controller._focus_library_media_trash_after_paint(
             "#library-media-trash-search", older_generation
         )
         await pilot.pause()
@@ -2019,7 +2021,7 @@ async def test_media_trash_commit_unknown_blocks_back_but_refresh_can_be_abandon
                 == "Finishing this action…"
             )
             assert screen.check_action("library_media_trash_back", ()) is False
-            screen.action_library_media_trash_back()
+            screen._media_controller.action_library_media_trash_back()
             assert screen._media_state.view == "trash"
 
             release_commit.set()
@@ -2725,7 +2727,7 @@ async def test_media_trash_back_and_escape_restore_distinct_media_return(exit_ke
             lambda: controller.applied_scope == MediaBrowseScope(),
             message="Initial Media page never applied.",
         )
-        screen._request_library_media_page(2, focus_identity=None)
+        screen._media_controller._request_library_media_page(2, focus_identity=None)
         await _wait_for_condition(
             pilot,
             lambda: controller.applied_scope == MediaBrowseScope(page=2),
@@ -2750,7 +2752,7 @@ async def test_media_trash_back_and_escape_restore_distinct_media_return(exit_ke
             lambda: trash_controller.state.applied_result is not None,
             message="Trash page never applied.",
         )
-        screen._request_library_media_trash_page(
+        screen._media_controller._request_library_media_trash_page(
             2, focus_identity="#library-media-trash-next"
         )
         await _wait_for_condition(

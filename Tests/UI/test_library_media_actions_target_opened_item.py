@@ -414,7 +414,7 @@ async def test_use_in_console_payload_names_the_opened_item():
         await _wait_for_library_shell(screen, pilot)
         await _open_by_link(screen, pilot, "3")
 
-        payload = screen._selected_media_handoff_payload()
+        payload = screen._media_controller._selected_media_handoff_payload()
 
         assert payload is not None
         assert payload.item_type == "media"
@@ -574,7 +574,7 @@ async def test_speaker_rename_id_follows_the_reader_during_a_pending_selection()
         )
         assert screen._media_state.reader_session.loaded_id == canonical
         assert _reader_title(screen) == TITLES["3"]
-        screen._sync_library_media_viewer_or_recompose()
+        screen._media_controller._sync_library_media_viewer_or_recompose()
         await pilot.pause()
         viewer = screen.query_one("#library-media-viewer", LibraryMediaViewer)
         assert viewer.speaker_rename_media_id == 3, viewer.speaker_rename_media_id

@@ -182,8 +182,12 @@ async def test_arrow_traversal_updates_selection_immediately_but_loads_only_sett
         service.detail_calls.clear()
         row_1 = _row_identity(screen.query_one("#library-media-row-1", Button))
         row_2 = _row_identity(screen.query_one("#library-media-row-2", Button))
-        screen._select_library_media_reader_row(row_1[0], row_1[2], immediate=False)
-        screen._select_library_media_reader_row(row_2[0], row_2[2], immediate=False)
+        screen._media_controller._select_library_media_reader_row(
+            row_1[0], row_1[2], immediate=False
+        )
+        screen._media_controller._select_library_media_reader_row(
+            row_2[0], row_2[2], immediate=False
+        )
 
         selected, expected_backing_id, _ = row_2
         assert screen._media_state.selected_media_id == selected
@@ -389,7 +393,7 @@ async def test_reader_defaults_to_read_and_keeps_mode_across_local_items():
         screen._media_state.reader_session = set_mode(
             screen._media_state.reader_session, "analysis"
         )
-        screen._sync_library_media_viewer_or_recompose()
+        screen._media_controller._sync_library_media_viewer_or_recompose()
         await _wait_for_condition(
             pilot,
             lambda: bool(screen.query("#library-media-reader-mode-analysis")),
@@ -486,7 +490,7 @@ async def test_external_detail_without_original_exposes_no_empty_more_menu():
 
     async with host.run_test(size=WIDE_SIZE) as pilot:
         screen = await _open_media_list(host, pilot)
-        await screen._open_library_external_media_detail("7")
+        await screen._media_controller._open_library_external_media_detail("7")
         await _wait_for_condition(
             pilot,
             lambda: bool(screen.query("#library-media-reader-identity")),
@@ -550,7 +554,7 @@ async def test_stale_more_disclosure_paints_nothing_on_a_sourceless_detail():
         screen.query_one("#library-media-reader-more", Button).press()
         await _wait_for_selector(screen, pilot, "#library-media-reader-more-actions")
 
-        await screen._open_library_external_media_detail("7")
+        await screen._media_controller._open_library_external_media_detail("7")
         await _wait_for_condition(
             pilot,
             lambda: screen._media_state.reader_session.external_detail,
@@ -573,9 +577,13 @@ async def test_late_external_a_cannot_replace_b_or_show_error(late_outcome):
 
     async with host.run_test(size=WIDE_SIZE) as pilot:
         screen = await _open_media_list(host, pilot)
-        opening_a = asyncio.create_task(screen._open_library_external_media_detail("7"))
+        opening_a = asyncio.create_task(
+            screen._media_controller._open_library_external_media_detail("7")
+        )
         await _wait_for_detail_call(service, 7)
-        opening_b = asyncio.create_task(screen._open_library_external_media_detail("8"))
+        opening_b = asyncio.create_task(
+            screen._media_controller._open_library_external_media_detail("8")
+        )
         await _wait_for_detail_call(service, 8)
         service.release(8)
         await _wait_for_condition(
@@ -624,7 +632,7 @@ async def test_info_describes_the_same_stored_text_representation_sent_to_consol
         provenance = await _wait_for_selector(
             screen, pilot, "#library-media-reader-provenance"
         )
-        payload = screen._selected_media_handoff_payload()
+        payload = screen._media_controller._selected_media_handoff_payload()
 
         assert payload is not None
         assert "Complete stored text excerpt" in str(provenance.renderable)
@@ -662,7 +670,7 @@ async def test_info_calls_empty_content_metadata_only_like_console():
         provenance = await _wait_for_selector(
             screen, pilot, "#library-media-reader-provenance"
         )
-        payload = screen._selected_media_handoff_payload()
+        payload = screen._media_controller._selected_media_handoff_payload()
 
         assert payload is not None
         assert "No stored content." in payload.body
@@ -724,7 +732,9 @@ async def test_late_completion_for_a_cannot_replace_loaded_b_or_show_error(
         canonical_b, backing_b, title_b = _row_identity(row_b)
         row_a.press()
         await _wait_for_detail_call(service, backing_a)
-        screen._select_library_media_reader_row(canonical_b, title_b, immediate=True)
+        screen._media_controller._select_library_media_reader_row(
+            canonical_b, title_b, immediate=True
+        )
         await _wait_for_detail_call(service, backing_b)
         service.release(backing_b)
         await _wait_for_condition(
@@ -1468,8 +1478,9 @@ class _MoreHandlerControllerFake:
     """The one production hop the More delegator makes, reproduced minimally.
 
     (wave-7 merge) ``handle_library_media_reader_more`` moved to
-    ``LibraryMediaController``; the screen keeps a one-line delegator. The
-    controller reaches the session through its GENERATED state shim and
+    ``LibraryMediaController``; the screen keeps a one-line delegator, which
+    the tests no longer call (TASK-36952.2). The controller reaches the
+    session through its GENERATED state shim and
     ``_after_library_media_viewer_sync`` through its group-(e) late-binding
     property, so both are reproduced here -- the REAL controller body still
     runs, against this file's own screen fake. The alternative (reverting the
@@ -1537,13 +1548,11 @@ def test_more_toggle_chains_the_restore_already_queued_on_the_viewer():
     fake._queue_after_library_media_viewer_recompose = MethodType(
         LibraryScreen._queue_after_library_media_viewer_recompose, fake
     )
-    # (wave-7 merge) the handler itself moved; the screen delegates to the
-    # controller, so the fake carries the same one hop.
-    fake._media_controller = _MoreHandlerControllerFake(fake)
+    # TASK-36952.2: the handler lives on the controller, so the test calls it
+    # there rather than through the screen's one-line delegator.
+    controller = _MoreHandlerControllerFake(fake)
 
-    LibraryScreen.handle_library_media_reader_more(
-        fake, SimpleNamespace(stop=lambda: None)
-    )
+    controller.handle_library_media_reader_more(SimpleNamespace(stop=lambda: None))
 
     assert fake._media_state.reader_session.more_open is True
     assert calls == ["sync"]
@@ -1627,13 +1636,11 @@ def test_more_toggle_without_a_viewer_falls_back_to_the_screen_seam():
     fake._queue_after_library_media_viewer_recompose = MethodType(
         LibraryScreen._queue_after_library_media_viewer_recompose, fake
     )
-    # (wave-7 merge) the handler itself moved; the screen delegates to the
-    # controller, so the fake carries the same one hop.
-    fake._media_controller = _MoreHandlerControllerFake(fake)
+    # TASK-36952.2: the handler lives on the controller, so the test calls it
+    # there rather than through the screen's one-line delegator.
+    controller = _MoreHandlerControllerFake(fake)
 
-    LibraryScreen.handle_library_media_reader_more(
-        fake, SimpleNamespace(stop=lambda: None)
-    )
+    controller.handle_library_media_reader_more(SimpleNamespace(stop=lambda: None))
 
     assert fake._media_state.reader_session.more_open is True
     assert len(calls) == 2 and calls[0] == "sync"
@@ -2163,7 +2170,7 @@ async def test_thirty_step_traversal_settles_at_most_one_progress_write():
             for index in step_indexes
         ]
         for canonical_id, _backing_id, title in rows:
-            screen._select_library_media_reader_row(
+            screen._media_controller._select_library_media_reader_row(
                 canonical_id, title, immediate=False
             )
             # Key repeat spans event-loop turns: give the drainer the chance
