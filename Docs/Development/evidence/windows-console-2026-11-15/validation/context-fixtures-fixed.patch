@@ -1,0 +1,302 @@
+diff --git a/Tests/Chat/test_console_context_presentation_reads.py b/Tests/Chat/test_console_context_presentation_reads.py
+index 18c4d315d3..24af510eb0 100644
+--- a/Tests/Chat/test_console_context_presentation_reads.py
++++ b/Tests/Chat/test_console_context_presentation_reads.py
+@@ -1,6 +1,7 @@
+ """Presentation reads use captured lineage and leave send authority unchanged."""
+ 
+ import asyncio
++import sys
+ from contextlib import asynccontextmanager
+ import threading
+ from types import SimpleNamespace
+@@ -80,7 +81,19 @@ async def test_cold_and_expired_presentation_never_fall_back_to_live_ui_reads(
+     tmp_path, monkeypatch
+ ):
+     database, store, controller, _ = _controller(tmp_path)
+-    tasks, calls = [], []
++    tasks, calls, live_calls = [], [], []
++    live_function = type(controller).context_control_inputs
++    live_code = live_function.__code__
++    monitor = sys.monitoring
++    tool = next(slot for slot in range(6) if monitor.get_tool(slot) is None)
++    monitor.use_tool_id(tool, "original-context-reader")
++
++    def observe_live(code, offset):
++        if sys._getframe(1).f_locals.get("self") is controller:
++            live_calls.append(threading.get_ident())
++
++    monitor.register_callback(tool, monitor.events.PY_START, observe_live)
++    monitor.set_local_events(tool, live_code, monitor.events.PY_START)
+     try:
+         store.active_session_id = "session-1"
+         message = store.append_message(
+@@ -101,11 +114,8 @@ async def test_cold_and_expired_presentation_never_fall_back_to_live_ui_reads(
+             return task
+ 
+         monkeypatch.setattr(store.persistence, "get_message_versions", versions)
+-        monkeypatch.setattr(
+-            controller,
+-            "context_control_inputs",
+-            lambda *_: pytest.fail("presentation fell back to live UI reads"),
+-        )
++        # Replacing this callback deliberately selects the custom fallback.
++        # Observe its original code so this remains a stock-reader control.
+         snapshot = spend.ConsoleContextReadSnapshot(schedule=schedule)
+         assert snapshot.inputs(controller, "session-1")[2] is None
+         assert calls == []
+@@ -126,7 +136,15 @@ async def test_cold_and_expired_presentation_never_fall_back_to_live_ui_reads(
+         assert snapshot.inputs(controller, "session-1")[2] is None
+         await asyncio.gather(*tasks)
+         assert len(calls) == 3
++        assert not live_calls, "presentation fell back to the original live reader"
+     finally:
++        monitor.set_local_events(tool, live_code, 0)
++        monitor.register_callback(tool, monitor.events.PY_START, None)
++        monitor.free_tool_id(tool)
++        assert type(controller).context_control_inputs is live_function
++        assert live_function.__code__ is live_code
++        if tasks:
++            await asyncio.gather(*tasks, return_exceptions=True)
+         database.close()
+ 
+ 
+@@ -299,6 +317,13 @@ async def _real_compaction_resume(tmp_path, monkeypatch):
+     )
+ 
+     _database, store, controller, gateway = _live_controller(tmp_path, overrides=_ASK)
++    # A real RESET keeps RAW memory semantics but makes lineage validation
++    # necessary. Seed it before the threshold-reaching Send captures its scope.
++    from Tests.Chat.test_console_context_presentation_current import _memory_owner
++
++    seed = await controller.submit_draft("Seed context", session_id="session-1")
++    assert seed.accepted
++    _memory_owner(store, controller)
+     _draft, result = await _send_until_held(controller, gateway)
+     preparation = store.preparation_for_session("session-1")
+     assert (
+diff --git a/Tests/Packaging/test_console_interaction_import_closure.py b/Tests/Packaging/test_console_interaction_import_closure.py
+index 0905aedc30..3f6d9ea1e2 100644
+--- a/Tests/Packaging/test_console_interaction_import_closure.py
++++ b/Tests/Packaging/test_console_interaction_import_closure.py
+@@ -13,6 +13,28 @@ import pytest
+     [
+         """
+ import sys
++from tldw_chatbook.Provider_Contract import provider_endpoint_contract as contract
++
++for key, base, expected in (
++    ('openai', 'https://api.openai.com/v1', 'https://api.openai.com/v1/chat/completions'),
++    ('local_llamacpp', 'http://127.0.0.1:8080', 'http://127.0.0.1:8080/v1/chat/completions'),
++):
++    resolution = contract.resolve_provider_endpoint(key, base)
++    assert not resolution.errors, resolution.errors
++    assert resolution.chat_url == expected
++for name in (
++    'tldw_chatbook.Provider_Contract.provider_setup_facts',
++    'tldw_chatbook.Chat.provider_setup_facts',
++):
++    assert name not in sys.modules, name
++from tldw_chatbook.Provider_Contract import provider_setup_facts as facts
++assert facts.ROUTE_SUFFIXES is contract.ROUTE_SUFFIXES
++base = 'https://api.z.ai/api/paas/v4'
++assert contract.resolve_provider_endpoint('zai', base).chat_url == base + '/chat/completions'
++assert facts.provider_setup_facts('zai').route_suffix == '/chat/completions'
++""",
++        """
++import sys
+ from tldw_chatbook.UI.Console_Modules.environment import ConsoleEnvironmentController
+ 
+ jobs = []
+@@ -101,6 +123,7 @@ assert execution not in sys.modules
+ """,
+     ],
+     ids=[
++        "endpoint-routing-without-setup-facts",
+         "closed-environment-rail",
+         "vllm-handoff-contract",
+         "non-anthropic-readiness",
+diff --git a/Tests/UI/modal_wide_tier_registry.py b/Tests/UI/modal_wide_tier_registry.py
+index 929d2ab4dd..feea6bb8c7 100644
+--- a/Tests/UI/modal_wide_tier_registry.py
++++ b/Tests/UI/modal_wide_tier_registry.py
+@@ -73,6 +73,7 @@ MODAL_WIDE_TIER_SKIPPED: dict[str, str] = {
+     "PluginStatusModal": "shared plugin-review-shell is already 90% of the viewport",
+     "PluginVariableDialog": "shared plugin-review-shell is already 90% of the viewport",
+     "PluginAuthorityResetModal": "shared plugin-review-shell is already 90% of the viewport",
++    "PluginRestoreAdoptionModal": "shared plugin-review-shell is already 90% of the viewport",
+     "VoiceBlendDialog": "inventory #74: fixed 15-column slider grid, extra width is dead space",
+     "ConfirmationDialog": "inventory #76: tiny-by-design confirm",
+     "UnsavedChangesDialog": "tiny-by-design confirm (ConfirmationDialog family)",
+diff --git a/Tests/UI/test_console_tab_publication_read_barrier.py b/Tests/UI/test_console_tab_publication_read_barrier.py
+index 655e200827..ba371a74b6 100644
+--- a/Tests/UI/test_console_tab_publication_read_barrier.py
++++ b/Tests/UI/test_console_tab_publication_read_barrier.py
+@@ -576,9 +576,11 @@ class _OriginalReadGate:
+ 
+ @contextmanager
+ def _original_close_read_drain(runtime, session_id):
+-    from tldw_chatbook.Chat import console_preparation_reads as module
++    from tldw_chatbook.Backup_Recovery import runtime_producer_lifetime as module
++    from tldw_chatbook.Chat import console_preparation_reads as public_reads
+ 
+     function = module.drain_preparation_reads
++    assert public_reads.drain_preparation_reads is function
+     code = function.__code__
+     assert function.__globals__ is module.__dict__
+     assert _shape(code) == _shape(_source_code(module, function.__qualname__))
+@@ -740,22 +742,22 @@ async def test_actual_close_publishes_real_tabs_before_stock_read_release(
+     lock_owned = False
+     async with host.run_test(size=_SIZE) as pilot:
+         console = await _mounted_console(host, pilot, "#console-native-composer")
++        projection = spend.ConsoleReadinessConfigProjection.for_screen(console)
++        assert type(projection) is spend.ConsoleReadinessConfigProjection
++        assert projection.max_age == 1.0
++        # Composer presence can precede attach's queued FULL publication. Finish
++        # that owner before seeding sessions: _show_tabs may otherwise defer its
++        # only FULL while its DOM wait depends on startup's later replay.
++        deadline = time.monotonic() + 10.0
++        assert await _finish_startup_publication(console, deadline=deadline)
++        assert await _readiness_settled(
++            console, projection, no_replay=True, deadline=deadline
++        )
+         controller = console._ensure_console_chat_controller()
+         keeper = controller.store.active_session_id
+         doomed = controller.new_session(title="Read barrier Close")
+         controller.switch_session(keeper)
+         await _show_tabs(console, pilot, {keeper, doomed.id})
+-        projection = spend.ConsoleReadinessConfigProjection.for_screen(console)
+-        assert type(projection) is spend.ConsoleReadinessConfigProjection
+-        assert projection.max_age == 1.0
+-        if phase in {"coalesced", "same_session_drain"}:
+-            deadline = time.monotonic() + 10.0
+-            assert await _finish_startup_publication(console, deadline=deadline)
+-            assert await _readiness_settled(
+-                console, projection, no_replay=True, deadline=deadline
+-            )
+-        else:
+-            assert await _readiness_settled(console, projection, no_replay=True)
+         if phase == "after_close":
+             controller.switch_session(doomed.id)
+             await _show_tabs(console, pilot, {keeper, doomed.id})
+diff --git a/tldw_chatbook/Chat/console_context_repository.py b/tldw_chatbook/Chat/console_context_repository.py
+index 5fdb54997c..3ea70a0bf9 100644
+--- a/tldw_chatbook/Chat/console_context_repository.py
++++ b/tldw_chatbook/Chat/console_context_repository.py
+@@ -1378,6 +1378,7 @@ async def read_context_presentation_inputs(
+ 
+     def current():
+         if (not callbacks_current() or controller._disposed or controller.store is not store
++            or session_id in controller._session_close_generations
+             or controller._context_repository is not repository
+             or getattr(store, "persistence", None) is not persistence
+             or getattr(repository, "db", None) is not repository_db
+diff --git a/tldw_chatbook/Chat/console_preparation_reads.py b/tldw_chatbook/Chat/console_preparation_reads.py
+index d4a1b70f6f..39086e7bac 100644
+--- a/tldw_chatbook/Chat/console_preparation_reads.py
++++ b/tldw_chatbook/Chat/console_preparation_reads.py
+@@ -30,6 +30,30 @@ if TYPE_CHECKING:
+     )
+ 
+ 
++
++async def drain_console_preparation_reads(
++    runtime_reads: set[ConsolePreparationRead], controller: object, session_id: str
++) -> bool:
++    """Drain both captured owners before a Console session can be deleted.
++
++    Reads issued after controller binding may live only in its own set. Join
++    their original physical retirement even after task cancellation.
++
++    Args:
++        runtime_reads: The closing runtime's original read collection.
++        controller: The original controller captured by the close ticket.
++        session_id: The exact session being closed.
++
++    Returns:
++        Whether cancellation must be delivered after finalization.
++    """
++    cancelled = await drain_preparation_reads(runtime_reads, session_id)
++    controller_reads = getattr(controller, "_preparation_reads", None)
++    if controller_reads is not None and controller_reads is not runtime_reads:
++        cancelled |= await drain_preparation_reads(controller_reads, session_id)
++    return cancelled
++
++
+ def current_workflow_preparation(controller=None):
+     from tldw_chatbook.Agents.run_context import current_workflow_preparation as current
+ 
+diff --git a/tldw_chatbook/Chat/console_runtime.py b/tldw_chatbook/Chat/console_runtime.py
+index 6014850e9b..fc3d28414a 100644
+--- a/tldw_chatbook/Chat/console_runtime.py
++++ b/tldw_chatbook/Chat/console_runtime.py
+@@ -6096,9 +6096,9 @@ class ConsoleRuntime:
+         cancel_requested |= await self._drain_ordinary_native_commits(
+             controller, session_id
+         )
+-        from .console_preparation_reads import drain_preparation_reads
++        from .console_preparation_reads import drain_console_preparation_reads
+ 
+-        cancel_requested |= await drain_preparation_reads(self._preparation_reads, session_id)
++        cancel_requested |= await drain_console_preparation_reads(self._preparation_reads, controller, session_id)
+         cancel_requested |= await self._drain_hook_review_operations(session_id)
+         pending = {task for task in pending if not task.done()}
+         fleet_fenced = callable(getattr(bridge, "fence_fleet", None))
+diff --git a/tldw_chatbook/Provider_Contract/provider_endpoint_contract.py b/tldw_chatbook/Provider_Contract/provider_endpoint_contract.py
+index 0ee544b0c7..1b69a84392 100644
+--- a/tldw_chatbook/Provider_Contract/provider_endpoint_contract.py
++++ b/tldw_chatbook/Provider_Contract/provider_endpoint_contract.py
+@@ -86,11 +86,15 @@ _ENGINE_PRESETS = {
+ #: already carries its API version owns its route suffix, so it resolves like
+ #: an engine preset (``<base>/chat/completions``). Z.ai's ``/api/paas/v4``
+ #: base previewed and saved ``…/v4/v1/chat/completions`` under the generic rule.
+-#: The setup facts' ``ROUTE_SUFFIXES`` is the one owner (review round 1, F11).
++#: Keep the single route table here; setup facts re-export the same object.
++#: Providers whose saved base already ends in its API version, so the chat
++#: route is ``<base>/chat/completions`` -- never ``<base>/v1/chat/completions``
++#: (review provider-20 / task-33621.32: Z.ai's ``/api/paas/v4``).
++ROUTE_SUFFIXES: dict[str, str] = {"zai": "/chat/completions"}
++
+ @lru_cache(maxsize=1)
+ def _route_owning_presets() -> dict[str, ProviderRecord]:
+-    """Load setup facts when interpreting an endpoint, keeping imports pure."""
+-    from tldw_chatbook.Provider_Contract.provider_setup_facts import ROUTE_SUFFIXES
++    """Find route-owning presets without importing first-use setup data."""
+ 
+     return {
+         record.key: record for record in ALL_RECORDS if record.key in ROUTE_SUFFIXES
+diff --git a/tldw_chatbook/Provider_Contract/provider_setup_facts.py b/tldw_chatbook/Provider_Contract/provider_setup_facts.py
+index 7d9d54a458..81fa39af87 100644
+--- a/tldw_chatbook/Provider_Contract/provider_setup_facts.py
++++ b/tldw_chatbook/Provider_Contract/provider_setup_facts.py
+@@ -10,7 +10,8 @@ hard-coded ports), each drifting on its own. ``ConsoleProviderCatalogEntry``
+ The facts are derived from the provider registry (ADR-179) and readiness where
+ those already own them -- locality, the conventional env var, the per-account
+ base URL -- and kept here only where nothing else owns them: where to get a
+-key, the local ports an engine listens on, a route suffix, the legacy flag.
++key, the local ports an engine listens on, and the legacy flag. Route suffixes
++are re-exported from the canonical endpoint contract that interprets them.
+ 
+ Key URLs are only ever ones taken from the provider's own documentation;
+ providers whose page was not confirmed sit on ``KEY_URL_UNCONFIRMED`` and get
+@@ -24,6 +25,8 @@ from dataclasses import dataclass
+ from functools import lru_cache
+ from typing import Literal
+ 
++from .provider_endpoint_contract import ROUTE_SUFFIXES as ROUTE_SUFFIXES
++
+ Locality = Literal["local", "cloud"]
+ CheckKind = Literal["model_list", "authenticated", "none"]
+ 
+@@ -129,11 +132,6 @@ ENDPOINT_EXAMPLES: dict[str, str] = {
+     "koboldcpp": "http://127.0.0.1:5001/api/v1/generate",
+ }
+ 
+-#: Providers whose saved base already ends in its API version, so the chat
+-#: route is ``<base>/chat/completions`` -- never ``<base>/v1/chat/completions``
+-#: (review provider-20 / task-33621.32: Z.ai's ``/api/paas/v4``).
+-ROUTE_SUFFIXES: dict[str, str] = {"zai": "/chat/completions"}
+-
+ #: Legacy aliases and the '#2' slot: listed by Settings (task-33002.5 AC#6),
+ #: kept behind 'Show legacy entries' in first-run setup (review provider-12).
+ LEGACY_PROVIDER_KEYS: frozenset[str] = frozenset(

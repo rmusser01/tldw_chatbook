@@ -159,6 +159,13 @@ final disabled, tooltip, queue and setup states (TASK-35614).
 
 ## Screen layout
 
+Context presentation rejects a committed session-close fence before admitting
+another qualified finite native read. Close drains both its runtime-owned read
+set and the controller's distinct set before finalization, using the existing
+physical-retirement primitive. Reads issued after controller binding therefore
+retain their native handle through cancellation, and repeated Close cancellation
+is delivered only after retirement and session deletion (TASK-35679.1).
+
 Activation focus restoration checks the focused control and its ancestors, not only its logical pane. A visible collapsed Inspector handle remains the keyboard target while its full rail is hidden (`ChatScreen._restore_console_workbench_focus`, TASK-40758).
 
 Top-to-bottom inside `#console-shell`: a `DestinationHeader` with speech controls; hidden legacy compat statics kept for contract tests; a dispatch-recovery callout; the dense `ConsoleControlBar`; then the main grid — left `ConsoleRailHandle` → `ConsoleLeftRail` (3fr) → center column (13fr, hosting either the transcript region or the embedded terminal workspace) → `ConsoleInspectorRail` (4fr) → right handle. Below the grid: status chips (position from `[console] status_chips_position`), staged evidence strip, dispatch-recovery region, prompt-queue region, the `ConsoleComposerBar`, command popup, and setup modal.

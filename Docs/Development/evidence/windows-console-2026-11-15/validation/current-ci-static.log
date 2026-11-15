@@ -1,0 +1,61 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+..................................F..................................... [ 58%]
+....................................................                     [100%]
+================================== FAILURES ===================================
+________ test_every_modalscreen_class_is_tiered_or_explicitly_skipped _________
+
+    def test_every_modalscreen_class_is_tiered_or_explicitly_skipped() -> None:
+        """The reverse sweep: no modal surface may be an unlisted gap.
+    
+        Fails naming any ModalScreen subclass that no registry anchor reaches
+        and no skip entry covers -- exactly how the PR #2742 review found the
+        eight modals the inventory missed -- and fails on stale skip entries so
+        the lists stay honest.
+        """
+        classes = _scan_modal_classes()
+        modals = sorted(name for name in classes if _is_modal(name, classes))
+    
+        uncovered = {
+            name: classes[name][0] for name in modals if not _is_anchored(name, classes)
+        }
+    
+        stale_class_skips = sorted(set(MODAL_WIDE_TIER_SKIPPED) - set(modals))
+        assert not stale_class_skips, (
+            f"skip entries name non-modal/missing classes: {stale_class_skips}"
+        )
+    
+        missing = sorted(
+            f"{name} ({module})"
+            for name, module in uncovered.items()
+            if name not in MODAL_WIDE_TIER_SKIPPED
+            and module not in MODAL_WIDE_TIER_SKIPPED_MODULES
+        )
+>       assert not missing, (
+            "ModalScreen subclasses outside the wide tier and absent from both "
+            "skip lists (register an anchor or document a skip):\n  " + "\n  ".join(missing)
+        )
+E       AssertionError: ModalScreen subclasses outside the wide tier and absent from both skip lists (register an anchor or document a skip):
+E           PluginRestoreAdoptionModal (Widgets/plugin_review_modal.py)
+E       assert not ['PluginRestoreAdoptionModal (Widgets/plugin_review_modal.py)']
+
+Tests\UI\test_modal_wide_tier.py:395: AssertionError
+============================== warnings summary ===============================
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+<unknown>:31
+Tests/UI/test_modal_wide_tier.py::test_every_modalscreen_class_is_tiered_or_explicitly_skipped
+  <unknown>:31: SyntaxWarning: invalid escape sequence '\ '
+
+<unknown>:32
+Tests/UI/test_modal_wide_tier.py::test_every_modalscreen_class_is_tiered_or_explicitly_skipped
+  <unknown>:32: SyntaxWarning: invalid escape sequence '\ '
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED Tests/UI/test_modal_wide_tier.py::test_every_modalscreen_class_is_tiered_or_explicitly_skipped
+1 failed, 123 passed, 5 warnings in 383.82s (0:06:23)

@@ -576,9 +576,11 @@ class _OriginalReadGate:
 
 @contextmanager
 def _original_close_read_drain(runtime, session_id):
-    from tldw_chatbook.Chat import console_preparation_reads as module
+    from tldw_chatbook.Backup_Recovery import runtime_producer_lifetime as module
+    from tldw_chatbook.Chat import console_preparation_reads as public_reads
 
     function = module.drain_preparation_reads
+    assert public_reads.drain_preparation_reads is function
     code = function.__code__
     assert function.__globals__ is module.__dict__
     assert _shape(code) == _shape(_source_code(module, function.__qualname__))
@@ -740,22 +742,22 @@ async def test_actual_close_publishes_real_tabs_before_stock_read_release(
     lock_owned = False
     async with host.run_test(size=_SIZE) as pilot:
         console = await _mounted_console(host, pilot, "#console-native-composer")
+        projection = spend.ConsoleReadinessConfigProjection.for_screen(console)
+        assert type(projection) is spend.ConsoleReadinessConfigProjection
+        assert projection.max_age == 1.0
+        # Composer presence can precede attach's queued FULL publication. Finish
+        # that owner before seeding sessions: _show_tabs may otherwise defer its
+        # only FULL while its DOM wait depends on startup's later replay.
+        deadline = time.monotonic() + 10.0
+        assert await _finish_startup_publication(console, deadline=deadline)
+        assert await _readiness_settled(
+            console, projection, no_replay=True, deadline=deadline
+        )
         controller = console._ensure_console_chat_controller()
         keeper = controller.store.active_session_id
         doomed = controller.new_session(title="Read barrier Close")
         controller.switch_session(keeper)
         await _show_tabs(console, pilot, {keeper, doomed.id})
-        projection = spend.ConsoleReadinessConfigProjection.for_screen(console)
-        assert type(projection) is spend.ConsoleReadinessConfigProjection
-        assert projection.max_age == 1.0
-        if phase in {"coalesced", "same_session_drain"}:
-            deadline = time.monotonic() + 10.0
-            assert await _finish_startup_publication(console, deadline=deadline)
-            assert await _readiness_settled(
-                console, projection, no_replay=True, deadline=deadline
-            )
-        else:
-            assert await _readiness_settled(console, projection, no_replay=True)
         if phase == "after_close":
             controller.switch_session(doomed.id)
             await _show_tabs(console, pilot, {keeper, doomed.id})

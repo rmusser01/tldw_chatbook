@@ -10,7 +10,8 @@ hard-coded ports), each drifting on its own. ``ConsoleProviderCatalogEntry``
 The facts are derived from the provider registry (ADR-179) and readiness where
 those already own them -- locality, the conventional env var, the per-account
 base URL -- and kept here only where nothing else owns them: where to get a
-key, the local ports an engine listens on, a route suffix, the legacy flag.
+key, the local ports an engine listens on, and the legacy flag. Route suffixes
+are re-exported from the canonical endpoint contract that interprets them.
 
 Key URLs are only ever ones taken from the provider's own documentation;
 providers whose page was not confirmed sit on ``KEY_URL_UNCONFIRMED`` and get
@@ -23,6 +24,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Literal
+
+from .provider_endpoint_contract import ROUTE_SUFFIXES as ROUTE_SUFFIXES
 
 Locality = Literal["local", "cloud"]
 CheckKind = Literal["model_list", "authenticated", "none"]
@@ -128,11 +131,6 @@ LOCAL_PORTS: dict[str, tuple[int, ...]] = {
 ENDPOINT_EXAMPLES: dict[str, str] = {
     "koboldcpp": "http://127.0.0.1:5001/api/v1/generate",
 }
-
-#: Providers whose saved base already ends in its API version, so the chat
-#: route is ``<base>/chat/completions`` -- never ``<base>/v1/chat/completions``
-#: (review provider-20 / task-33621.32: Z.ai's ``/api/paas/v4``).
-ROUTE_SUFFIXES: dict[str, str] = {"zai": "/chat/completions"}
 
 #: Legacy aliases and the '#2' slot: listed by Settings (task-33002.5 AC#6),
 #: kept behind 'Show legacy entries' in first-run setup (review provider-12).

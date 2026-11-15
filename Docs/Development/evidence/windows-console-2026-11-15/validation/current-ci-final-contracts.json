@@ -1,0 +1,27 @@
+{
+  "head": "cc6006fcf59328353004206bba8724c399216749",
+  "source_diff_sha256": "2db7aad9130f534c805891794d9dca9bad6b29df30bf14250fbfe33ebc76a145",
+  "private_child_node": null,
+  "command": [
+    "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-X",
+    "utf8",
+    "-m",
+    "Tests.windows_private_fixture_runner",
+    "Tests/Performance/test_ui_ready_module_census.py::test_ui_ready_module_census_stays_at_the_pinned_size",
+    "Tests/UI/test_screen_navigation.py::test_main_navigation_copy_and_order",
+    "Tests/UI/test_screen_navigation.py::test_lazy_screen_registry_resolves_visible_shell_destinations",
+    "Tests/UI/test_console_send_ready_attachment.py::test_the_workbench_send_action_agrees_with_the_composer_send",
+    "Tests/UI/test_app_quit_under_modal.py::test_a_snapshot_preference_edit_is_kept_and_asked_about_from_console",
+    "Tests/UI/test_console_preparing_current_sources.py::test_preparing_changed_source_after_original_tab_await_replays_full",
+    "Tests/UI/test_console_durable_commit_quiet_gap.py",
+    "Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/Chat/console_runtime.py]",
+    "-q",
+    "-o",
+    "addopts=",
+    "--timeout=180"
+  ],
+  "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-66d04bb7f4ba",
+  "exit_code": 1,
+  "seconds": 377.3429999999935
+}

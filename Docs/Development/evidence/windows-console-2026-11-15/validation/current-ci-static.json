@@ -1,0 +1,25 @@
+{
+  "head": "cc6006fcf59328353004206bba8724c399216749",
+  "source_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "private_child_node": null,
+  "command": [
+    "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-X",
+    "utf8",
+    "-m",
+    "Tests.windows_private_fixture_runner",
+    "Tests/Architecture/test_app_string_lookup_census.py",
+    "Tests/Architecture/test_layer_direction.py::test_no_new_upward_import",
+    "Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet",
+    "Tests/UI/test_component_pattern_governance.py::test_sheet_size_ceiling",
+    "Tests/UI/test_modal_wide_tier.py::test_every_modalscreen_class_is_tiered_or_explicitly_skipped",
+    "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme",
+    "-q",
+    "-o",
+    "addopts=",
+    "--timeout=180"
+  ],
+  "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-53fa1716cd88",
+  "exit_code": 1,
+  "seconds": 391.75
+}

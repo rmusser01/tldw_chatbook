@@ -1,0 +1,291 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+F                                                                        [100%]
+================================== FAILURES ===================================
+_ test_actual_close_publishes_real_tabs_before_stock_read_release[same_session_drain] _
+
+request = <FixtureRequest for <Coroutine test_actual_close_publishes_real_tabs_before_stock_read_release[same_session_drain]>>
+phase = 'same_session_drain'
+
+    @pytest.mark.ui
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(180)
+    @pytest.mark.parametrize("phase", ["after_close", "coalesced", "same_session_drain"])
+    @private_profile_test
+    async def test_actual_close_publishes_real_tabs_before_stock_read_release(
+        request, phase
+    ):
+        from tldw_chatbook.UI.Console_Modules import console_spend_projection as spend
+    
+        app = _ready_app()
+        host = ProductionConsoleHarness(app)
+        gate, held_sync = None, None
+        warming = surface = entry = drain_context = drain_facts = None
+        lock_owned = False
+        async with host.run_test(size=_SIZE) as pilot:
+            console = await _mounted_console(host, pilot, "#console-native-composer")
+            projection = spend.ConsoleReadinessConfigProjection.for_screen(console)
+            assert type(projection) is spend.ConsoleReadinessConfigProjection
+            assert projection.max_age == 1.0
+            # Composer presence can precede attach's queued FULL publication. Finish
+            # that owner before seeding sessions: _show_tabs may otherwise defer its
+            # only FULL while its DOM wait depends on startup's later replay.
+            deadline = time.monotonic() + 10.0
+            assert await _finish_startup_publication(console, deadline=deadline)
+            assert await _readiness_settled(
+                console, projection, no_replay=True, deadline=deadline
+            )
+            controller = console._ensure_console_chat_controller()
+            keeper = controller.store.active_session_id
+            doomed = controller.new_session(title="Read barrier Close")
+            controller.switch_session(keeper)
+            await _show_tabs(console, pilot, {keeper, doomed.id})
+            if phase == "after_close":
+                controller.switch_session(doomed.id)
+                await _show_tabs(console, pilot, {keeper, doomed.id})
+                assert await projection.warm()
+                assert projection.key[5] == doomed.id
+                assert await _readiness_settled(console, projection, no_replay=False)
+            gate = _OriginalReadGate(
+                projection, controller.store, doomed.id,
+                "coalesced" if phase == "same_session_drain" else phase,
+            )
+            gate.start()
+            try:
+                if phase in {"coalesced", "same_session_drain"}:
+                    if phase == "same_session_drain":
+                        controller.switch_session(doomed.id)
+                        drain_context = _original_close_read_drain(console._console_runtime(), doomed.id)
+>                       drain_facts = drain_context.__enter__()
+
+Tests\UI\test_console_tab_publication_read_barrier.py:775: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+C:\Python312\Lib\contextlib.py:137: in __enter__
+    return next(self.gen)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+runtime = <tldw_chatbook.Chat.console_runtime.ConsoleRuntime object at 0x000001DF7F92A060>
+session_id = '7075f000-b392-44f8-921f-88910a69b145'
+
+    @contextmanager
+    def _original_close_read_drain(runtime, session_id):
+        from tldw_chatbook.Chat import console_preparation_reads as module
+    
+        function = module.drain_preparation_reads
+        code = function.__code__
+>       assert function.__globals__ is module.__dict__
+E       AssertionError: assert {'Any': typing.Any, 'Callable': <class 'collections.abc.Callable'>, 'ConsolePreparationRead': <class 'tldw_chatbook.Backup_Recovery.runtime_producer_lifetime.ConsolePreparationRead'>, 'ContextVar': <class '_contextvars.ContextVar'>, ...} is {'AbstractContextManager': <class 'contextlib.AbstractContextManager'>, 'ConsolePreparationRead': <class 'tldw_chatboo...tion': <class 'tldw_chatbook.Chat.console_preparation_reads.NativePluginHookPreparation'>, 'TYPE_CHECKING': False, ...}
+E        +  where {'Any': typing.Any, 'Callable': <class 'collections.abc.Callable'>, 'ConsolePreparationRead': <class 'tldw_chatbook.Backup_Recovery.runtime_producer_lifetime.ConsolePreparationRead'>, 'ContextVar': <class '_contextvars.ContextVar'>, ...} = <function drain_preparation_reads at 0x000001DF6DF59A80>.__globals__
+E        +  and   {'AbstractContextManager': <class 'contextlib.AbstractContextManager'>, 'ConsolePreparationRead': <class 'tldw_chatboo...tion': <class 'tldw_chatbook.Chat.console_preparation_reads.NativePluginHookPreparation'>, 'TYPE_CHECKING': False, ...} = <module 'tldw_chatbook.Chat.console_preparation_reads' from 'C:\\Users\\GDesktop-1\\.codex\\worktrees\\console-validation-performance\\tldw_tui\\tldw_chatbook\\Chat\\console_preparation_reads.py'>.__dict__
+
+Tests\UI\test_console_tab_publication_read_barrier.py:583: AssertionError
+
+During handling of the above exception, another exception occurred:
+
+request = <FixtureRequest for <Coroutine test_actual_close_publishes_real_tabs_before_stock_read_release[same_session_drain]>>
+phase = 'same_session_drain'
+
+    @pytest.mark.ui
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(180)
+    @pytest.mark.parametrize("phase", ["after_close", "coalesced", "same_session_drain"])
+    @private_profile_test
+    async def test_actual_close_publishes_real_tabs_before_stock_read_release(
+        request, phase
+    ):
+        from tldw_chatbook.UI.Console_Modules import console_spend_projection as spend
+    
+        app = _ready_app()
+        host = ProductionConsoleHarness(app)
+        gate, held_sync = None, None
+        warming = surface = entry = drain_context = drain_facts = None
+        lock_owned = False
+        async with host.run_test(size=_SIZE) as pilot:
+            console = await _mounted_console(host, pilot, "#console-native-composer")
+            projection = spend.ConsoleReadinessConfigProjection.for_screen(console)
+            assert type(projection) is spend.ConsoleReadinessConfigProjection
+            assert projection.max_age == 1.0
+            # Composer presence can precede attach's queued FULL publication. Finish
+            # that owner before seeding sessions: _show_tabs may otherwise defer its
+            # only FULL while its DOM wait depends on startup's later replay.
+            deadline = time.monotonic() + 10.0
+            assert await _finish_startup_publication(console, deadline=deadline)
+            assert await _readiness_settled(
+                console, projection, no_replay=True, deadline=deadline
+            )
+            controller = console._ensure_console_chat_controller()
+            keeper = controller.store.active_session_id
+            doomed = controller.new_session(title="Read barrier Close")
+            controller.switch_session(keeper)
+            await _show_tabs(console, pilot, {keeper, doomed.id})
+            if phase == "after_close":
+                controller.switch_session(doomed.id)
+                await _show_tabs(console, pilot, {keeper, doomed.id})
+                assert await projection.warm()
+                assert projection.key[5] == doomed.id
+                assert await _readiness_settled(console, projection, no_replay=False)
+            gate = _OriginalReadGate(
+                projection, controller.store, doomed.id,
+                "coalesced" if phase == "same_session_drain" else phase,
+            )
+            gate.start()
+            try:
+                if phase in {"coalesced", "same_session_drain"}:
+                    if phase == "same_session_drain":
+                        controller.switch_session(doomed.id)
+                        drain_context = _original_close_read_drain(console._console_runtime(), doomed.id)
+                        drain_facts = drain_context.__enter__()
+                    else:
+                        # A real surviving-session settings transition makes its
+                        # display cold without lending its lifetime to the closing tab.
+                        settings = controller.store.session_settings(keeper)
+                        controller.store.replace_session_settings(
+                            keeper, replace(settings, temperature=settings.temperature + 0.01)
+                        )
+                    from Tests.UI.test_console_tab_publication_maintenance import (
+                        _OriginalSurfaceEntry,
+                    )
+                    from tldw_chatbook.Widgets.Console.console_session_surface import (
+                        ConsoleSessionSurface,
+                    )
+    
+                    surface = console.query_one("#console-session-surface", ConsoleSessionSurface)
+                    await surface._session_sync_lock.acquire()
+                    lock_owned = True
+                    entry = _OriginalSurfaceEntry(console, surface)
+                    entry.start()
+                    held_sync = asyncio.create_task(console._sync_native_console_chat_ui())
+                    entry.task = held_sync
+                    # Current FULL returns False for cold readiness. Hold its real
+                    # earlier Surface await, and admit the original read separately.
+                    warming = asyncio.create_task(projection.warm())
+                    assert await _event_within(entry.entered)
+                    assert await _event_within(gate.entered_async), "original reader was never admitted"
+                    assert console._console_sync_in_progress
+                    assert doomed.id in _session_ids(controller.store)
+                await _click(pilot, f"#console-close-session-tab-{doomed.id}")
+                if phase == "same_session_drain":
+                    assert await _event_within(drain_facts["entered"])
+                    assert doomed.id in _session_ids(controller.store)
+                    assert not gate.release.is_set() and not gate.completed_checked_read
+                    assert all(not item.retired.done() for item in drain_facts["reads"])
+                    gate.release.set()
+                    # The exact runtime close owns physical retirement and removal.
+                    # Await its original return at the same ten-second bound instead
+                    # of driving sub-resolution Pilot polls during native work.
+                    assert await _event_within(drain_facts["returned"])
+                    assert doomed.id not in _session_ids(controller.store)
+                else:
+                    assert await _settle(
+                        pilot, lambda: doomed.id not in _session_ids(controller.store)
+                    )
+                assert await _event_within(gate.entered_async), "no held original post-Close reader"
+                assert gate.release.is_set() == (phase == "same_session_drain")
+                assert gate.reader_actor is not threading.current_thread()
+                if phase in {"coalesced", "same_session_drain"}:
+                    assert await _settle(pilot, lambda: console._console_session_tabs_sync_calls >= 2)
+                    surface._session_sync_lock.release()
+                    lock_owned = False
+                await _await_tabs(console, pilot, {keeper})
+                assert _open_tab_ids(console) == {keeper}
+                if phase == "same_session_drain":
+                    assert gate.completed_checked_read
+                    assert all(item.retired.done() and not item.retired.cancelled() for item in drain_facts["reads"])
+                else:
+                    assert not gate.completed_checked_read, "tab assertion happened after reader completion"
+            finally:
+                gate.release.set()
+                if lock_owned:
+                    surface._session_sync_lock.release()
+                try:
+                    reader_returned = await _event_within(gate.returned_async)
+>                   assert reader_returned, (
+                        "released original held reader never returned; "
+                        + json.dumps(gate.reader_diagnostic(), sort_keys=True)
+                    )
+E                   AssertionError: released original held reader never returned; {"entered": false, "future_capture": "not_entered", "future_source_current": false, "held_frame_is_original": false, "held_last_source_line": null, "native_calls_exact_held_ancestry": 0, "reader_returned": false, "released": true, "return_callback_seen": false}
+E                   assert False
+
+Tests\UI\test_console_tab_publication_read_barrier.py:840: AssertionError
+---------------------------- Captured stderr setup ----------------------------
+2026-11-15 10:57:23.356 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-11-15 10:57:23.538 | INFO     | tldw_chatbook.Audio.recording_service:<module>:49 - PyAudio backend available
+2026-11-15 10:57:23.539 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-11-15 10:57:23.540 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+---------------------------- Captured stderr call -----------------------------
+2026-11-15 10:57:24.276 | INFO     | tldw_chatbook.app:__init__:1308 - Loaded app_config - strip_thinking_tags: True
+2026-11-15 10:57:24.855 | INFO     | tldw_chatbook.app:__init__:1418 - Parallel init task 'providers_models' completed in 0.000s
+2026-11-15 10:57:24.855 | INFO     | tldw_chatbook.app:__init__:1418 - Parallel init task 'prompts_service' completed in 0.000s
+2026-11-15 10:57:24.856 | INFO     | tldw_chatbook.app:__init__:1418 - Parallel init task 'notes_service' completed in 0.000s
+2026-11-15 10:57:24.856 | INFO     | tldw_chatbook.app:__init__:1418 - Parallel init task 'media_db' completed in 0.000s
+2026-11-15 10:57:25.060 | INFO     | tldw_chatbook.DB.base_db:__init__:1140 - LibraryCollectionsDB initialized with path: C:\Users\GDesktop-1\.tmp-pr3166-final-08549044f1d2\temp\tldw-chatbook-test-4emawy3w\library_collections.sqlite [Client: tldw_cli_local_instance_v1]
+2026-11-15 10:57:26.069 | INFO     | tldw_chatbook.DB.base_db:__init__:1140 - WorkspaceDB initialized with path: C:\Users\GDesktop-1\.tmp-pr3166-final-08549044f1d2\temp\tldw-chatbook-test-4emawy3w\workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+2026-11-15 10:57:27.723 | INFO     | tldw_chatbook.DB.base_db:__init__:1140 - SubscriptionsDB initialized with path: C:\Users\GDesktop-1\.tmp-pr3166-final-08549044f1d2\temp\tldw-chatbook-test-4emawy3w\subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+2026-11-15 10:57:28.035 | INFO     | tldw_chatbook.DB.base_db:__init__:1140 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+2026-11-15 10:57:28.039 | INFO     | tldw_chatbook.DB.base_db:__init__:1140 - EventStateRepository initialized with path: C:\Users\GDesktop-1\.tmp-pr3166-final-08549044f1d2\temp\tldw-chatbook-test-4emawy3w\tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+2026-11-15 10:57:28.040 | INFO     | tldw_chatbook.DB.base_db:__init__:1140 - SyncStateRepository initialized with path: C:\Users\GDesktop-1\.tmp-pr3166-final-08549044f1d2\temp\tldw-chatbook-test-4emawy3w\tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+2026-11-15 10:57:28.594 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:73 - Scheduling schema migrated to version 2 (missed_count column)
+2026-11-15 10:57:28.788 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:58 - Scheduling schema migrated to version 3 (timeout_seconds column)
+2026-11-15 10:57:29.023 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+2026-11-15 10:57:29.213 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:63 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+2026-11-15 10:57:29.664 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:68 - Scheduling schema migrated to version 6 (task_incidents)
+2026-11-15 10:57:29.920 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+2026-11-15 10:57:29.921 | INFO     | tldw_chatbook.DB.base_db:__init__:1140 - ScheduledTasksDB initialized with path: C:\Users\GDesktop-1\.tmp-pr3166-final-08549044f1d2\temp\tldw-chatbook-test-4emawy3w\scheduled_tasks.sqlite [Client: default]
+2026-11-15 10:57:31.172 | DEBUG    | tldw_chatbook.app:__init__:1489 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+2026-11-15 10:57:31.172 | DEBUG    | tldw_chatbook.app:__init__:1492 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+2026-11-15 10:57:31.301 | DEBUG    | tldw_chatbook.Evals.config_loader:_load_config:115 - Loaded evaluation configuration from C:\Users\GDesktop-1\.tmp-pr3166-final-08549044f1d2\config\config\eval_overrides.yaml
+2026-11-15 10:57:31.718 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:619 - Created EvalsDB schema version 7
+2026-11-15 10:57:31.718 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:247 - EvalsDB initialized with path: C:\Users\GDesktop-1\.tmp-pr3166-final-08549044f1d2\config\home\.local\share\tldw_cli\default_user\evals.db
+2026-11-15 10:57:31.718 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+2026-11-15 10:57:32.415 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:125 - Registered worker handler: MiscWorkerHandler
+2026-11-15 10:57:32.415 | INFO     | tldw_chatbook.app:_init_worker_handlers:2236 - Worker handler registry initialized with all handlers
+2026-11-15 10:57:32.415 | INFO     | tldw_chatbook.app:__init__:1676 - === STARTUP TIMING SUMMARY ===
+2026-11-15 10:57:32.415 | INFO     | tldw_chatbook.app:__init__:1677 - Total initialization time: 8.643 seconds
+2026-11-15 10:57:32.415 | INFO     | tldw_chatbook.app:__init__:1683 -   basic_init: 1.066s (12.3%)
+2026-11-15 10:57:32.415 | INFO     | tldw_chatbook.app:__init__:1683 -   attribute_init: 0.000s (0.0%)
+2026-11-15 10:57:32.415 | INFO     | tldw_chatbook.app:__init__:1683 -   parallel_init: 0.002s (0.0%)
+2026-11-15 10:57:32.415 | INFO     | tldw_chatbook.app:__init__:1696 -     - providers_models: 0.000s (0.4% of parallel_init)
+2026-11-15 10:57:32.415 | INFO     | tldw_chatbook.app:__init__:1696 -     - notes_service: 0.000s (0.4% of parallel_init)
+2026-11-15 10:57:32.415 | INFO     | tldw_chatbook.app:__init__:1696 -     - media_db: 0.000s (0.2% of parallel_init)
+2026-11-15 10:57:32.415 | INFO     | tldw_chatbook.app:__init__:1696 -     - prompts_service: 0.000s (0.1% of parallel_init)
+2026-11-15 10:57:32.415 | INFO     | tldw_chatbook.app:__init__:1700 - ==============================
+2026-11-15 10:57:33.292 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:124 - Initializing ChatScreen screen: chat
+2026-11-15 10:57:34.173 | DEBUG    | tldw_chatbook.Chat.console_runtime:ensure_chat_controller:4965 - ensure_chat_controller: ignoring runtime-owned kwargs supplied by caller: ['default_session_settings', 'global_user_display_name', 'library_provider_factory', 'provider_config', 'rag_capture_provider', 'turn_context_provider']
+2026-11-15 10:57:34.255 | DEBUG    | tldw_chatbook.UI.Console_Modules.workspace:_persisted_console_browser_rows:4027 - Local persisted conversation service is unavailable
+2026-11-15 10:57:34.256 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_sync_console_workspace_context:12764 - No Console workspace context tray available for sync
+2026-11-15 10:57:34.256 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_sync_console_workspace_context:12764 - No Console workspace context tray available for sync
+2026-11-15 10:57:36.995 | DEBUG    | tldw_chatbook.Widgets.compact_model_bar:handle_compact_temp_change:913 - Sidebar temperature input not found for sync
+2026-11-15 10:57:37.035 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:722 - Screen chat mounted
+2026-11-15 10:57:37.041 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:22867 - Chat screen resuming
+2026-11-15 10:57:38.838 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:716 - Compiled 10 pricing patterns for provider anthropic
+2026-11-15 10:57:38.841 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:716 - Compiled 18 pricing patterns for provider openai
+2026-11-15 10:57:38.841 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:716 - Compiled 5 pricing patterns for provider cohere
+2026-11-15 10:57:38.842 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:716 - Compiled 5 pricing patterns for provider google
+2026-11-15 10:57:38.842 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:716 - Compiled 4 pricing patterns for provider mistral
+2026-11-15 10:57:38.842 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:716 - Compiled 4 pricing patterns for provider mistralai
+2026-11-15 10:57:38.843 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:716 - Compiled 2 pricing patterns for provider deepseek
+2026-11-15 10:57:38.843 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:__init__:689 - PricingCatalog initialized with 62 direct mappings and patterns for 7 providers
+2026-11-15 10:57:40.049 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:22867 - Chat screen resuming
+2026-11-15 10:57:40.173 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_restore_collapsible_states:24402 - No collapsible states to restore
+2026-11-15 10:57:54.480 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:753 - Screen chat unmounted
+------------------------------ Captured log call ------------------------------
+INFO     root:app.py:1444 App __init__: Determined initial tab value: chat
+WARNING  root:app.py:1551 Prompts service not initialized, self.prompts_db set to None.
+ERROR    root:app.py:1565 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+-------------------------- Captured stderr teardown ---------------------------
+2026-11-15 10:57:55.077 | INFO     | tldw_chatbook.Chat.console_runtime:_dispose_owned:6865 - Console trace compatibility totals: normalized_write=0 normalized_read=0 legacy_read=0 fallback_read=0 incomplete=0
+============================== warnings summary ===============================
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pydub\utils.py:14
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydub\utils.py:14: DeprecationWarning: 'audioop' is deprecated and slated for removal in Python 3.13
+    import audioop
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED Tests/UI/test_console_tab_publication_read_barrier.py::test_actual_close_publishes_real_tabs_before_stock_read_release[same_session_drain]
+1 failed, 2 warnings in 59.63s

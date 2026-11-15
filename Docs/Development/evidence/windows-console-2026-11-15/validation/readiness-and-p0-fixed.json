@@ -1,0 +1,21 @@
+{
+  "head": "cc6006fcf59328353004206bba8724c399216749",
+  "source_diff_sha256": "d153cbc09cb29cb241da4d9b8ec1fcdf43f3c911011953e291dc2412f9b301a8",
+  "private_child_node": null,
+  "command": [
+    "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-X",
+    "utf8",
+    "-m",
+    "Tests.windows_private_fixture_runner",
+    "Tests/UI/test_console_send_ready_attachment.py::test_the_workbench_send_action_agrees_with_the_composer_send",
+    "Tests/CI/test_console_p0_regression_gate.py",
+    "-q",
+    "-o",
+    "addopts=",
+    "--timeout=180"
+  ],
+  "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-e959f8f9cd31",
+  "exit_code": 0,
+  "seconds": 178.45300000000861
+}

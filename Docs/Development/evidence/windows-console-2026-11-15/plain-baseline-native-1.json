@@ -1,0 +1,47 @@
+{
+  "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+  "platform": "Windows-10-10.0.19045-SP0",
+  "textual": "8.2.8",
+  "diagnostic": false,
+  "viewport": [
+    170,
+    48
+  ],
+  "routes": [],
+  "typing": [],
+  "attach_poll": true,
+  "temporary_profile": "C:\\Users\\GDesktop-1\\.tmp-windows-perf-cdfb11b9cce1",
+  "periodic_tracebacks": "python-thread-synchronous",
+  "traceback_interval_seconds": 60.0,
+  "revision": "cc6006fcf59328353004206bba8724c399216749",
+  "product_sources_before": {
+    "file": "plain-baseline-native-1-sources-before.json",
+    "sha256": "159ad8bbc620dbbccac319afd93bd5e5aa95fd0066535c3ad50b13a0ed10f812",
+    "count": 3012
+  },
+  "loop_clock_resolution_seconds": 0.015625,
+  "probe_poll_seconds": 0.03125,
+  "probe_heartbeat_seconds": 0.03125,
+  "import_ms": 18410.099000000628,
+  "construct_ms": 59242.872000002535,
+  "mount_ready_ms": 96572.25369999651,
+  "console_resume": [],
+  "pending_resume": {
+    "iteration": 0,
+    "resume_to_input_ms": 1014.0909999900032
+  },
+  "failure": {
+    "stage": "console-resume-0",
+    "type": "TimeoutError"
+  },
+  "observer_threads_stopped": true,
+  "blocked_network_attempts": 0,
+  "real_profile_refusals": 0,
+  "product_sources_after": {
+    "file": "plain-baseline-native-1-sources-after.json",
+    "sha256": "159ad8bbc620dbbccac319afd93bd5e5aa95fd0066535c3ad50b13a0ed10f812",
+    "count": 3012
+  },
+  "revision_after": "cc6006fcf59328353004206bba8724c399216749",
+  "product_sources_unchanged": true
+}

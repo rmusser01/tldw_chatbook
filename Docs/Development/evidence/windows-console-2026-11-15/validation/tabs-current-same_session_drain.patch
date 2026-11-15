@@ -1,0 +1,78 @@
+diff --git a/Tests/UI/modal_wide_tier_registry.py b/Tests/UI/modal_wide_tier_registry.py
+index 929d2ab4dd..feea6bb8c7 100644
+--- a/Tests/UI/modal_wide_tier_registry.py
++++ b/Tests/UI/modal_wide_tier_registry.py
+@@ -73,6 +73,7 @@ MODAL_WIDE_TIER_SKIPPED: dict[str, str] = {
+     "PluginStatusModal": "shared plugin-review-shell is already 90% of the viewport",
+     "PluginVariableDialog": "shared plugin-review-shell is already 90% of the viewport",
+     "PluginAuthorityResetModal": "shared plugin-review-shell is already 90% of the viewport",
++    "PluginRestoreAdoptionModal": "shared plugin-review-shell is already 90% of the viewport",
+     "VoiceBlendDialog": "inventory #74: fixed 15-column slider grid, extra width is dead space",
+     "ConfirmationDialog": "inventory #76: tiny-by-design confirm",
+     "UnsavedChangesDialog": "tiny-by-design confirm (ConfirmationDialog family)",
+diff --git a/Tests/UI/test_console_tab_publication_read_barrier.py b/Tests/UI/test_console_tab_publication_read_barrier.py
+index 655e200827..452d59f00c 100644
+--- a/Tests/UI/test_console_tab_publication_read_barrier.py
++++ b/Tests/UI/test_console_tab_publication_read_barrier.py
+@@ -740,22 +740,22 @@ async def test_actual_close_publishes_real_tabs_before_stock_read_release(
+     lock_owned = False
+     async with host.run_test(size=_SIZE) as pilot:
+         console = await _mounted_console(host, pilot, "#console-native-composer")
++        projection = spend.ConsoleReadinessConfigProjection.for_screen(console)
++        assert type(projection) is spend.ConsoleReadinessConfigProjection
++        assert projection.max_age == 1.0
++        # Composer presence can precede attach's queued FULL publication. Finish
++        # that owner before seeding sessions: _show_tabs may otherwise defer its
++        # only FULL while its DOM wait depends on startup's later replay.
++        deadline = time.monotonic() + 10.0
++        assert await _finish_startup_publication(console, deadline=deadline)
++        assert await _readiness_settled(
++            console, projection, no_replay=True, deadline=deadline
++        )
+         controller = console._ensure_console_chat_controller()
+         keeper = controller.store.active_session_id
+         doomed = controller.new_session(title="Read barrier Close")
+         controller.switch_session(keeper)
+         await _show_tabs(console, pilot, {keeper, doomed.id})
+-        projection = spend.ConsoleReadinessConfigProjection.for_screen(console)
+-        assert type(projection) is spend.ConsoleReadinessConfigProjection
+-        assert projection.max_age == 1.0
+-        if phase in {"coalesced", "same_session_drain"}:
+-            deadline = time.monotonic() + 10.0
+-            assert await _finish_startup_publication(console, deadline=deadline)
+-            assert await _readiness_settled(
+-                console, projection, no_replay=True, deadline=deadline
+-            )
+-        else:
+-            assert await _readiness_settled(console, projection, no_replay=True)
+         if phase == "after_close":
+             controller.switch_session(doomed.id)
+             await _show_tabs(console, pilot, {keeper, doomed.id})
+diff --git a/tldw_chatbook/Chat/console_context_repository.py b/tldw_chatbook/Chat/console_context_repository.py
+index 5fdb54997c..3ea70a0bf9 100644
+--- a/tldw_chatbook/Chat/console_context_repository.py
++++ b/tldw_chatbook/Chat/console_context_repository.py
+@@ -1378,6 +1378,7 @@ async def read_context_presentation_inputs(
+ 
+     def current():
+         if (not callbacks_current() or controller._disposed or controller.store is not store
++            or session_id in controller._session_close_generations
+             or controller._context_repository is not repository
+             or getattr(store, "persistence", None) is not persistence
+             or getattr(repository, "db", None) is not repository_db
+diff --git a/tldw_chatbook/Chat/console_runtime.py b/tldw_chatbook/Chat/console_runtime.py
+index 6014850e9b..cc184b7074 100644
+--- a/tldw_chatbook/Chat/console_runtime.py
++++ b/tldw_chatbook/Chat/console_runtime.py
+@@ -6099,6 +6099,11 @@ class ConsoleRuntime:
+         from .console_preparation_reads import drain_preparation_reads
+ 
+         cancel_requested |= await drain_preparation_reads(self._preparation_reads, session_id)
++        # Context presentation reads issued after binding live in the controller's
++        # own set. Cancellation must not let their native handles escape Close.
++        controller_reads = getattr(controller, "_preparation_reads", None)
++        if controller_reads is not None and controller_reads is not self._preparation_reads:
++            cancel_requested |= await drain_preparation_reads(controller_reads, session_id)
+         cancel_requested |= await self._drain_hook_review_operations(session_id)
+         pending = {task for task in pending if not task.done()}
+         fleet_fenced = callable(getattr(bridge, "fence_fleet", None))

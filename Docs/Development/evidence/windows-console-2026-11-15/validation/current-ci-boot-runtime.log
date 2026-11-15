@@ -1,0 +1,71 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+F.........                                                               [100%]
+================================== FAILURES ===================================
+____________ test_ui_ready_module_census_stays_at_the_pinned_size _____________
+
+tmp_path = WindowsPath('C:/Users/GDesktop-1/.tmp-pr3166-final-12b7b073f7c7/temp/pytest-of-GDesktop-1/pytest-0/test_ui_ready_module_census_st0')
+ratchet = <module 'tldw_tests_boot_budget_ratchet' from 'C:\\Users\\GDesktop-1\\.codex\\worktrees\\console-validation-performance\\tldw_tui\\Tests\\Performance\\boot_budget_ratchet.py'>
+
+    @pytest.mark.integration
+    def test_ui_ready_module_census_stays_at_the_pinned_size(
+        tmp_path: Path, ratchet
+    ) -> None:
+        """Boot to `_ui_ready`; this repo's resident modules stay within budget.
+    
+        Args:
+            tmp_path: pytest fixture; isolated dir for the subprocess's profile.
+            ratchet: shared ratchet helper (see ``conftest.py``).
+        """
+        mods = _boot_and_census(tmp_path)
+    
+        missing = [m for m in EXPECTED_AT_READY if m not in mods]
+        assert not missing, (
+            f"census looks degenerate -- expected mount-leg members missing: {missing}"
+        )
+    
+>       assert len(mods) <= MAX_TLDW_MODULES_AT_UI_READY, (
+            f"{len(mods)} tldw_chatbook modules resident at _ui_ready "
+            f"(ratchet limit {MAX_TLDW_MODULES_AT_UI_READY}). Mount-leg growth "
+            "is invisible to the import guards.\n"
+            f"{ratchet.format_module_diff(mods, 'ui-ready-census')}\n"
+            f"{ratchet.ratchet_policy('MAX_TLDW_MODULES_AT_UI_READY')}\n"
+            f"Deliberate snapshot refresh: `{ratchet.SNAPSHOT_REFRESH}`"
+        )
+E       AssertionError: 1041 tldw_chatbook modules resident at _ui_ready (ratchet limit 1040). Mount-leg growth is invisible to the import guards.
+E         vs pinned snapshot boot_budget_snapshots/ui_ready_modules.txt:
+E           NEW modules (2) -- these consumed the headroom; defer them or shed elsewhere:
+E             + tldw_chatbook.Provider_Contract.provider_setup_facts
+E             + tldw_chatbook.Utils.windows_files
+E         RATCHET (ADR-097, backlog/decisions/097-boot-budget-ratchets.md): MAX_TLDW_MODULES_AT_UI_READY never rises. Legitimate responses: (a) defer the cost off this path, (b) shed equivalent cost elsewhere in the same PR, or (c) an explicit owner exception recorded in the ADR's exception ledger. Raising the constant is NOT one of the options -- a PR that raises it without a ledger entry should be rejected in review.
+E         Deliberate snapshot refresh: `.venv/bin/python scripts/update_boot_budget_snapshots.py`
+E       assert 1041 <= 1040
+E        +  where 1041 = len(['tldw_chatbook', 'tldw_chatbook.ACP_Interop', 'tldw_chatbook.ACP_Interop.runtime_process', 'tldw_chatbook.ACP_Interop.runtime_session', 'tldw_chatbook.Actor_Packs', 'tldw_chatbook.Actor_Packs.activation', ...])
+
+Tests\Performance\test_ui_ready_module_census.py:577: AssertionError
+---------------------------- Captured stderr setup ----------------------------
+2026-11-15 10:44:31.608 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-11-15 10:44:32.155 | INFO     | tldw_chatbook.Audio.recording_service:<module>:49 - PyAudio backend available
+2026-11-15 10:44:32.156 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-11-15 10:44:32.158 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+============================== warnings summary ===============================
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pydub\utils.py:14
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydub\utils.py:14: DeprecationWarning: 'audioop' is deprecated and slated for removal in Python 3.13
+    import audioop
+
+Tests/UI/test_modal_wide_tier.py::test_every_modalscreen_class_is_tiered_or_explicitly_skipped
+  <unknown>:31: SyntaxWarning: invalid escape sequence '\ '
+
+Tests/UI/test_modal_wide_tier.py::test_every_modalscreen_class_is_tiered_or_explicitly_skipped
+  <unknown>:32: SyntaxWarning: invalid escape sequence '\ '
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED Tests/Performance/test_ui_ready_module_census.py::test_ui_ready_module_census_stays_at_the_pinned_size
+1 failed, 9 passed, 4 warnings in 470.49s (0:07:50)

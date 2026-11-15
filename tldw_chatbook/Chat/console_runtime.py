@@ -6096,9 +6096,9 @@ class ConsoleRuntime:
         cancel_requested |= await self._drain_ordinary_native_commits(
             controller, session_id
         )
-        from .console_preparation_reads import drain_preparation_reads
+        from .console_preparation_reads import drain_console_preparation_reads
 
-        cancel_requested |= await drain_preparation_reads(self._preparation_reads, session_id)
+        cancel_requested |= await drain_console_preparation_reads(self._preparation_reads, controller, session_id)
         cancel_requested |= await self._drain_hook_review_operations(session_id)
         pending = {task for task in pending if not task.done()}
         fleet_fenced = callable(getattr(bridge, "fence_fleet", None))

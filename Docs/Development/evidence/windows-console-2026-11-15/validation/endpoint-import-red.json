@@ -1,0 +1,20 @@
+{
+  "head": "cc6006fcf59328353004206bba8724c399216749",
+  "source_diff_sha256": "c95934e99af1ce85bf338578fd9085ae74f7fa2372765b6ae24adbb88a01a7ae",
+  "private_child_node": null,
+  "command": [
+    "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-X",
+    "utf8",
+    "-m",
+    "Tests.windows_private_fixture_runner",
+    "Tests/Packaging/test_console_interaction_import_closure.py::test_console_services_load_only_on_first_use[endpoint-routing-without-setup-facts]",
+    "-q",
+    "-o",
+    "addopts=",
+    "--timeout=90"
+  ],
+  "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-d01452d72fce",
+  "exit_code": 1,
+  "seconds": 7.14100000000326
+}

@@ -1,0 +1,162 @@
+{
+  "historical_head": "9f07ca956dbedbce544b56dae5442f8688a46455",
+  "current_base": "cc6006fcf59328353004206bba8724c399216749",
+  "evidence_scope": "Historical logs plus read-only current source attribution. Current test statuses supplied by root; this agent ran no tests/apps.",
+  "current_selected_summary": "Root reported124 selected cases:123passed/1failed(new modal classification); repair pending rerun. Current after-close control fails before gate_show_tabs and is under root investigation. Current CI43743285529 pending.",
+  "groups": [
+    {
+      "job": "Console P0 regression gate",
+      "job_id": 124663681608,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/41244049567/job/124663681608",
+      "historical_failing_nodes": [
+        "Tests/UI/test_console_preparing_current_sources.py::test_preparing_changed_source_after_original_tab_await_replays_full[natural]"
+      ],
+      "attribution": "Historical preparing changed-source natural variant assert False with local conversation service unavailable logged. Fresh run pending."
+    },
+    {
+      "job": "Derived artifacts reproduce from their sources",
+      "job_id": 124729496697,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/41244049567/job/124729496697",
+      "historical_failing_nodes": [],
+      "attribution": "Historical required-lane aggregator failures plus standalone markup census: KanbanBoardScreen._load_and_apply and _run_mutation_worker notify_interp now1,pinned0. Current notifications have markup=False; standalone checker pending."
+    },
+    {
+      "job": "PR Fast Lane",
+      "job_id": 124663681405,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/41244049567/job/124663681405",
+      "historical_failing_nodes": [
+        "Tests/Architecture/test_app_string_lookup_census.py::test_app_string_lookups_match_their_pin[Chat]",
+        "Tests/Architecture/test_app_string_lookup_census.py::test_app_string_lookups_match_their_pin[UI]",
+        "Tests/Architecture/test_app_string_lookup_census.py::test_app_string_lookups_match_their_pin[Widgets]",
+        "Tests/Architecture/test_app_string_lookup_census.py::test_no_new_private_app_attribute_lookups",
+        "Tests/Architecture/test_layer_direction.py::test_no_new_upward_import",
+        "Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet"
+      ],
+      "attribution": "Historical census Chat176>174/UI1301>1284/Widgets35>33; private _plugin_operations; six upward app_shutdown imports; CSS271>270. Current selected architecture/CSS checks passed per root. Source: private lookup absent, shutdown moved to package root."
+    },
+    {
+      "job": "PR Fast Lane (admission-sensitive)",
+      "job_id": 124663681522,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/41244049567/job/124663681522",
+      "historical_failing_nodes": [
+        "Tests/UI/test_console_runtime_ownership.py::test_runtime_owned_custody_tracks_only_lifetime_handles"
+      ],
+      "attribution": "Historical extra custody fields _pressed_inputs/_pressed_stash/_pressed_attachment_generation. Current expected fields explicitly include them and verify private repr/default semantics. Fresh run pending."
+    },
+    {
+      "job": "UI Fast Lane (15)",
+      "job_id": 124663681949,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/41244049567/job/124663681949",
+      "historical_failing_nodes": [
+        "Tests/UI/test_screen_navigation.py::test_lazy_screen_registry_resolves_visible_shell_destinations"
+      ],
+      "attribution": "Historical visible shell registry expected mapping mismatch. Fresh run pending."
+    },
+    {
+      "job": "UI Fast Lane (17)",
+      "job_id": 124663681906,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/41244049567/job/124663681906",
+      "historical_failing_nodes": [
+        "Tests/UI/test_console_first_send_preimport.py::test_a_harness_send_imports_nothing_lazy_beyond_the_list",
+        "Tests/UI/test_console_first_send_preimport.py::test_the_idle_pass_imports_the_first_send_modules",
+        "Tests/UI/test_console_first_send_preimport.py::test_the_idle_pass_warms_every_screen_route_before_the_first_send_modules",
+        "Tests/UI/test_console_first_send_preimport.py::test_the_send_guard_counts_a_module_resident_at_ui_ready_as_warm",
+        "Tests/UI/test_screen_navigation.py::test_main_navigation_copy_and_order"
+      ],
+      "attribution": "Historical eager console_received_dispatch, missing console_plugin_context/hook_permissions warmups, navigation order mismatch. Current preimport list reconciles dispatch and missing imports; fresh run pending."
+    },
+    {
+      "job": "UI Fast Lane (19)",
+      "job_id": 124663681895,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/41244049567/job/124663681895",
+      "historical_failing_nodes": [
+        "Tests/UI/test_component_pattern_governance.py::test_sheet_size_ceiling"
+      ],
+      "attribution": "Historical _console.tcss2001 active lines>2000. Current sheet split; selected sheet check passed per root."
+    },
+    {
+      "job": "UI Fast Lane (23)",
+      "job_id": 124663681893,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/41244049567/job/124663681893",
+      "historical_failing_nodes": [
+        "Tests/UI/test_console_send_ready_attachment.py::test_the_workbench_send_action_agrees_with_the_composer_send"
+      ],
+      "attribution": "Historical workbench send readiness(True,False)!=(True,True). Fresh run pending."
+    },
+    {
+      "job": "UI Fast Lane (25)",
+      "job_id": 124663681609,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/41244049567/job/124663681609",
+      "historical_failing_nodes": [
+        "Tests/UI/test_modal_wide_tier.py::test_every_modalscreen_class_is_tiered_or_explicitly_skipped"
+      ],
+      "attribution": "Historical seven omitted modal classifications now documented. Current selected run exposed only new PluginRestoreAdoptionModal; root added existing90% shell classification, green rerun pending."
+    },
+    {
+      "job": "UI Fast Lane (26)",
+      "job_id": 124663681542,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/41244049567/job/124663681542",
+      "historical_failing_nodes": [
+        "Tests/UI/test_console_durable_commit_quiet_gap.py::test_a_sends_start_lasts_from_acceptance_to_its_provider_request"
+      ],
+      "attribution": "Historical acceptance recorded no send start. Fresh run pending."
+    },
+    {
+      "job": "UI Fast Lane (27)",
+      "job_id": 124663681653,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/41244049567/job/124663681653",
+      "historical_failing_nodes": [
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[akira_neo_tokyo_grit]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[atom-one-light]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[bunny_fluff]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[cloudy_day]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[confectionery_bliss]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[coral_bloom]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[desert_oasis_mirage]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[earthy_nature]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[flexoki]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[frutiger_aero]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[gruvbox_light]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[industrial_gearworks]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[kawaii_candy]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[litestep]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[magical_girl_transform]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[neon_sunset_drive]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[palm_mall]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[paradise_virtua]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[pastel_dreams]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[retro_mint_chip]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[saiyan_power_orange]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[sakura_viewing_picnic]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[scouting_legionnaire]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[spring_meadowburst]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[sweet_sorbet]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[twilight_lavender_fields]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[urban_stealth_camo]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[zen_garden]",
+        "Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_every_theme[zero_day_stealth]"
+      ],
+      "attribution": "Historical29 themes failed plugins-list focus border ds-focus-accent. Current border ds-active-fg; selected themes passed per root."
+    },
+    {
+      "job": "UI Fast Lane (5)",
+      "job_id": 124663682051,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/41244049567/job/124663682051",
+      "historical_failing_nodes": [
+        "Tests/UI/test_app_quit_under_modal.py::test_a_snapshot_preference_edit_is_kept_and_asked_about_from_console"
+      ],
+      "attribution": "Historical settings snapshot edit showed No unsaved changes vs Unsaved changes. Fresh run pending."
+    },
+    {
+      "job": "UI latency guardrails",
+      "job_id": 124663680870,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/41244049619/job/124663680870",
+      "historical_failing_nodes": [
+        "Tests/Performance/test_boot_worker_census.py::test_boot_worker_and_thread_starts_stay_within_the_allowlist",
+        "Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet",
+        "Tests/Performance/test_ui_ready_module_census.py::test_ui_ready_module_census_stays_at_the_pinned_size"
+      ],
+      "attribution": "Historical module census1033>1031; two unreviewed boot workers(_load_recovered_images,console-recovered-images),(_reconcile_console_after_attach,console-attach-reconciliation); CSS271>270. No historical latency budget assertion failure. CSS selected passed; boot censuses pending."
+    }
+  ]
+}

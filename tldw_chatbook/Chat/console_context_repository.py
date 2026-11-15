@@ -1378,6 +1378,7 @@ async def read_context_presentation_inputs(
 
     def current():
         if (not callbacks_current() or controller._disposed or controller.store is not store
+            or session_id in controller._session_close_generations
             or controller._context_repository is not repository
             or getattr(store, "persistence", None) is not persistence
             or getattr(repository, "db", None) is not repository_db
