@@ -506,31 +506,40 @@ def note_console_transcript_discarded(viewport: ConsoleTranscript) -> None:
         heap_refreezer().note_stranded()
 
 
-def note_console_conversation_painted(screen: Any, viewport: ConsoleTranscript) -> None:
-    """Request re-freeze on a conversation switch and track each viewport's rows."""
+def stage_console_transcript_refreeze(
+    screen: Any, viewport: ConsoleTranscript
+) -> tuple[str | None, str | None]:
+    """Remember the staged identity and request the existing idle re-freeze."""
     store = screen._console_chat_store
     key = (
         store.active_session_id if store is not None else None,
         screen._current_console_conversation_id(),
     )
-    painted = getattr(viewport, _REFREEZE_PAINTED_ATTRIBUTE, None)
-    if painted is None:
-        setattr(viewport, _REFREEZE_PAINTED_ATTRIBUTE, (key, heap_freeze_epoch()))
-    elif painted[0] != key:
-        if painted[0] == (key[0], None):
-            # First persistence keeps the message rows and their original epoch.
-            epoch = painted[1]
-        else:
-            note_console_transcript_discarded(viewport)
-            epoch = heap_freeze_epoch()
-        setattr(viewport, _REFREEZE_PAINTED_ATTRIBUTE, (key, epoch))
+    viewport._console_heap_refreeze_projection_key = key
+    requested = getattr(screen, "_console_heap_refreeze_requested_key", None)
+    if requested != key:
+        screen._console_heap_refreeze_requested_key = key
+        if requested != (key[0], None):
+            request_console_heap_refreeze(screen, "conversation_painted")
+    return key
 
-    shown = getattr(screen, "_console_heap_refreeze_painted_key", None)
-    if shown == key:
-        return
-    screen._console_heap_refreeze_painted_key = key
-    if shown != (key[0], None):
-        request_console_heap_refreeze(screen, "conversation_painted")
+
+def note_console_transcript_rows_projected(
+    viewport: ConsoleTranscript,
+    key: tuple[str | None, str | None],
+    *,
+    rows_removed: bool = False,
+) -> None:
+    """Track the rows that survived or were replaced by the applied projection."""
+    painted = getattr(viewport, _REFREEZE_PAINTED_ATTRIBUTE, None)
+    if painted is not None:
+        if painted[0] == key:
+            return
+        if rows_removed and painted[0] != (key[0], None):
+            note_console_transcript_discarded(viewport)
+            painted = None
+    epoch = heap_freeze_epoch() if painted is None else painted[1]
+    setattr(viewport, _REFREEZE_PAINTED_ATTRIBUTE, (key, epoch))
 
 
 def _console_heap_busy(screen: Any) -> bool:

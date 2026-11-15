@@ -377,7 +377,9 @@ async def test_frozen_transcript_owes_compaction_only_when_discarded(monkeypatch
         second = store.create_session(title="Second", activate=False)
         third = store.create_session(title="Third", activate=False)
         for session in (first, second, third):
-            store.append_message(session.id, role=ConsoleMessageRole.USER, content="Row")
+            store.append_message(
+                session.id, role=ConsoleMessageRole.USER, content="Row"
+            )
         await console._sync_native_console_transcript()
         await pilot.pause()
         surface = console.query_one(ConsoleTranscriptSurface)
@@ -402,6 +404,96 @@ async def test_frozen_transcript_owes_compaction_only_when_discarded(monkeypatch
         await console._sync_native_console_transcript()
         assert not first_view.is_attached
         assert refreezer.compaction_due()
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize(
+    "after_prune", [False, True], ids=["before-prune", "after-prune"]
+)
+async def test_cancelled_in_place_switch_accounts_for_actual_row_retirement(
+    monkeypatch, after_prune
+):
+    from tldw_chatbook.UI.Console_Modules import transcript as transcript_region
+    from tldw_chatbook.Utils import ui_responsiveness
+    from tldw_chatbook.Widgets.Console import console_transcript as transcript_widget
+
+    epoch = 0
+    refreezer = ui_responsiveness.IdleHeapRefreezer(enabled=lambda: False)
+    monkeypatch.setattr(ui_responsiveness, "_HEAP_REFREEZER", refreezer)
+    monkeypatch.setattr(transcript_region, "heap_freeze_epoch", lambda: epoch)
+    host = _ready_console_host()
+    async with host.run_test(size=(120, 50)) as pilot:
+        console = await _mounted_console(host, pilot)
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session()
+        second = store.create_session(title="Second", activate=False)
+        first_row = store.append_message(
+            first.id, role=ConsoleMessageRole.USER, content="First row"
+        )
+        store.append_message(
+            second.id, role=ConsoleMessageRole.USER, content="Second row"
+        )
+        await console._sync_native_console_transcript()
+        await pilot.pause()
+        surface = console.query_one(ConsoleTranscriptSurface)
+        viewport = surface.transcript
+        row_key = f"message:{first_row.id}"
+        row = viewport._row_widgets[row_key]
+        epoch += 1
+
+        entered = asyncio.Event()
+        pruned = asyncio.Event()
+        refresh = viewport.refresh_messages
+        finish_removal = transcript_widget.finish_removal
+        switch = None
+
+        async def observe_refresh():
+            if asyncio.current_task() is switch:
+                entered.set()
+            await refresh()
+
+        async def hold_after_prune(removal):
+            await finish_removal(removal)
+            if asyncio.current_task() is switch and not row.is_attached:
+                pruned.set()
+                await asyncio.Future()
+
+        with monkeypatch.context() as patch:
+            patch.setattr(viewport, "refresh_messages", observe_refresh)
+            if after_prune:
+                patch.setattr(transcript_widget, "finish_removal", hold_after_prune)
+            try:
+                # A busy viewport is ineligible for retention, so the real
+                # switch stages a replacement on this same viewport.
+                async with viewport._refresh_lock:
+                    store.switch_session(second.id)
+                    switch = asyncio.create_task(
+                        console._sync_native_console_transcript()
+                    )
+                    await asyncio.wait_for(entered.wait(), 5)
+                    assert surface.transcript is viewport
+                    assert row.parent is viewport and not row._pruning
+                    if not after_prune:
+                        switch.cancel()
+                        with pytest.raises(asyncio.CancelledError):
+                            await switch
+                if after_prune:
+                    await asyncio.wait_for(pruned.wait(), 5)
+            finally:
+                if switch is not None and not switch.done():
+                    switch.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await switch
+
+        if not after_prune:
+            store.switch_session(first.id)
+            await console._sync_native_console_transcript(force=True)
+            assert surface.transcript is viewport
+            assert viewport._row_widgets[row_key] is row and row.is_attached
+        else:
+            assert row_key not in viewport._row_widgets and not row.is_attached
+        assert refreezer.compaction_due() == after_prune
 
 
 @pytest.mark.asyncio

@@ -435,19 +435,28 @@ def test_switching_away_from_a_transcript_frozen_while_shown_owes_a_compaction(
     screen = PaintedScreen()
     viewport = SimpleNamespace()
 
-    console_transcript.note_console_conversation_painted(screen, viewport)
+    key = console_transcript.stage_console_transcript_refreeze(screen, viewport)
+    console_transcript.note_console_transcript_rows_projected(viewport, key)
     assert len(screen.timers) == 1, "the first paint asked for no re-freeze"
-    console_transcript.note_console_conversation_painted(screen, viewport)
+    key = console_transcript.stage_console_transcript_refreeze(screen, viewport)
+    console_transcript.note_console_transcript_rows_projected(viewport, key)
     assert len(screen.timers) == 1, "a repaint of the same conversation asked again"
 
     screen.conversation = "c2"  # switched before anything froze c1's rows
-    console_transcript.note_console_conversation_painted(screen, viewport)
+    key = console_transcript.stage_console_transcript_refreeze(screen, viewport)
+    console_transcript.note_console_transcript_rows_projected(
+        viewport, key, rows_removed=True
+    )
     assert len(screen.timers) == 2
     assert not refreezer.compaction_due(), "unfrozen rows were reported stranded"
 
     epoch[0] += 1  # a re-freeze ran while c2 was shown
     screen._console_chat_store.active_session_id = "s2"  # another tab
-    console_transcript.note_console_conversation_painted(screen, viewport)
+    key = console_transcript.stage_console_transcript_refreeze(screen, viewport)
+    assert not refreezer.compaction_due(), "staging alone stranded rows"
+    console_transcript.note_console_transcript_rows_projected(
+        viewport, key, rows_removed=True
+    )
     assert len(screen.timers) == 3
     assert refreezer.compaction_due(), "rows frozen while shown were left stranded"
 
@@ -481,14 +490,19 @@ def test_a_new_chat_gaining_its_conversation_id_is_not_a_switch(
     viewport = SimpleNamespace()
     screen.conversation = None  # a new chat, not yet persisted
 
-    console_transcript.note_console_conversation_painted(screen, viewport)
+    key = console_transcript.stage_console_transcript_refreeze(screen, viewport)
+    console_transcript.note_console_transcript_rows_projected(viewport, key)
     epoch[0] += 1  # a re-freeze ran while the new chat was shown
     screen.conversation = "c1"  # its first send persisted it
-    console_transcript.note_console_conversation_painted(screen, viewport)
+    key = console_transcript.stage_console_transcript_refreeze(screen, viewport)
+    console_transcript.note_console_transcript_rows_projected(viewport, key)
     assert not refreezer.compaction_due(), "persisting a new chat stranded its rows"
 
     screen.conversation = "c2"  # a real switch in the same tab
-    console_transcript.note_console_conversation_painted(screen, viewport)
+    key = console_transcript.stage_console_transcript_refreeze(screen, viewport)
+    console_transcript.note_console_transcript_rows_projected(
+        viewport, key, rows_removed=True
+    )
     assert refreezer.compaction_due(), (
         "the rows frozen while the new chat was shown were left stranded"
     )

@@ -1671,3 +1671,14 @@ by the viewport, the switch and warm return preserve the record. Opening a
 third chat evicts the frozen viewport and still records compaction debt.
 This verifies the retirement signal. The cold whole-heap compaction and
 the 50 ms event-loop qualification remain open.
+
+The independent review of `b69a67c9` found that staging an in-place
+replacement still recorded debt before the widget acquired its refresh lock.
+A mounted check canceled the switch with the lock held. The exact old row
+remained mounted when the original assertion found compaction due. The
+correction tracks which identity actually reached the row reconciler and
+records debt once Textual queues the prune. The mounted cases now check both
+cancellation before removal and cancellation after the old row is detached.
+The existing refreeze request and collector policy in
+[ADR-198](../../../backlog/decisions/198-gc-policy-freeze-boot-heap.md)
+still apply.
