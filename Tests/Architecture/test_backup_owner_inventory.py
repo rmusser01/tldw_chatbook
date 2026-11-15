@@ -1469,6 +1469,63 @@ def test_actor_pack_store_error_before_commit_removes_published_files(
         db.close_connection()
 
 
+def test_actor_pack_import_leaves_no_worker_connection_for_a_later_drain(
+    tmp_path, monkeypatch
+):
+    """TASK-41110: the import controller inspects and activates on
+    ``asyncio.to_thread``. A capture that begins after the import has
+    finished must drain, so the executor thread must not keep the
+    ChaChaNotes connection the import opened there."""
+    import asyncio
+    import time
+
+    from tldw_chatbook.Actor_Packs.import_controller import (
+        ActorPackImportController,
+    )
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+    from tldw_chatbook.Backup_Recovery.participants import (
+        retire_current_thread_caches,
+    )
+
+    db, activation, review, trees = _actor_pack_activation_on_profile(
+        tmp_path, monkeypatch
+    )
+    activation.importer.cleanup_review(review)  # The controller inspects anew.
+    controller = ActorPackImportController(activation.importer, activation)
+
+    async def import_pack():
+        request = controller.create_request(tmp_path / "persona.tldw-actor-pack")
+        inspected = await controller.wait(controller.start_inspection(request))
+        assert inspected.review is not None, inspected
+        activated = await controller.wait(
+            controller.start_activation(inspected.review, "create_new")
+        )
+        await controller.shutdown()
+        return activated
+
+    try:
+        outcome = asyncio.run(import_pack())
+        assert outcome.error_category is None, outcome
+        assert outcome.result.actor_kind == "persona"
+        assert len(_published_files(trees)) == 3
+        # A capture starting now: fence, retire this thread's own caches, drain.
+        pause = storage._begin_local_pause()
+        try:
+            retire_current_thread_caches(pause)
+            drained = pause.drain(time.monotonic() + 5)
+            holders = sorted(
+                getattr(getattr(lease, "resource_thread", None), "name", "?")
+                for lease in storage._live_leases
+                if getattr(lease, "resource_path", None) == db.db_path
+            )
+        finally:
+            pause.resume()
+        assert drained, f"ChaChaNotes leases still held by threads {holders}"
+    finally:
+        db.close_idle_connections()  # Every thread's handle, also when red.
+        db.close_connection()
+
+
 def test_actor_pack_and_reaction_trees_have_their_own_review_labels():
     """TASK-40305 AC1: restore, recovery-copy and rollback review name owners
     through ``owner_label``; these two trees read as "Other saved data"."""
