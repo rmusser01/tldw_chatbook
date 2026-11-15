@@ -121,3 +121,9 @@ TASK-41176 owns the first qualification gate. Native host evidence must name the
 actual build, output route, capture method, numerical errors and limitations;
 unsupported/unrun platforms remain unqualified. The implementation plan maps the
 remaining deliverables to focused regression tests and mounted/native evidence.
+
+Initial [Windows qualification evidence](../../Docs/Testing/watchlist-article-audio-qualification.md)
+found missing final content despite successful process exits. A trailing-silence
+control is promising but not adopted; ffplay remains provisional and dependent
+feature implementation remains gated. Other platforms and listener/physical
+output have not been qualified.
