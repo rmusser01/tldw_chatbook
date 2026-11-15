@@ -324,6 +324,10 @@ before considering this currently incomplete server operation.
 | State | Cause | Safe next action | Current limit |
 | --- | --- | --- | --- |
 | **Profile locked** | The profile key is unavailable or cannot decrypt the data. | Unlock the key protector, preserve the data, and choose **Try again**. | No bypass, automatic key recreation, or recovery import is shipped. |
+| **Locked: key not in the backup** | A restored profile came from a backup without credentials, and this device does not have its key. | Your data is kept. Restore again with **Replace** from an encrypted backup that includes credentials, then choose **Try again**. | A locked profile cannot be removed or started fresh; Chatbook never makes a new key for it. |
+| **Locked: separately restored copy** | An isolated restore has no access to the system keyring. Its data is kept, and its key is kept too: in the encrypted restore copy when the backup included it, or still on this device. | Restore with **Replace** to use it. | Isolated copies always keep Personal Context locked, and show this reason even though they have no keyring. |
+| **Locked: no secure keyring for the key** | A **Replace** restore ran on a device with no secure keyring. The key stays in the encrypted restore copy. | Set up a secure keyring, then restore again from the same backup with **Replace**. | The reason is kept with the profile, so it shows the same after a restart. |
+| **Locked: key belongs to a different copy** | The key on this device does not open this profile (for example, a copied file, or a key another copy now uses). | Your data is kept. Use **Backup & Restore** to roll back or restore the matching copy, then choose **Try again**. | Detected by authentication, never by key version. A damaged profile header reads the same way. |
 | **Adaptive interview privacy or provider failure** | Adaptive mode contacted the default Console provider, or it returned no usable question. | Use **Fixed local questions**, continue without the interview, or retry later. | The first request finishes before provider/model disclosure; a failed request may have left the device. |
 | **HTTP or altered TLS verification** | The URL is HTTP, or custom/disabled verification is selected. | Use HTTPS with **Verify certificates (default)** or a correctly configured custom CA. | HTTP is unencrypted. Disabled verification does not authenticate the server and permits interception. **Test Connection** always uses default verification. |
 | **Post-link change queued** | A syncable local change created an encrypted outbox entry after linking. | Preserve the local profile and export it if needed; treat the server as unchanged. | No shipped action drains this queue; **Manual Sync** covers Notes and Chat only. |
@@ -357,14 +361,38 @@ Personal Context merge or resolution action in Settings.
   or removed. The keys that link this device to your home server always stay on
   this device. While a first link is in progress, the database is not copied, and
   the preview says to finish linking and back up again.
-- Restores: restoring Personal Context is not available yet. Every restore leaves
-  your current Personal Context profile exactly as it is, and the restore review
-  says so before anything is written. After any restore, Personal Context sync
-  stays off. Settings > Personal Context shows **Review restored profile** when
-  the restore did not bring back saved sync state; reviewing confirms the profile
-  on this device but does not turn sync back on. When the restore did bring back
-  sync state, or when the review cannot be read, Settings says sync stays off
-  and why.
+- Restores: a **Replace** restore brings Personal Context back, and the restore
+  review says first whether it will be readable or locked, and why. Its key goes
+  into a new keyring entry; no existing keyring entry is changed, so a later
+  rollback still opens your previous profile with its own key, even after the
+  restored profile is linked or removed. The key comes from the backup when it
+  includes credentials, or else from this device if it still holds it. If no key
+  opens the restored profile, or this device has no secure keyring, Personal
+  Context is restored but stays locked, its data is kept, and the review asks
+  you to acknowledge that first. To move Personal Context to another device,
+  make an encrypted backup with credentials on the original device, then restore
+  it there with Replace. A separately restored copy (an isolated restore) always
+  keeps Personal Context locked. Settings > Personal Context says why it is
+  locked (see Troubleshooting). After any restore, Personal Context sync stays
+  off, and a restored profile never resumes its old link. Settings > Personal
+  Context says sync is off because the profile was restored and shows **Review
+  restored profile**. Confirming it re-encrypts the profile under a new key in
+  the background, so the key in the backup no longer reads it, then confirms the
+  profile on this device and, when the restore brought back the old link, forgets
+  it, so **Link to home server** starts a fresh first link. If re-encrypting
+  fails, nothing is confirmed, the profile stays readable, and you can review it
+  again. If the old device is lost, remove it on your server: Chatbook cannot.
+  Sync with your server, for Notes and Chat too, stays off after a restore and
+  never resumes as the old device: turn it back on with the **Sync identity
+  review** in Backup & Restore > Restored profiles, which clears the restored
+  device identity first, then prepare sync again: in Settings > Overview >
+  **Advanced / Diagnostics**, choose **Switch Source / Server**, then **Activate
+  Server** with the same server. Until then
+  Settings > Personal Context keeps saying sync is off and names that step. Link
+  to home server waits for both reviews. If some records were damaged so that no
+  key can read them, **Review restored profile** first says how many, and
+  confirming removes them while it re-encrypts the rest. When the review cannot
+  be read, Settings says sync stays off and why.
 - Encryption does not hide all metadata, such as object counts and update
   timing. Under `server_trusted_v1`, the authorized home server can decrypt
   syncable content and re-encrypt it with its own keys. HTTPS protects that

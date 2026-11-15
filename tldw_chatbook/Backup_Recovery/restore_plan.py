@@ -736,7 +736,14 @@ def plan_restore(
             for issue in acknowledged_credential_issues
         )
         or mode != "replace"
-        and (safety_scope or acknowledged_credential_issues)
+        and (
+            safety_scope
+            # TASK-40136: an isolated restore acknowledges only its locked cases.
+            or any(
+                not issue.startswith("credential_personal_context_restore_locked:")
+                for issue in acknowledged_credential_issues
+            )
+        )
     ):
         raise ValueError("invalid_replacement_review")
     if (
@@ -760,12 +767,6 @@ def plan_restore(
         ):
             raise ValueError("safety_scope_unverified")
     doc = _document(archive)
-    # TASK-40134: until readable restores ship (TASK-40135), no restore publishes
-    # the Personal Context repository; the live copy stays exactly as it is.
-    held_back = {
-        row.root_id for row in doc.files if row.owner_id == "personal_context.repository"
-    }
-    destinations = {k: v for k, v in destinations.items() if k not in held_back}
     group_scope = None
     group_ids = None
     if data_groups is not None or doc.group_scope is not None:
@@ -780,11 +781,6 @@ def plan_restore(
         if retain_config and group_scope.support_ids and not retained_configs:
             raise ValueError("retained_config_relation_required")
         group_ids = selected_archive_ids(doc, group_scope, retain_config=retain_config)
-        group_ids = group_ids - {
-            row.logical_id
-            for row in (*doc.files, *doc.directories)
-            if row.root_id in held_back
-        }
     if mode == "replace" and doc.consistency != "coherent":
         raise ValueError("partial_replacement")
     names = dict(profile_names or {})
@@ -1411,9 +1407,24 @@ def plan_restore(
     metadata, issues = (
         [],
         ["owner_setup_required:" + owner for owner in sorted(deferred_selected)]
-        + sorted(set(projection_issues))
-        + (["personal_context_not_restored"] if held_back else []),
+        + sorted(set(projection_issues)),
     )
+    if local_snapshot is None:
+        from tldw_chatbook.Personal_Context.recovery import restore_plan_issue
+
+        owners_by_id = {row.logical_id: row.owner_id for row in doc.files}
+        # TASK-40135/40136: how each restored repository ends, said first.
+        issues += [
+            issue
+            for key, path in plan.restore
+            if owners_by_id.get(key) == "personal_context.repository"
+            and (
+                issue := restore_plan_issue(
+                    archive, doc, key, path, isolated=mode == "isolated"
+                )
+            )
+            is not None
+        ]
     restored_ids = {key for key, _ in restore}
     for record in records:
         if record.logical_id not in restored_ids:

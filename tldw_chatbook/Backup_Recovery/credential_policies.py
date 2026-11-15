@@ -83,3 +83,11 @@ GENERATION_KEYRINGS = (
     ),
     ("video_generation", "tldw_chatbook_videogen", ("minimax",)),
 )
+
+# Coverage issues that limit recovery readiness without making the stored-data
+# snapshot inconsistent: values needing manual application, and Personal
+# Context link keys, which are never captured by design (TASK-40135).
+MANUAL_CREDENTIAL_ISSUES = (
+    "credential_manual_recovery_required:",
+    "credential_personal_context_link_keys_excluded:",
+)

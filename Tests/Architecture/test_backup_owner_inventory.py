@@ -1709,6 +1709,9 @@ def test_no_reviewer_approves_the_shared_sync_owners():
     from tldw_chatbook.Personal_Context.recovery import OWNER as personal_context_owner
     from tldw_chatbook.Plugins.backup import OWNER as plugins_owner
     from tldw_chatbook.RAG_Search.activation import _REVIEW_OWNERS as rag_owners
+    from tldw_chatbook.Sync_Interop.recovery import (
+        SYNC_IDENTITY_OWNERS as sync_identity_owners,
+    )
 
     calls = Counter()
     for path in sorted((ROOT / "tldw_chatbook").rglob("*.py")):
@@ -1742,11 +1745,15 @@ def test_no_reviewer_approves_the_shared_sync_owners():
             ("tldw_chatbook/Skills_Interop/recovery_activation.py", "'skills'"): 1,
             # TASK-40711: Backup & Restore's settings review, `config` only.
             ("tldw_chatbook/Backup_Recovery/recovery_service.py", "'config'"): 1,
+            # TASK-40139: the sync-identity review, the only approver of
+            # `runtime.sync_state`; it clears the restored identity first.
+            ("tldw_chatbook/Sync_Interop/recovery.py", "owner"): 1,
         }
     )
     assert {"config", "runtime.sync_state"}.isdisjoint(
         {*mcp_owners, personal_context_owner, plugins_owner, *rag_owners}
     )
+    assert sync_identity_owners == ("config", "runtime.sync_state")
 
 
 _CONFIG_REVIEW = r"""

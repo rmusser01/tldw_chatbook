@@ -1113,17 +1113,17 @@ async def _run_personal_context_link(app) -> None:
         )
         return
     try:
+        from .Personal_Context.recovery import require_sync_allowed
+
+        # TASK-40134/40139: every link waits for the restore reviews, before any
+        # key or link-state read; a review must never delete a fresh link.
+        require_sync_allowed()
         wrapping_provider = KeyringPersonalContextWrappingKeyProvider()
         key_custodian = KeyringPersonalContextLinkKeyCustodian()
         existing = app.sync_state_repository.get_personal_context_link_state(
             server_profile_id=str(server_profile_id),
             authenticated_principal_id=scope.get("authenticated_principal_id"),
         )
-        if existing is not None:
-            from .Personal_Context.recovery import require_sync_allowed
-
-            # TASK-40134: before the staged-key reads and activation below.
-            require_sync_allowed()
         recovered_apply = False
         if existing is not None and existing["state"] == "applying":
             binding = PersonalContextLinkService._key_binding(existing)
@@ -1244,7 +1244,18 @@ async def _run_personal_context_link(app) -> None:
                 continue
             await coordinator.apply(result.plan_id, result.decisions)
             break
-    except Exception:
+    except Exception as error:
+        from .Personal_Context.recovery import SYNC_REVIEW_REQUIRED
+
+        if isinstance(error, ValueError) and str(error) == SYNC_REVIEW_REQUIRED:
+            # TASK-40139: name the pending restore reviews, not a generic error.
+            app.notify(
+                "Linking waits for the restore reviews: choose Review restored "
+                "profile in Settings > Personal Context, and review the sync "
+                "identity in Backup & Restore > Restored profiles.",
+                severity="warning",
+            )
+            return
         app.notify(
             "Profile linking needs attention. No profile content was shown; retry from Settings.",
             severity="error",

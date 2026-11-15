@@ -195,7 +195,7 @@ def test_restored_link_resumes_nothing_before_its_review(monkeypatch) -> None:
     )
     asyncio.run(app_destinations._run_personal_context_link(app))
     assert reads == []
-    assert notices and "needs attention" in notices[0]
+    assert notices and "Linking waits for the restore reviews" in notices[0]
 
 
 def test_an_unreadable_restore_review_is_named_only_while_sync_is_off(
@@ -232,3 +232,56 @@ def test_reading_published_owners_never_creates_an_operation_directory(
     assert _published_owners(witness) is None
     assert list(control.iterdir()) == []
 
+
+def test_no_link_starts_before_the_restore_reviews(monkeypatch) -> None:
+    """TASK-40139 (review r14pccB): with a restore review pending, Link to home
+    server refuses before it reads any key or link state, even with no stored
+    link; otherwise the Personal Context review would later delete that link."""
+    import asyncio
+
+    import tldw_chatbook.Personal_Context.link_key_custody as custody
+    import tldw_chatbook.Personal_Context.recovery as recovery
+    from tldw_chatbook import app_destinations
+
+    monkeypatch.setattr(recovery, "sync_allowed", lambda path=None: False)
+    touched = []
+
+    class Custodian:
+        def __init__(self, *args, **kwargs):
+            touched.append("custodian")
+
+    monkeypatch.setattr(custody, "KeyringPersonalContextLinkKeyCustodian", Custodian)
+    monkeypatch.setattr(
+        custody,
+        "KeyringPersonalContextWrappingKeyProvider",
+        lambda *a, **k: touched.append("wrapping"),
+    )
+    notices = []
+    app = SimpleNamespace(
+        _server_notification_event_scope=lambda: {"server_profile_id": "server"},
+        sync_state_repository=SimpleNamespace(
+            get_personal_context_link_state=lambda **_kwargs: touched.append("state")
+        ),
+        notify=lambda message, **_kwargs: notices.append(message),
+    )
+    asyncio.run(app_destinations._run_personal_context_link(app))
+    assert touched == []
+    # Review r14pcc-rev2: the refusal names the pending reviews.
+    assert notices and "Linking waits for the restore reviews" in notices[0]
+    assert "Backup & Restore > Restored profiles" in notices[0]
+
+
+
+def test_the_review_names_sync_identity_pending_only_while_sync_is_off(
+    monkeypatch, tmp_path
+) -> None:
+    """TASK-40139 (review r14pccB): with no Personal Context review left, sync
+    still off reads as SYNC_IDENTITY_PENDING; with sync allowed, nothing."""
+    import tldw_chatbook.Personal_Context.recovery as recovery
+
+    monkeypatch.setattr(recovery, "_restore_reviews", lambda *_a, **_k: ())
+    path = tmp_path / "tldw_chatbook_personal_context.db"
+    monkeypatch.setattr(recovery, "sync_allowed", lambda path=None: False)
+    assert recovery.restore_review(path) == recovery.SYNC_IDENTITY_PENDING
+    monkeypatch.setattr(recovery, "sync_allowed", lambda path=None: True)
+    assert recovery.restore_review(path) is None

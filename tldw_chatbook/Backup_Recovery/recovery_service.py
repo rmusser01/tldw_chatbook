@@ -185,15 +185,79 @@ _ISSUE_MESSAGES = {
         "copy is readable only on this device, and only until Personal Context is "
         "linked or removed. To include the key, back up with credentials."
     ),
-    "personal_context_not_restored": (
-        "Personal Context will not be restored: your current Personal Context "
-        "profile stays exactly as it is, and the backup keeps its copy."
+    # TASK-40135/40136: what a restore will do with Personal Context.
+    "personal_context_restore_readable": (
+        "Personal Context will be restored readable: its key goes into a new "
+        "keyring account, and no existing keyring entry is changed."
+    ),
+    "personal_context_restore_locked:personal_context_key_not_in_backup": (
+        "Personal Context will be restored but stay locked: this backup does not "
+        "include its key, and this device does not have it. The data is kept."
+    ),
+    "personal_context_restore_locked:personal_context_keyring_unavailable": (
+        "Personal Context will be restored but stay locked: a separately restored "
+        "copy has no access to the system keyring. Its data and key are kept; "
+        "restore with Replace to use it."
+    ),
+    "personal_context_restore_locked:personal_context_key_install_unavailable": (
+        "Personal Context will be restored but stay locked: this device has no "
+        "secure keyring to hold its key. The data is kept, and the key stays in "
+        "the encrypted restore copy."
+    ),
+    "sync_identity_unavailable": (
+        "The restored sync state could not be read, so nothing was cleared and "
+        "server sync stays off. Open Restored profiles again later."
+    ),
+    "sync_identity_counts_changed": (
+        "What the sync-identity review would clear changed after it was shown. "
+        "Open Restored profiles again and review the new counts."
+    ),
+    "personal_context_key_check_unavailable": (
+        "Personal Context was restored, but its key could not be checked (the "
+        "keyring or the database did not answer). The data and the new keyring "
+        "entry are kept; open Settings > Personal Context and choose Try again."
+    ),
+    "personal_context_restore_changed": (
+        "What Personal Context's restore would do changed after the plan was "
+        "shown (its key was added or removed on this device). Nothing was "
+        "restored; review the restore again."
+    ),
+    "personal_context_key_account_in_use": (
+        "The new keyring account for Personal Context's key is already in use, so "
+        "nothing was restored and no keyring entry changed. Review the restore again."
+    ),
+    "personal_context_key_install_failed": (
+        "Personal Context's key could not be stored in the keyring, so nothing was "
+        "restored. Check the keyring, then review the restore again."
+    ),
+    "personal_context_validation_unavailable": (
+        "Personal Context's copy in this backup could not be read, so the restore "
+        "cannot say how it would end. Restore without the Personal Context group, "
+        "or use another backup."
+    ),
+    "personal_context_keyring_read_failed": (
+        "The keyring did not answer while Personal Context's key was read, so "
+        "nothing was restored. Unlock the keyring, then review the restore again."
+    ),
+    "personal_context_key_unverified": (
+        "Personal Context was restored but its key did not open it, so it stays "
+        "locked and the new keyring entry was removed. The data is kept; restore "
+        "again with Replace from the same backup."
     ),
     "credential_personal_context_link_keys_excluded": (
         "Personal Context's link keys are left out: the device wrapping key, staged "
         "integrity keys and dataset staging keys stay in this device's keyring."
     ),
 }
+
+
+def _verify_personal_context(service, operation, plan) -> None:
+    """TASK-40135: a published repository opens with the key its account holds."""
+    from tldw_chatbook.Personal_Context.recovery import verify_restored_keys
+
+    issues = verify_restored_keys(plan)
+    if issues:
+        service._update(operation, issues=issues)
 
 
 def issue_message(code: str) -> str:
@@ -797,6 +861,7 @@ class RecoveryService:
                     "journal_operation_id": journal_operation,
                     "restoration_validated": True,
                 }
+                _verify_personal_context(self, operation, plan)
             self._update(operation, phase="restoration_validated", result=result)
 
         return self._start("restore", restore)
@@ -933,6 +998,12 @@ class RecoveryService:
                     rollback_password=rollback_password,
                     cancel=cancel,
                 )
+            if outcome == "committed" and state["mode"] != "isolated":
+                from .plan_records import load_plan
+                from .recovery_copies import _journal
+
+                plan = load_plan(_journal(self.control_root, operation_id))
+                _verify_personal_context(self, operation, plan)
             self._update(
                 operation,
                 phase=outcome,
@@ -1126,6 +1197,52 @@ class RecoveryService:
             ):
                 raise ValueError("config_review_changed")
             ActivationStore(Path(witness["store_root"])).approve(generation, "config")
+
+    @staticmethod
+    def _sync_state_path():
+        """The current profile's sync state database (`runtime.sync_state`)."""
+        import tomllib
+
+        from tldw_chatbook.runtime_policy.server_parity_state import (
+            SYNC_STATE_DB_FILENAME,
+        )
+
+        from . import bootstrap
+        from .profile_paths import user_data_dir
+        from .storage_admission import _read_recovery_file, acquire_storage
+
+        selected = bootstrap.effective_config_path()
+        with acquire_storage(selected):
+            raw = _read_recovery_file("config", selected, max_bytes=16 * 1024**2)
+        return user_data_dir(tomllib.loads(raw.decode("utf-8"))) / SYNC_STATE_DB_FILENAME
+
+    def sync_identity_review(self):
+        """What the sync-identity review would clear, or None (TASK-40139).
+
+        Raises:
+            ValueError: ``sync_identity_unavailable`` when the sync state cannot
+                be read; other failures keep their own code.
+        """
+        import sqlite3
+
+        from tldw_chatbook.Sync_Interop.recovery import sync_identity_review
+
+        try:
+            return sync_identity_review(self._sync_state_path())
+        except sqlite3.Error:
+            raise ValueError("sync_identity_unavailable") from None
+
+    def approve_sync_identity(self, shown):
+        """Clear the restored sync identity the user saw counted, then approve
+        `config` and `runtime.sync_state` together (owner ruling, TASK-40137)."""
+        import sqlite3
+
+        from tldw_chatbook.Sync_Interop.recovery import approve_sync_identity
+
+        try:
+            approve_sync_identity(self._sync_state_path(), shown=shown)
+        except sqlite3.Error:
+            raise ValueError("sync_identity_unavailable") from None
 
     def profiles(self):
         """Enumerate locally associated restored profiles and recheck launch evidence."""

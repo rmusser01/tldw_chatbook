@@ -43,6 +43,24 @@ def _removal_tag(keys: ProfileKeyMaterial, account: str) -> str:
     ).hexdigest()
 
 
+# TASK-40136: a restore's marker names why it stays locked, across restarts.
+RESTORE_MARKER = "recovery:setup_required:"
+RESTORE_REASONS = frozenset(
+    {
+        "personal_context_key_not_in_backup",
+        "personal_context_keyring_unavailable",
+        "personal_context_key_install_unavailable",
+    }
+)
+KEY_MISMATCH = "personal_context_key_mismatch"
+
+
+def _locked(message: str, reason: str) -> ProfileLockedError:
+    error = ProfileLockedError(message)
+    error.reason_code = reason
+    return error
+
+
 class RepositoryKeyCustody:
     """Key-account lookup, provisioning and removal for the repository."""
 
@@ -53,7 +71,29 @@ class RepositoryKeyCustody:
             return self._profile_ref
         if isinstance(stored, str) and KEY_ACCOUNT.fullmatch(stored):
             return stored
+        if isinstance(stored, str) and stored.startswith(RESTORE_MARKER):
+            reason = stored.removeprefix(RESTORE_MARKER)
+            if reason in RESTORE_REASONS:
+                raise _locked("Restored profile key is not set up.", reason)
         raise ProfileLockedError("Profile key account is invalid.")
+
+    def _or_marker(self, keyring_protector):
+        """The default keyring protector, or the reason a restore left.
+
+        Without a secure keyring (an isolated restored copy always runs a null
+        one) the protector refuses to construct. A restore's marker names the
+        real reason, so it is read first, read-only, without creating the
+        database (TASK-40136); anything else keeps the keyring's refusal.
+        """
+        try:
+            return keyring_protector()
+        except ProfileLockedError as refusal:
+            from .recovery import stored_restore_marker
+
+            stored = stored_restore_marker(self.db_path)
+            if stored is not None:
+                self._named_key_account(stored)  # raises the marker's reason
+            raise refusal
 
     def _account_on(self, connection: sqlite3.Connection) -> str:
         row = connection.execute(
@@ -102,7 +142,17 @@ class RepositoryKeyCustody:
             protected = self._protector.load(account)
         if recovery_integrity_key is None:
             if protected is not None:
-                self._authenticate_keys(connection, protected)
+                from .repository import ProfileIntegrityError
+
+                try:
+                    self._authenticate_keys(connection, protected)
+                except ProfileLockedError as exc:
+                    # The manifest head failed AEAD/HMAC under the stored key:
+                    # that key belongs to another copy (or the head was
+                    # tampered with, which fails the same way). TASK-40136.
+                    if isinstance(exc.__context__, ProfileIntegrityError):
+                        raise _locked("Profile key does not match.", KEY_MISMATCH) from None
+                    raise
                 if meta["key_account"] == "":
                     connection.execute(
                         "UPDATE profile_meta SET key_account = ? "
@@ -171,6 +221,155 @@ class RepositoryKeyCustody:
                 with suppress(Exception):
                     self._protector.delete(account)
             raise
+
+    def damaged_record_versions(self) -> int:
+        """How many stored record versions no key can read (TASK-40140).
+
+        Owner decision 2026-11-14: the review shows this count, and
+        re-encryption removes them. Read-only.
+        """
+
+        self._require_keys()
+        with closing(self._connect()) as connection:
+            connection.execute("BEGIN")
+            try:
+                rows = connection.execute(
+                    "SELECT * FROM encrypted_objects WHERE object_type = 'record'"
+                ).fetchall()
+                return sum(1 for row in rows if self._reads(row) is None)
+            finally:
+                connection.rollback()
+
+    def _reads(self, row) -> bytes | None:
+        """The row's plaintext, or None when it fails authentication (a record
+        only; any other damaged object still refuses)."""
+        from .repository import ProfileIntegrityError
+
+        try:
+            return self._decrypt_row_authenticated(row)
+        except ProfileIntegrityError:
+            if row["object_type"] != "record":
+                raise
+            return None
+
+    def reencrypt_profile(
+        self, *, keep_old_account: bool, expected_damaged: int = 0
+    ) -> str:
+        """Re-encrypt every row under a fresh encryption key (TASK-40140).
+
+        The integrity key and link state stay; ``key_version`` goes up. The new
+        key goes into a new, unused account first; one transaction then rewrites
+        every row and names that account, so an interruption leaves either the
+        old rows naming the old key or the new rows naming the new one. Record
+        versions no key can read are removed in that same transaction, but only
+        as many as the review showed (``expected_damaged``; owner decision
+        2026-11-14). The old account is deleted only after the new one opens the
+        database, and only when the caller knows no retained restore copy can
+        name it.
+
+        Returns:
+            The new account.
+        """
+
+        from .crypto import EnvelopeCipher
+
+        old = self._require_keys()
+        if old.key_version >= 255:
+            raise ProfileLockedError("Profile key version is exhausted.")
+        new = ProfileKeyMaterial(
+            secrets.token_bytes(32), old.integrity_key, old.key_version + 1
+        )
+        with self._transaction() as connection:
+            old_account = self._reencryption_source(connection, old)
+        account = "personal-context:profile_" + secrets.token_hex(16)
+        self._protector.install(account, new)
+        try:
+            with self._transaction() as connection:
+                if self._reencryption_source(connection, old) != old_account:
+                    raise ProfileLockedError("Profile key account changed.")
+                cipher = EnvelopeCipher(new.encryption_key, key_version=new.key_version)
+                rows = connection.execute(
+                    "SELECT * FROM encrypted_objects"
+                ).fetchall()
+                damaged = []
+                for row in rows:
+                    key = (row["object_type"], row["object_id"], row["version_id"])
+                    plaintext = self._reads(row)
+                    if plaintext is None:
+                        damaged.append(key)
+                        continue
+                    sealed = cipher.encrypt(plaintext, self._aad(*key))
+                    connection.execute(
+                        "UPDATE encrypted_objects SET algorithm = ?, nonce = ?, "
+                        "ciphertext = ?, wrapped_dek = ?, key_version = ? "
+                        "WHERE object_type = ? AND object_id = ? AND version_id = ?",
+                        (
+                            sealed.algorithm,
+                            sealed.nonce,
+                            sealed.ciphertext,
+                            sealed.wrap_nonce + sealed.wrapped_dek,
+                            sealed.key_version,
+                            *key,
+                        ),
+                    )
+                if len(damaged) != expected_damaged:
+                    raise ProfileLockedError("Damaged records changed since review.")
+                self._remove_damaged(connection, damaged)
+                connection.execute(
+                    "UPDATE profile_meta SET key_account = ? WHERE singleton = 1",
+                    (account,),
+                )
+                self._authenticate_keys(connection, new)
+        except BaseException:
+            self._keys = old
+            with suppress(Exception):
+                if not self._names_account(account):
+                    self._protector.delete(account)
+            raise
+        # The new account must open the committed database before the old goes.
+        with closing(self._connect()) as connection:
+            connection.execute("BEGIN")
+            try:
+                self._authenticate_keys(connection, self._protector.load(account))
+            finally:
+                connection.rollback()
+        if not keep_old_account:
+            self._protector.delete(old_account)
+        return account
+
+    def _remove_damaged(self, connection, damaged) -> None:
+        """Drop unreadable record versions with what points at them: a head
+        (the record goes; it already reads under no key), queued envelopes with
+        their encrypted bodies and heads, and quarantine notes. Readable history
+        and notes that name no version stay."""
+        for key in damaged:
+            for outbox_id, envelope_version in connection.execute(
+                "SELECT outbox_id, envelope_version FROM encrypted_outbox "
+                "WHERE object_type = ? AND object_id = ? AND version_id = ?",
+                key,
+            ).fetchall():
+                self._shred_outbox_body(connection, outbox_id, envelope_version)
+            for table in ("object_heads", "encrypted_outbox", "quarantine"):
+                connection.execute(
+                    f"DELETE FROM {table} WHERE object_type = ? "  # nosec B608 - fixed names
+                    "AND object_id = ? AND version_id = ?",
+                    key,
+                )
+            connection.execute(
+                "DELETE FROM encrypted_objects WHERE object_type = ? "
+                "AND object_id = ? AND version_id = ?",
+                key,
+            )
+
+    def _reencryption_source(self, connection, keys) -> str:
+        """The live account holding exactly ``keys``; never mid-link."""
+        if connection.execute(
+            "SELECT 1 FROM first_link_freeze UNION ALL "
+            "SELECT 1 FROM first_link_rebaseline_commit LIMIT 1"
+        ).fetchone():
+            raise ProfileLockedError("A first link is in progress.")
+        self._authenticate_keys(connection, keys)
+        return self._authenticated_account(connection, keys)
 
     def _add_key_account_column(self, connection: sqlite3.Connection) -> None:
         """v8 -> v9: the empty reference; stamping waits for an authenticated key.
@@ -244,7 +443,20 @@ def profile_key_opens(connection: sqlite3.Connection, account: str, value) -> bo
     Backup uses it on a captured copy before it records the key (TASK-40134).
     """
 
-    from .repository import PersonalContextRepository
+    return profile_key_authenticates(connection, account, value) is True
+
+
+def profile_key_authenticates(
+    connection: sqlite3.Connection, account: str, value
+) -> bool | None:
+    """True or False when the manifest head says so; None when it could not tell.
+
+    False is definite: the value is not key material, or the head fails
+    AEAD/HMAC under it. Anything else (a read error, say) is None, so a caller
+    never deletes a possibly good key on it (TASK-40135).
+    """
+
+    from .repository import PersonalContextRepository, ProfileIntegrityError
 
     try:
         keys = decode_keyring_material(value)
@@ -260,7 +472,11 @@ def profile_key_opens(connection: sqlite3.Connection, account: str, value) -> bo
     try:
         probe._authenticate_keys(connection, keys)
         return True
-    except Exception:  # noqa: BLE001 - any failure means the key does not open it
+    except ProfileIntegrityError:
         return False
+    except ProfileLockedError as error:
+        return False if isinstance(error.__context__, ProfileIntegrityError) else None
+    except Exception:  # noqa: BLE001 - could not tell; never a verdict
+        return None
     finally:
         connection.row_factory = factory

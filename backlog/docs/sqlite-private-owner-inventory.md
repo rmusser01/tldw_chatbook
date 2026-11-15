@@ -384,6 +384,14 @@ assessment state/JSON updates. This path is selected-import preparation only;
 internal rollback does not disable local rules. The private-call census pins
 this symbol, literal adapter selection, candidate argument, and validation call.
 
+TASK-40135/40136 add a second one: `Personal_Context/recovery.py::stamp_restored_key`
+opens the staged Personal Context copy (already validated against the exact
+catalogs) via `open_recovery_validation(OWNER, candidate, writable=True,
+with_restrictions=True)`; its `stamping_key_account` flag admits only an `UPDATE`
+of `profile_meta.key_account`, to a fresh restore account or the
+`recovery:setup_required:<reason>` marker. The census pins the symbol, the
+literal `OWNER` and the call.
+
 | C98 | tldw_chatbook/DB/Workspace_Project_Index_DB | WorkspaceProjectIndexDB._open_connection | db.workspace_project_index | private_file | derived cache read/write | Migrated via `connect_private_sqlite`. Through SQLiteStoreKernel. Opaque workspace/binding accounting parent, complete-key namespace children, and stable per-authority native lifetime files. All nested DB, sidecar, control, and lease bytes are excluded from centralized backup payload; the service retains storage admission until native worker and DB owner-thread retirement. Fresh v2 uses incremental reclamation; binding-wide Clear preserves DB identity, control history, and stable lease files. |
 
 ## Managed plugin backup (TASK-40132, ADR-126)
@@ -402,5 +410,8 @@ validates and copies the repository through its own recovery owner, which only t
 installed `personal_context.repository` backup owner in `Personal_Context/recovery.py` uses.
 
 | C100 | tldw_chatbook/Personal_Context/recovery | _Repository.validate | recovery.personal_context.repository | private_file, read_only_uri | exact installed v9 repository catalogs and first-link marker check | Migrated via `connect_private_sqlite`. Frozen measured catalogs (`REPOSITORY_SCHEMAS`); version from `personal_context_schema`; reads only the freeze and rebaseline markers to refuse mid-link capture. No repository construction, no key. |
-| B42 | tldw_chatbook/Personal_Context/recovery | _Repository.capture | recovery.personal_context.repository | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. Checked maintenance snapshot of ciphertext rows; committed WAL frames fold into it. The key travels only as an encrypted credential record; no restore publishes the copy yet. |
+| B42 | tldw_chatbook/Personal_Context/recovery | _Repository.capture | recovery.personal_context.repository | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. Checked maintenance snapshot of ciphertext rows; committed WAL frames fold into it. The key travels only as an encrypted credential record; a replace restore publishes the copy with a fresh key account or the recovery marker (TASK-40135). |
+| C101 | tldw_chatbook/Personal_Context/recovery | _archived_key | recovery.personal_context.repository | memory | restore plan and pre-publication key check (TASK-40135) | Migrated via `connect_private_sqlite`. An in-memory image of the archived copy (header set to rollback journal; nothing on disk), read only to authenticate a candidate key against its manifest head. |
+| C102 | tldw_chatbook/Personal_Context/recovery | verify_restored_key | recovery.personal_context.repository | private_file, read_only_uri | published repository after restore (TASK-40135) | Migrated via `connect_private_sqlite`. Read-only: authenticates the manifest head with the key its fresh account holds; no repository construction. |
+| C103 | tldw_chatbook/Personal_Context/recovery | stored_restore_marker | recovery.personal_context.repository | private_file, read_only_uri | live repository's `profile_meta.key_account` when no secure keyring exists (TASK-40136) | Migrated via `connect_private_sqlite`. Read-only; returns a `recovery:setup_required:<reason>` marker or nothing, so the restore's reason shows instead of the keyring's refusal. Never creates the database; no key. |
 

@@ -117,6 +117,7 @@ class _Restrictions:
         self.workflow_statistics = ()
         self.dropping_workflow_phase = False
         self.preparing_response_rules = False
+        self.stamping_key_account = False
         self.sargable_migration = False
         self.canvas_schema = False
         self.changing_schema_trust = False
@@ -434,6 +435,15 @@ class _Restrictions:
         ):
             return sqlite3.SQLITE_OK
         if self.preparing_response_rules and action == sqlite3.SQLITE_TRANSACTION:
+            return sqlite3.SQLITE_OK
+        # TASK-40135/40136: a restore rewrites only the staged Personal Context
+        # copy's key reference (personal_context.recovery.stamp_restored_key).
+        if self.stamping_key_account and source is None and (
+            action == sqlite3.SQLITE_TRANSACTION
+            or action == sqlite3.SQLITE_UPDATE
+            and database == "main"
+            and (first, second) == ("profile_meta", "key_account")
+        ):
             return sqlite3.SQLITE_OK
         if self.migrating:
             if action == sqlite3.SQLITE_TRANSACTION:

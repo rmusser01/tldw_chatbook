@@ -4,8 +4,10 @@ Importing opens no store. The repository is ordinary SQLite with ciphertext
 columns, so it is captured as it is, without its key, through the SQLite backup
 route, and validated against the exact v9 catalogs below. The profile key
 travels only as an encrypted credential record (``Backup_Recovery.credentials``).
-No restore publishes the repository yet (``restore_plan``): readable restores
-are TASK-40135. While a first link is frozen or committing, capture is refused.
+A replace restore publishes it and always rewrites its key reference, to a
+fresh account holding a key that authenticated it or to a marker naming why it
+stays locked (TASK-40135); isolated restores still hold it back (TASK-40136).
+While a first link is frozen or committing, capture is refused.
 
 Every SQL catalog a Personal Context repository at schema v9 can have.
 
@@ -23,7 +25,12 @@ Captured from the real constructors; ``Tests/Personal_Context/test_repository.py
 rebuilds each.
 """
 
-from contextlib import closing
+import hashlib
+import json
+import os
+import sqlite3
+import zipfile
+from contextlib import closing, suppress
 from dataclasses import replace
 from pathlib import Path
 from threading import Event
@@ -39,7 +46,6 @@ from tldw_chatbook.DB.recovery_operations import _SQLiteDeclaration
 OWNER = "personal_context.repository"
 LEAF = "tldw_chatbook_personal_context.db"
 FIRST_LINK_IN_PROGRESS = "personal_context_first_link_in_progress"
-NOT_RESTORED = "personal_context_not_restored"
 VERSION_QUERY = "SELECT version FROM personal_context_schema WHERE singleton = 1"
 REPOSITORY_SCHEMA_VERSION = 9
 
@@ -183,19 +189,20 @@ class _Repository(_SQLiteDeclaration):
                 progress_guard=guard,
             )
 
-    def relocate(self, candidate: Path, mapping) -> None:
-        # The restore planner never publishes the repository until TASK-40135.
-        raise ValueError(NOT_RESTORED)
 
 
 # Personal Context sync needs both owners approved for every restored
-# generation. This review approves only the repository, and only where the
-# restore published neither (TASK-40134 AC#9-10); `runtime.sync_state` and
-# `config` keep their own review (TASK-40137), so sync does not resume here.
+# generation. This review approves only the repository (TASK-40134 AC#9-10);
+# after a restore that published either owner it first clears the restored
+# Personal Context link state, so the next link is a fresh first link
+# (TASK-40139). `config` and `runtime.sync_state` keep their own sync-identity
+# review (Sync_Interop.recovery), so sync does not resume here.
 SYNC_OWNERS = (OWNER, "runtime.sync_state")
 REVIEW_AVAILABLE = "personal_context_restore_review_available"
 RESTORED_LINK_STATE = "personal_context_restored_link_state"
 REVIEW_UNAVAILABLE = "personal_context_restore_review_unavailable"
+# Review r14pccB: after this review, sync stays off until the sync identity is.
+SYNC_IDENTITY_PENDING = "personal_context_sync_identity_pending"
 
 
 SYNC_REVIEW_REQUIRED = "personal_context_sync_restore_review_required"
@@ -251,13 +258,30 @@ def _restore_reviews(db_path: Path, *, approve: bool) -> tuple[str, ...]:
             ):
                 continue
             published = _published_owners(witness)
-            if published is None or published & set(SYNC_OWNERS):
-                states.append(RESTORED_LINK_STATE)  # Unknown counts as published.
-            elif approve:
-                store.approve(witness["generation"], OWNER)
-            else:
-                states.append(REVIEW_AVAILABLE)
+            # Unknown counts as published.
+            relink = published is None or bool(published & set(SYNC_OWNERS))
+            if not approve:
+                states.append(RESTORED_LINK_STATE if relink else REVIEW_AVAILABLE)
+                continue
+            if relink:
+                _clear_link_state(db_path)
+            store.approve(witness["generation"], OWNER)
     return tuple(states)
+
+
+def _clear_link_state(db_path: Path) -> None:
+    """Forget the restored link before the review approves (TASK-40139 AC#2)."""
+    from tldw_chatbook.runtime_policy.server_parity_state import SYNC_STATE_DB_FILENAME
+    from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
+
+    path = Path(db_path).parent / SYNC_STATE_DB_FILENAME
+    if not path.exists():
+        return
+    repository = SyncStateRepository(path)
+    try:
+        repository.clear_personal_context_link_state()
+    finally:
+        repository.close()
 
 
 def restore_review(db_path: Path) -> str | None:
@@ -272,13 +296,14 @@ def restore_review(db_path: Path) -> str | None:
         return None if sync_allowed(db_path) else REVIEW_UNAVAILABLE
     if RESTORED_LINK_STATE in states:
         return RESTORED_LINK_STATE
-    return REVIEW_AVAILABLE if states else None
+    if states:
+        return REVIEW_AVAILABLE
+    return None if sync_allowed(db_path) else SYNC_IDENTITY_PENDING
 
 
 def approve_restore_review(db_path: Path) -> None:
-    """Approve only ``personal_context.repository`` for reviewable generations."""
-    if RESTORED_LINK_STATE in _restore_reviews(Path(db_path), approve=True):
-        raise ValueError(RESTORED_LINK_STATE)
+    """Approve only ``personal_context.repository``; a restored link is cleared first."""
+    _restore_reviews(Path(db_path), approve=True)
 
 
 def recovery_adapters() -> tuple[OwnerAdapter, ...]:
@@ -288,3 +313,375 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
             optional_default=True,
         ),
     )
+
+
+# TASK-40135: a restore never adopts, overwrites or deletes an entry it did not
+# create (ADR-126 decision 8). Key material is used only after it authenticates
+# the restored copy's manifest head; it then goes into a fresh account. Anything
+# else leaves the marker, whose reason survives a restart. Staging only names
+# the account; the entry is written just before publication (and again,
+# idempotently, by ``recover --finish``), so an abandoned review leaves none.
+MARKER = "recovery:setup_required:"
+KEY_NOT_IN_BACKUP = "personal_context_key_not_in_backup"
+KEY_INSTALL_UNAVAILABLE = "personal_context_key_install_unavailable"
+KEYRING_UNAVAILABLE = "personal_context_keyring_unavailable"
+RESTORE_READABLE = "personal_context_restore_readable"
+RESTORE_LOCKED = "personal_context_restore_locked"
+# TASK-40136: each locked case is acknowledged before staging writes anything.
+LOCKED_ACKNOWLEDGEMENT = "credential_" + RESTORE_LOCKED + ":"
+KEY_UNVERIFIED = "personal_context_key_unverified"
+KEY_CHECK_UNAVAILABLE = "personal_context_key_check_unavailable"
+_RECOVERY_ACCOUNT = "personal-context:recovery_"
+
+
+def _device_protector():
+    """This device's secure profile keyring, or None; never a null backend."""
+    from tldw_chatbook.Backup_Recovery.credentials import _credential_store
+
+    from .key_protector import KeyringProfileKeyProtector
+
+    try:
+        return KeyringProfileKeyProtector(_credential_store()._keyring)
+    except Exception:  # noqa: BLE001 - unavailable or insecure keyring
+        return None
+
+
+KEYRING_READ_FAILED = "personal_context_keyring_read_failed"
+
+
+def _stored_value(protector, account: str):
+    """The stored value, or None when the account is empty.
+
+    A keyring that does not answer is never "no key": it refuses, so a restore
+    never plans or stamps a lock (or deletes an entry) on a failed read.
+    """
+    from .key_protector import _KEYRING_SERVICE
+
+    try:
+        return protector._keyring.get_password(_KEYRING_SERVICE, account)
+    except Exception:  # noqa: BLE001 - backend errors can contain secret values
+        raise ValueError(KEYRING_READ_FAILED) from None
+
+
+def restore_key(connection, *, record_value, target: Path, protector):
+    """Pick the key a restore may install: ``(value, None)`` or ``(None, reason)``.
+
+    Candidates are the archive's record, then the account the archived copy
+    names on this device (the target path's legacy account for an empty
+    reference). A value counts only once it authenticates this copy. A copy
+    with no live profile holds no key: ``(None, None)``.
+    """
+    from .repository_keys import KEY_ACCOUNT, profile_key_opens
+
+    meta = connection.execute(
+        "SELECT destroyed, key_account FROM profile_meta WHERE singleton = 1"
+    ).fetchone()
+    if meta is None or meta[0]:
+        return None, None
+    stored = meta[1]
+    candidates = [] if record_value is None else [(stored, record_value)]
+    if protector is not None:
+        account = (
+            stored
+            if isinstance(stored, str) and KEY_ACCOUNT.fullmatch(stored)
+            else "personal-context:"
+            + hashlib.sha256(os.fsencode(str(Path(target).absolute()))).hexdigest()
+            if stored == ""
+            else None
+        )
+        if account is not None:
+            candidates.append((account, _stored_value(protector, account)))
+    for account, value in candidates:
+        if value is not None and profile_key_opens(connection, account, value):
+            if protector is None:
+                return None, KEY_INSTALL_UNAVAILABLE
+            return value, None
+    if record_value is not None and protector is None:
+        return None, KEY_INSTALL_UNAVAILABLE
+    return None, KEY_NOT_IN_BACKUP
+
+
+def _isolated(record_value, value, reason):
+    """An isolated copy has no keyring (decision 6): always locked, never written.
+
+    ``key_not_in_backup`` only when the archive had no key and no account on this
+    device opens the copy (spec Q2 row 1); otherwise "Restore with Replace" is true.
+    """
+    if value is None and reason is None:
+        return None, None
+    if record_value is None and value is None:
+        return None, KEY_NOT_IN_BACKUP
+    return None, KEYRING_UNAVAILABLE
+
+
+def unacknowledged_locks(plan) -> tuple[str, ...]:
+    """The locked-case acknowledgements a plan still needs (TASK-40136 AC#4)."""
+    return tuple(
+        code
+        for issue in plan.issues
+        if issue.startswith(RESTORE_LOCKED + ":")
+        if (code := "credential_" + issue) not in plan.acknowledged_credential_issues
+    )
+
+
+def _issue(value, reason, logical_id: str) -> str | None:
+    """The plan line for one repository; its logical id keeps profiles apart."""
+    if reason is not None:
+        return RESTORE_LOCKED + ":" + reason + ":" + logical_id
+    return None if value is None else RESTORE_READABLE + ":" + logical_id
+
+
+def restore_account(candidate: Path, logical_id: str) -> str:
+    """The fresh account one staged restore names; unique per staging."""
+    seed = os.fsencode(str(candidate)) + b"\x00" + logical_id.encode()
+    return _RECOVERY_ACCOUNT + hashlib.sha256(seed).hexdigest()[:32]
+
+
+def _archived_key(archive, doc, logical_id: str, target: Path, *, isolated=False):
+    """``restore_key`` against the sealed archive's own copy and record."""
+    row = next(row for row in doc.files if row.logical_id == logical_id)
+    with zipfile.ZipFile(archive.path) as container:
+        data = container.read(row.payload)
+        record = None
+        material = next(
+            (r for r in doc.files if r.owner_id == "recovery.credentials"), None
+        )
+        if doc.credential_policy != "exclude" and material is not None:
+            records = json.loads(container.read(material.payload))["records"]
+            record = next(
+                (
+                    r.get("value")
+                    for r in records
+                    if r.get("kind") == "personal_context"
+                    and r.get("file") == row.payload
+                    and r.get("status") == "captured"
+                ),
+                None,
+            )
+    if hashlib.sha256(data).hexdigest() != row.sha256:
+        raise ValueError("sealed_changed")
+    from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+
+    with closing(
+        connect_private_sqlite("recovery.personal_context.repository", ":memory:")
+    ) as connection:
+        # An in-memory image cannot be in WAL mode; the bytes on disk are untouched.
+        connection.deserialize(data[:18] + b"\x01\x01" + data[20:])
+        found = restore_key(
+            connection, record_value=record, target=target, protector=_device_protector()
+        )
+    return _isolated(record, *found) if isolated else found
+
+
+def restore_plan_issue(
+    archive, doc, logical_id: str, target: Path, *, isolated: bool = False
+) -> str | None:
+    """What the plan says before a restore runs: readable or locked, and why."""
+    try:
+        return _issue(
+            *_archived_key(archive, doc, logical_id, target, isolated=isolated),
+            logical_id,
+        )
+    except (OSError, KeyError, sqlite3.Error, zipfile.BadZipFile, json.JSONDecodeError):
+        raise ValueError("personal_context_validation_unavailable") from None
+
+
+def stamp_restored_key(
+    candidate: Path,
+    *,
+    record_value,
+    target: Path,
+    logical_id: str,
+    planned: str | None,
+    account: str,
+    isolated: bool = False,
+) -> None:
+    """Rewrite a staged copy's key reference; nothing is written to the keyring.
+
+    Readable: the copy names ``account``, which must be unused. Locked: the
+    copy names the marker. A removed profile names nothing. Only
+    ``key_account`` changes. A result other than the reviewed plan's refuses
+    before any write.
+    """
+    from tldw_chatbook.DB.private_sqlite import open_recovery_validation
+
+    protector = _device_protector()
+    with open_recovery_validation(
+        OWNER, candidate, writable=True, with_restrictions=True
+    ) as (connection, restrictions):
+        value, reason = restore_key(
+            connection, record_value=record_value, target=target, protector=protector
+        )
+        if isolated:
+            value, reason = _isolated(record_value, value, reason)
+        if _issue(value, reason, logical_id) != planned:
+            raise ValueError("personal_context_restore_changed")
+        if value is None and reason is None:
+            reference = ""
+        elif reason is not None:
+            reference = MARKER + reason
+        elif _stored_value(protector, account) is not None:
+            raise ValueError("personal_context_key_account_in_use")
+        else:
+            reference = account
+        restrictions.stamping_key_account = True
+        try:
+            with connection:
+                connection.execute(
+                    "UPDATE profile_meta SET key_account = ? WHERE singleton = 1",
+                    (reference,),
+                )
+        finally:
+            restrictions.stamping_key_account = False
+
+
+def install_restored_keys(archive, doc, plan, candidate: Path) -> None:
+    """Write each readable restore's key into its fresh account before publication.
+
+    Set-if-absent and read back; a rerun (``recover --finish``) accepts the same
+    value already there. The key is re-derived from the archive and must still
+    authenticate; anything else refuses before publication.
+    """
+    from .key_protector import decode_keyring_material
+
+    for key, target in plan.restore:
+        if RESTORE_READABLE + ":" + key not in plan.issues:
+            continue
+        value, reason = _archived_key(archive, doc, key, target)
+        if reason is not None or value is None:
+            raise ValueError("personal_context_restore_changed")
+        protector = _device_protector()
+        account = restore_account(candidate, key)
+        material = decode_keyring_material(value)
+        existing = _stored_value(protector, account)
+        if existing is None:
+            protector.install(account, material)
+        elif existing != value:
+            raise ValueError("personal_context_key_account_in_use")
+        if protector.load(account) != material:
+            raise ValueError("personal_context_key_install_failed")
+
+
+def stored_restore_marker(db_path: Path) -> str | None:
+    """A live profile's restore marker, read-only; None for anything else.
+
+    The repository reads it when no secure keyring exists, so a restore's
+    reason shows instead of the keyring's refusal (TASK-40136). It never
+    creates the database.
+    """
+    from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+
+    if not Path(db_path).exists():
+        return None
+    try:
+        with closing(
+            connect_private_sqlite(
+                "recovery.personal_context.repository", db_path, read_only=True
+            )
+        ) as connection:
+            row = connection.execute(
+                "SELECT key_account FROM profile_meta "
+                "WHERE singleton = 1 AND destroyed = 0"
+            ).fetchone()
+    except (OSError, ValueError, sqlite3.Error):
+        return None
+    stored = None if row is None else row[0]
+    return stored if isinstance(stored, str) and stored.startswith(MARKER) else None
+
+
+def forget_restored_keys(plan, candidate: Path) -> None:
+    """After a rollback, delete the fresh accounts this restore created (spec Q4).
+
+    Their names are unique to this staging, and the rolled-back database names
+    its own account again; nothing else is touched. A keyring that fails here
+    leaves an entry no database names, never a failed rollback.
+    """
+    protector = _device_protector()
+    if protector is None:
+        return
+    prefix = RESTORE_READABLE + ":"
+    for issue in plan.issues:
+        if issue.startswith(prefix):
+            with suppress(Exception):
+                protector.delete(restore_account(candidate, issue[len(prefix) :]))
+
+
+def verify_restored_key(path: Path) -> str | None:
+    """After publication: the restored copy opens with the key its account holds.
+
+    On failure only the ``recovery_`` account the restore created is deleted;
+    the database stays in place and Personal Context is locked.
+    """
+    from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+
+    from .repository_keys import profile_key_authenticates
+
+    try:
+        with closing(
+            connect_private_sqlite(
+                "recovery.personal_context.repository", path, read_only=True
+            )
+        ) as connection:
+            row = connection.execute(
+                "SELECT destroyed, key_account FROM profile_meta WHERE singleton = 1"
+            ).fetchone()
+            if row is None or row[0] or not str(row[1]).startswith(_RECOVERY_ACCOUNT):
+                return None
+            account = row[1]
+            protector = _device_protector()
+            if protector is None:
+                return KEY_CHECK_UNAVAILABLE
+            # A keyring that does not answer raises: that is not a wrong key.
+            value = _stored_value(protector, account)
+            verdict = (
+                False
+                if value is None
+                else profile_key_authenticates(connection, account, value)
+            )
+    except (OSError, ValueError, sqlite3.Error):
+        return KEY_CHECK_UNAVAILABLE
+    if verdict is None:
+        return KEY_CHECK_UNAVAILABLE  # could not tell: keep the entry
+    if verdict:
+        return None
+    # Definite: the entry is missing, or its key does not open the copy.
+    with suppress(Exception):
+        protector.delete(account)
+    return KEY_UNVERIFIED
+
+
+def verify_restored_keys(plan) -> tuple[str, ...]:
+    """Check every Personal Context repository a finished restore published."""
+    return tuple(
+        sorted(
+            {
+                issue
+                for key, path in plan.restore
+                if key.count(":") >= 2 and key.split(":")[2] == OWNER
+                if (issue := verify_restored_key(path)) is not None
+            }
+        )
+    )
+
+
+def reencrypt_profile(repository, *, expected_damaged: int = 0) -> str:
+    """TASK-40140: re-encrypt a profile so an old archive's key reads no live row.
+
+    Owner decision 2026-11-13: confirming "Review restored profile" calls this
+    (``PersonalContextService.reencrypt_after_restore``). Owner decision
+    2026-11-14: the ``expected_damaged`` unreadable record versions the review
+    showed are removed in the same transaction; a different count refuses. The
+    old account stays while any recovery copy exists: a retained copy may name
+    it, and its later rollback would then open nothing (ADR-126 decision 8).
+    """
+    from tldw_chatbook.Backup_Recovery.recovery_copies import list_recovery_copies
+    from tldw_chatbook.Backup_Recovery.service_storage import default_control_root
+
+    try:
+        retained = bool(list_recovery_copies(default_control_root()))
+    except Exception:  # noqa: BLE001 - unreadable copies count as retained
+        retained = True
+    return repository.reencrypt_profile(
+        keep_old_account=retained, expected_damaged=expected_damaged
+    )
+

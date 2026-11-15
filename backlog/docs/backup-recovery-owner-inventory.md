@@ -4058,27 +4058,75 @@ selectable `personal_context` group ("Personal Context").
 | the profile key (`profile_meta.key_account` names its keyring account) | — | `include`/`rollback` only: a `personal_context` credential record (service `tldw_chatbook.personal_context`, not remappable), written only after the key authenticates the captured copy's manifest; `credential_manual_recovery_required` like the citation key. An empty reference, a removed profile or a recovery marker carries no record. `exclude` (the default) never reads it and never rewrites the database: the reference is not a secret, and the preview says the key is not in the backup. |
 | link keys (device wrapping key, staged integrity keys, dataset staging keys) | — | never captured (decision 5); `include` mode discloses them as `credential_personal_context_link_keys_excluded:<id>`, like skill-trust keys |
 
-**Restore.** Until readable restores ship (TASK-40135), `restore_plan.plan_restore`
-never plans the repository for publication in replace or isolated mode, the group
-is not offered for restore, the live database is preserved byte-for-byte, the
-archive keeps its copy, and the plan carries `personal_context_not_restored`.
-`relocate` refuses as a second line. The owner is activation-required: every
-restore binds it. Personal Context sync (`app._load_personal_context_sync_runtime`)
+**Restore (TASK-40135, TASK-40136).** Every restore publishes the repository. The
+plan carries, per repository, `personal_context_restore_readable:<id>` or
+`personal_context_restore_locked:<reason>:<id>` (`personal_context_key_not_in_backup`,
+`personal_context_key_install_unavailable`, and for an isolated restore
+`personal_context_keyring_unavailable`; an isolated copy is always locked and uses
+`key_not_in_backup` only when the archive had no key and no account on this device
+opens the copy). Each locked case needs the acknowledgement
+`credential_personal_context_restore_locked:<reason>:<id>` before staging writes
+anything (allowed in isolated plans too; the safety copy's credential review
+ignores it). The marker's reason locks the repository on every start
+(`repository_keys._named_key_account`), and a stored key that does not
+authenticate the manifest head locks as `personal_context_key_mismatch`. The
+outcome is computed from the archive's own copy:
+the key is the archive's record, else the account the copy names on this device
+(the target path's legacy account for an empty reference), used only once it
+authenticates the copy's manifest head. Staging recomputes it and refuses a
+different result, then rewrites only `profile_meta.key_account` in the staged
+copy, through the restricted candidate connection (`stamping_key_account`): a fresh, unused `personal-context:recovery_<hex>` account, or the marker
+`recovery:setup_required:<reason>` (a removed profile names nothing). No keyring
+entry is written while staging; `replacement._install_personal_context_keys`
+re-derives the key from the archive and writes it set-if-absent just before
+publication, and `recover --finish` repeats that idempotently. After publication
+(and after `--finish`) the service opens the copy with that key; on failure it
+deletes only that `recovery_` account and reports `personal_context_key_unverified`.
+No restore overwrites or deletes an entry it did not create (ADR-126 decision 8),
+so a rollback reopens the original with its own account. A `personal_context`
+record is still retained in the encrypted restore copy, so the
+`credential_isolated_retention_required` review applies. Link-key disclosure
+(`credential_personal_context_link_keys_excluded`) no longer makes an include-mode
+archive partial (`credential_policies.MANUAL_CREDENTIAL_ISSUES`). The owner is
+activation-required: every restore binds it. Personal Context sync (`app._load_personal_context_sync_runtime`)
 loads only when `execution_allowed` passes for `personal_context.repository` and
 `runtime.sync_state` (`recovery.require_sync_allowed`), and so do the link service's `resume` and `resume_after_local_activation` and the Settings link flow for a stored link, before any state or keyring read. Settings' review approves
-only `personal_context.repository`, and only for a generation whose restore plan
-published neither owner; otherwise it shows `personal_context_restored_link_state`, and `personal_context_restore_review_unavailable` when the review cannot be read while the gate is closed.
+only `personal_context.repository`; for a generation whose restore plan published
+either owner (or cannot be read) it shows `personal_context_restored_link_state`
+and, when confirmed, first deletes every restored `personal_context_link_state`
+row, so the next link is a fresh first link (TASK-40139). It shows
+`personal_context_restore_review_unavailable` when the review cannot be read while the gate is closed.
 It never approves `config` or `runtime.sync_state` (TASK-40137), so sync stays off.
+Those two are approved together only by the sync-identity review
+(`Sync_Interop.recovery.approve_sync_identity`, TASK-40139, owner ruling
+2026-11-12): it recounts what it will clear, refuses if the counts the user saw
+changed, clears device ids, dataset bindings and cursors, saved Prepare results
+(`dry_run_metadata`, which holds the Notes organization client profile id), pull
+cursors, remote heads, Personal Context link state and the unsent outbox (with
+their projection receipts) for every server profile, then approves both owners.
+The step holds the sync state's storage, and the count check and the clear share
+one `BEGIN IMMEDIATE` transaction. Every Link to home server waits for both
+reviews (`require_sync_allowed` before any key or link-state read). Its screen is
+Backup & Restore > Restored profiles > Current profile, beside **Approve
+settings** (`RecoveryService.sync_identity_review` / `approve_sync_identity`;
+owner decision 2026-11-13). Confirming **Review restored profile** in Settings >
+Personal Context first re-encrypts the profile under a fresh key
+(`PersonalContextService.reencrypt_after_restore`, TASK-40140; owner decision
+2026-11-13), then approves; a failed re-encryption approves nothing.
 Detached import refuses the repository by name
 (`detached_owner_unavailable:personal_context.repository`): it carries no key.
 Manual (inert) extraction never offers or writes credential material.
 
 | Registry owner | Source module | Existing policy | Recovery cohort/status |
 | --- | --- | --- | --- |
-| sqlite:recovery.personal_context.repository | tldw_chatbook/Personal_Context/recovery | _PRIVATE_AND_READ_ONLY | sqlite/Personal Context backup owner (centralized backup and recovery capture allowed) |
+| sqlite:recovery.personal_context.repository | tldw_chatbook/Personal_Context/recovery | _PRIVATE_MEMORY_AND_READ_ONLY | sqlite/Personal Context backup owner (centralized backup and recovery capture allowed; memory: an in-memory image of an archived copy, TASK-40135) |
 
 | Module | Producer symbol | Call | Count | Classification | Resolver / adapter cohort |
 | --- | --- | --- | --- | --- | --- |
 | tldw_chatbook/Personal_Context/recovery.py | _Repository.capture | copy_private_sqlite | 1 | qualified | personal_context.repository |
 | tldw_chatbook/Personal_Context/recovery.py | _Repository.validate | connect_private_sqlite | 1 | qualified | personal_context.repository; read-only catalog validation and first-link check |
+| tldw_chatbook/Personal_Context/recovery.py | _archived_key | ZipFile | 1 | qualified | personal_context.repository; reads the sealed archive's own copy and key record to plan and recheck a restore (TASK-40135) |
+| tldw_chatbook/Personal_Context/recovery.py | _archived_key | connect_private_sqlite | 1 | qualified | personal_context.repository; in-memory image only, no file (TASK-40135) |
+| tldw_chatbook/Personal_Context/recovery.py | verify_restored_key | connect_private_sqlite | 1 | qualified | personal_context.repository; read-only check of the published copy (TASK-40135) |
+| tldw_chatbook/Personal_Context/recovery.py | stored_restore_marker | connect_private_sqlite | 1 | qualified | personal_context.repository; read-only peek at a restore marker when no secure keyring exists (TASK-40136) |
 

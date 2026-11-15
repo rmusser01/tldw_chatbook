@@ -265,6 +265,24 @@ identity is reviewed separately. If the current profile changed after the summar
 shown, approval is refused; open **Restored profiles** again and review the new
 summary.
 
+Server sync has its own review too, beside **Approve settings**. A restore brings
+back the old device's sync identity, so server sync (Notes, Chat and Personal
+Context) stays off: otherwise it would act as the device the backup came from.
+While a restored generation awaits it, **Current profile** shows a **Sync identity
+review** that counts what it will clear: device ids, dataset bindings and cursors,
+pull cursors, remote heads, Personal Context links, unsent changes and saved Prepare
+results. **Clear sync identity and approve sync** clears all of them for every
+server profile, then approves the profile settings and the sync state together.
+Then prepare sync again: in Settings > Overview > **Advanced / Diagnostics**, choose
+**Switch Source / Server**, then **Activate Server** with the same server. That
+registers this device as a new one and downloads again (sync refuses to run until
+then). Changes that were queued
+but never sent are dropped from the queue (they stay in your local data). If the
+counts changed after they were shown, nothing is cleared; open **Restored
+profiles** again and review the new counts. If the sync state cannot be read, the
+review says so and nothing changes. The old device stays registered on the server;
+remove it there if it is lost.
+
 Plugins restore only onto the profile and data folder they came from: their
 registry and authority record those folder paths, so restoring them into a
 separate profile, or after the profile's data folder moved, is refused with

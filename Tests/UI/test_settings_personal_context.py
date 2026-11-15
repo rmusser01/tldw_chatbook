@@ -847,6 +847,56 @@ async def test_my_profile_named_states_are_safe_and_actionable(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reason", "copy"),
+    [
+        ("personal_context_key_not_in_backup", "this backup did not include its key"),
+        ("personal_context_keyring_unavailable", "can't open in a separately restored copy"),
+        ("personal_context_key_install_unavailable", "no secure keyring to hold its key"),
+        ("personal_context_key_mismatch", "belongs to a different copy of the profile"),
+        ("profile_locked", "Unlock secure key storage and try again."),
+    ],
+)
+async def test_locked_profile_says_why_and_offers_only_what_a_locked_profile_allows(
+    reason: str, copy: str
+) -> None:
+    """TASK-40136 AC#5: each locked reason has the spec's copy; restore cases
+    name only Backup & Restore and Try again (Remove and Start fresh refuse
+    while locked)."""
+    status = ProfileOperationalStatus(
+        state=ProfileOperationalState.LOCKED,
+        profile_present=True,
+        locked=True,
+        runtime_enabled=False,
+        reason_code=reason,
+    )
+    app = _build_test_app()
+    app._personal_context_service = _ProfileServiceStub(
+        PersonalContextSettingsSnapshot(status=status)
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        await _settle_settings(pilot)
+        await _click_settings_category(pilot, "personal-context")
+        screen = _active_destination_screen(host)
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        text = str(screen.query_one("#personal-context-locked-reason").renderable)
+        assert copy in text
+        assert screen.query("#personal-context-reload")
+        for absent in (
+            "#personal-context-finish-removal",
+            "#personal-context-start-fresh",
+            "#personal-context-create",
+        ):
+            assert not screen.query(absent)
+        if reason != "profile_locked":
+            assert "Unlock secure key storage" not in text
+
+
+@pytest.mark.asyncio
 async def test_profile_load_error_is_content_free() -> None:
     app = _build_test_app()
     app._personal_context_service = _ExplodingProfileService()
@@ -2233,15 +2283,33 @@ async def test_export_and_deleted_labels_keep_literal_metadata(monkeypatch):
 class _RestoredProfileService(_ProfileServiceStub):
     _repository = SimpleNamespace(db_path="restored-personal-context.db")
 
+    def __init__(
+        self, snapshot, *, fail_reencrypt: bool = False, damaged: int = 0
+    ) -> None:
+        super().__init__(snapshot)
+        self.fail_reencrypt = fail_reencrypt
+        self.damaged = damaged
+        self.steps: list[str] = []
+
+    def damaged_record_count(self) -> int:
+        return self.damaged
+
+    def reencrypt_after_restore(self, *, expected_damaged: int = 0) -> str:
+        self.steps.append(("reencrypt", expected_damaged) if expected_damaged else "reencrypt")
+        if self.fail_reencrypt:
+            raise RuntimeError("private-key-detail-that-must-never-render")
+        return "personal-context:profile_" + "f" * 32
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("review", ["available", "link_state", "unavailable"])
 async def test_restored_profile_review_never_claims_sync_resumes(
     monkeypatch, review
 ) -> None:
-    """TASK-40134 AC#10: Settings offers the Personal Context review only when it
-    can approve it, its copy keeps sync off, and a restore that brought back link
-    state shows a named reason instead."""
+    """TASK-40134 AC#10, TASK-40139 AC#8: Settings offers the Personal Context
+    review whenever it can approve it, its copy keeps sync off, and a restore that
+    brought back link state says to link again and to remove a lost old device
+    on the server."""
     import tldw_chatbook.Widgets.Settings_Widgets.personal_context_panel as module
     from tldw_chatbook.Personal_Context import recovery
 
@@ -2267,8 +2335,12 @@ async def test_restored_profile_review_never_claims_sync_resumes(
         assert "sync" in copy.lower() and "off" in copy
         assert "resume" not in copy.replace("resume the old device", "")
         buttons = panel.query("#personal-context-restore-review")
-        if review != "available":
-            assert ("saved sync state" if review == "link_state" else "could not be read") in copy
+        if review == "link_state":
+            assert "because this profile was restored" in copy
+            assert "Link to home server again" in copy
+            assert "If the old device is lost, remove it on your server" in copy
+        if review == "unavailable":
+            assert "could not be read" in copy
             assert not buttons
             return
         await pilot.click("#personal-context-restore-review")
@@ -2276,3 +2348,165 @@ async def test_restored_profile_review_never_claims_sync_resumes(
         await pilot.pause()
         assert reviewed == ["restored-personal-context.db"]
         assert not panel.query("#personal-context-restore-review-copy")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["reencrypted", "reencrypt_failed"])
+async def test_restored_profile_review_reencrypts_before_it_approves(
+    monkeypatch, outcome
+) -> None:
+    """TASK-40140, owner decision 2026-11-13 ("As part of the restored-profile
+    review"): confirming Review restored profile re-encrypts on a worker, then
+    approves. A failed re-encryption approves nothing, keeps the review
+    offered, and shows the panel's content-free failure copy."""
+    import tldw_chatbook.Widgets.Settings_Widgets.personal_context_panel as module
+    from tldw_chatbook.Personal_Context import recovery
+
+    service = _RestoredProfileService(
+        _ready_snapshot(), fail_reencrypt=outcome == "reencrypt_failed"
+    )
+    monkeypatch.setattr(
+        module,
+        "restore_review",
+        lambda path: None if "approve" in service.steps else recovery.REVIEW_AVAILABLE,
+    )
+    monkeypatch.setattr(
+        module, "approve_restore_review", lambda path: service.steps.append("approve")
+    )
+    panel = PersonalContextSettingsPanel(service)
+    notices: list[str] = []
+    monkeypatch.setattr(panel, "notify", lambda message, **_: notices.append(message))
+
+    class _PanelHost(ConsolidatedCSSApp):
+        def compose(self):
+            yield panel
+
+    host = _PanelHost()
+    async with host.run_test(size=(100, 40)) as pilot:
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        await pilot.click("#personal-context-restore-review")
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        assert notices[0] == "Re-encrypting the restored profile under a new key…"
+        if outcome == "reencrypted":
+            assert service.steps == ["reencrypt", "approve"]
+            assert notices[-1] == (
+                "Restored profile reviewed and re-encrypted under a new key."
+            )
+            assert not panel.query("#personal-context-restore-review")
+            return
+        assert service.steps == ["reencrypt"]
+        assert notices[-1].startswith("The profile change could not be saved.")
+        assert "private-key-detail" not in " ".join(notices)
+        assert panel.query("#personal-context-restore-review")
+
+
+@pytest.mark.asyncio
+async def test_restored_profile_review_shows_and_removes_the_damaged_count(
+    monkeypatch,
+) -> None:
+    """TASK-40140 AC#5, owner decision 2026-11-14: before confirming, the review
+    says "N damaged records can't be read and will be removed"; confirming
+    passes exactly that count to re-encryption."""
+    import tldw_chatbook.Widgets.Settings_Widgets.personal_context_panel as module
+    from tldw_chatbook.Personal_Context import recovery
+
+    service = _RestoredProfileService(_ready_snapshot(), damaged=2)
+    monkeypatch.setattr(
+        module,
+        "restore_review",
+        lambda path: None if "approve" in service.steps else recovery.REVIEW_AVAILABLE,
+    )
+    monkeypatch.setattr(
+        module, "approve_restore_review", lambda path: service.steps.append("approve")
+    )
+    panel = PersonalContextSettingsPanel(service)
+
+    class _PanelHost(ConsolidatedCSSApp):
+        def compose(self):
+            yield panel
+
+    host = _PanelHost()
+    async with host.run_test(size=(100, 40)) as pilot:
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        line = str(
+            panel.query_one("#personal-context-restore-review-damaged", Static).render()
+        )
+        assert line == "2 damaged records can't be read and will be removed"
+        await pilot.click("#personal-context-restore-review")
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        assert service.steps == [("reencrypt", 2), "approve"]
+
+
+@pytest.mark.asyncio
+async def test_sync_stays_named_off_until_the_sync_identity_review(monkeypatch) -> None:
+    """TASK-40139 (review r14pccB): after the Personal Context review, while sync
+    is still off, the panel names the Backup & Restore step; no review button."""
+    import tldw_chatbook.Widgets.Settings_Widgets.personal_context_panel as module
+    from tldw_chatbook.Personal_Context import recovery
+
+    monkeypatch.setattr(
+        module, "restore_review", lambda path: recovery.SYNC_IDENTITY_PENDING
+    )
+    panel = PersonalContextSettingsPanel(_RestoredProfileService(_ready_snapshot()))
+
+    class _PanelHost(ConsolidatedCSSApp):
+        def compose(self):
+            yield panel
+
+    host = _PanelHost()
+    async with host.run_test(size=(100, 40)) as pilot:
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        copy = str(panel.query_one("#personal-context-restore-review-copy", Static).render())
+        assert "sync is still off" in copy
+        assert "Backup & Restore > Restored profiles > Sync identity review" in copy
+        assert not panel.query("#personal-context-restore-review")
+
+
+
+@pytest.mark.asyncio
+async def test_a_refused_review_reloads_the_damaged_count(monkeypatch) -> None:
+    """TASK-40140 (review r14pcc-rev2): one damaged record reads in the
+    singular; when re-encryption refuses (the count changed), the panel reloads
+    and shows the new count before the next confirm."""
+    import tldw_chatbook.Widgets.Settings_Widgets.personal_context_panel as module
+    from tldw_chatbook.Personal_Context import recovery
+
+    class _CountChanged(_RestoredProfileService):
+        def reencrypt_after_restore(self, *, expected_damaged: int = 0) -> str:
+            self.steps.append(("reencrypt", expected_damaged))
+            self.damaged = 2
+            raise RuntimeError("damaged records changed since review")
+
+    service = _CountChanged(_ready_snapshot(), damaged=1)
+    monkeypatch.setattr(module, "restore_review", lambda path: recovery.REVIEW_AVAILABLE)
+    monkeypatch.setattr(
+        module, "approve_restore_review", lambda path: service.steps.append("approve")
+    )
+    panel = PersonalContextSettingsPanel(service)
+
+    class _PanelHost(ConsolidatedCSSApp):
+        def compose(self):
+            yield panel
+
+    def damaged_line():
+        return str(
+            panel.query_one("#personal-context-restore-review-damaged", Static).render()
+        )
+
+    host = _PanelHost()
+    async with host.run_test(size=(100, 40)) as pilot:
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        assert damaged_line() == "1 damaged record can't be read and will be removed"
+        await pilot.click("#personal-context-restore-review")
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        assert service.steps == [("reencrypt", 1)]
+        assert damaged_line() == "2 damaged records can't be read and will be removed"

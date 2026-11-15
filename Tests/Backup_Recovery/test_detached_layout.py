@@ -939,57 +939,35 @@ def test_detached_import_keeps_interview_drafts_on_the_original_device(
 
 
 @pytest.mark.parametrize(
-    ("adapter", "suffix"),
+    ("content", "suffix"),
     [
-        *(("installed", suffix) for suffix in ("", "-wal", "-shm", "-journal")),
-        ("captured", ""),
+        *(("bytes", suffix) for suffix in ("", "-wal", "-shm", "-journal")),
+        ("valid", ""),
     ],
 )
 def test_detached_import_refuses_the_personal_context_repository_by_name(
-    tmp_path, monkeypatch, adapter, suffix
+    tmp_path, content, suffix
 ):
     """TASK-40138 AC#2: the repository's key stays in the original device's
-    keyring (detached import is credential-excluded), so it is refused by name
-    whichever adapter declares it: today's `_LocalSQLite` row, or a captured
-    `_SQLiteDeclaration` like TASK-40134's, which the SQLite loop would
-    otherwise normalize and import."""
+    keyring (detached import is credential-excluded), so the installed captured
+    owner (TASK-40134) is refused by name, before any owner opens data: for its
+    file or any sidecar, and for a real repository that would pass validation."""
     source, root, _old = _base_profile(tmp_path)
     database = root / "tldw_chatbook_personal_context.db"
-    if adapter == "captured":
-        from tldw_chatbook.Backup_Recovery import owner_registry, sqlite_validation
-        from tldw_chatbook.Sync_Interop.recovery import _SYNC_SCHEMA, _SyncAdapter
+    if content == "valid":
+        from tldw_chatbook.Personal_Context.key_protector import (
+            InMemoryProfileKeyProtector,
+        )
+        from tldw_chatbook.Personal_Context.repository import (
+            PersonalContextRepository,
+        )
+        from tldw_chatbook.Personal_Context.service import PersonalContextService
 
-        # An installed stand-in whose validator accepts the file, so only the
-        # by-name refusal stops the import.
-        captured = _SyncAdapter(
-            "personal_context.repository",
-            None,
-            database.name,
-            (9,),
-            _SYNC_SCHEMA,
-            (),
-            optional_default=True,
-        )
-        installed = owner_registry.install_adapters()
-        monkeypatch.setattr(
-            owner_registry,
-            "install_adapters",
-            lambda: tuple(
-                captured if owner.owner_id == captured.owner_id else owner
-                for owner in installed
-            ),
-        )
-        resolve = sqlite_validation._installed_owner
-        monkeypatch.setattr(
-            sqlite_validation,
-            "_installed_owner",
-            lambda owner_id: captured
-            if owner_id == captured.owner_id
-            else resolve(owner_id),
-        )
-        _installed_database(captured, database)
-        with sqlite3.connect(database) as connection:
-            connection.execute("PRAGMA user_version=9")  # unlisted owner's version
+        PersonalContextService(
+            PersonalContextRepository(
+                database, key_protector=InMemoryProfileKeyProtector()
+            )
+        ).create_profile()
     else:
         Path(str(database) + suffix).write_bytes(b"keyring-bound ciphertext rows")
     before = {

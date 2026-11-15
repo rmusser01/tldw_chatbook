@@ -39,6 +39,7 @@ from ...Personal_Context.recovery import (
     RESTORED_LINK_STATE,
     REVIEW_AVAILABLE,
     REVIEW_UNAVAILABLE,
+    SYNC_IDENTITY_PENDING,
     approve_restore_review,
     restore_review,
 )
@@ -76,6 +77,32 @@ _DISABLED_REASON_COPY = {
     "agent_authority_denied": "Agent use is disabled because runtime authority could not be verified.",
 }
 
+# TASK-40136 (spec Q2): why a profile is locked, naming only what a locked
+# profile allows: restore or roll back through Backup & Restore, then Try again.
+_LOCKED_REASON_COPY = {
+    "personal_context_key_not_in_backup": (
+        "Personal Context is locked: this backup did not include its key, and "
+        "this device does not have it. Your profile data is kept. To read it, "
+        "restore again with Replace from an encrypted backup that includes "
+        "credentials."
+    ),
+    "personal_context_keyring_unavailable": (
+        "Personal Context can't open in a separately restored copy, because that "
+        "copy has no access to the system keyring. Its data and key are kept. "
+        "Restore with Replace to use it."
+    ),
+    "personal_context_key_install_unavailable": (
+        "Personal Context was restored but stays locked: this device has no "
+        "secure keyring to hold its key. The key is kept in the encrypted "
+        "restore copy. Set up a secure keyring, then restore again."
+    ),
+    "personal_context_key_mismatch": (
+        "Personal Context is locked: the key on this device belongs to a "
+        "different copy of the profile. Your data is kept. Use Backup & Restore "
+        "to roll back or restore the matching copy, then choose Try again."
+    ),
+}
+
 _KIND_OPTIONS = (
     ("Preference", "preference"),
     ("Identity", "identity"),
@@ -95,16 +122,27 @@ _COLLISION_COPY = (
 )
 
 
+_SYNC_IDENTITY_STEP = (
+    "Backup & Restore > Restored profiles > Sync identity review"
+)
 _RESTORE_REVIEW_COPY = {
     REVIEW_AVAILABLE: (
         "This profile was restored from a backup. Choose Review restored profile "
-        "to confirm Personal Context on this device. Sync with your home server "
-        "stays off after a restore."
+        "to confirm Personal Context on this device; it re-encrypts the profile "
+        "under a new key. Sync with your home server stays off until you also "
+        f"review the restored sync identity in {_SYNC_IDENTITY_STEP}."
     ),
+    # TASK-40139 AC#8: the old link never resumes; the next one is a fresh link.
     RESTORED_LINK_STATE: (
-        "Personal Context sync is off because this profile was restored together "
-        "with saved sync state, which could resume the old device's link. Sync "
-        "stays off; the profile stays usable on this device."
+        "Personal Context sync is off because this profile was restored. Choose "
+        "Review restored profile, review the restored sync identity in "
+        f"{_SYNC_IDENTITY_STEP}, then Link to home server again. If the old "
+        "device is lost, remove it on your server."
+    ),
+    # Review r14pccB: sync stays off after this review until that one.
+    SYNC_IDENTITY_PENDING: (
+        "Personal Context sync is still off: review the restored sync identity in "
+        f"{_SYNC_IDENTITY_STEP}, then Link to home server again."
     ),
     REVIEW_UNAVAILABLE: (
         "Personal Context sync is off: the restore review for this profile could "
@@ -225,6 +263,7 @@ class PersonalContextSettingsPanel(Vertical):
         self._load_generation = 0
         self._proposal_review: PersonalContextProposalReviewModal | None = None
         self._restore_review: str | None = None
+        self._damaged_records = 0
 
     def on_mount(self) -> None:
         self.load_records(retry_locked=True)
@@ -274,8 +313,16 @@ class PersonalContextSettingsPanel(Vertical):
             return
         path = self._repository_path(service)
         review = None if path is None else restore_review(path)
+        damaged = 0
+        if review in {REVIEW_AVAILABLE, RESTORED_LINK_STATE}:
+            # TASK-40140, owner decision 2026-11-14: counted before confirming.
+            count = getattr(service, "damaged_record_count", None)
+            try:
+                damaged = int(count()) if callable(count) else 0
+            except Exception:
+                damaged = 0
         self.app.call_from_thread(
-            self._apply_snapshot, generation, snapshot, service, review
+            self._apply_snapshot, generation, snapshot, service, review, damaged
         )
 
     @staticmethod
@@ -307,13 +354,18 @@ class PersonalContextSettingsPanel(Vertical):
         snapshot: PersonalContextSettingsSnapshot,
         service: PersonalContextService | None = None,
         review: str | None = None,
+        damaged: int = 0,
     ) -> None:
         if generation != self._load_generation:
             return
         if service is not None:
             self._service = service
-        review_changed = review != self._restore_review
+        review_changed = (review, damaged) != (
+            self._restore_review,
+            self._damaged_records,
+        )
         self._restore_review = review
+        self._damaged_records = damaged
         self.load_failed = False
         self.snapshot = snapshot
         if review_changed:
@@ -381,7 +433,11 @@ class PersonalContextSettingsPanel(Vertical):
 
         if status.state is ProfileOperationalState.LOCKED:
             yield Static(
-                "Your encrypted profile is locked. Unlock secure key storage and try again.",
+                _LOCKED_REASON_COPY.get(
+                    status.reason_code,
+                    "Your encrypted profile is locked. Unlock secure key storage and try again.",
+                ),
+                id="personal-context-locked-reason",
                 classes="settings-inline-guidance",
             )
             yield Button("Try again", id="personal-context-reload")
@@ -591,7 +647,19 @@ class PersonalContextSettingsPanel(Vertical):
                 id="personal-context-restore-review-copy",
                 classes="settings-inline-guidance",
             )
-            if self._restore_review == REVIEW_AVAILABLE:
+            if self._restore_review in {REVIEW_AVAILABLE, RESTORED_LINK_STATE}:
+                if self._damaged_records:
+                    yield Static(
+                        (
+                            "1 damaged record can't be read and will be removed"
+                            if self._damaged_records == 1
+                            else f"{self._damaged_records} damaged records can't "
+                            "be read and will be removed"
+                        ),
+                        id="personal-context-restore-review-damaged",
+                        classes="settings-inline-guidance",
+                        markup=False,
+                    )
                 yield Button(
                     "Review restored profile", id="personal-context-restore-review"
                 )
@@ -934,8 +1002,25 @@ class PersonalContextSettingsPanel(Vertical):
             self.action_link_server()
         elif button_id == "personal-context-restore-review":
             path = self._repository_path(self._service)
+            service = self._service
+            damaged = self._damaged_records
+
+            def review() -> None:
+                # TASK-40140, owner decision 2026-11-13: re-encrypt first, so a
+                # failure leaves the profile readable and the review offered.
+                # Owner decision 2026-11-14: the damaged records shown go too.
+                try:
+                    service.reencrypt_after_restore(expected_damaged=damaged)
+                except BaseException:
+                    # A refusal (say, the count changed) reloads the review, so
+                    # the current count shows before the next confirm.
+                    self.app.call_from_thread(self.load_records)
+                    raise
+                approve_restore_review(path)
+
+            self.notify("Re-encrypting the restored profile under a new key…")
             self._run_mutation(
-                lambda: approve_restore_review(path), "Restored profile reviewed."
+                review, "Restored profile reviewed and re-encrypted under a new key."
             )
         elif button_id.startswith("personal-context-proposal-"):
             self._review_proposal_index(button_id)
