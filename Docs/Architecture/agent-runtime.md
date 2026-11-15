@@ -509,6 +509,15 @@ return. Ordinary automatic wake uses its own empty Context and native authorizat
 Runtime disposal fences the registered wake owner before draining workflows and
 retiring downstream stores and scratch.
 
+A turn's claim is OPAQUE only for what the turn can actually reach (ADR-285, "Late
+opaque widening"). `spawn_subagent`, `install_skill` and `run_skill_script` widen
+the turn's own claim in place when called (`WorktreeActivity.widen_to_opaque`);
+another live claim refuses that one call with a tool error, never a wait. The
+light/full tool surface is fixed at admission and the reply cannot widen it, so a
+light-surface turn does not count Canvas or chatbook's own MCP tools. The
+runtime's own app with no Personal Context service cached yet counts as bounded;
+a custom cached service stays OPAQUE.
+
 Stop cancels current session/app preparation reads and continues through native
 settlement of an already streaming response. A concurrent read does not consume
 that visible Stop action. Cancelled read handles stay owned until their physical

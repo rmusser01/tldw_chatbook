@@ -75,6 +75,9 @@ class OrdinaryTurn:
             self.runtime.worktree_activity,
         )
         self.owner = self.claim = self.footprint = None
+        # The light/full tool surface fixed at capture; the reply may narrow
+        # it but never widen it (TASK-40715).
+        self.light_surface = False
         self.permission = self.permission_path = None
         self.native_permission_publication = None
         self.reference = None

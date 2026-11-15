@@ -2,9 +2,10 @@
 
 A private child builds the real ``TldwCli`` over the stock config template
 (only first-run completion, no splash and an OpenAI fixture key are written on
-top), mounts it headless, sends the first chat through the real composer, and
-holds that provider call. A second chat then goes through the Console's own
-pre-send capture. ``chat_api_call`` is the only replaced boundary.
+top; the ``full_tools`` case also turns Full agent tools on), mounts it
+headless, sends the first chat through the real composer, and holds that
+provider call. A second chat then goes through the Console's own pre-send
+capture. ``chat_api_call`` is the only replaced boundary.
 """
 
 import json
@@ -15,8 +16,10 @@ from Tests.Backup_Recovery.test_home_citation_retirement import _run
 
 pytestmark = pytest.mark.bootstrap_profile
 
+BUSY = "Workspace activity is busy; retry after it finishes."
+
 _SCRIPT = r"""
-import asyncio, json, os, threading
+import asyncio, json, os, sys, threading
 from pathlib import Path
 from Tests import network_guard, real_profile_guard
 from Tests.windows_private_fixture_runner import user_fixture_default_owner
@@ -125,7 +128,8 @@ with user_fixture_default_owner():
         "[first_run]\nsetup_completed=true\n[_first_run]\nsetup_completed=true\n"
         "[splash_screen]\nenabled=false\n"
         '[api_settings.openai]\napi_key="fixture-not-a-real-key"\n'
-        '[chat_defaults]\nprovider="openai"\nmodel="gpt-4o-mini"\n',
+        '[chat_defaults]\nprovider="openai"\nmodel="gpt-4o-mini"\n'
+        + ("[tools]\nfull_agent_tools_enabled=true\n" if sys.argv[2] == "full_tools" else ""),
         encoding="utf-8",
     )
     selected.chmod(0o600)
@@ -133,20 +137,25 @@ with user_fixture_default_owner():
 """
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "TASK-40715 AC #2, owner decision pending: a default-config agent turn is "
-        "still OPAQUE through the personal-context, canvas and chatbook-MCP "
-        "terms of _capture_maximum, none of which the light tool surface offers"
-    ),
-)
-def test_default_config_second_chat_reaches_provider_while_first_reply_runs(tmp_path):
-    _run(tmp_path, "default_send", "two_chats", script=_SCRIPT, timeout=360)
+@pytest.mark.parametrize("surface", ["default", "full_tools"])
+def test_default_config_second_chat_reaches_provider_while_first_reply_runs(
+    tmp_path, surface
+):
+    _run(tmp_path, "default_send", surface, script=_SCRIPT, timeout=360)
     log = (tmp_path / "restart-output.log").read_text(
         encoding="utf-8", errors="replace"
     )
     facts = json.loads(log.split("FACTS ", 1)[1].splitlines()[0])
-    assert facts["first_agent_eligible"], facts
-    assert facts["second"][0] is True, facts
-    assert any("second default chat" in call for call in facts["calls"]), facts
+    first = facts["captures"][0]
+    assert facts["first_agent_eligible"] and first["agent_eligible"], facts
+    if surface == "default":
+        # Nothing the light surface offers is undeclarable: both chats run.
+        assert not first["opaque"], facts
+        assert facts["second"][0] is True, facts
+        assert any("second default chat" in call for call in facts["calls"]), facts
+    else:
+        # Full agent tools still count Canvas and chatbook's MCP tools up front.
+        assert first["opaque"], facts
+        assert "canvas" in first["other_providers"], facts
+        assert "builtin:tldw_chatbook" in first["mcp_servers"], facts
+        assert facts["second"] == [False, BUSY], facts

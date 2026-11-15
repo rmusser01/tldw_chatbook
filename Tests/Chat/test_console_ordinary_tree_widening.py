@@ -311,3 +311,77 @@ async def test_skill_effect_widens_the_claim_or_is_refused_while_another_turn_ru
         )
     else:
         assert effects == [True], f"{tool} ran without widening the claim"
+
+
+async def _held_turn(h, text):
+    """Send ``text`` from a new agent chat, hold its provider call, yield its turn."""
+    held = _Held(text)
+
+    class Gateway(_RecordingGateway):
+        async def stream_chat(self, resolution, messages, **kwargs):
+            self.payloads.append(messages)
+            await held.hold(messages)
+            yield "reply"
+
+    _install(h, Gateway())
+    chat = _chat(h)
+    task = asyncio.create_task(h.controller.submit_draft(text, session_id=chat.id))
+    h.tasks.append(task)
+    await until(lambda: held.entered.is_set() or task.done())
+    assert held.entered.is_set(), task.result() if task.done() else "no provider call"
+    return _turn(h, chat), held, task
+
+
+@pytest.mark.parametrize("cached", ["none", "stock", "custom"])
+async def test_personal_context_is_bounded_only_when_stock(ordinary_host, cached):
+    from tldw_chatbook.Personal_Context.service import PersonalContextService
+
+    class CustomProfileService(PersonalContextService):
+        pass
+
+    h = ordinary_host
+    h.app._personal_context_service = {
+        "none": None,
+        "stock": PersonalContextService.locked("unavailable"),
+        "custom": CustomProfileService.locked("unavailable"),
+    }[cached]
+    h.app.get_personal_context_service = lambda: h.app._personal_context_service
+    turn, held, task = await _held_turn(h, "personal chat")
+    try:
+        assert turn.footprint.opaque is (cached == "custom")
+    finally:
+        held.release.set()
+        await task
+
+
+async def test_light_surface_fixed_at_capture_cannot_widen_at_reply(
+    ordinary_host, monkeypatch
+):
+    from tldw_chatbook.Chat import console_ordinary_tree as ordinary
+
+    h = ordinary_host
+    live = {"light": True}
+    h.bridge._light_tool_surface = lambda: live["light"]
+    capture = ordinary._capture_maximum
+
+    def capture_then_turn_full(tree, **kwargs):
+        footprint = capture(tree, **kwargs)
+        live["light"] = False  # e.g. agent work arrived in this chat
+        return footprint
+
+    monkeypatch.setattr(ordinary, "_capture_maximum", capture_then_turn_full)
+    surfaces = []
+    remember = h.bridge._remember_tool_surface
+
+    def record(session_id, plan, *, light_surface):
+        surfaces.append(light_surface)
+        return remember(session_id, plan, light_surface=light_surface)
+
+    monkeypatch.setattr(h.bridge, "_remember_tool_surface", record)
+    turn, held, task = await _held_turn(h, "light chat")
+    try:
+        assert turn.light_surface and not live["light"]
+        assert surfaces == [True], "the reply widened past its admitted surface"
+    finally:
+        held.release.set()
+        await task

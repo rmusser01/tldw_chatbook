@@ -139,6 +139,16 @@ async def admit_ordinary_turn(
             )
             tree.reference.capture_authority()
             tree.reference.ordinary_tree = tree
+        if agent_eligible:
+            from .console_skill_resolver import MENTION_SIGIL
+
+            # A `$skill` draft may bind the full surface, so it never counts light.
+            light = getattr(controller._agent_bridge, "light_surface_for", None)
+            tree.light_surface = bool(
+                MENTION_SIGIL not in text
+                and callable(light)
+                and light(session_id=session.id)
+            )
         footprint = _capture_maximum(tree, hook_read=hook_read)
         tree.check_local_sources()
         tree.admit(footprint)
@@ -434,6 +444,7 @@ def _capture_maximum(tree, *, hook_read=None):
         evaluate_tool_policy,
         parse_persona_policy_from_rules,
     )
+    from tldw_chatbook.MCP.builtin_tool_policy import BUILTIN_MCP_SERVER_KEY
     from tldw_chatbook.Workspaces.change_review_consent import ChangeReviewState
 
     configuration = tree.configuration
@@ -478,7 +489,9 @@ def _capture_maximum(tree, *, hook_read=None):
                 )
                 if tree.mcp_source_maximum is None
                 else any(
-                    tree.catalog_permits("mcp", row[3]) for row in sources.values()
+                    tree.catalog_permits("mcp", row[3])
+                    and not (tree.light_surface and row[1] == BUILTIN_MCP_SERVER_KEY)
+                    for row in sources.values()
                 )
             )
         )
@@ -695,7 +708,12 @@ def _capture_personal_source(tree):
     tree.personal_service = getattr_static(tree.app, "_personal_context_service", None)
     if tree.personal_getter is None:
         return False
-    tree.personal_native = _capture_personal_service(tree, tree.personal_service)
+    # The runtime's own app with nothing cached yet bootstraps the stock service,
+    # which touches only private profile storage; publication rechecks what it
+    # registers (TASK-40715). A cached service must itself be stock.
+    tree.personal_native = (
+        tree.personal_service is None and tree.app is tree.runtime._app
+    ) or _capture_personal_service(tree, tree.personal_service)
     return not tree.personal_native
 
 
@@ -855,7 +873,7 @@ def _capture_other_providers(tree):
             for name in tool_catalog.CANVAS_RESERVED_TOOL_NAMES
             if tree.catalog_permits("canvas", name)
         )
-        opaque = True
+        opaque = not tree.light_surface  # Canvas is not on the light surface.
     if tree.personal_getter is not None and not tree.session.ephemeral:
         tree.other_maximum["personal-context"] = frozenset(
             name
