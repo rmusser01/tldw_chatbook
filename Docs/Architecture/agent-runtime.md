@@ -50,6 +50,8 @@ This document describes the agent execution loop: the pure control loop in `Agen
 10. **Dispatch** per call: cancel → approval-revoked + `RUN_CANCELLED`; loop detection (repeated identical calls, period-aware) short-circuits; special in-loop tools (spawn, fleet, fork/new-chat, find/load tools, skill tools, run-log tools) execute directly, looked up by name in `SPECIAL_TOOL_HANDLERS` (each handler takes the call and the run's `LoopState`); everything else, including a special tool whose `LoopDeps` callable is not wired (its handler returns `ORDINARY_TOOL`), goes through `deps.invoke_tool`.
 11. **Result capture**: the `tool_call` run-log record is written **before** dispatch (a crash still leaves a durable trace); the `tool_result` after; content is capped with a recovery pointer into the run log. Consecutive same-tool failures (≥3) → `RUN_STUCK`.
 
+Steps 2–11 are phase functions in `agent_runtime.py`, from `_phase_turn_start` to `_phase_denial_breaker` (TASK-36950.2). `run_agent_loop` builds the run's one `LoopState`, restores a persisted provider continuation first (`_restore_provider_continuation`, which can itself end the run), then runs the phases in order each turn. Every variable of the run lives on that `LoopState`, which the special-tool handlers share. A phase returns `None` to run the next phase, `NEXT_TURN` to start the next turn, or a `RunOutcome` to end the run.
+
 Catalog dispatch checks the run's allow-list before checking schema disclosure.
 An excluded or unknown name keeps the generic `Tool not permitted` refusal.
 An allowed tool whose schema is absent instead returns `Tool schema not loaded`

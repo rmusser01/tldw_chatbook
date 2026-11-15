@@ -34,6 +34,9 @@ from tldw_chatbook.Agents.agent_models import (
     AgentConfig,
     ModelTurn,
     RUN_DONE,
+    RUN_STUCK,
+    STEP_ERROR,
+    STEP_MODEL_ERROR,
     RunBudget,
     ToolCatalogEntry,
     ToolLoadSelection,
@@ -49,10 +52,14 @@ from tldw_chatbook.Agents.agent_models import (
 )
 from tldw_chatbook.Agents.tool_catalog import INSTALL_SKILL_TOOL_SCHEMA
 from tldw_chatbook.Agents.agent_runtime import (
+    EMPTY_TURN_LIMIT,
+    NEXT_TURN,
     ORDINARY_TOOL,
     SPECIAL_TOOL_HANDLERS,
     LoopDeps,
     LoopState,
+    _phase_denial_breaker,
+    _phase_settle_text_turn,
     run_agent_loop,
 )
 
@@ -509,3 +516,53 @@ def test_spawn_counts_admitted_children_on_the_state():
     exhausted = _dispatch(SPAWN_TOOL_NAME, {"task": "t2"}, state)
     assert exhausted.error == "sub-agent budget exhausted"
     assert state.spawned == 1 and len(steps) == 1
+
+
+# --- TASK-36950.2: loop phases run on a bare LoopState, without the loop. ---
+
+
+def test_denial_breaker_phase_keeps_every_settled_reply_and_ends_stuck():
+    config = AgentConfig(
+        model="m",
+        system_prompt="s",
+        allowed_tools=("calculator",),
+        budget=RunBudget(denial_circuit_breaker_limit=2),
+    )
+    state, steps = _state(config)
+    state.messages.append({"role": "tool", "tool_call_id": "c1", "content": "no"})
+    state.coherent_len = 1  # the loop-top boundary, before this batch's reply
+    state.consecutive_denials = 1
+    assert _phase_denial_breaker(state) is None
+    assert steps == []
+
+    state.consecutive_denials = 2
+    outcome = _phase_denial_breaker(state)
+    assert outcome.status == RUN_STUCK
+    assert outcome.denial_count == 2
+    # The breaker moves the boundary past the batch: the denied reply survives.
+    assert outcome.final_messages == state.messages
+    assert [kind for kind, _ in steps] == [STEP_ERROR]
+    assert "2 consecutive tool calls were denied" in steps[0][1]["summary"]
+
+
+def test_empty_text_turn_phase_restarts_the_turn_until_the_limit():
+    traces = []
+    state, steps = _state()
+    state.deps = _replace(state.deps, on_trace_step=traces.append)
+    state.turn = ModelTurn(text="  ")
+    state.calls = []
+    state.model_request_step = SimpleNamespace(index=7)
+    results = [_phase_settle_text_turn(state) for _ in range(EMPTY_TURN_LIMIT)]
+    assert results[:-1] == [NEXT_TURN] * (EMPTY_TURN_LIMIT - 1)
+    assert [step.kind for step in traces] == [STEP_MODEL_ERROR] * (EMPTY_TURN_LIMIT - 1)
+    assert traces[0].parent_step_index == 7
+    assert results[-1].status == RUN_STUCK
+    assert state.consecutive_empty_turns == EMPTY_TURN_LIMIT
+    assert [kind for kind, _ in steps] == [STEP_ERROR]
+
+    state.turn = ModelTurn(text="an answer")
+    state.consecutive_empty_turns = 0
+    assert _phase_settle_text_turn(state) is None
+    state.calls = [SimpleNamespace(name="calculator")]
+    assert _phase_settle_text_turn(state) is None
+    assert state.consecutive_empty_turns == 0
