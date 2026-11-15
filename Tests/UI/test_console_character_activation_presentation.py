@@ -188,13 +188,15 @@ async def test_prepared_character_switcher_yields_to_due_timer_before_dismissal(
                 store.switch_session(prior)
                 store.switch_session(selected)
 
-        async def publish_transcript():
+        async def publish_transcript(*, force=False):
+            # Dev's Library-outcome repaint passes force=True through this seam.
             nonlocal preparing
-            await sync_transcript()
+            projected = await sync_transcript(force=force)
             if preparing is asyncio.current_task():
                 preparing = None
                 loop = asyncio.get_running_loop()
                 loop.call_at(loop.time(), timer_due)
+            return projected
 
         monkeypatch.setattr(
             workspace, "open_console_workspace_conversation", open_saved
