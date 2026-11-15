@@ -30,7 +30,7 @@ references:
 
 TASK-34100.14's notes counted the same 11 errors and called them pre-existing. TASK-32029 owns the three source_reader modules; no task owns the other eight. These modules run on no PR lane.
 
-Why high: `.github/workflows/test.yml` runs on every push to main, and its core job runs `pytest Tests --ignore=Tests/UI` without `--continue-on-collection-errors`, so the nine non-UI collection errors abort all six core shards there. nightly-deep survives only because it passes that flag.
+Why high: `.github/workflows/test.yml` runs on every push to main, and its core job runs `pytest Tests --ignore=Tests/UI` without `--continue-on-collection-errors`, so the eight non-UI collection errors (three in Tests/Chat, three in Tests/Evals, two in Tests/Web_Server) abort all six core shards there. nightly-deep survives only because it passes that flag.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

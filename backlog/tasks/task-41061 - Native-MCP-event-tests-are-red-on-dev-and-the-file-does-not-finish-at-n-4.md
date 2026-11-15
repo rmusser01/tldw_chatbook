@@ -31,5 +31,5 @@ The architecture-review fleet runs on dev beab5c1e4e (2026-11-13) saw the first 
 <!-- AC:BEGIN -->
 - [ ] #1 The task notes say for each node whether the product or the test is wrong, and name the commit
 - [ ] #2 A pytest run of Tests/Chat/test_native_v2_mcp_events.py alone, serially and at `-n 4`, runs to completion and the pytest process exits on its own within the run's timeout
-- [ ] #3 Every node of Tests/Chat/test_native_v2_mcp_events.py passes on dev at `-n 4`, or is fixed or retargeted with its reason in the task notes; a fixed product defect is shown red first
+- [ ] #3 Every node of Tests/Chat/test_native_v2_mcp_events.py passes on dev at `-n 4` (a node may first be deleted or retargeted, with its reason in the task notes); a fixed product defect is shown red first
 <!-- AC:END -->
