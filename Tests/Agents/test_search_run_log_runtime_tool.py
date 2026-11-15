@@ -135,6 +135,7 @@ def _svc_fence(name, args):
     return {"choices": [{"message": {"content": _fence(name, args)}}]}
 
 
+@pytest.mark.bootstrap_profile
 def test_subagent_cannot_call_search_run_log(tmp_path, monkeypatch):
     from tldw_chatbook.Agents import run_log as run_log_module
 
@@ -229,6 +230,7 @@ class _AllowGate:
         return None
 
 
+@pytest.mark.bootstrap_profile
 def test_real_closure_recovers_full_content_beyond_both_caps(tmp_path, monkeypatch):
     """CRITICAL 1's regression test: drive a real tool result large enough
     to be truncated in history, follow the trailer's own record pointer
@@ -393,6 +395,7 @@ def test_sensitive_large_result_has_no_recoverable_run_log_handle(
     assert result_record.content == "[local path withheld]"
 
 
+@pytest.mark.bootstrap_profile
 def test_parent_can_filter_its_log_to_subagent_records_via_kind(tmp_path, monkeypatch):
     """IMPORTANT 5's regression test: `kind` is implemented in
     `search_records` and justified by spec §4.1 ("a parent can search its
@@ -456,6 +459,7 @@ def test_parent_can_filter_its_log_to_subagent_records_via_kind(tmp_path, monkey
     assert any(child_marker in r for r in search_results)
 
 
+@pytest.mark.bootstrap_profile
 def test_real_closure_never_raises_on_a_junk_offset(tmp_path, monkeypatch):
     """TASK-1250: `offset` must be coerced defensively, the same way the
     closure already coerces from_record/to_record/context -- a model

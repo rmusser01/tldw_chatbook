@@ -153,9 +153,11 @@ def test_final_hook_validation_cannot_widen_task_scope():
     assert invoked == []
 
 
+@pytest.mark.bootstrap_profile
 def test_service_injects_registry_bound_validation_for_runtime_tools(
     tmp_path, monkeypatch
 ):
+    from Tests.agent_runs_owner import owned_agent_runs_db
     from Tests.Agents.test_agent_runtime_review_hook import (
         SVC_CFG,
         ScriptedChat,
@@ -164,7 +166,6 @@ def test_service_injects_registry_bound_validation_for_runtime_tools(
     )
     from tldw_chatbook.Agents import workflow_task_scope
     from tldw_chatbook.Agents.agent_service import AgentService
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     registry = _registry()
     seen = []
@@ -174,7 +175,7 @@ def test_service_injects_registry_bound_validation_for_runtime_tools(
         raise PermissionError("task cannot spawn")
 
     monkeypatch.setattr(workflow_task_scope, "check_current_task_call", refuse)
-    db = AgentRunsDB(tmp_path / "runs.db")
+    db = owned_agent_runs_db(tmp_path / "runs.db")
     try:
         service = AgentService(
             db=db,
