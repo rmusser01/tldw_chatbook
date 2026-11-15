@@ -668,6 +668,9 @@ RECOVERED_SUITES_TARGETS = (
     # TASK-40323: the green held-pointer case and stock skill-trust cases
     # (bootstrap_profile, private subprocesses), which ran on no lane.
     "Tests/Performance/test_app_wiring_held_pointer_currentness.py::test_actual_stock_held_pointer_refuses_before_foreign_access[collections]",
+    # TASK-41140: the [skill] case and the managed received file, green once
+    # re-pinned (bootstrap_profile, private subprocesses).
+    "Tests/Performance/test_app_wiring_held_pointer_currentness.py::test_actual_stock_held_pointer_refuses_before_foreign_access[skill]",
     "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[cancel]",
     "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[recancel]",
     "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[shutdown]",
@@ -682,6 +685,7 @@ RECOVERED_SUITES_TARGETS = (
     "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[helper_binding]",
     "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[helper_body]",
     "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[metadata_body]",
+    "Tests/Performance/test_console_managed_received_acceptance.py",
 )
 #: Deselected 2026-11-12: red on dev e0186fa10a (console_send_diagnostic
 #: ContextVar token reset across contexts), owned by TASK-33621.36 AC#3; remove when fixed.

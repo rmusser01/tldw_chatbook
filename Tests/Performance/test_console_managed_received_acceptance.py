@@ -30,6 +30,7 @@ from loguru import logger
 
 logger.remove()
 assert sys.argv[1:] == ["managed_received", "cold_policy_switch"]
+CUSTODY_BOUND = 30  # seconds; see the measurements at its first use
 
 
 def plain(value):
@@ -794,12 +795,17 @@ async def exercise():
                 except TimeoutError:
                     observed["failed_bound"] = "held_native_read_retirement_10s"
                     raise
+                # TASK-41140: the custody task runs the whole cold first turn
+                # once the builder is released. It took 15.7-21.0 s at load
+                # 63-81 on 18 CPUs; the trace-settlement connection was 0.12-0.15 s
+                # of that, and the personal-context step alone has a 10 s product
+                # budget (CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS).
                 try:
                     await asyncio.wait_for(
-                        asyncio.shield(objects["record_task"]), timeout=10
+                        asyncio.shield(objects["record_task"]), timeout=CUSTODY_BOUND
                     )
                 except TimeoutError:
-                    observed["failed_bound"] = "received_custody_task_10s"
+                    observed["failed_bound"] = "received_custody_task_30s"
                     raise
                 assert (
                     returned.is_set()
@@ -863,7 +869,8 @@ async def exercise():
                     finally:
                         if "record_task" in objects:
                             await asyncio.wait_for(
-                                asyncio.shield(objects["record_task"]), timeout=10
+                                asyncio.shield(objects["record_task"]),
+                                timeout=CUSTODY_BOUND,
                             )
                 except BaseException as cleanup:
                     if primary is None:

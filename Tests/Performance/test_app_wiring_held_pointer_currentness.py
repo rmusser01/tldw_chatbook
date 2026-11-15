@@ -107,6 +107,13 @@ async def run():
             source = wire._capture_console_skill_trust_source(app, app.skills_scope_service)
             assert source is not None, 'actual_stock_source_not_captured'
             assert source.current() and source.source_current()
+            # 2e6d7f64e8 starts a Console attention refresh in the app's
+            # constructor; its read joins the same runtime read set as the
+            # trust read, so settle it before the held read (TASK-41140).
+            refresh = app.console_runtime._attention_refresh_task
+            assert refresh is not None
+            await asyncio.gather(refresh, return_exceptions=True)
+            assert not source.runtime_reads
         for candidate in range(5, 0, -1):
             if candidate == sys.monitoring.DEBUGGER_ID:
                 continue
