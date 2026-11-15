@@ -265,10 +265,9 @@ _BUDGETS: dict[str, int] = {
     # 28,734 plus TASK-39159's +8, measured.
     # 2026-11-10, TASK-39155 (owner size waiver): 29183 -> 29184 (+1, exact),
     # a session close in progress counts as an explicit cancellation.
-    # 2026-11-14, TASK-40716 (size waiver requested): 28743 -> 28752 (+9,
-    # exact), a run that ends on an unproven tool cleanup remembers the row
-    # that explains it; the rows and release live in console_unproven_cleanup.
-    "tldw_chatbook/Chat/console_chat_controller.py": 28752,
+    # Raised for TASK-40716 unproven-cleanup retention, 2026-11-14: 28743 ->
+    # 28746 (+3, exact), each run's terminal row is remembered for Release.
+    "tldw_chatbook/Chat/console_chat_controller.py": 28746,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6298,
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.
@@ -697,11 +696,10 @@ _BUDGETS: dict[str, int] = {
     # old 8,353, and that overrun is not this task's to absorb, so the row
     # stays red until it is decomposed or re-pinned by its owner.
     # PR3299, 2026-10-31: user size waiver; exact integrated measurement.
-    # 2026-11-14, TASK-40716 (size waiver requested): 8534 -> 8555 (+21,
-    # exact), the Release tool slot row under an unproven-cleanup explanation
-    # (row kind, protected click class, setter, row plan, lazy widget hook);
-    # the widget lives in console_cleanup_release.py.
-    "tldw_chatbook/Widgets/Console/console_transcript.py": 8555,
+    # Raised for TASK-40716 unproven-cleanup retention, 2026-11-14: 8534 ->
+    # 8556 (+22, exact), the Release tool slot row (row kind, two protected
+    # click classes, setter, row plan, lazy widget hook).
+    "tldw_chatbook/Widgets/Console/console_transcript.py": 8556,
     # TASK-33003 (Phase 3) ends at 7,764 measured, down from 7,802: .2 moved
     # the control-height rules to app CSS, .4/.5/.8 spent part of that.
     # TASK-33006.1 lowers it to 7,516: the Model view's field rows, Source

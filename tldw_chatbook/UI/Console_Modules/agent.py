@@ -1287,10 +1287,10 @@ class ConsoleAgentController:
         )
 
     def sync_unproven_cleanup(self, transcript: Any) -> None:
-        """Push the rows that explain an unproven tool cleanup (TASK-40716)."""
+        """Push Release rows for runs with an unproven tool cleanup (TASK-40716)."""
         controller = self._console_chat_controller
         rows = {}
-        if getattr(controller, "unproven_cleanup_runs", None):
+        if getattr(controller, "run_terminal_rows", None):
             from tldw_chatbook.Chat.console_unproven_cleanup import (
                 unproven_cleanup_rows,
             )

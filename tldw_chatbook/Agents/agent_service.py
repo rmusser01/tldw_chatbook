@@ -2181,7 +2181,11 @@ def _call_with_timeout(
     after its human decision still trips the ceiling promptly, and
     cancellation is checked every slice regardless.
     """
-    from .execution_capacity import CapacityRefused, cleanup_unproven_result
+    from .execution_capacity import (
+        CapacityRefused,
+        CleanupUnprovenRefused,
+        cleanup_unproven_result,
+    )
     from .automatic_work_budget import AutomaticWorkRefused
     from .automatic_work_runtime import current_automatic_work
 
@@ -2194,6 +2198,8 @@ def _call_with_timeout(
             automatic_work.check()
         operation = owner.reserve_tool() if owner is not None else None
     except (CapacityRefused, AutomaticWorkRefused) as exc:
+        if isinstance(exc, CleanupUnprovenRefused):  # an earlier call's cleanup
+            return cleanup_unproven_result(exc.label)
         return ToolResult(
             ok=False,
             error=f"tool call refused: {exc}",

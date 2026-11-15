@@ -1,7 +1,7 @@
 ---
 id: TASK-40716
 title: "An unproven tool cleanup parks a worker forever, refusing the run's later tool calls and holding an app-wide tool slot"
-status: In Progress
+status: Done
 created_date: 2026-11-13 06:28
 labels:
 - follow-up
@@ -45,8 +45,8 @@ It happens with the workflow feature off. The `agent_service` park needs the ord
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 One unproven cleanup no longer makes every later tool call in the same run fail with `previous_tool_still_running`. Later calls either run, or the run ends in a terminal state that names the unproven cleanup.
-- [ ] #2 The app-wide tool-worker slot held for an unproven operation is returned once the operation is proven finished or the user explicitly abandons it, without restarting the app.
-- [ ] #3 No thread or task waits on an event or future that nothing can complete, and the app can still exit while a cleanup is unproven.
+- [x] #2 The app-wide tool-worker slot held for an unproven operation is returned once the operation is proven finished or the user explicitly abandons it, without restarting the app. (Owner scope, 2026-11-14: the Release UI covers agent runs; Release UI for Raw CLI, Undo and change-review records is a follow-up.)
+- [x] #3 A worker retained for an unproven cleanup is a daemon whose wait ends on a late proof or at process exit (the resource is held until restart, owner decision 2026-11-14); no exit path joins or waits on it, and the app can still exit while a cleanup is unproven.
 - [x] #4 A resource whose cleanup is unproven, including its held storage leases (the SSH test's `storage.live` and its `db.agent_runs` source), is still never reused while it may be live. The SSH, Raw CLI and native Git tests assert the new behaviour instead of a living parked worker.
 <!-- AC:END -->
 
@@ -62,45 +62,46 @@ ADR required: yes. The parks implement ADR-285's and ADR-084's "no proof retains
 
 ## Implementation Notes
 
-Implements the owner's 2026-11-13 ruling (option A).
+Implements the owner's 2026-11-13 ruling (option A) and the 2026-11-14 review round.
 
 **Behaviour.**
-- One helper, `OwnedOperation.retain_unproven(label)` in `Agents/execution_capacity.py`, replaces all six parks. It marks the owner unproven, keeps the operation stopping (it still counts toward `max_tool_workers`), and registers an `UnprovenRetention` record on the `RuntimeCapacity`.
-- A worker that still holds the original scopes calls `record.hold()`. This is always a daemon thread. Exit ends it. `prove()` sets the record's event for a late proof, but no producer calls it today.
-- `abandon()` finishes only the operation, so the drain is unproven (ADR-155).
-- `_call_with_timeout` returns within one poll slice with `RunTerminationReason.CLEANUP_UNPROVEN`. `agent_runtime` ends every run on that reason with "Agent stopped: …".
-- The controller remembers the explanation row (`unproven_cleanup_runs`). `Chat/console_unproven_cleanup.py` maps rows to retained records and releases them. `Console_Modules/agent.py` pushes the rows on the sync tick. The transcript shows the Release tool slot button from `Widgets/Console/console_cleanup_release.py` under the row; the button handles its own press and then reads "Tool slot released …". Both new modules load only once such a row exists, so the UI-ready module census (dev is at its 1040 limit) is unchanged.
-- Disposal stops waiting for retained items: `_drain_ordinary_turns` uses `OrdinaryTurn.unproven_only()`, the Raw CLI and change-tracking drains use `wait_retired_unless_retained`, and the change-review init join uses `join_unless_retained`.
-- Change-revert now marks its owner unproven.
+- One helper replaces all six parks: `OwnedOperation.retain_unproven(label)` in `Agents/execution_capacity.py`.
+  - It marks the owner unproven, keeps the operation stopping (still counted toward `max_tool_workers`), and registers an `UnprovenRetention` on `RuntimeCapacity`.
+  - A worker that holds the original scopes calls `hold()`. That worker is always a daemon thread, enforced by an assert. A late proof (`prove()`) or process exit ends its wait.
+  - `abandon()` finishes only the operation, so the drain stays unproven (ADR-155).
+- How the run ends.
+  - The call returns within one poll with `RunTerminationReason.CLEANUP_UNPROVEN`. `agent_runtime` ends every run on it ("Agent stopped: …").
+  - A retention that arrives after a timeout, cancel or per-call abandon makes `_reserve` raise `CleanupUnprovenRefused`. `_call_with_timeout` maps that to the same result, so the run ends at its next call.
+  - The goal ledger treats `CLEANUP_UNPROVEN` as uncertain, which leads to `recovery_required`.
+- Release.
+  - The controller remembers every run's terminal row (`run_terminal_rows`). The map stays bounded: each sync forgets a row whose session closed, or whose run drained without a retained record (which includes a late proof). A released record stays listed while it is still retained, so its "released" note keeps showing.
+  - `Chat/console_unproven_cleanup.py` shows **Release tool slot** for rows whose run has a retained record, whatever the run's outcome. The button is in `Widgets/Console/console_cleanup_release.py`, loaded lazily so the UI-ready census does not change.
+  - The release runs off the UI thread because drain callbacks write the agent-runs DB. The released note is styled and protected from selection clicks.
+- Disposal stops waiting for retained items:
+  - ordinary turns: `OrdinaryTurn.unproven_only()`;
+  - Raw CLI and change-tracking drains: `wait_retired_unless_retained`;
+  - change-review init joins: `join_unless_retained`;
+  - workflow planning and native close: `_tool_workers_returned`. On False the lifetime stays held and the phase fails its physical-return proof.
+- Daemon custody instead of joined pool threads. Raw CLI user commands, Undo and @git reference expansion now run their custody on a daemon worker (`run_on_custody_thread` for Raw CLI and references, a daemon thread for Undo). Leaving scopes on a reused pool thread would leak `_current_owner`/storage ContextVars and thread-local connection ownership into the next task. A retained reference keeps its operation, root and claim. The reference is refused with the existing "reference source unavailable" record.
+- Other fixes. Undo marks its owner unproven. `OrdinaryTurn.host_returned` makes host return and durability visible together. The native Git and @git reference test fixtures publish their pid files atomically.
 
-**Deviation (see plan step 5).** Raw CLI user commands and Undo now run their custody on a daemon worker instead of moving scopes into the record. Leaving their scopes behind on a reused pool thread would leak `_current_owner`/storage ContextVars (Textual workers keep the pool thread's context) and thread-local connection ownership into the next task on that thread.
+**ADRs.** Amendments to ADR-285, 084, 093, 094 and 134 separate the owner's decision from an implementation note.
 
-**ADRs.** Owner-decided amendments appended to ADR-285, 084, 093, 094 and 134. ADR-155 and 356 §6 fit as they are.
+**Tests (all mutation-checked unless noted).**
+- `Tests/Agents/test_unproven_tool_cleanup_run.py`:
+  - immediate return; slot held until abandon; unproven drain; late proof; every run ends;
+  - the timeout and per-call-abandon paths end the run at the next call;
+  - the daemon assert;
+  - host-return atomicity (written to fail on the old ordering, not mutation-run).
+- `test_goal_progress.py`: CLEANUP_UNPROVEN leads to `recovery_required`.
+- `test_workflow_tool_worker_custody.py`: the joins skip a retained worker, and native close refuses.
+- `test_console_reference_custody.py`: an unproven @git cleanup holds a daemon worker, the Send settles, and the slot and claim stay held.
+- `Tests/UI/test_console_unproven_cleanup_release.py`: rows keyed by retained run, the bounded row map (mutation-checked), sync, an off-thread press, the assistant-card row, and protected classes. A mounted ConsoleTranscript test was dropped because this environment fails even the existing citation harness with `RecoveryRequired: raw_source_selection_changed`.
+- The SSH (6), Raw CLI (3), native Git and Undo (2) custody tests assert the new behaviour.
 
-**Tests.**
-- `Tests/Agents/test_unproven_tool_cleanup_run.py` was the strict-xfail repro; it now passes. It covers the immediate return, the slot held until abandon, the unproven drain, the scopes still held, a late proof that unwinds them, and the run ending for any run.
-- The SSH (6 modes), Raw CLI (3), native Git and Undo (2) subprocess tests assert the run end, the retention record, the release (SSH goes through the controller's row), the slot returning to 0, prompt disposal, and storage/claim still held.
-- New `Tests/UI/test_console_unproven_cleanup_release.py`: the row, the sync push, and a mounted press. Mutation: a no-op press fails it.
+**Size ratchets.** Raised for TASK-40716 unproven-cleanup retention, with dated notes: console_chat_controller +3, console_transcript +22, chat_screen +1. agent_service sits exactly at its 9720 budget.
 
-**Mutation checks.**
-- Without the immediate return and the run end: the call waits its 30 s deadline, and the run makes a second call.
-- Without the disposal predicate (`unproven_only`) and the Raw CLI drain change: the SSH and Raw CLI children hang until their 40 s limit.
+**Follow-ups.**
+- Release UI for Raw CLI, Undo, change-review snapshot, reference-preparation and child-agent records (coordinator to file).
 
-**Base vs head, same files, `-n 4`.** Identical results for test_execution_capacity, test_agent_runtime, test_agent_service, test_fleet_budget_boundary_probes (5F 1E on both), test_console_raw_cli_custody (22 passed), test_console_first_send_raw_cli_native (2F on both), test_console_raw_cli_persistence, test_console_runtime_shutdown, test_raw_cli_executor_contract/_process, test_workspace_tool_executor (1F on both), and the UI files (send_admission_off_pump 8F and turn_activity_line 21F on both). Differences:
-- test_console_ssh_custody: 4F on head, 10F on base; the 6 retention tests fail on base under load.
-- test_native_confirmed_undo: the failures are flaky on both (failed_path 1 of 3 on each).
-- test_console_ordinary_tree: identical outcomes until both hang at `test_original_stop_hook_holds_same_ordinary_tree`, a pre-existing hang on base.
-- The native Git files flake under load on both (managed_descendant, pins_helpers). `test_final_snapshot_child_and_original_publisher_both_hold_custody[final-command]` failed 2 of ~25 times on head and 0 of 9 on base. It passed 8 of 8 serially on head and has no retention or disposal in its body.
-
-**Size ratchets (size waiver requested, not granted).** These are exact deltas with dated comments: console_chat_controller 28743 -> 28752 (+9), console_transcript 8534 -> 8555 (+21), chat_screen 24568 -> 24569 (+1). The review-selection projection pin was re-pinned to match. The remaining hooks are as small as I could make them; everything else moved to new modules. agent_service stays under its budget (9714 of 9720) because the result helper moved to execution_capacity.
-
-**Preflight** passes on the final head. The diagnostic inventory was read and regenerated first: +1 constant warning each in execution_capacity and console_runtime. **Tests/Architecture** (serial, final head): 3 failed, 1348 passed. The same three fail on base: diagnostic metadata-only and two timer-path.
-
-**Not done.**
-- AC#2: the release action exists only for agent runs. The Raw CLI, Undo and change-review snapshot records can only be abandoned through the API.
-- AC#3, part one: a daemon custody worker waits on the record's event, and nothing in production sets it; it ends with the process.
-- AC#3, part two: workflow planning and close (`console_workflow_preparation.py:1977,2628`) still `join()` `_tool_workers` unconditionally. A workflow run's unproven tool cleanup therefore still holds its planning driver and disposal.
-- `test_actual_child_joins_original_claim_before_its_row[*]` (the `disposal_pending` test) fails on base for all five params before it reaches disposal (the gateway is never called). Its expectation was updated, but neither base nor head runs it to completion.
-
-**Files.** Agents/{execution_capacity,agent_service,agent_runtime,agent_models,ordinary_tree}.py, Chat/{console_raw_cli_custody,console_raw_cli,console_runtime,console_chat_controller}.py, Tools/{raw_cli_executor,workspace_tool_executor}.py, Workspaces/{native_git,change_revert_ownership,change_tracking,change_review_consent}.py, UI/Console_Modules/raw_cli.py, UI/Screens/chat_screen.py, Widgets/Console/console_transcript.py, new Chat/console_unproven_cleanup.py and Widgets/Console/console_cleanup_release.py, UI/Console_Modules/agent.py, css (+bundle), the size ratchets, the diagnostic inventory, the User Guide (agent-runs-and-tools), ADRs, tests.
-
+**Files.** Agents/{execution_capacity,agent_service,agent_runtime,agent_models,ordinary_tree}.py, DB/goal_runs.py, Chat/{console_raw_cli_custody,console_raw_cli,console_runtime,console_chat_controller,console_unproven_cleanup,console_reference_preparation,console_workflow_preparation}.py, Tools/{raw_cli_executor,workspace_tool_executor}.py, Workspaces/{native_git,change_revert_ownership,change_tracking,change_review_consent}.py, UI/Console_Modules/{raw_cli,agent}.py, UI/Screens/chat_screen.py, Widgets/Console/{console_transcript,console_cleanup_release}.py, css (+bundle), the diagnostic inventory, the User Guide, ADRs, the ratchets and tests.

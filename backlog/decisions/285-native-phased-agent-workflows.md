@@ -1320,11 +1320,18 @@ The Console check detail displays each stored check reason. A complete fresh nat
 
 ## Unproven-cleanup amendment (TASK-40716, 2026-11-13)
 
-This supersedes the sentences above that let unproven cleanup "hold disposal indefinitely" and keep native worker/storage/disposal retention "potentially indefinite". Custody of the resource is unchanged; the run, the slot and disposal are no longer held.
+This supersedes the sentences above that let unproven cleanup "hold disposal indefinitely" and keep native worker/storage/disposal retention "potentially indefinite". Custody of the resource does not change; the run, the slot and disposal are no longer held by it. Workflow planning and native close no longer join a tool worker that holds an unproven cleanup; that phase fails its physical-return proof instead.
 
-The owner decided this on 2026-11-13 ([TASK-40716](../tasks/task-40716%20-%20An-unproven-tool-cleanup-parks-a-worker-forever-refusing-later-tool-calls-and-holding-a-tool-slot.md)).
+**Owner decision, 2026-11-13 ([TASK-40716](../tasks/task-40716%20-%20An-unproven-tool-cleanup-parks-a-worker-forever-refusing-later-tool-calls-and-holding-a-tool-slot.md)).**
+- When a tool operation's cleanup cannot be proven, its run ends at once with a reason that names the unproven cleanup. This applies to every run, not only goal runs. The resource stays held and is never reused.
+- An explicit user abandon releases only the tool-worker slot and the run. The resource, its storage leases and any activity claim stay held until restart (ADR-155).
+- The abandon action is on the run's terminal card.
+- At app exit, disposal records retained items and stops waiting for them.
 
-- When a tool operation's cleanup cannot be proven, its resource stays held and is never reused: the original scopes, storage leases, scratch and activity claim stay where they are. One shared helper, `OwnedOperation.retain_unproven`, records this. The worker that holds those scopes is a daemon thread and waits on the record, so process exit ends it. Raw CLI user commands and Undo now run their custody on a daemon worker instead of a joined pool thread, so a held custody never delays interpreter exit.
-- The call returns at once with `RunTerminationReason.CLEANUP_UNPROVEN`, and every run ends there, not only goal runs. It no longer waits out its deadline, and the rest of the run is no longer refused `previous_tool_still_running` call by call.
-- The tool-worker slot is returned only by a late proof or an explicit user abandon (the "Release tool slot" action next to the run's explanation). Abandon finishes only the operation: the owner's drain is unproven (ADR-155), and the resource stays held until restart.
-- At app exit, disposal records retained items and stops waiting for them, so the process ends promptly. ADR-155's reopening of a prior process's records as uncertain covers the next start.
+**Implementation note (not an owner decision).**
+- `OwnedOperation.retain_unproven` records the retention on the runtime's capacity.
+- A worker that still holds the original scopes waits on that record in a daemon thread; `UnprovenRetention.hold` asserts this. A late proof or process exit ends the wait.
+- Raw CLI user commands, Undo and @git reference expansion run their custody on a daemon worker, so no joined pool thread ever holds. Undo also marks its owner unproven.
+- A retention that arrives after a timeout, cancel or per-call abandon ends the run at its next tool call.
+- A goal iteration that ends on it is uncertain, so it needs recovery.
+- The Release row is keyed on the run's retained record, not on how the run ended.

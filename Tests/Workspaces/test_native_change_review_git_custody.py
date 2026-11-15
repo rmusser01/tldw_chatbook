@@ -44,7 +44,9 @@ def selected_wrapper(tmp_path, monkeypatch, request):
     child = directory / "child.py"
     child.write_text(
         "import os,time\nfrom pathlib import Path\n"
-        f"Path({str(entered)!r}).write_text(str(os.getpid()))\n"
+        # Publish pid files atomically: an exists() poll must never read them empty.
+        f"Path({str(entered)!r} + '.tmp').write_text(str(os.getpid()))\n"
+        f"os.replace({str(entered)!r} + '.tmp', {str(entered)!r})\n"
         f"while not Path({str(release)!r}).exists(): time.sleep(.01)\n"
     )
     wrapper = directory / "git"
@@ -64,7 +66,9 @@ def selected_wrapper(tmp_path, monkeypatch, request):
         " while not (directory/'entered').exists(): time.sleep(.01)\n"
         f"result=subprocess.run([{real_git!r},*args],capture_output=True)\n"
         "sys.stdout.buffer.write(result.stdout)\nsys.stderr.buffer.write(result.stderr)\n"
-        "if held: (directory/'returned').write_text(str(os.getpid()))\n"
+        "if held:\n"
+        " (directory/'returned.tmp').write_text(str(os.getpid()))\n"
+        " os.replace(directory/'returned.tmp', directory/'returned')\n"
         "sys.exit(result.returncode)\n"
     )
     wrapper.chmod(0o700)

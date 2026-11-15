@@ -10,6 +10,8 @@ import time
 from contextlib import contextmanager
 from types import SimpleNamespace
 
+import pytest
+
 from tldw_chatbook.Agents.agent_models import (
     RUN_STUCK,
     AgentConfig,
@@ -154,3 +156,108 @@ def _custody_threads():
     import threading
 
     return [t for t in threading.enumerate() if holds_unproven_custody(t)]
+
+
+class _LateUnprovenSource(_UnprovenSource):
+    """A source return that fails only after the caller stopped waiting."""
+
+    def __init__(self, gate):
+        super().__init__()
+        self.gate = gate
+
+    @contextmanager
+    def activate(self):
+        yield
+        assert self.gate.wait(10)
+        raise OSError("controlled: original source return unavailable")
+
+
+@pytest.mark.parametrize("stopped_by", ["timeout", "per_call_abandon"])
+def test_cleanup_proven_unavailable_after_the_call_returned_still_ends_the_run(
+    stopped_by,
+):
+    """A retention after a timeout or abandon must not wedge later calls."""
+    import threading
+
+    capacity = RuntimeCapacity()
+    owner = capacity.begin_execution(origin=WorkOrigin.MANUAL, conversation_id="c")
+    tree = _OrdinaryTree(owner)
+    gate = threading.Event()
+    tree.source = _LateUnprovenSource(gate)
+    service = SimpleNamespace(_ordinary_tree=tree)
+    retention = None
+    try:
+        first = _call_with_timeout(
+            lambda: ToolResult(ok=True, content="read"),
+            0.2 if stopped_by == "timeout" else 30.0,
+            "fs_read",
+            should_cancel=lambda: stopped_by == "per_call_abandon",
+            execution_owner=service,
+            owner=owner,
+        )
+        assert first.termination_reason is None and first.dispatch_state == "uncertain"
+        gate.set()
+        deadline = time.monotonic() + 10
+        while not capacity.retained() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        (retention,) = capacity.retained()
+
+        second = _call_with_timeout(
+            lambda: ToolResult(ok=True, content="listed"),
+            30.0,
+            "fs_list",
+            execution_owner=service,
+            owner=owner,
+        )
+        # Not "previous_tool_still_running": the run ends, naming the tool
+        # whose cleanup is unproven.
+        assert second.termination_reason is RunTerminationReason.CLEANUP_UNPROVEN
+        assert "cleanup of fs_read could not be proven" in second.error
+        assert capacity.snapshot().tool_workers == 1
+    finally:
+        gate.set()
+        if retention is not None:
+            retention.prove()
+            for worker in _custody_threads():
+                worker.join(5)
+
+
+def test_hold_refuses_a_joined_thread():
+    capacity = RuntimeCapacity()
+    owner = capacity.begin_execution(origin=WorkOrigin.MANUAL, conversation_id="c")
+    retention = owner.reserve_tool().retain_unproven("fs_read")
+    retention.prove()
+    with pytest.raises(AssertionError, match="joined thread"):
+        retention.hold()
+
+
+def test_host_return_is_visible_only_with_its_decided_durability():
+    """Disposal must never read a returned host whose durability is undecided."""
+    import threading
+
+    from tldw_chatbook.Agents.ordinary_tree import OrdinaryTurn, _Member
+
+    owner = object()
+    member = _Member(settlement=None, run_id="run-1", row_started=True)
+    member.terminal = ("done", None, None)
+    member.steps = {0: "{}"}
+    seen = []
+
+    class _Database:
+        def get_run(self, run_id):
+            seen.append((member.host_returned, member.durable))
+            return {"status": "done", "result": None, "steps": [{"index": 0}]}
+
+    @contextmanager
+    def activate():
+        yield
+
+    turn = object.__new__(OrdinaryTurn)
+    turn.lock = threading.RLock()
+    turn.members = {owner: member}
+    turn.source = SimpleNamespace(activate=activate, databases=[_Database()])
+    turn._retire_scratch = lambda: None
+    turn.host_returned(owner)
+    turn.host_returned(owner)  # a second return is ignored
+    assert seen == [(False, False)]
+    assert member.host_returned and member.durable is False

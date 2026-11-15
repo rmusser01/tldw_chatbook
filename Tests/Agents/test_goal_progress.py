@@ -237,15 +237,17 @@ async def test_human_review_rechecks_manual_edits_and_retained_copy_survives_pru
 
 
 @pytest.mark.asyncio
+# TASK-40716: an unproven tool cleanup is an uncertain effect too.
+@pytest.mark.parametrize("reason", ["UNKNOWN_EFFECT", "CLEANUP_UNPROVEN"])
 async def test_unknown_effect_saves_evidence_but_retains_recovery_attempt(
-    stores, monkeypatch, tmp_path
+    stores, monkeypatch, tmp_path, reason
 ):
     from dataclasses import replace
 
     from tldw_chatbook.Agents.agent_models import RunTerminationReason
 
     coordinator, goal, result, *_ = await run_verifier(stores, monkeypatch, tmp_path)
-    result = replace(result, termination_reason=RunTerminationReason.UNKNOWN_EFFECT)
+    result = replace(result, termination_reason=RunTerminationReason[reason])
     saved = coordinator.service.checkpoint(result)
     assert saved.status == "recovery_required"
     assert coordinator.service.db.goal_runs.evidence(goal.id)[0].passed

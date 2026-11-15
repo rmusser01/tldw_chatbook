@@ -1,9 +1,11 @@
-"""The Release action under a run's unproven-cleanup explanation (TASK-40716).
+"""The Release action on a run with an unproven tool cleanup (TASK-40716).
 
 Imported only when such a row is built, so it never loads at boot.
 """
 
 from __future__ import annotations
+
+import asyncio
 
 from textual.widget import Widget
 from textual.widgets import Button, Static
@@ -22,20 +24,27 @@ class ConsoleCleanupReleaseButton(Button):
             id=f"console-cleanup-release-{message_id}",
             classes="console-transcript-cleanup-release",
             tooltip=(
-                "Lets new tool calls run. The tool's workspace and storage stay "
-                "held until you restart the app."
+                "A tool's cleanup could not be proven. Frees this run's tool slot "
+                "for other runs; the tool's workspace and storage stay held until "
+                "you restart the app."
             ),
         )
         self.native_message_id = message_id
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         agent = getattr(self.screen, "_agent", None)
-        if agent is not None and agent.release_unproven_tool_slot(
-            self.native_message_id
-        ):
+        if agent is None:
+            return
+        self.disabled = True
+        # Releasing runs drain callbacks that write the agent-runs DB.
+        released = await asyncio.to_thread(
+            agent.release_unproven_tool_slot, self.native_message_id
+        )
+        if released:
             self.label = RELEASED_COPY
-            self.disabled = True
+        else:
+            self.disabled = False
 
 
 def cleanup_release_widget(message_id: str, released: bool) -> Widget:

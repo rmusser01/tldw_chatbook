@@ -2801,6 +2801,7 @@ class ConsoleTranscript(VerticalScroll):
             "console-transcript-citation-sources",
             "console-transcript-library-activity",
             "console-transcript-cleanup-release",
+            "console-transcript-cleanup-released",
             "console-transcript-library-outcome",
             "console-transcript-annotations",
             # Textual scrollbars carry the generic system-widget class; ignore them

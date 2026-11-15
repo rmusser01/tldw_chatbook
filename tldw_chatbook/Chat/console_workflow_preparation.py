@@ -1962,6 +1962,12 @@ class _PreparedWorkflowReply:
             self._terminal_configuration_return = returned, closing_read, records
             self._execution_configuration_return()
 
+    def _tool_workers_returned(self):
+        """Join every tool worker; False when one holds an unproven cleanup."""
+        from tldw_chatbook.Agents.execution_capacity import join_unless_retained
+
+        return all([join_unless_retained(worker) for worker in self._tool_workers])
+
     def _close_on_native_owner(self, owner):
         """Return the original frame inside its pre-held native child operation."""
         from tldw_chatbook.Agents.execution_capacity import require_workflow_operation
@@ -1974,8 +1980,8 @@ class _PreparedWorkflowReply:
         # A tool may outlive its logical timeout. Its actual native thread
         # returns after source/storage and finish callbacks; do not unbind a
         # provider while that original effectful frame can still resume.
-        for worker in self._tool_workers:
-            worker.join()
+        if not self._tool_workers_returned():
+            raise PermissionError("original workflow tool cleanup unproven")
         _storage_source_current(self.source, preparation=self)
         with (
             owner.activate(),
@@ -2625,10 +2631,11 @@ class _PreparedWorkflowReply:
                     failure = error
                 finally:
                     self._planning_dispatch_closed = True
-                    for worker in self._tool_workers:
-                        worker.join()
-                    self._lifetime.__exit__(None, None, None)
-                    self._native_closed = True
+                    # An unproven tool cleanup keeps the lifetime; the phase
+                    # then fails its physical-return proof (TASK-40716).
+                    if self._tool_workers_returned():
+                        self._lifetime.__exit__(None, None, None)
+                        self._native_closed = True
                 if outcome is not None:
 
                     @async_worker_guard(self.bridge)

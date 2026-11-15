@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from contextvars import ContextVar
+from contextvars import ContextVar, copy_context
 from dataclasses import dataclass
 from threading import Event, Lock, Thread, current_thread
 from typing import Literal
@@ -27,6 +27,14 @@ from .agent_models import WorkOrigin as WorkOrigin
 
 class CapacityRefused(RuntimeError):
     """A stable, body-free admission refusal reason."""
+
+
+class CleanupUnprovenRefused(CapacityRefused):
+    """The owner's earlier tool cleanup is unproven; its run must end."""
+
+    def __init__(self, label: str) -> None:
+        super().__init__("previous_tool_cleanup_unproven")
+        self.label = label
 
 
 def _integer(value: object, default: int) -> int:
@@ -339,7 +347,13 @@ class ExecutionOwner:
             if self._root_finished:
                 raise CapacityRefused("execution_finished")
             if kind == "tool":
-                if any(op.kind == "tool" and op._stopping for op in self._operations):
+                stopping = [
+                    op for op in self._operations if op.kind == "tool" and op._stopping
+                ]
+                for op in stopping:
+                    if op.retention is not None:  # TASK-40716: end the run
+                        raise CleanupUnprovenRefused(op.retention.label)
+                if stopping:
                     raise CapacityRefused("previous_tool_still_running")
                 tools = [
                     op
@@ -457,6 +471,7 @@ class UnprovenRetention:
         exit. A worker from a joined thread pool must never hold.
         """
         thread = current_thread()
+        assert thread.daemon, "unproven custody must never hold a joined thread"
         with _custody_lock:
             _custody_threads.add(thread)
         try:
@@ -506,6 +521,34 @@ def holds_unproven_custody(thread: Thread) -> bool:
     """Whether ``thread`` is a worker holding an unproven cleanup's scopes."""
     with _custody_lock:
         return thread in _custody_threads
+
+
+def run_on_custody_thread(function, operation_of, poll_seconds: float = 0.1):
+    """Run ``function`` on a daemon worker so an unproven cleanup can hold it.
+
+    Returns its result, or raises ``CleanupUnprovenRefused`` as soon as the
+    operation from ``operation_of()`` is retained, leaving the daemon worker
+    holding the original scopes. The calling (pool) thread never holds.
+    """
+    box: dict = {}
+
+    def target() -> None:
+        try:
+            box["result"] = function()
+        except BaseException as error:  # noqa: BLE001 -- re-raised on the caller
+            box["error"] = error
+
+    worker = Thread(target=copy_context().run, args=(target,), daemon=True)
+    worker.start()
+    while worker.is_alive():
+        operation = operation_of()
+        retention = getattr(operation, "retention", None)
+        if retention is not None:
+            raise CleanupUnprovenRefused(retention.label)
+        worker.join(poll_seconds)
+    if "error" in box:
+        raise box["error"]
+    return box.get("result")
 
 
 def join_unless_retained(thread: Thread, poll_seconds: float = 0.1) -> bool:

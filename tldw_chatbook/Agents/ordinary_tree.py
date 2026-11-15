@@ -23,6 +23,7 @@ class _Member:
     steps: dict = field(default_factory=dict)
     terminal: tuple | None = None
     capture_failed: bool = False
+    host_returning: bool = False
     host_returned: bool = False
     durable: bool = False
     drained: bool = False
@@ -812,9 +813,9 @@ class OrdinaryTurn:
     def host_returned(self, owner):
         with self.lock:
             member = self.members.get(owner)
-            if member is None or member.host_returned:
+            if member is None or member.host_returning:
                 return
-            member.host_returned = True
+            member.host_returning = True
         proven = not member.row_started
         if (
             member.row_started
@@ -844,7 +845,9 @@ class OrdinaryTurn:
             except Exception:  # noqa: BLE001 - uncertainty retains the original claim
                 proven = False
         with self.lock:
+            # Durability is decided before host return is visible (TASK-40716).
             member.durable = proven
+            member.host_returned = True
         self._retire_scratch()
 
     def finish(self):
