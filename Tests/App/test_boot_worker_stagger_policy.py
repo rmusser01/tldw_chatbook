@@ -276,7 +276,9 @@ async def test_shutdown_closes_the_gate_instead_of_starting_more_work(request):
     assert started == list(STAGGERED_BOOT_WORKER_KEYS[:cap])
 
     app._shutting_down = True
-    app._release_boot_worker_slot(_fake_worker(STAGGERED_BOOT_WORKER_KEYS[0]))
+    app._release_boot_worker_slot(
+        app._boot_worker_handles[STAGGERED_BOOT_WORKER_KEYS[0]]
+    )
 
     assert started == list(STAGGERED_BOOT_WORKER_KEYS[:cap])
     assert app._boot_worker_gate.is_closed

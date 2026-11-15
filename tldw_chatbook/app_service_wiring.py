@@ -1627,8 +1627,13 @@ class ServiceWiringMixin(
             exit_on_error=False,
         )
 
+    def _start_subscriptions_fts_backfill_worker(self, path, admission):
+        from .app_boot_workers import _start_subscriptions_fts_backfill_worker
+
+        return _start_subscriptions_fts_backfill_worker(self, path, admission)
+
     async def _shutdown_actor_pack_recovery(self) -> asyncio.CancelledError | None:
-        """Fence queued boot work and settle exact issued native recovery."""
+        """Fence queued boot work and settle exact issued native boot calls."""
         self._close_boot_worker_gate("actor pack shutdown")
         reads = getattr(self, "_actor_pack_recovery_reads", None)
         if not reads:

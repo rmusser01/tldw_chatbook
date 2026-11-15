@@ -1,4 +1,8 @@
-"""Finite real-worker/native controls; full TldwCli mount remains separate."""
+"""Finite real-worker/native controls; full TldwCli mount remains separate.
+
+The 120-second child budget includes imports and built-in seeding on Windows;
+internal held-operation and cancellation deadlines remain unchanged.
+"""
 
 import pytest
 from Tests.Backup_Recovery.test_home_citation_retirement import _run
@@ -18,6 +22,7 @@ network_guard.install()
 real_profile_guard.install()
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook import config
+from tldw_chatbook.Backup_Recovery import runtime_producer_lifetime as lifetime
 from tldw_chatbook.Backup_Recovery import storage_admission as storage
 from tldw_chatbook.Actor_Packs.repository import ActorPackRepository
 from tldw_chatbook.Actor_Packs.persona_coordinator import PersonaActorPackCoordinator
@@ -158,8 +163,32 @@ async def exercise():
                     worker.cancel()
                     worker.cancel()
                     entry = TldwCli._shutdown_app_owned_lifecycles if case == 'owned_lifecycles' else TldwCli.on_unmount
-                    shutdown = asyncio.create_task(entry(host))
-                    await asyncio.sleep(0)
+                    reads = preparation_reads_for(host._actor_pack_recovery_reads)
+                    assert len(reads) == 1
+                    retained_read = reads[0]
+                    draining = asyncio.Event()
+
+                    def drain_yield(code, offset, value):
+                        frame = sys._getframe(1)
+                        if (frame.f_locals.get('reads') is host._actor_pack_recovery_reads
+                            and any(read is retained_read for read in frame.f_locals.get('pending', ()))):
+                            draining.set()
+
+                    # Cancellation must reach this exact physical drain, not
+                    # an earlier owner's await in the shipping shutdown stack.
+                    monitor = sys.monitoring
+                    tool = next(slot for slot in range(6) if monitor.get_tool(slot) is None)
+                    monitor.use_tool_id(tool, 'actor-boot-physical-drain')
+                    drain_code = lifetime.drain_preparation_reads.__code__
+                    assert monitor.register_callback(tool, monitor.events.PY_YIELD, drain_yield) is None
+                    monitor.set_local_events(tool, drain_code, monitor.events.PY_YIELD)
+                    try:
+                        shutdown = asyncio.create_task(entry(host))
+                        await settle(draining.is_set)
+                    finally:
+                        monitor.set_local_events(tool, drain_code, 0)
+                        assert monitor.register_callback(tool, monitor.events.PY_YIELD, None) is drain_yield
+                        monitor.free_tool_id(tool)
                     shutdown.cancel()
                     await asyncio.sleep(0)
                     shutdown.cancel()
@@ -216,4 +245,4 @@ asyncio.run(exercise())
 
 @pytest.mark.parametrize('case', ['owned_lifecycles', 'direct_unmount', 'queued', 'custom_result', 'custom_error'])
 def test_actor_pack_boot_retains_physical_outcome(tmp_path, case):
-    _run(tmp_path, 'actor_boot_owned', case, script=_SCRIPT, timeout=60)
+    _run(tmp_path, 'actor_boot_owned', case, script=_SCRIPT, timeout=120)

@@ -4715,18 +4715,7 @@ class TldwCli(
             # config read on the UI loop) waited out a worker's config read.
             db = getattr(self, "subscriptions_db", None)
             path = db.db_path if db is not None else get_subscriptions_db_path()
-            if not execution_allowed(("db.subscriptions",), path):
-                return None
-            # task-688: index subscription_items rows scraped before the FTS5
-            # index existed, so search covers a user's whole back catalogue
-            # without any action on their part.
-            return self.run_worker(
-                self._backfill_subscription_items_fts,
-                name="_backfill_subscription_items_fts",
-                group="subscriptions-fts-backfill",
-                thread=True,
-                exclusive=True,
-            )
+            return self._start_subscriptions_fts_backfill_worker(path, execution_allowed)
 
         return {
             "actor_pack_recovery": start_actor_pack_recovery,
@@ -4827,7 +4816,11 @@ class TldwCli(
         key = BOOT_WORKER_KEY_BY_IDENTITY.get(
             (getattr(worker, "name", ""), getattr(worker, "group", ""))
         )
-        if key is None or not gate.complete(key):
+        if (
+            key is None
+            or self._boot_worker_handles.get(key) is not worker
+            or not gate.complete(key)
+        ):
             return
         self._boot_worker_handles.pop(key, None)
         self._admit_staggered_boot_workers()

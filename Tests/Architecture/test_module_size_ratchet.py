@@ -145,9 +145,11 @@ _BUDGETS: dict[str, int] = {
     # the TUI opens ChaChaNotes and Media through the shared openers (+8).
     # the TUI opens ChaChaNotes and Media through the shared openers (+8);
     # review fix: a failed notes service reuses the startup-opened DB (+9).
-    "tldw_chatbook/app.py": 5705,
+    "tldw_chatbook/app.py": 5698,
     # TASK-34406.5: unchanged startup/footer wiring, born governed.
     "tldw_chatbook/app_startup.py": 176,
+    # TASK-35679.2: finite native subscriptions boot invocation, born governed.
+    "tldw_chatbook/app_boot_workers.py": 83,
     # TASK-34406.7: app-owned served control and relay bodies, born governed.
     "tldw_chatbook/app_served.py": 125,
     # TASK-33011: the Library ingest queue moved verbatim out of app.py. At
@@ -179,7 +181,7 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-07, TASK-36947.6 (owner rule 2026-10-04: raise by the change's own lines):
     # the local MCP control service gets a storage provider (+1), which
     # reports the DBs unavailable before the bundle is published (+1).
-    "tldw_chatbook/app_service_wiring.py": 3704,
+    "tldw_chatbook/app_service_wiring.py": 3702,
     # TASK-33011: TldwCli's lifecycle, shutdown and quit flow moved verbatim
     # out of app.py (LifecycleMixin); governed there, so governed here.
     # TASK-33621.13: 2,140 -> 2,134 (keep-alive dead-pump handling moved
