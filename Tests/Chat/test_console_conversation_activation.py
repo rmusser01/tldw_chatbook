@@ -674,7 +674,7 @@ async def test_production_workspace_predicate_failure_rolls_back_exact_owned_ses
     prior = store.create_session(title="Prior")
     composer = object()
     transcript = SimpleNamespace(_session_identity="stale-session")
-    screen = SimpleNamespace(is_mounted=True, is_attached=True, focused=composer)
+    screen = SimpleNamespace(is_mounted=True, focused=composer)
     screen.app = SimpleNamespace(screen=screen)
     screen._last_native_transcript_refresh_key = ("stale-session", 1)
     screen._sync_native_console_transcript = AsyncMock(return_value=None)
@@ -699,6 +699,8 @@ async def test_production_workspace_predicate_failure_rolls_back_exact_owned_ses
     controller = ConsoleWorkspaceController.__new__(ConsoleWorkspaceController)
     controller._screen = screen
     controller._chat_store_accessor = lambda: store
+    # The post-projection fence reads the controller's injected liveness seam.
+    controller._screen_running_accessor = lambda: True
 
     async def hydrate(_conversation_id):
         store.restore_persisted_session(
