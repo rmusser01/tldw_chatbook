@@ -24616,7 +24616,11 @@ class ConsoleChatController:
                         ConsoleRequestRoute.CONTINUE,
                     },
                 )
-            except MixinSnapshotUnavailableError:
+            except MixinSnapshotUnavailableError:  # TASK-41137: a close is not a save failure.
+                if self._disposed or owner_id in self._session_close_generations or not any(
+                    s.id == owner_id for s in self.store.sessions()
+                ):
+                    return self._session_closed_result(session_id=owner_id)
                 return self._block_context_preflight(
                     session_id=owner_id,
                     assistant_message_id=assistant_message_id,
