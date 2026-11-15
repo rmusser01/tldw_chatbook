@@ -365,18 +365,23 @@ def adapter_api_base_url(execution_key: str, base_url: str | None) -> str | None
 
 
 def meaningful_adapter_base_url(execution_key: str, base_url: str | None) -> str | None:
-    """Pin the resolved endpoint only when it carries real information.
+    """Pin the resolved endpoint when it carries real information.
 
     TASK-2117: a resolution's ``base_url`` always carries SOMETHING -- the
     builtin cloud default when neither a configured
     ``[api_settings.<provider>].api_base_url`` nor a session-selected endpoint
     exists. Forwarding that builtin would pin the adapter to a value it
-    already falls back to on its own, and would shadow endpoints configured
-    in the adapter's OWN legacy config section (``[google]``,
-    ``huggingface_api``) that today win when Console's canonical table is
-    empty. The kwarg is therefore forwarded only when the resolved endpoint
-    differs from the provider's shipped default -- i.e. exactly when a
-    configured or session-selected URL must reach the request.
+    already falls back to on its own, so for these first-party cloud keys the
+    kwarg is forwarded only when the resolved endpoint differs from the
+    provider's shipped default -- i.e. when a configured or session-selected
+    URL must reach the request.
+
+    HuggingFace is the exception (TASK-40300 review r14ep-rev5): it is always
+    pinned, built-in or not. Its adapter otherwise reads ``huggingface_api``
+    (in router mode, its ``router_base_url``), and Console already checks
+    that legacy table itself when ``[api_settings.huggingface]`` has no
+    endpoint (``console_own_table_endpoint``), so the URL pinned is the one
+    Console checked.
     """
     if execution_key not in CONDITIONAL_BASE_URL_EXECUTION_KEYS:
         return None

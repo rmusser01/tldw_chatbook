@@ -10,6 +10,7 @@ not-ready state.
 
 import logging
 import os
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -22,6 +23,7 @@ from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
+    _wait_for_selector,
 )
 from Tests.UI.test_settings_configuration_hub import (
     _click_scrolled_settings_button,
@@ -672,6 +674,28 @@ async def test_revert_to_a_registry_default_relocks_model_discovery(request):
         assert [button.id for button in buttons if not button.disabled] == []
 
 
+async def _click_until(screen, pilot, selector: str, done) -> None:
+    """Click a Custom endpoints button, then wait until ``done()`` holds.
+
+    Review r14ep-rev6: under load a coordinate click could land while the
+    detail pane was still laying out and be lost (the Rename form never
+    mounted in 1 of 21 serial runs at load 31-54), so while the button is
+    still there the press is retried through the button itself. Opening a
+    form is idempotent, and a repeated save writes the same value.
+    """
+    await _click_scrolled_settings_button(screen, pilot, selector)
+    for _attempt in range(3):
+        deadline = time.monotonic() + 4.0
+        while time.monotonic() < deadline:
+            if done():
+                await pilot.pause()
+                return
+            await pilot.pause(0.05)
+        if screen.query(selector):
+            screen.query_one(selector, Button).press()
+    assert done(), f"{selector} never took effect"
+
+
 @pytest.mark.asyncio
 @private_profile_test
 async def test_settings_lists_a_refused_endpoint_with_its_reason_and_edit_fixes_it(
@@ -697,6 +721,7 @@ async def test_settings_lists_a_refused_endpoint_with_its_reason_and_edit_fixes_
         screen = _active_destination_screen(host)
         await _open_settings_category(pilot, "#settings-category-providers-models")
         await _settle_settings_mount_storm(pilot)
+        await _wait_for_selector(screen, pilot, "#settings-cep-row-leaky", timeout=8.0)
         row = _text(screen, "#settings-cep-row-leaky")
         assert "not loaded: Endpoint URL must not include a query." in row, row
         assert "not-a-real-secret" not in row
@@ -704,21 +729,26 @@ async def test_settings_lists_a_refused_endpoint_with_its_reason_and_edit_fixes_
         # name alone.
         duplicate = screen.query_one("#settings-cep-duplicate-leaky", Button)
         assert duplicate.has_class("settings-gated-profile-hidden")
-        await _click_scrolled_settings_button(screen, pilot, "#settings-cep-rename-leaky")
-        await _settle_settings_mount_storm(pilot)
+        status = "#settings-custom-endpoints-status"
+        await _click_until(
+            screen, pilot, "#settings-cep-rename-leaky",
+            lambda: bool(screen.query("#settings-cep-rename-value")),
+        )
         screen.query_one("#settings-cep-rename-value", Input).value = "Leaky box"
-        await _click_scrolled_settings_button(screen, pilot, "#settings-cep-rename-save")
-        await pilot.app.workers.wait_for_complete()
-        await _settle_settings_mount_storm(pilot)
-        assert "Renamed endpoint to 'Leaky box'" in _text(
-            screen, "#settings-custom-endpoints-status"
+        await _click_until(
+            screen, pilot, "#settings-cep-rename-save",
+            lambda: "Renamed endpoint to 'Leaky box'" in _text(screen, status),
         )
 
-        await _click_scrolled_settings_button(screen, pilot, "#settings-cep-edit-leaky")
-        await _settle_settings_mount_storm(pilot)
+        await _wait_for_selector(screen, pilot, "#settings-cep-edit-leaky", timeout=8.0)
+        await _click_until(
+            screen, pilot, "#settings-cep-edit-leaky",
+            lambda: bool(screen.query("#settings-cep-edit-url")),
+        )
         screen.query_one("#settings-cep-edit-url", Input).value = "http://127.0.0.1:8000/v1"
-        await _click_scrolled_settings_button(screen, pilot, "#settings-cep-edit-save")
+        await _click_until(
+            screen, pilot, "#settings-cep-edit-save",
+            lambda: "Saved endpoint 'leaky'" in _text(screen, status),
+        )
         await pilot.app.workers.wait_for_complete()
-        await _settle_settings_mount_storm(pilot)
-        assert "Saved endpoint 'leaky'" in _text(screen, "#settings-custom-endpoints-status")
     assert "leaky" in load_custom_endpoints(load_settings())

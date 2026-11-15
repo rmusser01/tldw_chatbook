@@ -3,7 +3,7 @@ id: TASK-40300
 title: "Console send and readiness accept endpoints the provider endpoint contract refuses (zone id, leading-hyphen host, 127.1, IDN, localhost.., a query) for every provider"
 status: Done
 created_date: 2026-11-12 19:36
-updated_date: 2026-11-14 22:59
+updated_date: 2026-11-15 00:28
 assignee:
 - '@claude'
 labels:
@@ -197,3 +197,10 @@ Console's send, readiness, custom endpoint registry and project-instruction iden
   - (a): `test_a_blanked_shipped_endpoint_falls_back_to_the_adapters_own_table` (2; they pass at b3c75c8234 too, coverage the review asked for).
 - **Runs** (run.sh, `-n 4`): 121 files naming the touched helpers and keys: 9629 passed, 566 failed, 1 error. 446 failure sections are the local `RecoveryRequired` trap. The other 117 nodes were rerun at these sources and at b3c75c8234's: none fails only here; two fail only at b3c75c8234 (the gateway HuggingFace pin case, red first, and `test_console_more_delete_double_activation_stops_at_confirmation`, a timing flake seen in earlier rounds). `Tests/CI` + `Tests/Docs`: 1670 passed. `./scripts/preflight.sh` passes; `check_markup_interpolation.py` OK; module-size, chat-code-identity, screen-size, Agents/Chat boundary and diagnostic-privacy ratchets: 351 passed. `Tests/lint/ruff_gate.py` fails `ASYNC109: 46 > baseline 45`, as it does at b3c75c8234 and at the stream base b5020e9a1e (46 there, the same sites), so it comes from the restack base, not this stream.
 - Files (round 6): `tldw_chatbook/Agents/agent_routing.py`, `tldw_chatbook/Chat/console_provider_endpoints.py`, `Tests/Chat/test_local_server_discovery.py`, `Tests/Chat/test_console_provider_gateway.py`, `Docs/User_Guide/console.md`, `Docs/User_Guide/settings.md`.
+
+**Review r14ep-rev6 (round 7).**
+- **Flaky UI test.** `Tests/UI/test_settings_custom_endpoint_default.py::test_settings_lists_a_refused_endpoint_with_its_reason_and_edit_fixes_it` queried each form right after clicking, waiting only for workers. With a wait for the Input alone it still failed 1 of 21 serial runs: the captured run timed out after 8 s with the Rename form never mounted, so the coordinate click itself was lost while the detail pane was still laying out. The test now waits for the row, and each Rename/Edit open and save goes through `_click_until`: it clicks, polls for the effect (the form mounted, or the status line's result), and while the button is still there retries the press through the button itself. Opening a form is idempotent and a repeated save writes the same value. This stream added no other UI test with that shape (the only other UI-side change is a copy assertion in `test_console_endpoint_template_modal.py`).
+- **Stability** (run.sh): before the retry, 1 failure in 21 serial runs at load 31-54. After it, 10/10 serial (load 12-30) and 5/5 whole-file runs at `-n 4` (57 passed each, load 11-13), plus 15/15 serial runs in three concurrent lanes at load 30-35.
+- **Docs.** The `meaningful_adapter_base_url` docstring no longer says `huggingface_api` "today wins" or that every key pins only a non-default URL: HuggingFace is always pinned to the URL Console checked. `settings.md`'s Delete row says the switch-conversations copy fires when the entry's URL is not one of the refused URLs.
+- **Runs.** `./scripts/preflight.sh` passes; `check_markup_interpolation.py` OK; module-size, chat-code-identity, screen-size, Agents/Chat boundary and diagnostic-privacy ratchets: 351 passed. Endpoint and gateway files: 61 passed, 1 failed (deepseek, red at base). `Tests/lint/ruff_gate.py` still fails `ASYNC109: 46 > 45`, the same as at the stream base b5020e9a1e.
+- Files (round 7): `Tests/UI/test_settings_custom_endpoint_default.py`, `tldw_chatbook/Chat/console_provider_endpoints.py`, `Docs/User_Guide/settings.md`.
