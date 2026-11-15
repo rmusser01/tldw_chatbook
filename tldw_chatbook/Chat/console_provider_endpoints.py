@@ -237,8 +237,10 @@ CONDITIONAL_BASE_URL_EXECUTION_KEYS = frozenset(
 #: config raw, so a schemeless endpoint readiness reads as http:// went as
 #: typed. Every primary send pins the resolved base for them; shared by the
 #: gateway kwargs builders and the trace verifier's reconstruction (r11g-rev3).
+#: MLX-LM joins them (TASK-40300 review r14ep-rev3 follow-up): it builds its
+#: endpoint from its own host and port.
 CONFIG_READING_LOCAL_EXECUTION_KEYS = frozenset(
-    {"aphrodite", "koboldcpp", "oobabooga", "tabbyapi"}
+    {"aphrodite", "koboldcpp", "local_mlx_lm", "oobabooga", "tabbyapi"}
 )
 #: Where an adapter reads its endpoint when the request pins none, in its own
 #: order, when that is not its ``api_settings`` table under the dispatch name
@@ -294,6 +296,13 @@ def adapter_own_endpoint(
     return record.default_base_url if record and record.engine_driven else None
 
 
+#: Console execution keys besides ``CONFIG_READING_LOCAL_EXECUTION_KEYS``
+#: whose adapter reads a table Console's own lookup misses (review r14ep-rev3
+#: and its follow-up: Local LLM's ``api_ip``, Custom OpenAI API 2's top-level
+#: ``api_ip``).
+_OWN_TABLE_CONSOLE_KEYS = frozenset({"local-llm", "custom-openai-api-2"})
+
+
 def console_own_table_endpoint(
     execution_key: str, app_config: Mapping[str, object]
 ) -> str | None:
@@ -312,7 +321,7 @@ def console_own_table_endpoint(
     Returns:
         That endpoint, or None for any other adapter.
     """
-    if execution_key in CONFIG_READING_LOCAL_EXECUTION_KEYS | {"local-llm"}:
+    if execution_key in CONFIG_READING_LOCAL_EXECUTION_KEYS | _OWN_TABLE_CONSOLE_KEYS:
         return adapter_own_endpoint(execution_key, app_config)
     return None
 

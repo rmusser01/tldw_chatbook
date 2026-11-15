@@ -3428,29 +3428,27 @@ def test_a_custom_endpoint_not_loaded_says_where_its_reason_can_be_fixed(params,
     assert missing_custom_endpoint_copy(config, "custom-ep:box") == copy
 
 
-#: Review r14ep-rev3 I-3: adapters that read a table Console does not, so a
-#: send with nothing in Console's table went unpinned to the adapter's value.
+def _nested(path, value):
+    """``value`` at ``path`` in an otherwise empty config."""
+    for key in reversed(path):
+        value = {key: value}
+    return {"api_settings": {}, **value}
+
+
+#: Review r14ep-rev3 I-3 and its follow-up: where an adapter reads its
+#: endpoint when Console's table has none; a send went unpinned to it.
 _OWN_TABLE_ADAPTERS = [
-    ("aphrodite", "aphrodite_api", "api_url"),
-    ("oobabooga", "ooba_api", "api_ip"),
+    ("aphrodite", ("api_settings", "aphrodite_api", "api_url")),
+    ("oobabooga", ("api_settings", "ooba_api", "api_ip")),
+    ("custom_2", ("custom_openai_api_2", "api_ip")),
 ]
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("shape", sorted(_CONTRACT_REFUSED_BASES))
-@pytest.mark.parametrize(("provider", "table", "key"), _OWN_TABLE_ADAPTERS)
-async def test_console_never_sends_to_a_refused_endpoint_in_the_adapters_own_table(
-    provider, table, key, shape
-):
-    """Review r14ep-rev3 I-3: with the refused URL only in
-    ``[api_settings.aphrodite_api] api_url`` or ``[api_settings.ooba_api]
-    api_ip``, readiness and the send were Ready with no endpoint, and the
-    adapter POSTed to it."""
+async def _assert_refused_without_a_request(provider, config):
     from tldw_chatbook.Chat.console_session_settings import (
         build_console_settings_readiness,
     )
 
-    config = {"api_settings": {table: {key: _with_path(provider, _CONTRACT_REFUSED_BASES[shape])}}}
     settings = ConsoleSessionSettings(provider=provider, model="m")
     seen: list[str] = []
 
@@ -3463,13 +3461,54 @@ async def test_console_never_sends_to_a_refused_endpoint_in_the_adapters_own_tab
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("provider", "table", "key"), _OWN_TABLE_ADAPTERS)
+@pytest.mark.parametrize("shape", sorted(_CONTRACT_REFUSED_BASES))
+@pytest.mark.parametrize(("provider", "path"), _OWN_TABLE_ADAPTERS)
+async def test_console_never_sends_to_a_refused_endpoint_in_the_adapters_own_table(
+    provider, path, shape
+):
+    """Review r14ep-rev3 I-3: with the refused URL only in
+    ``[api_settings.aphrodite_api] api_url``, ``[api_settings.ooba_api]
+    api_ip`` or Custom OpenAI API 2's ``api_ip``, readiness and the send were
+    Ready with no endpoint, and the adapter POSTed to it."""
+    config = _nested(path, _with_path(provider, _CONTRACT_REFUSED_BASES[shape]))
+
+    await _assert_refused_without_a_request(provider, config)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("host", ["127.1", "-bad.corp", "bücher.example", "localhost.."])
+async def test_console_never_sends_to_a_refused_mlx_host(host):
+    """Review r14ep-rev3 follow-up: MLX-LM builds its endpoint from
+    ``[api_settings.local_mlx_lm] host`` and ``port``, which Console never
+    read, so ``host = "127.1"`` was sent to."""
+    await _assert_refused_without_a_request(
+        "mlx_lm", {"api_settings": {"local_mlx_lm": {"host": host, "port": 8080}}}
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "config", "pinned"),
+    [
+        *(
+            (provider, _nested(path, "http://127.0.0.1:5000/v1"), "http://127.0.0.1:5000/v1")
+            for provider, path in _OWN_TABLE_ADAPTERS[:2]
+        ),
+        (
+            "custom_2",
+            _nested(("custom_openai_api_2", "api_ip"), "http://127.0.0.1:5000/v1/chat/completions"),
+            "http://127.0.0.1:5000/v1/chat/completions",
+        ),
+        ("mlx_lm", {"api_settings": {"local_mlx_lm": {"port": 9000}}}, "http://127.0.0.1:9000/v1"),
+        ("mlx_lm", {"api_settings": {}}, "http://127.0.0.1:8080/v1"),
+    ],
+)
 async def test_console_checks_and_pins_an_endpoint_in_the_adapters_own_table(
-    provider, table, key
+    provider, config, pinned
 ):
     """Review r14ep-rev3 I-3: a config that sets only the adapter's own table
-    keeps working; the send is pinned to the endpoint Console checked."""
-    config = {"api_settings": {table: {key: "http://127.0.0.1:5000/v1"}}}
+    (or, for MLX-LM, nothing) keeps working; the send is pinned to the
+    endpoint Console checked, the one the adapter read before."""
     seen: list[str] = []
 
     resolution = await _resolve_endpoint_send(
@@ -3477,7 +3516,7 @@ async def test_console_checks_and_pins_an_endpoint_in_the_adapters_own_table(
     )
 
     assert resolution.ready is True, resolution.visible_copy
-    assert "adapter:http://127.0.0.1:5000/v1" in seen
+    assert f"adapter:{pinned}" in seen
 
 
 def test_a_refused_entry_renames_and_counts_but_offers_no_duplicate():
