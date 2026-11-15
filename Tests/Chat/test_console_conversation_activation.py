@@ -664,7 +664,9 @@ def test_production_workspace_visibility_requires_settled_transcript_owner() -> 
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("focus_failure", ["", "missing_composer", "broken_focus"])
+@pytest.mark.parametrize(
+    "focus_failure", ["", "missing_composer", "broken_focus", "app_shutdown"]
+)
 async def test_production_workspace_predicate_failure_rolls_back_exact_owned_session(
     focus_failure,
 ) -> None:
@@ -701,6 +703,11 @@ async def test_production_workspace_predicate_failure_rolls_back_exact_owned_ses
     controller._chat_store_accessor = lambda: store
     # The post-projection fence reads the controller's injected liveness seam.
     controller._screen_running_accessor = lambda: True
+    if focus_failure == "app_shutdown":
+        # App quit began during the post-projection yield; the pump still runs.
+        screen.app_instance = SimpleNamespace(
+            _console_runtime_shutdown_task=asyncio.create_task(asyncio.sleep(0))
+        )
 
     async def hydrate(_conversation_id):
         store.restore_persisted_session(
@@ -725,8 +732,12 @@ async def test_production_workspace_predicate_failure_rolls_back_exact_owned_ses
     result = await controller.activate_character_conversation_after_commit(request)
 
     screen._sync_native_console_transcript.assert_awaited_once()
-    assert "#console-native-composer" in presentation_steps
-    assert ("focus" in presentation_steps) == (focus_failure != "missing_composer")
+    assert ("#console-native-composer" in presentation_steps) == (
+        focus_failure != "app_shutdown"
+    )
+    assert ("focus" in presentation_steps) == (
+        focus_failure not in {"missing_composer", "app_shutdown"}
+    )
     assert result.kind is ConsoleActivationResultKind.FAILED
     assert store.active_session_id == prior.id
     assert all(
