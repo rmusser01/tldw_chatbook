@@ -370,8 +370,8 @@ moved bodies for every ``self.<attr>`` load/store AND every
 state fields and the movers themselves -- **90 names** -- and then adding
 **2 more the walk cannot see**, for **92**, every one pinned in
 ``test_media_controller_binds_every_name_its_moved_bodies_use``. That pin
-holds **93** since TASK-36952.3.1 (measured: 16 framework services, the 18
-state accessors of groups (b)/(b')/(c), 29 group-(a) helpers and 30 group-(e)
+holds **92** since TASK-36952.3.2 (measured: 16 framework services, the 18
+state accessors of groups (b)/(b')/(c), 29 group-(a) helpers and 28 group-(e)
 callables):
 
 1. **Framework services** (``app``, ``app_instance``, ``call_after_refresh``,
@@ -400,9 +400,10 @@ callables):
    prior-extracted media controller instances task 1 kept off
    ``LibraryMediaState`` (``_library_media_browse_controller``,
    ``_library_media_trash_browse_controller`` -- 11 movers each, the
-   cluster's most-referenced names); (e) 37 named late-binding callables for
+   cluster's most-referenced names); (e) 35 named late-binding callables for
    the exclusions above that a MOVER still calls internally (44 before
-   TASK-36952.3.1 moved seven of their bodies here; 30 are pinned) -- each a
+   TASK-36952.3.1 moved seven of their bodies here and TASK-36952.3.2 two
+   more; 28 are pinned) -- each a
    ``lambda`` re-reading ``screen.<name>`` on every invocation, at CALL time,
    which is exactly why every bypass fixture named above keeps working
    unmodified after this move.

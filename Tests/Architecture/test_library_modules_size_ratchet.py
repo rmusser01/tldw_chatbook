@@ -519,7 +519,11 @@ _BUDGETS: dict[str, int] = {
     # module docstring item 3 now describes the widened one-claim-site guard.
     # 2026-11-15, rebased onto 3.1's rebase onto dev cc6006fcf5: 7184 -> 7196
     # (the same +12), measured.
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 7196,
+    # 2026-11-15, TASK-36952.3.2 rebase onto 3.1's fix round: 7150 -> 7151 (+1),
+    # prose only: the docstring's binding counts re-measured after this slice.
+    # 2026-11-15, rebased onto 3.1's rebase onto dev cc6006fcf5: 7196 -> 7197
+    # (the same +1), measured; the binding counts re-measured unchanged.
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 7197,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only
