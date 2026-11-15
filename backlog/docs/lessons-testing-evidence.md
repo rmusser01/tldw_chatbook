@@ -25714,3 +25714,9 @@ label copy and unmasked live-row lookup errors. TASK-41218 landed while this
 independent fix awaited integration; retain its merged guard and validate it
 with both regression sets rather than replacing it with a competing guard.
 
+
+## A Console Send no longer runs on a Textual worker, and a pushed ChatScreen can land under the app's own Console (TASK-41139, 2026-11-15)
+
+**Incident.** `test_enter_with_popup_closed_sends_normally` pressed Send, awaited `pilot.app.workers.wait_for_complete()` and one pause, then asserted `submit_draft` was awaited. Since 3e618d7119 a stock Send is received into runtime custody (`accept_received_intent`): `submit_draft` runs on the runtime's task, outside `app.workers`, and a probe saw it called 5.4 s after the press at load 106. The visit-dispatch tests pushed `ChatScreen(app)` after one `pilot.pause()`; at load 80 the app's own initial Console was pushed after it, so the test's screen was never visited and its counters raised `KeyError`, where round 14 (load 55-87) had seen the count assertions fail instead.
+
+**What to do.** Wait for the effect itself (a spy's `await_count`, a stored row) with a bounded poll, not for workers. To observe a first Console visit, patch the class methods before `_build_test_app()` and watch the app's own Console, or wait for the app's initial navigation before pushing another screen.
