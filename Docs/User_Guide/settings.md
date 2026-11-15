@@ -1080,12 +1080,62 @@ is refused: `/completions` (the legacy text route), `/chat`, `/embeddings`,
 | **OpenAI-compatible** | The strict hosted-provider engine (see below) pointed at your URL — the same engine Databricks and the inference clouds use. |
 | **Ollama** | The Ollama path, including its model-discovery fallback. |
 
+In `config.toml` an entry's `family` is `llama_cpp`, `openai_compatible` or
+`ollama`; any other value keeps the entry from loading, as in "not loaded:
+Unknown endpoint family: vllm."
+
 Entries show in the Console provider list under their display name (their
 provider id is `custom-ep:<slug>`), each with its own cached model list.
 Sampling and generation settings are never copied from a template — they
 stay governed by the per-provider defaults chain. Credentials follow the
 usual precedence — `api_key_env` (a variable name; the safer form) wins over
 a stored `api_key` — and endpoint displays never show the key.
+
+**Sampling params.** An entry can carry its own sampling values in a
+`[custom_endpoints.<slug>.params]` table. They apply when an agent run sends
+work to the entry — a sub-agent spawned onto it, or a chat an agent run
+creates on it — where they rank below Console's saved per-provider defaults
+and above `[chat_defaults]` (the whole order is under [Routing sub-agents to
+other providers/models](console/agent-runs-and-tools.md#routing-sub-agents-to-other-providersmodels)).
+A Console chat you switch to the entry yourself does not read them. The
+**Params** box in "New endpoint from template" writes this table (one
+`key = value` per line; empty means none) and refuses a bad value before
+**Create**. After that the table is edited in `config.toml` only: **Edit**
+and **Rename** keep it as it is.
+
+```toml
+[custom_endpoints.gpu-box.params]
+temperature = 0.2
+max_tokens = 4096
+reasoning_effort = "low"
+```
+
+| Key | Accepted values |
+|---|---|
+| `temperature` | a number from 0.0 to 2.0 |
+| `top_p`, `min_p` | a number from 0.0 to 1.0 |
+| `presence_penalty`, `frequency_penalty` | a number from -2.0 to 2.0 |
+| `top_k` | an integer, 0 or more |
+| `max_tokens` | an integer, 1 or more |
+| `seed` | an integer, 0 or more |
+| `thinking_budget_tokens` | an integer, 1024 or more |
+| `reasoning_effort` | `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"` or `"xhigh"` |
+| `reasoning_summary` | `"auto"`, `"concise"`, `"detailed"` or `"none"` |
+| `verbosity` | `"low"`, `"medium"` or `"high"` |
+| `thinking_effort` | `"off"`, `"low"`, `"medium"`, `"high"`, `"xhigh"` or `"max"` |
+
+A number key also takes an integer (`temperature = 1`), but an integer key
+does not take a decimal (`max_tokens = 4096.0` is refused). `true`, `false`,
+`inf` and `nan` are never valid, and any other key, `stop` and `streaming`
+included, is refused. An entry holding an invalid value is not loaded:
+**Custom endpoints** lists it with the first problem, as in "not loaded:
+'temperature' must be between 0.0 and 2.0", and a chat on it reads "Provider
+blocked: this custom endpoint is not loaded: 'temperature' must be between
+0.0 and 2.0. Fix it in config.toml (see 'Custom endpoints' in the User
+Guide's Settings page), or delete the entry in Settings ▸ Custom
+endpoints." A `params` value that is not a table drops the whole entry: it
+is not listed, and a chat on it reads "Provider blocked: this custom
+endpoint is no longer configured."
 
 **The strict engine behind OpenAI-compatible.** OpenAI-compatible
 custom-endpoint entries — the `custom-ep:<slug>` registry entries — execute
