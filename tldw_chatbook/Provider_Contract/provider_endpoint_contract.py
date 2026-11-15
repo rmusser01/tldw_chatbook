@@ -118,6 +118,9 @@ REMOTE_ENDPOINT_SCHEME_REQUIRED = (
 _PROVIDER_KEY = re.compile(r"[a-z0-9_]+")
 _UNSAFE_UNICODE_CATEGORIES = frozenset({"Cc", "Cf", "Cs"})
 _HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
+#: One part ``inet_aton`` reads as a number: decimal, octal (leading 0) or
+#: hex (``0x``, digits optional).
+_INET_ATON_PART = re.compile(r"0[xX][0-9a-fA-F]*|[0-9]+")
 _UNRESERVED_ASCII = frozenset(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
 )
@@ -674,8 +677,9 @@ def canonical_endpoint_host(hostname: str) -> str | None:
 
     Returns:
         The lower-cased host (an IP in its compressed form), or None for a
-        host that is not ASCII, holds "%", is all digits and dots, is over
-        253 characters, or has a label ``valid_dns_label`` refuses.
+        host that is not ASCII, holds "%", has only parts ``inet_aton``
+        reads as numbers (``127.1``, ``0x7f.1``), is over 253 characters,
+        or has a label ``valid_dns_label`` refuses.
     """
     if not hostname.isascii() or "%" in hostname:
         return None
@@ -689,9 +693,13 @@ def canonical_endpoint_host(hostname: str) -> str | None:
     host = hostname.removesuffix(".")
     if not host or len(host) > 253:
         return None
-    if all(character.isdigit() or character == "." for character in host):
+    labels = host.split(".")
+    if all(_INET_ATON_PART.fullmatch(label) for label in labels):
+        # ``127.1``, ``0x7f.1``, ``0x7f000001``: a resolver reads every part
+        # as a number (``inet_aton``) and dials an address the dotted form
+        # hides (TASK-41132).
         return None
-    if not all(valid_dns_label(label) for label in host.split(".")):
+    if not all(valid_dns_label(label) for label in labels):
         return None
     return host.lower()
 

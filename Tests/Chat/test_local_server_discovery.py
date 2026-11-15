@@ -3762,3 +3762,45 @@ def test_a_refused_entry_renames_and_counts_but_offers_no_duplicate():
     assert validate_display_name(" ") == ["Display name is required."]
     screen = SimpleNamespace(_custom_endpoints_view_config=lambda: config)
     assert custom_endpoints_summary(screen).startswith("1 named endpoint ·")
+
+
+#: TASK-41132: hosts ``inet_aton`` reads as an IPv4 address through hex or
+#: octal parts, or fewer than four parts.
+_NUMERIC_IPV4_HOSTS = ("0x7f.1", "0x7f000001", "0177.0.0.1", "0X7F.0.0.1")
+
+
+@pytest.mark.parametrize("host", _NUMERIC_IPV4_HOSTS)
+def test_a_host_inet_aton_reads_as_an_address_is_refused_like_127_1(host):
+    """TASK-41132: ``127.1`` is refused because a resolver expands it into an
+    address its dotted form hides. ``0x7f.1`` and ``0x7f000001`` expand the
+    same way, but passed as DNS names, so loopback rules and identity
+    comparisons saw a different host from the one dialled."""
+    import socket
+
+    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+        canonical_endpoint_host,
+        endpoint_refusal,
+    )
+
+    assert socket.inet_aton(host) == socket.inet_aton("127.0.0.1")
+    assert canonical_endpoint_host(host) is None
+    refused = endpoint_refusal("vllm", "http://127.1:8000/v1")
+    assert endpoint_refusal("vllm", f"http://{host}:8000/v1") == refused != ""
+    assert endpoint_refusal("custom", f"http://{host}:8000/v1", custom_endpoint=True) == refused
+
+
+@pytest.mark.parametrize("host", ["0xdeadbeef.example.com", "0x7f.lan", "1.example.com"])
+def test_a_name_with_a_number_like_label_is_still_a_name(host):
+    """TASK-41132: only a host every label of which is a number is read as an
+    address; a name that merely has one keeps working."""
+    import socket
+
+    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+        canonical_endpoint_host,
+        endpoint_refusal,
+    )
+
+    with pytest.raises(OSError):
+        socket.inet_aton(host)
+    assert canonical_endpoint_host(host) == host
+    assert endpoint_refusal("vllm", f"http://{host}:8000/v1") == ""
