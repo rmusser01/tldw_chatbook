@@ -58,6 +58,7 @@ from tldw_chatbook.Notes.note_folder_models import (
     NotePlacementPage,
     NotePlacementRecord,
 )
+from tldw_chatbook.UI.Library_Modules.library_media_controller import LibraryMediaController
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.Widgets.Library.library_browse_reader_shell import (
     LIBRARY_BROWSE_READER_SHELL_ID,
@@ -2664,14 +2665,14 @@ async def test_a_user_move_to_the_items_grip_after_a_stage_pick_is_kept(
             LibraryPromptsController, "_refresh_library_prompt_detail", held
         )
     else:
-        original_media = library_screen_module.LibraryScreen._refresh_library_media_detail
+        original_media = LibraryMediaController._refresh_library_media_detail
 
         async def held_media(self, *args, **kwargs):
             await release.wait()
             return await original_media(self, *args, **kwargs)
 
         monkeypatch.setattr(
-            library_screen_module.LibraryScreen,
+            LibraryMediaController,
             "_refresh_library_media_detail",
             held_media,
         )

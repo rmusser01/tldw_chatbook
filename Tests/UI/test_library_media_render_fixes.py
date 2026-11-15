@@ -3550,13 +3550,13 @@ async def test_returning_to_read_restores_the_reading_position_once():
         screen._media_state.read_scroll_by_id[loaded_id] = (0, 3)
 
         restores: list[str] = []
-        real_restore = screen._restore_library_media_loaded_progress
+        real_restore = screen._media_controller._restore_library_media_loaded_progress
 
         def counting_restore(expected_id: str) -> None:
             restores.append(expected_id)
             real_restore(expected_id)
 
-        screen._restore_library_media_loaded_progress = counting_restore
+        screen._media_controller._restore_library_media_loaded_progress = counting_restore
 
         screen.query_one("#library-media-reader-select-analysis", Button).press()
         await _wait_for_condition(
@@ -4430,9 +4430,9 @@ async def test_decorating_a_page_loads_the_active_set_once_not_per_build():
         # The canvas build inside the fixture already decorated this page.
         assert len(loads) == 1, loads
 
-        first = screen._decorate_library_media_reviewed(items)
+        first = screen._media_controller._decorate_library_media_reviewed(items)
         for _ in range(20):
-            screen._decorate_library_media_reviewed(items)
+            screen._media_controller._decorate_library_media_reviewed(items)
 
         assert len(loads) == 1, loads
         assert _reviewed(first) == [False, False, None, None], first
@@ -4460,7 +4460,7 @@ async def test_marking_an_item_done_invalidates_the_decoration_cache():
             None,
         ]
         service.mark_item_done(set_id, backing_media_id=1, done=True)
-        marked = screen._decorate_library_media_reviewed(items)
+        marked = screen._media_controller._decorate_library_media_reviewed(items)
 
         assert _reviewed(marked) == [True, False, None, None], marked
         assert len(loads) == 2, loads
@@ -4521,11 +4521,11 @@ async def test_a_write_landing_during_the_load_is_not_stamped_as_included():
         # Invalidate first, so the racing build is the one that loads.
         service.set_cursor(set_id, 0)
         service.get_active_review_set = racing
-        stale = screen._decorate_library_media_reviewed(items)
+        stale = screen._media_controller._decorate_library_media_reviewed(items)
         assert _reviewed(stale) == [False, False, None, None], stale
 
         service.get_active_review_set = healthy
-        fresh = screen._decorate_library_media_reviewed(items)
+        fresh = screen._media_controller._decorate_library_media_reviewed(items)
         assert _reviewed(fresh) == [True, False, None, None], fresh
 
 

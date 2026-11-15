@@ -35,6 +35,7 @@ from tldw_chatbook.UI.destination_recovery import (
     DestinationRecoveryState,
     load_failure_recovery_state,
 )
+from tldw_chatbook.UI.Library_Modules.library_media_controller import LibraryMediaController
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import (
     LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS,
@@ -916,7 +917,7 @@ async def test_automatic_entry_worker_composes_screen_once_and_routes_in_place(
             LibraryScreen, "_refresh_library_note_detail", gated_note_load
         )
     elif case.name == "media":
-        original_load = LibraryScreen._refresh_library_media_detail
+        original_load = LibraryMediaController._refresh_library_media_detail
 
         async def gated_media_load(active_screen, *args, **kwargs):
             started.set()
@@ -924,7 +925,7 @@ async def test_automatic_entry_worker_composes_screen_once_and_routes_in_place(
             return await original_load(active_screen, *args, **kwargs)
 
         monkeypatch.setattr(
-            LibraryScreen,
+            LibraryMediaController,
             "_refresh_library_media_detail",
             gated_media_load,
         )
@@ -2008,7 +2009,7 @@ async def test_stale_media_detail_cannot_project_after_route_switch() -> None:
 
         app.media_reading_scope_service = SimpleNamespace(get_media_item=gated_media)
         task = asyncio.create_task(
-            screen._refresh_library_media_detail("media-1", entry_origin=True)
+            screen._media_controller._refresh_library_media_detail("media-1", entry_origin=True)
         )
         await _wait_for_condition(
             pilot,

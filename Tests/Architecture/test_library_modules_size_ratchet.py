@@ -543,7 +543,14 @@ _BUDGETS: dict[str, int] = {
     # 1 shell helper in (+6), imports (+8), prose (+18).
     # 2026-11-16, TASK-36952.3.5 rebased onto 3.4's rebase onto dev
     # cc6006fcf5: 8503 -> 9185 (the same +682), measured.
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 9185,
+    # 2026-11-15, TASK-36952.3.6 (media body move slice 6 of 8, the same
+    # sanctioned move): 9137 -> 9971 (+834): 16 bodies byte-for-byte with
+    # their separators and a section comment (+814), 8 callbacks out (-48),
+    # the `is_attached` service, 2 getters, 1 setter and 2 shell helpers in
+    # (+34), imports (+10), prose (+24).
+    # 2026-11-17, TASK-36952.3.6 rebased onto 3.5's rebase onto dev
+    # 5e3c8b2bd4: 9185 -> 10019 (the same +834), measured.
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 10019,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only

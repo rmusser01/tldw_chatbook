@@ -1,9 +1,10 @@
 """Speaker rename patches detail from the message, without a blob re-read."""
 
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 
 import pytest
 
+from tldw_chatbook.UI.Library_Modules.library_media_controller import LibraryMediaController
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Library.library_media_viewer import LibraryMediaViewer
 
@@ -34,6 +35,13 @@ def _screen(db_reads):
             return {"content": "db text"}
 
     screen.app_instance = SimpleNamespace(media_db=_DB())
+    # TASK-36952.3.6: the handler body moved to the media controller; a bypassed
+    # construction has none, so bind the moved body to this same fake.
+    screen._media_controller = SimpleNamespace(
+        _handle_library_media_speaker_renamed=MethodType(
+            LibraryMediaController._handle_library_media_speaker_renamed, screen
+        )
+    )
     return screen
 
 
