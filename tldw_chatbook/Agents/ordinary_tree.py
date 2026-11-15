@@ -29,6 +29,17 @@ class _Member:
     drained: bool = False
 
 
+def widen_refusal(tool_name, refused):
+    """The tool error the model sees when a turn's claim cannot widen."""
+    if str(refused) == "worktree_activity_busy":
+        return (
+            f"{tool_name} is unavailable while another chat's turn is running: "
+            "it needs the workspace to itself. Continue without it, or retry "
+            "after that turn finishes."
+        )
+    return f"{tool_name} is unavailable: this turn has already closed."
+
+
 def encode_ordinary_receipt(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
@@ -748,10 +759,30 @@ class OrdinaryTurn:
         )
         return self.owner
 
-    def attach(self, owner):
+    def widen(self):
+        """Make this turn's own claim OPAQUE before an undeclarable effect.
+
+        Sub-agents and skill installs/scripts declare no footprint, so the claim
+        widens when the turn actually uses one (TASK-40715). Never waits: another
+        live claim refuses with ``worktree_activity_busy``.
+        """
         self.check()
         if self.sealed or self.runtime._disposed or self.controller._disposed:
             raise CapacityRefused("ordinary_turn_closed")
+        if self.footprint.opaque:
+            return
+        try:
+            footprint = self.activity.widen_to_opaque(
+                self.claim, owner=self.owner, footprint=self.footprint
+            )
+        except ValueError:
+            raise CapacityRefused("ordinary_turn_closed") from None
+        if footprint is None:
+            raise CapacityRefused("worktree_activity_busy")
+        self.footprint = footprint
+
+    def attach(self, owner):
+        self.widen()
         for source in self.snapshot_sources:
             try:
                 source.prepare_survivor()

@@ -73,6 +73,9 @@ Exact evidence freshness and a bounded plan format also needed explicit rules.
    not a claim of filesystem isolation or multi-process scheduling.
    Opaque-capable native work acquires a runtime-wide opaque-effect reservation
    before root-specific claims, since its cwd does not bound its effects.
+   (Amended 2026-11-13 for ordinary Console turns: sub-agents and skill
+   installs/scripts widen the turn's own claim when used; see "Late opaque
+   widening" at the end of this ADR.)
    Restriction state is run/task-bound even when providers are shared.
 6. Workflow time policy charges the union of active execution intervals and
    excludes only durably quiescent approval/capacity waits. Alive/unknown cleanup
@@ -579,6 +582,9 @@ opaque; stock declarations distinguish confined paths from private control-plane
 effects. Selected-profile DENY may be projected by the existing by-key resolver
 (ASK remains reachable). Real final composition must fit that captured maximum;
 declaration metadata grants neither tool permission nor dispatch authority.
+
+Amended 2026-11-13 (TASK-40715): sub-agent spawn and skill install/script
+reachability no longer enter this maximum; see "Late opaque widening".
 
 ### Pure declaration correction (controller accepted)
 
@@ -1338,3 +1344,19 @@ This supersedes the sentences above that let unproven cleanup "hold disposal ind
 - A workflow run held only by unproven cleanups (each of its tool workers is retained or has returned) does not stop exit. `ConsoleRuntime.dispose` closes every other owner and then reports `workflow_original_shutdown_unresolved`, and the app's exit runs its remaining owners before re-raising, logging any further failure it does not raise. A cancellation requested meanwhile is still re-raised, chained to the retained runs. A run whose custody is still live keeps stopping disposal before capacity closes.
 - A goal iteration that ends on it is uncertain, so it needs recovery.
 - The Release row follows the run's retained records, not how the run ended, and releases every slot the run still holds. A closed and reopened conversation finds it again by the card's persisted id.
+
+## Late opaque widening for undeclarable turn effects (TASK-40715), 2026-11-13
+
+Owner decision, 2026-11-13. Every ordinary Console agent turn was OPAQUE up front because `spawn_subagent` (`max_subagents` 2, not configurable) and, with a skills service, `install_skill` and `run_skill_script` were reachable. An opaque claim conflicts with every other claim in the runtime, so while one chat's agent reply ran, Send in any other chat, character chats included, was refused "Workspace activity is busy".
+
+Decision. Reachability of these three tools no longer makes the ordinary maximum OPAQUE. The turn's own claim upgrades to OPAQUE in place when the turn actually uses one:
+
+- `spawn_subagent`, and every other child launch through the same reservation (skill forks, Code Review children, continuations): at `OrdinaryTurn.attach`, before the child's row, client, model or thread.
+- `install_skill` and `run_skill_script`: after the user's confirmation and before the effect.
+
+`WorktreeActivity.widen_to_opaque` performs the upgrade under the activity lock. It never waits. If any other live claim, recovery protection or workflow window exists, it refuses, and that one tool call returns a tool error naming the busy workspace; the turn carries on. Two widening turns therefore cannot deadlock: each refuses the other. A widened claim is an ordinary OPAQUE claim: it conflicts with every other claim runtime-wide until it retires, and it never narrows. A holder of the claim's pre-widening bounded footprint stays valid, because OPAQUE covers it (`validate_claim` accepts the recorded `widened_from` footprint).
+
+Scope. This supersedes, for these three tools only, Decision 5's "acquires a runtime-wide opaque-effect reservation before root-specific claims", the Task8D2 contract's "cannot silently expand" and Task 8D1's "bounded claims cannot be upgraded" (Change Review borrowing still cannot upgrade a bounded claim). Everything else that is OPAQUE stays up front: MCP-eligible sessions, hooks, Change Review, plugin-owned skills, references, SSH and remote roots, pending captures and unknown providers.
+
+COST. A spawn, install or script is refused while another chat's turn runs, where before the other chat's Send was refused. The undeclarable effect's coverage is decided at its call, so a turn's claim can change shape after admission.
+

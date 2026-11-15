@@ -450,7 +450,6 @@ def _capture_maximum(tree, *, hook_read=None):
     catalog_allowed = lambda source, name: (
         goal_scope is None or f"{source}:{name}" in goal_scope.catalog_tools
     )
-    runtime_allowed = lambda name: goal is None or goal.permits_runtime(name)
     tree.catalog_permits = lambda source, name: (
         advertised(name) and catalog_allowed(source, name)
     )
@@ -542,19 +541,8 @@ def _capture_maximum(tree, *, hook_read=None):
     if tree.agent_eligible:
         opaque |= _capture_personal_source(tree)
         opaque |= _capture_other_providers(tree)
-        budget = configuration.tool_configuration.get("agent_run_budget_maximum")
-        opaque |= bool(
-            budget is not None
-            and budget.max_subagents
-            and advertised("spawn_subagent")
-            and runtime_allowed("spawn_subagent")
-        )
-        bridge = tree.controller._agent_bridge
-        if bridge._skills_service is not None:
-            import os
-
-            opaque |= bool(os.name != "nt" and runtime_allowed("run_skill_script"))
-            opaque |= bool(runtime_allowed("install_skill"))
+        # Sub-agents and skill installs/scripts widen the claim when actually
+        # used (OrdinaryTurn.widen, TASK-40715); availability alone is bounded.
         if configuration.tool_configuration.get("local_tools_enabled"):
             from tldw_chatbook.Agents import local_tool_provider as local
             from tldw_chatbook.MCP.permission_store import (
