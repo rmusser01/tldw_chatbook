@@ -90,7 +90,7 @@ async def test_late_media_detail_arrival_cannot_clobber_the_trash_view() -> None
         await _wait_for_selector(screen, pilot, "#library-media-viewer-content")
         # task-31272: "‹ Back" is not composed in the three-pane shell, so
         # leave through the seam the button and Escape both share.
-        screen._exit_library_media_viewer()
+        screen._media_controller._exit_library_media_viewer()
         await _wait_for_selector(screen, pilot, "#library-media-trash-open")
 
         screen.query_one("#library-media-trash-open", Button).press()
@@ -152,7 +152,7 @@ async def test_viewer_substate_escape_refreshes_the_footer_shortcut_set() -> Non
             "test can no longer detect a stale footer"
         )
 
-        screen.action_library_media_viewer_back()
+        screen._media_controller.action_library_media_viewer_back()
         for _ in range(10):
             await pilot.pause(0.02)
 
@@ -253,7 +253,7 @@ async def test_slow_canvas_swap_is_not_raced_by_the_media_browse_sync() -> None:
         with patch.object(BaseAppScreen, "refresh", spy):
             # Items and Reader are retained siblings now. Settle the page in
             # the same pump window as the scheduled Reader exit continuation.
-            screen._exit_library_media_viewer()
+            screen._media_controller._exit_library_media_viewer()
             screen._sync_library_media_browse_state(None)
             fired.append("browse-sync")
             for _ in range(15):
@@ -294,7 +294,7 @@ async def test_routine_snapshot_midswap_still_runs_the_projection_follow_up() ->
 
         route_before: list[tuple] = []
 
-        screen._exit_library_media_viewer()
+        screen._media_controller._exit_library_media_viewer()
         # A routine snapshot lands before the scheduled retained-reader exit
         # continuation: generation moves, route key does not.
         route_before.append(screen._library_entry_route_key())

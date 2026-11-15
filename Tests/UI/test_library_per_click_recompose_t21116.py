@@ -126,7 +126,7 @@ async def test_media_viewer_back_is_canvas_scoped_and_restores_list_focus() -> N
             # task-31272: the "‹ Back" control itself is compact-only now
             # (the three-pane shell has no list mode of its own), so this
             # drives the exit seam the button and Escape share.
-            screen._exit_library_media_viewer()
+            screen._media_controller._exit_library_media_viewer()
             await _wait_for_selector(screen, pilot, "#library-media-row-0")
             await pilot.pause()
             await pilot.pause()
@@ -159,7 +159,7 @@ async def test_media_viewer_substate_escape_is_viewer_scoped() -> None:
         rail_before = screen.query_one("#library-rail")
         calls, spy = _screen_recompose_spy()
         with patch.object(BaseAppScreen, "refresh", spy):
-            screen.action_library_media_viewer_back()
+            screen._media_controller.action_library_media_viewer_back()
             await _wait_for_selector(screen, pilot, "#library-media-edit")
         assert calls == []
         assert screen.query_one("#library-rail") is rail_before
@@ -399,7 +399,7 @@ async def test_media_row_open_latency_probe() -> None:
             screen.query_one("#library-media-row-0", Button).press()
             await _wait_for_selector(screen, pilot, "#library-media-viewer-content")
             samples.append((perf_counter() - started) * 1000.0)
-            screen._exit_library_media_viewer()
+            screen._media_controller._exit_library_media_viewer()
             await _wait_for_selector(screen, pilot, "#library-media-row-0")
     assert len(samples) == 12
     assert all(sample > 0 for sample in samples)

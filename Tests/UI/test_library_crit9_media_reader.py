@@ -29,7 +29,9 @@ from textual.widgets import Button
 
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.Library.library_media_viewer_state import _is_markdown_media
-from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+from tldw_chatbook.UI.Library_Modules.library_media_controller import (
+    LibraryMediaController,
+)
 from tldw_chatbook.Widgets.Library.library_media_viewer import RENDERED_VIEW_NOTE
 from Tests.UI.test_library_media_side_by_side import (
     _build_media_test_app,
@@ -160,17 +162,17 @@ def test_the_escape_chip_and_the_guide_quote_the_same_words():
 
     # The plain viewer: focus in the Reader, nothing transient open.
     reader_fake, _calls, shell, _find = _escape_fake(region="reader")
-    assert LibraryScreen._library_media_escape_label(reader_fake) == "focus Items"
+    assert LibraryMediaController._library_media_escape_label(reader_fake) == "focus Items"
     assert "`esc focus Items`" in guide
 
     # One step out: focus in the Items pane, Library still open.
     reader_fake.focused = SimpleNamespace(ancestors=(shell.items,))
-    assert LibraryScreen._library_media_escape_label(reader_fake) == "focus Library"
+    assert LibraryMediaController._library_media_escape_label(reader_fake) == "focus Library"
     assert "`esc focus Library`" in guide
 
     # The fourth reading: the next pane out is collapsed, not on screen.
     shell.effective_layout.library_open = False
-    assert LibraryScreen._library_media_escape_label(reader_fake) == "back"
+    assert LibraryMediaController._library_media_escape_label(reader_fake) == "back"
     assert "`esc back`" in guide
 
     # Every transient sub-state shares the one word -- all four of them.
@@ -181,19 +183,19 @@ def test_the_escape_chip_and_the_guide_quote_the_same_words():
     # LIBRARY_MEDIA_SUBSTATE_BACK_SHORTCUTS docstring already promised all
     # three sub-states the single word "close" (task-31272).
     more_fake, _calls, _shell, _find = _escape_fake(region="reader", more_open=True)
-    assert LibraryScreen._library_media_escape_label(more_fake) == "close"
+    assert LibraryMediaController._library_media_escape_label(more_fake) == "close"
     assert "`esc close`" in guide
 
     for sub_state in ("editing", "editing_analysis"):
         sub_fake, _calls, _shell, _find = _escape_fake(region="reader")
         setattr(sub_fake._media_state, sub_state, True)
-        assert LibraryScreen._library_media_escape_label(sub_fake) == "close", sub_state
+        assert LibraryMediaController._library_media_escape_label(sub_fake) == "close", sub_state
     # TASK-34000.22 fix round 2 (R2-5): an armed delete confirm is the one
     # sub-state with its own word -- Escape cancels the confirm FIRST, before
     # the dirty-form veto, so the chip says "cancel" and the guide quotes it.
     confirm_fake, _calls, _shell, _find = _escape_fake(region="reader")
     confirm_fake._media_state.confirming_delete = True
-    confirm_label = LibraryScreen._library_media_escape_label(confirm_fake)
+    confirm_label = LibraryMediaController._library_media_escape_label(confirm_fake)
     assert confirm_label == "cancel"
     # The guide quotes the chip EXACTLY as the footer paints it (fix round 3).
     assert f"**`esc {confirm_label}`** over" in guide

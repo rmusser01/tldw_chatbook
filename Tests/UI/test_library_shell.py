@@ -9878,7 +9878,7 @@ async def test_library_shell_media_use_in_chat_without_open_item_notifies():
         await _wait_for_library_shell(screen, pilot)
 
         assert screen._media_state.detail is None
-        screen._open_selected_media_handoff()
+        screen._media_controller._open_selected_media_handoff()
         await pilot.pause()
 
     app.open_chat_with_handoff.assert_not_called()
@@ -9907,7 +9907,7 @@ async def test_library_shell_media_back_returns_to_list():
         # the Items pane already shows the list, so the control changed no
         # pixels while revoking every Reader binding gated on the view flag.
         assert not screen.query("#library-media-back")
-        screen._exit_library_media_viewer()
+        screen._media_controller._exit_library_media_viewer()
         await pilot.pause()
         await pilot.pause()
 
@@ -9977,7 +9977,7 @@ async def test_library_shell_media_rail_reentry_restores_the_open_item_and_back_
 
         # ‹ Back (compact-only at this size -- the same seam the button and
         # Escape share) returns to the list; the next round trip is fresh.
-        screen._exit_library_media_viewer()
+        screen._media_controller._exit_library_media_viewer()
         await pilot.pause()
         await pilot.pause()
         assert screen._media_state.view == "list"
@@ -10287,7 +10287,7 @@ async def test_library_shell_media_edit_save_refreshes_authoritative_page():
         assert service.search_calls[-1]["offset"] == 0
         # task-31272: "‹ Back" is compact-only; this drives the exit seam
         # it shares with Escape's compact branch.
-        screen._exit_library_media_viewer()
+        screen._media_controller._exit_library_media_viewer()
         await _wait_for_condition(
             pilot,
             lambda: "Renamed In List" in _visible_text(screen),
@@ -10424,7 +10424,7 @@ async def test_library_media_deep_link_back_loads_exact_page_and_facets() -> Non
 
         # task-31272: "‹ Back" is compact-only; this drives the seam it
         # shares with Escape's compact exit.
-        screen._exit_library_media_viewer()
+        screen._media_controller._exit_library_media_viewer()
         await _wait_for_condition(
             pilot,
             lambda: (
@@ -12515,7 +12515,7 @@ async def test_library_shell_media_content_search_resets_on_back():
         assert screen._media_state.content_query == "budget"
 
         # task-31272: "‹ Back" is compact-only; the exit seam is shared.
-        screen._exit_library_media_viewer()
+        screen._media_controller._exit_library_media_viewer()
         await pilot.pause()
         await pilot.pause()
 
@@ -12840,7 +12840,7 @@ async def test_library_shell_media_viewer_content_mode_resets_on_back_and_next_o
         assert screen._media_state.content_mode == "rendered"
 
         # task-31272: "‹ Back" is compact-only; the exit seam is shared.
-        screen._exit_library_media_viewer()
+        screen._media_controller._exit_library_media_viewer()
         await pilot.pause()
         await pilot.pause()
         assert screen._media_state.content_mode == "raw"

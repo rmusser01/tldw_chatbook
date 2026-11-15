@@ -203,7 +203,7 @@ async def test_media_type_filter_keeps_selected_id_in_step_with_the_canvas():
         assert screen._media_state.selected_media_id == video_id
         # Back to the list -- the selection survives the round trip, which is
         # how the browse canvas ends up pointing at a non-first row.
-        screen.action_library_media_viewer_back()
+        screen._media_controller.action_library_media_viewer_back()
         await _wait_for_selector(screen, pilot, "#library-media-type-filter")
         await pilot.pause()
         assert screen._media_state.selected_media_id == video_id

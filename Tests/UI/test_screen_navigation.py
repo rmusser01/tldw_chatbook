@@ -3270,14 +3270,14 @@ def test_action_library_media_viewer_back_returns_to_list_and_refocuses_it():
 
     screen.run_worker = _capture_worker
 
-    screen.action_library_media_viewer_back()
+    screen._media_controller.action_library_media_viewer_back()
 
     assert screen._media_state.view == "list"
     # task-21116: no whole-screen recompose at click time -- the exit is a
     # scheduled canvas-child swap plus the entry-focus arm.
     assert refresh_calls == []
     [(continuation, continuation_args)] = scheduled
-    assert continuation == screen._apply_library_media_list_return
+    assert continuation == screen._media_controller._apply_library_media_list_return
     assert continuation_args == (None,)
     import asyncio
 
@@ -3343,7 +3343,7 @@ def test_action_library_media_viewer_back_steps_out_of_a_sub_state_first(
     screen._media_state.editing_analysis = False
     screen._media_state.edit_draft = None
     screen._media_state.analysis_draft = None
-    screen._library_media_editor_dirty = lambda: ""
+    screen._media_controller._library_media_editor_dirty = lambda: ""
     setattr(screen._media_state, sub_state_flag, True)
 
     refresh_calls = []
@@ -3352,7 +3352,7 @@ def test_action_library_media_viewer_back_steps_out_of_a_sub_state_first(
     screen.call_after_refresh = lambda callback: focus_calls.append(callback)
     screen.set_timer = lambda delay, callback: None
 
-    screen.action_library_media_viewer_back()
+    screen._media_controller.action_library_media_viewer_back()
 
     # Still on the viewer -- Escape did NOT jump to the list.
     assert screen._media_state.view == "viewer"

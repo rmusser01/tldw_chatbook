@@ -1290,7 +1290,7 @@ async def test_escape_labels_are_one_of_five():
         seen: dict[str, str] = {}
 
         def record(state: str) -> None:
-            label = screen._library_media_escape_label()
+            label = screen._media_controller._library_media_escape_label()
             seen[state] = label
             assert label in _ESCAPE_LABELS or label == "", (state, label)
 
@@ -1470,7 +1470,7 @@ async def test_find_is_disabled_with_a_reason_when_the_analysis_tab_has_nothing_
         assert find.disabled is True
         assert "No analysis" in str(find.tooltip)
         # Belt and braces: the handler itself refuses.
-        screen.handle_library_media_reader_find(SimpleNamespace(stop=lambda: None))
+        screen._media_controller.handle_library_media_reader_find(SimpleNamespace(stop=lambda: None))
         await pilot.pause()
         await pilot.pause()
         assert screen._media_state.find_open is False
@@ -3839,7 +3839,7 @@ async def test_viewer_sync_follow_up_chains_the_restore_when_its_target_is_gone(
         screen._media_state.reader_session = set_more_open(
             screen._media_state.reader_session, True
         )
-        screen._after_library_media_viewer_sync("#library-media-reader-absent")
+        screen._media_controller._after_library_media_viewer_sync("#library-media-reader-absent")
         await _wait_for_selector(screen, pilot, "#library-media-reader-more-actions")
 
         await _settle_focus_on(
@@ -4124,7 +4124,7 @@ async def test_raising_follow_up_still_runs_the_queued_focus_restore():
             raise RuntimeError("follow-up blew up")
 
         with pytest.raises(RuntimeError, match="follow-up blew up"):
-            screen._after_library_media_viewer_sync(boom)
+            screen._media_controller._after_library_media_viewer_sync(boom)
             chained = viewer._post_recompose_callback
             assert chained is not None
             chained()

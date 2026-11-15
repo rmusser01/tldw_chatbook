@@ -431,6 +431,27 @@ _MEDIA_CLUSTER_METHOD_NAMES: tuple[str, ...] = (
     "handle_library_media_trash_type_filter",
     "request_library_media_layout_refresh",
     "use_media_in_chat",
+    # TASK-36952.3.1 (2026-11-15): the Reader's Find, the Escape label and
+    # viewer-back ladder, and the Console handoff -- 19 bodies.
+    "_after_library_media_viewer_sync",
+    "_close_library_media_find",
+    "_exit_library_media_viewer",
+    "_library_media_escape_label",
+    "_library_media_find_state",
+    "_library_media_find_unavailable_reason",
+    "_library_media_reader_exit_available",
+    "_open_selected_media_handoff",
+    "_queue_after_library_media_viewer_recompose",
+    "_reset_library_media_search_on_mode_change",
+    "_set_library_media_link_receipt",
+    "_toggle_library_media_find",
+    "action_library_media_move_to_trash",
+    "action_library_media_read_later",
+    "action_library_media_reader_find",
+    "action_library_media_use_in_console",
+    "action_library_media_viewer_back",
+    "handle_library_media_link_undo",
+    "handle_library_media_reader_find",
 )
 
 #: The names above that are ``@staticmethod`` on ``LibraryScreen``. Their
@@ -487,6 +508,17 @@ _MEDIA_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
         "_retry_library_media_browse",
         "_select_library_media_adjacent_item",
         "_toggle_library_media_read_later",
+        # TASK-36952.3.1: 8 of its 19 movers, whose screen delegators had no
+        # caller left once the move and its test retarget landed (ast census
+        # over tldw_chatbook/, Tests/, Docs/, scripts/ and Helper_Scripts/).
+        "_exit_library_media_viewer",
+        "_library_media_find_state",
+        "_library_media_reader_exit_available",
+        "_open_selected_media_handoff",
+        "_queue_after_library_media_viewer_recompose",
+        "_reset_library_media_search_on_mode_change",
+        "_set_library_media_link_receipt",
+        "_toggle_library_media_find",
     }
 )
 
@@ -563,7 +595,7 @@ _MEDIA_CLUSTER_SCREEN_DELEGATOR_ABSENT: frozenset[str] = (
 #:
 #: Grouped exactly as the controller's own constructor groups them.
 _MEDIA_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
-    # -- framework services, live-read from the screen on every access (15)
+    # -- framework services, live-read from the screen on every access (16)
     "app",
     "app_instance",
     "call_after_refresh",
@@ -579,6 +611,8 @@ _MEDIA_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
     "set_focus",
     "set_timer",
     "size",
+    # TASK-36952.3.1: `_toggle_library_media_find`, a mover, calls it
+    "notify",
     # -- shared shell state this cluster READS (getter-only accessors) (11)
     "_library_canvas_projection_depth",
     "_library_compose_generation",
@@ -634,34 +668,36 @@ _MEDIA_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
     "_sync_library_skills_reader_layout_from_shell",
     "_walk_active_review_set",
     "request_library_reader_layout_refresh",
-    # -- named late-binding callables for the excluded media methods a mover still calls (35)
+    # TASK-36952.3.1: shell helpers its movers call (24 -> 29)
+    "_close_open_library_choice_strip",
+    "_focus_library_rail_action",
+    "_invalidate_library_workspace_depth_state",
+    "_library_open_choice_strip",
+    "_library_workspace_depth_state",
+    # -- named late-binding callables for the excluded media methods a mover
+    #    still calls (35; TASK-36952.3.1 moved 5 of them here: 30)
     "_arm_library_media_return_settlement",
     "_build_library_media_trash_state",
     "_cancel_library_media_bulk_delete",
     "_capture_library_media_loaded_progress",
     "_clear_library_media_selection_for_scope_change",
-    "_close_library_media_find",
     "_commit_library_media_return",
     "_exit_library_media_trash",
-    "_exit_library_media_viewer",
     "_library_media_analysis_provider_reason",
     "_library_media_backing_id",
     "_library_media_content_matches",
     "_library_media_content_signature",
     "_library_media_focus_target_matches_receipt",
     "_library_media_layout_signature",
-    "_library_media_reader_exit_available",
     "_library_media_return_candidate",
     "_library_media_settlement_tree",
     "_library_media_trash_focus_selectors",
     "_library_media_trash_retry_visible",
     "_library_media_type_options",
     "_library_media_viewer_state_cached",
-    "_open_selected_media_handoff",
     "_reconcile_library_media_stage_presentation",
     "_refresh_library_media_detail",
     "_request_library_media_browse",
-    "_reset_library_media_search_on_mode_change",
     "_restore_library_media_loaded_progress",
     "_sanitize_media_field",
     "_save_library_media_analysis",
@@ -697,8 +733,10 @@ def test_media_cluster_method_names_are_genuinely_media_named() -> None:
     # screen delegator. Fix round 2 (2026-10-21): 146 -> 147,
     # ``_reveal_library_media_dirty_form`` (the refusal's and the Media
     # press's "put the form on screen": viewer view + the form's tab).
-    assert len(_MEDIA_CLUSTER_METHOD_NAMES) == 147, (
-        f"expected 147 moved names, got {len(_MEDIA_CLUSTER_METHOD_NAMES)}"
+    # 2026-11-15, TASK-36952.3.1: 147 -> 166, the 19 find / Escape label /
+    # viewer-back / Console handoff bodies moved off the screen.
+    assert len(_MEDIA_CLUSTER_METHOD_NAMES) == 166, (
+        f"expected 166 moved names, got {len(_MEDIA_CLUSTER_METHOD_NAMES)}"
     )
     assert len(set(_MEDIA_CLUSTER_METHOD_NAMES)) == len(_MEDIA_CLUSTER_METHOD_NAMES), (
         "duplicate entries in _MEDIA_CLUSTER_METHOD_NAMES"
@@ -869,8 +907,10 @@ def test_media_controller_binds_every_name_its_moved_bodies_use() -> None:
         LibraryMediaController,
     )
 
-    assert len(_MEDIA_CONTROLLER_BOUND_NAMES) == 92, (
-        f"expected 92 bound names, got {len(_MEDIA_CONTROLLER_BOUND_NAMES)}"
+    # 2026-11-15, TASK-36952.3.1: 92 -> 93. Five late-binding callbacks became
+    # moved methods (-5); `notify` and five shell helpers were bound (+6).
+    assert len(_MEDIA_CONTROLLER_BOUND_NAMES) == 93, (
+        f"expected 93 bound names, got {len(_MEDIA_CONTROLLER_BOUND_NAMES)}"
     )
     assert len(set(_MEDIA_CONTROLLER_BOUND_NAMES)) == len(
         _MEDIA_CONTROLLER_BOUND_NAMES
