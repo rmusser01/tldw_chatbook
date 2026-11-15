@@ -3045,14 +3045,6 @@ def _phase_prepare(state: LoopState) -> RunOutcome | object | None:
 def _phase_prepare_hooks(state: LoopState) -> None:
     """Re-check scope, then let hooks prepare (or refuse) each call."""
     deps = state.deps
-    # P5 Task 4: optional pre-dispatch batch review, called ONCE with
-    # the full batch about to be dispatched below (whichever produced
-    # it -- native multi-call or the single fence-parsed call) and
-    # BEFORE any of them is invoked. `deps.review_tool_calls is None`
-    # (the default) short-circuits to an empty verdicts map, which
-    # makes every `.get(name, "proceed")` lookup below resolve to
-    # "proceed" -- the exact same dispatch path as before this hook
-    # existed, so absent-hook behavior stays byte-identical.
     hook_preparation_refusals = state.preparation_refusals
 
     for call in state.calls:
@@ -3210,6 +3202,14 @@ def _phase_review(state: LoopState) -> RunOutcome | None:
         and review_call.call_id not in guard_refusals
     ]
 
+    # P5 Task 4: optional pre-dispatch batch review, called ONCE with
+    # the full batch about to be dispatched below (whichever produced
+    # it -- native multi-call or the single fence-parsed call) and
+    # BEFORE any of them is invoked. `deps.review_tool_calls is None`
+    # (the default) short-circuits to an empty verdicts map, which
+    # makes every `.get(name, "proceed")` lookup below resolve to
+    # "proceed" -- the exact same dispatch path as before this hook
+    # existed, so absent-hook behavior stays byte-identical.
     verdicts: dict[str, ToolReviewValue] = {}
     review_hook_failed = False
     if deps.review_tool_calls is not None and review_required_calls:
