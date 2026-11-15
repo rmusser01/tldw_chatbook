@@ -259,3 +259,32 @@ def test_native_geometry_unicode_paint_resize_and_gc_policy_are_unchanged():
     native = json.loads(_child(_PAINT))
     adapted = json.loads(_child("import tldw_chatbook.Widgets\n" + _PAINT))
     assert adapted == native
+
+
+def test_a_failing_adapter_installer_never_stops_the_ui_importing(monkeypatch, caplog):
+    """A raising installer (e.g. no Textual dist-info) logs and the rest still run."""
+    import importlib.metadata
+
+    import tldw_chatbook
+
+    attempted = []
+
+    def missing_metadata():
+        attempted.append("strip")
+        raise importlib.metadata.PackageNotFoundError("textual")
+
+    monkeypatch.setattr(tldw_chatbook, "install_lazy_strip_caches", missing_metadata)
+    monkeypatch.setattr(
+        tldw_chatbook,
+        "install_owner_free_style_colors",
+        lambda: attempted.append("colors") or True,
+    )
+    monkeypatch.setattr(
+        tldw_chatbook,
+        "install_owner_local_box_models",
+        lambda: attempted.append("box") or True,
+    )
+    with caplog.at_level("WARNING", logger="tldw_chatbook"):
+        _install_textual_compatibility_shims()
+    assert attempted == ["strip", "colors", "box"]
+    assert "missing_metadata not installed: PackageNotFoundError" in caplog.text

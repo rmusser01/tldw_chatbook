@@ -226,7 +226,14 @@ def install_owner_free_style_colors() -> bool:
         or code.co_argcount != 3
         or code.co_varnames[:3] != ("cls", "base_background", "background")
         or any(
-            instruction.opname.startswith("LOAD_") and instruction.argval == "cls"
+            instruction.opname.startswith("LOAD_")
+            # 3.13 superinstructions (LOAD_FAST_LOAD_FAST) carry a name tuple.
+            and "cls"
+            in (
+                instruction.argval
+                if isinstance(instruction.argval, tuple)
+                else (instruction.argval,)
+            )
             for instruction in get_instructions(compute)
         )
         or not callable(parameters)
@@ -391,6 +398,21 @@ def _install_textual_compatibility_shims() -> None:
             lambda self, value: self.update(value),
         )
     _install_zero_width_fold_guard()
+    # Optional allocation adapters: any failure (e.g. missing Textual
+    # dist-info metadata in a packaged build) leaves native Textual in place.
+    for install in (
+        install_lazy_strip_caches,
+        install_owner_free_style_colors,
+        install_owner_local_box_models,
+    ):
+        try:
+            install()
+        except Exception as error:  # noqa: BLE001 - an optimisation must never stop the UI importing.
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "%s not installed: %s", install.__name__, type(error).__name__
+            )
 
 
 #: Marks the guarded ``Content._wrap_and_format`` (idempotent, detectable).
@@ -459,12 +481,6 @@ def _install_zero_width_fold_guard() -> None:
     setattr(_wrap_and_format, ZERO_WIDTH_FOLD_GUARD, True)
     _wrap_and_format.__wrapped__ = upstream  # type: ignore[attr-defined]
     Content._wrap_and_format = _wrap_and_format  # type: ignore[method-assign]
-
-    install_lazy_strip_caches()
-
-    install_owner_free_style_colors()
-
-    install_owner_local_box_models()
 
 
 __version__ = "0.2.3"
