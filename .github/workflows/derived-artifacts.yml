@@ -1319,7 +1319,7 @@ jobs:
     #
     # TASK-39114 appends the private-SQLite registry and inventory files, red
     # on no required lane before. Tests/DB keeps the bootstrap profile, so they
-    # run last (TASK-32873); with them the step took 5-8 min locally at load
+    # run after every sandboxed target (TASK-32873); with them the step took 5-8 min locally at load
     # 32-52. The inventory's response-rule node also runs in console-p0-gate,
     # so the exclusive recovered-suites and Architecture guard jobs cannot
     # take the file.

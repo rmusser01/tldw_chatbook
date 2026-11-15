@@ -523,7 +523,7 @@ ARCH_REVIEW_TARGETS = (
     "Tests/test_config_load_settings_table_guard.py",
     "Tests/Performance/test_boot_css_byte_budget.py",
     "Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet",
-    # Phase 3 of the program, sandboxed: before the bootstrap-profile files.
+    # Phase 3 of the program, sandboxed: before the TASK-39114 files.
     # TASK-36953.1
     "Tests/Architecture/test_server_service_client_protocols.py",
     # TASK-36947.6
