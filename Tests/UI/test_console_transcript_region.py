@@ -69,8 +69,13 @@ from tldw_chatbook.Widgets.Console import (
     ConsoleTranscript,
     ConsoleTranscriptSurface,
 )
+from tldw_chatbook.Widgets.Console.console_message_more_menu import (
+    message_more_menus_on_screen,
+)
+from tldw_chatbook.Widgets.Console.console_selection import TextSelection
 from tldw_chatbook.Widgets.Console.console_selection_menu import (
     ConsoleSelectionQuoteRequested,
+    selection_menus_on_screen,
 )
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleMarkdownMessage
 from tldw_chatbook.Widgets.Console.console_transcript_input import transcript_callback
@@ -491,6 +496,87 @@ async def test_warm_swap_hides_outgoing_hit_targets_without_disabled_restyles(
             pass
         else:
             assert outgoing not in hit.ancestors_with_self
+
+
+async def _warm_two_chats(console, pilot):
+    """Leave chat A retained (hidden) behind a freshly projected chat B."""
+    store = console._ensure_console_chat_store()
+    first = store.ensure_session()
+    second = store.create_session(title="Other", activate=False)
+    store.append_message(first.id, role=ConsoleMessageRole.USER, content="First")
+    message = store.append_message(
+        second.id, role=ConsoleMessageRole.USER, content="Other"
+    )
+    await console._sync_native_console_transcript()
+    await pilot.pause()
+    surface = console.query_one(ConsoleTranscriptSurface)
+    first_view = surface.transcript
+    await console._session._activate_native_console_session(second.id)
+    await pilot.pause()
+    assert surface._previous[1] is first_view
+    return surface, first_view, surface.transcript, message
+
+
+async def _open_overlay(console, pilot, viewport, message_id, overlay):
+    """Open one screen-mounted per-message overlay owned by ``viewport``."""
+    if overlay == "more":
+        viewport.select_message(message_id)
+        await console._sync_native_console_transcript(force=True)
+        await pilot.pause()
+        viewport.query_one(
+            f"#console-message-action-more-{message_id}", Button
+        ).press()
+    else:
+        row = viewport.query_one(f"#console-message-{message_id}")
+        viewport.selection_manager.begin_drag(row.id, 0)
+        viewport.selection_manager.extend_drag(row.id, 3)
+        row.set_selection_range(0, 3)
+        viewport.selection_manager.finish_drag()
+        viewport.post_message(
+            ConsoleTranscript.TranscriptTextSelected(
+                selection=TextSelection(row.id, 0, 3),
+                screen_x=viewport.region.x + 4,
+                screen_y=viewport.region.y + 2,
+            )
+        )
+    await pilot.pause()
+    await pilot.pause()
+    return message_more_menus_on_screen(console) + selection_menus_on_screen(console)
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("overlay", ["more", "selection"])
+async def test_keyboard_switch_to_retained_chat_removes_message_overlays(overlay):
+    host = _ready_console_host()
+    async with host.run_test(size=(120, 50)) as pilot:
+        console = await _mounted_console(host, pilot)
+        surface, first_view, second_view, message = await _warm_two_chats(
+            console, pilot
+        )
+        assert await _open_overlay(console, pilot, second_view, message.id, overlay)
+
+        await pilot.press("alt+1")
+        for _ in range(4):
+            await pilot.pause()
+        assert surface.transcript is first_view
+        assert not second_view.is_attached
+        assert message_more_menus_on_screen(console) == []
+        assert selection_menus_on_screen(console) == []
+        await pilot.press("escape")
+        await pilot.click("#console-native-composer")
+        await pilot.pause()
+        assert message_more_menus_on_screen(console) == []
+        assert console.focused is console.query_one("#console-native-composer")
+
+
+def test_more_menu_focus_restore_ignores_a_detached_owner():
+    """A menu that outlives its viewport must not raise NoScreen on dismissal."""
+    from tldw_chatbook.Widgets.Console.console_message_more_menu import (
+        restore_message_action_focus,
+    )
+
+    restore_message_action_focus(ConsoleTranscript(), "console-message-action-more-x")
 
 
 @pytest.mark.asyncio

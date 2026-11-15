@@ -35,6 +35,7 @@ from tldw_chatbook.Utils.console_background_effects import (
 )
 from tldw_chatbook.Widgets.Console.console_message_more_menu import (
     message_more_menus_on_screen,
+    remove_message_more_menus,
 )
 from tldw_chatbook.Widgets.Console.console_selection_menu import (
     selection_menus_on_screen,
@@ -559,6 +560,7 @@ class ConsoleTranscriptSurface(Container):
 
     @staticmethod
     def _clear_transient_input(viewport: ConsoleTranscript) -> None:
+        remove_message_more_menus(viewport)
         if viewport.has_pending_selection_ui or selection_menus_on_screen(
             viewport.screen
         ):

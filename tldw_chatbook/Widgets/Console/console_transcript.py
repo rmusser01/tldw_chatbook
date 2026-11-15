@@ -132,6 +132,7 @@ from tldw_chatbook.Widgets.Console.console_message_more_menu import (
     dispatch_captured_message_action,
     message_more_menus_on_screen,
     open_message_more_menu,
+    remove_message_more_menus,
     restore_message_action_focus,
 )
 from tldw_chatbook.Widgets.Console.console_selection import (
@@ -3062,6 +3063,7 @@ class ConsoleTranscript(VerticalScroll):
         teardown still runs.
         """
         _LIVE_TRANSCRIPTS.discard(self)
+        remove_message_more_menus(self)  # screen-mounted: would outlive us
 
     def watch_has_focus(self, _has_focus: bool) -> None:
         """Restyle only the transcript itself when it gains or loses focus.

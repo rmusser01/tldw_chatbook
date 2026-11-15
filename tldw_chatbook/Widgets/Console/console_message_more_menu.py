@@ -57,9 +57,18 @@ def dismiss_message_more_menus(
         menu.dismiss_menu()
 
 
+def remove_message_more_menus(owner: Widget) -> None:
+    """Detach ``owner``'s overflow menus without restoring focus."""
+    for menu in list(_LIVE_MORE_MENUS):
+        if menu.owner is owner and menu.parent is not None and not menu._pruning:
+            menu.remove()
+
+
 def restore_message_action_focus(
     owner: ConsoleTranscript, opener_button_id: str
 ) -> None:
+    if not owner.is_attached:  # a retired viewport has no screen to focus
+        return
     if opener_button_id:
         for opener in owner.query(f"#{opener_button_id}"):
             if opener.is_mounted:
@@ -82,7 +91,7 @@ async def dismiss_message_more_menu(
     """Detach overflow UI and return its guarded deferred focus restore."""
     menus = (
         [menu for menu in message_more_menus_on_screen(owner.screen) if menu.owner is owner]
-        if owner.is_mounted else []
+        if owner.is_attached else []
     )
     opener_id = menus[0].opener_button_id if menus else ""
     restore = transcript_callback(owner, restore_message_action_focus, owner, opener_id)
