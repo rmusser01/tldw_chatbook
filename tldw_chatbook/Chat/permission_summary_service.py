@@ -152,8 +152,17 @@ def _summary_endpoint(config: Mapping, dispatch: str) -> Optional[str]:
         endpoint_refusal,
     )
 
+    from tldw_chatbook.Chat.console_provider_support import (
+        _EXECUTION_TO_READINESS_ALIASES,
+    )
+
     try:
-        settings = provider_settings_for_key(config.get("api_settings"), dispatch)
+        # TASK-41143: the provider's own table, as readiness and Console read
+        # it (Custom OpenAI API 2's endpoint is ``[api_settings.custom_2]``,
+        # not a table named after its handler).
+        settings = provider_settings_for_key(
+            config.get("api_settings"), _EXECUTION_TO_READINESS_ALIASES.get(dispatch, dispatch)
+        )
     except Exception:  # noqa: BLE001 -- a malformed table means no summary
         return None
     effective = (

@@ -3804,3 +3804,85 @@ def test_a_name_with_a_number_like_label_is_still_a_name(host):
         socket.inet_aton(host)
     assert canonical_endpoint_host(host) == host
     assert endpoint_refusal("vllm", f"http://{host}:8000/v1") == ""
+
+
+#: TASK-41143: Settings saves a custom slot's readiness key, and only the
+#: Console's alias table maps it onto the slot's chat handler.
+_CUSTOM_SLOTS = (
+    ("custom", "custom-openai-api", "http://127.0.0.1:1234/v1"),
+    ("custom_2", "custom-openai-api-2", "http://127.0.0.1:5678/v1"),
+)
+
+
+@pytest.mark.parametrize(("provider", "handler", "endpoint"), _CUSTOM_SLOTS)
+def test_permission_summaries_activate_on_a_ready_custom_slot(provider, handler, endpoint):
+    """TASK-41143: a Permission summaries provider saved as ``custom`` or
+    ``custom_2`` stayed off: ``chat_dispatch_name`` could not map it, and
+    nothing said why. With the slot's endpoint saved where Settings saves it,
+    the summary runs on the slot's handler and pins that endpoint."""
+    from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+    from tldw_chatbook.Library.ingest_analysis import chat_dispatch_name
+
+    api_settings = _merged({"api_settings": {provider: {"api_url": endpoint}}})["api_settings"]
+    assert get_provider_readiness(provider, {"api_settings": api_settings}, environ={}).ready
+
+    resolution, out, calls = _summary_calls(provider, api_settings)
+
+    assert chat_dispatch_name(provider) == handler
+    assert resolution.active is True
+    assert resolution.dispatch_name == handler
+    assert out == "ok"
+    assert [call["api_base_url"] for call in calls] == [endpoint]
+
+
+@pytest.mark.parametrize(("provider", "handler", "endpoint"), _CUSTOM_SLOTS)
+def test_ingest_analysis_resolves_a_custom_slot_to_its_handler(provider, handler, endpoint):
+    """TASK-41143: a ready ``[analysis_defaults] provider = "custom"`` was
+    refused as "not supported for ingest analysis"."""
+    from tldw_chatbook.Library.ingest_analysis import resolve_ingest_analysis_provider
+
+    config = _merged(
+        {
+            "analysis_defaults": {"provider": provider, "model": "m"},
+            "api_settings": {provider: {"api_url": endpoint}},
+        }
+    )
+
+    resolution = resolve_ingest_analysis_provider(config, environ={})
+
+    assert resolution.ready is True, resolution.short_reason
+    assert resolution.dispatch_name == handler
+
+
+@pytest.mark.parametrize(("provider", "handler", "endpoint"), _CUSTOM_SLOTS)
+def test_dreams_resolves_a_custom_slot_to_its_handler(provider, handler, endpoint, monkeypatch):
+    """TASK-41143: Dreams falls back to ``[chat_defaults] provider``, saved as
+    a readiness key, and raised "Dreams provider/model unavailable" for
+    ``custom`` and ``custom_2``."""
+    from tldw_chatbook.Dreams import story_service
+
+    captured: list[dict] = []
+    monkeypatch.setattr(
+        story_service,
+        "chat_api_call",
+        lambda **kwargs: captured.append(kwargs) or {"choices": [{"message": {"content": "ok"}}]},
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Dreams.settings.get_cli_setting",
+        lambda section, key, default=None: default,
+    )
+    monkeypatch.setattr(
+        story_service,
+        "load_cli_config_and_ensure_existence",
+        lambda **kw: _merged(
+            {
+                "chat_defaults": {"provider": provider, "model": "m"},
+                "api_settings": {provider: {"api_url": endpoint}},
+            }
+        ),
+    )
+
+    chat = story_service.resolve_dreams_chat()
+    chat(messages_payload=[{"role": "user", "content": "hi"}], streaming=False)
+
+    assert [call["api_endpoint"] for call in captured] == [handler]
