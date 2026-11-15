@@ -290,6 +290,8 @@ class CliTests(unittest.TestCase):
                     "250",
                     "--repeat",
                     "3",
+                    "--capture-buffer-frames",
+                    "4800",
                     "--ffplay",
                     "must-not-open",
                 ],
@@ -301,6 +303,7 @@ class CliTests(unittest.TestCase):
             receipt = json.loads((Path(scratch) / "qualification.json").read_text())
             self.assertEqual(receipt["tail_padding_ms"], 250)
             self.assertEqual(receipt["repeat"], 3)
+            self.assertEqual(receipt["capture_buffer_frames"], 4800)
             self.assertEqual(receipt["run_count"], 0)
             self.assertEqual(receipt["full_gate"], "unqualified")
 
@@ -310,6 +313,7 @@ class CliTests(unittest.TestCase):
             ("--tail-padding-ms", "-250"),
             ("--repeat", "0"),
             ("--repeat", "4"),
+            ("--capture-buffer-frames", "481"),
         ]:
             with (
                 self.subTest(option=option, value=value),
@@ -355,6 +359,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(receipt["fixture"].get("parser_result"), "pass")
             self.assertGreater(receipt["clock"]["resolution_s"], 0)
             self.assertEqual(receipt["run_count"], 0)
+            self.assertEqual(receipt["capture_buffer_frames"], 480)
             self.assertEqual(receipt["full_gate"], "unqualified")
             self.assertEqual(set(receipt["native_platforms"].values()), {"unqualified"})
             self.assertNotIn("executable", receipt)
@@ -552,6 +557,24 @@ class BookmarkTests(unittest.TestCase):
 
 
 class MatrixTests(unittest.TestCase):
+    def test_recorded_discontinuity_prevents_native_pass_despite_matching_edges(self):
+        run = {
+            "case": "near_eof_60ms",
+            "stop_after_launch_s": None,
+            "duration_s": 2.5,
+            "requested_start_s": 2.44,
+            "process_exit": "pass",
+            "endpoint_loopback": "pass",
+            "seek": "pass",
+            "tail_coverage": "pass",
+            "player_reaped": True,
+            "capture_reaped": True,
+            "diagnostics": {"worker": {"discontinuity_count": 1}},
+        }
+        self.assertEqual(native_result([run]), "unqualified")
+        run["diagnostics"]["worker"]["discontinuity_count"] = 0
+        self.assertEqual(native_result([run]), "pass")
+
     def test_unconfirmed_retirement_preserves_rows_and_aborts_all_later_launches(self):
         completed = []
         first = {"launched": True, "player_reaped": True, "capture_reaped": True}
@@ -666,7 +689,15 @@ class MatrixTests(unittest.TestCase):
         calls = []
 
         def capture_boundary(
-            executable, wav, source, *, offset, generation, stop_after, padded=False
+            executable,
+            wav,
+            source,
+            *,
+            offset,
+            generation,
+            stop_after,
+            padded=False,
+            capture_buffer_frames=480,
         ):
             calls.append(
                 (
@@ -675,6 +706,7 @@ class MatrixTests(unittest.TestCase):
                     hashlib.sha256(wav.read_bytes()).hexdigest(),
                     offset,
                     stop_after,
+                    capture_buffer_frames,
                 )
             )
             return {
@@ -696,9 +728,14 @@ class MatrixTests(unittest.TestCase):
             patch("qualification.run_case", side_effect=capture_boundary),
         ):
             runs = run_matrix(
-                Path("never-executed"), Path(scratch), tail_padding_ms=250, repeat=3
+                Path("never-executed"),
+                Path(scratch),
+                tail_padding_ms=250,
+                repeat=3,
+                capture_buffer_frames=4800,
             )
         self.assertEqual(len(calls), 21)
+        self.assertEqual({call[5] for call in calls}, {4800})
         self.assertEqual(len(runs), 21)
         for index in (5, 12, 19):
             stopped, resumed = calls[index : index + 2]
