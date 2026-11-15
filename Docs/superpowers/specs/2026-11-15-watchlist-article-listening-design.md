@@ -179,7 +179,7 @@ Saved excerpts and WAVs are private profile data. Existing TTS consent, readines
 
 ## ADR check
 
-A new canonical ADR is required before implementation because the change introduces durable queue state, audio lifecycle, and a controlled playback contract. Allocate its number during planning to avoid a concurrent-ID collision. Link it from the approved design, implementation plan, and Backlog tasks.
+[ADR-366](../../../backlog/decisions/366-watchlist-article-listening-and-controlled-playback.md) records the durable queue state, audio lifecycle, controlled playback contract and provisional ffplay gate. The [implementation plan](../plans/2026-11-15-watchlist-article-listening.md) maps the work to TASK-41176 through TASK-41182, beginning with native playback qualification.
 
 Existing governing decisions include [ADR-029](../../../backlog/decisions/029-local-private-data-boundary.md), [ADR-033](../../../backlog/decisions/033-application-session-state-ownership.md), [ADR-040](../../../backlog/decisions/040-profile-owned-state-and-shared-asset-paths.md), [ADR-023](../../../backlog/decisions/023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md), and [ADR-304](../../../backlog/decisions/304-global-and-studio-tts-settings-ownership.md).
 
