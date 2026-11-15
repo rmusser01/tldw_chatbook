@@ -326,11 +326,22 @@ async def test_character_mount_loads_groups_without_duplicate_cold_resume_worker
     monkeypatch.setattr(chat_screen_module.ChatScreen, "run_worker", run_worker)
     async with make_console_pilot(size=(120, 50)) as pilot:
         screen = pilot.app.screen
+
+        async def settled_groups() -> int:
+            # sync_state recomposes on a spawned task; a state published just
+            # before the poll wakes is not in the DOM yet (flaky on dev too).
+            widget = screen.query_one(ConsoleCharacterContext)
+            for _ in range(40):
+                if not widget._render_tasks:
+                    break
+                await pilot.pause(0.05)
+            return len(screen.query(".console-character-group"))
+
         for _ in range(40):
             if screen._character_context.state.groups:
                 break
             await pilot.pause(0.05)
-        assert len(screen.query(".console-character-group")) == 4
+        assert await settled_groups() == 4
         assert screen._character_context.state.scope_fingerprint.data_revision == 7
         assert refresh_workers == []
         assert recent_loads == [7]
@@ -342,7 +353,7 @@ async def test_character_mount_loads_groups_without_duplicate_cold_resume_worker
                 break
         assert len(refresh_workers) == 1
         assert screen._character_context.state.scope_fingerprint.data_revision == 8
-        assert len(screen.query(".console-character-group")) == 4
+        assert await settled_groups() == 4
         assert recent_loads == [7, 8]
 
 
@@ -1139,7 +1150,8 @@ async def test_character_scope_retires_cold_handles_without_wal_truncation(
         monkeypatch.setattr(db, "get_connection", observe_connection)
         fingerprint = await _controller(database_accessor=lambda: db)._fingerprint()
         assert (fingerprint.data_authority_id, fingerprint.data_revision) == expected
-        assert len(connections) == 2
+        # Dev reads the before/after scope pair on one cold handle (TASK-35961).
+        assert len(connections) == 1
         assert db.registered_connection_count() == 1
         assert main_connection.execute("SELECT 1").fetchone()[0] == 1
         assert not any(
