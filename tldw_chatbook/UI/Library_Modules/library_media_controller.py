@@ -370,8 +370,8 @@ moved bodies for every ``self.<attr>`` load/store AND every
 state fields and the movers themselves -- **90 names** -- and then adding
 **2 more the walk cannot see**, for **92**, every one pinned in
 ``test_media_controller_binds_every_name_its_moved_bodies_use``. That pin
-holds **92** since TASK-36952.3.2 (measured: 16 framework services, the 19
-state accessors of groups (b)/(b')/(c), 29 group-(a) helpers and 28 group-(e)
+holds **93** since TASK-36952.3.3 (measured: 17 framework services, the 21
+state accessors of groups (b)/(b')/(c), 33 group-(a) helpers and 22 group-(e)
 callables):
 
 1. **Framework services** (``app``, ``app_instance``, ``call_after_refresh``,
@@ -383,13 +383,13 @@ callables):
    for the reason the skills series established: six movers reach it, and an
    unbound ``getattr(self, "focused", None)`` returns its default silently,
    forever.
-2. **Everything else** is a NAMED constructor dependency: (a) 29 general
+2. **Everything else** is a NAMED constructor dependency: (a) 33 general
    Library-wide shell helpers a moved body calls with explicit arguments (24
-   at wave 7; TASK-36952.3.1 added five) --
+   at wave 7; TASK-36952.3.1 added five, TASK-36952.3.3 four) --
    including the five review-set entry points the One Home Rule kept on the
    screen (``_active_review_set_banner``, ``_review_dismiss_receipt_name``,
    ``_review_selected_worker``, ``_review_set_picker_worker``,
-   ``_review_these_worker``, ``_walk_active_review_set``); (b) 12 shared
+   ``_review_these_worker``, ``_walk_active_review_set``); (b) 14 shared
    shell state accessors this cluster READS and never writes; (b') **5 it
    also WRITES** (``_library_selected_row_id``,
    ``_library_notes_programmatic_focus_target``,
@@ -400,10 +400,10 @@ callables):
    prior-extracted media controller instances task 1 kept off
    ``LibraryMediaState`` (``_library_media_browse_controller``,
    ``_library_media_trash_browse_controller`` -- 11 movers each, the
-   cluster's most-referenced names); (e) 35 named late-binding callables for
+   cluster's most-referenced names); (e) 28 named late-binding callables for
    the exclusions above that a MOVER still calls internally (44 before
-   TASK-36952.3.1 moved seven of their bodies here and TASK-36952.3.2 two
-   more; 28 are pinned) -- each a
+   TASK-36952.3.1 moved seven of their bodies here, TASK-36952.3.2 two
+   more and TASK-36952.3.3 seven more; 22 are pinned) -- each a
    ``lambda`` re-reading ``screen.<name>`` on every invocation, at CALL time,
    which is exactly why every bypass fixture named above keeps working
    unmodified after this move.
