@@ -349,3 +349,10 @@ a529dbd3ed0b13502b8d100e3053e0bea5baa119
 # into LibraryMediaController with no token edit. Test edits are
 # receiver-only, AST-proven against the parent.
 632cf53183e1be001a67cd18a67ee710cd76f314
+
+# TASK-36952.3.3, 2026-11-15 -- media body move slice 3 of 8. Twenty-three
+# LibraryScreen media bodies (select mode, the row press, the browse request
+# and sync, the type filter, take-note) moved byte-for-byte into
+# LibraryMediaController with no token edit. Test edits are receiver-only,
+# AST-proven against the parent.
+ac07a6f2a14b13007bcbc43e59db049ec1c0808f
