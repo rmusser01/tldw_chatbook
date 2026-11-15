@@ -146,6 +146,8 @@ async def test_partial_create_keeps_the_committed_workspace_clear(
             == "Keep workspace"
         )
         error = modal.query_one("#workspace-create-error", Static)
+        # TASK-41142: the binding error already names the folder.
+        assert str(error.renderable).count(str(folder.resolve())) == 1
         _assert_painted(modal, error)
         _assert_painted(modal, host.focused)
         if recovery == "retry":
