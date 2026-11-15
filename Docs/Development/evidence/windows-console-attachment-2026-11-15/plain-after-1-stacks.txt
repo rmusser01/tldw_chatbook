@@ -1,0 +1,279 @@
+Thread 0x00009438 (most recent call first):
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 90 in _worker
+  File "C:\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x0000b7bc (most recent call first):
+  File "C:\Python312\Lib\threading.py", line 355 in wait
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Backup_Recovery\storage_admission.py", line 326 in initializing
+  File "C:\Python312\Lib\contextlib.py", line 137 in __enter__
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Backup_Recovery\storage_admission.py", line 1519 in _acquire_storage
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Backup_Recovery\storage_admission.py", line 1473 in acquire_storage
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\DB\private_sqlite.py", line 1527 in admitted
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\DB\private_sqlite.py", line 1938 in connect_private_sqlite
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\DB\base_db.py", line 1167 in _get_connection
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Scheduling\db\scheduled_tasks_db.py", line 263 in _get_connection
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Backup_Recovery\participants.py", line 493 in accessed
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Scheduling\db\scheduled_tasks_db.py", line 381 in transaction
+  File "C:\Python312\Lib\contextlib.py", line 137 in __enter__
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Backup_Recovery\participants.py", line 361 in counted
+  File "C:\Python312\Lib\contextlib.py", line 137 in __enter__
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Scheduling\db\scheduled_tasks_db.py", line 1133 in fail_interrupted_task_runs
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 59 in run
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 93 in _worker
+  File "C:\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x00005094 (most recent call first):
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 90 in _worker
+  File "C:\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x0000ba58 (most recent call first):
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 90 in _worker
+  File "C:\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x0000a4c0 (most recent call first):
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 90 in _worker
+  File "C:\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x0001240c (most recent call first):
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 59 in run
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 93 in _worker
+  File "C:\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x0001243c (most recent call first):
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 59 in run
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 93 in _worker
+  File "C:\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x0000e274 (most recent call first):
+  File "C:\Python312\Lib\threading.py", line 355 in wait
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Backup_Recovery\storage_admission.py", line 326 in initializing
+  File "C:\Python312\Lib\contextlib.py", line 137 in __enter__
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Backup_Recovery\storage_admission.py", line 1519 in _acquire_storage
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Backup_Recovery\storage_admission.py", line 1473 in acquire_storage
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Backup_Recovery\storage_admission.py", line 243 in _repository_operation
+  File "C:\Python312\Lib\contextlib.py", line 137 in __enter__
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Backup_Recovery\participants.py", line 335 in core_operation
+  File "C:\Python312\Lib\contextlib.py", line 137 in __enter__
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\DB\base_db.py", line 174 in invoke
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 59 in run
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 93 in _worker
+  File "C:\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x00004a58 (most recent call first):
+  File "C:\Python312\Lib\threading.py", line 355 in wait
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Backup_Recovery\storage_admission.py", line 326 in initializing
+  File "C:\Python312\Lib\contextlib.py", line 137 in __enter__
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Backup_Recovery\storage_admission.py", line 1519 in _acquire_storage
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Backup_Recovery\storage_admission.py", line 1473 in acquire_storage
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Backup_Recovery\persona_visual_participants.py", line 433 in files
+  File "C:\Python312\Lib\contextlib.py", line 137 in __enter__
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Persona_Visual\assets.py", line 242 in _read_profile_file
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Persona_Visual\assets.py", line 134 in load_persona_visual_asset
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Persona_Buddy\library.py", line 445 in ensure_builtin
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\app_service_wiring.py", line 1719 in ensure_actor_pack_recovery
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\app_service_wiring.py", line 1601 in call
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\app_service_wiring.py", line 1607 in invoke
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Backup_Recovery\runtime_producer_lifetime.py", line 263 in invoke
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 59 in run
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 93 in _worker
+  File "C:\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x00010c4c (most recent call first):
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 90 in _worker
+  File "C:\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x000112c8 (most recent call first):
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 90 in _worker
+  File "C:\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x00012c10 (most recent call first):
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 90 in _worker
+  File "C:\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x00005814 (most recent call first):
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 90 in _worker
+  File "C:\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x0000a344 (most recent call first):
+  File "C:\Python312\Lib\threading.py", line 355 in wait
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Backup_Recovery\storage_admission.py", line 326 in initializing
+  File "C:\Python312\Lib\contextlib.py", line 137 in __enter__
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Backup_Recovery\storage_admission.py", line 1519 in _acquire_storage
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Backup_Recovery\storage_admission.py", line 1473 in acquire_storage
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Backup_Recovery\raw_participants.py", line 1053 in scope
+  File "C:\Python312\Lib\contextlib.py", line 137 in __enter__
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Backup_Recovery\config_participants.py", line 468 in operation
+  File "C:\Python312\Lib\contextlib.py", line 137 in __enter__
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Backup_Recovery\config_participants.py", line 537 in wrapped
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\config.py", line 8128 in get_chachanotes_db_path
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Utils\db_status_manager.py", line 198 in _get_db_size
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Utils\db_status_manager.py", line 154 in _collect_db_sizes
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 59 in run
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 93 in _worker
+  File "C:\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x00012860 (most recent call first):
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 90 in _worker
+  File "C:\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x0000f0a0 (most recent call first):
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Utils\windows_files.py", line 672 in _parent
+  File "C:\Python312\Lib\contextlib.py", line 137 in __enter__
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Utils\windows_files.py", line 780 in stat
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Backup_Recovery\storage_admission.py", line 226 in _repository_operation
+  File "C:\Python312\Lib\contextlib.py", line 137 in __enter__
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Backup_Recovery\participants.py", line 335 in core_operation
+  File "C:\Python312\Lib\contextlib.py", line 137 in __enter__
+  File "C:\Python312\Lib\contextlib.py", line 526 in enter_context
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Chat\console_context_repository.py", line 1414 in native
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Backup_Recovery\runtime_producer_lifetime.py", line 263 in invoke
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 59 in run
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 93 in _worker
+  File "C:\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x00012f00 (most recent call first):
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 90 in _worker
+  File "C:\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x0000f7f8 (most recent call first):
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Utils\windows_files.py", line 466 in security
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Utils\windows_files.py", line 926 in _stat_handle
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Utils\windows_files.py", line 774 in fstat
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Backup_Recovery\native_files.py", line 32 in pinned_directory
+  File "C:\Python312\Lib\contextlib.py", line 137 in __enter__
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Backup_Recovery\control_records.py", line 146 in _establish_ancestry
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Backup_Recovery\control_records.py", line 181 in admission_authority
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Backup_Recovery\storage_admission.py", line 1548 in _acquire_storage
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Backup_Recovery\storage_admission.py", line 1473 in acquire_storage
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Backup_Recovery\storage_admission.py", line 243 in _repository_operation
+  File "C:\Python312\Lib\contextlib.py", line 137 in __enter__
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Backup_Recovery\participants.py", line 335 in core_operation
+  File "C:\Python312\Lib\contextlib.py", line 137 in __enter__
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Backup_Recovery\participants.py", line 360 in counted
+  File "C:\Python312\Lib\contextlib.py", line 137 in __enter__
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Library\collections_offline_store.py", line 454 in _file_rows_after
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Library\collections_offline_store.py", line 272 in _reconcile_batch_locked
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Library\collections_offline_store.py", line 267 in reconcile_batch
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\app_collections_wiring.py", line 955 in reconcile_in_worker
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Backup_Recovery\runtime_producer_lifetime.py", line 263 in invoke
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 59 in run
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 93 in _worker
+  File "C:\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x00010664 (most recent call first):
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 90 in _worker
+  File "C:\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x00012cc4 (most recent call first):
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 90 in _worker
+  File "C:\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x0000f560 (most recent call first):
+  File "C:\Python312\Lib\threading.py", line 359 in wait
+  File "C:\Python312\Lib\queue.py", line 180 in get
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Utils\ui_responsiveness.py", line 131 in _drain_stalls
+  File "C:\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x0001135c (most recent call first):
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 90 in _worker
+  File "C:\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x0000ebc4 (most recent call first):
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 90 in _worker
+  File "C:\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x000121dc (most recent call first):
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Utils\ui_responsiveness.py", line 318 in _watch_loop
+  File "C:\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x00006570 (most recent call first):
+  File "C:\Python312\Lib\threading.py", line 355 in wait
+  File "C:\Python312\Lib\threading.py", line 655 in wait
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Backup_Recovery\storage_admission.py", line 607 in _run
+  File "C:\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x0000ccc0 (most recent call first):
+  File "C:\Python312\Lib\threading.py", line 359 in wait
+  File "C:\Python312\Lib\threading.py", line 655 in wait
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\Docs\Development\evidence\windows-console-attachment-2026-11-15\probe.py", line 126 in sample_main
+  File "C:\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Current thread 0x00012ef4 (most recent call first):
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\Docs\Development\evidence\windows-console-attachment-2026-11-15\probe.py", line 100 in periodic_tracebacks
+  File "C:\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x0000d604 (most recent call first):
+  File "<frozen importlib._bootstrap_external>", line 147 in _path_stat
+  File "<frozen importlib._bootstrap_external>", line 1605 in find_spec
+  File "<frozen importlib._bootstrap_external>", line 1506 in _get_spec
+  File "<frozen importlib._bootstrap_external>", line 1532 in find_spec
+  File "<frozen importlib._bootstrap>", line 1262 in _find_spec
+  File "<frozen importlib._bootstrap>", line 1322 in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 1360 in _find_and_load
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\UI\Screens\chat_screen.py", line 9244 in _archive_recovery_view
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\UI\Screens\chat_screen.py", line 17797 in _sync_native_console_chat_ui
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\worker.py", line 339 in _run_async
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\worker.py", line 354 in run
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\worker.py", line 370 in _run
+  File "C:\Python312\Lib\asyncio\events.py", line 88 in _run
+  File "C:\Python312\Lib\asyncio\base_events.py", line 1999 in _run_once
+  File "C:\Python312\Lib\asyncio\base_events.py", line 645 in run_forever
+  File "C:\Python312\Lib\asyncio\windows_events.py", line 322 in run_forever
+  File "C:\Python312\Lib\asyncio\base_events.py", line 678 in run_until_complete
+  File "C:\Python312\Lib\asyncio\runners.py", line 118 in run
+  File "C:\Python312\Lib\asyncio\runners.py", line 195 in run
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\Docs\Development\evidence\windows-console-attachment-2026-11-15\probe.py", line 339 in <module>

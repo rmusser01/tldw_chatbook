@@ -97,7 +97,7 @@ __all__ = ["install_stylesheet_fastpath", "is_installed"]
 _MARKER = "_tldw_ordered_candidate_fastpath"
 
 #: Per-stylesheet cache: ``(rules_map, {id(rule): position}, {id(rule):
-#: requirements}, bounded candidate LRU)``. Keyed on the ``rules_map`` *object*,
+#: requirements}, bounded candidate LRU, prehashed subject buckets)``. Keyed on the ``rules_map`` *object*,
 #: of which we hold a
 #: strong reference: Textual sets ``_rules_map = None`` on every path that
 #: changes ``_rules`` (``parse``, ``reparse``, ``add_source``), so a surviving
@@ -177,16 +177,20 @@ def _ordered_candidates(stylesheet: Stylesheet, node: Any) -> list | None:
     rules_map = stylesheet.rules_map
 
     cached = getattr(stylesheet, _CACHE_ATTR, None)
-    if cached is not None and cached[0] is rules_map:
+    if cached is not None and len(cached) == 5 and cached[0] is rules_map:
         index = cached[1]
         requirements = cached[2]
         candidate_cache = cached[3]
+        rule_buckets = cached[4]
     else:
         index = {id(rule): position for position, rule in enumerate(rules)}
         requirements = {}
         candidate_cache = OrderedDict()
+        rule_buckets = {}
         setattr(
-            stylesheet, _CACHE_ATTR, (rules_map, index, requirements, candidate_cache)
+            stylesheet,
+            _CACHE_ATTR,
+            (rules_map, index, requirements, candidate_cache, rule_buckets),
         )
 
     # Cache only candidate selection, never resolved styles. Live selector and
@@ -199,9 +203,15 @@ def _ordered_candidates(stylesheet: Stylesheet, node: Any) -> list | None:
         candidate_cache.move_to_end(key)
         return candidate_cache[key]
 
-    candidates = {
-        rule for name in rules_map.keys() & selector_names for rule in rules_map[name]
-    }
+    # Hash each parsed subject bucket once. Native set unions reuse its hashes
+    # across different live ancestor shapes; no node or match result is stored.
+    buckets = []
+    for name in rules_map.keys() & selector_names:
+        bucket = rule_buckets.get(name)
+        if bucket is None:
+            bucket = rule_buckets[name] = set(rules_map[name])
+        buckets.append(bucket)
+    candidates = set().union(*buckets)
 
     # Each comma alternative must be statically impossible before dropping the
     # rule. An unrelated bare subject in one alternative must not keep a scoped

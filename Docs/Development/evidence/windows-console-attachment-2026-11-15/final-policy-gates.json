@@ -1,0 +1,26 @@
+{
+  "head": "7dbeff56aba6032f43aba2f4bbab803d3f133471",
+  "source_diff_sha256": "0edeb8259d44f0398d15f872f6dfb489c901aebde4a10b0ffce7a193824e5db9",
+  "private_child_node": "Tests/App/test_boot_worker_stagger_policy.py::test_shutdown_closes_the_gate_instead_of_starting_more_work",
+  "command": [
+    "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-X",
+    "utf8",
+    "-m",
+    "Tests.windows_private_fixture_runner",
+    "Tests/App/test_boot_worker_stagger_policy.py::test_shutdown_closes_the_gate_instead_of_starting_more_work",
+    "Tests/Architecture/test_module_size_ratchet.py",
+    "Tests/CI/test_console_p0_regression_gate.py",
+    "-q",
+    "-o",
+    "addopts=",
+    "--timeout=180",
+    "-p",
+    "pytest_asyncio.plugin",
+    "-p",
+    "pytest_timeout"
+  ],
+  "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-c2990f158207",
+  "exit_code": 0,
+  "seconds": 193.54699999999139
+}

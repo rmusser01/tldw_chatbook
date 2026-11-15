@@ -8,6 +8,7 @@ This document describes the `TldwCli` Textual application: startup phases, the s
 | --- | --- |
 | `tldw_chatbook/app.py` | `TldwCli` — composition root (ADR-036): config load, service graphs, navigation dispatch, global bindings, boot worker fleet, quit flow |
 | `tldw_chatbook/app_startup.py` | Delegated startup timers and footer wiring; app methods retain named dependency and callback routes |
+| `tldw_chatbook/app_boot_workers.py` | Finite App-owned subscriptions admission and backfill invocation; preserves boot policy and fresh effect-time admission |
 | `tldw_chatbook/app_served.py` | Deferred served control/approval relay wiring; App keeps task, publisher and client ownership plus live dependency lookups (ADR-236) |
 | `tldw_chatbook/Constants.py` | `TAB_*` route ids, `TAB_DISPLAY_LABELS`, navigation-context contract keys, subscription/splash constants |
 | `tldw_chatbook/UI/Navigation/shell_destinations.py` | `ShellDestination` dataclass, `SHELL_DESTINATION_ORDER`, `SHELL_DESTINATION_SHORTCUTS`, `resolve_shell_route()` |
@@ -87,6 +88,8 @@ The shell's routing message is `NavigateToScreen`. Beyond that, the codebase's e
 Worker completions funnel through one hook: `on_worker_state_changed` releases staggered-boot slots, persists `worker_failed` diagnostics (ADR-029), then delegates to `WorkerHandlerRegistry` (`Event_Handlers/worker_handlers/`). Only `Worker.name` may be persisted — `Worker.description` embeds worker arguments verbatim (prompts, API keys).
 
 ## Workers and boot fleet
+
+Subscriptions FTS startup runs its complete informational `execution_allowed` check and backfill callback off the event loop in one finite invocation (`app_boot_workers.py`, TASK-35679.2). It uses the App's existing `_actor_pack_recovery_reads` owner; both shutdown entries drain that owner before workflow/database teardown. The invocation starts with a fresh Context and the actual Textual Worker. The backfill retains its independent fresh `execution_scope`. Local-pause admission errors requeue through the existing boot gate; body failures keep their fatal worker policy. Slot release requires the exact registered Worker, so a stale terminal event cannot release a replacement's slot. No admission result or native lease crosses an await.
 
 Conventions: `run_worker(coro, group="<kebab-group>", exclusive=True|False, exit_on_error=False)`; `exit_on_error=False` on anything that must not kill the app; `@work(thread=True)` for blocking work with `call_from_thread` for UI updates.
 

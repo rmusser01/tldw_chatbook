@@ -1,0 +1,12 @@
+[
+  {
+    "path": "tldw_chatbook/app.py",
+    "diagnostic_is_baseline_CRLF": true,
+    "plain_is_baseline_blob": true
+  },
+  {
+    "path": "tldw_chatbook/app_service_wiring.py",
+    "diagnostic_is_baseline_CRLF": true,
+    "plain_is_baseline_blob": true
+  }
+]

@@ -1023,6 +1023,9 @@ jobs:
       # bootstrap_profile suites retain their own invocation and now guest.
       - name: Run the admission-sensitive Console P0 regression tests
         if: ${{ !cancelled() && matrix.profile == 'admission-sensitive' }}
+        # TASK-35679.2: all 11 finite subscription-boot cases use the same
+        # minimal-App/native-child shape as the Actor Pack lifetime controls.
+        # Runner cost is not yet measured; existing job/pytest bounds stay fixed.
         run: |
           pytest \
             Tests/UI/test_console_terminal_return_input.py \
@@ -1074,6 +1077,8 @@ jobs:
             "Tests/Chat/test_console_native_commit.py::test_owned_native_commit_drains_original_callback_and_connection_after_global_cancel" \
             "Tests/Chat/test_console_shared_tool_cache.py::test_stock_cold_adopts_once_and_warm_reuses_without_payload_decode" \
             "Tests/Chat/test_console_context_presentation_current.py::test_context_display_retains_exact_native_handle_through_cancel[True]" \
+            Tests/Chat/test_console_context_close_lifetime.py \
+            Tests/Backup_Recovery/test_subscriptions_boot_physical_ownership.py \
             "Tests/UI/test_console_hook_refresh_lifetime.py::test_cancelled_visit_drains_actual_native_custody[True]" \
             "Tests/UI/test_console_received_intent_feedback.py::test_actual_send_receives_intent_before_original_configuration_read" \
             "Tests/UI/test_console_browser_current_native_lifetime.py::test_current_host_shutdown_drains_original_browser_callback[all_created-False]" \

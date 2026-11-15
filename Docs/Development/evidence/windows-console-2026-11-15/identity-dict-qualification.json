@@ -1,0 +1,9 @@
+{
+  "strict_byte_fidelity": false,
+  "baseline_difference": "tldw_chatbook/Utils/textual_css_fastpath.py",
+  "a1_sha256": "945b9a897bf9a22c467fa9b6cbd8da6e8e986a6f0a224a8036f47288e132bd15",
+  "a2_sha256": "58bffe0c337bfede204949ac98fc4cb2255fdbb94165fbd718e7325b56202bd3",
+  "git_blob_lf_sha256": "58bffe0c337bfede204949ac98fc4cb2255fdbb94165fbd718e7325b56202bd3",
+  "git_blob_crlf_sha256": "945b9a897bf9a22c467fa9b6cbd8da6e8e986a6f0a224a8036f47288e132bd15",
+  "conclusion": "First baseline differs only by line endings; strict paired comparison not accepted; identity dictionary rejected on isolated timing evidence."
+}

@@ -1,0 +1,29 @@
+{
+  "head": "cc6006fcf59328353004206bba8724c399216749",
+  "source_diff_sha256": "dcc6315e1c91d50fe8cf4c2675b11764121a8a16beab01cc0581a94db38f80ee",
+  "private_child_node": null,
+  "command": [
+    "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-X",
+    "utf8",
+    "-m",
+    "Tests.windows_private_fixture_runner",
+    "Tests/Performance/test_ui_ready_module_census.py::test_ui_ready_module_census_stays_at_the_pinned_size",
+    "Tests/Performance/test_boot_worker_census.py::test_boot_worker_and_thread_starts_stay_within_the_allowlist",
+    "Tests/UI/test_console_first_send_preimport.py::test_the_idle_pass_imports_the_first_send_modules",
+    "Tests/UI/test_console_first_send_preimport.py::test_the_idle_pass_warms_every_screen_route_before_the_first_send_modules",
+    "Tests/UI/test_console_first_send_preimport.py::test_the_send_guard_counts_a_module_resident_at_ui_ready_as_warm",
+    "Tests/UI/test_console_first_send_preimport.py::test_a_harness_send_imports_nothing_lazy_beyond_the_list",
+    "Tests/UI/test_console_runtime_ownership.py::test_runtime_owned_custody_tracks_only_lifetime_handles",
+    "Tests/UI/test_modal_wide_tier.py::test_every_modalscreen_class_is_tiered_or_explicitly_skipped",
+    "Tests/UI/test_modal_wide_tier.py::test_every_anchor_targets_real_code",
+    "Tests/UI/test_modal_wide_tier.py::test_every_wide_tier_rule_is_registered",
+    "-q",
+    "-o",
+    "addopts=",
+    "--timeout=180"
+  ],
+  "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-12b7b073f7c7",
+  "exit_code": 1,
+  "seconds": 499.4219999999914
+}

@@ -1,0 +1,20 @@
+{
+  "head": "cc6006fcf59328353004206bba8724c399216749",
+  "source_diff_sha256": "513c223795c2263de125590de82514edac6eb19b8003c9d8ff09cdacec807fc7",
+  "private_child_node": null,
+  "command": [
+    "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-X",
+    "utf8",
+    "-m",
+    "Tests.windows_private_fixture_runner",
+    "Tests/Chat/test_console_context_close_lifetime.py",
+    "-q",
+    "-o",
+    "addopts=",
+    "--timeout=60"
+  ],
+  "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-e5cff2ea777a",
+  "exit_code": 0,
+  "seconds": 14.437000000005355
+}

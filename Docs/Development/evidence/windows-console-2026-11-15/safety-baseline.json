@@ -1,0 +1,19 @@
+{
+  "baseline_revision": "cc6006fcf59328353004206bba8724c399216749",
+  "sha256": {
+    "tldw_chatbook/config.py": "af94eaa46253b135fe32db78c2456b764d69f278ab84d5327ca7d9532f4fa0d5",
+    "tldw_chatbook/Backup_Recovery/storage_admission.py": "41813e79843002d0d174a829ac959bdb977148fe7c356777f4b200808658442b",
+    "tldw_chatbook/Backup_Recovery/config_participants.py": "3a41f1141b1ae2a3b4316ba18f34571019b8e14d78a041e954dc87664bf84a76",
+    "tldw_chatbook/Backup_Recovery/raw_participants.py": "b043191aa860098b1f5ce48b848c3dc89ba47d9e5d845f700bc36423dacceeb5",
+    "tldw_chatbook/Backup_Recovery/native_files.py": "1f66157b68537e9558bb1a9d3075d8f9dfef92bc61d835796c79f2ad94cc65cb",
+    "tldw_chatbook/Backup_Recovery/control_records.py": "d2f3c472936b5cdbf7751cac480e027bdc02a3d149e6fdf57cb3e6bb190e4c81",
+    "tldw_chatbook/Chat/console_preparation_reads.py": "31ce4c0d3b6b02fda572257f11d2511a56ec5691658788ccf3dee5ceca94b400",
+    "tldw_chatbook/Chat/console_native_commit.py": "f8fe9261e3cc03aba5fd50580cb77bccb5226910630c91eeeaa05835f8a3fcd9",
+    "tldw_chatbook/Utils/windows_files.py": "3b908d245b25f8797816c28d18d138ebc37c74dc1ae6ca813e5af22fcabc66c9",
+    "tldw_chatbook/Chat/console_chat_controller.py": "b79d2793281e65e69be86e8d53ac19e8ed31d6455766d094886ba35c8e80ed4e",
+    "tldw_chatbook/Chat/console_context_policy.py": "78c979d78c58549d47f0c614f95bbe3e503dd1c404af0f7526c2cc0344bd3fda",
+    "tldw_chatbook/Chat/console_context_repository.py": "913471e103ad5b62ab5bd52404dba57e96ddb0f21547af92495757271db55da3",
+    "tldw_chatbook/UI/Console_Modules/config_sync.py": "0247414e062c7e9a56c4c75aedba4efae5cf75443a4a9dc61a74b4528474122d",
+    "tldw_chatbook/UI/Console_Modules/workspace.py": "61b1762234f855f822918f0c52069c326860316a9b9aba043257dc47a3e6863e"
+  }
+}

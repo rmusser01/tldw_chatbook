@@ -29,12 +29,15 @@ from __future__ import annotations
 import asyncio
 import inspect
 import os
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
-from textual.css.stylesheet import Stylesheet
 from textual.css.match import _check_selectors as upstream_match
+from textual.css.model import RuleSet
+from textual.css.stylesheet import Stylesheet
 
 from Tests.private_profile import private_profile_test
 
@@ -67,6 +70,10 @@ def test_upstream_apply_still_has_the_shape_the_fastpath_assumes() -> None:
     ``self.rules``. Both appear as literal source below; if a Textual upgrade
     changes either, this test fails and the delegation must be re-reviewed.
     """
+    assert (
+        inspect.getsource(RuleSet.__hash__).strip().splitlines()[-1].strip()
+        == "return id(self)"
+    ), "Candidate union relies on upstream rule identity; re-review if hashing changes."
     source = inspect.getsource(
         getattr(Stylesheet.apply, "__wrapped__", Stylesheet.apply)
     )
@@ -83,6 +90,56 @@ def test_upstream_apply_still_has_the_shape_the_fastpath_assumes() -> None:
         "self.rules. The fast path hands it a pre-ordered narrowed list and "
         "relies on that reversal; re-review "
         "tldw_chatbook/Utils/textual_css_fastpath.py before shipping."
+    )
+
+
+def test_cold_candidate_unions_hash_each_subject_index_only_once() -> None:
+    """Different live shapes reuse bucket hashes while keeping every rule."""
+    from tldw_chatbook.Utils.textual_css_fastpath import _ordered_candidates
+
+    sheet = Stylesheet()
+    sheet.add_source(".a, .b, .c { color: red; }\n" * 500)
+    rules = sheet.rules
+    assert len(rules) == 500
+    # Build upstream's index before measuring only our cold candidate union.
+    assert sheet.rules_map
+    assert all(hash(rule) == id(rule) for rule in rules)
+    nodes = [
+        SimpleNamespace(
+            _selector_names={".a", ".b", ".c"},
+            ancestors=(
+                SimpleNamespace(
+                    _css_type_names=frozenset({"Container"}),
+                    id=None,
+                    classes={f"shape-{i}"},
+                ),
+            ),
+        )
+        for i in range(10)
+    ]
+    calls = 0
+
+    def entered(_code, _offset):
+        nonlocal calls
+        calls += 1
+
+    monitor = sys.monitoring
+    tool = next(i for i in range(1, 6) if monitor.get_tool(i) is None)
+    monitor.use_tool_id(tool, "candidate-union-work")
+    code = RuleSet.__hash__.__code__
+    try:
+        monitor.register_callback(tool, monitor.events.PY_START, entered)
+        monitor.set_local_events(tool, code, monitor.events.PY_START)
+        for node in nodes:
+            candidates = _ordered_candidates(sheet, node)
+            assert [id(rule) for rule in candidates] == [id(rule) for rule in rules]
+    finally:
+        monitor.set_local_events(tool, code, 0)
+        monitor.register_callback(tool, monitor.events.PY_START, None)
+        monitor.free_tool_id(tool)
+
+    assert calls <= 3 * len(rules), (
+        f"subject buckets repeated Python hashes {calls} times"
     )
 
 
@@ -113,9 +170,12 @@ async def test_fastpath_computes_identical_styles_for_every_node(
 
     app = TldwCli()
     async with app.run_test(size=(170, 48)) as pilot:
-        for _ in range(20):
-            await asyncio.sleep(0.05)
-            await pilot.pause()
+        # Pilot.pause snapshots every current widget. Startup replaces its
+        # screen, so first qualify publication without queuing old callbacks.
+        async with asyncio.timeout(30):
+            while not app._ui_ready:  # noqa: ASYNC110 - publication exposes a flag, not an event.
+                await asyncio.sleep(0.005)
+        assert not app.splash_screen_active
 
         mismatches: list[str] = []
         checked = 0
@@ -129,6 +189,7 @@ async def test_fastpath_computes_identical_styles_for_every_node(
                 await pilot.pause()
                 if type(pilot.app.screen).__name__ == expected:
                     break
+            assert type(pilot.app.screen).__name__ == expected
             for _ in range(6):
                 await asyncio.sleep(0.05)
                 await pilot.pause()
@@ -195,9 +256,9 @@ def test_ancestor_requirements_only_claims_what_it_can_prove() -> None:
     # No ancestor implied -- must be empty, or styling breaks.
     assert requirements_for("Button") == (set(),)
     assert requirements_for("#panel") == (set(),)
-    assert requirements_for("Button.foo") == (
-        set(),
-    ), "one compound: the class is on the SUBJECT, not an ancestor"
+    assert requirements_for("Button.foo") == (set(),), (
+        "one compound: the class is on the SUBJECT, not an ancestor"
+    )
     assert requirements_for("Button#thing.foo") == (set(),)
     # Single compounds led by an ID/class must also stay on the subject.
     assert requirements_for("#thing.foo") == (set(),), (
@@ -406,9 +467,9 @@ async def test_ancestor_scoped_bare_type_rule_count_is_a_ratchet(
             "console-trace-send-without",
             "console-trace-send-without-library",
             "console-trace-cancel",
-        } and all(
-            button.is_mounted for button in recovery_buttons
-        ), "CSS census requires fully mounted Console recovery controls"
+        } and all(button.is_mounted for button in recovery_buttons), (
+            "CSS census requires fully mounted Console recovery controls"
+        )
         rules_map = app.stylesheet.rules_map
 
         per_key: Counter = Counter()

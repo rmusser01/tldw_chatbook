@@ -1,0 +1,82 @@
+diff --git a/Tests/Chat/test_console_context_close_lifetime.py b/Tests/Chat/test_console_context_close_lifetime.py
+index 2a7527a3bb..53624fba7a 100644
+--- a/Tests/Chat/test_console_context_close_lifetime.py
++++ b/Tests/Chat/test_console_context_close_lifetime.py
+@@ -96,9 +96,9 @@ async def test_close_waits_for_existing_original_context_native_retirement(
+         assert read is not None and read.session_id == session_id
+         held.append(read)
+         loop.call_soon_threadsafe(entered.set)
+-        assert release.wait(
+-            20
+-        ), "candidate cleanup never released original native query"
++        assert release.wait(20), (
++            "candidate cleanup never released original native query"
++        )
+ 
+     def bounded_return(frame, value):
+         if frame.f_locals.get("self") is runtime:
+@@ -260,9 +260,9 @@ async def test_original_context_read_refuses_admission_during_session_close(tmp_
+                 await controller.context_control_presentation_inputs(session_id)
+             except RuntimeError:
+                 refused = True
+-            assert (
+-                refused and not admitted
+-            ), f"closing context admitted {len(admitted)} native handle observations; refused={refused}"
++            assert refused and not admitted, (
++                f"closing context admitted {len(admitted)} native handle observations; refused={refused}"
++            )
+         finally:
+             hooks.release.set()
+             await _cleanup(
+diff --git a/Tests/Performance/test_textual_css_fastpath.py b/Tests/Performance/test_textual_css_fastpath.py
+index 986c08fed6..6cd63fc911 100644
+--- a/Tests/Performance/test_textual_css_fastpath.py
++++ b/Tests/Performance/test_textual_css_fastpath.py
+@@ -138,9 +138,9 @@ def test_cold_candidate_unions_hash_each_subject_index_only_once() -> None:
+         monitor.register_callback(tool, monitor.events.PY_START, None)
+         monitor.free_tool_id(tool)
+ 
+-    assert calls <= 3 * len(
+-        rules
+-    ), f"subject buckets repeated Python hashes {calls} times"
++    assert calls <= 3 * len(rules), (
++        f"subject buckets repeated Python hashes {calls} times"
++    )
+ 
+ 
+ @pytest.mark.ui
+@@ -173,7 +173,7 @@ async def test_fastpath_computes_identical_styles_for_every_node(
+         # Pilot.pause snapshots every current widget. Startup replaces its
+         # screen, so first qualify publication without queuing old callbacks.
+         async with asyncio.timeout(30):
+-            while not app._ui_ready:
++            while not app._ui_ready:  # noqa: ASYNC110 - publication exposes a flag, not an event.
+                 await asyncio.sleep(0.005)
+         assert not app.splash_screen_active
+ 
+@@ -256,9 +256,9 @@ def test_ancestor_requirements_only_claims_what_it_can_prove() -> None:
+     # No ancestor implied -- must be empty, or styling breaks.
+     assert requirements_for("Button") == (set(),)
+     assert requirements_for("#panel") == (set(),)
+-    assert requirements_for("Button.foo") == (
+-        set(),
+-    ), "one compound: the class is on the SUBJECT, not an ancestor"
++    assert requirements_for("Button.foo") == (set(),), (
++        "one compound: the class is on the SUBJECT, not an ancestor"
++    )
+     assert requirements_for("Button#thing.foo") == (set(),)
+     # Single compounds led by an ID/class must also stay on the subject.
+     assert requirements_for("#thing.foo") == (set(),), (
+@@ -467,9 +467,9 @@ async def test_ancestor_scoped_bare_type_rule_count_is_a_ratchet(
+             "console-trace-send-without",
+             "console-trace-send-without-library",
+             "console-trace-cancel",
+-        } and all(
+-            button.is_mounted for button in recovery_buttons
+-        ), "CSS census requires fully mounted Console recovery controls"
++        } and all(button.is_mounted for button in recovery_buttons), (
++            "CSS census requires fully mounted Console recovery controls"
++        )
+         rules_map = app.stylesheet.rules_map
+ 
+         per_key: Counter = Counter()

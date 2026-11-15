@@ -1,0 +1,14 @@
+{
+  "probe.py": {
+    "file": "executed-harness/probe.py.txt",
+    "sha256": "3ec101cce032a8f0c6be53625f114968bae09b018ddf85b5aafc78b679a170b1"
+  },
+  "run_probe.py": {
+    "file": "executed-harness/run_probe.py.txt",
+    "sha256": "660be6b80469360f5031d9fec15ad2c28e329bc2d7f245148b256a63b7677528"
+  },
+  "return_observer.py": {
+    "file": "executed-harness/return_observer.py.txt",
+    "sha256": "18371a301bc410c7f4ffc659effbe60eb880e005c1d61eaa4db8d97d0434e260"
+  }
+}

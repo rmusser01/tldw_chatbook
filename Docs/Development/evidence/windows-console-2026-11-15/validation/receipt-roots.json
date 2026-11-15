@@ -1,0 +1,104 @@
+[
+  {
+    "label": "context-close-green",
+    "receipt": "context-close-green.json",
+    "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-e5cff2ea777a",
+    "cleanup_status": "not checked; receipt-owned root retained for root-agent cleanup"
+  },
+  {
+    "label": "context-close-red",
+    "receipt": "context-close-red.json",
+    "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-88ee9503fa6d",
+    "cleanup_status": "not checked; receipt-owned root retained for root-agent cleanup"
+  },
+  {
+    "label": "context-endpoint-connected",
+    "receipt": "context-endpoint-connected.json",
+    "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-fa53e679ff66",
+    "cleanup_status": "not checked; receipt-owned root retained for root-agent cleanup"
+  },
+  {
+    "label": "context-fixtures-fixed",
+    "receipt": "context-fixtures-fixed.json",
+    "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-e51e7468af18",
+    "cleanup_status": "not checked; receipt-owned root retained for root-agent cleanup"
+  },
+  {
+    "label": "current-after-close-close-trace",
+    "receipt": "current-after-close-close-trace.json",
+    "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-10ac6dde550b",
+    "cleanup_status": "not checked; receipt-owned root retained for root-agent cleanup"
+  },
+  {
+    "label": "current-after-close-fixed",
+    "receipt": "current-after-close-fixed.json",
+    "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-ed1569165cd2",
+    "cleanup_status": "not checked; receipt-owned root retained for root-agent cleanup"
+  },
+  {
+    "label": "current-after-close-observed-r2",
+    "receipt": "current-after-close-observed-r2.json",
+    "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-72223c8b2fd9",
+    "cleanup_status": "not checked; receipt-owned root retained for root-agent cleanup"
+  },
+  {
+    "label": "current-after-close-observed",
+    "receipt": "current-after-close-observed.json",
+    "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-a5ceaf2a55de",
+    "cleanup_status": "not checked; receipt-owned root retained for root-agent cleanup"
+  },
+  {
+    "label": "current-after-close",
+    "receipt": "current-after-close.json",
+    "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-b7a16b3d41bc",
+    "cleanup_status": "not checked; receipt-owned root retained for root-agent cleanup"
+  },
+  {
+    "label": "current-ci-boot-runtime",
+    "receipt": "current-ci-boot-runtime.json",
+    "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-12b7b073f7c7",
+    "cleanup_status": "not checked; receipt-owned root retained for root-agent cleanup"
+  },
+  {
+    "label": "current-ci-final-contracts",
+    "receipt": "current-ci-final-contracts.json",
+    "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-66d04bb7f4ba",
+    "cleanup_status": "not checked; receipt-owned root retained for root-agent cleanup"
+  },
+  {
+    "label": "current-ci-static",
+    "receipt": "current-ci-static.json",
+    "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-53fa1716cd88",
+    "cleanup_status": "not checked; receipt-owned root retained for root-agent cleanup"
+  },
+  {
+    "label": "endpoint-import-red",
+    "receipt": "endpoint-import-red.json",
+    "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-d01452d72fce",
+    "cleanup_status": "not checked; receipt-owned root retained for root-agent cleanup"
+  },
+  {
+    "label": "tabs-current-after_close",
+    "receipt": "tabs-current-after_close.json",
+    "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-355a16ae0f0e",
+    "cleanup_status": "not checked; receipt-owned root retained for root-agent cleanup"
+  },
+  {
+    "label": "tabs-current-coalesced",
+    "receipt": "tabs-current-coalesced.json",
+    "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-bab7053472d7",
+    "cleanup_status": "not checked; receipt-owned root retained for root-agent cleanup"
+  },
+  {
+    "label": "tabs-current-same_session_drain",
+    "receipt": "tabs-current-same_session_drain.json",
+    "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-08549044f1d2",
+    "cleanup_status": "not checked; receipt-owned root retained for root-agent cleanup"
+  },
+  {
+    "label": "tabs-current-same-session-owner-fixed",
+    "receipt": "tabs-current-same-session-owner-fixed.json",
+    "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-b04a835722c4",
+    "cleanup_status": "not checked; receipt-owned root retained for root-agent cleanup"
+  }
+]

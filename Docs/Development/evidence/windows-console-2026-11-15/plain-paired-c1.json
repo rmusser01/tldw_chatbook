@@ -1,0 +1,100 @@
+{
+  "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+  "platform": "Windows-10-10.0.19045-SP0",
+  "textual": "8.2.8",
+  "diagnostic": false,
+  "viewport": [
+    170,
+    48
+  ],
+  "routes": [],
+  "typing": [],
+  "attach_poll": true,
+  "temporary_profile": "C:\\Users\\GDesktop-1\\.tmp-windows-perf-9d738d0f05f8",
+  "periodic_tracebacks": "python-thread-synchronous",
+  "traceback_interval_seconds": 60.0,
+  "revision": "f53f8c7bebf5fbee0148f546a1ac693054089899",
+  "product_sources_before": {
+    "file": "plain-paired-c1-sources-before.json",
+    "sha256": "584ca82309c11732b23b916ab94bf2e90bdefb03b82745887be6c2a241dc13b5",
+    "count": 3012
+  },
+  "loop_clock_resolution_seconds": 0.015625,
+  "probe_poll_seconds": 0.03125,
+  "probe_heartbeat_seconds": 0.03125,
+  "import_ms": 8433.995400002459,
+  "construct_ms": 31130.938199989032,
+  "mount_ready_ms": 61080.598700005794,
+  "console_resume": [
+    {
+      "iteration": 0,
+      "resume_to_input_ms": 677.1504000062123,
+      "resume_to_attach_ms": 8893.396700004814,
+      "input_ms": 67.59540000348352,
+      "max_loop_overshoot_ms": 578.1857999972999,
+      "draft_retained": true,
+      "attach_reconciled": true,
+      "elapsed_ms": 8928.040900005726
+    },
+    {
+      "iteration": 1,
+      "resume_to_input_ms": 150.86999998311512,
+      "resume_to_attach_ms": 5306.572999979835,
+      "input_ms": 80.06890001706779,
+      "max_loop_overshoot_ms": 60.596800001803786,
+      "draft_retained": true,
+      "attach_reconciled": true,
+      "elapsed_ms": 5330.849699996179
+    },
+    {
+      "iteration": 2,
+      "resume_to_input_ms": 92.49690000433475,
+      "resume_to_attach_ms": 2503.5839999909513,
+      "input_ms": 51.43240001052618,
+      "max_loop_overshoot_ms": 70.84139998187311,
+      "draft_retained": true,
+      "attach_reconciled": true,
+      "elapsed_ms": 2505.0538000068627
+    },
+    {
+      "iteration": 3,
+      "resume_to_input_ms": 39.159599982667714,
+      "resume_to_attach_ms": 2953.709699999308,
+      "input_ms": 6.6257000144105405,
+      "max_loop_overshoot_ms": 527.0355000102427,
+      "draft_retained": true,
+      "attach_reconciled": true,
+      "elapsed_ms": 2977.8997999965213
+    },
+    {
+      "iteration": 4,
+      "resume_to_input_ms": 53.61600001924671,
+      "resume_to_attach_ms": 3029.9330000125337,
+      "input_ms": 12.377000006381422,
+      "max_loop_overshoot_ms": 114.99510001158342,
+      "draft_retained": true,
+      "attach_reconciled": true,
+      "elapsed_ms": 3031.1827000114135
+    },
+    {
+      "iteration": 5,
+      "resume_to_input_ms": 184.45459997747093,
+      "resume_to_attach_ms": 4132.729599979939,
+      "input_ms": 57.74099999689497,
+      "max_loop_overshoot_ms": 104.23239998635836,
+      "draft_retained": true,
+      "attach_reconciled": true,
+      "elapsed_ms": 4159.338600002229
+    }
+  ],
+  "observer_threads_stopped": true,
+  "blocked_network_attempts": 0,
+  "real_profile_refusals": 0,
+  "product_sources_after": {
+    "file": "plain-paired-c1-sources-after.json",
+    "sha256": "584ca82309c11732b23b916ab94bf2e90bdefb03b82745887be6c2a241dc13b5",
+    "count": 3012
+  },
+  "revision_after": "f53f8c7bebf5fbee0148f546a1ac693054089899",
+  "product_sources_unchanged": true
+}

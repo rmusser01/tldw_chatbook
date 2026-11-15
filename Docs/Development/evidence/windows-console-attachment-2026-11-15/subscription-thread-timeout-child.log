@@ -1,0 +1,65 @@
+[32m2026-11-15 14:57:38.638[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.config[0m:[36m<module>[0m:[36m155[0m - [34m[1mCRITICAL DEBUG: config.py module is being imported/executed NOW.[0m
+[32m2026-11-15 14:57:40.186[0m | [1mINFO    [0m | [36mtldw_chatbook.config[0m:[36m_load_cli_config_bootstrap_unlocked[0m:[36m4212[0m - [1mAttempting to load CLI config from: C:\Users\GDesktop-1\.tmp-pr3166-final-77a8a48a1753\temp\pytest-of-GDesktop-1\pytest-0\test_subscription_boot_admissi0\config\config.toml[0m
+[32m2026-11-15 14:57:40.215[0m | [1mINFO    [0m | [36mtldw_chatbook.config[0m:[36m_load_cli_config_bootstrap_unlocked[0m:[36m4241[0m - [1mCLI Config file not found at C:\Users\GDesktop-1\.tmp-pr3166-final-77a8a48a1753\temp\pytest-of-GDesktop-1\pytest-0\test_subscription_boot_admissi0\config\config.toml. Creating with default values from CONFIG_TOML_CONTENT.[0m
+[32m2026-11-15 14:57:40.259[0m | [1mINFO    [0m | [36mtldw_chatbook.config[0m:[36m_load_cli_config_bootstrap_unlocked[0m:[36m4250[0m - [1mCreated default CLI config file at C:\Users\GDesktop-1\.tmp-pr3166-final-77a8a48a1753\temp\pytest-of-GDesktop-1\pytest-0\test_subscription_boot_admissi0\config\config.toml[0m
+[32m2026-11-15 14:57:40.260[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.config[0m:[36m_load_cli_config_bootstrap_unlocked[0m:[36m4318[0m - [34m[1mload_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'console_ssh', 'hooks', 'skills', 'tamagotchi', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'session_summary', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'sync', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run'][0m
+[32m2026-11-15 14:57:40.261[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.config[0m:[36m_load_cli_config_bootstrap_unlocked[0m:[36m4322[0m - [34m[1m  'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'databricks', 'together', 'fireworks', 'cerebras', 'sambanova', 'nvidia', 'deepinfra', 'nebius', 'novita', 'minimax', 'mimo', 'tokenhub', 'byteplus', 'stepfun', 'vercel', 'zenmux', 'kilo', 'siliconflow', 'baseten', 'gmi', 'ollama_cloud', 'upstage', 'arcee', 'qianfan', 'nous', 'venice', 'meta', 'azure', 'wandb', 'cloudflare', 'opencode_zen', 'commandcode', 'strata', 'polystrata', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm'][0m
+[32m2026-11-15 14:57:40.885[0m | [1mINFO    [0m | [36mtldw_chatbook.config[0m:[36m_load_settings_uncached[0m:[36m2010[0m - [1mDetermined ACTUAL_PROJECT_ROOT for general paths: C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook[0m
+[32m2026-11-15 14:57:40.885[0m | [1mINFO    [0m | [36mtldw_chatbook.config[0m:[36m_load_settings_uncached[0m:[36m2013[0m - [1mDetermined APP_COMPONENT_ROOT for config files: C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook[0m
+[32m2026-11-15 14:57:40.902[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.config[0m:[36m_load_settings_uncached[0m:[36m2036[0m - [34m[1mload_settings: Configuration loaded from disk (cache miss or forced reload)[0m
+[32m2026-11-15 14:57:43.641[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.config[0m:[36m_load_settings_uncached[0m:[36m3601[0m - [34m[1mEnsured chat dictionaries folder exists: C:\Users\GDesktop-1\.tmp-pr3166-final-77a8a48a1753\temp\pytest-of-GDesktop-1\pytest-0\test_subscription_boot_admissi0\home\.local\share\tldw_cli\default_user\chat_dicts[0m
+[32m2026-11-15 14:57:43.649[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.config[0m:[36m_load_settings_uncached[0m:[36m3633[0m - [34m[1mload_settings: Configuration cached for future use[0m
+[32m2026-11-15 14:57:43.651[0m | [1mINFO    [0m | [36mtldw_chatbook.config[0m:[36m<module>[0m:[36m8578[0m - [1mDefault API Endpoint (from config.py global scope): openai[0m
+[32m2026-11-15 14:57:57.916[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.Utils.optional_deps[0m:[36m<module>[0m:[36m1581[0m - [34m[1mSkipping auto-initialization in test environment[0m
+Thread 0x000121b0 (most recent call first):
+  File "C:\Python312\Lib\threading.py", line 355 in wait
+  File "C:\Python312\Lib\threading.py", line 655 in wait
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Backup_Recovery\storage_admission.py", line 607 in _run
+  File "C:\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Current thread 0x00010488 (most recent call first):
+  File "<string>", line 16 in dump_stalled_child
+  File "C:\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x00011cc0 (most recent call first):
+  File "<frozen importlib._bootstrap_external>", line 1190 in get_data
+  File "<frozen importlib._bootstrap_external>", line 1091 in get_code
+  File "<frozen importlib._bootstrap_external>", line 995 in exec_module
+  File "<frozen importlib._bootstrap>", line 935 in _load_unlocked
+  File "<frozen importlib._bootstrap>", line 1331 in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 1360 in _find_and_load
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Notifications\notifications_scope_service.py", line 9 in <module>
+  File "<frozen importlib._bootstrap>", line 488 in _call_with_frames_removed
+  File "<frozen importlib._bootstrap_external>", line 999 in exec_module
+  File "<frozen importlib._bootstrap>", line 935 in _load_unlocked
+  File "<frozen importlib._bootstrap>", line 1331 in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 1360 in _find_and_load
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Home\active_work_adapter.py", line 21 in <module>
+  File "<frozen importlib._bootstrap>", line 488 in _call_with_frames_removed
+  File "<frozen importlib._bootstrap_external>", line 999 in exec_module
+  File "<frozen importlib._bootstrap>", line 935 in _load_unlocked
+  File "<frozen importlib._bootstrap>", line 1331 in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 1360 in _find_and_load
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\Home\__init__.py", line 12 in <module>
+  File "<frozen importlib._bootstrap>", line 488 in _call_with_frames_removed
+  File "<frozen importlib._bootstrap_external>", line 999 in exec_module
+  File "<frozen importlib._bootstrap>", line 935 in _load_unlocked
+  File "<frozen importlib._bootstrap>", line 1331 in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 1360 in _find_and_load
+  File "<frozen importlib._bootstrap>", line 488 in _call_with_frames_removed
+  File "<frozen importlib._bootstrap>", line 1310 in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 1360 in _find_and_load
+  File "C:\Users\GDesktop-1\.codex\worktrees\console-validation-performance\tldw_tui\tldw_chatbook\app.py", line 155 in <module>
+  File "<frozen importlib._bootstrap>", line 488 in _call_with_frames_removed
+  File "<frozen importlib._bootstrap_external>", line 999 in exec_module
+  File "<frozen importlib._bootstrap>", line 935 in _load_unlocked
+  File "<frozen importlib._bootstrap>", line 1331 in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 1360 in _find_and_load
+  File "<string>", line 29 in <module>
+[32m2026-11-15 14:58:11.948[0m | [1mINFO    [0m | [36mtldw_chatbook.Evals.task_loader[0m:[36m<module>[0m:[36m36[0m - [1mHuggingFace evaluation datasets are unavailable. Install with: pip install datasets[0m
+[32m2026-11-15 14:58:16.737[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.base_db[0m:[36m__init__[0m:[36m1140[0m - [1mSubscriptionsDB initialized with path: C:\Users\GDesktop-1\.tmp-pr3166-final-77a8a48a1753\temp\pytest-of-GDesktop-1\pytest-0\test_subscription_boot_admissi0\home\.local\share\tldw_cli\default_user\tldw_chatbook_subscriptions.db [Client: default][0m
+retired and reopened

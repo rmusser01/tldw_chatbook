@@ -1,0 +1,286 @@
+{
+  "scope": "Only exact current-task receipt-owned native fixture roots; real profile untouched",
+  "active_owned_processes": 0,
+  "roots": [
+    {
+      "root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-0415db5092c0",
+      "receipts": [
+        "css-union-connected.json"
+      ],
+      "status": "removed",
+      "detail": null
+    },
+    {
+      "root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-08549044f1d2",
+      "receipts": [
+        "tabs-current-same_session_drain.json"
+      ],
+      "status": "removed",
+      "detail": null
+    },
+    {
+      "root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-10ac6dde550b",
+      "receipts": [
+        "current-after-close-close-trace.json"
+      ],
+      "status": "removed",
+      "detail": null
+    },
+    {
+      "root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-12b7b073f7c7",
+      "receipts": [
+        "current-ci-boot-runtime.json"
+      ],
+      "status": "removed",
+      "detail": null
+    },
+    {
+      "root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-204e0e2ef67a",
+      "receipts": [
+        "css-parity-startup-fixed.json"
+      ],
+      "status": "removed",
+      "detail": null
+    },
+    {
+      "root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-355a16ae0f0e",
+      "receipts": [
+        "tabs-current-after_close.json"
+      ],
+      "status": "removed",
+      "detail": null
+    },
+    {
+      "root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-53fa1716cd88",
+      "receipts": [
+        "current-ci-static.json"
+      ],
+      "status": "removed",
+      "detail": null
+    },
+    {
+      "root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-54b0e2b4ef4f",
+      "receipts": [
+        "css-buckets-connected.json"
+      ],
+      "status": "removed",
+      "detail": null
+    },
+    {
+      "root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-66d04bb7f4ba",
+      "receipts": [
+        "current-ci-final-contracts.json"
+      ],
+      "status": "removed",
+      "detail": null
+    },
+    {
+      "root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-72223c8b2fd9",
+      "receipts": [
+        "current-after-close-observed-r2.json"
+      ],
+      "status": "removed",
+      "detail": null
+    },
+    {
+      "root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-8272dc5681d8",
+      "receipts": [
+        "final-native-and-css-contracts.json"
+      ],
+      "status": "removed",
+      "detail": null
+    },
+    {
+      "root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-88ee9503fa6d",
+      "receipts": [
+        "context-close-red.json"
+      ],
+      "status": "removed",
+      "detail": null
+    },
+    {
+      "root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-a18cc9f7facd",
+      "receipts": [
+        "css-buckets-parity.json"
+      ],
+      "status": "removed",
+      "detail": null
+    },
+    {
+      "root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-a5ceaf2a55de",
+      "receipts": [
+        "current-after-close-observed.json"
+      ],
+      "status": "removed",
+      "detail": null
+    },
+    {
+      "root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-b04a835722c4",
+      "receipts": [
+        "tabs-current-same-session-owner-fixed.json"
+      ],
+      "status": "removed",
+      "detail": null
+    },
+    {
+      "root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-b2e48a59e198",
+      "receipts": [
+        "css-buckets-red.json"
+      ],
+      "status": "removed",
+      "detail": null
+    },
+    {
+      "root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-b7a16b3d41bc",
+      "receipts": [
+        "current-after-close.json"
+      ],
+      "status": "removed",
+      "detail": null
+    },
+    {
+      "root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-bab7053472d7",
+      "receipts": [
+        "tabs-current-coalesced.json"
+      ],
+      "status": "removed",
+      "detail": null
+    },
+    {
+      "root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-d01452d72fce",
+      "receipts": [
+        "endpoint-import-red.json"
+      ],
+      "status": "removed",
+      "detail": null
+    },
+    {
+      "root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-e51e7468af18",
+      "receipts": [
+        "context-fixtures-fixed.json"
+      ],
+      "status": "removed",
+      "detail": null
+    },
+    {
+      "root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-e5cff2ea777a",
+      "receipts": [
+        "context-close-green.json"
+      ],
+      "status": "removed",
+      "detail": null
+    },
+    {
+      "root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-e959f8f9cd31",
+      "receipts": [
+        "readiness-and-p0-fixed.json"
+      ],
+      "status": "removed",
+      "detail": null
+    },
+    {
+      "root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-ed1569165cd2",
+      "receipts": [
+        "current-after-close-fixed.json"
+      ],
+      "status": "removed",
+      "detail": null
+    },
+    {
+      "root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-ef06020918f5",
+      "receipts": [
+        "css-union-red.json"
+      ],
+      "status": "removed",
+      "detail": null
+    },
+    {
+      "root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-fa53e679ff66",
+      "receipts": [
+        "context-endpoint-connected.json"
+      ],
+      "status": "removed",
+      "detail": null
+    },
+    {
+      "root": "C:\\Users\\GDesktop-1\\.tmp-windows-perf-07500378c491",
+      "receipts": [
+        "diagnostic-baseline-cpu-3.json"
+      ],
+      "status": "removed",
+      "detail": null
+    },
+    {
+      "root": "C:\\Users\\GDesktop-1\\.tmp-windows-perf-27bdf6038933",
+      "receipts": [
+        "plain-paired-b2.json"
+      ],
+      "status": "removed",
+      "detail": null
+    },
+    {
+      "root": "C:\\Users\\GDesktop-1\\.tmp-windows-perf-65215cdf62e2",
+      "receipts": [
+        "plain-paired-a2.json"
+      ],
+      "status": "removed",
+      "detail": null
+    },
+    {
+      "root": "C:\\Users\\GDesktop-1\\.tmp-windows-perf-67e2349ebddc",
+      "receipts": [
+        "plain-paired-c2.json"
+      ],
+      "status": "removed",
+      "detail": null
+    },
+    {
+      "root": "C:\\Users\\GDesktop-1\\.tmp-windows-perf-690e7a8d3d93",
+      "receipts": [
+        "plain-paired-b1.json"
+      ],
+      "status": "removed",
+      "detail": null
+    },
+    {
+      "root": "C:\\Users\\GDesktop-1\\.tmp-windows-perf-8ddfec6b50df",
+      "receipts": [
+        "plain-paired-a1.json"
+      ],
+      "status": "removed",
+      "detail": null
+    },
+    {
+      "root": "C:\\Users\\GDesktop-1\\.tmp-windows-perf-987c4f0d0cc3",
+      "receipts": [
+        "diagnostic-baseline-native-2.json"
+      ],
+      "status": "removed",
+      "detail": null
+    },
+    {
+      "root": "C:\\Users\\GDesktop-1\\.tmp-windows-perf-9d738d0f05f8",
+      "receipts": [
+        "plain-paired-c1.json"
+      ],
+      "status": "removed",
+      "detail": null
+    },
+    {
+      "root": "C:\\Users\\GDesktop-1\\.tmp-windows-perf-c2b6ecdc213f",
+      "receipts": [
+        "plain-paired-a3.json"
+      ],
+      "status": "removed",
+      "detail": null
+    },
+    {
+      "root": "C:\\Users\\GDesktop-1\\.tmp-windows-perf-cdfb11b9cce1",
+      "receipts": [
+        "plain-baseline-native-1.json"
+      ],
+      "status": "removed",
+      "detail": null
+    }
+  ]
+}

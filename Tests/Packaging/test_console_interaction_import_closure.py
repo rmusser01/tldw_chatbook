@@ -13,6 +13,28 @@ import pytest
     [
         """
 import sys
+from tldw_chatbook.Provider_Contract import provider_endpoint_contract as contract
+
+for key, base, expected in (
+    ('openai', 'https://api.openai.com/v1', 'https://api.openai.com/v1/chat/completions'),
+    ('local_llamacpp', 'http://127.0.0.1:8080', 'http://127.0.0.1:8080/v1/chat/completions'),
+):
+    resolution = contract.resolve_provider_endpoint(key, base)
+    assert not resolution.errors, resolution.errors
+    assert resolution.chat_url == expected
+for name in (
+    'tldw_chatbook.Provider_Contract.provider_setup_facts',
+    'tldw_chatbook.Chat.provider_setup_facts',
+):
+    assert name not in sys.modules, name
+from tldw_chatbook.Provider_Contract import provider_setup_facts as facts
+assert facts.ROUTE_SUFFIXES is contract.ROUTE_SUFFIXES
+base = 'https://api.z.ai/api/paas/v4'
+assert contract.resolve_provider_endpoint('zai', base).chat_url == base + '/chat/completions'
+assert facts.provider_setup_facts('zai').route_suffix == '/chat/completions'
+""",
+        """
+import sys
 from tldw_chatbook.UI.Console_Modules.environment import ConsoleEnvironmentController
 
 jobs = []
@@ -101,6 +123,7 @@ assert execution not in sys.modules
 """,
     ],
     ids=[
+        "endpoint-routing-without-setup-facts",
         "closed-environment-rail",
         "vllm-handoff-contract",
         "non-anthropic-readiness",

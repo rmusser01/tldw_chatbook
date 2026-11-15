@@ -1,0 +1,318 @@
+{
+  "order": [
+    "paired-a2",
+    "paired-c1",
+    "paired-c2",
+    "paired-a3"
+  ],
+  "changed_product_files": [
+    "tldw_chatbook\\Utils\\textual_css_fastpath.py"
+  ],
+  "cohorts": {
+    "paired-a2": {
+      "head": "80710424ceebe3c545160fa368dfe344f9c83f78",
+      "qualified": true,
+      "outcome": "complete",
+      "exit_code": 0,
+      "timed_out": false,
+      "completed_returns": 6,
+      "expected_returns": 6,
+      "samples": [
+        {
+          "iteration": 0,
+          "resume_to_input_ms": 282.9922999953851,
+          "resume_to_attach_ms": 4105.030700011412,
+          "input_ms": 17.07830000668764,
+          "max_loop_overshoot_ms": 234.5123999984935,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 4128.0274000018835
+        },
+        {
+          "iteration": 1,
+          "resume_to_input_ms": 82.05120000638999,
+          "resume_to_attach_ms": 2785.7305000070482,
+          "input_ms": 44.12079998292029,
+          "max_loop_overshoot_ms": 44.10099997767247,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 2816.9890999852214
+        },
+        {
+          "iteration": 2,
+          "resume_to_input_ms": 108.67590000270866,
+          "resume_to_attach_ms": 3013.816399994539,
+          "input_ms": 53.75680001452565,
+          "max_loop_overshoot_ms": 51.50100000901148,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 3038.257199979853
+        },
+        {
+          "iteration": 3,
+          "resume_to_input_ms": 210.5298000096809,
+          "resume_to_attach_ms": 5444.07160000992,
+          "input_ms": 56.35540001094341,
+          "max_loop_overshoot_ms": 123.97509999573231,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 5447.407400002703
+        },
+        {
+          "iteration": 4,
+          "resume_to_input_ms": 119.78310000267811,
+          "resume_to_attach_ms": 3536.009399977047,
+          "input_ms": 63.33810000796802,
+          "max_loop_overshoot_ms": 113.83440002100542,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 3563.0556999822147
+        },
+        {
+          "iteration": 5,
+          "resume_to_input_ms": 366.9027000141796,
+          "resume_to_attach_ms": 7569.830100022955,
+          "input_ms": 109.59929999080487,
+          "max_loop_overshoot_ms": 256.5443000057712,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 7599.817900016205
+        }
+      ],
+      "pending_resume": null,
+      "failure": null,
+      "guards": {
+        "blocked_network_attempts": 0,
+        "real_profile_refusals": 0,
+        "observer_threads_stopped": true,
+        "product_sources_unchanged": true,
+        "css_unchanged": true
+      },
+      "medians_ms": {
+        "resume_to_input_ms": 165.1564500061795,
+        "resume_to_attach_ms": 3820.5200499942293,
+        "input_ms": 55.05610001273453,
+        "max_loop_overshoot_ms": 118.90475000836886
+      }
+    },
+    "paired-c1": {
+      "head": "f53f8c7bebf5fbee0148f546a1ac693054089899",
+      "qualified": true,
+      "outcome": "complete",
+      "exit_code": 0,
+      "timed_out": false,
+      "completed_returns": 6,
+      "expected_returns": 6,
+      "samples": [
+        {
+          "iteration": 0,
+          "resume_to_input_ms": 677.1504000062123,
+          "resume_to_attach_ms": 8893.396700004814,
+          "input_ms": 67.59540000348352,
+          "max_loop_overshoot_ms": 578.1857999972999,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 8928.040900005726
+        },
+        {
+          "iteration": 1,
+          "resume_to_input_ms": 150.86999998311512,
+          "resume_to_attach_ms": 5306.572999979835,
+          "input_ms": 80.06890001706779,
+          "max_loop_overshoot_ms": 60.596800001803786,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 5330.849699996179
+        },
+        {
+          "iteration": 2,
+          "resume_to_input_ms": 92.49690000433475,
+          "resume_to_attach_ms": 2503.5839999909513,
+          "input_ms": 51.43240001052618,
+          "max_loop_overshoot_ms": 70.84139998187311,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 2505.0538000068627
+        },
+        {
+          "iteration": 3,
+          "resume_to_input_ms": 39.159599982667714,
+          "resume_to_attach_ms": 2953.709699999308,
+          "input_ms": 6.6257000144105405,
+          "max_loop_overshoot_ms": 527.0355000102427,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 2977.8997999965213
+        },
+        {
+          "iteration": 4,
+          "resume_to_input_ms": 53.61600001924671,
+          "resume_to_attach_ms": 3029.9330000125337,
+          "input_ms": 12.377000006381422,
+          "max_loop_overshoot_ms": 114.99510001158342,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 3031.1827000114135
+        },
+        {
+          "iteration": 5,
+          "resume_to_input_ms": 184.45459997747093,
+          "resume_to_attach_ms": 4132.729599979939,
+          "input_ms": 57.74099999689497,
+          "max_loop_overshoot_ms": 104.23239998635836,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 4159.338600002229
+        }
+      ],
+      "pending_resume": null,
+      "failure": null,
+      "guards": {
+        "blocked_network_attempts": 0,
+        "real_profile_refusals": 0,
+        "observer_threads_stopped": true,
+        "product_sources_unchanged": true,
+        "css_unchanged": true
+      },
+      "medians_ms": {
+        "resume_to_input_ms": 121.68344999372493,
+        "resume_to_attach_ms": 3581.3312999962363,
+        "input_ms": 54.586700003710575,
+        "max_loop_overshoot_ms": 109.61374999897089
+      }
+    },
+    "paired-c2": {
+      "head": "f53f8c7bebf5fbee0148f546a1ac693054089899",
+      "qualified": true,
+      "outcome": "complete",
+      "exit_code": 0,
+      "timed_out": false,
+      "completed_returns": 6,
+      "expected_returns": 6,
+      "samples": [
+        {
+          "iteration": 0,
+          "resume_to_input_ms": 733.8133000012022,
+          "resume_to_attach_ms": 6360.032299999148,
+          "input_ms": 124.503500002902,
+          "max_loop_overshoot_ms": 577.8616000025067,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 6396.140500000911
+        },
+        {
+          "iteration": 1,
+          "resume_to_input_ms": 132.39230000181124,
+          "resume_to_attach_ms": 5303.46280001686,
+          "input_ms": 69.72629998927005,
+          "max_loop_overshoot_ms": 66.62019999930635,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 5330.306299991207
+        },
+        {
+          "iteration": 2,
+          "resume_to_input_ms": 111.1500000115484,
+          "resume_to_attach_ms": 3795.4441999900155,
+          "input_ms": 57.75269999867305,
+          "max_loop_overshoot_ms": 442.6831000018865,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 3810.8769000100438
+        },
+        {
+          "iteration": 3,
+          "resume_to_input_ms": 44.93589999037795,
+          "resume_to_attach_ms": 4002.7566000062507,
+          "input_ms": 8.531500003300607,
+          "max_loop_overshoot_ms": 78.27070000348613,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 4036.255799990613
+        },
+        {
+          "iteration": 4,
+          "resume_to_input_ms": 73.01229998120107,
+          "resume_to_attach_ms": 2608.434699999634,
+          "input_ms": 12.035699997795746,
+          "max_loop_overshoot_ms": 121.88049999531358,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 2615.598400007002
+        },
+        {
+          "iteration": 5,
+          "resume_to_input_ms": 104.59940001601353,
+          "resume_to_attach_ms": 2714.413900015643,
+          "input_ms": 51.63890001131222,
+          "max_loop_overshoot_ms": 53.68879999150522,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 2743.634700018447
+        }
+      ],
+      "pending_resume": null,
+      "failure": null,
+      "guards": {
+        "blocked_network_attempts": 0,
+        "real_profile_refusals": 0,
+        "observer_threads_stopped": true,
+        "product_sources_unchanged": true,
+        "css_unchanged": true
+      },
+      "medians_ms": {
+        "resume_to_input_ms": 107.87470001378097,
+        "resume_to_attach_ms": 3899.100399998133,
+        "input_ms": 54.695800004992634,
+        "max_loop_overshoot_ms": 100.07559999939986
+      }
+    },
+    "paired-a3": {
+      "head": "80710424ceebe3c545160fa368dfe344f9c83f78",
+      "qualified": false,
+      "outcome": "failed_or_incomplete",
+      "exit_code": 1,
+      "timed_out": false,
+      "completed_returns": 1,
+      "expected_returns": 6,
+      "samples": [
+        {
+          "iteration": 0,
+          "resume_to_input_ms": 5700.066899997182,
+          "resume_to_attach_ms": 73.80009998450987,
+          "input_ms": 5646.992299996782,
+          "max_loop_overshoot_ms": 1169.2220999975689,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 11579.670700011775
+        }
+      ],
+      "pending_resume": {
+        "iteration": 1,
+        "resume_to_input_ms": 88.38040000409819
+      },
+      "failure": {
+        "stage": "console-resume-1",
+        "type": "TimeoutError"
+      },
+      "guards": {
+        "blocked_network_attempts": 0,
+        "real_profile_refusals": 0,
+        "observer_threads_stopped": true,
+        "product_sources_unchanged": true,
+        "css_unchanged": true
+      }
+    }
+  },
+  "qualified": false,
+  "limits": [
+    "Four attempted processes, six intended returns each; incomplete cohorts prevent arm aggregation.",
+    "Two processes per arm are insufficient for significance or a general speed claim.",
+    "Source hashing warms filesystem caches; not OS-cold or historical startup evidence.",
+    "Identical stack-sampled headless journeys use a periodic traceback thread; these are not uninstrumented terminal-paint timings.",
+    "The harness explicitly focuses the composer before posting its draft key; automatic arrival focus is not qualified.",
+    "draft_retained means the posted key survives attachment, not that a prior draft survives navigation.",
+    "The synthetic benchmark measures candidate-cache misses with warm parsed indexes and subject buckets; cold first-use construction is excluded.",
+    "Instrumented discovery and earlier failed or rejected runs remain separate; this summary retains every cohort in the selected order."
+  ]
+}

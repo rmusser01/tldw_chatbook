@@ -156,8 +156,20 @@ is unchanged. Upstream-comparison tests restore both application and matcher sea
 Composer Send/Stop class changes use Textual's native `update_classes` batch,
 avoiding intermediate style refreshes while preserving unrelated classes and the
 final disabled, tooltip, queue and setup states (TASK-35614).
+Cold CSS candidate collection hashes each parsed subject bucket once and uses
+native set unions for different live shapes. The derived buckets share the
+existing parsed-map lifetime and retain no nodes. The upstream hash contract is
+pinned; distinct identical rules, source order, live filtering, cache invalidation
+and upstream matching remain unchanged (TASK-35679.1).
 
 ## Screen layout
+
+Context presentation rejects a committed session-close fence before admitting
+another qualified finite native read. Close drains both its runtime-owned read
+set and the controller's distinct set before finalization, using the existing
+physical-retirement primitive. Reads issued after controller binding therefore
+retain their native handle through cancellation, and repeated Close cancellation
+is delivered only after retirement and session deletion (TASK-35679.1).
 
 Activation focus restoration checks the focused control and its ancestors, not only its logical pane. A visible collapsed Inspector handle remains the keyboard target while its full rail is hidden (`ChatScreen._restore_console_workbench_focus`, TASK-40758).
 

@@ -1,6 +1,7 @@
 """Presentation reads use captured lineage and leave send authority unchanged."""
 
 import asyncio
+import sys
 from contextlib import asynccontextmanager
 import threading
 from types import SimpleNamespace
@@ -80,7 +81,19 @@ async def test_cold_and_expired_presentation_never_fall_back_to_live_ui_reads(
     tmp_path, monkeypatch
 ):
     database, store, controller, _ = _controller(tmp_path)
-    tasks, calls = [], []
+    tasks, calls, live_calls = [], [], []
+    live_function = type(controller).context_control_inputs
+    live_code = live_function.__code__
+    monitor = sys.monitoring
+    tool = next(slot for slot in range(6) if monitor.get_tool(slot) is None)
+    monitor.use_tool_id(tool, "original-context-reader")
+
+    def observe_live(code, offset):
+        if sys._getframe(1).f_locals.get("self") is controller:
+            live_calls.append(threading.get_ident())
+
+    monitor.register_callback(tool, monitor.events.PY_START, observe_live)
+    monitor.set_local_events(tool, live_code, monitor.events.PY_START)
     try:
         store.active_session_id = "session-1"
         message = store.append_message(
@@ -101,11 +114,8 @@ async def test_cold_and_expired_presentation_never_fall_back_to_live_ui_reads(
             return task
 
         monkeypatch.setattr(store.persistence, "get_message_versions", versions)
-        monkeypatch.setattr(
-            controller,
-            "context_control_inputs",
-            lambda *_: pytest.fail("presentation fell back to live UI reads"),
-        )
+        # Replacing this callback deliberately selects the custom fallback.
+        # Observe its original code so this remains a stock-reader control.
         snapshot = spend.ConsoleContextReadSnapshot(schedule=schedule)
         assert snapshot.inputs(controller, "session-1")[2] is None
         assert calls == []
@@ -126,7 +136,15 @@ async def test_cold_and_expired_presentation_never_fall_back_to_live_ui_reads(
         assert snapshot.inputs(controller, "session-1")[2] is None
         await asyncio.gather(*tasks)
         assert len(calls) == 3
+        assert not live_calls, "presentation fell back to the original live reader"
     finally:
+        monitor.set_local_events(tool, live_code, 0)
+        monitor.register_callback(tool, monitor.events.PY_START, None)
+        monitor.free_tool_id(tool)
+        assert type(controller).context_control_inputs is live_function
+        assert live_function.__code__ is live_code
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
         database.close()
 
 
@@ -299,6 +317,13 @@ async def _real_compaction_resume(tmp_path, monkeypatch):
     )
 
     _database, store, controller, gateway = _live_controller(tmp_path, overrides=_ASK)
+    # A real RESET keeps RAW memory semantics but makes lineage validation
+    # necessary. Seed it before the threshold-reaching Send captures its scope.
+    from Tests.Chat.test_console_context_presentation_current import _memory_owner
+
+    seed = await controller.submit_draft("Seed context", session_id="session-1")
+    assert seed.accepted
+    _memory_owner(store, controller)
     _draft, result = await _send_until_held(controller, gateway)
     preparation = store.preparation_for_session("session-1")
     assert (

@@ -1,0 +1,26 @@
+{
+  "head": "7dbeff56aba6032f43aba2f4bbab803d3f133471",
+  "source_diff_sha256": "c914dba2dfa7940eafd0bd9a197615cc560b9a9c9e2bbd695c323f352daebb3b",
+  "private_child_node": null,
+  "command": [
+    "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-X",
+    "utf8",
+    "-m",
+    "Tests.windows_private_fixture_runner",
+    "Tests/Backup_Recovery/test_subscriptions_boot_physical_ownership.py::test_subscription_boot_admission_and_callback_contract[thread]",
+    "Tests/Backup_Recovery/test_subscriptions_boot_physical_ownership.py::test_subscription_gate_errors_keep_starter_warning_and_retry_policy[stale_terminal]",
+    "Tests/Backup_Recovery/test_subscriptions_boot_physical_ownership.py::test_subscription_body_keeps_fresh_effect_time_admission",
+    "Tests/Backup_Recovery/test_actor_pack_boot_physical_ownership.py",
+    "Tests/UI/test_app_instance_warning.py",
+    "Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/app.py]",
+    "Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/app_service_wiring.py]",
+    "-q",
+    "-o",
+    "addopts=",
+    "--timeout=180"
+  ],
+  "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-3fa0bbfadd54",
+  "exit_code": 4,
+  "seconds": 29.110000000015134
+}

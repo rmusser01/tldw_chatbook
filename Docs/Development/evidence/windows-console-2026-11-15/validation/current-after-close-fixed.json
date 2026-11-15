@@ -1,0 +1,24 @@
+{
+  "head": "cc6006fcf59328353004206bba8724c399216749",
+  "source_diff_sha256": "dcc6315e1c91d50fe8cf4c2675b11764121a8a16beab01cc0581a94db38f80ee",
+  "private_child_node": "Tests/UI/test_console_tab_publication_read_barrier.py::test_actual_close_publishes_real_tabs_before_stock_read_release[after_close]",
+  "command": [
+    "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-X",
+    "utf8",
+    "-m",
+    "Tests.windows_private_fixture_runner",
+    "Tests/UI/test_console_tab_publication_read_barrier.py::test_actual_close_publishes_real_tabs_before_stock_read_release[after_close]",
+    "-q",
+    "-o",
+    "addopts=",
+    "--timeout=180",
+    "-p",
+    "pytest_asyncio.plugin",
+    "-p",
+    "pytest_timeout"
+  ],
+  "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-ed1569165cd2",
+  "exit_code": 1,
+  "seconds": 111.73400000002584
+}

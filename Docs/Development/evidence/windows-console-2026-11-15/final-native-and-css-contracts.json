@@ -1,0 +1,24 @@
+{
+  "head": "f53f8c7bebf5fbee0148f546a1ac693054089899",
+  "source_diff_sha256": "3ee856b93dee467042b48d639cacf83a321358b4efb4972ad11465dbfba426dc",
+  "private_child_node": null,
+  "command": [
+    "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-X",
+    "utf8",
+    "-m",
+    "Tests.windows_private_fixture_runner",
+    "Tests/Chat/test_console_context_close_lifetime.py",
+    "Tests/Performance/test_textual_css_fastpath.py::test_cold_candidate_unions_hash_each_subject_index_only_once",
+    "Tests/Performance/test_textual_css_fastpath.py::test_upstream_apply_still_has_the_shape_the_fastpath_assumes",
+    "Tests/Performance/test_textual_css_fastpath.py::test_ancestor_requirements_only_claims_what_it_can_prove",
+    "Tests/Performance/test_css_candidate_reuse.py",
+    "-q",
+    "-o",
+    "addopts=",
+    "--timeout=90"
+  ],
+  "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-8272dc5681d8",
+  "exit_code": 0,
+  "seconds": 25.54700000002049
+}

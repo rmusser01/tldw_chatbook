@@ -30,6 +30,29 @@ if TYPE_CHECKING:
     )
 
 
+async def drain_console_preparation_reads(
+    runtime_reads: set[ConsolePreparationRead], controller: object, session_id: str
+) -> bool:
+    """Drain both captured owners before a Console session can be deleted.
+
+    Reads issued after controller binding may live only in its own set. Join
+    their original physical retirement even after task cancellation.
+
+    Args:
+        runtime_reads: The closing runtime's original read collection.
+        controller: The original controller captured by the close ticket.
+        session_id: The exact session being closed.
+
+    Returns:
+        Whether cancellation must be delivered after finalization.
+    """
+    cancelled = await drain_preparation_reads(runtime_reads, session_id)
+    controller_reads = getattr(controller, "_preparation_reads", None)
+    if controller_reads is not None and controller_reads is not runtime_reads:
+        cancelled |= await drain_preparation_reads(controller_reads, session_id)
+    return cancelled
+
+
 def current_workflow_preparation(controller=None):
     from tldw_chatbook.Agents.run_context import current_workflow_preparation as current
 

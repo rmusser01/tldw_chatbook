@@ -1,0 +1,208 @@
+diff --git a/Tests/App/test_boot_worker_stagger_policy.py b/Tests/App/test_boot_worker_stagger_policy.py
+index 4ab9f5aa01..a042344978 100644
+--- a/Tests/App/test_boot_worker_stagger_policy.py
++++ b/Tests/App/test_boot_worker_stagger_policy.py
+@@ -276,7 +276,9 @@ async def test_shutdown_closes_the_gate_instead_of_starting_more_work(request):
+     assert started == list(STAGGERED_BOOT_WORKER_KEYS[:cap])
+ 
+     app._shutting_down = True
+-    app._release_boot_worker_slot(_fake_worker(STAGGERED_BOOT_WORKER_KEYS[0]))
++    app._release_boot_worker_slot(
++        app._boot_worker_handles[STAGGERED_BOOT_WORKER_KEYS[0]]
++    )
+ 
+     assert started == list(STAGGERED_BOOT_WORKER_KEYS[:cap])
+     assert app._boot_worker_gate.is_closed
+diff --git a/Tests/Architecture/test_module_size_ratchet.py b/Tests/Architecture/test_module_size_ratchet.py
+index 17a0e1eb4e..a3a7c53356 100644
+--- a/Tests/Architecture/test_module_size_ratchet.py
++++ b/Tests/Architecture/test_module_size_ratchet.py
+@@ -145,9 +145,11 @@ _BUDGETS: dict[str, int] = {
+     # the TUI opens ChaChaNotes and Media through the shared openers (+8).
+     # the TUI opens ChaChaNotes and Media through the shared openers (+8);
+     # review fix: a failed notes service reuses the startup-opened DB (+9).
+-    "tldw_chatbook/app.py": 5705,
++    "tldw_chatbook/app.py": 5698,
+     # TASK-34406.5: unchanged startup/footer wiring, born governed.
+     "tldw_chatbook/app_startup.py": 176,
++    # TASK-35679.2: finite native subscriptions boot invocation, born governed.
++    "tldw_chatbook/app_boot_workers.py": 83,
+     # TASK-34406.7: app-owned served control and relay bodies, born governed.
+     "tldw_chatbook/app_served.py": 125,
+     # TASK-33011: the Library ingest queue moved verbatim out of app.py. At
+@@ -179,7 +181,7 @@ _BUDGETS: dict[str, int] = {
+     # 2026-11-07, TASK-36947.6 (owner rule 2026-10-04: raise by the change's own lines):
+     # the local MCP control service gets a storage provider (+1), which
+     # reports the DBs unavailable before the bundle is published (+1).
+-    "tldw_chatbook/app_service_wiring.py": 3704,
++    "tldw_chatbook/app_service_wiring.py": 3702,
+     # TASK-33011: TldwCli's lifecycle, shutdown and quit flow moved verbatim
+     # out of app.py (LifecycleMixin); governed there, so governed here.
+     # TASK-33621.13: 2,140 -> 2,134 (keep-alive dead-pump handling moved
+diff --git a/Tests/Backup_Recovery/test_actor_pack_boot_physical_ownership.py b/Tests/Backup_Recovery/test_actor_pack_boot_physical_ownership.py
+index 62cc9819cb..6dd25e0b6c 100644
+--- a/Tests/Backup_Recovery/test_actor_pack_boot_physical_ownership.py
++++ b/Tests/Backup_Recovery/test_actor_pack_boot_physical_ownership.py
+@@ -18,6 +18,7 @@ network_guard.install()
+ real_profile_guard.install()
+ from tldw_chatbook.app import TldwCli
+ from tldw_chatbook import config
++from tldw_chatbook.Backup_Recovery import runtime_producer_lifetime as lifetime
+ from tldw_chatbook.Backup_Recovery import storage_admission as storage
+ from tldw_chatbook.Actor_Packs.repository import ActorPackRepository
+ from tldw_chatbook.Actor_Packs.persona_coordinator import PersonaActorPackCoordinator
+@@ -158,8 +159,32 @@ async def exercise():
+                     worker.cancel()
+                     worker.cancel()
+                     entry = TldwCli._shutdown_app_owned_lifecycles if case == 'owned_lifecycles' else TldwCli.on_unmount
+-                    shutdown = asyncio.create_task(entry(host))
+-                    await asyncio.sleep(0)
++                    reads = preparation_reads_for(host._actor_pack_recovery_reads)
++                    assert len(reads) == 1
++                    retained_read = reads[0]
++                    draining = asyncio.Event()
++
++                    def drain_yield(code, offset, value):
++                        frame = sys._getframe(1)
++                        if (frame.f_locals.get('reads') is host._actor_pack_recovery_reads
++                            and any(read is retained_read for read in frame.f_locals.get('pending', ()))):
++                            draining.set()
++
++                    # Cancellation must reach this exact physical drain, not
++                    # an earlier owner's await in the shipping shutdown stack.
++                    monitor = sys.monitoring
++                    tool = next(slot for slot in range(6) if monitor.get_tool(slot) is None)
++                    monitor.use_tool_id(tool, 'actor-boot-physical-drain')
++                    drain_code = lifetime.drain_preparation_reads.__code__
++                    assert monitor.register_callback(tool, monitor.events.PY_YIELD, drain_yield) is None
++                    monitor.set_local_events(tool, drain_code, monitor.events.PY_YIELD)
++                    try:
++                        shutdown = asyncio.create_task(entry(host))
++                        await settle(draining.is_set)
++                    finally:
++                        monitor.set_local_events(tool, drain_code, 0)
++                        assert monitor.register_callback(tool, monitor.events.PY_YIELD, None) is drain_yield
++                        monitor.free_tool_id(tool)
+                     shutdown.cancel()
+                     await asyncio.sleep(0)
+                     shutdown.cancel()
+@@ -216,4 +241,4 @@ asyncio.run(exercise())
+ 
+ @pytest.mark.parametrize('case', ['owned_lifecycles', 'direct_unmount', 'queued', 'custom_result', 'custom_error'])
+ def test_actor_pack_boot_retains_physical_outcome(tmp_path, case):
+-    _run(tmp_path, 'actor_boot_owned', case, script=_SCRIPT, timeout=60)
++    _run(tmp_path, 'actor_boot_owned', case, script=_SCRIPT, timeout=120)
+diff --git a/Tests/CI/test_console_p0_regression_gate.py b/Tests/CI/test_console_p0_regression_gate.py
+index e8bdc403d1..38f596be49 100644
+--- a/Tests/CI/test_console_p0_regression_gate.py
++++ b/Tests/CI/test_console_p0_regression_gate.py
+@@ -56,6 +56,9 @@ _KEEP = "Tests/UI/test_app_keep_alive_dead_screen.py::"
+ #: P0 task -> the gated regression tests (a file, or one test's node id).
+ P0_REGRESSION_TESTS: dict[str, tuple[str, ...]] = {
+     "TASK-35679.1": ("Tests/Chat/test_console_context_close_lifetime.py",),
++    "TASK-35679.2": (
++        "Tests/Backup_Recovery/test_subscriptions_boot_physical_ownership.py",
++    ),
+     # PR3300: new mounted return/input regressions use the private bootstrap lane.
+     "TASK-33622.23": ("Tests/UI/test_console_terminal_return_input.py",),
+     "TASK-35552": (
+diff --git a/Tests/UI/test_app_instance_warning.py b/Tests/UI/test_app_instance_warning.py
+index 91368ba272..8377ba5722 100644
+--- a/Tests/UI/test_app_instance_warning.py
++++ b/Tests/UI/test_app_instance_warning.py
+@@ -145,7 +145,7 @@ def test_push_initial_screen_wires_the_config_load_failure_warning_call():
+ 
+ 
+ def test_subscriptions_starter_reads_no_config_on_the_ui_loop(monkeypatch, tmp_path):
+-    """TASK-36511: the backfill starter checks activation against the wired DB.
++    """The starter passes its wired DB path to finite admission without UI I/O.
+ 
+     Starters run on the UI loop. This one resolved ``get_subscriptions_db_path()``,
+     a checked config operation that waits out any worker's config read: it held
+@@ -154,7 +154,9 @@ def test_subscriptions_starter_reads_no_config_on_the_ui_loop(monkeypatch, tmp_p
+ 
+     Pinned here, unbound against a stub like this file's boot warnings, because
+     this file runs in the PR lane (Tests/App/test_boot_worker_stagger_policy.py,
+-    the boot fleet's own suite, runs in none).
++    the boot fleet's own suite, runs in none). Native admission itself now
++    belongs to the finite worker; its original-code controls live in
++    test_subscriptions_boot_physical_ownership.py.
+     """
+     import tldw_chatbook.app as app_module
+     from tldw_chatbook.Backup_Recovery import activation
+@@ -172,12 +174,15 @@ def test_subscriptions_starter_reads_no_config_on_the_ui_loop(monkeypatch, tmp_p
+         lambda owners, path=None: checked.append((owners, path)) or True,
+     )
+     db = SimpleNamespace(db_path=tmp_path / "subscriptions.db")
++    def start_finite(path, admission):
++        started.append((path, admission))
++        return "worker"
++
+     app = SimpleNamespace(
+         subscriptions_db=db,
+-        _backfill_subscription_items_fts=lambda: None,
+-        run_worker=lambda *args, **kwargs: started.append(kwargs["name"]) or "worker",
++        _start_subscriptions_fts_backfill_worker=start_finite,
+     )
+     starter = app_module.TldwCli.boot_worker_starters(app)["subscriptions_fts_backfill"]
+     assert starter() == "worker"
+-    assert checked == [(("db.subscriptions",), db.db_path)]
+-    assert started == ["_backfill_subscription_items_fts"]
++    assert checked == []  # The finite worker owns native admission, not this UI call.
++    assert started == [(db.db_path, activation.execution_allowed)]
+diff --git a/tldw_chatbook/app.py b/tldw_chatbook/app.py
+index fa069bde8c..f9660c278f 100644
+--- a/tldw_chatbook/app.py
++++ b/tldw_chatbook/app.py
+@@ -4715,18 +4715,7 @@ class TldwCli(
+             # config read on the UI loop) waited out a worker's config read.
+             db = getattr(self, "subscriptions_db", None)
+             path = db.db_path if db is not None else get_subscriptions_db_path()
+-            if not execution_allowed(("db.subscriptions",), path):
+-                return None
+-            # task-688: index subscription_items rows scraped before the FTS5
+-            # index existed, so search covers a user's whole back catalogue
+-            # without any action on their part.
+-            return self.run_worker(
+-                self._backfill_subscription_items_fts,
+-                name="_backfill_subscription_items_fts",
+-                group="subscriptions-fts-backfill",
+-                thread=True,
+-                exclusive=True,
+-            )
++            return self._start_subscriptions_fts_backfill_worker(path, execution_allowed)
+ 
+         return {
+             "actor_pack_recovery": start_actor_pack_recovery,
+@@ -4827,7 +4816,11 @@ class TldwCli(
+         key = BOOT_WORKER_KEY_BY_IDENTITY.get(
+             (getattr(worker, "name", ""), getattr(worker, "group", ""))
+         )
+-        if key is None or not gate.complete(key):
++        if (
++            key is None
++            or self._boot_worker_handles.get(key) is not worker
++            or not gate.complete(key)
++        ):
+             return
+         self._boot_worker_handles.pop(key, None)
+         self._admit_staggered_boot_workers()
+diff --git a/tldw_chatbook/app_service_wiring.py b/tldw_chatbook/app_service_wiring.py
+index b23b95cde5..9180ad4bd4 100644
+--- a/tldw_chatbook/app_service_wiring.py
++++ b/tldw_chatbook/app_service_wiring.py
+@@ -1627,8 +1627,13 @@ class ServiceWiringMixin(
+             exit_on_error=False,
+         )
+ 
++    def _start_subscriptions_fts_backfill_worker(self, path, admission):
++        from .app_boot_workers import _start_subscriptions_fts_backfill_worker
++
++        return _start_subscriptions_fts_backfill_worker(self, path, admission)
++
+     async def _shutdown_actor_pack_recovery(self) -> asyncio.CancelledError | None:
+-        """Fence queued boot work and settle exact issued native recovery."""
++        """Fence queued boot work and settle exact issued native boot calls."""
+         self._close_boot_worker_gate("actor pack shutdown")
+         reads = getattr(self, "_actor_pack_recovery_reads", None)
+         if not reads:

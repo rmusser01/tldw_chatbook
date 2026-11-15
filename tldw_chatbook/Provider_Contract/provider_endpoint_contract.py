@@ -86,11 +86,15 @@ _ENGINE_PRESETS = {
 #: already carries its API version owns its route suffix, so it resolves like
 #: an engine preset (``<base>/chat/completions``). Z.ai's ``/api/paas/v4``
 #: base previewed and saved ``…/v4/v1/chat/completions`` under the generic rule.
-#: The setup facts' ``ROUTE_SUFFIXES`` is the one owner (review round 1, F11).
+#: Keep the single route table here; setup facts re-export the same object.
+#: Providers whose saved base already ends in its API version, so the chat
+#: route is ``<base>/chat/completions`` -- never ``<base>/v1/chat/completions``
+#: (review provider-20 / task-33621.32: Z.ai's ``/api/paas/v4``).
+ROUTE_SUFFIXES: dict[str, str] = {"zai": "/chat/completions"}
+
 @lru_cache(maxsize=1)
 def _route_owning_presets() -> dict[str, ProviderRecord]:
-    """Load setup facts when interpreting an endpoint, keeping imports pure."""
-    from tldw_chatbook.Provider_Contract.provider_setup_facts import ROUTE_SUFFIXES
+    """Find route-owning presets without importing first-use setup data."""
 
     return {
         record.key: record for record in ALL_RECORDS if record.key in ROUTE_SUFFIXES

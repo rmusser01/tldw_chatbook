@@ -1,0 +1,179 @@
+{
+  "schema_version": 1,
+  "selection": {
+    "starter_qualname": "TldwCli.boot_worker_starters.<locals>.start_subscriptions_fts_backfill",
+    "admission_qualname": "execution_allowed",
+    "worker_function": "run_preparation_read.<locals>.invoke",
+    "callback_qualname": "_start_subscriptions_fts_backfill_worker.<locals>.backfill.<locals>.invoke",
+    "pairing": "Exact function, callback metadata and thread ID; stages may differ."
+  },
+  "sources": {
+    "before": {
+      "file": "diagnostic-baseline-diagnostic.json",
+      "sha256": "ab629ac5984db590a88a6c8c7c5668115175bb8b64552a6564814448ad232ce7",
+      "revision": "7dbeff56aba6032f43aba2f4bbab803d3f133471",
+      "product_sources_before": {
+        "file": "diagnostic-baseline-diagnostic-sources-before.json",
+        "sha256": "584ca82309c11732b23b916ab94bf2e90bdefb03b82745887be6c2a241dc13b5",
+        "count": 3012
+      },
+      "product_sources_after": {
+        "file": "diagnostic-baseline-diagnostic-sources-after.json",
+        "sha256": "584ca82309c11732b23b916ab94bf2e90bdefb03b82745887be6c2a241dc13b5",
+        "count": 3012
+      },
+      "product_sources_unchanged": true
+    },
+    "after": {
+      "file": "diagnostic-after-diagnostic.json",
+      "sha256": "57295ce235bf1d01552ebbef5256912c6dcb5769b358d949189faac60b58ecd9",
+      "revision": "ea5a104807a53c2ba69c2434f6a4a1b22118b139",
+      "product_sources_before": {
+        "file": "diagnostic-after-diagnostic-sources-before.json",
+        "sha256": "509b9b128ac02ee2475caa67804373e972e9583baceb37c409005e9a0e727147",
+        "count": 3013
+      },
+      "product_sources_after": {
+        "file": "diagnostic-after-diagnostic-sources-after.json",
+        "sha256": "509b9b128ac02ee2475caa67804373e972e9583baceb37c409005e9a0e727147",
+        "count": 3013
+      },
+      "product_sources_unchanged": true
+    }
+  },
+  "sync_span_columns": [
+    "stage",
+    "function",
+    "wall_ms",
+    "main_thread_cpu_ms"
+  ],
+  "worker_event_columns": [
+    "stage",
+    "function",
+    "event",
+    "wall_seconds",
+    "task_or_thread_id",
+    "thread_cpu_ns",
+    "worker_metadata (workers only)"
+  ],
+  "journey_edge_columns": [
+    "stage",
+    "event",
+    "wall_seconds"
+  ],
+  "before": {
+    "original_starter_row": [
+      "console-resume-2",
+      "TldwCli.boot_worker_starters.<locals>.start_subscriptions_fts_backfill",
+      637.4921999813523,
+      125.0
+    ],
+    "original_execution_allowed_row": [
+      "console-resume-2",
+      "execution_allowed",
+      637.1606000175234,
+      125.0
+    ]
+  },
+  "after": {
+    "original_starter_row": [
+      "console-resume-1",
+      "TldwCli.boot_worker_starters.<locals>.start_subscriptions_fts_backfill",
+      7.308300002478063,
+      0.0
+    ],
+    "background_start_row": [
+      "console-resume-1",
+      "run_preparation_read.<locals>.invoke",
+      "start",
+      228650.9335313,
+      12388,
+      578125000,
+      {
+        "callback_qualname": "_start_subscriptions_fts_backfill_worker.<locals>.backfill.<locals>.invoke"
+      }
+    ],
+    "background_return_row": [
+      "console-resume-2",
+      "run_preparation_read.<locals>.invoke",
+      "return",
+      228655.0339505,
+      12388,
+      1453125000,
+      {
+        "callback_qualname": "_start_subscriptions_fts_backfill_worker.<locals>.backfill.<locals>.invoke"
+      }
+    ],
+    "overlapping_key_posted_row": [
+      "console-resume-2",
+      "key-posted",
+      228652.2335927
+    ],
+    "overlapping_key_observed_row": [
+      "console-resume-2",
+      "key-observed",
+      228652.3124924
+    ],
+    "startup_execution_allowed_rows": [
+      [
+        "startup",
+        "execution_allowed",
+        86.40920001198538,
+        78.125
+      ],
+      [
+        "startup",
+        "execution_allowed",
+        2217.4220999877434,
+        109.375
+      ],
+      [
+        "startup",
+        "execution_allowed",
+        263.9341999893077,
+        109.375
+      ],
+      [
+        "startup",
+        "execution_allowed",
+        439.32229999336414,
+        125.0
+      ],
+      [
+        "startup",
+        "execution_allowed",
+        97.09339999244548,
+        93.75
+      ]
+    ],
+    "return_execution_allowed_rows": []
+  },
+  "computed": {
+    "before_starter_wall_ms": 637.4921999813523,
+    "before_starter_main_thread_cpu_ms": 125.0,
+    "before_execution_allowed_wall_ms": 637.1606000175234,
+    "before_execution_allowed_main_thread_cpu_ms": 125.0,
+    "after_starter_wall_ms": 7.308300002478063,
+    "after_starter_main_thread_cpu_ms": 0.0,
+    "observed_starter_wall_difference_ms": 630.1838999788743,
+    "background_thread_id": 12388,
+    "background_wall_ms": 4100.419199996395,
+    "background_thread_cpu_ms": 875.0,
+    "key_post_to_observed_ms": 78.89969999087043,
+    "key_observed_before_background_return_ms": 2721.4580999861937,
+    "background_pair_crosses_stage_labels": true,
+    "key_edges_both_inside_background_interval": true,
+    "after_startup_main_thread_execution_allowed_count": 5,
+    "after_return_main_thread_execution_allowed_count": 0
+  },
+  "limits": [
+    "This proves the selected admission/backfill callback executes off the UI thread and draft input is delivered while it remains active; it does not establish a global journey latency improvement.",
+    "Five startup execution_allowed calls remain on the main thread; zero recorded return-stage calls does not mean all application admission is off-loop.",
+    "The background callback includes both admission and backfill. Its duration is not directly comparable to the before execution_allowed duration.",
+    "Observed starter duration differences come from separate diagnostic processes with uncontrolled host-wide contention, including unrelated task40608 native tests.",
+    "The baseline diagnostic probe lacks the later prior-draft assertion. The candidate diagnostic includes it; selected original-code spans support attribution, not a fully identical-harness journey comparison.",
+    "diagnostic-eol-qualification.json establishes the earlier diagnostic/plain app.py and app_service_wiring.py differences were exclusively CRLF line endings.",
+    "Thread CPU resolution is coarse; a measured zero is not proof of zero CPU work. Wall minus thread CPU includes descheduling and native waits and is not a mutex-wait measurement.",
+    "Native worker intervals may overlap and must not be summed as total attachment latency. The historical A3 attachment timeout has no uniquely established owner and no deadlock is claimed."
+  ]
+}

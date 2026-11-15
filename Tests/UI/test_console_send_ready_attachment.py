@@ -198,10 +198,12 @@ async def test_the_workbench_send_action_agrees_with_the_composer_send(monkeypat
             host, pilot, monkeypatch
         )
         workbench_send = console.query_one("#workbench-action-send", Button)
+        # Compare one checked publication, as the sibling readiness tests do.
+        # Bare nonblocking polling intentionally remains in refusal/replay tests.
         for name, fields, sendable in _STAGED_KINDS:
             store.clear_pending_attachments(session_id)
             assert store.add_pending_attachment(session_id, _attachment(name, fields))
-            await _sync_controls(console, pilot)
+            await _sync_console_control_bar_now(console)
             assert (workbench_send.disabled, send.disabled) == (
                 not sendable,
                 not sendable,
@@ -218,7 +220,7 @@ async def test_the_workbench_send_action_agrees_with_the_composer_send(monkeypat
         store.clear_pending_attachments(session_id)
         image = _attachment("photo.png", _STAGED_KINDS[0][1])
         assert store.add_pending_attachment(session_id, image)
-        await _sync_controls(console, pilot)
+        await _sync_console_control_bar_now(console)
         assert (workbench_send.disabled, send.disabled) == (True, True)
 
 
