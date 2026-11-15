@@ -405,6 +405,7 @@ from ...Widgets.workbench_focus import (
     widget_has_visible_region,
 )
 from ...Widgets.Library import (
+    LIBRARY_ADAPTIVE_READER_GRIP_CLASS,
     AdaptiveReaderShellResized,
     CollectionsCaptureReaderPresentation,
     LIBRARY_SKILLS_FILTER_ID,
@@ -17369,6 +17370,8 @@ class LibraryScreen(BaseAppScreen):
         if (
             not exact_pending_return
             and pending_entry_focus_generation is None
+            # Reset recovery outranks implicit parking, not an explicit request.
+            and not (reader_was_reset and focus_identity is None)
             and isinstance(focused_id, str)
             and focused_id
             and any(widget.id == "library-media-canvas" for widget in focused.ancestors)
@@ -17424,13 +17427,38 @@ class LibraryScreen(BaseAppScreen):
                 else None
             )
             if then is None and reader_was_reset:
-                # TASK-40293: wait for the results owner, keeping newer focus arms.
+                # Capture ownership before either deferred completion boundary.
+                empty_page_result = controller.applied_result
+                empty_page_generation = self._library_list_entry_focus_generation
+                empty_page_focus = focused
+
+                def empty_page_is_current() -> bool:
+                    current_focus = self.focused
+                    return (
+                        controller.applied_result is empty_page_result
+                        and applied == controller.requested_scope
+                        and not controller.loading
+                        and not controller.retained_items
+                        and self._media_state.view == "list"
+                        and empty_page_generation
+                        == self._library_list_entry_focus_generation
+                        and not self._library_pending_list_entry_focus
+                        and not self._media_state.find_focus_pending
+                        and (
+                            current_focus is empty_page_focus
+                            or current_focus is None
+                            or not current_focus.is_attached
+                            or current_focus.has_class(
+                                LIBRARY_ADAPTIVE_READER_GRIP_CLASS
+                            )
+                        )
+                    )
+
                 def land_emptied_page() -> None:
-                    if not (
-                        self._library_pending_list_entry_focus
-                        or self._library_media_find_focus_pending
-                    ):
-                        self._media_controller._land_library_media_emptied_page()
+                    if empty_page_is_current():
+                        self._media_controller._land_library_media_emptied_page(
+                            is_current=empty_page_is_current
+                        )
 
                 then = land_emptied_page
         if pending_entry_focus_generation is not None:

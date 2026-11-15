@@ -1,0 +1,98 @@
+{
+  "selector": "Tests/Architecture/test_library_media_wiring.py::test_emptied_page_focus_callback_retains_admitted_owner",
+  "lane": "Architecture guard contracts",
+  "capacity_evidence": {
+    "successful_existing_jobs": 18,
+    "observed_max_job_minutes": 10.366666666666667,
+    "observed_median_job_minutes": 7.966666666666667,
+    "job_timeout_minutes": 20
+  },
+  "timing_limit": "Existing Architecture timing sample and local regression runtime support bounded routing; no future CI timing guarantee.",
+  "routing_validation": {
+    "passed": 3,
+    "failures": 0,
+    "errors": 0,
+    "skips": 0,
+    "seconds": 35.05,
+    "junit_sha256": "a76dc837cc43fd3287797521dadd27075b945b3bddd6ea129c93399bff223560",
+    "scope": "Final bootstrap-tail Architecture lane mirror and ordering, plus selector resolution and disjoint targets. These contracts were unchanged by the later loop-capture correction.",
+    "ui_census_entries": 2172,
+    "ui_model_unchanged": true
+  },
+  "cases": 1,
+  "passed": 1,
+  "failures": 0,
+  "errors": 0,
+  "skips": 0,
+  "held_boundary_scenarios": 12,
+  "selector_seconds": 68.533,
+  "qualification_run_passed": 1,
+  "qualification_run_seconds": 79.63,
+  "junit_sha256": "5d9d9b9a7567f810d54b445ab30295884285084f66887245a26d53d86b98df12",
+  "junit_path": ".test-tmp/textual-1378-3/ci-resync-bound-focus-lint-followup-01/result.xml",
+  "test_file_sha256": "db39a65102abc45ec227b3bf4f1327373263e5ec1e791b4454d58a6179712af6",
+  "case_seconds": {
+    "test_emptied_page_focus_callback_retains_admitted_owner": 68.533
+  },
+  "profile": "bootstrap_profile",
+  "scope": "One mounted App case loops through 12 held-callback ownership scenarios. All calls bind to the real screen and controller; explicit default arguments retain each loop value. The production code, selector and strict unbound-call pin are unchanged.",
+  "historical_unbound_qualification": {
+    "selector": "Tests/Architecture/test_library_media_wiring.py::test_emptied_page_focus_callback_retains_admitted_owner",
+    "cases": 10,
+    "passed": 10,
+    "failures": 0,
+    "errors": 0,
+    "skips": 0,
+    "elapsed_pytest_seconds": 17.03,
+    "junit_sha256": "4d3993077db48185ecf6b1760057a593f6892dcb8f4d526acf93499d42b73997",
+    "junit_path": ".test-tmp/textual-1378-3/ci-resync-empty-focus-ownership-green-02/result.xml",
+    "case_seconds": {
+      "test_emptied_page_focus_callback_retains_admitted_owner[pending-entry-results]": 8.762,
+      "test_emptied_page_focus_callback_retains_admitted_owner[pending-entry-focus]": 0.007,
+      "test_emptied_page_focus_callback_retains_admitted_owner[pending-find-results]": 0.008,
+      "test_emptied_page_focus_callback_retains_admitted_owner[pending-find-focus]": 0.008,
+      "test_emptied_page_focus_callback_retains_admitted_owner[settled-reader-results]": 0.007,
+      "test_emptied_page_focus_callback_retains_admitted_owner[settled-reader-focus]": 0.007,
+      "test_emptied_page_focus_callback_retains_admitted_owner[settled-items-results]": 0.007,
+      "test_emptied_page_focus_callback_retains_admitted_owner[settled-items-focus]": 0.007,
+      "test_emptied_page_focus_callback_retains_admitted_owner[recovery-results]": 0.007,
+      "test_emptied_page_focus_callback_retains_admitted_owner[recovery-focus]": 0.007
+    },
+    "lane": "Architecture guard contracts",
+    "scope": "Actual production method delegation with held results and final-focus callbacks; mounted controls qualify layout separately.",
+    "timing_limit": "Existing Architecture timing sample and local regression runtime support bounded routing; no future CI timing guarantee.",
+    "status": "Historical only: superseded by one mounted bound-method case; not final execution evidence."
+  },
+  "routing_order_review": "The final selector is target 42, after the existing terminal-privacy file at target 41. No target follows this new bootstrap-profile case. The existing mixed-profile file at target 2 predates the resync and is unchanged; architecture-lane-order.json records the full inspection.",
+  "historical_unbound_routing_validation": {
+    "passed": 5,
+    "failures": 0,
+    "errors": 0,
+    "skips": 0,
+    "seconds": 85.66,
+    "junit_sha256": "2662a0c0e7ee5482c05f26f892cd930d30a677b44a08c44456834312d07fcff1",
+    "census_entries": 2172,
+    "census_floor": 2172,
+    "ui_model_order_unchanged": true,
+    "scope": "Historical Architecture lane mirror, selector resolution and overlap, 40-shard unique coverage, and the 19-runner capacity pin."
+  },
+  "prior_mounted_pin_qualification": {
+    "cases": 1,
+    "passed": 1,
+    "failures": 0,
+    "errors": 0,
+    "skips": 0,
+    "held_boundary_scenarios": 12,
+    "selector_seconds": 44.685,
+    "qualification_run_passed": 8,
+    "qualification_run_seconds": 195.29,
+    "junit_sha256": "40427d737e9c12e58f826ff7df573117701d8f3405048fe25c026d24a19d5a26",
+    "junit_path": ".test-tmp/textual-1378-3/ci-resync-bound-focus-architecture-01/result.xml",
+    "test_file_sha256": "c17902ec9279f4e85a76c69dd7cdc8d92b56eca77cc894a87d8fe3dff99038ae",
+    "case_seconds": {
+      "test_emptied_page_focus_callback_retains_admitted_owner": 44.685
+    },
+    "profile": "bootstrap_profile",
+    "status": "Historical timing for the earlier mounted test. This eight-target run retains evidence that the strict unbound-call pin stayed at 722; its 44.685-second selector timing is not the final lint-corrected timing."
+  }
+}

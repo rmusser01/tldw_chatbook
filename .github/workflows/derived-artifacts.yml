@@ -1241,8 +1241,9 @@ jobs:
     # git history (TASK-39055 retired those nodes). The profile inventory's
     # CLI test is left out: preflight's census step runs the same CLI (but
     # not its `--print-occurrences` check, which is unlaned).
-    # TASK-39153: the persistent terminal privacy boundary runs last; its one
-    # bootstrap_profile node must not precede a sandboxed suite (TASK-32873).
+    # TASK-39153: the persistent terminal privacy boundary begins the final
+    # bootstrap_profile tail (TASK-32873). PR3569 appends its mounted Media
+    # focus-ownership selector there too, after every sandboxed target.
     name: Architecture guard contracts
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
@@ -1304,6 +1305,7 @@ jobs:
             Tests/Architecture/test_console_wave6_inventory.py \
             Tests/Backup_Recovery/test_restore_plan_excluded_directories.py \
             Tests/Architecture/test_persistent_terminal_privacy_boundary.py \
+            Tests/Architecture/test_library_media_wiring.py::test_emptied_page_focus_callback_retains_admitted_owner \
             --timeout=180 \
             --tb=short
 

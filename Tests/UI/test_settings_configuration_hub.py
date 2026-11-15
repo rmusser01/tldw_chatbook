@@ -3734,6 +3734,12 @@ async def test_settings_overview_renders_server_sync_workspace_contracts_in_diag
         session_payload={"id": "session-1"},
     )
 
+    # Supplied-state presentation uses the real read-only fallbacks, without
+    # resolving the fabricated server or opening unrelated sync storage.
+    app.server_context_provider = None
+    app.sync_scope_service = None
+    app.manual_sync_control_service = None
+
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:

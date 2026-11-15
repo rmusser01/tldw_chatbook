@@ -1,11 +1,11 @@
 ---
 id: TASK-37360
 title: Preserve Media filter typing and editing context across browse publication
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: 2026-10-29 04:49
-updated_date: '2026-11-15T21:16:00Z'
+updated_date: '2026-11-15T22:29:00Z'
 labels:
   - textual-patterns
   - library
@@ -66,4 +66,6 @@ Changed the Media canvas, canvas_sync callback routing, clean Reader path and so
 Verification: original identity/prefix and before-Changed failures reproduced. Final 7 cases pass (5 new + 2 applied-scope regressions); broader targeted run had 52 passes. Four initially bootstrap-blocked legacy cases subsequently passed under the existing bootstrap contract. One early-Clear timing assertion independently fails on the exact baseline; settled native Clear passes. No assertions or guards weakened. Relevant CSS/token/component checks pass; no new lint findings; inherited whole-file formatting/lint debt is documented.
 
 Independent task/scoped and final whole-branch reviews approved. Five new cases are in the PR census. ADR required: no; existing ADR-033/086/150/161 apply. Evidence and limitations: Docs/superpowers/qa/2026-11-14-textual-pattern-followups/verification.md. Local uncommitted implementation; no full-suite or publish claim.
+
+PR3569 integration with dev cc6006fc preserves incoming empty-page recovery through retained results. A targetless reset no longer mistakes Textual automatic filter parking for an explicit filter request; native filter requests retain priority. Recovery captures accepted result, entry generation and focus, then checks canonical Media Find state and ownership again at the final focus write. Existing route, foreign-focus, pruning and eligibility safeguards remain. The final real-mounted regression loops12scenarios without increasing the722unbound-call pin. Its negative control catches the stale final write; original compact2 and final Media7 all pass. Exact line/no-slack and coupling guards pass; after explicit per-iteration callback binding, the final new selector passes with full Ruff/scoped format clean. Final production inventory has no drift and independent integration review found no actionable issue. No new production lint findings:24Library findings match HEAD exactly. ADR required:no new ADR; existing ADR033/086/150/161 govern this routine integration. Final source hashes and receipts, including initial failures and probe limitations: Docs/superpowers/qa/2026-11-14-textual-pattern-followups/ci-resync-cc6006fc.md. CI capacity follow-up TASK39144 and broader Settings parent remain open; no full local suite or final remote-CI claim.
 <!-- SECTION:NOTES:END -->

@@ -793,7 +793,7 @@ MINIMUM_FILES = 1660
 # TASK-38740 (2026-11-05): append the narrow Settings sweep's six
 # (category, height) nodes at the tail.
 MINIMUM_FILES = 1666
-# TASK-38714 (2026-11-05): append the Settings â–¸ Agents worker-connection
+# TASK-38714 (2026-11-05): append the Settings ▸ Agents worker-connection
 # node at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 1667
 # TASK-38718 review (2026-11-05): append the Console resend guard's fifteen
@@ -1003,7 +1003,7 @@ MINIMUM_FILES = 2034
 # measured entry count.
 MINIMUM_FILES = 2037
 MINIMUM_FILES = 2031
-# TASK-40712 (2026-11-13): append the Plugins screen's Importâ€¦ preview review
+# TASK-40712 (2026-11-13): append the Plugins screen's Import… preview review
 # buttons and the review dialog's load-failure test at the tail. The floor is
 # the measured entry count.
 MINIMUM_FILES = 2039

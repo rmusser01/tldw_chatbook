@@ -76,7 +76,7 @@ changes require new priced inputs rather than an untimed default.
 
 ## Validation
 
-At this 2172-selector resync base, the census checker passes and 15 targeted
+For the verified 2172-selector resync model, the census checker passes and 15 targeted
 count, 40-shard unique/order-coverage, selector, aggregation and incoming-lane
 contract cases pass with zero failures/errors/skips in 61.41 seconds. JUnit
 SHA256: `2bf8bea306696190755533575ceb0d80e6af710e6be1e370d2afdf6349be7942`.
@@ -85,7 +85,42 @@ order and maximum. Ruff retains the same one baseline finding with no new
 diagnostics; three inherited formatting-debt files remain, while the checker
 and new reproducer pass formatting. Scoped diff checks pass.
 
-Prior 38/40-shard results stay dated in their original reports. Additional
-Library race regressions, if added, require measured charges and a fresh final
-replay; these results describe this recorded selector set. No full test sweep
-or new 40-shard CI execution is claimed.
+The actual-method Library focus regression is routed separately to the existing
+Architecture guard lane through exactly
+`Tests/Architecture/test_library_media_wiring.py::test_emptied_page_focus_callback_retains_admitted_owner`,
+mirrored in `ARCHITECTURE_GUARD_TARGETS`. This file previously had no PR route;
+only this function is enrolled. Its final shape is one mounted
+`bootstrap_profile` case looping twelve held-callback scenarios, with every call
+bound to the real screen/controller. The strict unbound-call pin stays at 722.
+After the test's loop captures were bound through explicit default arguments,
+the final selector passed with zero failures/errors/skips in a 79.63-second
+pytest run. Its exact JUnit case time is 68.533 seconds; JUnit SHA256:
+`5d9d9b9a7567f810d54b445ab30295884285084f66887245a26d53d86b98df12`.
+Final test-file SHA256:
+`db39a65102abc45ec227b3bf4f1327373263e5ec1e791b4454d58a6179712af6`.
+The earlier eight-target qualification passed in 195.29 seconds and retains
+evidence for the unchanged pin; its 44.685-second selector timing is historical.
+That run's JUnit SHA256 is
+`40427d737e9c12e58f826ff7df573117701d8f3405048fe25c026d24a19d5a26`.
+The earlier ten unmounted cases and their 17.03-second run are retained as
+historical qualification in `architecture-route.json`, not as final evidence.
+Eighteen successful Architecture jobs in the recovered metadata had a
+10.367-minute maximum and 7.967-minute median against the unchanged 20-minute
+cap; this bounded 68.533-second addition does not require a new job. The final
+mounted selector runs last, after the existing terminal-privacy file, so no
+sandboxed target follows the new bootstrap-profile case. The complete 42-target
+inspection is in `architecture-lane-order.json`. It also records an unchanged
+upstream mixed-profile file at position two; that inherited placement is not
+rewritten or claimed to be a sandboxed-only sequence.
+
+The Architecture route leaves the UI census at 2172, so the model above remains
+unchanged. Prior 38/40-shard results stay dated in their original reports.
+After the final bootstrap-tail placement, three targeted lane-order/mirror and
+selector resolution/overlap checks pass with zero failures/errors/skips in
+35.05 seconds; JUnit SHA256
+`a76dc837cc43fd3287797521dadd27075b945b3bddd6ea129c93399bff223560`.
+The earlier five routing/census checks remain historical evidence in the JSON.
+The UI census and model are unchanged at 2172, 40 shards and concurrency 19.
+Modified routing Python passes Ruff; checker/reproducer format and scoped diff
+checks pass. The restored UTF-8 arrow/ellipsis checker comments remain intact.
+No full test sweep or new 40-shard CI execution is claimed.

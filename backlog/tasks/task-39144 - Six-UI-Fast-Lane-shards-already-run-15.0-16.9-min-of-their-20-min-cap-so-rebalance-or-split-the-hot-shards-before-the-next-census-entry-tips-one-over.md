@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: 2026-11-07 02:28
-updated_date: '2026-11-15T17:20:00Z'
+updated_date: '2026-11-15T21:31:00Z'
 labels:
   - follow-up
   - ci
@@ -243,6 +243,14 @@ created: 2026-11-15T17:20:00Z
 ---
 
 PR #3569 rebase onto dev 2ff0e9a5e5f (2026-11-15): preserved all 2076 incoming selectors plus the same 27 PR cases, census/floor 2103. The 42 incoming selectors are explicitly charged from pinned task evidence: 1823.4 seconds plus a separately identified conservative 42.8-second reserve, totaling 1866.2 seconds. Combined model 530.843283 minutes makes 39 shards impossible at the 13.3-minute target; 40 shards after 61 swaps reach max 13.287801 minutes. Concurrency remains 18, deadlines unchanged. Twelve targeted count, coverage, workflow and incoming-lane guards pass; both portable replays match. Prior 38-shard artifacts and census are archived separately. Current evidence: Docs/superpowers/qa/2026-11-14-textual-pattern-followups/ci/README.md. Actual post-change CI observation remains open; modeled headroom is not a completed CI run.
+
+---
+
+created: 2026-11-15T21:31:00Z
+
+---
+
+PR #3569 CI integration onto dev cc6006fcf5 (2026-11-15): retained all 2145 upstream UI selectors plus the original 27 PR cases, census/floor 2172. Preserved upstream concurrency 19 and the 13.0-minute target. Recovered the named 25 November 14 run sets and 867 green UI logs; all 2034 base selectors are timed, all 111 upstream additions explicitly charged from task notes at 2174.82 seconds. Fresh upstream model is 492.9432526 minutes, close to its rounded 492.8 report. Adding the 27 recorded Windows charges (1385.997 seconds) yields 516.0432026 minutes. The 39-shard ideal floor 13.231877 exceeds target; 40 shards after 36 swaps reach maximum 12.9976141. No old reserve or unpriced fallback is reused. Fifteen targeted CI count, coverage, selector and incoming-lane contracts pass. Portable current inputs and reproduction: Docs/superpowers/qa/2026-11-14-textual-pattern-followups/ci/resync-cc6006fc/. Earlier QA remains dated history. Actual post-change CI observation stays open; the pending Library scheduling regression belongs to the separate Architecture lane and does not add a UI census selector.
 
 ---
 <!-- COMMENTS:END -->

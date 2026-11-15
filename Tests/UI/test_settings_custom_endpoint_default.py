@@ -15,7 +15,7 @@ from types import SimpleNamespace
 
 import pytest
 from textual.content import Content
-from textual.css.query import QueryError
+from textual.css.query import NoMatches, QueryError
 from textual.widgets import Button, Input, Select, Static
 
 from Tests.private_profile import private_profile_test
@@ -690,7 +690,11 @@ async def _click_until(screen, pilot, selector: str, done) -> None:
         await _click_scrolled_settings_button(screen, pilot, selector)
         deadline = time.monotonic() + 4.0
         while time.monotonic() < deadline:
-            if done():
+            try:
+                finished = done()
+            except NoMatches:
+                finished = False  # Children are absent while the section recomposes.
+            if finished:
                 await pilot.pause()
                 return
             await pilot.pause(0.05)

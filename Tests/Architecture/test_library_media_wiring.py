@@ -884,3 +884,173 @@ def test_media_controller_binds_every_name_its_moved_bodies_use() -> None:
         "moved bodies reference these names, but the controller binds no "
         f"property for them: {unbound!r}"
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_emptied_page_focus_callback_retains_admitted_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Hold both completion boundaries on one real mounted Library screen.
+
+    Actual bound Screen/controller methods and mounted focus owners protect
+    their wiring contract. The side-by-side tests qualify results rendering;
+    this test deliberately holds the two scheduling boundaries synchronously.
+    """
+    from textual.widgets import Button, Input
+
+    from Tests.UI.test_library_shell import (
+        LibraryProductionCSSHarness,
+        _active_library_screen,
+        _build_test_app,
+        _seed_conversations,
+        _two_conversations,
+        _wait_for_condition,
+        _wait_for_library_shell,
+        _wait_for_selector,
+    )
+    from tldw_chatbook.UI.Screens import library_screen
+    from tldw_chatbook.Widgets.Library import LibraryBrowseReaderShell
+
+    app = _build_test_app()
+    app.library_new_profile_admission = False
+    _seed_conversations(app, _two_conversations(), media=[])
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-media", Button).press()
+        recovery = await _wait_for_selector(
+            screen, pilot, "#library-media-empty-import"
+        )
+        browse = screen._library_media_browse_controller
+        await _wait_for_condition(
+            pilot,
+            lambda: browse.applied_result is not None and not browse.loading,
+            message="The mounted empty Media page did not settle.",
+        )
+        shell = screen.query_one(".library-media-route", LibraryBrowseReaderShell)
+        reader_focus = Button("Reader focus", id="ownership-reader-focus")
+        items_focus = Button("Items focus", id="ownership-items-focus")
+        await shell.reader.mount(reader_focus)
+        await screen.query_one("#library-media-canvas").mount(items_focus)
+        field = screen.query_one("#library-media-filter", Input)
+        await pilot.pause()
+        assert all(
+            widget in screen.focus_chain
+            for widget in (reader_focus, items_focus, field, recovery)
+        )
+
+        cases = [
+            (owner, boundary)
+            for owner in (
+                "pending-entry",
+                "pending-find",
+                "settled-reader",
+                "settled-items",
+                "recovery",
+            )
+            for boundary in ("results", "focus")
+        ] + [("implicit-filter", "results"), ("explicit-filter", "results")]
+        empty_session = LibraryMediaState().reader_session
+        for new_owner, boundary in cases:
+            screen._disarm_library_list_entry_focus()
+            screen._media_state.find_focus_pending = False
+            initial_focus = field if new_owner.endswith("filter") else reader_focus
+            screen.set_focus(initial_focus, scroll_visible=False)
+            await pilot.pause()
+            assert screen.focused is initial_focus, (new_owner, boundary)
+
+            results_callbacks = []
+            focus_callbacks = []
+            focus_writes = []
+            real_set_focus = screen.set_focus
+            real_after_refresh = screen.call_after_refresh
+
+            def hold_results(owner, kind, *, then, _callbacks=results_callbacks):
+                assert owner is screen and kind == "media"
+                _callbacks.append(then)
+                return True
+
+            def hold_landing(
+                callback,
+                *args,
+                _callbacks=focus_callbacks,
+                _after_refresh=real_after_refresh,
+                **kwargs,
+            ):
+                if "_land_library_media_emptied_page.<locals>.land" in getattr(
+                    callback, "__qualname__", ""
+                ):
+                    assert not args and not kwargs
+                    _callbacks.append(callback)
+                    return True
+                return _after_refresh(callback, *args, **kwargs)
+
+            def record_focus(
+                widget, *args, _writes=focus_writes, _set_focus=real_set_focus, **kwargs
+            ):
+                _writes.append(widget)
+                return _set_focus(widget, *args, **kwargs)
+
+            try:
+                with monkeypatch.context() as held:
+                    held.setattr(library_screen, "_sync_library_canvas", hold_results)
+                    held.setattr(screen, "call_after_refresh", hold_landing)
+                    held.setattr(screen, "set_focus", record_focus)
+                    held.setattr(screen, "_mounted_library_media_viewer", lambda: None)
+                    screen._media_state.view = "viewer"
+                    screen._media_state.reader_session = dataclasses.replace(
+                        empty_session,
+                        loaded_id="local:media:1",
+                        loaded_backing_id=1,
+                        selected_id="local:media:1",
+                        selected_backing_id=1,
+                    )
+                    screen._sync_library_media_browse_state(
+                        "#library-media-filter"
+                        if new_owner == "explicit-filter"
+                        else None
+                    )
+                    assert len(results_callbacks) == 1
+                    assert not focus_callbacks and not focus_writes
+                    if boundary == "focus":
+                        results_callbacks.pop()()
+                        assert len(focus_callbacks) == 1
+                        assert not focus_writes
+
+                    if new_owner == "pending-entry":
+                        screen._library_pending_list_entry_focus = True
+                    elif new_owner == "pending-find":
+                        screen._media_state.find_focus_pending = True
+                    elif new_owner == "settled-reader":
+                        # A consumed newer arm returned to the same real control.
+                        screen._library_list_entry_focus_generation += 2
+                    elif new_owner == "settled-items":
+                        real_set_focus(items_focus, scroll_visible=False)
+
+                    if boundary == "results":
+                        results_callbacks.pop()()
+                    while focus_callbacks:
+                        focus_callbacks.pop(0)()
+                    expected = (
+                        [recovery]
+                        if new_owner in {"recovery", "implicit-filter"}
+                        else []
+                    )
+                    if new_owner == "explicit-filter":
+                        # The existing explicit restore schedules its focus write.
+                        assert screen.focused is field
+                    else:
+                        assert focus_writes == expected, (new_owner, boundary)
+                    if expected:
+                        assert screen.focused is recovery
+                    assert not results_callbacks and not focus_callbacks
+            finally:
+                screen._disarm_library_list_entry_focus()
+                screen._media_state.find_focus_pending = False
+                screen._media_state.reader_session = empty_session
+                screen._media_state.view = "list"
+            await pilot.pause()
+            if new_owner == "explicit-filter":
+                assert screen.focused is field

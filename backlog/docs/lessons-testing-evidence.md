@@ -1,5 +1,20 @@
 # Lessons: what counts as evidence a change works
 
+## A callback double can invent a removed state owner (PR #3569, 2026-11-15)
+
+**Incident.** Integrating retained Media results with empty-page focus recovery
+read a nonexistent screen-level Find flag. The first callback test supplied that
+attribute on its double, so it hid the ownership error; an observational probe
+repeated the mistake and failed before recording its snapshot. The real flag is
+`LibraryMediaState.find_focus_pending`. Using the canonical state exposed the
+error. Holding both results completion and the helper's later focus callback also
+showed that checking ownership only before scheduling the helper was too early.
+
+**What to do.** Check each receiver against its real owner before trusting an
+actual-method test on a double. Use the canonical state where practical, and
+exercise the final deferred write as well as the callback that schedules it.
+Keep a failed observer separate from evidence about the product it observes.
+
 ## A `sleep(0)` observer starves worker threads on Linux, and the switch interval does not bound it (TASK-40334, 2026-11-13)
 
 **Incident.** The idle-heap test's old `BusySampler` looped on `await asyncio.sleep(0)`. It failed 13 CI shard-2 jobs and none of about 20 macOS runs or 17 runs in a local Linux 3.12.16 container. In 11 of the 13 the send logged nothing until the test's 15 s wait gave up and stopped the sampler; in the other two a durable commit that takes 0.2 s took 12-14 s. This is the starvation in "A `pilot.pause()` poll can starve a worker thread's config write of the GIL" (TASK-36530), with one difference: there a shorter switch interval helped, here it cannot. The `sleep(0)` loop releases the GIL on every turn, and each release signals the GIL condition (`drop_gil`). That wakes the waiting worker before its timed wait runs out, so it never asks for a hand-off (`take_gil`), and the loop thread, still on-CPU, takes the GIL back first. Linux makes that a spin: a bare `sleep(0)` loop made 112,810 turns on 0.200 s of CPU in 0.2 s, against 457 turns on 0.007 s on macOS, where a zero-timeout `kqueue` still parks the thread. PR3496 (538aad893f) replaced the sampler; after it the mounted test took 7.9-11.8 s in 23 CI shard-2 jobs, against 10.6-34 s before.

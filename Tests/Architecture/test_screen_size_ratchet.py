@@ -1373,7 +1373,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-11-15, PR #3569 CI resync: retain Media filter/results ownership
     #: with TASK-40293 empty-page landing after results completion. Exact
     #: combined size 38,183 lines / 1,377 methods; no ceiling increases.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38183, 1377),
+    #: 2026-11-15, TASK-37360 integration review: the final callback keeps
+    #: its admitted result/focus generation and uses canonical Media state.
+    #: Exact measured 38,211 / 1,377 under the owner-authorized rebase waiver.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38211, 1377),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

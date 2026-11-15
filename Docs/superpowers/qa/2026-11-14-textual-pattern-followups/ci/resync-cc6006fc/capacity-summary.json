@@ -364,7 +364,7 @@
     "40shardswith19parallelcreates3waves;newmatrixexecutionand12postchangeobservationsremainpending."
   ],
   "validation": {
-    "scope": "2172-selector resync base before any additional Library race regressions",
+    "scope": "Verified 2172-selector resync model; the mounted focus regression is routed separately in the Architecture guard lane.",
     "census_checker": {
       "passed": true,
       "entries": 2172,
@@ -392,5 +392,31 @@
     "scoped_diff_check": true,
     "full_suite_run": false,
     "new_matrix_ci_execution_observed": false
+  },
+  "architecture_route": {
+    "metadata_file": "architecture-route.json",
+    "metadata_sha256": "f7cf6a9e207366e4e436ff33ac4d8f59901108784e264492213ae35793a2c4d6",
+    "selector": "Tests/Architecture/test_library_media_wiring.py::test_emptied_page_focus_callback_retains_admitted_owner",
+    "passed_cases": 1,
+    "ui_census_changed": false,
+    "route_contract_checks_pending": false,
+    "routing_validation": {
+      "passed": 3,
+      "failures": 0,
+      "errors": 0,
+      "skips": 0,
+      "seconds": 35.05,
+      "junit_sha256": "a76dc837cc43fd3287797521dadd27075b945b3bddd6ea129c93399bff223560",
+      "scope": "Final bootstrap-tail Architecture lane mirror and ordering, plus selector resolution and disjoint targets. These contracts were unchanged by the later loop-capture correction.",
+      "ui_census_entries": 2172,
+      "ui_model_unchanged": true
+    },
+    "source_qualification_limit": "One final mounted bootstrap-profile case loops through 12 ownership scenarios and takes 68.533 seconds in the final receipt. Earlier mounted and unbound timings are historical. The function selector, lane tail, UI census and capacity model remain unchanged.",
+    "held_boundary_scenarios": 12,
+    "local_selector_seconds": 68.533,
+    "qualification_run_seconds": 79.63,
+    "qualification_run_junit_sha256": "5d9d9b9a7567f810d54b445ab30295884285084f66887245a26d53d86b98df12",
+    "route_order_pending_review": false,
+    "final_selector_test_file_sha256": "db39a65102abc45ec227b3bf4f1327373263e5ec1e791b4454d58a6179712af6"
   }
 }
