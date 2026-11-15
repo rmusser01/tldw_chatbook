@@ -4319,7 +4319,11 @@ class ConsoleComposerBar(Horizontal):
                 # moved the whole transcript twice each way. It keeps its rows.
                 row_count = min(row_count, shown[0])
             renderable = self._current_visible_draft_renderable(draft, width)
-            self.query_one("#console-command-visible-text", Static).update(renderable)
+            # Geometry is pinned (see `_toggle_cursor_blink`); a same-height
+            # edit repaints only, and `_apply_draft_height` lays out a change.
+            self.query_one("#console-command-visible-text", Static).update(
+                renderable, layout=False
+            )
             self._apply_draft_height(row_count)
         except NoMatches:
             return
