@@ -67,6 +67,70 @@ def test_native_close_refuses_instead_of_waiting_on_a_retained_worker(
     assert not prepared._native_closed
 
 
+class _Run:
+    """The fields of a workflow run the coordinator's shutdown reads."""
+
+    def __init__(self, driver, workers):
+        self.driver, self.wake, self.phase, self.control = driver, None, object(), None
+        self.prepared = SimpleNamespace(
+            _tool_workers=list(workers),
+            _planning_recovery_return=None,
+            cancel_event=threading.Event(),
+        )
+
+
+def _coordinator(runs):
+    from tldw_chatbook.Chat.console_workflow_runs import ConsoleWorkflowCoordinator
+
+    coordinator = object.__new__(ConsoleWorkflowCoordinator)
+    runtime = SimpleNamespace(_workflow_waves=(), _workflow_coordinator=coordinator)
+    coordinator.runtime = runtime
+    coordinator.controller = SimpleNamespace(app=SimpleNamespace(console_runtime=runtime))
+    coordinator._subscribers, coordinator._commands = [], {}
+    coordinator._metadata_cells, coordinator._pending_planning = {}, set()
+    coordinator._runs = {f"w{index}": run for index, run in enumerate(runs)}
+    return coordinator
+
+
+def test_a_run_with_a_live_worker_is_not_retained_only(custody):
+    """One retained worker must not hide another that may still act."""
+    done = SimpleNamespace(done=lambda: True)
+    release = threading.Event()
+    live = threading.Thread(target=release.wait, daemon=True)
+    live.start()
+    run = _Run(done, [custody.worker, live])
+    try:
+        assert not _coordinator([run])._retained_only()
+    finally:
+        release.set()
+        live.join(5)
+    assert _coordinator([run])._retained_only()
+    assert not _coordinator([_Run(done, [live])])._retained_only()
+
+
+@pytest.mark.asyncio
+async def test_retained_shutdown_keeps_a_requested_cancellation(custody):
+    """The cancellation close would return is chained, not swallowed."""
+    import asyncio
+
+    from tldw_chatbook.Chat.console_workflow_runs import WorkflowShutdownRetained
+
+    release = asyncio.Event()
+    driver = asyncio.create_task(release.wait())
+    coordinator = _coordinator([_Run(driver, [custody.worker])])
+    close = asyncio.create_task(
+        coordinator.close(_runtime_disposal=coordinator.runtime)
+    )
+    await asyncio.sleep(0)
+    close.cancel()  # the disposer's own task is cancelled while it drains
+    await asyncio.sleep(0)
+    release.set()
+    cancellation = await close
+    assert isinstance(cancellation, asyncio.CancelledError)
+    assert isinstance(cancellation.__cause__, WorkflowShutdownRetained)
+    assert str(cancellation.__cause__) == "workflow_original_shutdown_unresolved"
+
+
 _PLANNING_SCRIPT = r"""
 import asyncio, os, sys
 from pathlib import Path

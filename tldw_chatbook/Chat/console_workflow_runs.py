@@ -2669,7 +2669,13 @@ class ConsoleWorkflowCoordinator:
             raise RuntimeError("workflow_original_metadata_shutdown_unresolved")
         if self._runs or self._pending_planning:
             if self._retained_only():
-                raise WorkflowShutdownRetained("workflow_original_shutdown_unresolved")
+                retained = WorkflowShutdownRetained("workflow_original_shutdown_unresolved")
+                if cancellation is None or _runtime_disposal is not self.runtime:
+                    raise retained
+                # Disposal still re-raises the requested cancellation, chained
+                # to the retained runs, after the other owners close.
+                cancellation.__cause__ = retained
+                return cancellation
             raise RuntimeError("workflow_original_shutdown_unresolved")
         if cancellation is not None:
             if _runtime_disposal is self.runtime:
@@ -2677,17 +2683,23 @@ class ConsoleWorkflowCoordinator:
             raise cancellation
 
     def _retained_only(self) -> bool:
-        """Every unresolved run returned and is held only by an unproven cleanup."""
+        """Every unresolved run returned and is held only by unproven cleanups."""
         from tldw_chatbook.Agents.execution_capacity import holds_unproven_custody
 
-        return all(
-            run.driver is not None
-            and run.driver.done()
-            and any(
-                holds_unproven_custody(worker)
-                for worker in getattr(run.prepared, "_tool_workers", ())
+        def retained(run) -> bool:
+            workers = getattr(run.prepared, "_tool_workers", ())
+            return (
+                run.driver is not None
+                and run.driver.done()
+                and any(holds_unproven_custody(worker) for worker in workers)
+                and all(
+                    holds_unproven_custody(worker) or not worker.is_alive()
+                    for worker in workers
+                )
             )
-            for run in {*self._runs.values(), *self._pending_planning}
+
+        return all(
+            retained(run) for run in {*self._runs.values(), *self._pending_planning}
         )
 
 

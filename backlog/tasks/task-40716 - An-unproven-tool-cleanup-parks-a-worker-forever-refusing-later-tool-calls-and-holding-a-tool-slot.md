@@ -113,6 +113,14 @@ Implements the owner's 2026-11-13 ruling (option A), the 2026-11-14 review round
 - Tests: the planning journey also asserts that capacity closed and the retention is still held; `test_a_console_shutdown_error_still_shuts_down_every_later_owner`; `test_custody_bearing_calls_never_hold_the_run_thread` (both paths); the reopen test checks aliases stay at one per run. Each fix was mutation-checked (6 of 6 fail when reverted).
 - Size ratchet: console_runtime 7043 -> 7048 (+5), dated note.
 
+**Post-rebase minors (2026-11-14, on 70b9a27584).**
+- `_shutdown_app_owned_lifecycles` raises the first owner failure and logs each later one (type only), so a Console shutdown error behind a lab or workflow-authoring error is no longer dropped.
+- The DEFINITIVE_AFTER_START refusal for an SSH/Raw CLI call is a plain not-started result ("tool call not started: <tool> (it needs SSH or Raw CLI custody, which a must-finish tool call cannot hold)"), not a permission-style `blocked`.
+- `_retained_only` requires every tool worker of the run to be retained or returned, and at least one retained, so a live non-custody worker keeps the plain unresolved error.
+- When a cancellation was requested while the coordinator drained, `close` returns it chained to `WorkflowShutdownRetained` (as `__cause__`) instead of raising the retained error, so disposal still re-raises the cancellation after the other owners close.
+- Tests: the dropped-error log, the not-started message, a live worker alongside a retained one, and the chained cancellation; each fails when its fix is reverted (4 of 4).
+- Size ratchet: app_lifecycle 2207 -> 2216 (+9), dated note; agent_service and console_runtime unchanged at their rebased pins.
+
 **ADRs.** Amendments to ADR-285, 084, 093, 094 and 134 separate the owner's decision from an implementation note.
 
 **Tests (all mutation-checked unless noted).**

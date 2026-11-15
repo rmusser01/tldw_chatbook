@@ -828,15 +828,24 @@ class LifecycleMixin:
             close_pooled_default_sessions()
         except Exception as exc:  # noqa: BLE001 - preserve retained owner failures.
             pool_error = exc
-        for error in (
-            recovery_cancellation,
-            lab_error,
-            workflow_error,
-            console_error,
-            pool_error,
-        ):
-            if error is not None:
-                raise error
+        errors = [
+            error
+            for error in (
+                recovery_cancellation,
+                lab_error,
+                workflow_error,
+                console_error,
+                pool_error,
+            )
+            if error is not None
+        ]
+        for dropped in errors[1:]:  # only the first is raised (TASK-40716)
+            logger.error(
+                "App-owned lifecycle shutdown also failed type={}",
+                type(dropped).__name__,
+            )
+        if errors:
+            raise errors[0]
 
     async def _shutdown(self) -> None:
         """Settle app-owned durable work before Textual closes screens."""

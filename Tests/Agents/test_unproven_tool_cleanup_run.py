@@ -375,7 +375,9 @@ def test_custody_bearing_calls_never_hold_the_run_thread(tmp_path, monkeypatch, 
     result = invoke_tool(ToolCall(name="calculator", args={"expression": "2+2"}))
     if path == "definitive_after_start":
         # Refused before start: nothing ran and no custody was entered.
-        assert not result.ok and "custody-bearing" in result.error
+        assert not result.ok and result.dispatch_state == "not_started"
+        assert result.error.startswith("tool call not started: calculator")
+        assert "needs SSH or Raw CLI custody" in result.error
         assert invoked == [] and custody.threads == []
     else:
         # Routed through the timeout wrapper's daemon worker.

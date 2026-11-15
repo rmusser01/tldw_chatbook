@@ -735,9 +735,14 @@ def make_invoke_tool(
                     dispatch_state="not_started",
                 )
             if ssh_call or raw_cli_call:
-                # Custody-bearing calls hold only a daemon tool worker (TASK-40716).
-                return runtime.ToolResult.blocked(
-                    f"{TOOL_ADMISSION_REFUSED}custody-bearing tool is not definitive"
+                # SSH/Raw CLI custody is held only on a daemon tool worker (TASK-40716).
+                return runtime.ToolResult(
+                    ok=False,
+                    error=(
+                        f"tool call not started: {call.name} (it needs SSH or Raw "
+                        "CLI custody, which a must-finish tool call cannot hold)"
+                    ),
+                    dispatch_state="not_started",
                 )
             try:
                 operation = owner.reserve_tool() if owner is not None else None

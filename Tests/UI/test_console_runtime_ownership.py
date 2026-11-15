@@ -2851,6 +2851,59 @@ async def test_a_console_shutdown_error_still_shuts_down_every_later_owner(
 
 
 @pytest.mark.asyncio
+async def test_a_console_shutdown_error_behind_an_earlier_one_is_logged(
+    monkeypatch,
+):
+    """Only the first owner failure is raised; every later one is logged."""
+    from loguru import logger
+
+    from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.Utils import egress
+
+    async def nothing(*_args, **_kwargs):
+        return None
+
+    async def console(*_args, **_kwargs):
+        raise LookupError("controlled Console shutdown failure")
+
+    async def lab_close():
+        raise RuntimeError("controlled lab close failure")
+
+    for name in (
+        "_shutdown_recovery_service",
+        "_stop_backup_maintenance_monitor",
+        "_shutdown_collections_capture_runtime",
+        "_shutdown_notes_sync_runtime",
+        "_shutdown_actor_pack_import",
+        "_shutdown_actor_pack_export",
+        "_shutdown_raw_cli_runtime",
+        "_shutdown_terminal_session_manager",
+        "_shutdown_console_settings_durability",
+        "_shutdown_persona_buddy",
+        "_shutdown_console_image_edits",
+        "_shutdown_file_notes_session_owner",
+    ):
+        monkeypatch.setattr(TldwCli, name, nothing)
+    monkeypatch.setattr(TldwCli, "_shutdown_console_runtime", console)
+    monkeypatch.setattr(egress, "close_pooled_default_sessions", lambda: None)
+    app = object.__new__(TldwCli)
+    app._chunking_lab_coordinator = SimpleNamespace(close=lab_close)
+    app.audio_cpp_model_install_owner = SimpleNamespace(shutdown=nothing)
+    app._meeting_session_owner = None
+    logged: list[str] = []
+    sink = logger.add(lambda message: logged.append(str(message)), level="ERROR")
+    try:
+        with pytest.raises(RuntimeError, match="controlled lab close failure"):
+            await app._shutdown_app_owned_lifecycles()
+    finally:
+        logger.remove(sink)
+    assert any(
+        "App-owned lifecycle shutdown also failed type=LookupError" in line
+        for line in logged
+    ), logged
+
+
+@pytest.mark.asyncio
 async def test_raw_cli_runtime_shutdown_is_once_and_precedes_console_shutdown():
     """Both Textual shutdown paths share one raw-runtime shutdown task."""
     from tldw_chatbook.app import TldwCli

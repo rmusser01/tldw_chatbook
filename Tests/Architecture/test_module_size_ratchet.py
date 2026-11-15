@@ -194,7 +194,10 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-06, TASK-39117 (owner size waiver): 2203 -> 2207 (+4) -- the
     # quit's idle close also covers the Workspace, Library Collections and
     # notifications stores.
-    "tldw_chatbook/app_lifecycle.py": 2207,
+    # 2026-11-14, TASK-40716 (owner rule: exact measurement, dated note):
+    # 2207 -> 2216 (+9) -- quit logs every app-owned shutdown failure it
+    # does not raise, so a Console shutdown error is never dropped.
+    "tldw_chatbook/app_lifecycle.py": 2216,
     # TASK-33011: TldwCli's screen navigation moved verbatim out of app.py
     # (NavigationMixin); governed there, so governed here.
     # TASK-34000.27 (2026-10-09): 1110 -> 1195 (+85), owner decision
