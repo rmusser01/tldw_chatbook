@@ -1497,3 +1497,48 @@ The evidence did not support a switcher handoff change. Production
 source and the 50/100 ms limits were preserved. TASK-31966 stays open.
 The raw traces, startup-label failure and 63 verified hashes are local
 under `/private/tmp/pr3536-cold-handoff-5GsdAo91`.
+
+### Cold saved-chat resume phase trace
+
+Three more isolated Terminal runs used the same frozen `f497f8d3e9`
+source, sealed corpus, 120×50 viewport, two Active priming switches and
+`perf-00000` cold open. One-minute host load ranged from 15.36 to 18.91
+on 18 CPUs. The private observer added call-through timestamps and
+matched the spans to the resume coroutine. The table reports elapsed
+milliseconds. Indented rows are included in their parent.
+
+| Phase | R1 | R2 | R3 |
+| --- | ---: | ---: | ---: |
+| Hydrated runtime to resume return | 1030.76 | 1313.15 | 1288.19 |
+| Work before scope resolution | 118.29 | 124.61 | 116.19 |
+| Effective-scope resolution | 134.52 | 141.89 | 168.29 |
+| Token warmup | 54.17 | 133.29 | 119.03 |
+| Session switch and activation setup | 4.60 | 6.21 | 8.38 |
+| Full Console sync | 716.60 | 905.30 | 872.46 |
+| ↳ Before transcript sync | 447.52 | 597.41 | 606.29 |
+| ↳↳ Dictionary and world-book summaries | 219.22 | 280.49 | 241.23 |
+| ↳ Transcript sync | 267.39 | 305.49 | 263.68 |
+| ↳↳ Viewport projection | 159.28 | 171.83 | 167.72 |
+| ↳↳↳ Transcript build and row refresh | 69.07 | 96.52 | 107.49 |
+| ↳ After transcript sync | 1.69 | 2.40 | 2.48 |
+| Browser refresh after full sync | 2.39 | 1.63 | 3.58 |
+| Return to usable viewport | 1712.14 | 2033.79 | 2017.12 |
+
+Live character name resolution took 93–113 ms before scope, and the
+store switch itself took 1.37–2.19 ms. The full sync awaited the two
+Inspector summaries serially before starting transcript sync. Switcher
+paint overlapped 74–124 ms of those summary waits and 71–101 ms of
+transcript sync. These are overlapping wall-time spans. The trace
+cannot distinguish all remaining work and scheduler wait, or turn the
+summary time into a predicted saving. The separate transcript check
+after resume returned took 1.13–1.67 ms.
+
+All runs verified exact conversation identity, focus, tab count, both
+scroll frames, and ordinary quit with zero private DB descriptors.
+They kept the full 13-second cold watch and over 9.44 seconds after
+scroll completion. Busy paint was 30.46–63.41 ms. Original loop gaps
+were 54.35, 106.34 and 83.48 ms. Extended gaps were 331.40, 326.84 and
+334.30 ms, all after scroll and overlapping 280–291 ms of main-thread
+generation-two collection. The 50/100 ms limits and production source
+were preserved. TASK-31966 remains open. All three runs and 62 verified
+hashes are local under `/private/tmp/pr3536-resume-phases-dqlvFKPS`.
