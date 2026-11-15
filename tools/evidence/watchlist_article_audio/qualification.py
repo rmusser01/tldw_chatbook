@@ -890,9 +890,14 @@ def run_matrix(
     tail_padding_ms: int,
     repeat: int,
     runs: list[dict] | None = None,
+    capture_buffer_frames: int = BLOCK,
 ) -> list[dict]:
     """Reuse three stable artifacts; a resume consumes its confirmed Stop frame."""
-    if tail_padding_ms not in (0, 250) or repeat not in (1, 2, 3):
+    if (
+        tail_padding_ms not in (0, 250)
+        or repeat not in (1, 2, 3)
+        or capture_buffer_frames not in (480, 4800)
+    ):
         raise ValueError("invalid_matrix_settings")
     artifacts = {}
     for duration in (0.120, 0.500, 2.5):
@@ -934,6 +939,7 @@ def run_matrix(
                 generation=generation,
                 stop_after=stop_after,
                 padded=bool(tail_padding_ms),
+                capture_buffer_frames=capture_buffer_frames,
             )
             run.update(
                 artifact,
@@ -980,6 +986,7 @@ def run_matrix(
                     generation=generation + 1,
                     stop_after=None,
                     padded=True,
+                    capture_buffer_frames=capture_buffer_frames,
                 )
             else:
                 resume = {
@@ -1009,6 +1016,11 @@ def native_result(runs: list[dict]) -> str:
     """Every required case counts; unmatched cases and missing cleanup cannot pass."""
     required = []
     for run in runs:
+        if (
+            run.get("diagnostics", {}).get("worker", {}).get("discontinuity_count", 0)
+            > 0
+        ):
+            required.append("unqualified")
         if run.get("cleanup_errors"):
             required.append("fail")
         required.append(run.get("process_exit", "unqualified"))
@@ -1090,6 +1102,9 @@ def main() -> int:
     parser.add_argument("--ffplay")
     parser.add_argument("--tail-padding-ms", type=int, choices=(0, 250), default=0)
     parser.add_argument("--repeat", type=int, choices=(1, 2, 3), default=1)
+    parser.add_argument(
+        "--capture-buffer-frames", type=int, choices=(480, 4800), default=480
+    )
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
     clock = time.get_clock_info("perf_counter")
@@ -1120,6 +1135,7 @@ def main() -> int:
         "seek_target_s": 0.250,
         "tail_padding_ms": args.tail_padding_ms,
         "repeat": args.repeat,
+        "capture_buffer_frames": args.capture_buffer_frames,
         "logical_eof": "no_content_or_exact_content_eof_requires_later_service_no_audio_run",
     }
     try:
@@ -1134,6 +1150,7 @@ def main() -> int:
                     tail_padding_ms=args.tail_padding_ms,
                     repeat=args.repeat,
                     runs=receipt["runs"],
+                    capture_buffer_frames=args.capture_buffer_frames,
                 )
             native = native_result(receipt["runs"])
             if platform.system() in receipt["native_platforms"]:
