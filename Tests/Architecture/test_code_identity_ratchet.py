@@ -42,7 +42,9 @@ PACKAGE = Path(__file__).resolve().parents[2] / "tldw_chatbook"
 # Measured after TASK-40719. Its base (dev 1455ceeb96) was one higher for
 # _getframe, __defaults__, __kwdefaults__, __closure__, cell_contents,
 # __globals__ and __wrapped__, two higher for f_code and __func__, and three
-# higher for f_locals and __code__. Lower a row when you remove sites.
+# higher for f_locals and __code__. Rebased onto dev bf0006bb47, which had
+# added one __func__ (de8880504c) and three __code__ (11be39b8c3) sites.
+# Lower a row when you remove sites.
 PINS = {
     # caller frames, coroutine/generator implementation
     "_getframe": 14,
@@ -61,8 +63,8 @@ PINS = {
     "ag_code": 0,
     "ag_frame": 0,
     # function, code, default and closure identity
-    "__func__": 143,
-    "__code__": 398,
+    "__func__": 144,
+    "__code__": 401,
     "__defaults__": 210,
     "__kwdefaults__": 314,
     "__closure__": 250,
