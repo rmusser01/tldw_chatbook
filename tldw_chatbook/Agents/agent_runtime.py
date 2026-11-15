@@ -3013,7 +3013,9 @@ def _phase_prepare(state: LoopState) -> RunOutcome | object | None:
     except Exception:  # noqa: BLE001 - content-free fail-open boundary
         code = "project_instruction_preparation_failed"
         tool_names = tuple(call.name for call in calls)
-        logger.warning(f"{code}: tool_names={tool_names!r} tool_count={len(calls)}")
+        logger.warning(
+            f"{code}: tool_names={tool_names!r} tool_count={len(calls)}"
+        )
         if deps.on_ephemeral_runtime_warning is not None:
             try:
                 deps.on_ephemeral_runtime_warning(code, tool_names, len(calls))
@@ -3378,7 +3380,9 @@ def _cycle_stuck(state: LoopState, call: ToolCall) -> RunOutcome | None:
     # verbatim as "Agent run stuck: {summary}." Fleet-UX review
     # F3: "loop detected: read_file repeated in a 1-cycle (3x)"
     # reads as unexplained jargon to a first-run user.
-    logger.debug(f"loop detected: period={period} repeats={repeats} tools={names}")
+    logger.debug(
+        f"loop detected: period={period} repeats={repeats} tools={names}"
+    )
     if period == 1:
         summary = (
             f"Agent stopped: it kept calling {names} with the "
