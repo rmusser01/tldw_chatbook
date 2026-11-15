@@ -18840,6 +18840,22 @@ async def _wait_for_library_notes_compact(screen, pilot, expected: bool) -> None
     )
 
 
+async def _wait_for_library_canvas_hidden_after_compact_resize(screen, pilot) -> None:
+    """Wait until the adaptive Notes shell hides ``#library-canvas``.
+
+    TASK-40713: a wide -> compact resize flips ``_notes_state.compact`` at
+    once, but the adaptive Notes reader applies pane visibility only once the
+    shell holds its settled compact allocation
+    (``_sync_library_notes_reader_layout_from_shell`` returns early on a
+    transient one), so the canvas stays displayed for a layout pass or more.
+    """
+    await _wait_for_condition(
+        pilot,
+        lambda: screen.query_one("#library-canvas").display is False,
+        message="The compact Notes shell never hid #library-canvas.",
+    )
+
+
 class _CountSeamLibraryNotesScopeService(StaticLibraryNotesListScopeService):
     """Local notes fake mirroring the real production shape: ``list_notes``
     returns a bare list with no total (like ``NotesInteropService.list_notes``),
@@ -32542,6 +32558,7 @@ async def test_library_note_wide_deep_link_back_clears_future_compact_intent() -
 
         await pilot.resize_terminal(60, 20)
         await _wait_for_library_notes_compact(screen, pilot, True)
+        await _wait_for_library_canvas_hidden_after_compact_resize(screen, pilot)
         assert screen._notes_state.stage == "rail"
         assert screen.query_one("#library-rail").display is True
         assert screen.query_one("#library-canvas").display is False
@@ -33381,6 +33398,7 @@ async def test_library_note_unsafe_session_outranks_rail_focus_on_compact_entry(
 
         await pilot.resize_terminal(60, 20)
         await _wait_for_library_notes_compact(screen, pilot, True)
+        await _wait_for_library_canvas_hidden_after_compact_resize(screen, pilot)
 
         assert screen._notes_state.stage == "notes"
         assert screen.query_one("#library-canvas").display is False
@@ -33435,6 +33453,7 @@ async def test_library_note_load_failure_outranks_rail_focus_on_compact_entry() 
 
         await pilot.resize_terminal(60, 20)
         await _wait_for_library_notes_compact(screen, pilot, True)
+        await _wait_for_library_canvas_hidden_after_compact_resize(screen, pilot)
 
         assert screen._notes_state.stage == "notes"
         assert screen._notes_state.load_state == "failed"

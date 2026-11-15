@@ -101,8 +101,7 @@ async def test_source_authoring_controls_fit_production_layout(size):
         assert not pane.query("#sources-type-select")
 
         pane.query_one("#sources-filter-toggle", Button).press()
-        await pilot.pause()
-        editor = pane.query_one("#sources-filter-editor")
+        editor = await _laid_out(pilot, pane, "#sources-filter-editor")
         assert editor.region.right <= pane.region.right
         for selector in (
             "#sources-type-select",
@@ -110,7 +109,7 @@ async def test_source_authoring_controls_fit_production_layout(size):
             "#sources-active-filter",
             "#sources-tags-filter",
         ):
-            control = editor.query_one(selector)
+            control = await _laid_out(pilot, editor, selector)
             assert control.region.width > 0 and control.region.height > 0
             assert control.region.right <= pane.region.right
         assert [
@@ -137,12 +136,15 @@ async def test_bulk_modal_escape_restores_focus_to_its_launch_action():
         launch = pane.query_one("#sources-add-several-button", Button)
         launch.focus()
         launch.press()
-        await pilot.pause()
+        # TASK-40333: the press posts a request the screen answers with a
+        # push; under load one pause can return before the modal is up.
+        await _until(pilot, lambda: isinstance(host.screen, BulkSourcesModal))
 
         assert isinstance(host.screen, BulkSourcesModal)
         await pilot.press("escape")
-        await pilot.pause()
+        await _until(pilot, lambda: host.screen is screen)
 
+        assert host.screen is screen
         restored = screen.query_one("#sources-add-several-button", Button)
         assert screen.focused is restored
 
@@ -555,11 +557,15 @@ async def test_server_mode_never_enables_local_only_source_actions(size):
         table.focus()
         # Let focus land first: `focus()` is deferred, and SourcesPane only
         # acts on a highlight from a focused table (TASK-38586), as a real
-        # click or key press always is.
-        await pilot.pause()
+        # click or key press always is. TASK-40333: under load one pause can
+        # return before focus lands, and the pane then ignores the highlight.
+        await _until(pilot, lambda: screen.focused is table)
         table.move_cursor(row=1, animate=False)
         pane.set_selected_source_ids((first["id"],))
-        await pilot.pause()
+        await _until(
+            pilot,
+            lambda: (screen.selected_source or {}).get("id") == second["id"],
+        )
         assert screen.focused is table
         assert table.cursor_row == 1
         assert screen.selected_source is not None
@@ -665,6 +671,17 @@ async def _until(pilot, done):
         if done():
             return
         await pilot.pause(0.05)
+
+
+async def _laid_out(pilot, node, selector, expect_type=None):
+    """Return ``node``'s ``selector`` match once it is mounted and laid out.
+
+    TASK-40333: opening the create form or the filter editor recomposes the
+    pane; under load one ``pilot.pause()`` can return before that recompose
+    mounts the new controls (NoMatches) or lays them out (a 0-width region).
+    """
+    await _until(pilot, lambda: any(w.region.width for w in node.query(selector)))
+    return node.query_one(selector, expect_type)
 
 
 @pytest.mark.asyncio
@@ -851,8 +868,7 @@ async def test_an_open_create_form_offers_a_watchlist_the_tree_load_adds(
         await tree_loaded(screen)
         pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
         pane.query_one("#sources-new-button", Button).press()
-        await pilot.pause()
-        destination = pane.query_one("#sources-create-watchlist", Select)
+        destination = await _laid_out(pilot, pane, "#sources-create-watchlist", Select)
         destination.value = chosen["id"]
         await pilot.pause()
         later = app_instance.watchlist_bundle_service.create("Later")
@@ -1032,8 +1048,7 @@ async def test_an_open_destination_list_keeps_its_highlight_when_choices_change(
         await tree_loaded(screen)
         pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
         pane.query_one("#sources-new-button", Button).press()
-        await pilot.pause()
-        destination = pane.query_one("#sources-create-watchlist", Select)
+        destination = await _laid_out(pilot, pane, "#sources-create-watchlist", Select)
         kind = pane.query_one("#sources-create-type", Select)
         kind.expanded = True
         await pilot.pause()
@@ -1190,6 +1205,8 @@ async def test_a_rail_reopened_after_a_discarded_build_shows_the_landed_tree(
             tree = screen.query_one("#wl-tree", WatchlistTree)
             return [int(row["id"]) for row in tree._watchlists]
 
+        # TASK-40333: the landed load rebuilds the reopened rail's tree
+        # (remove, then mount), so a poll between the two halves finds none.
         await _until(
             pilot,
             lambda: bool(screen.query("#wl-tree")) and shown() == [watchlist["id"]],
@@ -1371,12 +1388,11 @@ async def test_backend_switch_preserves_open_source_draft_widget_and_focus(size)
         assert not screen._tree_snapshot_failures
         assert watchlist["id"] in {row["id"] for row in screen._tree_watchlists}
         pane.query_one("#sources-new-button", Button).press()
-        await pilot.pause()
+        destination = await _laid_out(pilot, pane, "#sources-create-watchlist", Select)
         table = pane.query_one("#sources-table", DataTable)
         name = pane.query_one("#sources-create-name", Input)
         url = pane.query_one("#sources-create-url", Input)
         tags = pane.query_one("#sources-create-tags", Input)
-        destination = pane.query_one("#sources-create-watchlist", Select)
         name.value = "Daily intelligence"
         url.value = "https://intel.example/feed"
         tags.value = "threat-intel, daily"
