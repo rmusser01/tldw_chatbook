@@ -256,17 +256,6 @@ turn continues, unlike **Stop**, which ends the run. A tool that must
 finish once started (a Watchlists mutation, for example) cannot be
 abandoned and shows no link.
 
-Sometimes the app cannot confirm that a process a tool started has really
-stopped: a shell command, an SSH request or a Git process. The tool's folder,
-storage and reservation then stay held until you restart the app, so nothing
-can reuse them while that process might still be running. The run stops at once
-with *Agent stopped: the cleanup of `<tool>` could not be proven, so its
-workspace and storage stay held until you restart the app.* The same happens at
-the run's next tool call when the cleanup turns out to be unproven only after the
-call timed out or was abandoned. While the tool's worker slot stays counted against
-the app-wide tool limit, the run's last reply shows **Release tool slot**.
-Releasing frees that slot for other runs; the workspace and storage stay held
-until you restart the app. When you quit, the app does not wait for such a tool.
 a long tool call never looks frozen: `⚙ read_file · 4s` names the tool that
 is running and how long it has been running, `Thinking… · 6s` means the
 tool finished and the model is composing the next round, and `Generating…`
@@ -275,6 +264,27 @@ advances while you watch. The line is live-only — it vanishes the moment
 the reply's own text arrives, and a conversation you reopen later shows the
 completed `Tool` rows below instead. A sub-agent's work never appears here;
 it belongs to the Inspect rail's **Agents** section.
+
+Sometimes the app cannot confirm that a process a tool started has really
+stopped: a shell command, an SSH request or a Git process. The tool's folder,
+storage and reservation then stay held until you restart the app, so nothing
+can reuse them while that process might still be running. The run stops at once
+with *Agent stopped: the cleanup of `<tool>` could not be proven, so its
+workspace and storage stay held until you restart the app.* The same happens at
+the run's next tool call when the cleanup turns out to be unproven only after the
+call timed out or was abandoned. An `@git` reference or a remote working folder's
+startup instructions are read before the run starts, with the turn's own
+reservation. When that read's cleanup is unproven, the reference or the
+instructions are left out, and the turn stops at its first tool call (for an
+`@git` reference, *the cleanup of native Git could not be proven*), or before the
+run starts when the turn needs a tool slot to set up its MCP tools. A turn that
+stops before its run starts has no run to release, so its slot stays counted
+until you restart the app. Otherwise, while the worker slots stay counted against
+the app-wide tool limit, the run's last reply shows **Release tool slot**, also
+after you close and reopen the conversation.
+Releasing frees every slot that run still holds for other runs; the workspace and
+storage stay held until you restart the app. When you quit, the app does not wait
+for such a tool.
 
 While a model call is generating or thinking, this line may also show its
 current output count. `17 provider output tok` means the provider supplied an

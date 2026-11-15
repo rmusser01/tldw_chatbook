@@ -65,18 +65,28 @@ def test_release_rows_follow_retained_runs_whatever_their_outcome():
     transcript = SimpleNamespace(set_unproven_cleanup_rows=pushed.append)
     agent = object.__new__(ConsoleAgentController)
     agent._chat_controller_accessor = lambda: controller
+    messages = [_card("done-card"), _card("other")]
 
-    agent.sync_unproven_cleanup(transcript)
+    agent.sync_unproven_cleanup(transcript, messages)
     assert not agent.release_unproven_tool_slot("other")
     assert agent.release_unproven_tool_slot("done-card")
     assert not agent.release_unproven_tool_slot("done-card")
-    agent.sync_unproven_cleanup(transcript)
+    agent.sync_unproven_cleanup(transcript, messages)
     assert pushed == [{"done-card": False}, {"done-card": True}]
     assert retention.abandoned and capacity.snapshot().tool_workers == 0
     # A late proof drops the row: nothing is held any more.
     retention.prove()
-    agent.sync_unproven_cleanup(transcript)
+    agent.sync_unproven_cleanup(transcript, messages)
     assert pushed[-1] == {}
+
+
+def _card(message_id, persisted=None):
+    return ConsoleChatMessage(
+        id=message_id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Agent stopped.",
+        persisted_message_id=persisted,
+    )
 
 
 def test_sync_skips_lookups_before_any_run_has_finished():
@@ -164,30 +174,85 @@ def test_run_rows_are_forgotten_once_nothing_can_need_release():
 
     clean_owner, clean_op = run("clean")
     held_owner, held_op = run("held")
-    closed_owner, closed_op = run("closed")
     held = held_op.retain_unproven("fs_read")
-    closed_op.retain_unproven("fs_list")
     controller = SimpleNamespace(
-        run_terminal_rows={"c": "clean", "h": "held", "x": "closed"},
-        store=SimpleNamespace(_message_session_index={"c": "s", "h": "s"}),
+        run_terminal_rows={"c": "clean", "h": "held"},
         _agent_bridge=SimpleNamespace(_runtime_capacity=capacity),
     )
+    messages = [_card("c"), _card("h")]
 
-    # A run still live keeps its row; a closed session's row is forgotten.
-    assert unproven_cleanup_rows(controller) == {"h": False}
+    # A run still live keeps its row; only a retained run shows one.
+    assert unproven_cleanup_rows(controller, messages) == {"h": False}
     assert controller.run_terminal_rows == {"c": "clean", "h": "held"}
 
     # A run that drained without retention needs no Release row.
     clean_op.finish()
     clean_owner.finish_root()
-    unproven_cleanup_rows(controller)
+    unproven_cleanup_rows(controller, messages)
     assert controller.run_terminal_rows == {"h": "held"}
 
     # A released record stays listed while it is retained...
     assert held.abandon()
     held_owner.finish_root()
-    assert unproven_cleanup_rows(controller) == {"h": True}
+    assert unproven_cleanup_rows(controller, messages) == {"h": True}
     # ...and a late proof forgets it.
     held.prove()
-    assert unproven_cleanup_rows(controller) == {}
+    assert unproven_cleanup_rows(controller, messages) == {}
     assert controller.run_terminal_rows == {}
+
+
+def test_a_closed_and_reopened_card_keeps_its_release_row():
+    """Closing the conversation must not strand a held slot without a button."""
+    from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity, WorkOrigin
+    from tldw_chatbook.Chat.console_unproven_cleanup import (
+        release_unproven_tool_slot,
+        unproven_cleanup_rows,
+    )
+
+    capacity = RuntimeCapacity()
+    owner = capacity.begin_execution(origin=WorkOrigin.MANUAL, conversation_id="c")
+    owner.bind_run("held")
+    owner.reserve_tool().retain_unproven("fs_read")
+    owner.finish_root()
+    # The card is recorded by its persisted id once it has one.
+    controller = SimpleNamespace(
+        run_terminal_rows={"db-card": "held"},
+        _agent_bridge=SimpleNamespace(_runtime_capacity=capacity),
+    )
+    assert unproven_cleanup_rows(controller, [_card("live-card", "db-card")]) == {
+        "live-card": False
+    }
+    # Closed: no open message shows it, yet nothing forgets it.
+    assert unproven_cleanup_rows(controller, []) == {}
+    # Reopened: the same persisted card has a new in-memory id.
+    reopened = [_card("reopened-card", "db-card")]
+    assert unproven_cleanup_rows(controller, reopened) == {"reopened-card": False}
+    assert release_unproven_tool_slot(controller, "reopened-card")
+    assert capacity.snapshot().tool_workers == 0
+    assert unproven_cleanup_rows(controller, reopened) == {"reopened-card": True}
+
+
+def test_release_returns_every_slot_a_run_retains():
+    """Two retentions on one run are one row, and Release frees both slots."""
+    from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity, WorkOrigin
+    from tldw_chatbook.Chat.console_unproven_cleanup import (
+        release_unproven_tool_slot,
+        unproven_cleanup_rows,
+    )
+
+    capacity = RuntimeCapacity()
+    owner = capacity.begin_execution(origin=WorkOrigin.MANUAL, conversation_id="c")
+    owner.bind_run("held")
+    first, second = owner.reserve_tool(), owner.reserve_tool()
+    first.retain_unproven("fs_read")
+    second.retain_unproven("native Git")
+    controller = SimpleNamespace(
+        run_terminal_rows={"card": "held"},
+        _agent_bridge=SimpleNamespace(_runtime_capacity=capacity),
+    )
+    assert capacity.snapshot().tool_workers == 2
+    assert unproven_cleanup_rows(controller, [_card("card")]) == {"card": False}
+    assert release_unproven_tool_slot(controller, "card")
+    assert capacity.snapshot().tool_workers == 0
+    assert unproven_cleanup_rows(controller, [_card("card")]) == {"card": True}
+    assert not release_unproven_tool_slot(controller, "card")

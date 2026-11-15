@@ -704,3 +704,59 @@ async def test_terminal_readback_requires_canonical_step_types(raw_host):
     assert not call.observe_terminal("done", step), (
         "JSON number is not the original boolean proof"
     )
+
+
+def _custody_double(seen):
+    return SimpleNamespace(
+        start=lambda: True,
+        operation=SimpleNamespace(retention=None),
+        deliver=lambda *args, **kwargs: seen.append("refused"),
+        finish=lambda: seen.append("finished"),
+    )
+
+
+async def test_a_custody_worker_error_is_not_a_failed_thread_start():
+    """The worker refuses and finishes itself; nothing refuses a second time."""
+    controller = object.__new__(ConsoleRawCliController)
+    seen = []
+
+    def worker_failed(*args):
+        seen.append("worker")
+        raise RuntimeError("controlled worker failure")
+
+    controller._execute_custody = worker_failed
+    with pytest.raises(RuntimeError, match="controlled worker failure"):
+        await asyncio.to_thread(
+            controller._execute,
+            None,
+            SimpleNamespace(),
+            "session",
+            None,
+            None,
+            _custody_double(seen),
+        )
+    assert seen == ["worker"]
+
+
+async def test_a_custody_thread_that_cannot_start_refuses_once(monkeypatch):
+    from tldw_chatbook.Agents import execution_capacity
+
+    class Unstartable(threading.Thread):
+        def start(self):
+            raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(execution_capacity, "Thread", Unstartable)
+    controller = object.__new__(ConsoleRawCliController)
+    controller._marshal_to_ui = controller._refuse = None
+    controller._execute_custody = lambda *args: pytest.fail("nothing launched")
+    seen = []
+    await asyncio.to_thread(
+        controller._execute,
+        None,
+        SimpleNamespace(),
+        "session",
+        None,
+        None,
+        _custody_double(seen),
+    )
+    assert seen == ["refused", "finished"]

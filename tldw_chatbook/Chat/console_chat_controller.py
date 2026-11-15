@@ -27197,9 +27197,9 @@ class ConsoleChatController:
         be useless to resume). Never fails the turn -- a marker-anchoring
         bookkeeping write, wrapped defensively like the file's other seams.
         """
-        if run_id and completed is not None:  # its card, for Release (TASK-40716)
-            self.run_terminal_rows[completed.id] = run_id
         persisted = getattr(completed, "persisted_message_id", None)
+        if run_id and completed is not None:  # its card, for Release (TASK-40716)
+            self.run_terminal_rows[persisted or completed.id] = run_id
         if not run_id or persisted is None or self._agent_bridge is None:
             return
         try:

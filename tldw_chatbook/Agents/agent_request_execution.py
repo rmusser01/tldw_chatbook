@@ -597,7 +597,12 @@ def make_invoke_tool(
     """
     from tldw_chatbook.Agents import agent_service as runtime
 
-    from .execution_capacity import CapacityRefused, current_execution_owner
+    from .execution_capacity import (
+        CapacityRefused,
+        CleanupUnprovenRefused,
+        cleanup_unproven_result,
+        current_execution_owner,
+    )
 
     # Captured as the deps are built, which is immediately before the
     # loop records its own `started`. Being marginally early makes the
@@ -728,6 +733,8 @@ def make_invoke_tool(
             try:
                 operation = owner.reserve_tool() if owner is not None else None
             except CapacityRefused as exc:
+                if isinstance(exc, CleanupUnprovenRefused):  # end the run (TASK-40716)
+                    return cleanup_unproven_result(exc.label)
                 return runtime.ToolResult.blocked(f"{TOOL_ADMISSION_REFUSED}{exc}")
             result = runtime.ToolResult(
                 ok=False, error=f"tool call failed: {call.name}"
@@ -833,6 +840,8 @@ def make_invoke_tool(
         try:
             operation = owner.reserve_tool() if owner is not None else None
         except CapacityRefused as exc:
+            if isinstance(exc, CleanupUnprovenRefused):  # end the run (TASK-40716)
+                return cleanup_unproven_result(exc.label)
             return runtime.ToolResult(
                 ok=False,
                 error=f"{TOOL_ADMISSION_REFUSED}{exc}",

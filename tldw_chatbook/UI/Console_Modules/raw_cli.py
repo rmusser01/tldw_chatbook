@@ -451,22 +451,22 @@ class ConsoleRawCliController:
 
         # Custody runs on a daemon worker: an unproven cleanup holds that
         # worker's scopes, never this joined pool thread (TASK-40716).
-        try:
-            run_on_custody_thread(
-                partial(
-                    self._execute_custody,
-                    runtime,
-                    request,
-                    session_id,
-                    stash,
-                    native_anchor,
-                    custody,
-                ),
-                lambda: custody.operation,
+        started = threading.Event()
+
+        def execute_custody():
+            started.set()
+            return self._execute_custody(
+                runtime, request, session_id, stash, native_anchor, custody
             )
+
+        try:
+            run_on_custody_thread(execute_custody, lambda: custody.operation)
         except CleanupUnprovenRefused:
             return
-        except RuntimeError:  # no thread could start: nothing launched
+        except RuntimeError:
+            if started.is_set():  # the worker already refused and finished
+                raise
+            # No thread could start: nothing launched.
             custody.deliver(self._marshal_to_ui, self._refuse, session_id, stash, _AUTHORITY_CHANGED_REFUSAL, refusal=True)
             custody.finish()
 

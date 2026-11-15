@@ -8,6 +8,7 @@ import shutil
 from contextlib import ExitStack, asynccontextmanager, contextmanager, nullcontext
 from functools import partial
 from pathlib import Path
+from threading import Lock
 
 from tldw_chatbook.app_services import (
     read_app_config,
@@ -260,6 +261,7 @@ class _ReferenceRead:
         self.text, self.authority = text, None
         self.candidates = candidates
         self.owner = self.operation = self.claim = None
+        self._finish_once = Lock()
         from .console_ordinary_tree import current_ordinary_tree
 
         self.ordinary_tree = current_ordinary_tree(controller)
@@ -420,14 +422,29 @@ class _ReferenceRead:
             return result
 
     def finish(self):
-        # A retained Git cleanup keeps its operation, root and claim (TASK-40716).
-        if self.operation is not None and self.operation.retention is None:
+        # A retained Git cleanup keeps its operation, root and claim until a
+        # late proof; its custody worker then finishes them once (TASK-40716).
+        retention = getattr(self.operation, "retention", None)
+        if (
+            self.operation is not None
+            and (retention is None or retention.proven)
+            and self._finish_once.acquire(blocking=False)
+        ):
             # Availability listeners inside finish must return before root/claim release.
             with self.activate():
                 self.operation.finish()
                 if self.ordinary_tree is None:
                     self.owner.finish_root()
                     self.claim.settle(durable=True)
+
+
+def _finish_after_late_proof(request, callback):
+    """A retained Git custody worker finishes its reference once proven."""
+    try:
+        return callback()
+    finally:
+        if getattr(request.operation, "retention", None) is not None:
+            request.finish()
 
 
 @asynccontextmanager
@@ -460,6 +477,8 @@ async def prepare_reference_expansion(
     async def run(callback, *, check=True, custody=False):
         from tldw_chatbook.Agents.activation import worker_guard
 
+        if custody:
+            callback = partial(_finish_after_late_proof, request, callback)
         if request.ordinary_tree is not None:
             callback = worker_guard(controller._agent_bridge)(callback)
         if custody:

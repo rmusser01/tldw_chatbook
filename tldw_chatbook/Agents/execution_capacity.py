@@ -465,13 +465,19 @@ class UnprovenRetention:
         return self._proven.is_set()
 
     def hold(self) -> None:
-        """Keep this daemon worker's original scopes until a late proof.
+        """Keep this worker's original scopes until a late proof.
 
-        Process exit ends a daemon worker, so a held custody never delays
-        exit. A worker from a joined thread pool must never hold.
+        Callers hold on a daemon worker, so process exit ends the wait and a
+        held custody never delays exit. Custody is already entered here, so a
+        joined worker is reported and still holds: unwinding would release a
+        resource that may be live.
         """
         thread = current_thread()
-        assert thread.daemon, "unproven custody must never hold a joined thread"
+        if not thread.daemon:
+            logger.error(
+                "Unproven cleanup of {} is held on a joined thread; exit may wait",
+                self.label,
+            )
         with _custody_lock:
             _custody_threads.add(thread)
         try:

@@ -222,13 +222,33 @@ def test_cleanup_proven_unavailable_after_the_call_returned_still_ends_the_run(
                 worker.join(5)
 
 
-def test_hold_refuses_a_joined_thread():
+def test_hold_on_a_joined_thread_keeps_custody_instead_of_unwinding():
+    """Scopes are already entered: unwinding them could free a live resource."""
+    import threading
+
     capacity = RuntimeCapacity()
     owner = capacity.begin_execution(origin=WorkOrigin.MANUAL, conversation_id="c")
     retention = owner.reserve_tool().retain_unproven("fs_read")
-    retention.prove()
-    with pytest.raises(AssertionError, match="joined thread"):
-        retention.hold()
+    unwound = []
+
+    def custody():
+        try:
+            retention.hold()
+        finally:
+            unwound.append(retention.proven)
+
+    worker = threading.Thread(target=custody)  # a joined, non-daemon worker
+    worker.start()
+    try:
+        deadline = time.monotonic() + 5
+        while not holds_unproven_custody(worker) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert holds_unproven_custody(worker) and unwound == []
+    finally:
+        retention.prove()
+        worker.join(5)
+    # Only the late proof let the scopes unwind.
+    assert unwound == [True]
 
 
 def test_host_return_is_visible_only_with_its_decided_durability():
@@ -261,3 +281,84 @@ def test_host_return_is_visible_only_with_its_decided_durability():
     turn.host_returned(owner)  # a second return is ignored
     assert seen == [(False, False)]
     assert member.host_returned and member.durable is False
+
+
+@pytest.mark.parametrize("path", ["definitive_after_start", "no_timeout"])
+def test_a_retained_cleanup_ends_the_run_on_the_unwrapped_dispatch_paths(
+    tmp_path, monkeypatch, path
+):
+    """Calls that skip the timeout wrapper must end the run too, not continue."""
+    from tldw_chatbook.Agents.agent_models import RunBudget, ToolCall
+    from tldw_chatbook.Agents.agent_service import AgentService
+    from tldw_chatbook.Agents.tool_catalog import (
+        BuiltinToolProvider,
+        ToolCatalogRegistry,
+        ToolExecutionPolicy,
+    )
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    invoked = []
+    monkeypatch.setattr(
+        registry,
+        "invoke_by_name",
+        lambda name, _args: invoked.append(name) or ToolResult(ok=True, content="ran"),
+    )
+    if path == "definitive_after_start":
+        monkeypatch.setattr(
+            registry,
+            "execution_policy_for",
+            lambda _name: ToolExecutionPolicy.DEFINITIVE_AFTER_START,
+        )
+    service = AgentService(
+        db=AgentRunsDB(tmp_path / "runs.db", client_id="t"),
+        registry=registry,
+        chat_call=lambda **_kwargs: pytest.fail("no model call"),
+    )
+    capacity = RuntimeCapacity()
+    owner = capacity.begin_execution(origin=WorkOrigin.MANUAL, conversation_id="c")
+    owner.reserve_tool().retain_unproven("fs_read")
+    config = AgentConfig(
+        model="m",
+        system_prompt="s",
+        allowed_tools=("calculator",),
+        budget=RunBudget(max_tool_call_seconds=0 if path == "no_timeout" else 30),
+    )
+    with owner.activate():
+        invoke_tool = service._make_invoke_tool(
+            config, disclosed_names={"calculator"}, run_id="run-1"
+        )
+    result = invoke_tool(ToolCall(name="calculator", args={"expression": "2+2"}))
+    assert result.termination_reason is RunTerminationReason.CLEANUP_UNPROVEN
+    assert "cleanup of fs_read could not be proven" in result.error
+    assert invoked == []
+
+
+def test_change_review_snapshot_on_a_retained_owner_fails_closed():
+    """Decision: a retained cleanup is not a capacity wait (TASK-40716).
+
+    Waiting would admit the snapshot once the slot is released, and read a
+    workspace that may still be changing. Refusing makes the review
+    unadmitted at once instead.
+    """
+    from tldw_chatbook.Agents.execution_capacity import CleanupUnprovenRefused
+    from tldw_chatbook.Workspaces.change_review_ownership import _SnapshotSource
+
+    capacity = RuntimeCapacity()
+    owner = capacity.begin_execution(origin=WorkOrigin.MANUAL, conversation_id="c")
+    issuer = SimpleNamespace(
+        capacity=capacity,
+        activity=SimpleNamespace(validate_opaque_claim=lambda *a, **k: None),
+        coordinator=SimpleNamespace(_subscribe_native=lambda *a: None, _publish=None),
+    )
+    source = _SnapshotSource(
+        issuer, None, None, None, None, "c", WorkOrigin.MANUAL, (), (), (), owner=owner
+    )
+    stopping = owner.reserve_tool()
+    stopping.mark_stopping()
+    # An ordinary stopping tool is transient: the snapshot waits for a slot.
+    assert source._admit_owned() == (None, "capacity")
+    stopping.retain_unproven("fs_read")
+    with pytest.raises(CleanupUnprovenRefused):
+        source._admit_owned()

@@ -138,14 +138,15 @@ Unproven Raw CLI cleanup still keeps its process-group/scratch custody. Disposal
 
 **Owner decision, 2026-11-13 ([TASK-40716](../tasks/task-40716%20-%20An-unproven-tool-cleanup-parks-a-worker-forever-refusing-later-tool-calls-and-holding-a-tool-slot.md)).**
 - When a tool operation's cleanup cannot be proven, its run ends at once with a reason that names the unproven cleanup. This applies to every run, not only goal runs. The resource stays held and is never reused.
-- An explicit user abandon releases only the tool-worker slot and the run. The resource, its storage leases and any activity claim stay held until restart (ADR-155).
-- The abandon action is on the run's terminal card.
+- The run has already ended by then. An explicit user abandon releases only the tool-worker slot. The resource, its storage leases and any activity claim stay held until restart (ADR-155).
+- The abandon action sits on the run's terminal card: the run's reply, which the explanation naming the unproven cleanup follows.
 - At app exit, disposal records retained items and stops waiting for them.
 
 **Implementation note (not an owner decision).**
 - `OwnedOperation.retain_unproven` records the retention on the runtime's capacity.
-- A worker that still holds the original scopes waits on that record in a daemon thread; `UnprovenRetention.hold` asserts this. A late proof or process exit ends the wait.
-- Raw CLI user commands, Undo and @git reference expansion run their custody on a daemon worker, so no joined pool thread ever holds. Undo also marks its owner unproven.
+- A worker that still holds the original scopes waits on that record on a daemon thread. A late proof or process exit ends the wait. `UnprovenRetention.hold` never unwinds custody it has entered: on a joined thread it logs an error and still holds.
+- Raw CLI user commands, Undo, @git reference expansion and the Console's startup SSH instruction read run their custody on a daemon worker, so no joined pool thread ever holds. Undo also marks its owner unproven.
+- In an ordinary Console turn, @git references and the startup SSH instruction read borrow the turn's owner, so the turn's next tool reservation is refused as cleanup-unproven. That ends the agent run at its first tool call ("the cleanup of native Git could not be proven"), or, when the turn reserves a tool slot while composing its agent request (MCP), stops the turn before the run starts.
 - A retention that arrives after a timeout, cancel or per-call abandon ends the run at its next tool call.
 - A goal iteration that ends on it is uncertain, so it needs recovery.
-- The Release row is keyed on the run's retained record, not on how the run ended.
+- The Release row follows the run's retained records, not how the run ended, and releases every slot the run still holds. A closed and reopened conversation finds it again by the card's persisted id.

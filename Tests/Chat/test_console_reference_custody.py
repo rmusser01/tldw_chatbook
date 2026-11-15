@@ -798,6 +798,12 @@ async def test_unproven_reference_git_cleanup_holds_a_daemon_worker_not_the_send
         # The reference is refused (raw text, no Git body), as for any
         # unavailable reference source.
         assert h.gateway.payloads == [[{"content": "read @staged", "role": "user"}]]
+        # A late proof lets the custody worker retire the operation, so the
+        # turn's owner drains (TASK-40716).
+        retention.prove()
+        custody[0].join(5)
+        assert not custody[0].is_alive()
+        await until(lambda: not capacity.snapshot().executions)
     finally:
         w.release.touch()
         if retention is not None:

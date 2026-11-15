@@ -1286,7 +1286,7 @@ class ConsoleAgentController:
             ),
         )
 
-    def sync_unproven_cleanup(self, transcript: Any) -> None:
+    def sync_unproven_cleanup(self, transcript: Any, messages: Any = ()) -> None:
         """Push Release rows for runs with an unproven tool cleanup (TASK-40716)."""
         controller = self._console_chat_controller
         rows = {}
@@ -1295,7 +1295,7 @@ class ConsoleAgentController:
                 unproven_cleanup_rows,
             )
 
-            rows = unproven_cleanup_rows(controller)
+            rows = unproven_cleanup_rows(controller, messages)
         transcript.set_unproven_cleanup_rows(rows)
 
     def release_unproven_tool_slot(self, message_id: str) -> bool:
