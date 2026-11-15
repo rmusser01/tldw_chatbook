@@ -548,8 +548,12 @@ async def test_endpoint_command_create_lands_on_a_pair_in_pick_mode(
     async with harness.run_test(size=(160, 48)) as pilot:
         console = harness.screen
         await _wait_for_selector(console, pilot, "#console-settings-summary")
-        console.action_open_console_new_endpoint()
+        # The summary can mount while first-run setup still owns the screen.
+        dispatched = False
         for _ in range(60):
+            if not dispatched and not console._console_setup_modal_blocking():
+                console.action_open_console_new_endpoint()
+                dispatched = True
             await pilot.pause(0.02)
             if isinstance(harness.screen, ConsoleEndpointTemplateModal):
                 break
