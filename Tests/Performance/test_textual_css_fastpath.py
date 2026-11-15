@@ -29,12 +29,15 @@ from __future__ import annotations
 import asyncio
 import inspect
 import os
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
-from textual.css.stylesheet import Stylesheet
 from textual.css.match import _check_selectors as upstream_match
+from textual.css.model import RuleSet
+from textual.css.stylesheet import Stylesheet
 
 from Tests.private_profile import private_profile_test
 
@@ -67,6 +70,10 @@ def test_upstream_apply_still_has_the_shape_the_fastpath_assumes() -> None:
     ``self.rules``. Both appear as literal source below; if a Textual upgrade
     changes either, this test fails and the delegation must be re-reviewed.
     """
+    assert (
+        inspect.getsource(RuleSet.__hash__).strip().splitlines()[-1].strip()
+        == "return id(self)"
+    ), "Candidate union relies on upstream rule identity; re-review if hashing changes."
     source = inspect.getsource(
         getattr(Stylesheet.apply, "__wrapped__", Stylesheet.apply)
     )
@@ -84,6 +91,41 @@ def test_upstream_apply_still_has_the_shape_the_fastpath_assumes() -> None:
         "relies on that reversal; re-review "
         "tldw_chatbook/Utils/textual_css_fastpath.py before shipping."
     )
+
+
+def test_cold_candidate_union_keeps_each_rule_without_python_hash_callbacks() -> None:
+    """Shared indexes keep distinct rules once without identity-hash overhead."""
+    from tldw_chatbook.Utils.textual_css_fastpath import _ordered_candidates
+
+    sheet = Stylesheet()
+    sheet.add_source(".a, .b, .c { color: red; }\n" * 500)
+    rules = sheet.rules
+    assert len(rules) == 500
+    # Build upstream's index before measuring only our cold candidate union.
+    assert sheet.rules_map
+    assert all(hash(rule) == id(rule) for rule in rules)
+    node = SimpleNamespace(_selector_names={".a", ".b", ".c"}, ancestors=())
+    calls = 0
+
+    def entered(_code, _offset):
+        nonlocal calls
+        calls += 1
+
+    monitor = sys.monitoring
+    tool = next(i for i in range(1, 6) if monitor.get_tool(i) is None)
+    monitor.use_tool_id(tool, "candidate-union-work")
+    code = RuleSet.__hash__.__code__
+    try:
+        monitor.register_callback(tool, monitor.events.PY_START, entered)
+        monitor.set_local_events(tool, code, monitor.events.PY_START)
+        candidates = _ordered_candidates(sheet, node)
+    finally:
+        monitor.set_local_events(tool, code, 0)
+        monitor.register_callback(tool, monitor.events.PY_START, None)
+        monitor.free_tool_id(tool)
+
+    assert [id(rule) for rule in candidates] == [id(rule) for rule in rules]
+    assert calls == 0, f"cold union called Python RuleSet.__hash__ {calls} times"
 
 
 @pytest.mark.ui
@@ -113,9 +155,12 @@ async def test_fastpath_computes_identical_styles_for_every_node(
 
     app = TldwCli()
     async with app.run_test(size=(170, 48)) as pilot:
-        for _ in range(20):
-            await asyncio.sleep(0.05)
-            await pilot.pause()
+        # Pilot.pause snapshots every current widget. Startup replaces its
+        # screen, so first qualify publication without queuing old callbacks.
+        async with asyncio.timeout(30):
+            while not app._ui_ready:
+                await asyncio.sleep(0.005)
+        assert not app.splash_screen_active
 
         mismatches: list[str] = []
         checked = 0
@@ -129,6 +174,7 @@ async def test_fastpath_computes_identical_styles_for_every_node(
                 await pilot.pause()
                 if type(pilot.app.screen).__name__ == expected:
                     break
+            assert type(pilot.app.screen).__name__ == expected
             for _ in range(6):
                 await asyncio.sleep(0.05)
                 await pilot.pause()

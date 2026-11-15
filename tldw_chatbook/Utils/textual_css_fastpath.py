@@ -199,15 +199,19 @@ def _ordered_candidates(stylesheet: Stylesheet, node: Any) -> list | None:
         candidate_cache.move_to_end(key)
         return candidate_cache[key]
 
+    # RuleSet.__hash__ returns id(self). Use that identity directly so shared
+    # indexes do not repeatedly call its Python callback for the same rule.
     candidates = {
-        rule for name in rules_map.keys() & selector_names for rule in rules_map[name]
+        id(rule): rule
+        for name in rules_map.keys() & selector_names
+        for rule in rules_map[name]
     }
 
     # Each comma alternative must be statically impossible before dropping the
     # rule. An unrelated bare subject in one alternative must not keep a scoped
     # rule alive for every node of another alternative's type.
     surviving = []
-    for rule in candidates:
+    for rule in candidates.values():
         rule_id = id(rule)
         rule_requirements = requirements.get(rule_id)
         if rule_requirements is None:
