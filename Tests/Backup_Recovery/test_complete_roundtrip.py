@@ -47,6 +47,10 @@ def test_relative_archive_key_normalizes_windows_separators():
 
 _PRIVATE = r"""
 import asyncio,json,os,sys,threading
+# Fixture files written here (ui_state.toml, ...) are private, as the app's own
+# writers make them; capture refuses a group/other-readable config sibling
+# (capture_config_source_unsafe, TASK-41116).
+os.umask(0o077)
 from pathlib import Path
 from Tests.Backup_Recovery.test_complete_roundtrip import _relative_archive_key
 from Tests.network_guard import install,blocked_attempts
@@ -367,7 +371,9 @@ from tldw_chatbook.Backup_Recovery.owner_registry import install_adapters
 from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits
 async def main():
  app=TldwCli();monitoring=asyncio.create_task(monitor_app(app))
- cancel=threading.Event();watchdog=asyncio.get_running_loop().call_later(300 if sys.platform=='win32' else 55,cancel.set)
+ # Inside the child's 600 s cap (_run_profile_child); 55 s cancelled a capture
+ # that was only slow at load ~100 (TASK-41116).
+ cancel=threading.Event();watchdog=asyncio.get_running_loop().call_later(300 if sys.platform=='win32' else 540,cancel.set)
  try:
   selectors=tuple(fixture/label/'config.toml' for label in ('alpha','beta'))
   registry=app.local_chatbook_service.registry_path
@@ -618,9 +624,11 @@ def _run_profile_child(root, name, script, environment, *, timeout=60):
     program = root / (name + ".py")
     program.write_text(script, encoding="utf-8")
     output_path = root / (name + ".log")
+    from Tests.Backup_Recovery.test_config_sibling_capture import _wait_while_busy
+
     with output_path.open("w", encoding="utf-8") as output:
         # Fixed interpreter and fixture-owned source; no shell or external command.
-        result = subprocess.run(  # nosec B603
+        process = subprocess.Popen(  # nosec B603
             [sys.executable, str(program)],
             cwd=root
             if environment.get("TLDW_TEST_INSTALLED_PACKAGE")
@@ -628,10 +636,12 @@ def _run_profile_child(root, name, script, environment, *, timeout=60):
             env=environment,
             stdout=output,
             stderr=subprocess.STDOUT,
-            check=False,
-            timeout=timeout,
         )
-    assert result.returncode == 0, output_path.read_text(encoding="utf-8")[-14000:]
+        # TASK-41116: the fixed budget (60 s) killed capture children that were
+        # only slow at load ~105; fail once the child stops using CPU (a hang),
+        # with the old budget, ten times over, as a cap.
+        returncode = _wait_while_busy(process, idle=60, timeout=10 * timeout)
+    assert returncode == 0, output_path.read_text(encoding="utf-8")[-14000:]
     return output_path.read_text(encoding="utf-8")
 
 
@@ -716,7 +726,11 @@ def _capture_two_profiles(tmp_path, installed_package=None):
         )
     for name in ("alpha", "beta"):
         profile = root / name
-        (profile / "custom").mkdir(parents=True, mode=0o700)
+        # Not mkdir(parents=True): that leaves the profile at the umask mode,
+        # and the config companion guard refuses a group/other-readable
+        # selector parent (config_companion_parent_unsafe, TASK-41116).
+        profile.mkdir(mode=0o700)
+        (profile / "custom").mkdir(mode=0o700)
         (profile / "data").mkdir(mode=0o700)
         selector = profile / "config.toml"
         selector.write_text(
