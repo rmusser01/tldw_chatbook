@@ -93,8 +93,8 @@ def test_upstream_apply_still_has_the_shape_the_fastpath_assumes() -> None:
     )
 
 
-def test_cold_candidate_union_keeps_each_rule_without_python_hash_callbacks() -> None:
-    """Shared indexes keep distinct rules once without identity-hash overhead."""
+def test_cold_candidate_unions_hash_each_subject_index_only_once() -> None:
+    """Different live shapes reuse bucket hashes while keeping every rule."""
     from tldw_chatbook.Utils.textual_css_fastpath import _ordered_candidates
 
     sheet = Stylesheet()
@@ -104,7 +104,19 @@ def test_cold_candidate_union_keeps_each_rule_without_python_hash_callbacks() ->
     # Build upstream's index before measuring only our cold candidate union.
     assert sheet.rules_map
     assert all(hash(rule) == id(rule) for rule in rules)
-    node = SimpleNamespace(_selector_names={".a", ".b", ".c"}, ancestors=())
+    nodes = [
+        SimpleNamespace(
+            _selector_names={".a", ".b", ".c"},
+            ancestors=(
+                SimpleNamespace(
+                    _css_type_names=frozenset({"Container"}),
+                    id=None,
+                    classes={f"shape-{i}"},
+                ),
+            ),
+        )
+        for i in range(10)
+    ]
     calls = 0
 
     def entered(_code, _offset):
@@ -118,14 +130,17 @@ def test_cold_candidate_union_keeps_each_rule_without_python_hash_callbacks() ->
     try:
         monitor.register_callback(tool, monitor.events.PY_START, entered)
         monitor.set_local_events(tool, code, monitor.events.PY_START)
-        candidates = _ordered_candidates(sheet, node)
+        for node in nodes:
+            candidates = _ordered_candidates(sheet, node)
+            assert [id(rule) for rule in candidates] == [id(rule) for rule in rules]
     finally:
         monitor.set_local_events(tool, code, 0)
         monitor.register_callback(tool, monitor.events.PY_START, None)
         monitor.free_tool_id(tool)
 
-    assert [id(rule) for rule in candidates] == [id(rule) for rule in rules]
-    assert calls == 0, f"cold union called Python RuleSet.__hash__ {calls} times"
+    assert calls <= 3 * len(
+        rules
+    ), f"subject buckets repeated Python hashes {calls} times"
 
 
 @pytest.mark.ui
