@@ -11,6 +11,7 @@ from types import ModuleType, SimpleNamespace
 import pytest
 from loguru import logger
 
+from Tests.Chat.test_console_trace_maintenance_parking import fake_maintenance_module
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_exchange_capture import (
     CaptureDetail,
@@ -1063,8 +1064,7 @@ async def test_runtime_starts_legacy_maintenance_only_after_ui_ready(
         def run_batch(self) -> SimpleNamespace:
             return SimpleNamespace(logical_complete=True, admitted=True)
 
-    module = ModuleType("tldw_chatbook.Chat.console_trace_maintenance")
-    module.LegacyTraceMaintenance = _Maintenance  # type: ignore[attr-defined]
+    module = fake_maintenance_module(LegacyTraceMaintenance=_Maintenance)
     monkeypatch.setitem(sys.modules, module.__name__, module)
     monkeypatch.setattr(
         "tldw_chatbook.Chat.console_runtime."
@@ -1136,10 +1136,11 @@ async def test_runtime_runs_gc_then_physical_maintenance_after_normalization(
             events.append("vacuum")
             return SimpleNamespace(completed=True, reason_code="complete")
 
-    module = ModuleType("tldw_chatbook.Chat.console_trace_maintenance")
-    module.LegacyTraceMaintenance = _Maintenance  # type: ignore[attr-defined]
-    module.TraceGarbageCollector = _Collector  # type: ignore[attr-defined]
-    module.PhysicalTraceCompactor = _Compactor  # type: ignore[attr-defined]
+    module = fake_maintenance_module(
+        LegacyTraceMaintenance=_Maintenance,
+        TraceGarbageCollector=_Collector,
+        PhysicalTraceCompactor=_Compactor,
+    )
     monkeypatch.setitem(sys.modules, module.__name__, module)
     monkeypatch.setattr(
         "tldw_chatbook.Chat.console_capture_policy.resolve_trace_compaction_policy",
@@ -1216,10 +1217,11 @@ async def test_runtime_rechecks_thresholds_without_creating_another_gc_run(
                 )
             return SimpleNamespace(completed=True, reason_code="complete")
 
-    module = ModuleType("tldw_chatbook.Chat.console_trace_maintenance")
-    module.LegacyTraceMaintenance = _Maintenance  # type: ignore[attr-defined]
-    module.TraceGarbageCollector = _Collector  # type: ignore[attr-defined]
-    module.PhysicalTraceCompactor = _Compactor  # type: ignore[attr-defined]
+    module = fake_maintenance_module(
+        LegacyTraceMaintenance=_Maintenance,
+        TraceGarbageCollector=_Collector,
+        PhysicalTraceCompactor=_Compactor,
+    )
     monkeypatch.setitem(sys.modules, module.__name__, module)
     monkeypatch.setattr(
         "tldw_chatbook.Chat.console_capture_policy.resolve_trace_compaction_policy",
@@ -1269,8 +1271,7 @@ async def test_runtime_retries_legacy_maintenance_after_unexpected_failure(
                 raise RuntimeError("injected")
             return SimpleNamespace(logical_complete=True, admitted=True)
 
-    module = ModuleType("tldw_chatbook.Chat.console_trace_maintenance")
-    module.LegacyTraceMaintenance = _Maintenance  # type: ignore[attr-defined]
+    module = fake_maintenance_module(LegacyTraceMaintenance=_Maintenance)
     monkeypatch.setitem(sys.modules, module.__name__, module)
     monkeypatch.setattr(
         "tldw_chatbook.Chat.console_runtime."

@@ -612,6 +612,11 @@ RECOVERED_SUITES_TARGETS = (
     "Tests/Chat/test_trace_v2_collaboration.py::test_code_and_docs_that_only_look_like_credentials_survive_a_shared_bundle",
     "Tests/Chat/test_trace_v2_collaboration.py::test_an_older_bundle_holding_a_newly_masked_shape_is_refused_on_import",
     "Tests/Chat/test_console_trace_legacy_migration.py::test_a_v1_legacy_ledger_keeps_migrating_new_exchanges_under_v2",
+    # TASK-41134: the legacy trace maintenance loop's parking and projection
+    # files, red on dev in no PR lane (their stand-in module lacked the loop's
+    # helpers). Sandboxed, no config read.
+    "Tests/Chat/test_console_trace_maintenance_parking.py",
+    "Tests/Chat/test_console_trace_projection.py",
     # TASK-39172: config participant lifetimes, sandboxed and reading config
     # in-process, so before the bootstrap_profile suites.
     "Tests/Backup_Recovery/test_config_participant_lifetimes.py",

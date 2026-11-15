@@ -24,6 +24,7 @@ from tldw_chatbook.Chat import chat_persistence_service
 from tldw_chatbook.Chat import console_runtime as runtime_module
 from tldw_chatbook.Chat.console_exchange_capture import capture_to_blob
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+from tldw_chatbook.Chat import console_trace_maintenance as maintenance_module
 from tldw_chatbook.Chat.console_trace_legacy import LegacyTraceNormalizer
 from tldw_chatbook.Chat.console_trace_maintenance import (
     LegacyTraceMaintenance,
@@ -31,6 +32,28 @@ from tldw_chatbook.Chat.console_trace_maintenance import (
     TraceGarbageCollector,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+
+_WORKERS = ("LegacyTraceMaintenance", "TraceGarbageCollector", "PhysicalTraceCompactor")
+
+
+def fake_maintenance_module(**doubles: object) -> ModuleType:
+    """The real maintenance module with its three workers swapped for ``doubles``.
+
+    A worker not passed is absent, so the loop takes its narrow-double path.
+    The loop's own helpers stay real: 6125fbc5b8 moved
+    ``maintenance_error_must_propagate``, ``call_owned_maintenance`` and
+    ``runtime_provider_active`` here, and a stub without them failed every
+    loop test with an ImportError (TASK-41134).
+    """
+    module = ModuleType(maintenance_module.__name__)
+    module.__dict__.update(
+        (name, value)
+        for name, value in vars(maintenance_module).items()
+        if name not in _WORKERS
+    )
+    module.__dict__.update(doubles)
+    return module
 
 
 def _install_fake_maintenance(monkeypatch: pytest.MonkeyPatch, calls: list[str]) -> None:
@@ -44,8 +67,7 @@ def _install_fake_maintenance(monkeypatch: pytest.MonkeyPatch, calls: list[str])
             calls.append("batch")
             return SimpleNamespace(logical_complete=True, admitted=True)
 
-    module = ModuleType("tldw_chatbook.Chat.console_trace_maintenance")
-    module.LegacyTraceMaintenance = _Maintenance  # type: ignore[attr-defined]
+    module = fake_maintenance_module(LegacyTraceMaintenance=_Maintenance)
     monkeypatch.setitem(sys.modules, module.__name__, module)
 
 
@@ -131,8 +153,7 @@ async def test_a_signal_wake_tells_the_pass_it_has_work(
             self.expect_work = False
             return SimpleNamespace(logical_complete=True, admitted=True)
 
-    module = ModuleType("tldw_chatbook.Chat.console_trace_maintenance")
-    module.LegacyTraceMaintenance = _Maintenance  # type: ignore[attr-defined]
+    module = fake_maintenance_module(LegacyTraceMaintenance=_Maintenance)
     monkeypatch.setitem(sys.modules, module.__name__, module)
     runtime = _fast_runtime(monkeypatch)
 
@@ -171,8 +192,7 @@ async def test_work_written_during_an_unparked_pass_is_flagged_for_the_next(
                 chat_persistence_service.signal_trace_maintenance_work()
             return SimpleNamespace(logical_complete=True, admitted=True)
 
-    module = ModuleType("tldw_chatbook.Chat.console_trace_maintenance")
-    module.LegacyTraceMaintenance = _Maintenance  # type: ignore[attr-defined]
+    module = fake_maintenance_module(LegacyTraceMaintenance=_Maintenance)
     monkeypatch.setitem(sys.modules, module.__name__, module)
     runtime = _fast_runtime(monkeypatch)
 
@@ -204,8 +224,7 @@ async def test_one_signal_wakes_every_parked_runtime(
             calls.append(self._database)
             return SimpleNamespace(logical_complete=True, admitted=True)
 
-    module = ModuleType("tldw_chatbook.Chat.console_trace_maintenance")
-    module.LegacyTraceMaintenance = _Maintenance  # type: ignore[attr-defined]
+    module = fake_maintenance_module(LegacyTraceMaintenance=_Maintenance)
     monkeypatch.setitem(sys.modules, module.__name__, module)
     runtimes = [_fast_runtime(monkeypatch), _fast_runtime(monkeypatch)]
     databases = ["db-a", "db-b"]
@@ -518,8 +537,7 @@ async def test_disposal_retains_original_maintenance_return_through_cancellation
             finally:
                 returned.set()
 
-    module = ModuleType("tldw_chatbook.Chat.console_trace_maintenance")
-    module.LegacyTraceMaintenance = Maintenance
+    module = fake_maintenance_module(LegacyTraceMaintenance=Maintenance)
     monkeypatch.setitem(sys.modules, module.__name__, module)
     runtime = _fast_runtime(monkeypatch)
     runtime._schedule_legacy_trace_maintenance(object(), object)
