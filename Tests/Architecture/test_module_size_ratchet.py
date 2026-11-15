@@ -918,7 +918,10 @@ _BUDGETS: dict[str, int] = {
     # TASK-36944.2, 2026-11-03: +6 for the public `setting` Console reads.
     # TASK-36950.3/.4, 2026-11-13: _run_one's fleet and run-log tool closures
     # moved to agent_run_tools.py.
-    "tldw_chatbook/Agents/agent_service.py": 7677,
+    # 2026-11-15, TASK-40716 rebased onto dev ecad404bd4 (owner rule: raise by
+    # the change's own lines): 7677 -> 7686 (+9) -- the unproven-cleanup
+    # retention and immediate return in the tool-call wait.
+    "tldw_chatbook/Agents/agent_service.py": 7686,
     # 2026-10-31, PR #3259: explicit user size-limit waiver. Pin the
     # actual current-base N-32 file-body F6 integration at 9,541 lines.
     # TASK-36513, 2026-11-03 (size waiver per the burn-down brief: re-pin at
@@ -1070,7 +1073,9 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-14, TASK-40716 (owner rule: raise by the change's own lines):
     # 7043 -> 7048 (+5) -- dispose closes the other owners when a workflow
     # run is held only by an unproven tool cleanup, then reports it.
-    "tldw_chatbook/Chat/console_runtime.py": 7052,
+    # 2026-11-15, stacked on TASK-40717 and rebased onto dev e36c4953b1 (dev
+    # 7043): TASK-40717's +4 and TASK-40716's +20, so 7067 -- exact measurement.
+    "tldw_chatbook/Chat/console_runtime.py": 7067,
     # 2026-10-27 (TASK-33621.29 / TASK-33621.7, owner decision 2026-10-19,
     # "expand limits, never contort code"): +56 for the rewritten-tail
     # transition (ADR-337 amendment 2026-10-27). The proof itself lives in
