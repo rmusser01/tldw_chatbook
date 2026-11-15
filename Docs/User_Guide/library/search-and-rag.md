@@ -537,8 +537,8 @@ indexes — if RAG Answer mode reports an empty index, go there to backfill.
    history remembers query text, not earlier settings. Both query boxes
    show the selected text. **Clear history** removes the saved entries and
    leaves the current query, evidence and answer in place.
-6. **Ask a question and get an answer** — click **"mode: Search ▸"** so it
-   reads "mode: RAG Answer ▸", then run; the panel shows a generated,
+6. **Ask a question and get an answer** — click **"mode: ✓ Search ⇄ RAG
+   Answer"** so it reads "mode: Search ⇄ ✓ RAG Answer", then run; the panel shows a generated,
    cited answer above the evidence rows — or an honest "Nothing in your
    library supports an answer to that." if it can't. If the run blocks,
    follow the recovery copy.

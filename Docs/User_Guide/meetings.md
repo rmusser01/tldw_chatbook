@@ -411,8 +411,8 @@ what happens to a meeting once it's queued.
   2", … as each new voice is heard, and typing a name into a row's rename
   box relabels that speaker everywhere — the legend, the transcript shown so
   far, and the name map saved into `meeting.json` for the finished
-  recording. This live path has automated pilot-test coverage only; it has
-  not been exercised in a live session on this page's verification host.
+  recording. This live path is covered by automated pilot tests only; it
+  has not yet been tried in a real recording session.
 - **The name that stands in for you is fixed when the meeting starts.** It
   is your configured chat display name when you have set one (otherwise
   "You"), and it is stamped onto the recording at Start — so changing that
@@ -464,10 +464,10 @@ what happens to a meeting once it's queued.
 - **Windows loopback capture is unverified.** The design calls for
   `sounddevice` to enumerate a `[Loopback]` WASAPI device automatically;
   this has not been confirmed on a real Windows machine.
-- **Call mode (native system-audio tap) is unverified end-to-end on this
-  host.** The live verification for this page ran without the macOS System
-  Audio Recording grant, so only room mode (mic-only) was confirmed to
-  produce a working recording, footer, and Library handoff. To verify call
+- **Call mode (native system-audio tap) is not yet confirmed end to end.**
+  Only room mode (mic-only) has been confirmed to produce a working
+  recording, footer, and Library handoff; call mode also needs the macOS
+  System Audio Recording grant. To verify call
   mode yourself: grant System Audio Recording to your terminal app once
   (macOS prompts on first use), run
   `TLDW_RUN_AUDIOTAP_HELPER_TEST=1 .venv/bin/python -m pytest Tests/Audio/test_audiotap_helper_macos.py -p no:cacheprovider`,
@@ -481,8 +481,5 @@ what happens to a meeting once it's queued.
   transcription dependencies (e.g. `faster-whisper`); the meeting's own
   files and metadata are unaffected either way.
 - **Pause/Resume, the device pickers' remembered choice, and the level
-  meters are covered by automated pilot tests, not by this page's live
-  session** — the mic level stayed at 0% throughout live verification (no
-  audio input reached the terminal running the app), so those three
-  behaviors were exercised only in the test suite, not watched moving on a
-  real screen.
+  meters are covered by automated pilot tests only** — they have not yet
+  been watched working with real audio input on a real screen.

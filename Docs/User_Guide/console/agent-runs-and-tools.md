@@ -1808,7 +1808,7 @@ and ledger rows are already durable, and answering (or denying) the
 round releases them immediately — observed live as a stalled
 conversation delivering the instant a blocked round was denied. This is
 the deliberate trade of the app-wide serialization invariant (one
-`_delivering` per runtime; see the headless-wake close-out report). With
+`_delivering` per runtime). With
 the card rendering correctly the hold is always answerable, so it lasts
 exactly as long as you leave the question open.
 

@@ -177,7 +177,7 @@ From another screen, press **Ctrl+P** and choose **Library: Import…** or
   "Press again to replace form" confirmation before replacing an edited draft.
 
 **Export bundle (.zip)** is a single form: the "Export bundle (.zip)"
-header, a scope line ("Everything: 128 media · 542 conversations · 87 notes · 34
+header, a scope line ("Everything: 128 media items · 542 conversations · 87 notes · 34
 prompts", or "Prompts · 34 items" when you arrived scoped; "Counting…" while
 it tallies), the "Export name" and "Description (optional)" fields, a
 "quality: …" chooser with a helper line matching whichever option is
@@ -434,9 +434,8 @@ destination, or leaving the Import canvas cancels pending consent.
    collection. Choose the rail's **Export** row for `Everything` when the bundle
    should also include media, conversations, and notes.
 7. **Retry a failed job** — Find the "✗ failed" row in the Queue and press
-   "Retry"; the new attempt shows a **" · attempt 2"** suffix (then
-   " · attempt 3", and so on — the label counts attempts, not retries, so
-   the first retry reads 2). No Retry button
+   "Retry"; the requeued row shows a **" · retry 1"** suffix (then
+   " · retry 2", and so on). No Retry button
    means the failure is permanent (unsupported type or missing file) — fix
    the source and start a fresh import, and use "Dismiss" to drop the row.
    A URL your web-security settings refuse fails with a plain receipt:
@@ -598,8 +597,8 @@ imported items afterwards.
   show**; a failure whose reason arrived with nothing behind it offers no
   "Show details" at all. Infrastructure failures that stop the import
   worker before it reads a single file are the case you are most likely to
-  meet: they surface as a raw system message on the row ("Parse pool could
-  not start: [Errno 28] No space left on device", which on macOS usually
-  means exhausted POSIX semaphores rather than a full disk) with no details
-  row and no plain-language remedy. Mapping those to a readable reason with
-  a next step is tracked as task-32054.
+  meet. The common one on macOS is exhausted POSIX semaphores, which the
+  system reports as "No space left on device" although the disk has room:
+  the row reads "The import worker couldn't start on this machine (system
+  resource limit) · Restart the app, then Retry", and **Show details** holds
+  the raw system message.

@@ -38,17 +38,6 @@ Study. This page is the orientation tour; the details live on these pages:
 
 ## Get started on a new profile
 
-> **You will probably never see this.** "New profile" here means a profile
-> whose `config.toml` was created **in the same run** — the first launch
-> that writes the file. If the config file already existed when the app
-> started, Library opens the **full rail** even on a completely empty
-> profile, and the Get started view below never appears. That includes the
-> ordinary case of quitting during first-run setup and relaunching: setup
-> writes the config, so the next launch is no longer "new". Making a
-> genuinely empty profile reach
-> Get started regardless of when its config was written is tracked as
-> task-32059.
-
 A new profile starts with a compact rail: **Import…**, **New note**, and
 **Explore all tools**. It has no search box, so **F6** lands on **Import…**
 (or on **Explore all tools** when Import is not offered). The Get started
@@ -91,8 +80,10 @@ the reader had just done.)
 
 Compact presentation never blocks navigation. Deep links and command-palette
 routes, including **Tab Navigation: Library — Skills**, can open a tool that is
-not shown in the Get started rail. Existing profiles without this preference
-open the full Library. A profile created by this app records its Library
+not shown in the Get started rail. A profile with no stored Library choice,
+including one whose `config.toml` was written before its first launch, shows
+the full rail while its sources are checked, then settles on Get started if
+every source is empty and on the full Library if any holds content. A profile created by this app records its Library
 lifecycle when the profile is created, so Get started still appears if you
 complete first-run setup, quit, and come back before ever opening Library.
 

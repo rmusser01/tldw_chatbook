@@ -590,11 +590,11 @@ requested load.
 conversation into a pane headed **"Conversation reader"** with:
 
 - a **Read** / **Info** mode row (the same shape the media Reader uses);
-- a status line reading `Loaded <conversation id> · N of M messages ·
-  complete.`;
+- a status line reading `Loaded <title> · N of M messages · complete.`
+  ("this conversation" when it has no title);
 - a **"Find in complete transcript…"** box; and
-- the transcript itself, one block per message, each headed
-  `user` / `assistant` and the message's timestamp.
+- the transcript itself, one block per message, each headed with its
+  sender and age (`user · 27m`).
 
 **The reader stays in step with Console.** Each time the Conversations list
 reads again — when you come back to Library from Console, page, or filter —
@@ -602,11 +602,6 @@ the open conversation's saved transcript is checked. If messages were deleted
 (or brought back with Undo), edited, or added in Console since the reader
 loaded it, the reader reloads it in place, so its message count matches the
 list. Read/Info and your Find text are kept.
-
-One rough edge is known and tracked separately: the status line shows the
-raw conversation UUID and each message shows a full ISO timestamp rather
-than an age string. ("Open in Console" moved into the reader header,
-beside Read/Info, in task-32056.)
 
 Empty state: "No conversations yet. Chat in Console and it appears here."
 There is no create, rename, or delete here — this panel treats your chats

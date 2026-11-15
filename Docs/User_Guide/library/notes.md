@@ -583,8 +583,8 @@ In Edit and Preview, the footer names whichever control has focus as an
 "enter …" chip, so focus is never unaccounted for: Tab onto "‹ Notes" and
 the footer reads "enter back to list", onto Save and it reads "enter save
 note". While the body or a field has focus there is no enter chip, because
-Enter types. Info's footer is fixed instead — "enter run action" — except
-while its inline delete confirmation is open, which does name the focused
+Enter types. Info names its focused control the same way (see below), and
+while its inline delete confirmation is open the chip names the focused
 button ("enter cancel" / "enter delete").
 
 That is true in **Preview** and **Info** as well, not only in Edit: Tab there
@@ -1070,7 +1070,6 @@ the click that focuses it, is the Folder files root picker's
 ([File notes](file-notes.md)); here `Ctrl+A` selects whatever you typed. An
 invalid path shows its reason on a row under the field ("The file must exist")
 and leaves the dialog open. **Select folder** picks the folder row you last
-clicked if you clicked one, otherwise the folder being browsed.
 clicked if you clicked one, otherwise the folder being browsed. (Was "Its
 **Folder path** field … The field arrives pre-filled with the directory being
 browsed, and the click that puts the cursor in it selects that value" —
@@ -1353,11 +1352,6 @@ The receipt is then on screen. Tab stays inside Import once throughout —
    cutover release.
 2. In the notes list, click **Add from files…** and choose **Keep a folder
    synced**.
-3. Click **Choose folder…**; type a path into the **File name** field ("File
-   name or path") and either press Enter (browses into it) or click **Select
-   folder** (uses the folder being browsed, or the folder row you last
-   clicked) — this is the files-or-one-folder dialog, whose field is
-   "File name" and starts empty. Choose a direction and local destination.
 3. Click **Choose folder…**; type a path into the **Folder path** field and
    either press Enter (browses into it) or click **Select folder** (uses the
    folder being browsed). (Was "type into the **File name** field ('File name

@@ -162,7 +162,7 @@ Every step has a keyboard route (task-32606):
 3. The picker opens with the **Folder path** field focused and its value
    selected — type or paste the folder and it replaces what was there.
 4. **Enter** browses into the typed folder; **Tab** then **Enter** on
-   **Select** links it. **Esc** leaves the picker without changing anything.
+   **Select folder** links it. **Esc** leaves the picker without changing anything.
 
 While the picker is open the bottom row of the terminal shows the picker's own
 keys instead of Library's, starting with `esc Cancel` — that row is how you

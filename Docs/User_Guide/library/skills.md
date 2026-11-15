@@ -246,7 +246,7 @@ Basic                                  Advanced
 │ Name                         │       │ Basic fields remain mounted  │
 │ Description                  │       │ Run context                  │
 │ Instructions                 │       │ Restrict tools   [Filter…]   │
-│ You can invoke       [on/off]│       │ ┌ SelectionList (bounded) ┐  │
+│ User can invoke      [on/off]│       │ ┌ SelectionList (bounded) ┐  │
 │ Agent can invoke     [on/off]│       │ │ [x] calculator          │  │
 │ Argument hint (when useful)  │       │ │ [x] old-tool unavailable│  │
 │ Trust summary / safe action  │       │ └──────────────────────────┘  │
@@ -261,7 +261,7 @@ Basic fields:
   create a new Skill instead.
 - **Description** — optional list summary.
 - **Instructions** — the Skill's `SKILL.md` body.
-- **You can invoke** and **Agent can invoke** — independent choices. Turning
+- **User can invoke** and **Agent can invoke** — independent choices. Turning
   both off makes the Skill reference-only; the editor says so explicitly.
   Each is a one-press toggle whose label shows both options with ✓ on the
   active one ("User can invoke: ✓ yes ⇄ no").
