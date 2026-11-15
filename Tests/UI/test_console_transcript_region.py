@@ -361,6 +361,51 @@ async def test_queued_transcript_quote_expires_even_when_original_chat_returns()
 
 @pytest.mark.asyncio
 @pytest.mark.bootstrap_profile
+async def test_frozen_transcript_owes_compaction_only_when_discarded(monkeypatch):
+    from tldw_chatbook.UI.Console_Modules import transcript as transcript_region
+    from tldw_chatbook.Utils import ui_responsiveness
+
+    epoch = 0
+    refreezer = ui_responsiveness.IdleHeapRefreezer(enabled=lambda: False)
+    monkeypatch.setattr(ui_responsiveness, "_HEAP_REFREEZER", refreezer)
+    monkeypatch.setattr(transcript_region, "heap_freeze_epoch", lambda: epoch)
+    host = _ready_console_host()
+    async with host.run_test(size=(120, 50)) as pilot:
+        console = await _mounted_console(host, pilot)
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session()
+        second = store.create_session(title="Second", activate=False)
+        third = store.create_session(title="Third", activate=False)
+        for session in (first, second, third):
+            store.append_message(session.id, role=ConsoleMessageRole.USER, content="Row")
+        await console._sync_native_console_transcript()
+        await pilot.pause()
+        surface = console.query_one(ConsoleTranscriptSurface)
+        first_view = surface.transcript
+        assert first_view._row_widgets
+        epoch += 1
+
+        store.switch_session(second.id)
+        await console._sync_native_console_transcript()
+        assert first_view.is_attached and not first_view.display
+        assert not refreezer.compaction_due()
+
+        store.switch_session(first.id)
+        await console._sync_native_console_transcript()
+        assert surface.transcript is first_view
+        store.switch_session(second.id)
+        await console._sync_native_console_transcript()
+        assert first_view.is_attached and not first_view.display
+        assert not refreezer.compaction_due()
+
+        store.switch_session(third.id)
+        await console._sync_native_console_transcript()
+        assert not first_view.is_attached
+        assert refreezer.compaction_due()
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_active_switch_reuses_previous_rows_and_reprojects_background_edit(
     monkeypatch,
 ):

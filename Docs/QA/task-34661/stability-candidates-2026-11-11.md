@@ -1656,3 +1656,18 @@ used raw object counts instead. All heap attempts are excluded from the
 timing comparison. A runner path typo also failed before launching a
 timing arm. TASK-31966 stays open. All results and 194 verified hashes
 are local under `/private/tmp/pr3536-scroll-gc-cah2qeAs`.
+
+### Retained viewport compaction debt follow-up
+
+A disposable mounted control froze a Textual label and a Console viewport
+with seven row widgets. Normal unmount and releasing Console's references
+left all nine sampled widgets alive. Each still had a Textual style object
+pointing back to its widget. The probe establishes that Console-owned
+reference cleanup alone cannot release this frozen graph.
+
+The mounted regression reproduced compaction debt on the first warm switch
+while the frozen viewport was still attached. With the freeze record owned
+by the viewport, the switch and warm return preserve the record. Opening a
+third chat evicts the frozen viewport and still records compaction debt.
+This verifies the retirement signal. The cold whole-heap compaction and
+the 50 ms event-loop qualification remain open.

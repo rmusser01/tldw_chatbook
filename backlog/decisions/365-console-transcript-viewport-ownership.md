@@ -49,6 +49,12 @@ An action keeps its origin through descendant dispatch, overflow-menu
 callbacks and delivery to the screen. Deferred focus validates the same visit.
 An inactive viewport has no actionable generation.
 
+Each viewport records the heap freeze epoch for the conversation it has
+projected. Retaining or reactivating a viewport preserves that record.
+Unmount or replacement of the conversation in the same viewport reports
+potential frozen garbage to the existing ADR-198 refreezer. First
+persistence of a new chat preserves its row ownership and freeze record.
+
 The first retained slot is for settled text windows. Scrollback or transient
 input state, active decorations, media, tool workers, native action buttons
 and rendered Markdown links use the ordinary projection path. These native

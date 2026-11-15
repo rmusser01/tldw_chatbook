@@ -17137,7 +17137,7 @@ class ChatScreen(BaseAppScreen):
                 messages,
                 session_id=self._ensure_console_chat_store().active_session_id,
             )
-            note_console_conversation_painted(self)  # TASK-33620.15.3
+            note_console_conversation_painted(self, transcript)
             # Live turn-activity line. `apply_turn_activity` hands back the
             # EFFECTIVE value ("" unless a row is actually in flight), which
             # is what joins the refresh key below -- so an idle transcript

@@ -496,37 +496,41 @@ def request_transcript_sync(screen: Any) -> None:
     screen._start_console_transcript_sync_timer()
 
 
-def note_console_conversation_painted(screen: Any) -> None:
-    """Request a re-freeze when the transcript shows a different conversation.
+def note_console_transcript_discarded(viewport: ConsoleTranscript) -> None:
+    """Record debt when discarded rows may still belong to the frozen heap."""
+    painted = getattr(viewport, _REFREEZE_PAINTED_ATTRIBUTE, None)
+    if painted is None:
+        return
+    delattr(viewport, _REFREEZE_PAINTED_ATTRIBUTE)
+    if heap_freeze_epoch() != painted[1]:
+        heap_refreezer().note_stranded()
 
-    The transcript is rebuilt for every conversation it shows. When a freeze
-    ran while the outgoing one was shown, its rows were frozen live and are
-    now cyclic garbage no collection reaches, so the refreezer is told to
-    compact at the next idle moment (ADR-198 amendment). Rows replaced
-    before any freeze are ordinary garbage: the re-freeze's own full
-    collection reclaims them. A new chat gaining its conversation id on its
-    first send is not a switch: its rows stay (they match by message id).
 
-    Args:
-        screen: The Console ``ChatScreen`` whose transcript was just synced.
-    """
+def note_console_conversation_painted(screen: Any, viewport: ConsoleTranscript) -> None:
+    """Request re-freeze on a conversation switch and track each viewport's rows."""
     store = screen._console_chat_store
     key = (
         store.active_session_id if store is not None else None,
         screen._current_console_conversation_id(),
     )
-    shown = getattr(screen, _REFREEZE_PAINTED_ATTRIBUTE, None)
-    if shown is not None and shown[0] == key:
+    painted = getattr(viewport, _REFREEZE_PAINTED_ATTRIBUTE, None)
+    if painted is None:
+        setattr(viewport, _REFREEZE_PAINTED_ATTRIBUTE, (key, heap_freeze_epoch()))
+    elif painted[0] != key:
+        if painted[0] == (key[0], None):
+            # First persistence keeps the message rows and their original epoch.
+            epoch = painted[1]
+        else:
+            note_console_transcript_discarded(viewport)
+            epoch = heap_freeze_epoch()
+        setattr(viewport, _REFREEZE_PAINTED_ATTRIBUTE, (key, epoch))
+
+    shown = getattr(screen, "_console_heap_refreeze_painted_key", None)
+    if shown == key:
         return
-    if shown is not None and shown[0] == (key[0], None):
-        # A new chat's first send persisted it: rows match by message id, so
-        # none were replaced. Keep the epoch it was first shown under.
-        setattr(screen, _REFREEZE_PAINTED_ATTRIBUTE, (key, shown[1]))
-        return
-    if shown is not None and heap_freeze_epoch() != shown[1]:
-        heap_refreezer().note_stranded()
-    setattr(screen, _REFREEZE_PAINTED_ATTRIBUTE, (key, heap_freeze_epoch()))
-    request_console_heap_refreeze(screen, "conversation_painted")
+    screen._console_heap_refreeze_painted_key = key
+    if shown != (key[0], None):
+        request_console_heap_refreeze(screen, "conversation_painted")
 
 
 def _console_heap_busy(screen: Any) -> bool:

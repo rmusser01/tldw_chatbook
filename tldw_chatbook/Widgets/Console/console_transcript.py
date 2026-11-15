@@ -3058,6 +3058,12 @@ class ConsoleTranscript(VerticalScroll):
         teardown still runs.
         """
         _LIVE_TRANSCRIPTS.discard(self)
+        if getattr(self, "_console_heap_refreeze_painted", None) is not None:
+            from tldw_chatbook.UI.Console_Modules.transcript import (
+                note_console_transcript_discarded,
+            )
+
+            note_console_transcript_discarded(self)
 
     def watch_has_focus(self, _has_focus: bool) -> None:
         """Restyle only the transcript itself when it gains or loses focus.
