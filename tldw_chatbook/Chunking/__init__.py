@@ -12,27 +12,27 @@ CHANGELOG. The vendored engine's ``ChunkingTemplate`` is deliberately NOT
 re-exported: nothing outside the service layer resolves templates.
 """
 
-from .Chunk_Lib import (
-    Chunker,
-    ChunkingError,
-    InvalidChunkingMethodError,
-    InvalidInputError,
-    LanguageDetectionError,
-    improved_chunking_process,
-    chunk_for_embedding,
-    process_document_with_metadata,
-    DEFAULT_CHUNK_OPTIONS,
-    ENGINE_VERSION,
-)
+from importlib import import_module
+from typing import Any
 
-from .language_chunkers import (
-    LanguageChunkerFactory,
-    ChineseChunker,
-    JapaneseChunker,
-    DefaultChunker,
-)
-
-from .token_chunker import TokenBasedChunker, create_token_chunker
+_EXPORT_MODULES = {
+    "Chunker": ".Chunk_Lib",
+    "ChunkingError": ".Chunk_Lib",
+    "InvalidChunkingMethodError": ".Chunk_Lib",
+    "InvalidInputError": ".Chunk_Lib",
+    "LanguageDetectionError": ".Chunk_Lib",
+    "improved_chunking_process": ".Chunk_Lib",
+    "chunk_for_embedding": ".Chunk_Lib",
+    "process_document_with_metadata": ".Chunk_Lib",
+    "DEFAULT_CHUNK_OPTIONS": ".Chunk_Lib",
+    "ENGINE_VERSION": ".Chunk_Lib",
+    "LanguageChunkerFactory": ".language_chunkers",
+    "ChineseChunker": ".language_chunkers",
+    "JapaneseChunker": ".language_chunkers",
+    "DefaultChunker": ".language_chunkers",
+    "TokenBasedChunker": ".token_chunker",
+    "create_token_chunker": ".token_chunker",
+}
 
 __all__ = [
     # Main chunking classes
@@ -56,3 +56,16 @@ __all__ = [
     "InvalidInputError",
     "LanguageDetectionError",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    # Pure migration helpers must not load runtime configuration on import.
+    if name not in _EXPORT_MODULES:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(import_module(_EXPORT_MODULES[name], __name__), name)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))

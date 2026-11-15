@@ -12,20 +12,34 @@ import warnings
 import weakref
 from dataclasses import dataclass, field
 from collections.abc import Callable, Iterator, Mapping
-from enum import StrEnum
-from pathlib import Path, PureWindowsPath
+from pathlib import Path
 from threading import Lock, RLock, get_ident
 from types import MappingProxyType
 from typing import Any, cast
-from urllib.parse import quote
 
+from tldw_chatbook.DB.private_sqlite_values import (
+    SQLiteTargetKind,
+    SQLitePrivacyUnverifiedWarning,
+    SQLiteRestoreBusyError,
+    SQLiteRestoreIndeterminateError,
+    SQLiteOwnerPolicy,
+    _PRIVATE_FILE,
+    _MEMORY,
+    _PRIVATE_OR_MEMORY,
+    _READ_ONLY_URI,
+    _PRIVATE_AND_READ_ONLY,
+    _PRIVATE_MEMORY_AND_READ_ONLY,
+    SQLitePrivateDestinationError,
+    _failure,
+    _build_read_only_uri,
+    _build_existing_writable_uri,
+    _classify_target,
+    _helper_result,
+)
 from tldw_chatbook.DB.private_sqlite_process import (
     HELPER_ADMISSION,
     HelperLease,
-    HelperProtocolError,
     HelperReservation,
-    HelperTimeoutError,
-    HelperUnavailableError,
     OperationDeadline,
 )
 from tldw_chatbook.DB.private_sqlite_protocol import (
@@ -37,7 +51,6 @@ from tldw_chatbook.Utils import private_paths
 from tldw_chatbook.Utils.platform_files import os
 from tldw_chatbook.Utils.private_paths import (
     PrivatePathError,
-    PrivatePathResult,
     PrivatePathStatus,
     lexical_path,
     secure_private_directory,
@@ -50,69 +63,20 @@ _ORIGINAL_DESCRIPTOR_DUP = os.dup
 _ordinary_connections = weakref.WeakKeyDictionary()
 
 
-class SQLiteTargetKind(StrEnum):
-    """Supported SQLite storage target classifications."""
-
-    PRIVATE_FILE = "private_file"
-    MEMORY = "memory"
-    READ_ONLY_URI = "read_only_uri"
-
-
-class SQLitePrivacyUnverifiedWarning(RuntimeWarning):
-    """Warn that a successful SQLite file open lacks verified ACL privacy."""
-
-
-class SQLiteRestoreBusyError(sqlite3.OperationalError):
-    """Report that a live database cannot be restored safely."""
-
-
-class SQLiteRestoreIndeterminateError(sqlite3.OperationalError):
-    """Report that a committed restore could not be rolled back reliably."""
-
-    def __init__(
-        self,
-        destination_path: str | os.PathLike[str],
-        pre_restore_path: str | os.PathLike[str],
-    ) -> None:
-        self.destination_path = Path(destination_path)
-        self.pre_restore_path = Path(pre_restore_path)
-        super().__init__(
-            "The live database may already contain restored data because "
-            "automatic recovery failed. Inspect "
-            f"{self.destination_path} and the pre-restore snapshot at "
-            f"{self.pre_restore_path}. Do not retry automatically."
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class SQLiteOwnerPolicy:
-    """Immutable storage policy for one registered production owner."""
-
-    production_module: str
-    allowed_target_kinds: frozenset[SQLiteTargetKind]
-    reason: str
-    centralized_backup_allowed: bool = False
-    preserve_read_only_source_mode: bool = False
-    foreign_read_only_source: bool = False
-    recovery_capture_allowed: bool = False
-
-
-_PRIVATE_FILE = frozenset({SQLiteTargetKind.PRIVATE_FILE})
-_MEMORY = frozenset({SQLiteTargetKind.MEMORY})
-_PRIVATE_OR_MEMORY = frozenset({SQLiteTargetKind.PRIVATE_FILE, SQLiteTargetKind.MEMORY})
-_READ_ONLY_URI = frozenset({SQLiteTargetKind.READ_ONLY_URI})
-_PRIVATE_AND_READ_ONLY = frozenset(
-    {SQLiteTargetKind.PRIVATE_FILE, SQLiteTargetKind.READ_ONLY_URI}
-)
-_PRIVATE_MEMORY_AND_READ_ONLY = frozenset(
-    {
-        SQLiteTargetKind.PRIVATE_FILE,
-        SQLiteTargetKind.MEMORY,
-        SQLiteTargetKind.READ_ONLY_URI,
-    }
-)
-
 _SQLITE_OWNER_POLICIES = {
+    "recovery.mobile.completion.read": SQLiteOwnerPolicy(
+        "tldw_chatbook/Backup_Recovery/mobile_consolidation_recovery",
+        _READ_ONLY_URI,
+        "Ordinary admitted completion/schema reads; SQLite SHM coordination only.",
+        preserve_read_only_source_mode=True,
+    ),
+    "recovery.mobile.preview": SQLiteOwnerPolicy(
+        "tldw_chatbook/Backup_Recovery/mobile_consolidation",
+        _READ_ONLY_URI,
+        "Read-only legacy inventory over native checked SQLite snapshots.",
+        preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
     "plugins.registry": SQLiteOwnerPolicy(
         "tldw_chatbook/Plugins/registry",
         _PRIVATE_MEMORY_AND_READ_ONLY,
@@ -129,7 +93,7 @@ _SQLITE_OWNER_POLICIES = {
         "Fresh disposable credential reconstruction from installed schema and parameterized rows.",
     ),
     "recovery.validation": SQLiteOwnerPolicy(
-        "tldw_chatbook/DB/private_sqlite",
+        "tldw_chatbook/Backup_Recovery/sqlite_validation",
         _PRIVATE_AND_READ_ONLY,
         "Restricted disposable imported candidate, never a live repository open.",
     ),
@@ -204,6 +168,28 @@ _SQLITE_OWNER_POLICIES = {
         _PRIVATE_OR_MEMORY,
         "BaseDB is the shared file and memory connection owner for subclasses.",
     ),
+    "db.workspaces.preflight": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/Workspace_DB",
+        _READ_ONLY_URI,
+        "Fixed incompatible-preview metadata rejection before native schema initialization.",
+        preserve_read_only_source_mode=True,
+    ),
+    "db.chachanotes.read": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/ChaChaNotes_DB", _READ_ONLY_URI,
+        "Canonical saved-history and notes reads without schema initialization.",
+        preserve_read_only_source_mode=True,
+    ),
+    "db.media.read": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/Client_Media_DB_v2", _READ_ONLY_URI,
+        "Canonical Library reads without schema initialization.",
+        preserve_read_only_source_mode=True,
+    ),
+    "db.agent_runs.read": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/AgentRuns_DB",
+        _READ_ONLY_URI,
+        "Non-owning Console inspection without schema initialization or recovery.",
+        preserve_read_only_source_mode=True,
+    ),
     "db.subscriptions.agent_read": SQLiteOwnerPolicy(
         "tldw_chatbook/DB/Subscriptions_DB",
         _READ_ONLY_URI,
@@ -230,19 +216,22 @@ _SQLITE_OWNER_POLICIES = {
         recovery_capture_allowed=True,
     ),
     "recovery.operations.workspaces": SQLiteOwnerPolicy(
-        "tldw_chatbook/DB/recovery_operations", _PRIVATE_AND_READ_ONLY,
+        "tldw_chatbook/Backup_Recovery/sqlite_adapters",
+        _PRIVATE_AND_READ_ONLY,
         "Installed operational history snapshot; imported claims remain inactive.",
         centralized_backup_allowed=True, preserve_read_only_source_mode=True,
         recovery_capture_allowed=True,
     ),
     "recovery.operations.agent_runs": SQLiteOwnerPolicy(
-        "tldw_chatbook/DB/recovery_operations", _PRIVATE_AND_READ_ONLY,
+        "tldw_chatbook/Backup_Recovery/sqlite_adapters",
+        _PRIVATE_AND_READ_ONLY,
         "Installed operational history snapshot; imported claims remain inactive.",
         centralized_backup_allowed=True, preserve_read_only_source_mode=True,
         recovery_capture_allowed=True,
     ),
     "recovery.operations.subscriptions": SQLiteOwnerPolicy(
-        "tldw_chatbook/DB/recovery_operations", _PRIVATE_AND_READ_ONLY,
+        "tldw_chatbook/Backup_Recovery/sqlite_adapters",
+        _PRIVATE_AND_READ_ONLY,
         "Installed operational history snapshot; imported claims remain inactive.",
         centralized_backup_allowed=True, preserve_read_only_source_mode=True,
         recovery_capture_allowed=True,
@@ -323,31 +312,36 @@ _SQLITE_OWNER_POLICIES = {
         recovery_capture_allowed=True,
     ),
     "recovery.core.chachanotes": SQLiteOwnerPolicy(
-        "tldw_chatbook/DB/recovery_core", _PRIVATE_AND_READ_ONLY,
+        "tldw_chatbook/Backup_Recovery/core_adapters",
+        _PRIVATE_AND_READ_ONLY,
         "Native-held complete recovery snapshot; selective export policy unchanged.",
         centralized_backup_allowed=True, preserve_read_only_source_mode=True,
         recovery_capture_allowed=True,
     ),
     "recovery.core.media": SQLiteOwnerPolicy(
-        "tldw_chatbook/DB/recovery_core", _PRIVATE_AND_READ_ONLY,
+        "tldw_chatbook/Backup_Recovery/core_adapters",
+        _PRIVATE_AND_READ_ONLY,
         "Native-held complete recovery snapshot; selective export policy unchanged.",
         centralized_backup_allowed=True, preserve_read_only_source_mode=True,
         recovery_capture_allowed=True,
     ),
     "recovery.core.prompts": SQLiteOwnerPolicy(
-        "tldw_chatbook/DB/recovery_core", _PRIVATE_AND_READ_ONLY,
+        "tldw_chatbook/Backup_Recovery/core_adapters",
+        _PRIVATE_AND_READ_ONLY,
         "Native-held complete recovery snapshot; selective export policy unchanged.",
         centralized_backup_allowed=True, preserve_read_only_source_mode=True,
         recovery_capture_allowed=True,
     ),
     "recovery.core.library_collections": SQLiteOwnerPolicy(
-        "tldw_chatbook/DB/recovery_core", _PRIVATE_AND_READ_ONLY,
+        "tldw_chatbook/Backup_Recovery/core_adapters",
+        _PRIVATE_AND_READ_ONLY,
         "Native-held complete recovery snapshot; selective export policy unchanged.",
         centralized_backup_allowed=True, preserve_read_only_source_mode=True,
         recovery_capture_allowed=True,
     ),
     "recovery.core.library_ingest_jobs": SQLiteOwnerPolicy(
-        "tldw_chatbook/DB/recovery_core", _PRIVATE_AND_READ_ONLY,
+        "tldw_chatbook/Backup_Recovery/core_adapters",
+        _PRIVATE_AND_READ_ONLY,
         "Native-held complete recovery snapshot; selective export policy unchanged.",
         centralized_backup_allowed=True, preserve_read_only_source_mode=True,
         recovery_capture_allowed=True,
@@ -688,17 +682,6 @@ _PROFILE_MIGRATION_BOUNDARY_OWNER = "tts.profile_migration_boundary"
 _PROFILE_DESTINATION_FACTORY_TOKEN = object()
 
 
-class SQLitePrivateDestinationError(OSError):
-    """Bounded failure for an opaque private SQLite destination."""
-
-    def __init__(self, code: str = "destination_invalid") -> None:
-        self.code = code
-        super().__init__(f"SQLite private destination failed: {code}")
-
-    def __repr__(self) -> str:
-        return f"SQLitePrivateDestinationError({self.code!r})"
-
-
 class ProfileMigrationBoundaryDestination:
     """Opaque, thread-confined owner for one future boundary artifact."""
 
@@ -770,14 +753,6 @@ def _warn_unverified_platform(owner_id: str) -> None:
             stacklevel=3,
         )
         _WARNED_UNVERIFIED_OWNER_IDS.add(owner_id)
-
-
-def _failure(
-    selected: Path,
-    status: PrivatePathStatus,
-    reason: str,
-) -> PrivatePathError:
-    return PrivatePathError(PrivatePathResult(selected, status, reason=reason))
 
 
 def _open_artifact_fd(
@@ -1256,76 +1231,11 @@ def _prepare_artifact(
     )
 
 
-def _build_read_only_uri(
-    database: str | os.PathLike[str],
-    *,
-    windows: bool | None = None,
-    immutable: bool = False,
-) -> str:
-    raw = os.fspath(database)
-    if not isinstance(raw, str):
-        raise TypeError("SQLite paths must be text paths")
-    if "\x00" in raw:
-        raise ValueError("Path must not contain NUL")
-    windows = os.name == "nt" if windows is None else windows
-    if windows:
-        path = PureWindowsPath(raw)
-        posix_path = path.as_posix()
-        if posix_path.startswith("//"):
-            authority_and_path = posix_path[2:].split("/", 1)
-            authority = authority_and_path[0]
-            remainder = authority_and_path[1] if len(authority_and_path) == 2 else ""
-            encoded = quote(remainder, safe="/")
-            uri = f"file://{authority}/{encoded}?mode=ro"
-            return f"{uri}&immutable=1" if immutable else uri
-        encoded = quote(posix_path, safe="/:")
-        uri = f"file:///{encoded}?mode=ro"
-        return f"{uri}&immutable=1" if immutable else uri
-
-    uri = f"{Path(raw).as_uri()}?mode=ro"
-    return f"{uri}&immutable=1" if immutable else uri
-
-
-def _build_existing_writable_uri(
-    database: str | os.PathLike[str],
-    *,
-    windows: bool | None = None,
-) -> str:
-    """Build a seam-owned ``mode=rw`` URI that cannot create a database."""
-
-    return _build_read_only_uri(database, windows=windows).replace(
-        "?mode=ro",
-        "?mode=rw",
-        1,
-    )
-
-
 def _validated_owner_policy(owner_id: str) -> SQLiteOwnerPolicy:
     try:
         return SQLITE_OWNER_REGISTRY[owner_id]
     except KeyError:
         raise ValueError(f"Unknown SQLite owner: {owner_id}") from None
-
-
-def _classify_target(
-    database: str | os.PathLike[str],
-    *,
-    read_only: bool,
-) -> tuple[str, SQLiteTargetKind]:
-    raw = os.fspath(database)
-    if not isinstance(raw, str):
-        raise TypeError("SQLite paths must be text paths")
-    if "\x00" in raw:
-        raise ValueError("Path must not contain NUL")
-    if raw.startswith("file:"):
-        raise ValueError("Caller-supplied file: SQLite URIs are not supported")
-    if raw == ":memory:":
-        if read_only:
-            raise ValueError("A read-only memory database is not supported")
-        return raw, SQLiteTargetKind.MEMORY
-    return raw, (
-        SQLiteTargetKind.READ_ONLY_URI if read_only else SQLiteTargetKind.PRIVATE_FILE
-    )
 
 
 @contextlib.contextmanager
@@ -1346,24 +1256,6 @@ def _helper_operation(
         owned.operation_scope(),
     ):
         yield owned
-
-
-def _helper_result(selected: Path, response: dict[str, object]) -> PrepareResult:
-    """Translate validated, source-free helper refusals at the parent boundary."""
-    status = response["status"]
-    if status == "private_path_error":
-        raise _failure(
-            selected,
-            PrivatePathStatus(response["privacy_status"]),
-            str(response["reason"]),
-        )
-    if status == "timeout":
-        raise HelperTimeoutError()
-    if status == "protocol_error":
-        raise HelperProtocolError()
-    if status != "ok":
-        raise HelperUnavailableError()
-    return PrepareResult.from_payload(response["result"])
 
 
 @contextlib.contextmanager
@@ -1501,22 +1393,35 @@ def _with_storage_admission(function):
             return function(owner_id, database, **kwargs)
         from tldw_chatbook.Backup_Recovery.storage_admission import (
             _acquire_capture_storage,
+            _acquire_mobile_storage,
             _CaptureLease,
+            _MobileScope,
         )
 
+        factory = kwargs.get("factory", sqlite3.Connection)
         try:
-            lease = _acquire_capture_storage(
+            lease = _acquire_mobile_storage(
                 Path(database),
                 owner_id=owner_id,
+                factory=factory,
                 read_only=kwargs.get("read_only", False),
+                must_exist=kwargs.get("must_exist", False),
+                immutable=kwargs.get("immutable", False),
             )
+            if lease is None:
+                lease = _acquire_capture_storage(
+                    Path(database),
+                    owner_id=owner_id,
+                    read_only=kwargs.get("read_only", False),
+                )
         except BaseException:
             if outcome is not None:
                 outcome.admission_refused = True
             raise
         factory = kwargs.get("factory", sqlite3.Connection)
         capture_lease = type(lease) is _CaptureLease
-        if lease is not None and factory is not sqlite3.Connection:
+        mobile_lease = capture_lease and type(lease.scope) is _MobileScope
+        if lease is not None and factory is not sqlite3.Connection and not mobile_lease:
             # Custom __new__/__init__ may retain a native handle then raise before
             # the seam receives it. Capture qualifies only the native constructor;
             # ordinary owner factory compatibility remains unchanged below.
@@ -1540,6 +1445,21 @@ def _with_storage_admission(function):
             ):
                 raise RecoveryRequired("connection_factory_not_qualified")
 
+            if mobile_lease:
+
+                class MobileCursor(sqlite3.Cursor):
+                    def execute(self, *args, **options):
+                        _MobileScope.check(lease.scope)
+                        return super().execute(*args, **options)
+
+                    def executemany(self, *args, **options):
+                        _MobileScope.check(lease.scope)
+                        return super().executemany(*args, **options)
+
+                    def executescript(self, *args, **options):
+                        _MobileScope.check(lease.scope)
+                        return super().executescript(*args, **options)
+
             class AdmittedConnection(factory):
                 _admission_close_attempted = False
 
@@ -1551,6 +1471,39 @@ def _with_storage_admission(function):
                         # Bind the actual native handle before connector-level
                         # post-open validation can reject it.
                         lease.attach(self)
+
+                if mobile_lease:
+
+                    def cursor(self, factory=None):
+                        sqlite3.Connection.in_transaction.__get__(self)
+                        from tldw_chatbook.DB.base_db import _QuiescentSQLiteCursor
+
+                        _MobileScope.check(lease.scope)
+                        if factory not in (
+                            None,
+                            sqlite3.Cursor,
+                            _QuiescentSQLiteCursor,
+                        ):
+                            raise RecoveryRequired("mobile_cursor_factory_unqualified")
+
+                        return super().cursor(MobileCursor)
+
+                    def execute(self, *args, **options):
+                        return self.cursor().execute(*args, **options)
+
+                    def executemany(self, *args, **options):
+                        return self.cursor().executemany(*args, **options)
+
+                    def executescript(self, *args, **options):
+                        return self.cursor().executescript(*args, **options)
+
+                    def commit(self):
+                        _MobileScope.check(lease.scope)
+                        return super().commit()
+
+                    def rollback(self):
+                        _MobileScope.check(lease.scope)
+                        return super().rollback()
 
                 def __new__(cls, *args, **options):
                     nonlocal allocation_started
@@ -1862,19 +1815,32 @@ def _connect_registered_sqlite(
         if directory_result.status is PrivatePathStatus.UNVERIFIED_PLATFORM:
             _warn_unverified_platform(owner_id)
         deadline = OperationDeadline(operation_deadline)
+        from tldw_chatbook.Backup_Recovery.storage_admission import (
+            _mobile_private_preparation,
+        )
+
+        require_private_mode = _mobile_private_preparation(selected)
         with _helper_operation(1, deadline, reservation) as envelope:
             request = PrepareRequest(
                 path=str(selected),
                 writable=not read_only,
                 create_if_missing=not read_only and not must_exist,
                 preserve_source_mode=(
-                    read_only and policy.preserve_read_only_source_mode
+                    read_only
+                    and policy.preserve_read_only_source_mode
+                    and not require_private_mode
                 ),
+                require_private_mode=require_private_mode,
             )
             if private_paths._WINDOWS_PLATFORM:
+                if require_private_mode:
+                    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+                    raise RecoveryRequired("mobile_native_preparation_unqualified")
                 deadline.remaining(5.0)
                 _prepare_artifact(
-                    selected, writable=request.writable,
+                    selected,
+                    writable=request.writable,
                     create_if_missing=request.create_if_missing,
                     enforce_private_mode=not request.preserve_source_mode,
                 )
@@ -1890,6 +1856,9 @@ def _connect_registered_sqlite(
             verify_expected_named_identity(selected, expected_identity)
             if capture_path is not None:
                 _verify_capture_sqlite_target(capture_path)
+            if require_private_mode:
+                # Preparation cannot turn a foreign generation into SQLite ownership.
+                _mobile_private_preparation(selected)
             connection = sqlite3.connect(connection_target, uri=use_uri, **kwargs)
             try:
                 if capture_path is not None:
@@ -1970,6 +1939,7 @@ def open_recovery_validation(
     writable: bool,
     with_restrictions: bool = False,
     cancel=None,
+    _custody=None,
 ) -> Iterator[sqlite3.Connection | tuple[sqlite3.Connection, Any]]:
     """Open a disposable candidate with restrictions before any imported query.
 
@@ -1979,17 +1949,18 @@ def open_recovery_validation(
     the connection so catalog inspection and later checks share one deadline.
     """
     from tldw_chatbook.Backup_Recovery.sqlite_validation import (
-        _installed_owner,
-        _recovery_restriction_scope,
-        _restrict_connection,
+        _open_recovery_validation,
     )
 
-    _installed_owner(owner_id)
-    connection = _connect_recovery_candidate(candidate, writable=writable)
-    with contextlib.closing(connection):
-        restrictions = _restrict_connection(connection, cancel)
-        with _recovery_restriction_scope(connection, restrictions):
-            yield (connection, restrictions) if with_restrictions else connection
+    with _open_recovery_validation(
+        owner_id,
+        candidate,
+        writable=writable,
+        with_restrictions=with_restrictions,
+        cancel=cancel,
+        _custody=_custody,
+    ) as opened:
+        yield opened
 
 
 _ORIGINAL_DESCRIPTOR_CONNECTOR = _connect_registered_sqlite

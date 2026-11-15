@@ -2,6 +2,8 @@
 
 Date: 2026-10-27
 Status: Accepted
+
+Amended 2026-11-01 by ADR244’s “Current-dev integration: terminal page authority over a retained Console.” The original independent-child-per-page and no-reattachment execution contract is superseded for shared served Console operation. Page-ID validation, login-scoped Canvas authority, bounded bindings, asset fingerprinting, late-publication refusal and login-wide channel revocation remain applicable as refined below.
 Task: TASK-37143
 
 ## Context
@@ -53,3 +55,9 @@ child cannot block a fresh page or release its binding. Logout and expiry close
 all sibling terminals. Existing direct fixtures and old clients retain their
 single-terminal compatibility scope. The protocol does not offer reconnecting
 a new WebSocket to an existing child.
+
+### Shared Console compatibility (2026-11-01)
+
+Terminal page identity separates browser/Canvas authority, not execution ownership. Under ADR244, pages for one canonical storage identity attach successively to one retained child; only the current attachment may send terminal input or own the viewport. A replacement revokes the predecessor's terminal and Canvas authority. Binding teardown and awaited Canvas publication must compare the exact attachment generation as well as the retained child and authenticated page scope. Child equality alone cannot identify a retiring page.
+
+The supplied `terminal_id` contract is unchanged: exactly one lowercase 32-hex value, with malformed, empty and repeated values refused; absence retains the legacy login-only scope. The shipped HTML, WebSocket shim and Canvas poll continue to carry the fresh page ID and fingerprinted scripts. Page labels confer no authentication or storage authority. Mounted Canvas requests retain the existing login, shell, cookie and capability checks against a current terminal binding. Expiry/logout/device revocation close login channels without terminating retained execution. Canvas disablement revokes Canvas facilities without closing Console control or the terminal host. The ADR244 amendment defines the resulting retention and physical shutdown boundaries.

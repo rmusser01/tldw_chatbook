@@ -162,3 +162,41 @@ def test_snapshot_is_immutable(tmp_path: Path) -> None:
     assert isinstance(snapshot, ConsoleScratchSnapshot)
     assert manager.is_live(snapshot)
     assert manager.dispose()
+
+
+def test_native_scratch_writer_retains_exact_manager_and_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+    from functools import partial
+
+    from tldw_chatbook.Agents import scratch_admission
+    from tldw_chatbook.Agents.run_log import RunLogWriter
+    from tldw_chatbook.Backup_Recovery.participants import native_scratch_writer
+
+    manager = ConsoleScratchSpaceManager(temp_parent=tmp_path)
+    snapshot = manager.snapshot("native-owner-boundary")
+    writer = RunLogWriter(
+        dir_name=".native-log",
+        segment_bytes=1024,
+        max_record_bytes=1024,
+        root=snapshot.root,
+        access_scope=partial(manager.lease, snapshot),
+    )
+    try:
+        assert scratch_admission._native_writer is native_scratch_writer
+        with manager.lease(snapshot):
+            assert native_scratch_writer(writer) == (manager, snapshot)
+            with monkeypatch.context() as fault:
+                fault.setattr(
+                    writer, "_access_scope", partial(manager.lease, replace(snapshot))
+                )
+                assert native_scratch_writer(writer) is None
+            with monkeypatch.context() as fault:
+                fault.setitem(writer.__dict__, "append", lambda **_kwargs: None)
+                assert native_scratch_writer(writer) is None
+            assert native_scratch_writer(writer) == (manager, snapshot)
+        assert not tuple(snapshot.root.iterdir())
+    finally:
+        assert manager.dispose()
+    assert not snapshot.root.exists()

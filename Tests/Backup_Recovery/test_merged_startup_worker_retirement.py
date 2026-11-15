@@ -121,11 +121,12 @@ async def run():
   while not entered.is_set() and not task.done():await asyncio.sleep(.01)
   assert entered.is_set(),'worker did not reach actual query'
   task.cancel()
-  try:await task
-  except asyncio.CancelledError:pass
+  await asyncio.sleep(0)
   with storage._lock:
    assert any(lease.resource_thread is observed[0][2] for lease in storage._live_leases)
   release.set()
+  try:await task
+  except asyncio.CancelledError:pass
  else:
   try:await task
   except RuntimeError:
@@ -182,3 +183,55 @@ print('retired and reopened')
 )
 def test_startup_worker_retires_own_native_handle(tmp_path, route, outcome):
     _run(tmp_path, route, outcome, script=_SCRIPT, timeout=60)
+
+
+@pytest.mark.parametrize("has_selected_database", [False, True])
+def test_fts_backfill_uses_only_the_app_selected_database(
+    tmp_path, monkeypatch, has_selected_database
+):
+    """A speculative backfill must not construct a different global owner."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook import app_feature_glue
+    from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.app_services import ProfileStorage
+    from tldw_chatbook.DB import chachanotes_fts_backfill
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    selected = (
+        CharactersRAGDB(tmp_path / "selected.db", client_id="fts-selected-owner")
+        if has_selected_database
+        else None
+    )
+    global_reads, backfills = [], []
+    original = chachanotes_fts_backfill.backfill_chachanotes_messages_fts
+
+    def unexpected_global_read():
+        global_reads.append(True)
+        raise AssertionError("backfill bypassed the app's selected owner")
+
+    def recorded_backfill(database, **kwargs):
+        backfills.append(database)
+        return original(database, **kwargs)
+
+    monkeypatch.setattr(
+        app_feature_glue,
+        "get_chachanotes_db_lazy",
+        unexpected_global_read,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        chachanotes_fts_backfill, "backfill_chachanotes_messages_fts", recorded_backfill
+    )
+    try:
+        TldwCli._backfill_chachanotes_messages_fts(
+            SimpleNamespace(
+                services=SimpleNamespace(storage=ProfileStorage(chachanotes=selected))
+            )
+        )
+        # The worker logs exceptions, so assert observations after it returns.
+        assert global_reads == []
+        assert backfills == ([selected] if has_selected_database else [])
+    finally:
+        if selected is not None:
+            selected.close_connection()

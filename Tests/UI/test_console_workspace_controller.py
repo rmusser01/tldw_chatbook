@@ -239,6 +239,7 @@ async def test_workspace_files_availability_snapshot_never_blocks_context_build(
     """Filesystem status work is owned by one off-loop, fail-closed snapshot."""
     entered = Event()
     release = Event()
+    label = "Folder"
 
     class _Registry:
         def list_folder_bindings(self, workspace_id):
@@ -248,6 +249,7 @@ async def test_workspace_files_availability_snapshot_never_blocks_context_build(
                 SimpleNamespace(
                     binding_kind=RuntimeBindingKind.LOCAL_FILESYSTEM,
                     status=RuntimeBindingStatus.READY,
+                    label=label,
                 ),
             )
 
@@ -286,6 +288,27 @@ async def test_workspace_files_availability_snapshot_never_blocks_context_build(
         controller._build_console_workspace_context_state().workspace_files_available_by_id
         == {"ws-a": True}
     )
+
+    async def refresh_expired_snapshot():
+        previous = (
+            time.monotonic()
+            - workspace_module.WORKSPACE_FILES_AVAILABILITY_CACHE_TTL_SECONDS
+        )
+        controller._workspace_files_availability_cached_at = previous
+        controller._request_workspace_files_availability_refresh(("ws-a",))
+        await screen.workers[-1][0]
+        assert controller._workspace_files_availability_cached_at > previous
+
+    await refresh_expired_snapshot()
+    assert len(screen.workers) == 2
+    assert sync_calls == ["sync"]
+
+    label = "Renamed folder"
+    await refresh_expired_snapshot()
+    assert len(screen.workers) == 3
+    assert controller._workspace_files_availability_by_id == {"ws-a": True}
+    assert controller._workspace_files_runtime_bindings_by_id["ws-a"][0].label == label
+    assert sync_calls == ["sync", "sync"]
 
 
 @pytest.mark.asyncio

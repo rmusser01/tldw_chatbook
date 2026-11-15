@@ -83,3 +83,130 @@ print('retired and reopened')
 @pytest.mark.parametrize("case", ["paused", "writer", "failure", "nested", "constructor"])
 def test_tokenizer_write_admission(tmp_path, case):
     _run(tmp_path, case, "success", script=_SCRIPT)
+
+
+_AVAILABILITY = r"""
+import sys, json
+from pathlib import Path
+from Tests.real_profile_guard import install as guard, take_violations
+guard()
+from Tests.network_guard import install, blocked_attempts
+install()
+from tldw_chatbook.Utils import custom_tokenizers as module
+from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+from tldw_chatbook.Backup_Recovery import native_files
+from tldw_chatbook.Backup_Recovery.profile_paths import default_config_path
+root = default_config_path().parent / 'tokenizers'
+root.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+case = sys.argv[1]
+module.TOKENIZERS_AVAILABLE = True
+module._tokenizer_manager = None
+original = module.CustomTokenizerManager
+calls=[]
+def refused(*args, **kwargs):
+    calls.append('constructor')
+    raise RecoveryRequired('actual-path-required')
+module.CustomTokenizerManager=refused
+if case == 'no-library':
+    module.TOKENIZERS_AVAILABLE=False
+    def unexpected(*args, **kwargs):raise AssertionError('absent library performed I/O')
+    native_files.pinned_directory=unexpected
+    assert module.custom_tokenizers_available() is False
+elif case == 'cached':
+    class Cached:
+        def has_tokenizers(self):return True
+    module._tokenizer_manager=Cached()
+    assert module.custom_tokenizers_available() is True
+elif case in ('missing-root','missing-map'):
+    if case == 'missing-map':root.mkdir(mode=0o700)
+    before = sorted(str(p) for p in root.parent.rglob('*'))
+    assert module.custom_tokenizers_available() is False
+    assert sorted(str(p) for p in root.parent.rglob('*')) == before
+    assert module._tokenizer_manager is None
+elif case == 'real-mapping':
+    root.mkdir(mode=0o700)
+    (root/'mappings.json').write_text(json.dumps({'model':'installed'}))
+    module.CustomTokenizerManager=original
+    assert module.custom_tokenizers_available() is True
+    assert module._tokenizer_manager._model_mappings == {'model':'installed'}
+else:
+    if case == 'mapping':
+        root.mkdir(mode=0o700)
+        (root/'mappings.json').write_text('{}')
+    elif case == 'non-directory':root.write_text('not a directory')
+    elif case == 'symlink':root.symlink_to(root.parent/'absent-target')
+    elif case == 'uncertain':
+        def unavailable(*args, **kwargs):raise PermissionError('controlled uncertain parent')
+        native_files.pinned_directory=unavailable
+    else:raise AssertionError(case)
+    try:module.custom_tokenizers_available()
+    except RecoveryRequired as error:assert str(error)=='actual-path-required'
+    else:raise AssertionError('native refusal swallowed')
+    assert calls==['constructor']
+assert not blocked_attempts(),blocked_attempts()
+assert not take_violations()
+print('availability contract verified; retired and reopened')
+"""
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "missing-root",
+        "missing-map",
+        "no-library",
+        "cached",
+        "mapping",
+        "real-mapping",
+        "non-directory",
+        "symlink",
+        "uncertain",
+    ],
+)
+def test_tokenizer_availability_never_creates_an_absent_optional_store(tmp_path, case):
+    _run(tmp_path, case, "success", script=_AVAILABILITY)
+
+
+_ALIAS = r"""
+import importlib, sys
+from Tests.real_profile_guard import install as guard, take_violations
+guard()
+from Tests.network_guard import install, blocked_attempts
+install()
+old_name = 'tldw_chatbook.Utils.custom_tokenizers'
+new_name = 'tldw_chatbook.Chat.custom_tokenizers'
+first = importlib.import_module(old_name if sys.argv[1] == 'old-first' else new_name)
+old = importlib.import_module(old_name)
+new = importlib.import_module(new_name)
+from tldw_chatbook.Utils import custom_tokenizers as package_alias
+assert first is old is new is package_alias
+assert sys.modules[old_name] is sys.modules[new_name] is old
+assert old.__name__ == new_name and old.__spec__.name == new_name
+assert old.get_tokenizer_manager.__globals__ is vars(new)
+assert old.CustomTokenizerManager.__init__.__globals__ is vars(new)
+class Cached:
+    def has_tokenizers(self): return True
+cached = Cached()
+old._tokenizer_manager = cached
+new.TOKENIZERS_AVAILABLE = True
+assert new.get_tokenizer_manager() is cached
+assert old.custom_tokenizers_available() is True
+old.TOKENIZERS_AVAILABLE = False
+assert new.custom_tokenizers_available() is False
+# Reload retains module identity; as before, it resets the service's lazy state.
+namespace = vars(old)
+assert importlib.reload(old) is old is new
+assert vars(new) is namespace
+assert sys.modules[old_name] is sys.modules[new_name] is old
+assert package_alias is old
+assert old._tokenizer_manager is None
+assert old.get_tokenizer_manager.__globals__ is namespace
+assert not blocked_attempts(), blocked_attempts()
+assert not take_violations()
+print('alias and reload verified; retired and reopened')
+"""
+
+
+@pytest.mark.parametrize("order", ["old-first", "new-first"])
+def test_tokenizer_compatibility_alias_keeps_one_live_module(tmp_path, order):
+    _run(tmp_path, order, "success", script=_ALIAS)

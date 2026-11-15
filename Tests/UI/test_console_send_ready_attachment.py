@@ -467,6 +467,7 @@ async def test_a_cold_refresh_that_returns_early_still_converges_the_controls(
                 requests.append(("retry", state["disposed"]))
             return real_set_timer(*args, **kwargs)
 
+        # Observe the request as the real worker is scheduled.
         def run_worker(*args, **kwargs):
             if kwargs.get("group") == "console-readiness-publication":
                 requests.append(("publish", state["disposed"]))

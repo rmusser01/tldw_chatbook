@@ -1244,6 +1244,43 @@ def test_public_provider_api_key_validator_accepts_real_trimmed_key():
     )
 
 
+def test_public_provider_api_key_validator_import_keeps_config_cold(tmp_path):
+    from Tests.Performance.test_app_import_weight import _run_isolated_python
+
+    result = _run_isolated_python(
+        tmp_path,
+        """
+import sys
+from tldw_chatbook.Chat import provider_readiness
+assert "tldw_chatbook.config" not in sys.modules
+from tldw_chatbook.Chat.provider_readiness import is_valid_provider_api_key
+assert is_valid_provider_api_key is provider_readiness.is_valid_provider_api_key
+assert callable(is_valid_provider_api_key)
+assert "tldw_chatbook.config" not in sys.modules
+""",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_public_provider_api_key_validator_uses_current_canonical_callback(monkeypatch):
+    from tldw_chatbook.Chat.provider_readiness import is_valid_provider_api_key
+
+    value, seen = object(), []
+    monkeypatch.setattr(
+        config_mod,
+        "is_valid_provider_api_key",
+        lambda value: seen.append(value) or False,
+    )
+    assert is_valid_provider_api_key(value=value) is False
+    monkeypatch.setattr(
+        config_mod,
+        "is_valid_provider_api_key",
+        lambda value: seen.append(value) or True,
+    )
+    assert is_valid_provider_api_key(value) is True
+    assert seen == [value, value]
+
+
 def test_key_required_provider_names_are_case_insensitive():
     readiness = get_provider_readiness(
         "openai",

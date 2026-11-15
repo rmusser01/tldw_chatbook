@@ -36,6 +36,7 @@ import time
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Chat.test_child_run_scope_ordering import _survivor_bridge
 from Tests.Chat.test_console_agent_bridge import (
     _fence,
@@ -239,9 +240,8 @@ async def test_a_child_that_finishes_inside_its_turn_marks_and_toasts_nothing(
         from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
         from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
         from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
-        db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+        db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
         store = ConsoleChatStore()
         session = store.ensure_session()
         store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")

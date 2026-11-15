@@ -9,6 +9,7 @@ import pytest
 
 from Tests.Backup_Recovery.test_agent_runs_recovery_schema import owner
 from Tests.DB.test_workflow_runs import attempt, planned
+from Tests.DB.test_workflow_runs_migration import _open_workflow_db
 from tldw_chatbook.Backup_Recovery.sqlite_validation import validate_candidate
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
@@ -40,12 +41,12 @@ def saved_result(db, tmp_path):
 
 def test_workflow_archive_exact_and_read_only_validation(tmp_path):
     path = tmp_path / "runs.db"
-    with closing(AgentRunsDB(path)) as db:
+    with _open_workflow_db(path) as db:
         snap, a, result = saved_result(db, tmp_path)
     before = path.read_bytes()
     assert validate_candidate(owner(), path, Event(), migrate=False) == ()
     assert path.read_bytes() == before
-    with closing(AgentRunsDB(path)) as db:
+    with _open_workflow_db(path) as db:
         assert db.workflow_runs.read_result(snap.id, a.id) == result
         assert db.workflow_runs.get(snap.id).accounting.used["generation"] == 0
         assert len(db.list_runs(snap.request.conversation_id)) == 1
@@ -67,7 +68,7 @@ def test_workflow_archive_exact_and_read_only_validation(tmp_path):
 )
 def test_workflow_archive_rejects_hybrid_or_cross_owned_rows(tmp_path, damage):
     path = tmp_path / "runs.db"
-    with closing(AgentRunsDB(path)) as db:
+    with _open_workflow_db(path) as db:
         snap, a, result = saved_result(db, tmp_path)
     with closing(sqlite3.connect(path)) as conn:
         if damage == "missing_table":
@@ -75,7 +76,10 @@ def test_workflow_archive_rejects_hybrid_or_cross_owned_rows(tmp_path, damage):
         elif damage == "extra_column":
             conn.execute("ALTER TABLE workflow_runs ADD COLUMN extra TEXT")
         elif damage == "wrong_stamp":
-            conn.execute("DELETE FROM schema_version WHERE version=31")
+            conn.execute(
+                "DELETE FROM schema_version WHERE version=?",
+                (AgentRunsDB._CURRENT_SCHEMA_VERSION,),
+            )
         elif damage == "bad_request":
             conn.execute("DROP TRIGGER workflow_launch_immutable")
             conn.execute("UPDATE workflow_runs SET request_json='{}'")
@@ -130,7 +134,7 @@ def test_staging_v24_migration_uses_installed_allowlist(tmp_path):
     assert validate_candidate(owner(), path, Event(), migrate=True) == ()
     with closing(sqlite3.connect(path)) as conn:
         assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone() == (
-            31,
+            AgentRunsDB._CURRENT_SCHEMA_VERSION,
         )
         assert conn.execute(
             "SELECT result FROM agent_runs WHERE id='legacy'"
@@ -139,7 +143,7 @@ def test_staging_v24_migration_uses_installed_allowlist(tmp_path):
 
 def test_settled_removed_payload_tombstones_remain_valid_archive(tmp_path):
     path = tmp_path / "removed.db"
-    with closing(AgentRunsDB(path)) as db:
+    with _open_workflow_db(path) as db:
         snap, a, result = saved_result(db, tmp_path)
         db.workflow_runs.record_retirement(
             snap.id, a.id, run_id=result.run_id, drained=True
@@ -172,15 +176,17 @@ def test_complete_backup_restore_and_rebackup_preserve_private_workflow_results(
     )
 
     setup = """
+    from contextlib import closing
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from tldw_chatbook.DB.console_execution_owner import ConsoleExecutionOwner
     from Tests.Backup_Recovery.test_workflow_recovery_schema import saved_result
     runs_path = Path(app.chachanotes_db.db_path).parent / 'agent_runs.db'
-    workflow_db = AgentRunsDB(runs_path)
-    try:
+    with (
+        ConsoleExecutionOwner.acquire(runs_path) as execution_owner,
+        closing(AgentRunsDB(runs_path, execution_owner=execution_owner)) as workflow_db,
+    ):
         workflow, workflow_attempt, workflow_result = saved_result(workflow_db, home)
         (home / 'workflow.json').write_text(json.dumps({'workflow_id': workflow.id, 'attempt_id': workflow_attempt.id, 'run_id': workflow_result.run_id, 'chain_id': workflow.chain_id}))
-    finally:
-        workflow_db.close()
 """
     # Both scripts are shared native backup fixtures. Only add workflow witnesses.
     public = _PUBLIC.replace(
@@ -196,18 +202,21 @@ def test_complete_backup_restore_and_rebackup_preserve_private_workflow_results(
         "(home / 'workflow.json').write_bytes((source / 'workflow.json').read_bytes())\nsource.rename(source.with_name('source-home-removed'))",
     )
     witness = """
+    from contextlib import closing
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from tldw_chatbook.DB.console_execution_owner import ConsoleExecutionOwner
     facts = json.loads((home / 'workflow.json').read_text())
-    workflow_db = AgentRunsDB(data / 'agent_runs.db')
-    try:
+    runs_path = data / 'agent_runs.db'
+    with (
+        ConsoleExecutionOwner.acquire(runs_path) as execution_owner,
+        closing(AgentRunsDB(runs_path, execution_owner=execution_owner)) as workflow_db,
+    ):
         snapshot = workflow_db.workflow_runs.get(facts['workflow_id'])
         result = workflow_db.workflow_runs.read_result(snapshot.id, facts['attempt_id'])
         assert result.handoff == 'required private bytes' and result.status == 'failed'
         assert snapshot.chain_id == facts['chain_id']
         assert snapshot.accounting.used['generation'] == 0
         assert len(workflow_db.list_runs(snapshot.request.conversation_id)) == 1
-    finally:
-        workflow_db.close()
 """
     reopen = _REOPEN.replace(
         "    videos = app.generated_video_store",
@@ -264,7 +273,7 @@ def test_archive_rejects_attempt_required_history_loss_without_rewrite(
     tmp_path, damage
 ):
     path = tmp_path / "required-history.db"
-    with closing(AgentRunsDB(path)) as db:
+    with _open_workflow_db(path) as db:
         snap, a, _ = saved_result(db, tmp_path)
         with db.connection() as conn:
             conn.execute("DELETE FROM workflow_results WHERE attempt_id=?", (a.id,))
@@ -308,7 +317,7 @@ def test_archive_rejects_attempt_required_history_loss_without_rewrite(
 @pytest.mark.parametrize("reserved", [False, True])
 def test_prepared_no_result_archive_remains_valid(tmp_path, reserved):
     path = tmp_path / "prepared.db"
-    with closing(AgentRunsDB(path)) as db:
+    with _open_workflow_db(path) as db:
         snap = planned(db, tmp_path)
         a = attempt(db, snap)
         if reserved:
@@ -320,7 +329,7 @@ def test_prepared_no_result_archive_remains_valid(tmp_path, reserved):
 
 def test_archive_refuses_disagreeing_attempt_and_result_outcomes(tmp_path):
     path = tmp_path / "outcome-mismatch.db"
-    with closing(AgentRunsDB(path)) as db:
+    with _open_workflow_db(path) as db:
         _, a, _ = saved_result(db, tmp_path)
         with db.connection() as conn:
             conn.execute(
@@ -367,7 +376,7 @@ def test_workflow_statistics_preserve_exact_schema_validation_and_upgrade(
 
         v24(path)
     else:
-        with closing(AgentRunsDB(path)) as db:
+        with _open_workflow_db(path) as db:
             saved_result(db, tmp_path)
     with closing(sqlite3.connect(path)) as conn:
         conn.execute("ANALYZE")
@@ -382,7 +391,7 @@ def test_workflow_statistics_preserve_exact_schema_validation_and_upgrade(
     assert validate_candidate(owner(), path, Event(), migrate=True) == ()
     with closing(sqlite3.connect(path)) as conn:
         assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone() == (
-            31,
+            AgentRunsDB._CURRENT_SCHEMA_VERSION,
         )
         conn.execute("PRAGMA writable_schema=ON")
         conn.execute(

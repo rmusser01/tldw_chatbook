@@ -164,13 +164,8 @@ from ...Chat.provider_usage import ProviderUsage
 from ...Video_Generation.video_metadata import VideoGenerationMetadata
 from ...config import get_cli_setting
 from ...Notes.notes_scope_service import ScopeType
-from ...Widgets.Console import (
-    ConsoleEditMessageModal,
-    ConsoleEditResult,
-    ConsoleEditThinkingModal,
-    ConsoleSaveAsModal,
-    ConsoleThinkingEditResult,
-)
+from ...Widgets import Console as console_widgets
+
 
 if TYPE_CHECKING:
     from tldw_chatbook.Audio.speech_presentation import SpeechPresentation
@@ -185,6 +180,7 @@ if TYPE_CHECKING:
 #: boot (ADR-097: they are not first-paint dependencies).
 CONSOLE_DELETE_ACTION_IDS = frozenset({"delete", "delete-confirm", "delete-cancel"})
 
+__getattr__ = console_widgets.__getattr__
 logger = logger.bind(module="ChatScreen")
 
 
@@ -1555,6 +1551,7 @@ class ConsoleMessageController:
             return await handle_console_delete_action(self, action_id, message_id)
 
         if action_id == "save-as":
+            from .message import ConsoleSaveAsModal
             destinations = self._console_save_as_destinations(message)
 
             def _apply_save_as(destination: str | None) -> None:
@@ -2872,7 +2869,7 @@ class ConsoleMessageController:
             )
         )
 
-        def _apply_edit(result: ConsoleEditResult | None) -> None:
+        def _apply_edit(result: console_widgets.ConsoleEditResult | None) -> None:
             if result is None or not target_is_current():
                 return
             self._clear_console_original_attempt_preview(message_id)
@@ -2916,6 +2913,8 @@ class ConsoleMessageController:
                 exclusive=True,
                 group=f"console-run-{target_session_id}",
             )
+
+        from .message import ConsoleEditMessageModal
 
         await self.push_screen(
             ConsoleEditMessageModal(
@@ -2981,7 +2980,7 @@ class ConsoleMessageController:
         """Open the block-scoped thinking edit modal for one displayable block."""
         store = self._ensure_console_chat_store()
 
-        def _apply_edit(result: ConsoleThinkingEditResult | None) -> None:
+        def _apply_edit(result: console_widgets.ConsoleThinkingEditResult | None) -> None:
             if result is None:
                 return
             try:
@@ -3018,6 +3017,8 @@ class ConsoleMessageController:
             self.app_instance.notify(
                 "Edited thinking block.", severity="information"
             )
+
+        from .message import ConsoleEditThinkingModal
 
         await self.push_screen(
             ConsoleEditThinkingModal(text=text),

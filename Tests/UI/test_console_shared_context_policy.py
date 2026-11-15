@@ -26,8 +26,10 @@ def _screen(tmp_path):
     tasks = []
 
     def schedule(work, **_kwargs):
-        # Textual accepts async callables as well as coroutine objects.
-        task = asyncio.create_task(work() if callable(work) else work)
+        async def run():
+            return await (work() if callable(work) else work)
+
+        task = asyncio.create_task(run())
         tasks.append(task)
         return task
 
@@ -382,11 +384,16 @@ async def test_changed_config_owner_discards_actual_context_worker_result(
 async def test_actual_settings_open_waits_for_shared_cold_checked_policy(
     tmp_path, monkeypatch
 ):
+    from textual.screen import Screen
+
     from Tests.UI.test_console_settings_context_owner import _screen as modal_screen
 
     database, store, _unused_controller, screen, pushed, tasks = modal_screen(
         tmp_path, monkeypatch
     )
+    # The real context estimate queries the unmounted screen for a composer.
+    Screen.__init__(screen)
+    screen._context_spend._pending_launch = lambda: None
     screen.app_instance.app_config = config.load_settings()
     screen.app_instance.chachanotes_db = database
     # This existing modal fixture intentionally omits runtime/view wiring;

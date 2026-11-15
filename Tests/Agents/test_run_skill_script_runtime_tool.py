@@ -26,10 +26,13 @@ they reach the primary agent.
 
 import json
 
+from Tests.agent_runs_owner import owned_agent_runs_db
+from Tests.Agents.conftest import join_fleet_children
+from Tests.Agents.test_agent_service import FleetChat, verbatim
 from tldw_chatbook.Agents.agent_models import (
-    RUNTIME_TOOL_NAMES,
     RUN_DONE,
     RUN_SKILL_SCRIPT_TOOL_NAME,
+    RUNTIME_TOOL_NAMES,
     SPAWN_TOOL_NAME,
     AgentConfig,
     ModelTurn,
@@ -45,10 +48,6 @@ from tldw_chatbook.Agents.tool_catalog import (
     BuiltinToolProvider,
     ToolCatalogRegistry,
 )
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-
-from Tests.Agents.conftest import join_fleet_children
-from Tests.Agents.test_agent_service import FleetChat, verbatim
 
 # --- Step 1 unit tests (name + schema shape) --------------------------------
 
@@ -246,7 +245,7 @@ def _svc_fence(name, args):
 
 
 def test_top_level_agent_dispatches_run_skill_script(tmp_path):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     reg = _registry_with_builtins()
     seen = []
 
@@ -294,7 +293,7 @@ def test_top_level_agent_dispatches_run_skill_script(tmp_path):
 
 
 def test_run_skill_script_absent_and_falls_through_when_not_wired(tmp_path):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     reg = _registry_with_builtins()
 
     script = [
@@ -350,7 +349,7 @@ def test_subagent_can_also_dispatch_and_be_pinned_run_skill_script(tmp_path):
     (LoopDeps.run_skill_script). Contrast with
     test_install_skill_runtime_tool.test_subagent_cannot_call_install_skill,
     where the equivalent child call is refused."""
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     reg = _registry_with_builtins()
     seen = []
 

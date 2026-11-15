@@ -12,20 +12,28 @@ import atexit
 import copy
 import sqlite3
 import stat
-import sys
 import threading
 import time
 from collections import OrderedDict
 from collections.abc import Iterable
 from contextlib import contextmanager
 from pathlib import Path
+from weakref import WeakKeyDictionary
 
 from tldw_chatbook.Utils.platform_files import os
 
 from . import bootstrap, control_records
 from .admission import Admission, AdmissionCancelled, _local
 from .control_records import UNBOUND_NAMESPACE, admission_authority
-from .profile_paths import effective_config_path, lexical_path
+from .limits import _RAW_RECOVERY_LIMITS, ArchiveLimits, _read_limits
+from .profile_paths import (
+    _chain,
+    _nofollow_any_flag,
+    _selected_paths,
+    _verified_resolved_path,
+    effective_config_path,
+    lexical_path,
+)
 from .qualification import qualified_for
 
 _lock = threading.RLock()
@@ -35,6 +43,39 @@ _holds: dict[tuple[int, str], "_Hold"] = {}
 _retiring_holds: set["_Hold"] = set()
 _startups: dict[tuple[int, str], "StorageLease"] = {}
 _forked_with_owners = False
+
+# Native issuance history survives scope retirement and local marker removal.
+_mobile_admissions = WeakKeyDictionary()
+
+
+def _mobile_admission(session):
+    session._check()
+    state = _mobile_admissions.get(session)
+    if state is None or state[0] is not session._scopes:
+        raise bootstrap.RecoveryRequired("mobile_admission_registry_changed")
+    if state[4] is not None:
+        from tldw_chatbook.Backup_Recovery.models import _mobile_budget_pair
+
+        if not _mobile_budget_pair(state[4], state[2]):
+            raise bootstrap.RecoveryRequired("mobile_budget_pair_changed")
+    return state
+
+
+def _attach_mobile_budgets(session, pair):
+    from tldw_chatbook.Backup_Recovery.models import _mobile_budget_pair
+
+    state = _mobile_admission(session)
+    if type(pair) is not tuple or len(pair) != 2 or not _mobile_budget_pair(*pair):
+        raise bootstrap.RecoveryRequired("mobile_budget_pair_changed")
+    if state[2] is not None or state[4] is not None:
+        raise bootstrap.RecoveryRequired("mobile_budget_already_issued")
+    state[2], state[4] = pair[1], pair[0]
+
+
+def _mobile_coordinator_budget(session):
+    """Return this actual admission's public envelope or its private default."""
+    state = _mobile_admission(session)
+    return state[4] if state[4] is not None else state[2]
 
 
 # This local gate intentionally covers all roots: an acquisition may still be
@@ -55,79 +96,12 @@ def _task_identity():
         return None
 
 
-def _nofollow_any_flag() -> int:
-    """``O_NOFOLLOW_ANY`` where the running kernel is known to honour it, else 0.
-
-    macOS 11 (Darwin 20) refuses a symbolic link in any component of an open
-    with this flag. The constant comes from the build SDK, and an older kernel
-    may ignore an open flag it does not know, which would follow links.
-    """
-    if sys.platform != "darwin":
-        return 0
-    flag = getattr(os, "O_NOFOLLOW_ANY", 0)
-    if not flag:
-        return 0
-    try:
-        major = int(os.uname().release.split(".", 1)[0])
-    except (AttributeError, ValueError):
-        return 0
-    return flag if major >= 20 else 0
-
-
 _NOFOLLOW_ANY = _nofollow_any_flag()
 
 
 def _resolved(path: Path) -> Path:
-    """Return exactly ``path.resolve()``, in one kernel walk when no link is in it.
-
-    TASK-33620.15.47: ``Path.resolve`` lstat()s one component per call, and each
-    call releases the GIL. Every transaction entry resolves the participant path,
-    the config selector and the acquired source several times, so a UI-loop entry
-    waited for the scheduler dozens of times per resolution at high host load.
-
-    An absolute, normalized path that has no link in any component resolves to
-    itself. One ``O_NOFOLLOW_ANY`` open of its parent (the kernel refuses a link
-    anywhere on the way) and an lstat of its leaf prove that. A link, any error,
-    another path shape or a kernel without the flag runs ``path.resolve()``
-    unchanged, so the result, links and refusals included, never differs.
-
-    Only the parent directory is opened, never the leaf: the leaf is often a
-    SQLite database, and closing any descriptor of it would drop every POSIX
-    lock this process holds on that file.
-    """
-    if _NOFOLLOW_ANY:
-        text = str(path)
-        if (
-            text.startswith("/")
-            and not text.startswith("//")
-            and text != "/"
-            and os.path.normpath(text) == text
-        ):
-            parent, name = os.path.split(text)
-            try:
-                descriptor = os.open(
-                    parent,
-                    os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | _NOFOLLOW_ANY,
-                )
-            except (OSError, ValueError):
-                descriptor = -1
-            if descriptor >= 0:
-                try:
-                    leaf = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
-                except FileNotFoundError:
-                    leaf = None  # resolve() keeps an absent leaf as written
-                except (OSError, ValueError):
-                    leaf = False
-                finally:
-                    try:
-                        os.close(descriptor)
-                    except OSError:
-                        pass  # a read-only directory descriptor holds nothing
-                if leaf is None or (
-                    leaf is not False and not stat.S_ISLNK(leaf.st_mode)
-                ):
-                    return path
-    return path.resolve()
+    """Resolve the path using the checked parent proof when available."""
+    return _verified_resolved_path(path, _NOFOLLOW_ANY) or path.resolve()
 
 
 class _Operation:
@@ -589,7 +563,9 @@ class _Hold:
         # evidence, discarded with this hold. Guarded by _lock.
         self.evidence: dict[str, _Evidence] = {}
         self.path_evidence: OrderedDict[tuple, _Evidence] = OrderedDict()
-        self.derived_evidence: OrderedDict[tuple, tuple[_Evidence, object]] = OrderedDict()
+        self.derived_evidence: OrderedDict[tuple, tuple[_Evidence, object]] = (
+            OrderedDict()
+        )
         self.thread = threading.Thread(
             target=self._run,
             args=(authority,),
@@ -712,10 +688,15 @@ class StorageLease:
         self.close()
 
 
-def _contains_owned_path(root: Path, selected: Path) -> bool:
+def _contains_owned_path(root: Path, selected: Path, *, _custody=None) -> bool:
     """Authorize exact objects or descendants of a declared directory, never parents."""
+    if _custody is not None and (
+        type(_custody) is not _CaptureFileDescriptors or _custody.close_failed
+    ):
+        raise ValueError("invalid_mobile_preservation_custody")
     resolved_root = root.resolve(strict=True)
-    with bootstrap.pinned_directory(resolved_root.parent) as parent:
+    pin = bootstrap.pinned_directory if _custody is None else _custody.pinned_directory
+    with pin(resolved_root.parent) as parent:
         info = os.stat(resolved_root.name, dir_fd=parent, follow_symlinks=False)
     resolved_selected = selected.resolve()
     if stat.S_ISDIR(info.st_mode):
@@ -746,9 +727,51 @@ _CONFIG_CAPTURE_LEAVES = {
 }
 
 
-def _config_capture_bindings(root, selectors):
+def _mobile_discovery_pending(root, names, selected):
+    """Allow passive generation reads only inside this operation's native scope."""
+    scope = getattr(_local, "discovery_scope", None)
+    if (
+        type(scope) is not _DiscoveryScope
+        or type(scope.session) is not MaintenanceSession
+    ):
+        return False
+    if not any(issued is scope for issued in scope.session._scopes):
+        return False
+    scope.check()
+    session = scope.session
+    journal = getattr(session, "_mobile_journal", None)
+    if journal is None or root != session._control.parent:
+        return False
+    from .journal import _mobile_state
+
+    with journal._locked(exclusive=False) as fd:
+        records = journal._records(fd)
+    prepared, _ = _mobile_state(records)
+    control_records._mobile_pending(session, journal, prepared)
+    return str(selected) in {
+        prepared.source_selector,
+        prepared.target_selector,
+    } and set(names or ()) <= set(prepared.namespaces) <= set(session._names)
+
+
+def _config_capture_bindings(
+    root, selectors, *, _mobile_session=None, _read_budget=None, _custody=None
+):
     """Observe every bound selector that can write requested config siblings."""
-    pending, profiles = bootstrap._records(root)
+    from .mobile_preview_budget import path_cost, read_options
+
+    _read_budget, _custody = read_options(_read_budget, _custody)
+    if _read_budget is not None:
+        _read_budget.container(3 * len(selectors))
+        for path in selectors:
+            _read_budget.reserve(path_cost(path, copies=3))
+    pending, profiles = bootstrap._records(
+        root, _budget=_read_budget, _custody=_custody
+    )
+    if _read_budget is not None:
+        _read_budget.container(3 * len(profiles))
+        for row in profiles:
+            _read_budget.reserve(1024 + 16 * len(row["selector"]))
     requested = {str(lexical_path(path)) for path in selectors}
     parents = {
         Path(row["selector"]).parent for row in profiles if row["selector"] in requested
@@ -756,16 +779,43 @@ def _config_capture_bindings(root, selectors):
     if not parents:
         return ()
     if pending:
-        raise bootstrap.RecoveryRequired("capture_config_scope_changed")
-    registry = bootstrap._registry(root)
+        if type(_mobile_session) is not MaintenanceSession:
+            raise bootstrap.RecoveryRequired("capture_config_scope_changed")
+        _mobile_session._check()
+        journal = getattr(_mobile_session, "_mobile_journal", None)
+        if journal is None:
+            raise bootstrap.RecoveryRequired("mobile_native_preparation_required")
+        from .journal import _mobile_state
+
+        with journal._locked(exclusive=False) as fd:
+            records = journal._records(fd)
+        prepared, _ = _mobile_state(records)
+        control_records._mobile_pending(_mobile_session, journal, prepared)
+        if root != _mobile_session._control.parent or requested != {
+            prepared.source_selector,
+            prepared.target_selector,
+        }:
+            raise bootstrap.RecoveryRequired("capture_config_scope_changed")
+    registry = bootstrap._registry(root, _budget=_read_budget, _custody=_custody)
     result = []
     for row in profiles:
+        if _read_budget is not None:
+            _read_budget.reserve(512 + 16 * len(row["selector"]))
         selector = Path(row["selector"])
         if selector.parent not in parents:
             continue
-        if bootstrap._binding(selector, profiles, registry) != row:
+        if (
+            bootstrap._binding(
+                selector, profiles, registry, _budget=_read_budget, _custody=_custody
+            )
+            != row
+        ):
             raise bootstrap.RecoveryRequired("capture_config_scope_changed")
-        with bootstrap.pinned_directory(selector.parent) as parent:
+        with (
+            bootstrap.pinned_directory(selector.parent)
+            if _custody is None
+            else _custody.pinned_directory(selector.parent)
+        ) as parent:
             info = os.fstat(parent)
             if info.st_uid != os.geteuid() or info.st_mode & 0o077:
                 raise bootstrap.RecoveryRequired("capture_config_parent_unsafe")
@@ -773,15 +823,30 @@ def _config_capture_bindings(root, selectors):
     return tuple(result)
 
 
-def _config_capture_sources(root, selectors, bindings):
+def _config_capture_sources(
+    root, selectors, bindings, *, _read_budget=None, _custody=None
+):
     """Derive only installed fixed leaves; foreign registry aliases still refuse."""
+    from .mobile_preview_budget import path_cost, read_options
     from .service_storage import default_control_root, work_root
 
+    _read_budget, _custody = read_options(_read_budget, _custody)
+    if _read_budget is not None:
+        _read_budget.reserve(4096 + path_cost(root, copies=4))
+        _read_budget.container(len(selectors) + len(bindings))
+        for path in selectors:
+            _read_budget.reserve(path_cost(path, copies=3))
+
     requested = {str(lexical_path(path)) for path in selectors}
-    registry = bootstrap._registry(root)
+    registry = bootstrap._registry(root, _budget=_read_budget, _custody=_custody)
     controls = (root, default_control_root(), work_root(default_control_root()))
     result = []
     for row, parent_identity in bindings:
+        if _read_budget is not None:
+            _read_budget.container(len(registry))
+            _read_budget.reserve(1024 + 16 * len(row["selector"]))
+            for raw in row["roots"]:
+                _read_budget.reserve(512 + 16 * len(raw))
         if row["selector"] not in requested:
             continue
         # Related profiles are held for exclusion, never adopted as ownership.
@@ -792,6 +857,16 @@ def _config_capture_sources(root, selectors, bindings):
         if not _contains_capture_path(map(Path, row["roots"]), selector):
             raise bootstrap.RecoveryRequired("capture_config_scope_changed")
         for owner, leaf in _CONFIG_CAPTURE_LEAVES.items():
+            if _read_budget is not None:
+                _read_budget.reserve(
+                    path_cost(selector, copies=8) + 4096 + 64 * len(leaf)
+                )
+                for entry in foreign:
+                    _read_budget.value(entry)
+                    for raw in entry["roots"]:
+                        _read_budget.reserve(512 + 32 * len(raw))
+                    for token in entry["historical"]:
+                        _read_budget.reserve(512 + 32 * len(token))
             path = selector.parent / leaf
             tokens = {"path:" + str(path), "path:" + str(path.resolve())}
             try:
@@ -909,11 +984,6 @@ def _content(path: Path) -> tuple | None:
     return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
 
 
-def _chain(path: Path) -> tuple[Path, ...]:
-    """Every component from the filesystem root down to ``path`` itself."""
-    return (*reversed(path.parents), path)
-
-
 class _Evidence:
     """Stamps over one derivation's inputs; immutable once published on a hold."""
 
@@ -1029,14 +1099,6 @@ def _mount_read_only(path: Path) -> bool:
         return bool(statvfs(path).f_flag & getattr(os, "ST_RDONLY", 1))
     except OSError:
         return True
-
-
-def _selected_paths(path, related_paths) -> tuple[Path, ...]:
-    return tuple(
-        selected
-        for selected in ((lexical_path(path) if path is not None else None), *related_paths)
-        if selected is not None
-    )
 
 
 def _ordinary_hold(authority=None, lease=None):
@@ -1532,7 +1594,9 @@ def _acquire_storage(
             # each owner path to its verified scope. Native unavailability is not a
             # conflict with an unrelated operation and never qualifies maintenance.
             _scope(
-                root, selector, lexical_path(path) if path is not None else None,
+                root,
+                selector,
+                lexical_path(path) if path is not None else None,
                 related_paths=related_paths,
             )
             allowed, reason = bootstrap.startup_permission(selector, root)
@@ -1595,8 +1659,14 @@ def _acquire_storage(
                 raise bootstrap.RecoveryRequired("storage_scope_changed")
         if before is not None:
             _note_evidence(
-                hold, root, selector, path, related_paths, names,
-                attempt.scope_roots, before,
+                hold,
+                root,
+                selector,
+                path,
+                related_paths,
+                names,
+                attempt.scope_roots,
+                before,
             )
         return token
     except BaseException:
@@ -1677,8 +1747,12 @@ class _CaptureLease:
     """A capture connection cannot outlive the native maintenance session."""
 
     def __init__(self, scope):
+        budget = getattr(scope, "read_budget", None)
+        if budget is not None:
+            budget.reserve(512)
         self.scope = scope
         self.connection = None
+        self.descriptor_outcome = None
         self.resource_close_failed = False
         self.resource_closed = False
         scope.resources.append(self)
@@ -1686,6 +1760,8 @@ class _CaptureLease:
     def attach(self, connection):
         self.connection = connection
         self.resource_closed = False
+        if type(self.scope) is _MobileScope:
+            self.scope.handed_off = True
 
     def native_closed(self):
         self.connection = None
@@ -1698,17 +1774,36 @@ class _CaptureLease:
             self.scope.resources.remove(self)
 
     def retire(self):
+        outcome = self.descriptor_outcome
+        if outcome is not None:
+            if (
+                outcome.connector_pending
+                or outcome.connection_pending
+                or outcome.duplicate_pending
+                or outcome.duplicate is not None
+                and not outcome.duplicate_closed
+                or outcome.connection_close_attempted
+                and not outcome.connection_closed
+            ):
+                self.resource_close_failed = True
+            if outcome.connection is not None and not outcome.connection_closed:
+                self.connection = outcome.connection
         if self.resource_close_failed:
             raise bootstrap.RecoveryRequired("capture_resources_not_retired")
         if self.connection is not None:
             # Retire the native handle before releasing its capture authority.
             closed = False
             try:
-                sqlite3.Connection.close(self.connection)
+                if type(self.scope) is _MobileScope:
+                    self.connection.close()
+                else:
+                    sqlite3.Connection.close(self.connection)
                 closed = True
             finally:
                 if not closed:
                     self.resource_close_failed = True
+            if outcome is not None:
+                outcome.connection_closed = True
             self.native_closed()
         self.close()
 
@@ -1728,6 +1823,7 @@ class _CaptureScope:
         self.sqlite_targets = {}
         self.sqlite_directory = None
         self.sqlite_directory_identity = None
+        self._digest_buffer = None
 
     def check(self):
         self.session._check()
@@ -1746,6 +1842,7 @@ class _CaptureScope:
                 self.verify_sqlite_sources()
         finally:
             self.active = False
+            self._digest_buffer = None
             for resource in tuple(self.resources):
                 resource.retire()
             if self.sqlite_directory is not None:
@@ -1759,46 +1856,20 @@ class _CaptureScope:
 
     @staticmethod
     def _sqlite_identity(info):
-        return (
-            info.st_dev,
-            info.st_ino,
-            info.st_mode,
-            info.st_nlink,
-            info.st_uid,
-            info.st_size,
-            info.st_mtime_ns,
-            info.st_ctime_ns,
+        from . import storage_sqlite_copies
+
+        return storage_sqlite_copies._sqlite_identity(
+            info,
         )
 
     def _sqlite_state(self, source):
         self.check()
-        resources = _CaptureFileDescriptors(self)
-        try:
-            with resources.pinned_directory(source.parent) as parent:
-                parent_info = os.fstat(parent)
-                result = []
-                for suffix in ("", "-wal", "-shm", "-journal"):
-                    try:
-                        info = os.stat(
-                            source.name + suffix, dir_fd=parent, follow_symlinks=False
-                        )
-                    except FileNotFoundError:
-                        result.append(None)
-                        continue
-                    if (
-                        not stat.S_ISREG(info.st_mode)
-                        or info.st_nlink != 1
-                        or info.st_uid != os.geteuid()
-                    ):
-                        raise ValueError("capture_sqlite_source_changed")
-                    result.append(self._sqlite_identity(info))
-                if result[0] is None or (source, *result[0][:2]) not in self.sources:
-                    raise ValueError("capture_sqlite_source_changed")
-                if result[3] is not None and result[3][5]:
-                    raise ValueError("capture_sqlite_hot_journal")
-                return (self._sqlite_identity(parent_info), tuple(result))
-        finally:
-            resources.retire()
+        from . import storage_sqlite_copies
+
+        return storage_sqlite_copies._capture_sqlite_state(
+            self,
+            source,
+        )
 
     def verify_sqlite_sources(self):
         for source, (before, target) in self.sqlite_snapshots.items():
@@ -1810,30 +1881,12 @@ class _CaptureScope:
     def verify_sqlite_target(self, target):
         """Check materialized authority, excluding SQLite's private SHM work."""
         self.check()
-        expected = self.sqlite_targets.get(target)
-        if expected is None:
-            return
-        root = os.stat(self.sqlite_directory, follow_symlinks=False)
-        if (root.st_dev, root.st_ino) != self.sqlite_directory_identity:
-            raise ValueError("capture_sqlite_staging_changed")
-        resources = _CaptureFileDescriptors(self)
-        try:
-            with resources.pinned_directory(target.parent) as parent:
-                info = os.fstat(parent)
-                if (info.st_dev, info.st_ino) != expected[0]:
-                    raise ValueError("capture_sqlite_target_changed")
-                for suffix, identity in zip(("", "-wal"), expected[1], strict=True):
-                    try:
-                        info = os.stat(
-                            target.name + suffix, dir_fd=parent, follow_symlinks=False
-                        )
-                    except FileNotFoundError:
-                        info = None
-                    actual = None if info is None else self._sqlite_identity(info)
-                    if actual != identity:
-                        raise ValueError("capture_sqlite_target_changed")
-        finally:
-            resources.retire()
+        from . import storage_sqlite_copies
+
+        return storage_sqlite_copies._verify_sqlite_target(
+            self,
+            target,
+        )
 
     def sqlite_target(self, owner_id, source, progress_guard=None):
         """Materialize only a native-qualified main/WAL set, never live SHM."""
@@ -1844,146 +1897,15 @@ class _CaptureScope:
         self.check()
         if not SQLITE_OWNER_REGISTRY[owner_id].recovery_capture_allowed:
             raise bootstrap.RecoveryRequired("capture_owner_not_registered")
-        source = lexical_path(source)
-        if self.staging in source.parents:
-            self.verify_sqlite_target(source)
-            return None
-        if progress_guard is not None:
-            progress_guard()
-        before = self._sqlite_state(source)
-        if source in self.sqlite_snapshots:
-            original, target = self.sqlite_snapshots[source]
-            if original != before:
-                raise ValueError("capture_sqlite_source_changed")
-            if target is None:
-                raise ValueError("capture_sqlite_copy_incomplete")
-            self.verify_sqlite_target(target)
-            return target
-        required = sum(info[5] for info in before[1][:2] if info is not None)
-        if (
-            any(
-                info is not None and info[5] > self.limits.member_bytes
-                for info in before[1][:2]
-            )
-            or self.copied_bytes + required > self.byte_budget
-        ):
-            raise ValueError("capture_sqlite_limit")
-        require_capacity({self.staging: required * 2})
-        resources = _CaptureFileDescriptors(self)
-        try:
-            if self.sqlite_directory is None:
-                from uuid import uuid4
+        from . import storage_sqlite_copies
 
-                name = "sqlite-sources-" + uuid4().hex
-                with resources.pinned_directory(self.staging) as parent:
-                    info = os.fstat(parent)
-                    if (info.st_dev, info.st_ino) != (
-                        self.staging_identity.st_dev,
-                        self.staging_identity.st_ino,
-                    ):
-                        raise ValueError("capture_sqlite_staging_changed")
-                    os.mkdir(name, mode=0o700, dir_fd=parent)
-                    self.sqlite_directory = self.staging / name
-                    created = os.stat(name, dir_fd=parent, follow_symlinks=False)
-                    self.sqlite_directory_identity = created.st_dev, created.st_ino
-            target_root = self.sqlite_directory / str(len(self.sqlite_snapshots))
-            with resources.pinned_directory(self.sqlite_directory) as parent:
-                info = os.fstat(parent)
-                if (info.st_dev, info.st_ino) != self.sqlite_directory_identity:
-                    raise ValueError("capture_sqlite_staging_changed")
-                os.mkdir(target_root.name, mode=0o700, dir_fd=parent)
-                created = os.stat(
-                    target_root.name, dir_fd=parent, follow_symlinks=False
-                )
-                target_identity = created.st_dev, created.st_ino
-            target = target_root / "source.sqlite3"
-            # Failed attempts remain unqualified until scope retirement.
-            self.sqlite_snapshots[source] = before, None
-            private_identities = [None, None]
-            wal_header = False
-            main_header = bytearray()
-            with resources.pinned_directory(source.parent) as parent:
-                if self._sqlite_identity(os.fstat(parent)) != before[0]:
-                    raise ValueError("capture_sqlite_source_changed")
-                for suffix, expected in zip(("", "-wal"), before[1][:2], strict=True):
-                    if expected is None and not (suffix == "-wal" and wal_header):
-                        continue
-                    if expected is not None:
-                        descriptor = os.open(
-                            source.name + suffix,
-                            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
-                            dir_fd=parent,
-                        )
-                        resources.fds.append(descriptor)
-                        if self._sqlite_identity(os.fstat(descriptor)) != expected:
-                            raise ValueError("capture_sqlite_source_changed")
-                    with resources.pinned_directory(target_root) as output_parent:
-                        info = os.fstat(output_parent)
-                        if (info.st_dev, info.st_ino) != target_identity:
-                            raise ValueError("capture_sqlite_staging_changed")
-                        output = os.open(
-                            target.name + suffix,
-                            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-                            0o600,
-                            dir_fd=output_parent,
-                        )
-                        resources.fds.append(output)
-                    count = 0
-                    while expected is not None:
-                        if progress_guard is not None:
-                            progress_guard()
-                        self.check()
-                        chunk = os.read(
-                            descriptor, min(1024**2, expected[5] - count + 1)
-                        )
-                        if not chunk:
-                            break
-                        if not suffix and len(main_header) < 20:
-                            # WAL-header databases need an empty WAL even when
-                            # the original was cleanly checkpointed. Create and
-                            # bind it now; never adopt a later replacement.
-                            main_header.extend(chunk[: 20 - len(main_header)])
-                            wal_header = (
-                                main_header[:16] == b"SQLite format 3\x00"
-                                and main_header[18:20] == b"\x02\x02"
-                            )
-                        count += len(chunk)
-                        if count > expected[5]:
-                            raise ValueError("capture_sqlite_source_changed")
-                        view = memoryview(chunk)
-                        while view:
-                            written = os.write(output, view)
-                            if not written:
-                                raise OSError("capture_sqlite_write_failed")
-                            view = view[written:]
-                    if expected is not None and (
-                        count != expected[5]
-                        or self._sqlite_identity(os.fstat(descriptor)) != expected
-                    ):
-                        raise ValueError("capture_sqlite_source_changed")
-                    current_parent = os.stat(target_root, follow_symlinks=False)
-                    current = os.stat(
-                        target_root / (target.name + suffix), follow_symlinks=False
-                    )
-                    held = os.fstat(output)
-                    if (
-                        current_parent.st_dev,
-                        current_parent.st_ino,
-                    ) != target_identity or (current.st_dev, current.st_ino) != (
-                        held.st_dev,
-                        held.st_ino,
-                    ):
-                        raise ValueError("capture_sqlite_staging_changed")
-                    private_identities[bool(suffix)] = self._sqlite_identity(held)
-        finally:
-            try:
-                self.verify_sqlite_sources()
-            finally:
-                resources.retire()
-        self.copied_bytes += required
-        self.sqlite_targets[target] = target_identity, tuple(private_identities)
-        self.sqlite_snapshots[source] = before, target
-        return target
+        return storage_sqlite_copies._capture_sqlite_target(
+            self,
+            owner_id,
+            source,
+            progress_guard,
+            require_capacity=require_capacity,
+        )
 
 
 def _capture_sqlite_target(owner_id, source):
@@ -2020,14 +1942,31 @@ def _capture_sqlite_source(owner_id, source, progress_guard):
 class _DiscoveryScope:
     """Read-only installed owner probes within an already native-held scope."""
 
-    def __init__(self, session, *, private_sqlite=False, limits=None, byte_budget=None):
+    def __init__(
+        self,
+        session,
+        *,
+        private_sqlite=False,
+        limits=None,
+        byte_budget=None,
+        read_budget=None,
+    ):
+        if read_budget is not None:
+            read_budget.reserve(1024)
         self.session = session
+        self.read_budget = read_budget
         self.config_sources = getattr(session, "_config_capture_sources", ())
         self.resources = []
         self.active = True
+        self.custody = (
+            _CaptureFileDescriptors(self) if read_budget is not None else None
+        )
         self.sqlite_copies = (
-            _PreviewScope(limits, byte_budget, native_scope=self)
-            if private_sqlite else None
+            _PreviewScope(
+                limits, byte_budget, native_scope=self, read_budget=read_budget
+            )
+            if private_sqlite
+            else None
         )
 
     def check(self):
@@ -2063,7 +2002,10 @@ class _DiscoveryScope:
 class _PreviewScope:
     """Bounded read probes over private SQLite copies, without live admission."""
 
-    def __init__(self, limits, byte_budget, *, native_scope=None):
+    def __init__(self, limits, byte_budget, *, native_scope=None, read_budget=None):
+        if read_budget is not None:
+            read_budget.reserve(2048)
+        self.read_budget = read_budget
         self.native_scope = native_scope
         self.pid = os.getpid()
         self.thread = threading.get_ident()
@@ -2074,6 +2016,10 @@ class _PreviewScope:
         self.copied_bytes = 0
         self.directory = None
         self.snapshots = {}
+        self.custody = (
+            _CaptureFileDescriptors(self) if read_budget is not None else None
+        )
+        self.copy_buffer = None
 
     def check(self):
         if (
@@ -2100,36 +2046,22 @@ class _PreviewScope:
             if self._source_state(source) != before:
                 raise ValueError("preview_sqlite_changed")
 
-    @staticmethod
-    def _source_state(source):
-        result = []
-        for suffix in ("", "-wal", "-journal"):
-            path = source.with_name(source.name + suffix)
-            try:
-                info = os.stat(path, follow_symlinks=False)
-            except FileNotFoundError:
-                result.append(None)
-                continue
-            if (
-                not stat.S_ISREG(info.st_mode)
-                or info.st_nlink != 1
-                or info.st_uid != os.geteuid()
-            ):
-                raise ValueError("preview_sqlite_unavailable")
-            result.append(
-                (
-                    info.st_dev,
-                    info.st_ino,
-                    info.st_size,
-                    info.st_mtime_ns,
-                    info.st_ctime_ns,
-                )
-            )
-        if result[0] is None or result[2] is not None and result[2][2]:
-            # A hot rollback journal needs recovery; preview never runs that on
-            # the source or guesses a committed image from an incomplete copy.
-            raise ValueError("preview_sqlite_unavailable")
-        return tuple(result)
+    def _buffer(self):
+        self.check()
+        if self.read_budget is None or not hasattr(os, "readv"):
+            raise ValueError("preview_copy_buffer_unavailable")
+        if self.copy_buffer is None:
+            self.read_budget.reserve(65536 + 1024)
+            self.copy_buffer = memoryview(bytearray(65536))
+        return self.copy_buffer
+
+    def _source_state(self, source):
+        from . import storage_sqlite_copies
+
+        return storage_sqlite_copies._preview_source_state(
+            self,
+            source,
+        )
 
     def sqlite_target(self, source):
         """Copy a stable main/WAL set once; never open live SQLite to back it up."""
@@ -2140,99 +2072,17 @@ class _PreviewScope:
         from .space import require_capacity
 
         self.check()
-        source = lexical_path(source)
-        if source in self.snapshots:
-            previous, target = self.snapshots[source]
-            if self.native_scope is not None and self._source_state(source) != previous:
-                raise ValueError("preview_sqlite_changed")
-            # Owners sharing this source inspect one verified image per preview.
-            # Ordinary live commits cannot invalidate that private image; a
-            # replaced or unsafe source path still cannot reuse its identity.
-            with bootstrap.pinned_directory(source.parent) as parent:
-                current = os.stat(source.name, dir_fd=parent, follow_symlinks=False)
-                if (
-                    not stat.S_ISREG(current.st_mode)
-                    or current.st_nlink != 1
-                    or current.st_uid != os.geteuid()
-                    or (current.st_dev, current.st_ino) != previous[0][:2]
-                ):
-                    raise ValueError("preview_sqlite_changed")
-            return target
-        before = self._source_state(source)
-        required = sum(state[2] for state in before[:2] if state is not None)
-        if (
-            any(
-                state is not None and state[2] > self.limits.member_bytes
-                for state in before[:2]
-            )
-            or self.copied_bytes + required > self.byte_budget
-        ):
-            raise ValueError("preview_sqlite_limit")
-        temporary_parent = Path(tempfile.gettempdir()).resolve()
-        require_capacity({temporary_parent: required * 2})
-        if self.directory is None:
-            self.directory = Path(
-                tempfile.mkdtemp(prefix="chatbook-preview-", dir=temporary_parent)
-            )
-        target_root = self.directory / str(len(self.snapshots))
-        create_private_directory(target_root)
-        target = target_root / "source.sqlite3"
-        try:
-            with bootstrap.pinned_directory(source.parent) as parent:
-                for suffix, expected in zip(("", "-wal"), before[:2], strict=True):
-                    if expected is None:
-                        continue
-                    descriptor = os.open(
-                        source.name + suffix,
-                        os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
-                        dir_fd=parent,
-                    )
-                    try:
-                        opened = os.fstat(descriptor)
-                        if (
-                            opened.st_dev,
-                            opened.st_ino,
-                            opened.st_size,
-                            opened.st_mtime_ns,
-                            opened.st_ctime_ns,
-                        ) != expected:
-                            raise ValueError("preview_sqlite_changed")
-                        with create_private_file(
-                            target.with_name(target.name + suffix)
-                        ) as output:
-                            count = 0
-                            while chunk := os.read(
-                                descriptor, min(1024**2, expected[2] - count + 1)
-                            ):
-                                count += len(chunk)
-                                if count > expected[2]:
-                                    raise ValueError("preview_sqlite_changed")
-                                view = memoryview(chunk)
-                                while view:
-                                    written = os.write(output, view)
-                                    if not written:
-                                        raise OSError("preview_sqlite_write_failed")
-                                    view = view[written:]
-                            info = os.fstat(descriptor)
-                            observed = (
-                                info.st_dev,
-                                info.st_ino,
-                                info.st_size,
-                                info.st_mtime_ns,
-                                info.st_ctime_ns,
-                            )
-                            if count != expected[2] or observed != expected:
-                                raise ValueError("preview_sqlite_changed")
-                    finally:
-                        os.close(descriptor)
-            if self._source_state(source) != before:
-                raise ValueError("preview_sqlite_changed")
-        except BaseException:
-            shutil.rmtree(target_root)
-            raise
-        self.copied_bytes += required
-        self.snapshots[source] = before, target
-        return target
+        from . import storage_sqlite_copies
+
+        return storage_sqlite_copies._preview_sqlite_target(
+            self,
+            source,
+            shutil=shutil,
+            tempfile=tempfile,
+            create_private_directory=create_private_directory,
+            create_private_file=create_private_file,
+            require_capacity=require_capacity,
+        )
 
     def retire(self):
         import shutil
@@ -2251,22 +2101,20 @@ def _preview_sqlite_target(source):
 
 
 @contextmanager
-def _preview_reads(*, limits=None, byte_budget=None):
+def _preview_reads(*, limits=None, byte_budget=None, _read_budget=None):
     """Keep installed read-only discovery from bootstrapping ordinary services."""
-    from .limits import ArchiveLimits
-
-    limits = ArchiveLimits() if limits is None else limits
-    if type(limits) is not ArchiveLimits:
-        raise TypeError("invalid_preview_limits")
-    byte_budget = limits.expanded_bytes if byte_budget is None else byte_budget
-    if type(byte_budget) is not int or not 0 < byte_budget <= limits.expanded_bytes:
-        raise ValueError("invalid_preview_budget")
+    limits, byte_budget = _read_limits(limits, byte_budget)
     if (
         getattr(_local, "preview_scope", None) is not None
         or getattr(_local, "maintenance_session", None) is not None
     ):
         raise bootstrap.RecoveryRequired("nested_preview_scope")
-    scope = _PreviewScope(limits, byte_budget)
+    if _read_budget is not None:
+        from tldw_chatbook.Backup_Recovery.models import _TraceReadBudget
+
+        if type(_read_budget) is not _TraceReadBudget:
+            raise TypeError("invalid_preview_materialization_budget")
+    scope = _PreviewScope(limits, byte_budget, read_budget=_read_budget)
     _local.preview_scope = scope
     try:
         yield
@@ -2275,6 +2123,512 @@ def _preview_reads(*, limits=None, byte_budget=None):
             scope.retire()
         finally:
             _local.preview_scope = None
+
+
+def _mobile_witness(path):
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return {"path": str(path), "device": None, "inode": None, "mode": None}
+    if stat.S_ISLNK(info.st_mode) or (
+        stat.S_ISREG(info.st_mode) and info.st_nlink != 1
+    ):
+        raise bootstrap.RecoveryRequired("mobile_unsafe_alias")
+    return {
+        "path": str(path),
+        "device": info.st_dev,
+        "inode": info.st_ino,
+        "mode": info.st_mode,
+    }
+
+
+def _mobile_publish_creation(session, journal):
+    """Finish only an empty native creation whose inode was durably witnessed."""
+    from .journal import _mobile_state
+    from .native_files import publish_new
+
+    session._check()
+    with journal._locked(exclusive=True) as parent:
+        records = journal._records(parent)
+        prepared, witnesses = _mobile_state(records)
+        control_records._mobile_pending(session, journal, prepared)
+        if records[-1].event != "mobile_path_staged":
+            raise bootstrap.RecoveryRequired("mobile_transition_unsettled")
+        evidence = records[-1].evidence
+        target, temporary = (
+            Path(evidence["target"]),
+            Path(evidence["temporary"]["path"]),
+        )
+        expected = {**evidence["temporary"], "path": str(target)}
+        if (
+            any(
+                _mobile_witness(Path(path)) != row
+                for path, row in witnesses.items()
+                if path != str(target)
+            )
+            or _mobile_witness(target.parent) != evidence["parent"]
+        ):
+            raise bootstrap.RecoveryRequired("mobile_object_changed")
+        current, staged = _mobile_witness(target), _mobile_witness(temporary)
+        if current["inode"] is None and staged == evidence["temporary"]:
+            if temporary.is_dir():
+                if any(temporary.iterdir()):
+                    raise bootstrap.RecoveryRequired("mobile_creation_changed")
+            elif temporary.stat().st_size:
+                raise bootstrap.RecoveryRequired("mobile_creation_changed")
+            journal._flush_records(parent)
+            identity = (evidence["parent"]["device"], evidence["parent"]["inode"])
+            publish_new(temporary, target, parent_identities=(identity, identity))
+        elif current != expected or staged["inode"] is not None:
+            raise bootstrap.RecoveryRequired("mobile_creation_ambiguous")
+        if (
+            _mobile_witness(target) != expected
+            or _mobile_witness(temporary)["inode"] is not None
+        ):
+            raise bootstrap.RecoveryRequired("mobile_creation_ambiguous")
+        # No constructor is allowed before this observation, so the witnessed
+        # object must still be the native empty file/directory.
+        if target.is_dir():
+            if any(target.iterdir()):
+                raise bootstrap.RecoveryRequired("mobile_creation_changed")
+        elif target.stat().st_size:
+            raise bootstrap.RecoveryRequired("mobile_creation_changed")
+        journal._append(parent, "mobile_path_observed", {"after": expected})
+
+
+def _mobile_create_path(session, journal, path, kind, witnesses):
+    """Publish an empty fixed native target; unknown temporaries remain evidence."""
+    import hashlib
+    from uuid import uuid4
+
+    from .native_files import flush_directory
+    from .native_platform import flush_file
+
+    session._check()
+    temporary = path.with_name(
+        ".mobile-create-"
+        + hashlib.sha256(journal.operation_id.encode()).hexdigest()
+        + "-"
+        + uuid4().hex
+    )
+    custody = _CaptureFileDescriptors(None)
+    session._scopes.append(custody)
+    try:
+        with journal._locked(exclusive=True) as journal_fd:
+            journal._append(
+                journal_fd,
+                "mobile_path_intended",
+                {
+                    "before": witnesses[str(path)],
+                    "kind": kind,
+                    "temporary": str(temporary),
+                },
+            )
+            with custody.pinned_directory(path.parent) as parent:
+                if any(
+                    _mobile_witness(Path(name)) != row
+                    for name, row in witnesses.items()
+                ):
+                    raise bootstrap.RecoveryRequired("mobile_object_changed")
+                info = os.fstat(parent)
+                expected_parent = witnesses[str(path.parent)]
+                if (info.st_dev, info.st_ino, info.st_mode) != (
+                    expected_parent["device"],
+                    expected_parent["inode"],
+                    expected_parent["mode"],
+                ):
+                    raise bootstrap.RecoveryRequired("mobile_object_changed")
+                if kind == "directory":
+                    os.mkdir(temporary.name, mode=0o700, dir_fd=parent)
+                    created = os.stat(
+                        temporary.name, dir_fd=parent, follow_symlinks=False
+                    )
+                else:
+                    fd = os.open(
+                        temporary.name,
+                        os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW,
+                        0o600,
+                        dir_fd=parent,
+                    )
+                    custody.fds.append(fd)
+                    created = os.fstat(fd)
+                    flush_file(fd)
+                    custody.close_descriptor(fd)
+                    custody.fds.remove(fd)
+                flush_directory(parent)
+                observed = _mobile_witness(temporary)
+                if (observed["device"], observed["inode"], observed["mode"]) != (
+                    created.st_dev,
+                    created.st_ino,
+                    created.st_mode,
+                ):
+                    raise bootstrap.RecoveryRequired("mobile_object_changed")
+                journal._append(
+                    journal_fd,
+                    "mobile_path_staged",
+                    {
+                        "target": str(path),
+                        "temporary": observed,
+                        "parent": expected_parent,
+                    },
+                )
+    finally:
+        custody.retire()
+    _mobile_publish_creation(session, journal)
+
+
+def _mobile_check_witnesses(records, witnesses, *, recovering_mode=False):
+    pending = (
+        records[-1].evidence if records[-1].event == "mobile_mode_intended" else None
+    )
+    for path, before in witnesses.items():
+        current = _mobile_witness(Path(path))
+        if current == before:
+            continue
+        if (
+            recovering_mode
+            and pending == before
+            and current == {**before, "mode": stat.S_IFREG | 0o600}
+        ):
+            continue
+        raise bootstrap.RecoveryRequired("mobile_object_changed")
+
+
+class _MobileScope:
+    """One native-constructed owner; a path string or copied grant grants nothing."""
+
+    def __init__(self):
+        raise TypeError("mobile_scope_is_native_issued")
+
+    def check(self):
+        _MobileScope._check(self)
+
+    def check_for_lock(self):
+        mode = getattr(self, "recovering_mode", None)
+        if type(mode) is not bool:
+            raise bootstrap.RecoveryRequired("mobile_scope_inactive")
+        _MobileScope._check(self, recovering_mode=mode)
+
+    def _check(self, *, recovering_mode=False):
+        from .journal import _mobile_active_owner, _mobile_state
+
+        session = getattr(self, "session", None)
+        if (
+            type(session) is not MaintenanceSession
+            or session is not getattr(_local, "maintenance_session", None)
+            or self not in session._scopes
+            or not self.active
+            or getattr(_local, "mobile_scope", None) is not self
+            or self.journal is not getattr(session, "_mobile_journal", None)
+        ):
+            raise bootstrap.RecoveryRequired("mobile_scope_inactive")
+        MaintenanceSession._check(session)
+        if self.captured is not None:
+            from .mobile_native_operation import _native_capture_check
+
+            _native_capture_check(self.captured, self.captured.cancel)
+        with self.journal._locked(exclusive=False) as parent:
+            records = self.journal._records(parent)
+        prepared, witnesses = _mobile_state(records)
+        control_records._mobile_pending(self.session, self.journal, prepared)
+        if (
+            records[-1].event == "mobile_mode_intended"
+            and not recovering_mode
+            or _mobile_active_owner(records) != self.owner
+        ):
+            raise bootstrap.RecoveryRequired("mobile_journal_operation_changed")
+        if witnesses != self.witnesses:
+            raise bootstrap.RecoveryRequired("mobile_object_changed")
+        _mobile_check_witnesses(records, witnesses, recovering_mode=recovering_mode)
+
+    def recover_mode(self):
+        """Settle the exact pre-constructor inode; Runs calls only after flock wins."""
+        from .native_files import pinned_directory
+        from .native_platform import flush_file
+
+        if not self.recovering_mode:
+            return
+        _MobileScope.check_for_lock(self)
+        if self.owner["owner_id"] == "db.agent_runs" and self.execution_stream is None:
+            raise bootstrap.RecoveryRequired("mobile_execution_not_owned")
+        with self.journal._locked(exclusive=True) as parent:
+            records = self.journal._records(parent)
+            if records[-1].event != "mobile_mode_intended":
+                raise bootstrap.RecoveryRequired("mobile_transition_unsettled")
+            before = records[-1].evidence
+            expected = {**before, "mode": stat.S_IFREG | 0o600}
+            evidence = (
+                self.witnesses if before["path"] in self.witnesses else self.sidecars
+            )
+            if evidence.get(before["path"]) != before:
+                raise bootstrap.RecoveryRequired("mobile_mode_unreviewed")
+            cohort = self.witnesses | self.sidecars
+            _mobile_check_witnesses(records, cohort, recovering_mode=True)
+            path = Path(before["path"])
+            with pinned_directory(path.parent) as directory:
+                self.mode_fd = os.open(
+                    path.name,
+                    os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                    dir_fd=directory,
+                )
+                try:
+                    info = os.fstat(self.mode_fd)
+                    if (info.st_dev, info.st_ino, info.st_uid, info.st_nlink) != (
+                        before["device"],
+                        before["inode"],
+                        os.geteuid(),
+                        1,
+                    ):
+                        raise bootstrap.RecoveryRequired("mobile_object_changed")
+                    _mobile_check_witnesses(records, cohort, recovering_mode=True)
+                    self.journal._flush_records(parent)
+                    os.fchmod(self.mode_fd, 0o600)
+                    flush_file(self.mode_fd)
+                    if _mobile_witness(path) != expected:
+                        raise bootstrap.RecoveryRequired("mobile_object_changed")
+                    _mobile_check_witnesses(records, cohort, recovering_mode=True)
+                    self.journal._append(
+                        parent, "mobile_mode_observed", {"after": expected}
+                    )
+                    evidence[str(path)] = expected
+                finally:
+                    try:
+                        os.close(self.mode_fd)
+                    except BaseException:
+                        self.close_failed = True
+                        raise
+                    self.mode_fd = None
+        self.recovering_mode = False
+        _MobileScope.check(self)
+
+    def sidecar_witnesses(self):
+        from .mobile_consolidation import _sqlite_sidecars
+
+        return {
+            row[0]: dict(zip(("path", "device", "inode", "mode"), row, strict=True))
+            for row in _sqlite_sidecars(Path(self.owner["path"]))
+        }
+
+    def observe_sidecars(self, phase):
+        _MobileScope.check(self)
+        observed = self.sidecar_witnesses()
+        with self.journal._locked(exclusive=True) as parent:
+            self.journal._append(
+                parent,
+                "mobile_sidecars_observed",
+                {
+                    "owner_id": self.owner["owner_id"],
+                    "phase": phase,
+                    "witnesses": list(observed.values()),
+                },
+            )
+        self.sidecars = observed
+
+    def harden_store(self):
+        """Prepare only reviewed main/sidecar objects before native factory handoff."""
+        _MobileScope.check(self)
+        if self.sidecar_witnesses() != self.sidecars:
+            raise bootstrap.RecoveryRequired("mobile_sidecar_changed")
+        for path in (self.owner["path"], *self.sidecars):
+            self._harden_path(Path(path))
+
+    def _harden_path(self, path):
+        """Journal one fixed private-mode transition on the bound generation."""
+        from .native_files import pinned_directory
+        from .native_platform import flush_file
+
+        _MobileScope.check(self)
+        evidence = self.witnesses if str(path) in self.witnesses else self.sidecars
+        before = evidence[str(path)]
+        if before["inode"] is None or stat.S_IMODE(before["mode"]) == 0o600:
+            return
+        with pinned_directory(path.parent) as parent:
+            parent_info = os.fstat(parent)
+            expected_parent = self.witnesses[str(path.parent)]
+            if (parent_info.st_dev, parent_info.st_ino, parent_info.st_mode) != (
+                expected_parent["device"],
+                expected_parent["inode"],
+                expected_parent["mode"],
+            ):
+                raise bootstrap.RecoveryRequired("mobile_object_changed")
+            self.mode_fd = os.open(
+                path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent
+            )
+            try:
+                info = os.fstat(self.mode_fd)
+                _MobileScope.check(self)
+                if (
+                    not stat.S_ISREG(info.st_mode)
+                    or info.st_nlink != 1
+                    or info.st_uid != os.geteuid()
+                    or (info.st_dev, info.st_ino, info.st_mode)
+                    != (before["device"], before["inode"], before["mode"])
+                ):
+                    raise bootstrap.RecoveryRequired("mobile_object_changed")
+                with self.journal._locked(exclusive=True) as journal_fd:
+                    self.journal._append(journal_fd, "mobile_mode_intended", before)
+                    if any(
+                        _mobile_witness(Path(name)) != row
+                        for name, row in (self.witnesses | self.sidecars).items()
+                    ):
+                        raise bootstrap.RecoveryRequired("mobile_object_changed")
+                    os.fchmod(self.mode_fd, 0o600)
+                    flush_file(self.mode_fd)
+                    expected = {**before, "mode": stat.S_IFREG | 0o600}
+                    after = os.fstat(self.mode_fd)
+                    if (
+                        (
+                            after.st_dev,
+                            after.st_ino,
+                            after.st_mode,
+                            after.st_nlink,
+                            after.st_uid,
+                        )
+                        != (
+                            expected["device"],
+                            expected["inode"],
+                            expected["mode"],
+                            1,
+                            os.geteuid(),
+                        )
+                        or _mobile_witness(path) != expected
+                        or any(
+                            _mobile_witness(Path(name)) != row
+                            for name, row in (self.witnesses | self.sidecars).items()
+                            if name != str(path)
+                        )
+                    ):
+                        raise bootstrap.RecoveryRequired("mobile_object_changed")
+                    self.journal._append(
+                        journal_fd, "mobile_mode_observed", {"after": expected}
+                    )
+                    evidence[str(path)] = expected
+            finally:
+                os.close(self.mode_fd)
+                self.mode_fd = None
+        _MobileScope.check(self)
+
+    def require_repository(self, repository):
+        _MobileScope.check(self)
+        from .participants import _repository_types
+
+        if (
+            repository is not self.repository
+            or _repository_types().get(type(repository)) != self.owner["owner_id"]
+            or repository.db_path != Path(self.owner["path"])
+            or getattr(repository, "_read_only", False)
+        ):
+            raise bootstrap.RecoveryRequired("mobile_repository_scope_invalid")
+
+    def retire(self):
+        if self.close_failed:
+            raise bootstrap.RecoveryRequired("capture_resources_not_retired")
+        # A failed native close retains both maintenance gates and execution ownership.
+        try:
+            for resource in tuple(self.resources):
+                resource.retire()
+            if self.mode_fd is not None:
+                os.close(self.mode_fd)
+                self.mode_fd = None
+            if self.handed_off:
+                self.observe_sidecars("retired")
+                self.handed_off = False
+            if self.execution_use is not None:
+                self.execution_use.__exit__(None, None, None)
+                self.execution_use = None
+            if self.execution_owner is not None:
+                self.execution_owner.close()
+                if (
+                    not self.execution_owner._stream.closed
+                    or self.execution_owner._users
+                ):
+                    raise bootstrap.RecoveryRequired("mobile_execution_not_retired")
+                self.execution_owner = None
+            if self.execution_stream is not None:
+                self.execution_stream.close()
+                if not self.execution_stream.closed:
+                    raise bootstrap.RecoveryRequired("mobile_execution_not_retired")
+                self.execution_stream = None
+                self.execution_fd = None
+            elif self.execution_fd is not None:
+                os.close(self.execution_fd)
+                self.execution_fd = None
+        except BaseException:
+            self.close_failed = True
+            raise
+        finally:
+            self.active = False
+
+
+def _mobile_repository_scope(repository):
+    scope = getattr(repository, "_mobile_consolidation_scope", None)
+    current = getattr(_local, "mobile_scope", None)
+    if scope is None and current is None:
+        return None
+    if type(scope) is not _MobileScope or scope is not current:
+        raise bootstrap.RecoveryRequired("mobile_repository_scope_invalid")
+    _MobileScope.require_repository(scope, repository)
+    return scope
+
+
+def _mobile_private_preparation(path):
+    scope = getattr(_local, "mobile_scope", None)
+    if scope is None:
+        return False
+    if type(scope) is not _MobileScope:
+        raise bootstrap.RecoveryRequired("mobile_scope_inactive")
+    _MobileScope.check(scope)
+    if lexical_path(path) != Path(scope.owner["path"]):
+        raise bootstrap.RecoveryRequired("mobile_connection_scope_invalid")
+    if not scope.handed_off and scope.sidecar_witnesses() != scope.sidecars:
+        raise bootstrap.RecoveryRequired("mobile_sidecar_changed")
+    return True
+
+
+def _acquire_mobile_storage(
+    path, *, owner_id, factory, read_only=False, must_exist=False, immutable=False
+):
+    scope = getattr(_local, "mobile_scope", None)
+    if scope is None:
+        return None
+    if type(scope) is not _MobileScope:
+        raise bootstrap.RecoveryRequired("mobile_scope_inactive")
+    _MobileScope.require_repository(scope, scope.repository)
+    from tldw_chatbook.DB.base_db import _QuiescentSQLiteConnection
+
+    expected_policy = (
+        "db.chachanotes.primary"
+        if scope.owner["owner_id"] == "db.chachanotes.primary"
+        else "db.base"
+    )
+    expected_factory = (
+        _QuiescentSQLiteConnection
+        if expected_policy == "db.chachanotes.primary"
+        else sqlite3.Connection
+    )
+    preflight_policy = {
+        "db.chachanotes.primary": "db.chachanotes.read",
+        "db.workspaces": "db.workspaces.preflight",
+        "db.agent_runs": "db.agent_runs.read",
+    }[scope.owner["owner_id"]]
+    preflight = (
+        owner_id == preflight_policy
+        and read_only is True
+        and must_exist is True
+        and immutable is False
+        and factory is sqlite3.Connection
+    )
+    if lexical_path(path) != Path(scope.owner["path"]) or not (
+        preflight or (owner_id == expected_policy and factory is expected_factory)
+    ):
+        raise bootstrap.RecoveryRequired("mobile_connection_scope_invalid")
+    lease = _CaptureLease(scope)
+    from tldw_chatbook.DB.private_sqlite import SQLITE_OWNER_REGISTRY
+
+    lease.resource_path = lexical_path(path)
+    lease.resource_policy = SQLITE_OWNER_REGISTRY[owner_id]
+    lease.resource_thread = threading.current_thread()
+    return lease
 
 
 class MaintenanceSession:
@@ -2309,7 +2663,14 @@ class MaintenanceSession:
         self._roots, self._all_roots = roots, all_roots
 
     def _discover_capture_inventory(
-        self, config_paths, selections, approved_scope, *, config_bindings=None
+        self,
+        config_paths,
+        selections,
+        approved_scope,
+        *,
+        config_bindings=None,
+        _mobile_partition=None,
+        private_sqlite=False,
     ):
         """Qualify first-use sources from installed discovery under native locks.
 
@@ -2318,6 +2679,7 @@ class MaintenanceSession:
         session-local authority. A caller-supplied Inventory grants nothing.
         """
         from .inventory import discover
+        from .mobile_preview_budget import path_cost
         from .models import DiscoverySelections
 
         self._check()
@@ -2329,62 +2691,144 @@ class MaintenanceSession:
             raise ValueError("invalid_capture_selection")
         if UNBOUND_NAMESPACE not in self._names:
             raise bootstrap.RecoveryRequired("capture_unbound_admission_required")
+        reader = getattr(_local, "mobile_sqlite_scope", None)
+        coordinator = None
+        if reader is not None:
+            from .mobile_captured_sqlite import (
+                _borrowed_capture_discovery,
+                _captured_discovery_budget,
+            )
+
+            coordinator = _captured_discovery_budget(self)
+            if coordinator is not None:
+                coordinator.container(len(config_paths))
+                for path in config_paths:
+                    coordinator.reserve(path_cost(path, copies=2))
+        elif _mobile_admission(self)[4] is not None and (
+            private_sqlite or _mobile_partition is not None
+        ):
+            coordinator = _mobile_coordinator_budget(self)
         selectors = tuple(lexical_path(path) for path in config_paths)
         root = self._control.parent
-        bindings = _config_capture_bindings(root, selectors)
+        if _mobile_partition is not None:
+            from .mobile_consolidation_apply import _MobileCapturePartition
+
+            if (
+                type(_mobile_partition) is not _MobileCapturePartition
+                or _mobile_partition.session is not self
+            ):
+                raise ValueError("mobile_native_partition_required")
+            _mobile_partition.check()
+        bindings = _config_capture_bindings(
+            root,
+            selectors,
+            _mobile_session=self if _mobile_partition is not None else None,
+            _read_budget=coordinator if reader is not None else None,
+            _custody=reader.custody if reader is not None else None,
+        )
         if (config_bindings is not None and bindings != config_bindings) or any(
             not set(row["namespaces"]) <= set(self._names) for row, _ in bindings
         ):
             raise bootstrap.RecoveryRequired("capture_config_scope_changed")
-        self._config_capture_sources = _config_capture_sources(root, selectors, bindings)
-        if any(
-            not _contains_capture_path(self._roots, path)
-            for path in selectors
-        ):
+        self._config_capture_sources = _config_capture_sources(
+            root,
+            selectors,
+            bindings,
+            _read_budget=coordinator if reader is not None else None,
+            _custody=reader.custody if reader is not None else None,
+        )
+        if any(not _contains_capture_path(self._roots, path) for path in selectors):
             raise bootstrap.RecoveryRequired("capture_source_outside_scope")
-        with self._discovery_reads():
-            current = discover(selectors, selections=selections)
+        with (
+            _borrowed_capture_discovery(self, _mobile_partition, coordinator)
+            if reader is not None
+            and reader._canonical_archive is not None
+            and _mobile_partition is not None
+            and _mobile_partition is reader._canonical_archive[0]
+            and getattr(_local, "discovery_scope", None) is not None
+            else self._discovery_reads(
+                private_sqlite=private_sqlite or _mobile_partition is not None,
+                _read_budget=coordinator,
+            )
+        ):
+            current = discover(
+                selectors, selections=selections, _read_budget=coordinator
+            )
+        if current.scope_digest != approved_scope and _mobile_partition is not None:
+            from .mobile_native_history import _original_history_inventory
+
+            current = _original_history_inventory(
+                self, _mobile_partition, current, selections, approved_scope
+            )
         if current.scope_digest != approved_scope:
             raise ValueError("scope_changed")
+        if reader is not None and coordinator is not None:
+            coordinator.container(2 * len(current.items))
         sources = []
         for item in current.items:
             if item.status != "included" or item.path is None:
                 continue
             path = lexical_path(item.path)
-            if not _contains_capture_path(self._roots, path) and not _config_capture_item(
-                item, current, self._config_capture_sources
-            ):
+            if not _contains_capture_path(
+                self._roots, path
+            ) and not _config_capture_item(item, current, self._config_capture_sources):
                 raise bootstrap.RecoveryRequired("capture_source_outside_scope")
             info = os.stat(path)
             if not stat.S_ISREG(info.st_mode):
                 raise bootstrap.RecoveryRequired("capture_file_not_regular")
+            if reader is not None and coordinator is not None:
+                coordinator.reserve(path_cost(path, copies=2) + 128)
             sources.append((path.resolve(strict=True), info.st_dev, info.st_ino))
         self._discovered_sources = tuple(sources)
         return current
 
     @contextmanager
-    def _discovery_reads(self, *, private_sqlite=False, limits=None, byte_budget=None):
+    def _discovery_reads(
+        self, *, private_sqlite=False, limits=None, byte_budget=None, _read_budget=None
+    ):
         """Allow installed reads, optionally using bounded private SQLite copies."""
-        from .limits import ArchiveLimits
-
         self._check()
         if getattr(_local, "discovery_scope", None) is not None:
             raise bootstrap.RecoveryRequired("nested_discovery_scope")
         if type(private_sqlite) is not bool:
             raise TypeError("invalid_discovery_copy_options")
         if private_sqlite:
-            limits = ArchiveLimits() if limits is None else limits
-            if type(limits) is not ArchiveLimits:
-                raise TypeError("invalid_preview_limits")
-            byte_budget = limits.expanded_bytes if byte_budget is None else byte_budget
-            if type(byte_budget) is not int or not 0 < byte_budget <= limits.expanded_bytes:
-                raise ValueError("invalid_preview_budget")
+            limits, byte_budget = _read_limits(limits, byte_budget)
         elif limits is not None or byte_budget is not None:
             raise ValueError("invalid_discovery_copy_options")
+        # Only this issuer installs the captured reader's exact child binding.
+        reader = getattr(_local, "mobile_sqlite_scope", None)
+        binding_map = None
+        if reader is not None and private_sqlite:
+            from .mobile_captured_sqlite import _captured_discovery_budget
+
+            _read_budget = _captured_discovery_budget(self, _read_budget=_read_budget)
+            reader.read_budget.container(12)
+            if _read_budget is None:
+                reader.read_budget.reserve(2 * 512)
+            binding_map = reader.discovery_bindings
+        elif _read_budget is not None and (
+            not private_sqlite or _mobile_coordinator_budget(self) is not _read_budget
+        ):
+            raise ValueError("mobile_preview_budget_changed")
         scope = _DiscoveryScope(
-            self, private_sqlite=private_sqlite, limits=limits, byte_budget=byte_budget
+            self,
+            private_sqlite=private_sqlite,
+            limits=limits,
+            byte_budget=byte_budget,
+            read_budget=_read_budget,
         )
+        if binding_map is not None and _read_budget is None:
+            scope.custody = _CaptureFileDescriptors(scope)
+            scope.sqlite_copies.custody = _CaptureFileDescriptors(scope.sqlite_copies)
         self._scopes.append(scope)
+        if binding_map is not None:
+            binding_map[scope] = (
+                reader,
+                scope.sqlite_copies,
+                scope.resources,
+                scope.sqlite_copies.resources,
+            )
         _local.discovery_scope = scope
         try:
             yield
@@ -2398,14 +2842,7 @@ class MaintenanceSession:
     def capture_scope(
         self, sources: tuple[Path, ...], staging: Path, *, limits=None, byte_budget=None
     ):
-        from .limits import ArchiveLimits
-
-        limits = ArchiveLimits() if limits is None else limits
-        if type(limits) is not ArchiveLimits:
-            raise TypeError("invalid_capture_limits")
-        byte_budget = limits.expanded_bytes if byte_budget is None else byte_budget
-        if type(byte_budget) is not int or not 0 < byte_budget <= limits.expanded_bytes:
-            raise ValueError("invalid_capture_budget")
+        limits, byte_budget = _read_limits(limits, byte_budget, kind="capture")
         self._check()
         if getattr(_local, "capture_scope", None) is not None:
             raise bootstrap.RecoveryRequired("nested_capture_scope")
@@ -2469,10 +2906,19 @@ class MaintenanceSession:
 
     @contextmanager
     def _replacement_capture_scope(
-        self, plan, journal, staging, *, limits, byte_budget
+        self,
+        plan,
+        journal,
+        staging,
+        *,
+        limits,
+        byte_budget,
+        _source_archive=None,
+        _source_read_budget=None,
+        _source_journal=None,
+        cancel=None,
     ):
         """Bind only rechecked prepared local originals, including damaged config."""
-        from .limits import ArchiveLimits
         from .replacement import _checked_originals
 
         self._check()
@@ -2484,7 +2930,17 @@ class MaintenanceSession:
             raise ValueError("invalid_capture_budget")
         if getattr(_local, "capture_scope", None) is not None:
             raise bootstrap.RecoveryRequired("nested_capture_scope")
-        _, inventory = _checked_originals(plan, journal, self)
+        source_options = {}
+        if _source_read_budget is not None:
+            _source_read_budget.reserve(512)
+            source_options = {
+                "_source_archive": _source_archive,
+                "_source_read_budget": _source_read_budget,
+                "_source_journal": _source_journal,
+                "cancel": cancel,
+            }
+        originals = _checked_originals(plan, journal, self, **source_options)
+        _, inventory = originals
         selected = []
         for item in inventory.items:
             if item.path is not None and item.path.is_file():
@@ -2495,7 +2951,7 @@ class MaintenanceSession:
         if not selected:
             raise bootstrap.RecoveryRequired("capture_sources_required")
         with self._capture_bound_sources(tuple(selected), staging, limits, byte_budget):
-            yield
+            yield originals
 
     @contextmanager
     def _capture_bound_sources(self, selected, staging, limits, byte_budget):
@@ -2529,10 +2985,431 @@ class MaintenanceSession:
                 if getattr(_local, "capture_scope", None) is scope:
                     _local.capture_scope = None
 
+    def prepare_mobile_consolidation(
+        self,
+        journal,
+        *,
+        source_config,
+        target_config,
+        selections,
+        approved_scope,
+        source_fingerprint,
+        destination_witnesses,
+        destination_sidecars,
+        reviewed_preview,
+    ):
+        """Bind reviewed selectors under native gates, then persist the startup fence.
+
+        This initial preparation grants no owner access. Reopening the same journal
+        uses its typed witnesses and the same checked selectors; batch recovery is
+        the importer owner's responsibility.
+        """
+        from dataclasses import replace
+
+        from .inventory import read_profile_config
+        from .journal import Journal, _mobile_state, _MobilePrepared
+        from .mobile_consolidation import (
+            CanonicalConsoleStores,
+            MobileConsolidationPreview,
+            _credential_review_evidence,
+            _preview,
+            _preview_selected_mobile,
+            _selector_evidence,
+        )
+        from .profile_paths import canonical_console_paths, legacy_mobile_dir
+
+        self._check()
+        if type(journal) is not Journal:
+            raise TypeError("mobile_native_journal_required")
+        selectors = tuple(lexical_path(path) for path in (source_config, target_config))
+        if (
+            type(reviewed_preview) is not MobileConsolidationPreview
+            or not reviewed_preview.selector_provenance
+            or (reviewed_preview.source_selector, reviewed_preview.target_selector)
+            != selectors
+        ):
+            raise ValueError("mobile_selector_review_required")
+        reviewed_selectors = _selector_evidence(reviewed_preview)
+        credential_review = _credential_review_evidence(reviewed_preview)
+        root = self._control.parent
+        if (
+            root != bootstrap.default_bootstrap_root()
+            or UNBOUND_NAMESPACE not in self._names
+        ):
+            raise bootstrap.RecoveryRequired("mobile_session_scope_changed")
+        pending, profiles = bootstrap._records(root)
+        registry = bootstrap._registry(root)
+        bindings = [bootstrap._binding(path, profiles, registry) for path in selectors]
+        if any(
+            row is None or not set(row["namespaces"]) <= set(self._names)
+            for row in bindings
+        ):
+            raise bootstrap.RecoveryRequired(
+                "mobile_close_old_instance_enrollment_required"
+            )
+        with journal._locked(exclusive=False) as parent:
+            records = journal._records(parent)
+        if records:
+            if records[0].event != "mobile_prepared":
+                raise ValueError("mobile_journal_operation_changed")
+            prepared, witnesses = _mobile_state(records)
+            if pending or len(records) != 1:
+                control_records._mobile_pending(self, journal, prepared)
+            if selectors != (
+                Path(prepared.source_selector),
+                Path(prepared.target_selector),
+            ):
+                raise ValueError("mobile_selector_changed")
+        else:
+            if pending:
+                raise bootstrap.RecoveryRequired("recovery_pending")
+            self._discover_capture_inventory(
+                tuple(dict.fromkeys(selectors)),
+                selections,
+                approved_scope,
+                private_sqlite=True,
+            )
+        coordinator = (
+            _mobile_coordinator_budget(self)
+            if _mobile_admission(self)[4] is not None
+            else None
+        )
+        with self._discovery_reads(private_sqlite=True, _read_budget=coordinator):
+            current_review = _preview_selected_mobile(
+                *selectors, review_destination=not records, _read_budget=coordinator
+            )
+        authoritative_review = replace(
+            current_review,
+            credential_acknowledgements=reviewed_preview.credential_acknowledgements,
+        )
+        if records:
+            # Only journal-governed destination observations may have changed.
+            # Their original/current witnesses are independently checked below.
+            # Collision hints are advisory; source identity/mapping/count evidence
+            # and every field that drives this lifecycle remain native-derived.
+            authoritative_review = replace(
+                authoritative_review,
+                destination_witnesses=reviewed_preview.destination_witnesses,
+                destination_sidecars=reviewed_preview.destination_sidecars,
+                selector_provenance=reviewed_preview.selector_provenance,
+                identity_conflicts=reviewed_preview.identity_conflicts,
+            )
+        current_selectors = _selector_evidence(current_review)
+        if records:
+            if [
+                row.model_dump() for row in prepared.credential_review
+            ] != credential_review:
+                raise ValueError("mobile_credential_review_changed")
+            if [
+                row.model_dump() for row in prepared.selector_review
+            ] != reviewed_selectors:
+                raise ValueError("mobile_selector_review_changed")
+            # Native owner transitions govern this destination; other candidates
+            # retain their original strict physical review.
+            for current, original in zip(
+                current_selectors, reviewed_selectors, strict=False
+            ):
+                if (
+                    current["destination_identity"]
+                    == current_review.destination.identity
+                ):
+                    current["targets"] = original["targets"]
+        if current_selectors != reviewed_selectors:
+            raise ValueError("mobile_selector_review_changed")
+        if (
+            reviewed_preview != authoritative_review
+            or reviewed_preview.destination_witnesses != destination_witnesses
+            or reviewed_preview.destination_sidecars != destination_sidecars
+        ):
+            raise ValueError("mobile_preview_authority_changed")
+        with self._discovery_reads(private_sqlite=True, _read_budget=coordinator):
+            source = read_profile_config(selectors[0])
+            target = CanonicalConsoleStores(
+                *canonical_console_paths(read_profile_config(selectors[1]))
+            )
+            preview = _preview(
+                legacy_mobile_dir(source),
+                target,
+                source,
+                review_destination=False,
+                _read_budget=coordinator,
+            )
+        if preview.issues or preview.source_fingerprint != source_fingerprint:
+            raise ValueError("mobile_source_changed")
+        for binding, paths in zip(
+            bindings, (preview.capture_scope, target.paths), strict=True
+        ):
+            roots = bootstrap.effective_roots(
+                binding["roots"], (registry[name] for name in binding["namespaces"])
+            )
+            if any(not _contains_capture_path(roots, path) for path in paths):
+                raise bootstrap.RecoveryRequired("mobile_path_outside_scope")
+        if records:
+            reviewed_witnesses = tuple(
+                (
+                    row.witnesses[-1].path,
+                    tuple(
+                        (item.path, item.device, item.inode, item.mode)
+                        for item in row.witnesses
+                    ),
+                )
+                for row in prepared.targets
+            )
+            if (
+                prepared.inventory_digest != approved_scope
+                or reviewed_witnesses != destination_witnesses
+            ):
+                raise ValueError("mobile_review_changed")
+            original_sidecars = tuple(
+                (
+                    row.witnesses[-1].path,
+                    tuple(
+                        (item.path, item.device, item.inode, item.mode)
+                        for item in row.sidecars
+                    ),
+                )
+                for row in prepared.targets
+            )
+            if original_sidecars != destination_sidecars:
+                raise ValueError("mobile_review_changed")
+            if prepared.source_fingerprint != source_fingerprint or tuple(
+                row.witnesses[-1].path for row in prepared.targets
+            ) != tuple(map(str, target.paths)):
+                raise ValueError("mobile_review_changed")
+            if records[-1].event == "mobile_path_staged":
+                _mobile_publish_creation(self, journal)
+                with journal._locked(exclusive=False) as parent:
+                    records = journal._records(parent)
+                prepared, witnesses = _mobile_state(records)
+            _mobile_check_witnesses(records, witnesses, recovering_mode=True)
+            if records[-1].event == "mobile_path_intended":
+                raise bootstrap.RecoveryRequired("mobile_transition_unsettled")
+        else:
+            if (
+                preview.destination_witnesses != destination_witnesses
+                or preview.destination_sidecars != destination_sidecars
+            ):
+                raise ValueError("mobile_destination_changed")
+            from .mobile_lineage import _prepared_predecessor
+
+            prepared = _MobilePrepared(
+                predecessor=_prepared_predecessor(self, journal, reviewed_preview),
+                bootstrap_root=str(root),
+                namespaces=sorted(
+                    {name for row in bindings for name in row["namespaces"]}
+                ),
+                source_selector=str(selectors[0]),
+                target_selector=str(selectors[1]),
+                source_fingerprint=source_fingerprint,
+                inventory_digest=approved_scope,
+                selector_fingerprints=[row["fingerprint"] for row in bindings],
+                selector_review=reviewed_selectors,
+                credential_review=credential_review,
+                targets=[
+                    {
+                        "owner_id": owner,
+                        "sidecars": [
+                            dict(
+                                zip(
+                                    ("path", "device", "inode", "mode"),
+                                    item,
+                                    strict=True,
+                                )
+                            )
+                            for item in dict(destination_sidecars)[chain[-1][0]]
+                        ],
+                        "witnesses": [
+                            dict(
+                                zip(
+                                    ("path", "device", "inode", "mode"),
+                                    witness,
+                                    strict=True,
+                                )
+                            )
+                            for witness in chain
+                        ],
+                    }
+                    for owner, (_, chain) in zip(
+                        ("db.chachanotes.primary", "db.workspaces", "db.agent_runs"),
+                        destination_witnesses,
+                        strict=True,
+                    )
+                ],
+            )
+            with journal._locked(exclusive=True) as parent:
+                journal._append(parent, "mobile_prepared", prepared.model_dump())
+            control_records.register_pending(
+                root,
+                journal.operation_id,
+                tuple(prepared.namespaces),
+                journal.root.parent,
+                tuple(dict.fromkeys(selectors)),
+            )
+        if records and not pending and len(records) == 1:
+            if (
+                prepared.bootstrap_root != str(root)
+                or prepared.namespaces
+                != sorted({name for row in bindings for name in row["namespaces"]})
+                or prepared.selector_fingerprints
+                != [row["fingerprint"] for row in bindings]
+            ):
+                raise bootstrap.RecoveryRequired("mobile_pending_scope_changed")
+            # Only the prepared-before-effects gap can recreate the missing pair.
+            with journal._locked(exclusive=True) as parent:
+                journal._flush_record(parent, "000000.json", records[0].model_dump())
+                control_records.register_pending(
+                    root,
+                    journal.operation_id,
+                    tuple(prepared.namespaces),
+                    journal.root.parent,
+                    tuple(dict.fromkeys(selectors)),
+                )
+        control_records._mobile_pending(self, journal, prepared)
+        self._mobile_journal = journal
+
+    @contextmanager
+    def mobile_consolidation_owner(self, journal, owner_id):
+        """Construct one exact installed owner; retire physical handles before return."""
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+        from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+        from tldw_chatbook.DB.console_execution_owner import ConsoleExecutionOwner
+        from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+
+        from .journal import _mobile_active_owner, _mobile_sidecar_state, _mobile_state
+        from .mobile_native_operation import _acquire_run_owner
+
+        self._check()
+        if journal is not getattr(self, "_mobile_journal", None) or any(
+            getattr(_local, name, None) is not None
+            for name in (
+                "mobile_scope",
+                "capture_scope",
+                "discovery_scope",
+                "mobile_history_scope",
+                "mobile_sqlite_scope",
+            )
+        ):
+            raise bootstrap.RecoveryRequired("mobile_native_preparation_required")
+        from .mobile_native_operation import _require_readers_retired
+
+        _require_readers_retired(self)
+        from .mobile_consolidation_apply import _CapturedMobile
+        from .mobile_native_operation import _native_preopen
+
+        captured = None
+        for candidate in self._scopes:
+            if type(candidate) is _CapturedMobile and candidate.active:
+                if captured is not None or candidate.journal is not journal:
+                    raise ValueError("mobile_native_capture_cohort_changed")
+                _native_preopen(candidate, candidate.cancel)
+                captured = candidate
+        classes = {
+            "db.chachanotes.primary": CharactersRAGDB,
+            "db.workspaces": WorkspaceDB,
+            "db.agent_runs": AgentRunsDB,
+        }
+        if owner_id not in classes:
+            raise ValueError("mobile_owner_scope_invalid")
+        with journal._locked(exclusive=False) as parent:
+            records = journal._records(parent)
+        prepared, witnesses = _mobile_state(records)
+        control_records._mobile_pending(self, journal, prepared)
+        if records[-1].event not in {
+            "mobile_prepared",
+            "mobile_capture_verified",
+            "mobile_history_verified",
+            "mobile_path_observed",
+            "mobile_owner_retired",
+            "mobile_owner_opened",
+            "mobile_mode_observed",
+            "mobile_mode_intended",
+            "mobile_sidecars_observed",
+        }:
+            raise bootstrap.RecoveryRequired("mobile_owner_not_retired")
+        if (
+            _mobile_active_owner(records) is not None
+            and _mobile_active_owner(records)["owner_id"] != owner_id
+        ):
+            raise bootstrap.RecoveryRequired("mobile_owner_not_retired")
+        recovering_owner = _mobile_active_owner(records) is not None
+        target = next(row for row in prepared.targets if row.owner_id == owner_id)
+        for witness in target.witnesses:
+            _mobile_check_witnesses(records, witnesses, recovering_mode=True)
+            current = witnesses[witness.path]
+            if current["inode"] is not None:
+                continue
+            path = Path(witness.path)
+            kind = "database" if witness is target.witnesses[-1] else "directory"
+            _mobile_create_path(self, journal, path, kind, witnesses)
+            witnesses[str(path)] = _mobile_witness(path)
+        owner = {"owner_id": owner_id, "path": target.witnesses[-1].path}
+        scope = object.__new__(_MobileScope)
+        scope.session, scope.journal, scope.owner = self, journal, owner
+        scope.captured = captured
+        scope.witnesses, scope.resources = witnesses, []
+        scope.sidecars = _mobile_sidecar_state(records, owner_id)
+        scope.handed_off = False
+        scope.recovering_owner = recovering_owner
+        scope.recovering_mode = records[-1].event == "mobile_mode_intended"
+        scope.active, scope.close_failed = True, False
+        scope.execution_owner = None
+        scope.mode_fd = None
+        scope.execution_use = None
+        scope.execution_stream = None
+        scope.execution_fd = None
+        scope.repository = object.__new__(classes[owner_id])
+        scope.repository._mobile_consolidation_scope = scope
+        self._scopes.append(scope)
+        _mobile_admission(self)[1].append(scope)
+        if not recovering_owner:
+            with journal._locked(exclusive=True) as parent:
+                journal._append(parent, "mobile_owner_opened", owner)
+        _local.mobile_scope = scope
+        owner_admitted = False
+        try:
+            kwargs = {}
+            if owner_id == "db.agent_runs":
+                scope.execution_owner = _acquire_run_owner(ConsoleExecutionOwner, scope)
+                kwargs = {
+                    "execution_owner": scope.execution_owner,
+                    "reconcile_on_init": False,
+                }
+            if owner_id != "db.agent_runs":
+                scope.recover_mode()
+            owner_admitted = True
+            if recovering_owner and owner_id != "db.agent_runs":
+                scope.observe_sidecars("recovered")
+            if recovering_owner:
+                with journal._locked(exclusive=True) as parent:
+                    journal._append(parent, "mobile_owner_retired", owner)
+                    journal._append(parent, "mobile_owner_opened", owner)
+            if owner_id != "db.agent_runs":
+                scope.harden_store()
+            classes[owner_id].__init__(
+                scope.repository, Path(owner["path"]), "mobile-consolidation", **kwargs
+            )
+            yield scope.repository
+        finally:
+            try:
+                scope.retire()
+                if not recovering_owner or owner_admitted:
+                    with journal._locked(exclusive=True) as parent:
+                        if journal._records(parent)[-1].event != "mobile_mode_intended":
+                            journal._append(parent, "mobile_owner_retired", owner)
+            finally:
+                _local.mobile_scope = None
+
+    def mobile_history_files(self, captured, *, password, cancel):
+        """Issue only the fixed imported-history capability of this live operation."""
+        from .mobile_history_files import _history_files
+
+        return _history_files(self, captured, password=password, cancel=cancel)
+
     def _retire(self):
         self._active = False
         for scope in self._scopes:
             scope.retire()
+        _mobile_admissions.pop(self, None)
         if getattr(_local, "maintenance_session", None) is self:
             _local.maintenance_session = None
 
@@ -2563,6 +3440,8 @@ def _mint_maintenance_session(
     session._thread = threading.get_ident()
     session._active = True
     session._scopes = []
+    _mobile_admissions[session] = [session._scopes, [], None, None, None]
+    session._mobile_attempted_journal = None
     _local.maintenance_session = session
     try:
         session._refresh_roots()
@@ -2643,8 +3522,12 @@ class _CaptureFileDescriptors:
     """Operation-private FDs with conservative unresolved-close quarantine."""
 
     def __init__(self, scope):
+        budget = getattr(scope, "read_budget", None)
+        if budget is not None:
+            budget.reserve(512)
         self.scope = scope
         self.fds = []
+        self.directory_iterators = []
         self.close_failed = False
         if scope is not None:
             scope.resources.append(self)
@@ -2661,12 +3544,27 @@ class _CaptureFileDescriptors:
             self.close_failed = True
             raise bootstrap.RecoveryRequired("capture_resources_not_retired") from None
 
+    def close_directory_iterator(self, iterator) -> None:
+        """Retain an actual native iterator after any ambiguous close outcome."""
+        if self.close_failed or not any(
+            item is iterator for item in self.directory_iterators
+        ):
+            raise bootstrap.RecoveryRequired("capture_resources_not_retired")
+        try:
+            iterator.close()
+        except BaseException:  # noqa: BLE001 -- Every uncertain close, including cancellation, retains custody.
+            self.close_failed = True
+            raise bootstrap.RecoveryRequired("capture_resources_not_retired") from None
+        self.directory_iterators.remove(iterator)
+
     def pinned_directory(self, root: Path):
         return bootstrap.pinned_directory(root, _close=self.close_descriptor)
 
     def retire(self):
         if self.close_failed:
             raise bootstrap.RecoveryRequired("capture_resources_not_retired")
+        while self.directory_iterators:
+            self.close_directory_iterator(self.directory_iterators[-1])
         while self.fds:
             fd = self.fds[-1]
             self.close_descriptor(fd)
@@ -2675,14 +3573,16 @@ class _CaptureFileDescriptors:
             self.scope.resources.remove(self)
 
 
-def _check_capture_file_identity(scope, selected, info, *, source_only=False, owner_id=None):
+def _check_capture_file_identity(
+    scope, selected, info, *, source_only=False, owner_id=None
+):
     scope.check()
     if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
         raise bootstrap.RecoveryRequired("capture_file_not_regular")
     if type(scope) is _DiscoveryScope:
-        if not _contains_capture_path(scope.session._roots, selected) and not _config_capture_file(
-            scope.config_sources, selected, owner_id, info
-        ):
+        if not _contains_capture_path(
+            scope.session._roots, selected
+        ) and not _config_capture_file(scope.config_sources, selected, owner_id, info):
             raise bootstrap.RecoveryRequired("capture_source_outside_scope")
         return
     if type(scope) is _PreviewScope:
@@ -2699,55 +3599,6 @@ def _check_capture_file_identity(scope, selected, info, *, source_only=False, ow
 
 
 # Explicit installed owners; identifiers grant no path or maintenance authority.
-_RAW_RECOVERY_LIMITS = {
-    "research.paste_staging": 64 * 1024,
-    "collections.archives": 1,
-    "rag.definitions": 16 * 1024**2,
-    "rag.projections": 256 * 1024**3,
-    "recovered.media": 512 * 1024**2,
-    "plugins": 256 * 1024**3,
-    "generation.assets": 256 * 1024**3,
-    "diagnostics.logs": 256 * 1024**3,
-    "tokenizers.custom": 256 * 1024**3,
-    "skills": 256 * 1024**3,
-    "persona.assets": 256 * 1024**3,
-    "persona.actor_packs": 256 * 1024**3,
-    "persona.visual_identity": 256 * 1024**3,
-    "persona.visual_identity_builtin": 256 * 1024**3,
-    "tts.voices": 256 * 1024**3,
-    "models.artifacts": 256 * 1024**3,
-    "config": 16 * 1024**2,
-    "config.history": 16 * 1024**2,
-    "personas": 256 * 1024**3,
-    "chat.dictionary_history": 256 * 1024**3,
-    "chat.rag_context": 256 * 1024**3,
-    "chat.grammars": 256 * 1024**3,
-    "feedback": 256 * 1024**3,
-    "audio.history": 256 * 1024**3,
-    "chat.prompt_history": 256 * 1024**3,
-    "ui.state": 256 * 1024**3,
-    "ui.emoji_recents": 256 * 1024**3,
-    "ui.themes": 256 * 1024**3,
-    "chatbooks.registry": 256 * 1024**3,
-    "chatbooks.archives": 256 * 1024**3,
-    "chat.dictionaries": 256 * 1024**3,
-    "chunking.templates": 256 * 1024**3,
-    "notes.templates": 256 * 1024**3,
-    "chat.prompts": 256 * 1024**3,
-    "generation.styles": 256 * 1024**3,
-    "external.files": 256 * 1024**3,
-    "eval.definitions": 1024**4,
-    "mcp.local": 16 * 1024**2,
-    "mcp.targets": 16 * 1024**2,
-    "mcp.context": 16 * 1024**2,
-    "mcp.permissions": 16 * 1024**2,
-    "mcp.history": 256 * 1024**3,
-    "runtime.source_state": 16 * 1024**2,
-    "tamagotchi.config": 16 * 1024**2,
-    "workspaces.change_tracking": 256 * 1024**3,
-    "agents.history": 256 * 1024**3,
-    "subscriptions.assets": 256 * 1024**3,
-}
 
 
 def _recovery_file_limit(owner_id: str, max_bytes: int) -> None:
@@ -2882,12 +3733,31 @@ def _check_recovery_file(
     )
 
 
+def _recovery_read_budget(scope, supplied):
+    """Select accounting only; source admission remains with the native scope."""
+    native = getattr(scope, "read_budget", None)
+    if supplied is None:
+        return native
+    from tldw_chatbook.Backup_Recovery.models import _TraceReadBudget
+
+    from .mobile_preview_budget import current
+
+    if type(supplied) is not _TraceReadBudget:
+        raise TypeError("native_read_budget_required")
+    active = current()
+    expected = active.read_budget if active is not None else native
+    if expected is not None and supplied is not expected:
+        raise ValueError("mobile_preview_budget_changed")
+    return supplied
+
+
 def _digest_recovery_file(
     owner_id: str,
     candidate: Path,
     *,
     max_bytes: int,
     cancel: threading.Event | None = None,
+    _read_budget=None,
 ) -> tuple[int, str]:
     """Return actual byte count/SHA256 only after positive native retirement."""
     return _consume_recovery_file(
@@ -2897,6 +3767,7 @@ def _digest_recovery_file(
         collect=False,
         cancel=cancel,
         digest=True,
+        _read_budget=_read_budget,
     )
 
 
@@ -2909,10 +3780,10 @@ def _consume_recovery_file(
     cancel: threading.Event | None = None,
     digest: bool = False,
     private: bool = False,
+    _read_budget=None,
 ) -> bytes | tuple[int, str] | None:
     """Return bounded definition bytes after native reader retirement."""
     _recovery_file_limit(owner_id, max_bytes)
-    selected = lexical_path(candidate)
     # Final rediscovery may run inside capture_scope. Its bounded reads use the
     # explicitly held discovery namespace, not the narrower payload source set.
     scope = (
@@ -2920,6 +3791,13 @@ def _consume_recovery_file(
         or getattr(_local, "capture_scope", None)
         or getattr(_local, "preview_scope", None)
     )
+    native_budget = getattr(scope, "read_budget", None)
+    read_budget = _recovery_read_budget(scope, _read_budget)
+    if read_budget is not None:
+        from .mobile_preview_budget import path_cost
+
+        read_budget.reserve(2048 + path_cost(candidate, copies=2))
+    selected = lexical_path(candidate)
     lease = acquire_storage(selected) if scope is None else None
     resources = _CaptureFileDescriptors(scope)
     try:
@@ -2939,17 +3817,55 @@ def _consume_recovery_file(
                 raise bootstrap.RecoveryRequired("credential_staging_required")
             if scope is not None:
                 _check_capture_file_identity(scope, selected, info, owner_id=owner_id)
+            if read_budget is not None:
+                if info.st_size > max_bytes:
+                    raise ValueError("definition_byte_limit")
+                read_budget.reserve(256 + (2 * info.st_size if collect else 0))
             chunks = []
             import hashlib
 
             hasher = hashlib.sha256() if digest else None
             total = 0
+            digest_buffer = None
             while True:
                 if cancel is not None and cancel.is_set():
                     raise InterruptedError("cancelled")
                 if scope is not None:
                     scope.check()
-                chunk = os.read(fd, min(1024**2, max_bytes - total + 1))
+                size = min(1024**2, max_bytes - total + 1)
+                if read_budget is not None:
+                    size = min(size, max(1, info.st_size - total + 1))
+                    read_budget.reserve(768)
+                if native_budget is not None and not collect:
+                    copies = (
+                        scope.sqlite_copies if type(scope) is _DiscoveryScope else scope
+                    )
+                    view = copies._buffer()[: min(size, 65536)]
+                    length = os.readv(fd, [view])
+                    chunk = view[:length]
+                elif (
+                    _read_budget is not None
+                    and digest
+                    and not collect
+                    and hasattr(os, "readv")
+                ):
+                    if digest_buffer is None:
+                        if type(scope) is _CaptureScope:
+                            if scope._digest_buffer is None:
+                                read_budget.reserve(65536 + 1024)
+                                scope._digest_buffer = memoryview(bytearray(65536))
+                            digest_buffer = scope._digest_buffer
+                        else:
+                            width = min(65536, max(1, info.st_size + 1))
+                            read_budget.reserve(width + 1024)
+                            digest_buffer = memoryview(bytearray(width))
+                    view = digest_buffer[: min(size, len(digest_buffer))]
+                    length = os.readv(fd, [view])
+                    chunk = view[:length]
+                else:
+                    if _read_budget is not None:
+                        read_budget.reserve(64 + size)
+                    chunk = os.read(fd, size)
                 if not chunk:
                     break
                 total += len(chunk)
@@ -2972,6 +3888,8 @@ def _consume_recovery_file(
                 ):
                     raise bootstrap.RecoveryRequired("capture_target_changed")
             if hasher is not None:
+                if _read_budget is not None:
+                    read_budget.reserve(512)
                 return total, hasher.hexdigest()
             return b"".join(chunks) if collect else None
     finally:
@@ -2989,6 +3907,7 @@ def copy_capture_file(
     cancel: threading.Event,
     *,
     max_bytes: int,
+    _read_budget=None,
 ) -> None:
     """Copy one enrolled regular file into private staging without exposed handles.
 
@@ -3001,6 +3920,13 @@ def copy_capture_file(
     if scope is None:
         raise bootstrap.RecoveryRequired("capture_requires_maintenance")
     scope.check()
+    read_budget = _recovery_read_budget(scope, _read_budget)
+    if _read_budget is not None:
+        from .mobile_preview_budget import path_cost
+
+        read_budget.reserve(
+            2048 + path_cost(source, copies=2) + path_cost(destination, copies=2)
+        )
     source = lexical_path(source)
     destination = lexical_path(destination)
     if scope.staging not in destination.parents:
@@ -3035,17 +3961,24 @@ def copy_capture_file(
             scope.check()
             if cancel.is_set():
                 raise InterruptedError("cancelled")
-            chunk = os.read(fd, min(1024**2, max_bytes - total + 1))
+            width = min(1024**2, max_bytes - total + 1)
+            if _read_budget is not None:
+                read_budget.reserve(64 + width)
+            chunk = os.read(fd, width)
             if not chunk:
                 break
             total += len(chunk)
             if total > max_bytes:
                 raise ValueError("capture_byte_limit")
+            if _read_budget is not None:
+                read_budget.reserve(256)
             view = memoryview(chunk)
             while view:
                 count = os.write(out, view)
                 if count <= 0:
                     raise OSError("capture_write_unavailable")
+                if _read_budget is not None:
+                    read_budget.reserve(256)
                 view = view[count:]
         os.fsync(out)
         scope.check()

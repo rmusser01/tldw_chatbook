@@ -2832,6 +2832,7 @@ def test_library_skill_trust_setup_explanation_css_block_matches_review_files_pa
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_library_shell_rail_switch_vetoed_while_skill_editor_dirty():
     """task-448 P0 regression: switching Library rail rows while the skill
     editor holds an unsaved edit must veto the switch -- the same contract

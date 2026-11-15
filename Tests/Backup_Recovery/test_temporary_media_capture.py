@@ -348,6 +348,8 @@ async def main():
         store.append_video_message(session.id, video_metadata=metadata, persist=True, message_id=message)
     store.append_video_message(session.id, video_metadata=VideoGenerationMetadata(name='expired', prompt='expired', backend='comfyui'), persist=True, message_id='expired-message')
     options = {'staging_parent': home, 'temporary_media': True}
+    # Finish the constructor's native read before freezing reviewed scope.
+    await app.console_runtime._attention_refresh_task
     preview = preview_capture((selector,), options=options)
     assert preview.complete, (preview.issues, [(i.owner, i.status, str(i.path)) for i in preview.items])
     destination = home / 'retained-temporary.tldw-backup.zip'
@@ -536,6 +538,8 @@ async def main():
         (home/'second-media-facts.json').write_text(json.dumps(facts,sort_keys=True))
     selector = Path(os.environ['TLDW_CONFIG_PATH'])
     options = {'staging_parent':home, 'temporary_media':False}
+    # Finish the constructor's native read before freezing reviewed scope.
+    await app.console_runtime._attention_refresh_task
     preview = preview_capture((selector,), options=options)
     assert preview.complete, (preview.issues, [(i.owner,i.status,i.path) for i in preview.items if i.status == 'unsupported'])
     from tldw_chatbook.Evals import _override_config_path

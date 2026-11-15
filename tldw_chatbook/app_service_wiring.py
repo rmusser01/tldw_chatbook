@@ -525,48 +525,12 @@ def _install_deferred_notes_sync_facades(app: Any) -> bool:
 
 
 def _notes_sync_state_db_has_configured_roots(state_path: Any) -> bool:
-    """Whether the notes-sync state DB on disk carries real configuration.
+    """Whether the notes-sync state DB on disk carries real configuration."""
+    from .Notes import notes_sync_legacy
 
-    TASK-21240: the TASK-21112 start gate's second clause was a bare
-    ``state_path.exists()``, which an ABANDONED first-time setup satisfies
-    forever -- opening setup force-starts the runtime (creating and
-    schema-initializing the file), and abandoning it without configuring a
-    sync directory leaves an empty store that re-arms the gate on every
-    subsequent boot. The honest evidence is a configured ROOT in
-    ``notes_sync_roots``.
-
-    Use the notes owner for read-only SELECTs, without creating or migrating
-    the database; its private-path and permission checks still apply. Corrupt
-    or unopenable stores raise so callers attempt normal runtime startup.
-
-    Args:
-        state_path: The state DB path from ``get_notes_sync_state_db_path()``.
-
-    Returns:
-        True when at least one sync root is configured; False when the file
-        is absent, schema-only (the abandoned-setup case), or missing the
-        roots table entirely.
-    """
-    from pathlib import Path as _Path
-
-    path = _Path(state_path)
-    if not path.exists():
-        return False
-    import sqlite3
-
-    from tldw_chatbook.Notes.notes_device_state_store import NotesDeviceStateStore
-
-    connection = NotesDeviceStateStore(path)._connect(read_only=True, must_exist=True)
-    try:
-        row = connection.execute(
-            "SELECT 1 FROM notes_sync_roots LIMIT 1"
-        ).fetchone()
-    except sqlite3.OperationalError:
-        # No such table: a store whose schema never reached root creation.
-        return False
-    finally:
-        connection.close()
-    return row is not None
+    return notes_sync_legacy._notes_sync_state_db_has_configured_roots(
+        state_path,
+    )
 
 
 def _task_ended_without_result(task: "asyncio.Task[None]") -> bool:
@@ -585,6 +549,16 @@ async def _await_notes_sync_start(pending: Any) -> None:
     from .Notes.notes_sync_startup import _await_notes_sync_start as delegated
 
     return await delegated(pending)
+
+
+def _notes_sync_state_has_imports(state_path: Any, core: Any) -> bool:
+    """Extra start evidence only for an existing exact cutover marker."""
+    from .Notes import notes_sync_legacy
+
+    return notes_sync_legacy._notes_sync_state_has_imports(
+        state_path,
+        core,
+    )
 
 
 def _notes_sync_boot_start_evidence(app: Any) -> bool:
@@ -615,9 +589,14 @@ def _notes_sync_boot_start_evidence(app: Any) -> bool:
 
     if legacy_sync_directory_configured(app.app_config):
         return True
-    return _notes_sync_state_db_has_configured_roots(
-        get_notes_sync_state_db_path()
-    )
+    state_path = get_notes_sync_state_db_path()
+    if _notes_sync_state_db_has_configured_roots(state_path):
+        return True
+    try:
+        core = app.chachanotes_db
+    except AttributeError:
+        core = None
+    return _notes_sync_state_has_imports(state_path, core)
 
 
 def _wire_notes_sync_services(app: Any) -> None:
@@ -877,6 +856,7 @@ class ServiceWiringMixin(
             legacy_sync_directory_configured,
         )
         from .Notes.notes_sync_runtime import (  # noqa: PLC0415
+            build_notes_sync_import_reviewer,
             build_notes_sync_legacy_migrator,
             build_notes_sync_runtime_owner,
         )
@@ -892,6 +872,7 @@ class ServiceWiringMixin(
         notes_sync_state_path = get_notes_sync_state_db_path()
         local_user_id = self.notes_user_id
         app_config = self.app_config
+        core = self.chachanotes_db
         notes_sync_watcher_interval, notes_sync_watcher_max_interval = (
             get_notes_sync_watcher_intervals(app_config)
         )
@@ -912,11 +893,16 @@ class ServiceWiringMixin(
             profile_process_is_sole=self._instance_lock_status.acquired,
             database_path=notes_sync_state_path,
             migrate_legacy=notes_sync_migrator,
+            review_imported_notes=build_notes_sync_import_reviewer(
+                database_path=notes_sync_state_path,
+                core=core,
+                note_scope_id=ScopeType.LOCAL_NOTE.value,
+                file_notes_binding=self._notes_sync_file_notes_binding,
+                private_paths=(notes_sync_state_path, get_chachanotes_db_path()),
+            ),
             file_notes_binding=self._notes_sync_file_notes_binding,
             local_user_id=local_user_id,
-            recovery_capacity_bytes=get_notes_sync_recovery_capacity_bytes(
-                app_config
-            ),
+            recovery_capacity_bytes=get_notes_sync_recovery_capacity_bytes(app_config),
             # TASK-21112 boot gate: start only on actual configuration — the
             # legacy [notes] sync-directory key (one-time migration path) or
             # a configured root in the state DB already on disk. The
@@ -930,9 +916,10 @@ class ServiceWiringMixin(
             # that deliberately rides the gate's fail-open path — one full
             # start attempt, which is the safe direction and is memoized.
             start_evidence=(
-                lambda settings=app_config, state_path=notes_sync_state_path: (
+                lambda settings=app_config, state_path=notes_sync_state_path, selected_core=core: (
                     legacy_sync_directory_configured(settings)
                     or _notes_sync_state_db_has_configured_roots(state_path)
+                    or _notes_sync_state_has_imports(state_path, selected_core)
                 )
             ),
             watcher_interval_seconds=notes_sync_watcher_interval,
@@ -1089,53 +1076,28 @@ class ServiceWiringMixin(
                 return None
 
     def ensure_notes_sync_runtime_started(self) -> "asyncio.Task[None] | None":
-        """Schedule the owner's NON-forced ``start()`` when boot's gate skipped it.
+        """Schedule the Notes Sync owner's non-forced start if boot skipped it.
 
-        TASK-34000.71: on a profile with no lasting-sync root, ``on_mount``
-        neither constructs nor starts the runtime (TASK-21247), and the
-        Library screen later builds the owner lazily without starting it --
-        so it sits at its constructor status ``"starting"``, which the setup
-        gate refuses, while the one force-start that would move it
-        (``review_setup``) is reachable only through the option that gate
-        refuses. The Library side calls this once it holds the owner. A
-        non-forced start runs the same TASK-21112 evidence probe boot would
-        have: with no root it defers to ``"not_configured"`` WITHOUT opening
-        the state store (the status first-time setup is offered from), and
-        with a configured root it is the full start boot would have run.
+        TASK-34000.71: a profile without a lasting sync root never starts at
+        boot. Without this call, the lazy Library owner stays at "starting"
+        and cannot reach setup. The ordinary evidence probe settles an
+        unconfigured profile without opening the state store, or starts a
+        configured one normally.
 
-        Idempotent, and a no-op in every case where there is nothing to do:
-        a start task already recorded (boot's own, or an earlier call here)
-        is returned as-is, so a configured user's in-flight boot start is
-        never doubled or re-reported; a build failure (``safe reader``) and
-        an owner double without ``start`` schedule nothing. The task slot is
-        written under the owner-construction lock, so a racing first reader
-        cannot schedule two starts over one owner, and it carries the boot
-        path's task name and done-callback (``_observe_notes_sync_runtime_
-        start``), which is what makes a lazily started runtime stop at exit
-        exactly like a boot-started one. Must be called on the event-loop
-        thread: without a running loop nothing is scheduled.
+        The construction lock makes this idempotent. Return a recorded
+        in-flight or completed start, and preserve the boot task name and
+        observer so shutdown also retires a lazy start. Only the task this
+        method schedules gets the Library's bounded settle wait. The method
+        requires a running event loop, a constructed owner, and a callable
+        start. A synchronous double schedules nothing; a non-coroutine
+        awaitable is wrapped.
 
-        Fix round 1:
-
-        - M-1: a task THIS path scheduled is also recorded on
-          ``_notes_sync_runtime_lazy_start_task``; the Library's bounded
-          settle wait applies only to that one, never to boot's own.
-        - M-2: a recorded task that ended with an exception or was cancelled
-          (a ``RecoveryRequired`` refusal from a paused producer, say) while
-          the owner still reports ``"starting"`` is the original defect in
-          another coat -- setup would stay inert for the session -- so one
-          call re-arms exactly one new start. Bounded: a permanently failing
-          start retries once per call (one per user action), never in a
-          loop, and a task that failed after the owner settled elsewhere is
-          left as history.
-        - M-3: ``start()`` may be a synchronous double; a non-awaitable
-          result schedules nothing (the docstring's "doubles are a no-op" is
-          then true in code), and an awaitable that is not a coroutine is
-          awaited through a wrapper.
+        If a recorded start failed or was cancelled while the owner still
+        reports "starting", allow one new start on this call. A task that
+        failed after the owner settled elsewhere stays as history.
 
         Returns:
-            The start task (new or existing), or None when nothing was
-            scheduled.
+            The existing or newly scheduled task, or None if there is none.
         """
         existing = getattr(self, "_notes_sync_runtime_start_task", None)
         if existing is not None and not _task_ended_without_result(existing):
@@ -2176,8 +2138,17 @@ class ServiceWiringMixin(
         self.change_review_consent_service = None
         self._tool_pack_guard_bootstrap = None
         try:
+            from tldw_chatbook.config import preflight_selected_console_stores
+
+            selected_workspace = get_workspaces_db_path()
+            preflight_selected_console_stores(
+                chat_path=getattr(
+                    getattr(self, "chachanotes_db", None), "db_path", None
+                ),
+                workspace_path=selected_workspace,
+            )
             self.local_workspace_db = WorkspaceDB(
-                get_workspaces_db_path(),
+                selected_workspace,
                 CLI_APP_CLIENT_ID,
             )
             self.workspace_registry_service = LocalWorkspaceRegistryService(

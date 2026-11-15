@@ -5,20 +5,27 @@ entry checks SQLite content and owned BLOBs; it never opens those external paths
 """
 
 import sqlite3
-from contextlib import closing, contextmanager
+from collections.abc import Iterator
+from contextlib import ExitStack, closing, contextmanager
 from contextvars import ContextVar
+from functools import partial
 from pathlib import Path
 from threading import Event
 from time import monotonic
+from typing import Any
 
 from .models import OwnerAdapter
-from tldw_chatbook.DB.recovery_sqlite import _split_statistics, _statistics_metadata
+from tldw_chatbook.DB.recovery_sqlite import (
+    _CATALOG_BYTES,
+    _CATALOG_LIMIT,
+    _read_bounded_catalog,
+    _split_statistics,
+    _statistics_metadata,
+)
 
 _PROGRESS_INTERVAL = 1000
 _STEP_BUDGET = 5_000_000
 _SECONDS = 30.0
-_CATALOG_LIMIT = 10_000
-_CATALOG_BYTES = 8 * 1024**2
 
 
 _active_restrictions = ContextVar("recovery_sqlite_restrictions", default=None)
@@ -86,6 +93,23 @@ def _installed_owner(owner_id):
                 if policy is not None and policy.schema_sql:
                     return owner
     raise ValueError("unsupported_sqlite_owner")
+
+
+@contextmanager
+def _open_installed_candidate(owner_id, path, *, cancel=None, _custody=None):
+    """Retain the native restricted read of an installed owner's candidate."""
+    from tldw_chatbook.DB.private_sqlite import open_recovery_validation
+
+    installed = _installed_owner(owner_id)
+    with open_recovery_validation(
+        installed.owner_id,
+        path,
+        writable=False,
+        with_restrictions=True,
+        cancel=cancel,
+        _custody=_custody,
+    ) as (connection, restrictions):
+        yield connection, restrictions, installed
 
 
 #: The five Evals tables whose inert ``version`` column the v5 -> v6 step drops.
@@ -368,7 +392,13 @@ class _Restrictions:
                 "foreign_key_check",
                 "data_version",
             }
-            metadata = {"table_xinfo", "index_list", "index_xinfo", "table_list"}
+            metadata = {
+                "table_xinfo",
+                "index_list",
+                "index_xinfo",
+                "table_list",
+                "foreign_key_list",
+            }
             permitted = (first in reads and second is None) or first in metadata
             permitted |= first == "trusted_schema" and second in ("OFF", "0")
             permitted |= (
@@ -434,6 +464,50 @@ class _Restrictions:
         if self.migrating:
             if action == sqlite3.SQLITE_TRANSACTION:
                 return sqlite3.SQLITE_OK
+            if self.migration_owner in {
+                "db.chachanotes.primary",
+                "db.workspaces",
+                "db.agent_runs",
+            }:
+                tables = {"mobile_consolidation_batches"}
+                locators = set()
+                if self.migration_owner != "db.chachanotes.primary":
+                    tables.add("mobile_import_authority_holds")
+                else:
+                    # TASK-36510: v87 also indexes the voice-promotion locators.
+                    locators = {
+                        ("idx_hook_continuation_receipts_assistant_message", "console_hook_continuation_receipts"),
+                        ("idx_hook_continuation_receipts_parent_message", "console_hook_continuation_receipts"),
+                        ("idx_machine_followup_receipts_assistant_message", "console_machine_followup_receipts"),
+                        ("idx_machine_followup_receipts_parent_message", "console_machine_followup_receipts"),
+                        ("idx_response_rule_assessments_message", "console_response_rule_assessments"),
+                        ("idx_response_rule_drafts_message", "console_response_rule_drafts"),
+                        ("idx_response_rule_fixtures_message", "console_response_rule_fixtures"),
+                        ("idx_response_rule_validations_message", "console_response_rule_validations"),
+                    }
+                if (
+                    database == "main"
+                    and source is None
+                    and (
+                        action == sqlite3.SQLITE_CREATE_TABLE
+                        and first in tables
+                        or action == sqlite3.SQLITE_CREATE_INDEX
+                        and (first, second)
+                        in locators
+                        | {(f"sqlite_autoindex_{table}_1", table) for table in tables}
+                        or action == sqlite3.SQLITE_REINDEX
+                        and first in {name for name, _table in locators}
+                        or action == sqlite3.SQLITE_INSERT
+                        and first == "sqlite_master"
+                        or action == sqlite3.SQLITE_UPDATE
+                        and first == "sqlite_master"
+                        and second in {"type", "name", "tbl_name", "rootpage", "sql"}
+                        or self.migration_owner == "db.workspaces"
+                        and action == sqlite3.SQLITE_INSERT
+                        and first == "schema_version"
+                    )
+                ):
+                    return sqlite3.SQLITE_OK
             if self.migration_owner == "db.chachanotes.primary":
                 allowed = (
                     action == sqlite3.SQLITE_UPDATE
@@ -918,13 +992,26 @@ class _Restrictions:
                 ):
                     return sqlite3.SQLITE_OK
 
-                if database == "main" and source is None and (
-                    action == sqlite3.SQLITE_CREATE_TABLE and first in GOAL_TABLES
-                    or action == sqlite3.SQLITE_CREATE_TABLE
-                    and first == "automatic_review_boundary_claims"
-                    or action == sqlite3.SQLITE_CREATE_INDEX
-                    and (first, second) in GOAL_AUTO_INDEXES | REVIEW_BOUNDARY_AUTO_INDEXES
-                    or action == sqlite3.SQLITE_CREATE_TRIGGER and first == "goal_launch_immutable" and second == "goal_runs"
+                if (
+                    database == "main"
+                    and source is None
+                    and (
+                        action == sqlite3.SQLITE_CREATE_TABLE
+                        and first in GOAL_TABLES
+                        or action == sqlite3.SQLITE_CREATE_TABLE
+                        and first == "automatic_review_boundary_claims"
+                        or action == sqlite3.SQLITE_CREATE_INDEX
+                        and (first, second)
+                        in GOAL_AUTO_INDEXES | REVIEW_BOUNDARY_AUTO_INDEXES
+                        or action == sqlite3.SQLITE_CREATE_TRIGGER
+                        and first == "goal_launch_immutable"
+                        and second == "goal_runs"
+                        or action == sqlite3.SQLITE_CREATE_TABLE
+                        and first == "console_command_receipts"
+                        or action == sqlite3.SQLITE_CREATE_INDEX
+                        and first == "sqlite_autoindex_console_command_receipts_1"
+                        and second == "console_command_receipts"
+                    )
                 ):
                     return sqlite3.SQLITE_OK
                 allowed = (
@@ -1116,20 +1203,30 @@ def _restrict_connection(connection, cancel=None):
         raise ValueError("sqlite_security_unavailable") from error
 
 
-def _catalog(connection):
-    rows = []
-    size = 0
-    for row in connection.execute(
-        "SELECT type,name,tbl_name,sql FROM sqlite_schema ORDER BY type,name"
-    ):
-        size += sum(len(value.encode("utf-8")) for value in row if value is not None)
-        if len(rows) >= _CATALOG_LIMIT or size > _CATALOG_BYTES:
-            raise ValueError("sqlite_resource_limit")
-        rows.append(tuple(row))
-    return tuple(rows)
+def _catalog(connection, *, _schemas=None):
+    from .mobile_preview_budget import catalog_cost, current, literal_catalog
+
+    if _schemas is not None and current() is not None:
+        return literal_catalog(connection, _schemas)
+    catalog_cost(connection)
+    return _read_bounded_catalog(
+        connection, row_limit=_CATALOG_LIMIT, byte_limit=_CATALOG_BYTES
+    )
+
+
+def _budgeted_legacy_catalog_reader(connection):
+    from .mobile_preview_budget import scalar_cost
+    from tldw_chatbook.DB.recovery_operations import _LEGACY_WORKFLOW_SCHEMAS
+
+    scalar_cost(connection, 3)
+    return partial(_catalog, _schemas=_LEGACY_WORKFLOW_SCHEMAS)
 
 
 def _metadata(connection, catalog, restrictions=None):
+    from .mobile_preview_budget import pragma_cost, reserve
+
+    reserve(256 + 96 * len(catalog))
+
     def quote(name):
         return '"' + name.replace('"', '""') + '"'
 
@@ -1144,6 +1241,7 @@ def _metadata(connection, catalog, restrictions=None):
                     and "USING fts5(" in sql
                 )
             try:
+                pragma_cost(connection, "table_xinfo", name)
                 columns = tuple(
                     tuple(row)
                     for row in connection.execute(f"PRAGMA table_xinfo({quote(name)})")
@@ -1152,6 +1250,7 @@ def _metadata(connection, catalog, restrictions=None):
                 if restrictions is not None:
                     restrictions.reading_fts_metadata = False
             # Sequence reflects creation order, not index semantics.
+            pragma_cost(connection, "index_list", name)
             indexes = tuple(
                 sorted(
                     row[1:]
@@ -1160,6 +1259,7 @@ def _metadata(connection, catalog, restrictions=None):
             )
             result.append((name, columns, indexes))
         elif kind == "index":
+            pragma_cost(connection, "index_xinfo", name)
             result.append(
                 (
                     name,
@@ -1201,6 +1301,7 @@ def _canvas_schema_access(connection, schema, restrictions=None):
         CHACHANOTES_V84_SCHEMAS,
         CHACHANOTES_V85_SCHEMAS,
         CHACHANOTES_V86_SCHEMAS,
+        CHACHANOTES_V87_SCHEMAS,
         CORE_SCHEMAS,
     )
 
@@ -1228,6 +1329,7 @@ def _canvas_schema_access(connection, schema, restrictions=None):
         *CHACHANOTES_V84_SCHEMAS,
         *CHACHANOTES_V85_SCHEMAS,
         *CHACHANOTES_V86_SCHEMAS,
+        *CHACHANOTES_V87_SCHEMAS,
         *(sql for _, sql in _SUBSCRIPTIONS_SCHEMA),
     )
     if schema not in frozen:
@@ -1284,18 +1386,38 @@ def _canvas_payload_issues(connection, restrictions):
     return ()
 
 
-def _reference(schema):
+def _reference(schema, *, _scope=None):
     from tldw_chatbook.DB.recovery_workflow_schema import open_installed_schema
 
-    with closing(open_installed_schema()) as reference:
+    from .mobile_preview_budget import current, reserve
+
+    preview_scope = current()
+    if preview_scope is not None:
+        if _scope is not None and _scope is not preview_scope:
+            raise ValueError("mobile_preview_scope_changed")
+        _scope = preview_scope
+        # Reference schema is installed text. These are new statement/catalog
+        # containers and fixed scalar query results, not a second data copy.
+        reserve(4096 + 1024 * len(schema))
+
+    with ExitStack() as resources:
+        reference = open_installed_schema()
+        if _scope is None:
+            resources.enter_context(closing(reference))
+        else:
+            from .storage_admission import _CaptureLease
+
+            lease = _CaptureLease(_scope)
+            lease.attach(reference)
+            resources.callback(lease.retire)
         reference.execute("PRAGMA trusted_schema=OFF")
         with _canvas_schema_access(reference, schema):
             # Execute only the installed catalog, never the candidate's SQL text.
             tables = [
                 sql
                 for sql in schema
-                if sql.upper().startswith("CREATE TABLE")
-                or sql.upper().startswith("CREATE VIRTUAL TABLE")
+                if sql[:20].upper().startswith("CREATE TABLE")
+                or sql[:20].upper().startswith("CREATE VIRTUAL TABLE")
             ]
             others = [sql for sql in schema if sql not in tables]
             for sql in tables + others:
@@ -1316,11 +1438,18 @@ def _reference(schema):
                 if existing:
                     continue
                 reference.execute(sql)
-            catalog = _catalog(reference)
+            catalog = (
+                _catalog(reference, _schemas=((0, schema),))
+                if preview_scope is not None
+                else _catalog(reference)
+            )
             return catalog, _metadata(reference, catalog)
 
 
 def _version(connection, owner_id):
+    from .mobile_preview_budget import scalar_cost, table_cost
+
+    scalar_cost(connection, 2)
     if owner_id in {
         "db.chachanotes.primary",
         "study.local",
@@ -1355,20 +1484,35 @@ def _version(connection, owner_id):
     else:
         query = "PRAGMA user_version"
     if owner_id == "db.dreams":
-        history = [row[0] for row in connection.execute("SELECT version FROM schema_version")]
-        if not history or any(type(version) is not int or version not in range(1, 7) for version in history):
+        table_cost(connection, "schema_version", ("version",))
+        history = [
+            row[0] for row in connection.execute("SELECT version FROM schema_version")
+        ]
+        if not history or any(
+            type(version) is not int or version not in range(1, 7)
+            for version in history
+        ):
             return None
     rows = connection.execute(query).fetchmany(2)
     return rows[0][0] if len(rows) == 1 else None
 
 
-def _check(connection, owner, policy, restrictions):
+def _check_details(connection, owner, policy, restrictions):
+    from .mobile_preview_budget import current, integrity_cost, reserve
+
     if restrictions.expired():
         raise ValueError("sqlite_resource_limit")
-    actual = _catalog(connection)
-    base, stats = (
-        _split_statistics(actual) if owner.owner_id == "db.agent_runs" else (actual, ())
+    actual = (
+        _catalog(connection, _schemas=policy.schema_sql)
+        if current() is not None
+        else _catalog(connection)
     )
+    reserve(256 + 64 * (len(actual) + len(policy.schema_sql)))
+    if owner.owner_id == "db.agent_runs":
+        reserve(128 + 32 * len(actual))
+        base, stats = _split_statistics(actual)
+    else:
+        base, stats = actual, ()
     actual_sql = tuple(row[3] for row in base if row[3] is not None)
     matched = tuple(
         (version, schema)
@@ -1376,25 +1520,31 @@ def _check(connection, owner, policy, restrictions):
         if schema == actual_sql
     )
     if not matched:
-        return ("unsupported_schema",), None
+        return ("unsupported_schema",), None, None
     # Only after exact catalog match may metadata/version/domain queries prepare
     # expressions contained in the imported schema.
     version = _version(connection, owner.owner_id)
     if version not in policy.versions or not any(v == version for v, _ in matched):
-        return ("unsupported_schema_version",), None
+        return ("unsupported_schema_version",), None, None
     with _canvas_schema_access(connection, matched[0][1], restrictions):
-        reference_catalog, metadata = _reference(matched[0][1])
-        if base != reference_catalog or _metadata(
-            connection, actual, restrictions
-        ) != _statistics_metadata(metadata, stats):
-            return ("unsupported_schema",), None
+        reference_catalog, metadata = _reference(
+            matched[0][1], _scope=getattr(restrictions, "capture_scope", None)
+        )
+        if base != reference_catalog:
+            return ("unsupported_schema",), None, None
+        actual_metadata = _metadata(connection, actual, restrictions)
+        if stats:
+            reserve(128 + 32 * (len(metadata) + len(stats)))
+        if actual_metadata != _statistics_metadata(metadata, stats):
+            return ("unsupported_schema",), None, None
+        integrity_cost(connection, actual)
         if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
-            return ("invalid_domain_reference",), None
+            return ("invalid_domain_reference",), None, None
         payload_issues = _canvas_payload_issues(connection, restrictions)
         if payload_issues:
-            return payload_issues, None
+            return payload_issues, None, None
         if connection.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
-            return ("invalid_sqlite_integrity",), None
+            return ("invalid_sqlite_integrity",), None, None
         if owner.owner_id == "db.subscriptions" and any(
             row[1] == "db_schema_version" for row in actual
         ):
@@ -1409,17 +1559,22 @@ def _check(connection, owner, policy, restrictions):
                 ).fetchone()
                 not in expected_stamps
             ):
-                return ("unsupported_schema_version",), None
+                return ("unsupported_schema_version",), None, None
         checker = getattr(owner, "_validate_connection", None)
         if checker is not None:
             issues = checker(connection)
             if issues:
-                return issues, None
+                return issues, None, None
         if restrictions.expired():
             raise ValueError("sqlite_resource_limit")
         if owner.owner_id == "db.agent_runs":
             restrictions.workflow_statistics = tuple(row[1] for row in stats)
-        return (), version
+        return (), version, (actual, actual_metadata)
+
+
+def _check(connection, owner, policy, restrictions):
+    issues, version, _ = _check_details(connection, owner, policy, restrictions)
+    return issues, version
 
 
 def _write_normalized_candidate(connection, destination, restrictions, cancel):
@@ -1499,6 +1654,7 @@ def _validate_candidate(
                         CHACHANOTES_V83_SCHEMAS,
                         CHACHANOTES_V84_SCHEMAS,
                         CHACHANOTES_V85_SCHEMAS,
+                        CHACHANOTES_V86_SCHEMAS,
                     )
 
                     actual_sql = tuple(
@@ -1529,6 +1685,8 @@ def _validate_candidate(
                         and actual_sql in CHACHANOTES_V84_SCHEMAS
                         or version == 85
                         and actual_sql in CHACHANOTES_V85_SCHEMAS
+                        or version == 86
+                        and actual_sql in CHACHANOTES_V86_SCHEMAS
                     ):
                         return (("unsupported_schema_migration",), None)
                     shipped_checkpoint = actual_sql in CHACHANOTES_V76_SHIPPED_SCHEMAS
@@ -1548,7 +1706,10 @@ def _validate_candidate(
                                 _legacy_workflow_upgrade,
                             )
 
-                            bridge = _legacy_workflow_upgrade(connection)
+                            bridge = _legacy_workflow_upgrade(
+                                connection,
+                                read_catalog=_budgeted_legacy_catalog_reader(connection),
+                            )
                         if bridge is not None:
                             expected, statements = bridge
                         elif len(choices) == 1:
@@ -1737,3 +1898,235 @@ def validated_schema_version(
     if issues or version is None:
         raise ValueError(issues[0] if issues else "sqlite_validation_unavailable")
     return version
+
+
+def _validate_sqlite(
+    connection: sqlite3.Connection,
+    versions: tuple[int, ...],
+    schemas: tuple[tuple[int, tuple[str, ...]], ...],
+    *,
+    version_query: str = "PRAGMA user_version",
+    allow_statistics: bool = False,
+) -> tuple[str, ...]:
+    from tldw_chatbook.Backup_Recovery.mobile_preview_budget import (
+        current,
+        integrity_cost,
+        matching_schemas,
+        reserve,
+        scalar_cost,
+    )
+
+    restrictions = _current_restrictions(connection)
+    if any(
+        "canvas_revision_payload_valid" in sql
+        for _, schema in schemas
+        for sql in schema
+    ):
+        if restrictions is None:
+            restrictions = _restrict_connection(connection)
+    else:
+        connection.execute("PRAGMA trusted_schema=OFF")
+    if current() is not None and not allow_statistics:
+        matches = matching_schemas(connection, schemas)
+        matched = tuple(row[0] for row in matches)
+        actual = matches[0][1] if matches else ()
+    else:
+        catalog = _catalog(connection, _schemas=schemas)
+        if allow_statistics:
+            reserve(128 + 32 * len(catalog))
+            catalog, _stats = _split_statistics(catalog)
+        actual = tuple(row[3] for row in catalog if row[3] is not None)
+        matched = tuple(known for known, schema in schemas if actual == schema)
+    if not matched:
+        return ("unsupported_schema",)
+    scalar_cost(connection)
+    version = connection.execute(version_query).fetchone()[0]
+    if version not in versions or version not in matched:
+        return ("unsupported_schema_version",)
+    with _canvas_schema_access(connection, actual, restrictions):
+        integrity_cost(connection)
+        if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+            return ("invalid_domain_reference",)
+        payload_issues = _canvas_payload_issues(connection, restrictions)
+        if payload_issues:
+            return payload_issues
+        if connection.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
+            return ("invalid_sqlite_integrity",)
+        return ()
+
+
+def validate_goal_rows(connection):
+    """Validate exact goal payloads and cross-table ownership without opening sources."""
+    import hashlib
+    from typing import get_args
+
+    from tldw_chatbook.Backup_Recovery.mobile_preview_budget import (
+        connection_budget,
+        scalar_cost,
+        table_cost,
+    )
+
+    budget = connection_budget(connection)
+    scalar_cost(connection, 2)
+
+    from tldw_chatbook.Agents.goal_models import (
+        GoalCheckpoint,
+        GoalEvidence,
+        GoalReport,
+        GoalRequest,
+        GoalSnapshot,
+    )
+
+    # Version admission runs first; still fail closed without a version.
+    version = connection.execute("SELECT MAX(version) FROM schema_version").fetchone()[
+        0
+    ]
+    if type(version) is not int:
+        return ("unsupported_schema_version",)
+    # Goal rows exist from v24 on (v25 adds review-boundary claims only).
+    if version < 24:
+        return ()
+    invalid = connection.execute(
+        "SELECT 1 FROM goal_runs g JOIN automatic_work_chains c ON c.id=g.chain_id "
+        "WHERE c.conversation_id!=g.conversation_id OR c.allowance_root_chain_id IS NOT NULL "
+        "UNION ALL SELECT 1 FROM goal_iterations i JOIN goal_runs g ON g.id=i.goal_id "
+        "JOIN automatic_wake_attempts a ON a.id=i.attempt_id "
+        "WHERE a.attempt_kind!='goal_iteration' OR a.chain_id!=g.chain_id OR a.conversation_id!=g.conversation_id "
+        "OR (i.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM agent_runs r WHERE r.id=i.run_id AND r.work_chain_id=g.chain_id AND r.conversation_id=g.conversation_id)) "
+        "UNION ALL SELECT 1 FROM automatic_wake_attempts a WHERE a.attempt_kind='goal_iteration' "
+        "AND NOT EXISTS (SELECT 1 FROM goal_iterations i WHERE i.attempt_id=a.id) "
+        "UNION ALL SELECT 1 FROM goal_reports r JOIN goal_iterations i ON i.id=r.iteration_id WHERE r.goal_id!=i.goal_id "
+        "UNION ALL SELECT 1 FROM goal_checkpoints c WHERE NOT EXISTS (SELECT 1 FROM goal_iterations i WHERE i.attempt_id=c.attempt_id AND i.goal_id=c.goal_id) "
+        "UNION ALL SELECT 1 FROM goal_evidence e WHERE NOT EXISTS (SELECT 1 FROM goal_iterations i WHERE i.attempt_id=e.attempt_id AND i.goal_id=e.goal_id) "
+        "UNION ALL SELECT 1 FROM goal_payload_reservations p WHERE NOT EXISTS (SELECT 1 FROM goal_iterations i WHERE i.attempt_id=p.attempt_id AND i.goal_id=p.goal_id) LIMIT 1"
+    ).fetchone()
+    if invalid is not None:
+        return ("invalid_goal_ownership",)
+    if budget is not None:
+        for table, columns in (
+            ("goal_runs", ("status", "request_json", "payload_hash")),
+            ("goal_reports", ("payload_json",)),
+            ("goal_checkpoints", ("attempt_id", "payload_json")),
+            ("goal_evidence", ("id", "goal_id", "attempt_id", "payload_json")),
+        ):
+            table_cost(connection, table, columns)
+        budget.reserve(2048)
+        count, size = connection.execute(
+            "SELECT count(*),coalesce(sum(coalesce(length(CAST(i.run_id AS BLOB)),0)),0) "
+            "FROM goal_evidence e JOIN goal_iterations i ON i.attempt_id=e.attempt_id"
+        ).fetchone()
+        budget.reserve(256 + 128 * count + 4 * size)
+
+    def payload_cost(payload):
+        if budget is not None:
+            budget.json(payload)
+            budget.reserve(1024 + 4 * len(payload))
+
+    try:
+        for status, payload, digest in connection.execute(
+            "SELECT status, request_json, payload_hash FROM goal_runs"
+        ):
+            if status not in get_args(GoalSnapshot.model_fields["status"].annotation):
+                return ("invalid_goal_payload",)
+            if status == "removed":
+                if payload:
+                    return ("invalid_goal_payload",)
+                continue
+            payload_cost(payload)
+            GoalRequest.model_validate_json(payload)
+            if hashlib.sha256(payload.encode()).hexdigest() != digest:
+                return ("invalid_goal_payload",)
+        for (payload,) in connection.execute("SELECT payload_json FROM goal_reports"):
+            payload_cost(payload)
+            GoalReport.model_validate_json(payload)
+        for attempt_id, ordinal, payload in connection.execute(
+            "SELECT c.attempt_id,i.ordinal,c.payload_json FROM goal_checkpoints c "
+            "JOIN goal_iterations i ON i.attempt_id=c.attempt_id"
+        ):
+            payload_cost(payload)
+            checkpoint = GoalCheckpoint.model_validate_json(payload)
+            if checkpoint.id != attempt_id or checkpoint.ordinal != ordinal:
+                return ("invalid_goal_ownership",)
+        for evidence_id, goal_id, attempt_id, run_id, payload in connection.execute(
+            "SELECT e.id,e.goal_id,e.attempt_id,i.run_id,e.payload_json FROM goal_evidence e "
+            "JOIN goal_iterations i ON i.attempt_id=e.attempt_id"
+        ):
+            payload_cost(payload)
+            evidence = GoalEvidence.model_validate_json(payload)
+            if (
+                evidence.id,
+                evidence.goal_id,
+                evidence.attempt_id,
+                evidence.run_id,
+            ) != (evidence_id, goal_id, attempt_id, run_id):
+                return ("invalid_goal_ownership",)
+    except (ValueError, TypeError):
+        return ("invalid_goal_payload",)
+    return ()
+
+
+@contextmanager
+def _open_recovery_validation(
+    owner_id: "str",
+    candidate: "Path",
+    *,
+    writable: "bool",
+    with_restrictions: "bool" = False,
+    cancel=None,
+    _custody=None,
+) -> "Iterator[sqlite3.Connection | tuple[sqlite3.Connection, Any]]":
+    """Open a disposable candidate with restrictions before any imported query.
+
+    The caller owns staging and must never pass a live destination. This authority
+    deliberately does not enroll the candidate as an ordinary profile resource.
+    Internal validators may request the original restriction budget alongside
+    the connection so catalog inspection and later checks share one deadline.
+    """
+    from tldw_chatbook.Backup_Recovery.sqlite_validation import (
+        _installed_owner,
+        _recovery_restriction_scope,
+        _restrict_connection,
+    )
+    from tldw_chatbook.DB import private_sqlite as _sqlite
+
+    _installed_owner(owner_id)
+    with _sqlite.contextlib.ExitStack() as resources:
+        if _custody is None:
+            connection = resources.enter_context(
+                _sqlite.contextlib.closing(
+                    _sqlite._connect_registered_sqlite(
+                        "recovery.validation",
+                        candidate,
+                        read_only=not writable,
+                        must_exist=True,
+                        immutable=not writable,
+                        isolation_level=None,
+                        cached_statements=0,
+                        timeout=0,
+                    )
+                )
+            )
+        else:
+            if writable:
+                raise ValueError("captured_validation_is_read_only")
+            from tldw_chatbook.Backup_Recovery.archive_reader import _regular
+            from tldw_chatbook.Backup_Recovery.storage_admission import _CaptureLease
+
+            stream = resources.enter_context(_regular(candidate, _custody=_custody))
+            lease = _CaptureLease(_custody.scope)
+            lease.descriptor_outcome = _sqlite._SQLiteDescriptorOutcome()
+            resources.callback(lease.retire)
+            connection = _sqlite.connect_private_sqlite_descriptor(
+                "recovery.validation",
+                stream.fileno(),
+                _native_outcome=lease.descriptor_outcome,
+                isolation_level=None,
+                cached_statements=0,
+                timeout=0,
+            )
+            lease.attach(connection)
+        restrictions = _restrict_connection(connection, cancel)
+        restrictions.capture_scope = None if _custody is None else _custody.scope
+        restrictions.capture_stream = None if _custody is None else stream
+        with _recovery_restriction_scope(connection, restrictions):
+            yield ((connection, restrictions) if with_restrictions else connection)

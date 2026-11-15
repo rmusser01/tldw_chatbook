@@ -576,3 +576,37 @@ def test_source_discovery_rejects_unqualified_adapter_deletion_evidence(
     result = discover((config_file(tmp_path),))
     assert "config_discovery_failure" in result.issues
     assert not any(item.deletion_validated for item in result.items)
+
+
+def test_legacy_mobile_inventory_uses_explicit_native_owner_ids(tmp_path):
+    from Tests.Backup_Recovery.mobile_consolidation_fixture import seed_legacy_mobile
+    from tldw_chatbook.Backup_Recovery.owner_registry import install_adapters
+    from tldw_chatbook.Backup_Recovery.storage_admission import _preview_reads
+
+    selected = config_file(tmp_path)
+    source = tmp_path / "data" / "Ada" / "mobile"
+    seeded = seed_legacy_mobile(source)
+    install_adapters()
+    with _preview_reads():
+        inventory = discover((selected,))
+    mobile = [
+        item for item in inventory.items if item.logical_id.endswith(":legacy-mobile")
+    ]
+    assert {item.path.name for item in mobile} == {
+        "chat.db",
+        "workspaces.db",
+        "runs.db",
+    }
+    assert {item.owner for item in mobile} == {
+        "db.chachanotes.primary",
+        "db.workspaces",
+        "db.agent_runs",
+    }
+    assert all(item.status == "included" for item in mobile)
+    assert any(
+        item.path == seeded["artifact_file"] and item.status == "included"
+        for item in inventory.items
+    )
+    assert not any(
+        item.owner == "unknown" and item.path == source for item in inventory.items
+    )

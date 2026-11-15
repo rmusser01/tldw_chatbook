@@ -1016,6 +1016,8 @@ def test_descendant_directory_symlink_is_unsafe_legacy_evidence(
     connection.close()
 
 
+# These cases resolve the real private data directory from the bound test profile.
+@pytest.mark.bootstrap_profile
 def test_actual_application_private_root_is_rejected_by_default(
     tmp_path: Path,
 ) -> None:
@@ -1030,6 +1032,7 @@ def test_actual_application_private_root_is_rejected_by_default(
     connection.close()
 
 
+@pytest.mark.bootstrap_profile
 def test_actual_application_private_root_case_alias_is_rejected_by_identity(
     tmp_path: Path,
 ) -> None:

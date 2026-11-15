@@ -19,6 +19,7 @@ from Tests.UI.test_console_dictation import (
     _mounted_console as _base_mounted_console,
     _ready_host,
 )
+from Tests.UI.test_console_native_chat_flow import _sync_console_control_bar_now
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
@@ -62,7 +63,7 @@ async def test_a_staged_image_the_model_cannot_take_names_the_image_not_setup():
         session_id = store.ensure_session().id
         composer.load_draft("what colour is this leaf?")
         assert store.add_pending_attachment(session_id, _image())
-        console._sync_console_control_bar()
+        await _sync_console_control_bar_now(console)
         await pilot.pause()
 
         # A model IS selected: readiness is ready; only the image blocks.
@@ -102,7 +103,7 @@ async def test_long_model_image_strip_keeps_the_limitation_visible(
         composer.load_draft("what colour is this leaf?")
         image = _image()
         assert store.add_pending_attachment(session_id, image)
-        console._sync_console_control_bar()
+        await _sync_console_control_bar_now(console)
         await pilot.pause()
         assert console._console_setup_blocked_reason() == ""
         assert long_model in console._console_attachment_blocked_reason()
@@ -252,7 +253,7 @@ async def test_a_refused_enter_writes_plain_sentences_the_context_view_can_copy(
         session_id = store.ensure_session().id
         composer.load_draft("what colour is this leaf?")
         assert store.add_pending_attachment(session_id, _image())
-        console._sync_console_control_bar()
+        await _sync_console_control_bar_now(console)
         await pilot.pause()
         await _refused_enter(console, composer, pilot)  # the image blocks
 

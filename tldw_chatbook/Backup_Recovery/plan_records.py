@@ -58,10 +58,14 @@ def _load_plan(journal, rows):
     """Use already-read records while the caller retains its journal lock."""
     from .archive_reader import _regular
     from .journal import _CandidateReceipt, _matches
+    from .mobile_preview_budget import current
     from .publication import _plan_digest
 
+    scope = current()
     if not rows or rows[0].event != "candidate_staged":
         raise ValueError("recovery_plan_missing")
+    if scope is not None:
+        scope.read_budget.value(rows[0].evidence, text_copies=2)
     receipt = _CandidateReceipt.model_validate(rows[0].evidence)
     expected = receipt.local_plan
     path = journal.root / "restore-plan.json"
@@ -71,10 +75,22 @@ def _load_plan(journal, rows):
         or not _matches(expected, str(path))
     ):
         raise ValueError("recovery_plan_changed")
-    with _regular(path) as stream:
-        encoded = stream.read(_LIMIT + 1)
+    with _regular(path, _custody=scope.custody if scope else None) as stream:
+        if scope is not None:
+            from tldw_chatbook.Utils.platform_files import os
+
+            size = os.fstat(stream.fileno()).st_size
+            if size > _LIMIT:
+                raise ValueError("recovery_plan_limit")
+            scope.read_budget.reserve(256 + size + 1)
+        encoded = stream.read(size + 1 if scope else _LIMIT + 1)
+        if scope is not None and len(encoded) != size:
+            raise ValueError("recovery_plan_changed")
     if len(encoded) > _LIMIT:
         raise ValueError("recovery_plan_limit")
+    if scope is not None:
+        scope.read_budget.json(encoded)
+        scope.read_budget.reserve(16384 + 32 * len(encoded))
     plan = _PLAN.validate_json(encoded, strict=True)
     if (
         json.loads(_encode_plan(plan)) != json.loads(encoded)

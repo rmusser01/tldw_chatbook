@@ -13,6 +13,8 @@ import threading
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
+from Tests.console_provider_doubles import provider_resolution
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import (
@@ -20,8 +22,6 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleRunStatus,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-from Tests.console_provider_doubles import provider_resolution
 
 
 class _ChunkThenParkGateway:
@@ -48,7 +48,7 @@ def _controller(tmp_path, gateway):
     store = ConsoleChatStore()
     session = store.create_session(title="Stop reliability", ephemeral=True)
     store.active_session_id = session.id
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
     controller = ConsoleChatController(
         store=store,

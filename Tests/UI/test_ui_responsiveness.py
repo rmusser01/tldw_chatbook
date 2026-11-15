@@ -372,7 +372,12 @@ def _make_sync_probe_screen(monitor):
     screen._console_chat_store = None
     screen._console_sync_in_progress = False
     screen._console_sync_requested = False
-    screen.app_instance = SimpleNamespace(ui_responsiveness_monitor=monitor)
+    screen._console_terminal_return_reading = None
+    # A generated app_config Mock would wait for a worker this probe never runs.
+    screen.app_instance = SimpleNamespace(
+        ui_responsiveness_monitor=monitor, app_config={}, _ui_ready=False
+    )
+    screen.app = screen.app_instance
     screen._ui_responsiveness_monitor = partial(
         ChatScreen._ui_responsiveness_monitor, screen
     )
@@ -386,6 +391,7 @@ def _make_sync_probe_screen(monitor):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_sync_records_worker_lifecycle():
     """The sync brackets its stage pipeline in started/finished recording."""
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen

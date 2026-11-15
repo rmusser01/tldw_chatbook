@@ -21,12 +21,12 @@ import pytest
 from textual.app import App
 from textual.widgets import Button, Input, Select, Static, TextArea
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.UI.consolidated_css import APP_STYLESHEETS
 from Tests.UI.test_destination_shells import _static_text
 from tldw_chatbook import config as config_module
 from tldw_chatbook.Agents.agent_models import AgentDefinition, definition_from_row
 from tldw_chatbook.Agents.agent_routing import load_agents_routing_config
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Widgets.settings_agents_panel import AgentsSettingsPanel
 
 pytestmark = pytest.mark.bootstrap_profile
@@ -59,7 +59,7 @@ READY = lambda _cfg, _provider: None  # noqa: E731
 
 @pytest.fixture()
 def runs_db(tmp_path):
-    return AgentRunsDB(tmp_path / "agent_runs.db", client_id="test")
+    return owned_agent_runs_db(tmp_path / "agent_runs.db", client_id="test")
 
 
 @pytest.fixture()

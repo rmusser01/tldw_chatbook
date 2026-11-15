@@ -35,20 +35,20 @@ from textual.worker import WorkerFailed
 
 import tldw_chatbook.config as config_module
 import tldw_chatbook.Utils.path_validation as path_validation_module
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.UI.Screens.change_review_screen import (
-    _land_on_ui,
     CHECKING_FOR_CHANGES_COPY,
     CURRENT_MODE_SENTINEL,
     ChangeReviewDiffPane,
     ChangeReviewScreen,
+    _land_on_ui,
 )
 from tldw_chatbook.Workspaces.change_review_provider import (
     AgentRunsChangeReviewProvider,
 )
+from tldw_chatbook.Utils.log_sanitizer import content_fingerprint
 from tldw_chatbook.Workspaces.change_tracking import ShadowRepoService
 from tldw_chatbook.Workspaces.change_turn_tracker import ChangeTurnTracker
-from tldw_chatbook.Utils.log_sanitizer import content_fingerprint
 
 BUNDLE = (
     Path(__file__).resolve().parents[2]
@@ -216,7 +216,7 @@ def git_review_fixture(tmp_path):
     repo = _init_repo(tmp_path / "repo")
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     tracker = ChangeTurnTracker(service=service)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     conv = "conv-1"
     run1 = db.create_run(conversation_id=conv, agent_kind="primary")
     run2 = db.create_run(conversation_id=conv, agent_kind="primary")
@@ -249,7 +249,7 @@ def plain_review_fixture(tmp_path):
     root.mkdir()
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     tracker = ChangeTurnTracker(service=service)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     conv = "conv-1"
     run1 = db.create_run(conversation_id=conv, agent_kind="primary")
     _record_turn(
@@ -323,7 +323,7 @@ async def test_current_status_worker_failure_logs_safe_metadata(
 ) -> None:
     _patch_git_actions(monkeypatch, True)
     root = _init_repo(tmp_path / "task-19864-private-status-workspace")
-    database = AgentRunsDB(tmp_path / "runs.db", client_id="task-19864")
+    database = owned_agent_runs_db(tmp_path / "runs.db", client_id="task-19864")
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     provider = AgentRunsChangeReviewProvider(
         db=database, service=service, conversation_id="task-19864"
@@ -376,7 +376,7 @@ async def test_git_target_preflight_fingerprints_stable_root_tuple(
     _patch_git_actions(monkeypatch, True)
     first = _init_repo(tmp_path / "task-19864-private-first-root")
     second = _init_repo(tmp_path / "task-19864-private-second-root")
-    database = AgentRunsDB(tmp_path / "runs.db", client_id="task-19864")
+    database = owned_agent_runs_db(tmp_path / "runs.db", client_id="task-19864")
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     provider = AgentRunsChangeReviewProvider(
         db=database, service=service, conversation_id="task-19864"
@@ -589,7 +589,7 @@ async def test_pseudo_entry_absent_for_non_repo_root(monkeypatch, plain_review_f
 async def test_pseudo_entry_absent_without_candidate_roots(monkeypatch, tmp_path):
     """No turns and no workspace roots ⇒ nothing to detect, no entry."""
     _patch_git_actions(monkeypatch, True)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     provider = AgentRunsChangeReviewProvider(
         db=db, service=service, conversation_id="empty-conv"
@@ -724,7 +724,7 @@ async def test_current_mode_lists_working_tree_and_renders_real_diffs(
 async def test_clean_working_tree_enters_the_mode_and_says_so(monkeypatch, tmp_path):
     _patch_git_actions(monkeypatch, True)
     repo = _init_repo(tmp_path / "clean_repo")
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     provider = AgentRunsChangeReviewProvider(
         db=db, service=service, conversation_id="conv-clean"
@@ -762,7 +762,7 @@ async def test_unborn_head_renders_every_file_through_the_preview_path(
     repo = _init_repo(tmp_path / "unborn_repo", commit=False)
     (repo / "first.txt").write_text("brand new tree\n")
     (repo / "second.txt").write_text("also new\n")
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     provider = AgentRunsChangeReviewProvider(
         db=db, service=service, conversation_id="conv-unborn"
@@ -1071,7 +1071,7 @@ async def test_one_root_failing_between_detect_and_status_degrades_alone(
     good = _init_repo(tmp_path / "good_repo")
     (good / "a.txt").write_text("changed\n")
     doomed = _init_repo(tmp_path / "doomed_repo")
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     provider = AgentRunsChangeReviewProvider(
         db=db, service=service, conversation_id="conv-multi"
@@ -1203,7 +1203,7 @@ async def test_every_root_failing_never_claims_the_tree_is_clean(monkeypatch, tm
     _patch_git_actions(monkeypatch, True)
     doomed = _init_repo(tmp_path / "doomed_repo")
     (doomed / "unseen.txt").write_text("never read\n")
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     provider = AgentRunsChangeReviewProvider(
         db=db, service=service, conversation_id="conv-doomed"
@@ -1264,7 +1264,7 @@ async def test_unborn_head_renders_a_STAGED_add_through_the_preview_path(
     _git(repo, "add", "staged.txt")
     (repo / "loose.txt").write_text("never staged\n")
 
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     provider = AgentRunsChangeReviewProvider(
         db=db, service=service, conversation_id="conv-unborn-staged"
@@ -1350,7 +1350,7 @@ async def test_empty_review_without_tracked_roots_explains_why(monkeypatch, tmp_
     negative claim is gone, and the remediation names both fix steps.
     """
     _patch_git_actions(monkeypatch, True)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     provider = AgentRunsChangeReviewProvider(
         db=db, service=service, conversation_id="unbound-conv"
@@ -1378,7 +1378,7 @@ async def test_empty_review_with_tracked_roots_still_reports_no_changes(
     DOES mean nothing was changed, and must keep saying so."""
     _patch_git_actions(monkeypatch, True)
     repo = _init_repo(tmp_path / "bound_repo")
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     provider = AgentRunsChangeReviewProvider(
         db=db, service=service, conversation_id="bound-conv"
@@ -1417,7 +1417,7 @@ async def test_untracked_agent_writable_root_is_disclosed(monkeypatch, tmp_path)
         ),
     )
 
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     provider = AgentRunsChangeReviewProvider(
         db=db, service=service, conversation_id="mismatch-conv"
@@ -1457,7 +1457,7 @@ async def test_untracked_cwd_is_disclosed_when_workspace_root_is_unset(
         ),
     )
 
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     provider = AgentRunsChangeReviewProvider(
         db=db, service=service, conversation_id="cwd-conv"
@@ -1486,7 +1486,7 @@ async def test_a_tracked_cwd_is_not_disclosed(monkeypatch, tmp_path):
             "" if (section, key) == ("console", "workspace_root") else default
         ),
     )
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     provider = AgentRunsChangeReviewProvider(
         db=db, service=service, conversation_id="cwd-tracked-conv"
@@ -1640,7 +1640,7 @@ def no_turns_repo_fixture(tmp_path):
     repo = _init_repo(tmp_path / "repo")
     (repo / "a.txt").write_text("changed in the working tree\n")
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     provider = AgentRunsChangeReviewProvider(
         db=db, service=service, conversation_id="conv-empty"
     )

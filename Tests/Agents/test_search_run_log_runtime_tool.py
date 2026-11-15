@@ -6,6 +6,10 @@ import re
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
+from Tests.Agents.conftest import join_fleet_children
+from Tests.Agents.test_agent_runtime import make_deps
+from Tests.Agents.test_agent_service import FleetChat, verbatim
 from tldw_chatbook.Agents.agent_models import (
     RUN_DONE,
     RUNTIME_TOOL_NAMES,
@@ -25,11 +29,6 @@ from tldw_chatbook.Agents.tool_catalog import (
     BuiltinToolProvider,
     ToolCatalogRegistry,
 )
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-
-from Tests.Agents.test_agent_runtime import make_deps
-from Tests.Agents.conftest import join_fleet_children
-from Tests.Agents.test_agent_service import FleetChat, verbatim
 
 
 def test_name_is_registered_as_a_runtime_tool():
@@ -136,6 +135,7 @@ def _svc_fence(name, args):
     return {"choices": [{"message": {"content": _fence(name, args)}}]}
 
 
+@pytest.mark.bootstrap_profile
 def test_subagent_cannot_call_search_run_log(tmp_path, monkeypatch):
     from tldw_chatbook.Agents import run_log as run_log_module
 
@@ -145,7 +145,7 @@ def test_subagent_cannot_call_search_run_log(tmp_path, monkeypatch):
     # on whatever machine runs the suite.
     monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
 
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     reg = ToolCatalogRegistry()
     reg.register_provider(BuiltinToolProvider())
 
@@ -230,6 +230,7 @@ class _AllowGate:
         return None
 
 
+@pytest.mark.bootstrap_profile
 def test_real_closure_recovers_full_content_beyond_both_caps(tmp_path, monkeypatch):
     """CRITICAL 1's regression test: drive a real tool result large enough
     to be truncated in history, follow the trailer's own record pointer
@@ -275,7 +276,7 @@ def test_real_closure_recovers_full_content_beyond_both_caps(tmp_path, monkeypat
 
     monkeypatch.setattr(CalculatorTool, "execute", safe_calculator)
 
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     reg = ToolCatalogRegistry()
     reg.register_provider(BuiltinToolProvider(gate=_AllowGate()))
 
@@ -361,7 +362,7 @@ def test_sensitive_large_result_has_no_recoverable_run_log_handle(
             return _svc_fence("read_file", {"file_path": "private.txt"})
         return {"choices": [{"message": {"content": "done"}}]}
 
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     registry = ToolCatalogRegistry()
     registry.register_provider(BuiltinToolProvider(gate=_AllowGate()))
     service = AgentService(db, registry, chat_call=chat)
@@ -394,6 +395,7 @@ def test_sensitive_large_result_has_no_recoverable_run_log_handle(
     assert result_record.content == "[local path withheld]"
 
 
+@pytest.mark.bootstrap_profile
 def test_parent_can_filter_its_log_to_subagent_records_via_kind(tmp_path, monkeypatch):
     """IMPORTANT 5's regression test: `kind` is implemented in
     `search_records` and justified by spec §4.1 ("a parent can search its
@@ -407,7 +409,7 @@ def test_parent_can_filter_its_log_to_subagent_records_via_kind(tmp_path, monkey
 
     monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
 
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     reg = ToolCatalogRegistry()
     reg.register_provider(BuiltinToolProvider())
 
@@ -457,6 +459,7 @@ def test_parent_can_filter_its_log_to_subagent_records_via_kind(tmp_path, monkey
     assert any(child_marker in r for r in search_results)
 
 
+@pytest.mark.bootstrap_profile
 def test_real_closure_never_raises_on_a_junk_offset(tmp_path, monkeypatch):
     """TASK-1250: `offset` must be coerced defensively, the same way the
     closure already coerces from_record/to_record/context -- a model
@@ -467,7 +470,7 @@ def test_real_closure_never_raises_on_a_junk_offset(tmp_path, monkeypatch):
 
     monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
 
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     reg = ToolCatalogRegistry()
     reg.register_provider(BuiltinToolProvider())
 
@@ -526,7 +529,7 @@ def wired(tmp_path, monkeypatch):
     from tldw_chatbook.Agents import run_log as run_log_module
 
     monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     reg = ToolCatalogRegistry()
     reg.register_provider(BuiltinToolProvider())
     return db, reg, tmp_path

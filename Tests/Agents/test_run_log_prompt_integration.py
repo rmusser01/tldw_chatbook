@@ -1,20 +1,19 @@
 # Tests/Agents/test_run_log_prompt_integration.py
 """Truncation points at the log; the prompt mentions it only when real."""
 
+from Tests.agent_runs_owner import owned_agent_runs_db
+from Tests.Agents.test_agent_runtime import CALC, fence, make_deps
 from tldw_chatbook.Agents import run_log as run_log_module
 from tldw_chatbook.Agents.agent_models import (
+    STEP_TOOL_RESULT,
     AgentConfig,
     ModelTurn,
     RunBudget,
-    STEP_TOOL_RESULT,
     ToolResult,
 )
 from tldw_chatbook.Agents.agent_runtime import _truncate_tool_result, run_agent_loop
 from tldw_chatbook.Agents.agent_service import RUN_LOG_PROMPT_SECTION, AgentService
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRegistry
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-
-from Tests.Agents.test_agent_runtime import CALC, fence, make_deps
 
 
 def test_trailer_points_at_the_record_when_one_exists():
@@ -89,7 +88,7 @@ def test_end_to_end_a_really_capped_record_produces_an_honest_trailer(
 
 
 def _service(tmp_path, capture):
-    db = AgentRunsDB(tmp_path / "runs.db")
+    db = owned_agent_runs_db(tmp_path / "runs.db")
     registry = ToolCatalogRegistry()
     registry.register_provider(BuiltinToolProvider())
     return AgentService(db, registry, chat_call=capture)

@@ -6,6 +6,7 @@ import asyncio
 import ntpath
 import os
 import signal
+import struct
 import subprocess
 import threading
 from collections import deque
@@ -160,6 +161,74 @@ class ProcessTreeController:
             stdin=stdin,
         )
 
+    async def spawn_windows_hook(
+        self, *argv: str, cwd: str,
+    ) -> OwnedProcessTree:
+        """Keep the ordinary hook's CreateProcess executable lookup and argv."""
+        if not isinstance(self._backend, _WindowsJobObjectController):
+            raise OSError("Windows hook jobs require Windows")
+        if not argv or not argv[0] or any("\0" in argument for argument in argv):
+            raise ValueError("Invalid Windows hook command")
+        return self._backend.spawn_hook(argv, cwd=cwd)
+
+    async def stop_windows_hook(self, tree: OwnedProcessTree, *, deadline: float) -> bool:
+        """Stop an ordinary hook and prove its observed Windows members exited."""
+        backend = self._backend
+        if not isinstance(backend, _WindowsJobObjectController):
+            raise OSError("Windows hook jobs require Windows")
+        identity = backend._identity(tree)
+        loop = asyncio.get_running_loop()
+        members: dict[int, int] = {}
+        try:
+            try:
+                if identity.assigned:
+                    api = backend._api
+                    total = api.total_processes(identity.job_handle)
+                    capacity = min(4, max(1, total))
+                    while True:
+                        if loop.time() >= deadline:
+                            raise TimeoutError("Windows hook Job membership snapshot expired")
+                        pids, assigned = api.job_member_pids(identity.job_handle, capacity)
+                        if assigned > total:
+                            raise OSError("Windows hook Job membership changed during capture")
+                        if len(pids) == assigned:
+                            break
+                        if assigned <= capacity:
+                            raise OSError("Windows hook Job membership snapshot was incomplete")
+                        capacity = assigned
+                    for pid in pids:
+                        if loop.time() >= deadline:
+                            raise TimeoutError("Windows hook Job member acquisition expired")
+                        # The direct-child wrapper already owns its live handle.
+                        if pid != identity.pid or tree.process.returncode is not None:
+                            members[pid] = api.open_job_member(identity.job_handle, pid)
+            finally:
+                try:
+                    self.kill(tree)
+                except OSError:
+                    # A Job can empty before kill. Require exit proof below.
+                    pass
+                while members:
+                    for pid, handle in tuple(members.items()):
+                        if backend._api.process_signaled(handle):
+                            backend._api.close_handle(members.pop(pid))
+                    remaining = deadline - loop.time()
+                    if members and remaining <= 0:
+                        raise TimeoutError("Windows hook Job member exit unproven")
+                    if members:
+                        await asyncio.sleep(min(_POLL_INTERVAL_SECONDS, remaining))
+                settled = await self.wait(tree, timeout=max(0, deadline - loop.time()))
+                if loop.time() > deadline:
+                    raise TimeoutError("Windows hook Job exit proof exceeded its deadline")
+            # Job accounting can clear before an individual process signals.
+            # New members after the snapshot leave a gap in the handle proof.
+            return settled and (
+                not identity.assigned or api.total_processes(identity.job_handle) == total
+            )
+        finally:
+            for handle in members.values():
+                backend._api.close_handle(handle)
+
     def terminate(self, tree: OwnedProcessTree) -> None:
         """Request native graceful tree termination."""
         self._backend.terminate(tree)
@@ -292,6 +361,14 @@ class _WindowsJobObjectController:
             stdin=stdin,
         )
 
+    def spawn_hook(
+        self, argv: tuple[str, ...], *, cwd: str,
+    ) -> OwnedProcessTree:
+        return self._api.spawn_suspended_assigned(
+            argv, cwd=cwd, environment=None, stdin=True,
+            ordinary_executable_lookup=True,
+        )
+
     def terminate(self, tree: OwnedProcessTree) -> None:
         identity = self._identity(tree)
         if identity.assigned:
@@ -372,6 +449,7 @@ class _WindowsPipeReader:
         self._condition = threading.Condition()
         self._chunks: deque[bytes] = deque()
         self._buffered = 0
+        self.buffer_limit = self._MAX_BUFFERED_BYTES
         self._eof = False
         self._closed = False
         self._error: BaseException | None = None
@@ -428,13 +506,14 @@ class _WindowsPipeReader:
             while True:
                 with self._condition:
                     while (
-                        not self._closed and self._buffered >= self._MAX_BUFFERED_BYTES
+                        not self._closed and self._buffered >= self.buffer_limit
                     ):
                         self._condition.wait()
                     if self._closed:
                         return
                     handle = self._handle
-                chunk = self._kernel.read_file(handle, 64 * 1024)
+                    capacity = min(64 * 1024, self.buffer_limit - self._buffered)
+                chunk = self._kernel.read_file(handle, capacity)
                 if not chunk:
                     return
                 with self._condition:
@@ -485,7 +564,16 @@ class _WindowsPipeWriter:
                 name="git-process-tree-pipe-writer",
                 daemon=True,
             ).start()
-        await asyncio.shield(self._future)
+        try:
+            await asyncio.shield(self._future)
+        except asyncio.CancelledError:
+            self._future.add_done_callback(self._observe_drain_completion)
+            raise
+
+    @staticmethod
+    def _observe_drain_completion(future: asyncio.Future[None]) -> None:
+        if not future.cancelled():
+            future.exception()
 
     def close(self) -> None:
         if self._future is None:
@@ -844,6 +932,10 @@ class _WindowsKernel:
     _HANDLE_FLAG_INHERIT = 0x00000001
     _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
     _JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION = 1
+    _JOB_OBJECT_BASIC_PROCESS_ID_LIST = 3
+    _SYNCHRONIZE = 0x00100000
+    _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    _ERROR_MORE_DATA = 234
     _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
     _CTRL_BREAK_EVENT = 1
     _RESUME_THREAD_FAILED = 0xFFFFFFFF
@@ -869,8 +961,9 @@ class _WindowsKernel:
         argv: tuple[str, ...],
         *,
         cwd: str,
-        environment: Mapping[str, str],
+        environment: Mapping[str, str] | None,
         stdin: bool,
+        ordinary_executable_lookup: bool = False,
     ) -> OwnedProcessTree:
         job_handle = self._create_job()
         parent_stdin = parent_stdout = parent_stderr = 0
@@ -887,6 +980,7 @@ class _WindowsKernel:
             parent_stdin, child_stdin = self._pipe(parent_reads=False)
             parent_stdout, child_stdout = self._pipe(parent_reads=True)
             parent_stderr, child_stderr = self._pipe(parent_reads=True)
+            launch = {"ordinary_executable_lookup": True} if ordinary_executable_lookup else {}
             self._create_process(
                 argv,
                 cwd=cwd,
@@ -894,6 +988,7 @@ class _WindowsKernel:
                 child_handles=(child_stdin, child_stdout, child_stderr),
                 fallback=fallback,
                 identity=identity,
+                **launch,
             )
             fallback.adopt_pipes(
                 parent_stdin,
@@ -931,6 +1026,8 @@ class _WindowsKernel:
             )
             fallback.transfer_to_wrapper()
             tree.process = process
+            if ordinary_executable_lookup:
+                process.stdout.buffer_limit = process.stderr.buffer_limit = 64 * 1024
             process.start_io()
             resumed = self.kernel32.ResumeThread(identity.thread_handle)
             self.close_handle(identity.thread_handle)
@@ -988,6 +1085,12 @@ class _WindowsKernel:
             raise self._last_error("TerminateProcess")
 
     def active_processes(self, job_handle: int) -> int:
+        return int(self._job_accounting(job_handle).ActiveProcesses)
+
+    def total_processes(self, job_handle: int) -> int:
+        return int(self._job_accounting(job_handle).TotalProcesses)
+
+    def _job_accounting(self, job_handle: int) -> Any:
         accounting = self.JobAccounting()
         if not self.kernel32.QueryInformationJobObject(
             job_handle,
@@ -997,7 +1100,45 @@ class _WindowsKernel:
             None,
         ):
             raise self._last_error("QueryInformationJobObject")
-        return int(accounting.ActiveProcesses)
+        return accounting
+
+    def job_member_pids(self, job_handle: int, capacity: int) -> tuple[tuple[int, ...], int]:
+        header = struct.Struct("=II")  # Two Win32 DWORDs before the ULONG_PTR array.
+        pid_type = self.ctypes.c_size_t
+        data = self.ctypes.create_string_buffer(header.size + capacity * self.ctypes.sizeof(pid_type))
+        ok = self.kernel32.QueryInformationJobObject(
+            job_handle, self._JOB_OBJECT_BASIC_PROCESS_ID_LIST, data, self.ctypes.sizeof(data), None
+        )
+        error = self.ctypes.get_last_error() if not ok else 0
+        if not ok and error != self._ERROR_MORE_DATA:
+            raise OSError(error, "QueryInformationJobObject process IDs failed")
+        assigned, listed = header.unpack_from(data)
+        if not ok or listed < assigned:
+            if assigned <= capacity:
+                raise OSError("Incomplete Windows Job process ID list")
+            return (), assigned
+        if listed != assigned or listed > capacity:
+            raise OSError("Invalid Windows Job process ID count")
+        pids = tuple((pid_type * listed).from_buffer(data, header.size))
+        if any(pid <= 0 for pid in pids) or len(set(pids)) != listed:
+            raise OSError("Invalid Windows Job process ID list")
+        return pids, assigned
+
+    def open_job_member(self, job_handle: int, pid: int) -> int:
+        access = self._SYNCHRONIZE | self._PROCESS_QUERY_LIMITED_INFORMATION
+        handle = self._handle_value(self.kernel32.OpenProcess(access, False, pid))
+        if not handle:
+            raise self._last_error("OpenProcess")
+        member = self.wintypes.BOOL()
+        try:
+            if not self.kernel32.IsProcessInJob(handle, job_handle, self.ctypes.byref(member)):
+                raise self._last_error("IsProcessInJob")
+            if not member.value:
+                raise OSError("Windows process is no longer in the hook Job")
+        except BaseException:
+            self.close_handle(handle)
+            raise
+        return handle
 
     def process_signaled(self, process_handle: int) -> bool:
         result = self.kernel32.WaitForSingleObject(process_handle, 0)
@@ -1109,10 +1250,11 @@ class _WindowsKernel:
         argv: tuple[str, ...],
         *,
         cwd: str,
-        environment: Mapping[str, str],
+        environment: Mapping[str, str] | None,
         child_handles: tuple[int, int, int],
         fallback: _WindowsFailedAdmissionProcess,
         identity: _WindowsJobIdentity,
+        ordinary_executable_lookup: bool = False,
     ) -> None:
         attribute_size = self.ctypes.c_size_t()
         self.kernel32.InitializeProcThreadAttributeList(
@@ -1156,16 +1298,15 @@ class _WindowsKernel:
             command_line = self.ctypes.create_unicode_buffer(
                 subprocess.list2cmdline(argv)
             )
-            environment_block = self._environment_block(environment)
-            flags = (
-                self._CREATE_SUSPENDED
-                | self._CREATE_NEW_PROCESS_GROUP
-                | self._CREATE_UNICODE_ENVIRONMENT
-                | self._EXTENDED_STARTUPINFO_PRESENT
+            environment_block = (
+                None if environment is None else self._environment_block(environment)
             )
+            flags = self._CREATE_SUSPENDED | self._EXTENDED_STARTUPINFO_PRESENT
+            if not ordinary_executable_lookup:
+                flags |= self._CREATE_NEW_PROCESS_GROUP | self._CREATE_UNICODE_ENVIRONMENT
             fallback.attach_process_info(process_info)
             if not self.kernel32.CreateProcessW(
-                argv[0],
+                None if ordinary_executable_lookup else argv[0],
                 command_line,
                 None,
                 None,
@@ -1419,6 +1560,14 @@ class _WindowsKernel:
             ctypes.POINTER(wintypes.DWORD),
         ]
         kernel32.QueryInformationJobObject.restype = wintypes.BOOL
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.IsProcessInJob.argtypes = [
+            wintypes.HANDLE,
+            wintypes.HANDLE,
+            ctypes.POINTER(wintypes.BOOL),
+        ]
+        kernel32.IsProcessInJob.restype = wintypes.BOOL
         kernel32.WaitForSingleObject.argtypes = [
             wintypes.HANDLE,
             wintypes.DWORD,

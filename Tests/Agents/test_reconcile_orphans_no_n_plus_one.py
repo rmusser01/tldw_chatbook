@@ -10,6 +10,7 @@ import json
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
@@ -36,7 +37,7 @@ def _seed_terminal_runs(db, n, steps_per_run=3):
 
 
 def test_reconcile_batch_hydrates_instead_of_one_query_per_run(tmp_path):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="recon", reconcile_on_init=False)
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="recon", reconcile_on_init=False)
     try:
         _seed_terminal_runs(db, 5)
         AgentRunsDB._swept_paths.discard(db.db_path_str)  # allow the sweep to run

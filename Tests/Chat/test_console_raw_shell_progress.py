@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Agents.agent_models import (
     AGENT_KIND_PRIMARY,
     STEP_TOOL_CALL,
@@ -17,7 +18,6 @@ from tldw_chatbook.Agents.run_context import use_run_id, use_tool_call_id
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.Tools.raw_cli_executor import (
     RawCliRequest,
@@ -31,7 +31,7 @@ def _bridge(tmp_path: Path) -> tuple[ConsoleAgentBridge, ConsoleChatStore, str]:
     session = store.create_session(title="raw progress")
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="run")
     bridge = ConsoleAgentBridge(
-        agent_runs_db=AgentRunsDB(tmp_path / "runs.db", client_id="test"),
+        agent_runs_db=owned_agent_runs_db(tmp_path / "runs.db", client_id="test"),
         store=store,
         provider_gateway=object(),
     )

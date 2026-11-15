@@ -24,12 +24,13 @@ import json
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Agents import run_log as run_log_module
 from tldw_chatbook.Agents.agent_models import (
     AGENT_KIND_PRIMARY,
     AGENT_KIND_SUBAGENT,
-    AgentStep,
     STEP_TOOL_RESULT,
+    AgentStep,
 )
 from tldw_chatbook.Agents.run_log import RunLogWriter
 from tldw_chatbook.Chat.console_agent_bridge import (
@@ -40,8 +41,6 @@ from tldw_chatbook.Chat.console_agent_bridge import (
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-
 
 LONG_RESULT = (
     "The traditional rollback procedure requires draining every in-flight "
@@ -246,7 +245,7 @@ def test_resumed_step_short_enough_result_is_returned_verbatim():
 
 @pytest.fixture
 def bridge(tmp_path):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     return ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None), db
 
 
@@ -315,7 +314,7 @@ def test_console_bridge_does_not_find_another_sessions_scratch_log(
     )
     monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: root_a)
     console_bridge = ConsoleAgentBridge(
-        agent_runs_db=AgentRunsDB(tmp_path / "runs-isolated.db", client_id="t"),
+        agent_runs_db=owned_agent_runs_db(tmp_path / "runs-isolated.db", client_id="t"),
         store=ConsoleChatStore(),
         provider_gateway=None,
     )
@@ -334,7 +333,7 @@ def test_console_bridge_run_log_read_fails_closed_after_chat_revocation(tmp_path
     manager = ConsoleScratchSpaceManager(temp_parent=tmp_path)
     snapshot = manager.snapshot("session-a")
     console_bridge = ConsoleAgentBridge(
-        agent_runs_db=AgentRunsDB(tmp_path / "runs-revoked.db", client_id="t"),
+        agent_runs_db=owned_agent_runs_db(tmp_path / "runs-revoked.db", client_id="t"),
         store=ConsoleChatStore(),
         provider_gateway=None,
     )
@@ -562,7 +561,7 @@ def test_load_run_log_text_window_grows_with_a_raised_max_record_bytes_config(
 def paged_authority(tmp_path):
     manager = ConsoleScratchSpaceManager(temp_parent=tmp_path)
     snapshot = manager.snapshot("paged-session")
-    db = AgentRunsDB(tmp_path / "paged.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "paged.db", client_id="t")
     bridge = ConsoleAgentBridge(
         agent_runs_db=db, store=ConsoleChatStore(), provider_gateway=None
     )

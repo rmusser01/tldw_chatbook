@@ -75,6 +75,17 @@ Protected-file checks use the lightweight `RAG_Search/state_paths.py` accessors;
 - The Library service owns the four-seam keyword path and UI recovery states; answer generation deliberately lives outside it as a pure seam with an injected `chat` callable.
 - `RAG_Search/simplified/search_service.py` exposes MCP-facing search that falls back to keyword FTS when the RAG runtime is unavailable (fallback rows carry `score: None`, never a fabricated 1.0).
 
+Completed keyword searches retain a thread-affine SQLite pool until explicit
+retirement. During local backup/recovery, `RuntimeMaintenance` closes this pool
+owner only after all accepted RAG, Chroma and embedding work has settled. The
+pool map lock covers construction through publication; the empty-map fast path
+uses a nonblocking lock attempt. Cleanup runs on each pool's native thread,
+then joins that thread before removing its map entry. The original remaining
+deadline bounds the wait, while a retained task owns physical cleanup through
+timeout or cancellation. Resume joins that task before reopening intake. A
+failed or silently refused close retains the pool and executor and refuses
+searches; it cannot silently replace the native owner (ADR-126).
+
 ## Console citation key readiness
 
 `Chat/citation_key_first_use.py` separates finite owned SQLite snapshot and

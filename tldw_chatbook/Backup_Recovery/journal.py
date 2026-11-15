@@ -7,6 +7,7 @@ import json
 import stat
 from collections.abc import Iterable, Mapping
 from contextlib import contextmanager
+from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Literal
 
@@ -18,7 +19,12 @@ from .admission import Admission, fcntl
 from .archive_models import Metadata
 from .bootstrap import MAX_RECORD, _read
 from .limits import RECOVERY_RECORD_BYTES
-from .native_files import create_private_directory, flush_directory, pinned_directory
+from .native_files import (
+    _close_owned,
+    create_private_directory,
+    flush_directory,
+    pinned_directory,
+)
 from .native_platform import flush_file
 from .qualification import qualified_for
 
@@ -40,7 +46,12 @@ class _Object(_Evidence):
     @field_validator("path")
     @classmethod
     def absolute_path(cls, value):
-        if not Path(value).is_absolute() or ".." in Path(value).parts or "\0" in value:
+        path = Path(value)
+        if (
+            not path.is_absolute()
+            or (".." in value and ".." in path.parts)
+            or "\0" in value
+        ):
             raise ValueError("artifact_path_invalid")
         return value
 
@@ -234,7 +245,70 @@ def _artifact_digest(rows: list[tuple]) -> str:
     return hashlib.sha256(json.dumps(rows, separators=(",", ":")).encode()).hexdigest()
 
 
-def observe_artifact(path: Path, *, metadata: bool = False) -> dict:
+@dataclass(frozen=True)
+class _ArtifactObservationLimits:
+    """Numeric resource ceilings only; no path, membership or observed authority."""
+
+    entry_count: int
+    total_file_bytes: int
+    total_relative_characters: int
+    maximum_relative_length: int
+    maximum_depth: int
+    maximum_component_length: int
+
+    def __post_init__(self):
+        if (
+            any(
+                type(getattr(self, field.name)) is not int
+                or getattr(self, field.name) < 0
+                for field in fields(self)
+            )
+            or self.entry_count > MAX_EVENTS
+            or self.total_file_bytes > 1024**4
+            or self.maximum_depth > MAX_EVENTS
+            or self.maximum_component_length == 0
+        ):
+            raise ValueError("artifact_limits_invalid")
+
+
+def _artifact_component_limit(fd):
+    """Use only the actual supported bounded descriptor backend and native limit."""
+    # WindowsOS.scandir eagerly materializes listdir. Never route around that
+    # native wrapper or claim its names were admitted one at a time.
+    if getattr(os, "name", None) != "posix" or not hasattr(os, "fpathconf"):
+        raise ValueError("artifact_bounded_enumeration_unavailable")
+    try:
+        limit = os.fpathconf(fd, "PC_NAME_MAX")
+    except (OSError, ValueError):
+        raise ValueError("artifact_bounded_enumeration_unavailable") from None
+    if type(limit) is not int or limit <= 0:
+        raise ValueError("artifact_bounded_enumeration_unavailable")
+    return limit
+
+
+def _qualify_artifact_enumeration(fd, custody):
+    """Qualify actual descriptor iterator creation/retirement before effects."""
+    limit = _artifact_component_limit(fd)
+    iterator = os.scandir(fd)
+    custody.directory_iterators.append(iterator)
+    custody.close_directory_iterator(iterator)
+    info = os.fstat(fd)
+    if any(
+        type(value) is not int or not 0 <= value <= 2**64 - 1
+        for value in (info.st_dev, info.st_ino)
+    ):
+        raise ValueError("artifact_physical_scalar_unrepresentable")
+    return limit
+
+
+def observe_artifact(
+    path: Path,
+    *,
+    metadata: bool = False,
+    _custody=None,
+    _limits=None,
+    _read_buffer=None,
+) -> dict:
     """Read bounded no-follow file/tree identity and bytes for local reconciliation.
 
     Modes are deliberately separate from content identity: native publication
@@ -242,8 +316,67 @@ def observe_artifact(path: Path, *, metadata: bool = False) -> dict:
     Directory evidence includes every child and empty directory, never just names
     from an intended payload list.
     """
+    if _limits is not None and (
+        type(_limits) is not _ArtifactObservationLimits or _custody is None
+    ):
+        raise ValueError("artifact_limits_invalid")
+    # A reusable byte workspace changes no identity, custody, limit or hash
+    # proof. Its caller has priced every fixed read count and partial view.
+    if (_read_buffer is not None) and (
+        type(_read_buffer) is not tuple
+        or len(_read_buffer) != 3
+        or type(_read_buffer[0]) is not bytearray
+        or len(_read_buffer[0]) != 65536
+        or type(_read_buffer[1]) is not memoryview
+        or _read_buffer[1].obj is not _read_buffer[0]
+        or len(_read_buffer[1]) != 65536
+        or _read_buffer[1].format != "B"
+        or type(_read_buffer[2]) is not list
+        or len(_read_buffer[2]) != 1
+        or _read_buffer[2][0] is not _read_buffer[1]
+        or _limits is None
+        or not hasattr(os, "readv")
+    ):
+        raise ValueError("artifact_read_buffer_invalid")
     count, total = 0, 0
     observed = {}
+    # Each complete name census has its own bounded counters. They describe
+    # retained names, not a replenishable materialization allowance.
+    scans = (
+        {"read": [1, 0], "immediate": [1, 0], "final": [1, 0]}
+        if _limits is not None
+        else None
+    )
+
+    def names_at(fd, relative, phase):
+        if _limits is None:
+            return sorted(os.listdir(fd))
+        if _artifact_component_limit(fd) > _limits.maximum_component_length:
+            raise ValueError("artifact_bounded_enumeration_unavailable")
+        names = []
+        iterator = os.scandir(fd)
+        _custody.directory_iterators.append(iterator)
+        try:
+            for entry in iterator:
+                name = entry.name
+                length = len(relative) + 1 + len(name)
+                depth = relative.count("/") + 1
+                census = scans[phase]
+                if (
+                    len(name) > _limits.maximum_component_length
+                    or census[0] >= _limits.entry_count
+                    or length > _limits.maximum_relative_length
+                    or depth > _limits.maximum_depth
+                    or census[1] + length > _limits.total_relative_characters
+                ):
+                    raise ValueError("artifact_limit")
+                census[0] += 1
+                census[1] += length
+                names.append(name)
+        finally:
+            _custody.close_directory_iterator(iterator)
+        names.sort()
+        return names
 
     def identity(info):
         return (
@@ -260,22 +393,32 @@ def observe_artifact(path: Path, *, metadata: bool = False) -> dict:
         if identity(os.fstat(fd)) != expected:
             raise ValueError("artifact_changed")
         if names is not None:
-            if sorted(os.listdir(fd)) != names:
+            if names_at(fd, relative, "final") != names:
                 raise ValueError("artifact_changed")
             for name in names:
                 child = os.open(
                     name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd
                 )
+                if _custody is not None:
+                    _custody.fds.append(child)
                 try:
                     recheck(child, relative + "/" + name)
                 finally:
-                    os.close(child)
+                    _close_owned(child, _custody)
 
     def read(fd, relative, device):
         nonlocal count, total
         before = os.fstat(fd)
         names = None
         count += 1
+        if _limits is not None:
+            if count > _limits.entry_count:
+                raise ValueError("artifact_limit")
+            if any(
+                type(value) is not int or not 0 <= value <= 2**64 - 1
+                for value in (before.st_dev, before.st_ino)
+            ):
+                raise ValueError("artifact_physical_scalar_unrepresentable")
         if (
             count > MAX_EVENTS
             or before.st_dev != device
@@ -285,9 +428,26 @@ def observe_artifact(path: Path, *, metadata: bool = False) -> dict:
         if stat.S_ISREG(before.st_mode):
             if before.st_nlink != 1 or before.st_size > 256 * 1024**3:
                 raise ValueError("artifact_unverified")
+            if _limits is not None and (
+                before.st_size < 0 or before.st_size > _limits.total_file_bytes - total
+            ):
+                raise ValueError("artifact_limit")
             digest = hashlib.sha256()
             size = 0
-            while chunk := os.read(fd, 64 * 1024):
+            while True:
+                if _read_buffer is None:
+                    chunk = os.read(fd, 64 * 1024)
+                else:
+                    chunk_size = os.readv(fd, _read_buffer[2])
+                    if chunk_size < min(65536, before.st_size - size):
+                        raise ValueError("artifact_changed")
+                    chunk = (
+                        _read_buffer[1]
+                        if chunk_size == 65536
+                        else _read_buffer[1][:chunk_size]
+                    )
+                if not chunk:
+                    break
                 size += len(chunk)
                 total += len(chunk)
                 if size > before.st_size or total > 1024**4:
@@ -296,7 +456,7 @@ def observe_artifact(path: Path, *, metadata: bool = False) -> dict:
             rows = [(relative, "file", size, digest.hexdigest())]
             kind = "file"
         elif stat.S_ISDIR(before.st_mode):
-            names = sorted(os.listdir(fd))
+            names = names_at(fd, relative, "read")
             if len(names) > MAX_EVENTS - count:
                 raise ValueError("artifact_limit")
             rows = [(relative, "directory")]
@@ -305,12 +465,14 @@ def observe_artifact(path: Path, *, metadata: bool = False) -> dict:
                 child = os.open(
                     name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd
                 )
+                if _custody is not None:
+                    _custody.fds.append(child)
                 try:
                     _, child_rows = read(child, relative + "/" + name, device)
                     rows.extend(child_rows)
                 finally:
-                    os.close(child)
-            if names != sorted(os.listdir(fd)):
+                    _close_owned(child, _custody)
+            if names != names_at(fd, relative, "immediate"):
                 raise ValueError("artifact_changed")
         else:
             raise ValueError("artifact_unverified")
@@ -322,10 +484,17 @@ def observe_artifact(path: Path, *, metadata: bool = False) -> dict:
         observed[relative] = identity(after), names
         return kind, rows
 
-    with pinned_directory(path.parent) as parent:
+    pinned = (
+        pinned_directory(path.parent)
+        if _custody is None
+        else pinned_directory(path.parent, _custody=_custody)
+    )
+    with pinned as parent:
         fd = os.open(
             path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent
         )
+        if _custody is not None:
+            _custody.fds.append(fd)
         try:
             before = os.fstat(fd)
             kind, rows = read(fd, "", before.st_dev)
@@ -334,7 +503,7 @@ def observe_artifact(path: Path, *, metadata: bool = False) -> dict:
             if (named.st_dev, named.st_ino) != (before.st_dev, before.st_ino):
                 raise ValueError("artifact_changed")
         finally:
-            os.close(fd)
+            _close_owned(fd, _custody)
     return _Object(
         path=str(path),
         device=before.st_dev,
@@ -345,11 +514,44 @@ def observe_artifact(path: Path, *, metadata: bool = False) -> dict:
     ).model_dump()
 
 
-def _matches(expected: _Object, path: str, *, metadata: bool = False) -> bool:
+def _matches(
+    expected: _Object,
+    path: str,
+    *,
+    metadata: bool = False,
+    cancel=None,
+    _read_budget=None,
+    _custody=None,
+) -> bool:
+    owned_custody = None
     try:
-        actual = observe_artifact(Path(path), metadata=metadata)
+        from .mobile_preview_budget import read_options
+
+        budget, custody = read_options(_read_budget, _custody)
+        if budget is None:
+            actual = observe_artifact(Path(path), metadata=metadata)
+        else:
+            from .mobile_builtin_preservation import _preservation_budget
+            from .mobile_rollback_io import observation
+            from .storage_admission import _CaptureFileDescriptors
+
+            _preservation_budget(budget)
+            if custody is None:
+                budget.reserve(512)
+                custody = owned_custody = _CaptureFileDescriptors(None)
+            elif type(custody) is not _CaptureFileDescriptors:
+                raise TypeError("invalid_mobile_preservation_custody")
+            budget.reserve(2048 + 16 * len(path))
+            if cancel is None:
+                from threading import Event
+
+                cancel = Event()
+            actual = observation(Path(path), budget, custody, cancel, metadata=metadata)
     except (OSError, ValueError, RecursionError):
         return False
+    finally:
+        if owned_custody is not None:
+            owned_custody.retire()
     return {
         key: value for key, value in actual.items() if key != "path"
     } == expected.model_dump(exclude={"path"})
@@ -596,12 +798,766 @@ class _Committed(_Evidence):
     credential_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
 
+_MOBILE_OWNERS = ("db.chachanotes.primary", "db.workspaces", "db.agent_runs")
+
+
+class _MobileWitness(_Evidence):
+    path: str
+    device: int | None = Field(ge=0)
+    inode: int | None = Field(ge=0)
+    mode: int | None = Field(ge=0)
+
+    @field_validator("path")
+    @classmethod
+    def absolute_path(cls, value):
+        return _Object.absolute_path(value)
+
+
+class _MobileTarget(_Evidence):
+    owner_id: Literal["db.chachanotes.primary", "db.workspaces", "db.agent_runs"]
+    witnesses: list[_MobileWitness] = Field(min_length=2, max_length=256)
+    sidecars: list[_MobileWitness] = Field(min_length=3, max_length=3)
+
+
+class _MobileSelectorReview(_Evidence):
+    selector: str
+    fingerprint: str | None = Field(pattern=r"^[0-9a-f]{64}$")
+    witnesses: list[_MobileWitness] = Field(min_length=2, max_length=256)
+    destination_identity: str | None = Field(pattern=r"^[0-9a-f]{64}$")
+    targets: list[_MobileTarget] = Field(max_length=3)
+
+    @field_validator("selector")
+    @classmethod
+    def absolute_path(cls, value):
+        return _Object.absolute_path(value)
+
+
+class _MobileCredentialReview(_Evidence):
+    purpose: Literal["legacy", "canonical"]
+    issues: list[str] = Field(max_length=10000)
+
+    @field_validator("issues")
+    @classmethod
+    def manual_only(cls, values):
+        import re
+
+        if values != sorted(set(values)) or any(
+            not re.fullmatch(r"credential_manual_recovery_required:[0-9a-f]{64}", value)
+            for value in values
+        ):
+            raise ValueError("mobile_credential_review_invalid")
+        return values
+
+
+class _MobileRef(_Evidence):
+    sequence: int = Field(ge=0, lt=MAX_EVENTS)
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class _MobilePredecessor(_Evidence):
+    operation_id: str = Field(min_length=1, max_length=256)
+    control_root: str
+    claim_path: str
+    claim: _Object
+    rolled_back: _MobileRef
+
+    @field_validator("control_root", "claim_path")
+    @classmethod
+    def absolute_path(cls, value):
+        return _Object.absolute_path(value)
+
+
+class _MobileSuccessor(_Evidence):
+    version: Literal[1] = 1
+    rolled_back: _MobileRef
+    operation_id: str = Field(min_length=1, max_length=256)
+    control_root: str
+    claim_path: str
+    prepared: _MobileRef
+
+    @field_validator("control_root", "claim_path")
+    @classmethod
+    def absolute_path(cls, value):
+        return _Object.absolute_path(value)
+
+
+class _MobilePrepared(_Evidence):
+    predecessor: _MobilePredecessor | None = None
+    mode: Literal["mobile_consolidation"] = "mobile_consolidation"
+    bootstrap_root: str
+    namespaces: list[str] = Field(min_length=1, max_length=4096)
+    source_selector: str
+    target_selector: str
+    source_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    inventory_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    selector_fingerprints: list[str] = Field(min_length=2, max_length=2)
+    selector_review: list[_MobileSelectorReview] = Field(
+        default_factory=list, max_length=4096
+    )
+    credential_review: list[_MobileCredentialReview] = Field(
+        default_factory=list, max_length=2
+    )
+    targets: list[_MobileTarget] = Field(min_length=3, max_length=3)
+
+    @field_validator("bootstrap_root", "source_selector", "target_selector")
+    @classmethod
+    def absolute_path(cls, value):
+        return _Object.absolute_path(value)
+
+
+class _MobileSourceClaim(_Evidence):
+    version: Literal[1] = 1
+    operation_id: str = Field(min_length=1, max_length=256)
+    control_root: str
+    claim_path: str
+    source_dir: str
+    source_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    source_witnesses: list[_MobileWitness] = Field(min_length=2, max_length=256)
+    destination_identity: str = Field(pattern=r"^[0-9a-f]{64}$")
+    targets: list[_MobileTarget] = Field(min_length=3, max_length=3)
+
+    @field_validator("control_root", "claim_path", "source_dir")
+    @classmethod
+    def absolute_path(cls, value):
+        return _Object.absolute_path(value)
+
+
+class _MobileCaptureIntent(_Evidence):
+    credential_issues: list[str] = Field(default_factory=list, max_length=10000)
+    purpose: Literal["legacy", "canonical"]
+    destination: str
+    source_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    inventory_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    destination_identity: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @field_validator("destination")
+    @classmethod
+    def absolute_path(cls, value):
+        return _Object.absolute_path(value)
+
+
+class _MobileCaptureStaged(_Evidence):
+    purpose: Literal["legacy", "canonical"]
+    temporary: _Object
+    destination_parent: _MobileWitness
+    temporary_parent: _MobileWitness
+    manifest_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    partition_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class _MobileCaptureVerified(_Evidence):
+    purpose: Literal["legacy", "canonical"]
+    archive: _Object
+    manifest_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    partition_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class _MobileHistoryIntent(_Evidence):
+    location: str
+    publication: str
+    temporary: str
+    parent: _MobileWitness
+    source_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    destination_identity: str = Field(pattern=r"^[0-9a-f]{64}$")
+    manifest_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    members_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @field_validator("location", "publication", "temporary")
+    @classmethod
+    def absolute_path(cls, value):
+        return _Object.absolute_path(value)
+
+
+class _MobileHistoryObject(_Evidence):
+    intent_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    artifact: _Object
+
+
+class _MobileEmptySource(_Evidence):
+    source_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class _MobileCaptureFinal(_Evidence):
+    purpose: Literal["legacy", "canonical"]
+    verified: _MobileRef
+
+
+class _MobileTargetFinal(_MobileTarget):
+    schema_version: Literal[87, 11, 33]
+
+
+class _MobileOwnerFinal(_Evidence):
+    owner_id: Literal["db.chachanotes.primary", "db.workspaces", "db.agent_runs"]
+    master_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    entry_count: int = Field(ge=0, le=2**63 - 1)
+    entries_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    command_history_count: int | None = Field(ge=0, le=2**63 - 1)
+
+
+class _MobileCommitted(_Evidence):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+    version: int = Field(ge=1, le=1)
+    kind: Literal["imported", "no_data"]
+    source_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    destination_identity: str = Field(pattern=r"^[0-9a-f]{64}$")
+    prepared: _MobileRef
+    claim: _MobileRef
+    captures: list[_MobileCaptureFinal] = Field(min_length=1, max_length=2)
+    targets: list[_MobileTargetFinal] = Field(min_length=3, max_length=3)
+    owners: list[_MobileOwnerFinal] = Field(max_length=3)
+    history: _MobileRef | None
+    pending: _Object
+    bootstrap: _Directory
+
+
+def _mobile_ref(record):
+    return {
+        "sequence": record.sequence,
+        "sha256": hashlib.sha256(_encoded(record)).hexdigest(),
+    }
+
+
+def _mobile_referenced(reference, records, event):
+    if reference.sequence >= len(records):
+        raise ValueError("mobile_terminal_reference_invalid")
+    record = records[reference.sequence]
+    if record.event != event or reference.model_dump() != _mobile_ref(record):
+        raise ValueError("mobile_terminal_reference_invalid")
+    return record
+
+
+def _validate_mobile_committed(value, prior, prepared, witnesses):
+    from .bootstrap import _key
+
+    claim = _mobile_referenced(value.claim, prior, "mobile_claim_observed")
+    _mobile_referenced(value.prepared, prior, "mobile_prepared")
+    intended = next(row for row in prior if row.event == "mobile_claim_intended")
+    if (
+        value.prepared.sequence != 0
+        or value.source_fingerprint != prepared.source_fingerprint
+        or value.destination_identity != intended.evidence["destination_identity"]
+        or claim.evidence["path"] != intended.evidence["claim_path"]
+        or value.bootstrap.path != prepared.bootstrap_root
+        or value.pending.path
+        != str(
+            Path(prepared.bootstrap_root)
+            / ("pending-" + _key(prior[0].operation_id) + ".json")
+        )
+        or value.pending.kind != "file"
+        or value.kind == "no_data"
+        and not any(row.event == "mobile_source_empty" for row in prior)
+        or value.kind == "imported"
+        and any(row.event == "mobile_source_empty" for row in prior)
+        or tuple(row.owner_id for row in value.targets) != _MOBILE_OWNERS
+        or tuple(row.schema_version for row in value.targets) != (87, 11, 33)
+        or tuple(row.owner_id for row in value.owners)
+        != (_MOBILE_OWNERS if value.kind == "imported" else ())
+    ):
+        raise ValueError("mobile_terminal_scope_invalid")
+    for target, original in zip(value.targets, prepared.targets, strict=True):
+        if (
+            [row.model_dump() for row in target.witnesses]
+            != [witnesses[row.path] for row in original.witnesses]
+            or target.witnesses[-1].inode is None
+            or [row.model_dump() for row in target.sidecars]
+            != list(_mobile_sidecar_state(prior, target.owner_id).values())
+        ):
+            raise ValueError("mobile_terminal_target_invalid")
+        _validate_mobile_sidecars(target.witnesses[-1].path, target.sidecars)
+    expected = ("legacy", "canonical") if value.kind == "imported" else ("canonical",)
+    if tuple(row.purpose for row in value.captures) != expected:
+        raise ValueError("mobile_terminal_capture_invalid")
+    for capture in value.captures:
+        record = _mobile_referenced(capture.verified, prior, "mobile_capture_verified")
+        if record.evidence["purpose"] != capture.purpose:
+            raise ValueError("mobile_terminal_capture_invalid")
+    history = [row for row in prior if row.event == "mobile_history_verified"]
+    if (value.history is None) != (not history):
+        raise ValueError("mobile_terminal_history_invalid")
+    if value.history is not None:
+        _mobile_referenced(value.history, prior, "mobile_history_verified")
+    for owner in value.owners:
+        if (owner.command_history_count is None) != (owner.owner_id != "db.agent_runs"):
+            raise ValueError("mobile_terminal_owner_invalid")
+
+
+class _MobilePathIntent(_Evidence):
+    before: _MobileWitness
+    kind: Literal["directory", "database"]
+    temporary: str | None = None
+
+
+class _MobilePathStaged(_Evidence):
+    target: str
+    temporary: _MobileWitness
+    parent: _MobileWitness
+
+
+class _MobilePathObserved(_Evidence):
+    after: _MobileWitness
+
+
+class _MobileOwner(_Evidence):
+    owner_id: Literal["db.chachanotes.primary", "db.workspaces", "db.agent_runs"]
+    path: str
+
+    @field_validator("path")
+    @classmethod
+    def absolute_path(cls, value):
+        return _Object.absolute_path(value)
+
+
+class _MobileSidecars(_Evidence):
+    owner_id: Literal["db.chachanotes.primary", "db.workspaces", "db.agent_runs"]
+    phase: Literal["recovered", "retired"]
+    witnesses: list[_MobileWitness] = Field(min_length=3, max_length=3)
+
+
+def _mobile_sidecar_state(records, owner_id):
+    prepared = _MobilePrepared.model_validate(records[0].evidence)
+    target = next(target for target in prepared.targets if target.owner_id == owner_id)
+    result = {row.path: row.model_dump() for row in target.sidecars}
+    for record in records:
+        if (
+            record.event == "mobile_mode_observed"
+            and record.evidence["after"]["path"] in result
+        ):
+            row = record.evidence["after"]
+            result[row["path"]] = row
+        if (
+            record.event == "mobile_sidecars_observed"
+            and record.evidence["owner_id"] == owner_id
+        ):
+            result = {row["path"]: row for row in record.evidence["witnesses"]}
+    return result
+
+
+def _validate_mobile_sidecars(path, rows):
+    if tuple(row.path for row in rows) != tuple(
+        path + suffix for suffix in ("-wal", "-shm", "-journal")
+    ):
+        raise ValueError("mobile_sidecar_scope_invalid")
+    for row in rows:
+        if row.inode is None:
+            if (row.device, row.mode) != (None, None):
+                raise ValueError("mobile_sidecar_witness_invalid")
+        elif row.device is None or row.mode is None or not stat.S_ISREG(row.mode):
+            raise ValueError("mobile_sidecar_witness_invalid")
+
+
+def _mobile_active_owner(records):
+    for record in reversed(records):
+        if record.event == "mobile_owner_opened":
+            return record.evidence
+        if record.event == "mobile_owner_retired":
+            return None
+    return None
+
+
+def _mobile_state(records):
+    """Replay only typed path transitions; owner records never prove a batch commit."""
+    prepared = _MobilePrepared.model_validate(records[0].evidence)
+    witnesses = {
+        row.path: row.model_dump()
+        for target in prepared.targets
+        for row in target.witnesses
+    }
+    for record in records:
+        if record.event in {"mobile_path_observed", "mobile_mode_observed"}:
+            row = record.evidence["after"]
+            if row["path"] in witnesses:
+                witnesses[row["path"]] = row
+    if any(row.event.startswith("mobile_rollback_") for row in records):
+        from .mobile_rollback_records import replay_witnesses
+
+        replay_witnesses(records, witnesses)
+    return prepared, witnesses
+
+
+def _validate_mobile(event, evidence, prior):
+    if event == "mobile_successor_intended":
+        from .mobile_lineage import _validate_successor
+
+        return _validate_successor(evidence, prior)
+    if event.startswith("mobile_rollback_") or event == "mobile_rolled_back":
+        from .mobile_rollback_records import validate_rollback
+
+        return validate_rollback(event, evidence, prior)
+    if any(
+        row.event in {"mobile_rollback_started", "mobile_rolled_back"} for row in prior
+    ):
+        raise ValueError("mobile_rollback_direction_frozen")
+    models = {
+        "mobile_prepared": _MobilePrepared,
+        "mobile_path_intended": _MobilePathIntent,
+        "mobile_path_staged": _MobilePathStaged,
+        "mobile_claim_intended": _MobileSourceClaim,
+        "mobile_claim_observed": _Object,
+        "mobile_capture_intended": _MobileCaptureIntent,
+        "mobile_capture_staged": _MobileCaptureStaged,
+        "mobile_capture_verified": _MobileCaptureVerified,
+        "mobile_source_empty": _MobileEmptySource,
+        "mobile_history_intended": _MobileHistoryIntent,
+        "mobile_history_staged": _MobileHistoryObject,
+        "mobile_history_observed": _MobileHistoryObject,
+        "mobile_history_verified": _MobileHistoryObject,
+        "mobile_path_observed": _MobilePathObserved,
+        "mobile_owner_opened": _MobileOwner,
+        "mobile_owner_retired": _MobileOwner,
+        "mobile_mode_intended": _MobileWitness,
+        "mobile_mode_observed": _MobilePathObserved,
+        "mobile_sidecars_observed": _MobileSidecars,
+        "mobile_committed": _MobileCommitted,
+    }
+    if event not in models:
+        raise ValueError("journal_transition_invalid")
+    value = models[event].model_validate(dict(evidence))
+    if not prior:
+        if event != "mobile_prepared":
+            raise ValueError("journal_transition_invalid")
+        if tuple(row.owner_id for row in value.targets) != _MOBILE_OWNERS:
+            raise ValueError("mobile_owner_scope_invalid")
+        seen = {}
+        targets = []
+        for target in value.targets:
+            path = Path(target.witnesses[-1].path)
+            expected = tuple(reversed((path, *path.parents)))
+            if tuple(Path(row.path) for row in target.witnesses) != expected:
+                raise ValueError("mobile_witness_chain_invalid")
+            _validate_mobile_sidecars(str(path), target.sidecars)
+            targets.extend((str(path), *(row.path for row in target.sidecars)))
+            for row in target.witnesses:
+                fields = (row.device, row.inode, row.mode)
+                if any(v is None for v in fields) and fields != (None, None, None):
+                    raise ValueError("mobile_witness_invalid")
+                if seen.setdefault(row.path, row) != row:
+                    raise ValueError("mobile_witness_conflict")
+        if len(set(targets)) != 12:
+            raise ValueError("mobile_target_alias")
+    else:
+        if prior[0].event != "mobile_prepared" or event == "mobile_prepared":
+            raise ValueError("journal_transition_invalid")
+        prepared, witnesses = _mobile_state(prior)
+        if any(row.event == "mobile_committed" for row in prior):
+            raise ValueError("mobile_operation_terminal")
+        last = prior[-1]
+        if last.event in {
+            "mobile_history_intended",
+            "mobile_history_staged",
+            "mobile_history_observed",
+        }:
+            intent = next(
+                row.evidence for row in prior if row.event == "mobile_history_intended"
+            )
+            expected_event = {
+                "mobile_history_intended": "mobile_history_staged",
+                "mobile_history_staged": "mobile_history_observed",
+                "mobile_history_observed": "mobile_history_verified",
+            }[last.event]
+            if event != expected_event or value.intent_digest != _evidence_digest(
+                intent
+            ):
+                raise ValueError("mobile_history_unsettled")
+            expected_path = (
+                intent["temporary"]
+                if event == "mobile_history_staged"
+                else intent["publication"]
+            )
+            if (
+                value.artifact.path != expected_path
+                or value.artifact.kind != "directory"
+            ):
+                raise ValueError("mobile_history_scope_invalid")
+            if last.event != "mobile_history_intended" and value.artifact.model_dump(
+                exclude={"path"}
+            ) != {
+                key: item
+                for key, item in last.evidence["artifact"].items()
+                if key != "path"
+            }:
+                raise ValueError("mobile_history_changed")
+        elif event == "mobile_history_intended":
+            claims = [
+                row.evidence for row in prior if row.event == "mobile_claim_intended"
+            ]
+            captures = [
+                row.evidence for row in prior if row.event == "mobile_capture_verified"
+            ]
+            if (
+                _mobile_active_owner(prior) is not None
+                or last.event not in {"mobile_capture_verified", "mobile_owner_retired"}
+                or any(row.event == event for row in prior)
+                or len(claims) != 1
+                or {row["purpose"] for row in captures} != {"legacy", "canonical"}
+                or value.source_fingerprint != prepared.source_fingerprint
+                or value.destination_identity != claims[0]["destination_identity"]
+                or value.manifest_digest
+                != next(
+                    row["manifest_digest"]
+                    for row in captures
+                    if row["purpose"] == "legacy"
+                )
+                or Path(value.location).parts[-4:]
+                != (
+                    "agent_history",
+                    "imports",
+                    value.destination_identity,
+                    value.source_fingerprint,
+                )
+                or Path(value.publication)
+                not in (Path(value.location), *list(Path(value.location).parents)[:3])
+                or Path(value.publication).parent != Path(value.parent.path)
+                or Path(value.temporary).parent != Path(value.parent.path)
+                or Path(value.temporary).name
+                != ".mobile-history-"
+                + hashlib.sha256(claims[0]["operation_id"].encode()).hexdigest()
+                or value.parent.inode is None
+            ):
+                raise ValueError("mobile_history_scope_invalid")
+        elif last.event == "mobile_claim_intended":
+            encoded = json.dumps(
+                last.evidence, sort_keys=True, separators=(",", ":")
+            ).encode()
+            artifact_rows = [
+                ("", "file", len(encoded), hashlib.sha256(encoded).hexdigest())
+            ]
+            digest = hashlib.sha256(
+                json.dumps(artifact_rows, separators=(",", ":")).encode()
+            ).hexdigest()
+            if (
+                event != "mobile_claim_observed"
+                or value.path != last.evidence["claim_path"]
+                or value.kind != "file"
+                or value.size != len(encoded)
+                or value.sha256 != digest
+            ):
+                raise ValueError("mobile_claim_unverified")
+        elif last.event == "mobile_capture_intended":
+            intent = last.evidence
+            if (
+                event != "mobile_capture_staged"
+                or value.purpose != intent["purpose"]
+                or value.temporary.kind != "file"
+                or Path(value.destination_parent.path)
+                != Path(intent["destination"]).parent
+                or Path(value.temporary_parent.path)
+                != Path(value.temporary.path).parent
+                or Path(value.temporary_parent.path).parent
+                != Path(value.destination_parent.path)
+                or not Path(value.temporary_parent.path).name.startswith(
+                    ".backup-write-"
+                )
+            ):
+                raise ValueError("mobile_capture_unverified")
+        elif last.event == "mobile_capture_staged":
+            intent = prior[-2].evidence
+            expected = {**last.evidence["temporary"], "path": intent["destination"]}
+            if (
+                event != "mobile_capture_verified"
+                or value.purpose != intent["purpose"]
+                or value.archive.model_dump() != expected
+                or value.manifest_digest != last.evidence["manifest_digest"]
+                or value.partition_digest != last.evidence["partition_digest"]
+            ):
+                raise ValueError("mobile_capture_unverified")
+        elif last.event == "mobile_path_intended":
+            before = last.evidence["before"]
+            temporary = last.evidence.get("temporary")
+            if temporary is not None:
+                expected_mode = (
+                    stat.S_IFDIR | 0o700
+                    if last.evidence["kind"] == "directory"
+                    else stat.S_IFREG | 0o600
+                )
+                if (
+                    event != "mobile_path_staged"
+                    or value.target != before["path"]
+                    or value.temporary.path != temporary
+                    or value.temporary.inode is None
+                    or value.temporary.mode != expected_mode
+                    or value.parent.model_dump()
+                    != witnesses[str(Path(before["path"]).parent)]
+                    or value.temporary.device != value.parent.device
+                ):
+                    raise ValueError("mobile_creation_unverified")
+            else:
+                if event != "mobile_path_observed":
+                    raise ValueError("mobile_creation_unsettled")
+                if value.after.path != before["path"] or any(
+                    item is None
+                    for item in (
+                        value.after.device,
+                        value.after.inode,
+                        value.after.mode,
+                    )
+                ):
+                    raise ValueError("mobile_creation_unverified")
+                check = (
+                    stat.S_ISDIR
+                    if last.evidence["kind"] == "directory"
+                    else stat.S_ISREG
+                )
+                if not check(value.after.mode):
+                    raise ValueError("mobile_creation_kind_invalid")
+        elif last.event == "mobile_path_staged":
+            expected = {**last.evidence["temporary"], "path": last.evidence["target"]}
+            if event != "mobile_path_observed" or value.after.model_dump() != expected:
+                raise ValueError("mobile_creation_unverified")
+        elif last.event == "mobile_mode_intended":
+            expected = {**last.evidence, "mode": stat.S_IFREG | 0o600}
+            if event != "mobile_mode_observed" or value.after.model_dump() != expected:
+                raise ValueError("mobile_mode_unsettled")
+        elif (owner := _mobile_active_owner(prior)) is not None:
+            if event == "mobile_mode_intended":
+                before = value.model_dump()
+                allowed = {
+                    owner["path"]: witnesses[owner["path"]],
+                    **_mobile_sidecar_state(prior, owner["owner_id"]),
+                }
+                if (
+                    before != allowed.get(before["path"])
+                    or before["inode"] is None
+                    or not stat.S_ISREG(before["mode"])
+                    or stat.S_IMODE(before["mode"]) == 0o600
+                ):
+                    raise ValueError("mobile_mode_unreviewed")
+            elif event == "mobile_sidecars_observed":
+                if value.owner_id != owner["owner_id"]:
+                    raise ValueError("mobile_sidecar_scope_invalid")
+                _validate_mobile_sidecars(owner["path"], value.witnesses)
+            elif event != "mobile_owner_retired" or value.model_dump() != owner:
+                raise ValueError("mobile_owner_not_retired")
+        elif event == "mobile_committed":
+            if last.event != "mobile_owner_retired":
+                raise ValueError("mobile_terminal_owners_not_retired")
+            _validate_mobile_committed(value, prior, prepared, witnesses)
+        elif event == "mobile_claim_intended":
+            if (
+                last.event != "mobile_prepared"
+                or value.operation_id != prior[0].operation_id
+                or value.source_fingerprint != prepared.source_fingerprint
+                or value.targets != prepared.targets
+            ):
+                raise ValueError("mobile_claim_scope_invalid")
+        elif event == "mobile_source_empty":
+            if (
+                last.event != "mobile_claim_observed"
+                or value.source_fingerprint != prepared.source_fingerprint
+            ):
+                raise ValueError("mobile_empty_source_unverified")
+        elif event == "mobile_capture_intended":
+            expected_purpose = (
+                "legacy" if last.event == "mobile_claim_observed" else "canonical"
+            )
+            if (
+                last.event
+                not in {
+                    "mobile_claim_observed",
+                    "mobile_source_empty",
+                    "mobile_capture_verified",
+                }
+                or last.event == "mobile_capture_verified"
+                and last.evidence["purpose"] != "legacy"
+                or value.purpose != expected_purpose
+                or value.source_fingerprint != prepared.source_fingerprint
+                or value.inventory_digest != prepared.inventory_digest
+                or value.credential_issues
+                != next(
+                    (
+                        row.issues
+                        for row in prepared.credential_review
+                        if row.purpose == value.purpose
+                    ),
+                    [],
+                )
+                or value.destination_identity
+                != next(
+                    row.evidence["destination_identity"]
+                    for row in prior
+                    if row.event == "mobile_claim_intended"
+                )
+            ):
+                raise ValueError("mobile_capture_scope_invalid")
+        elif event == "mobile_path_intended":
+            if (
+                witnesses.get(value.before.path) != value.before.model_dump()
+                or value.before.inode is not None
+            ):
+                raise ValueError("mobile_creation_unreviewed")
+            if value.temporary is not None:
+                import re
+
+                prefix = (
+                    ".mobile-create-"
+                    + hashlib.sha256(prior[0].operation_id.encode()).hexdigest()
+                    + "-"
+                )
+                temporary = Path(value.temporary)
+                if temporary.parent != Path(
+                    value.before.path
+                ).parent or not re.fullmatch(
+                    re.escape(prefix) + r"[0-9a-f]{32}", temporary.name
+                ):
+                    raise ValueError("mobile_creation_temporary_invalid")
+            leaves = {target.witnesses[-1].path for target in prepared.targets}
+            if (value.kind == "database") != (value.before.path in leaves):
+                raise ValueError("mobile_creation_kind_invalid")
+            parent = witnesses.get(str(Path(value.before.path).parent))
+            if parent is None or parent["inode"] is None:
+                raise ValueError("mobile_creation_parent_missing")
+        elif event == "mobile_owner_opened":
+            target = next(
+                row for row in prepared.targets if row.owner_id == value.owner_id
+            )
+            if (
+                value.path != target.witnesses[-1].path
+                or witnesses[value.path]["inode"] is None
+            ):
+                raise ValueError("mobile_owner_scope_invalid")
+        else:
+            raise ValueError("journal_transition_invalid")
+    return value.model_dump(
+        exclude={"predecessor"}
+        if event == "mobile_prepared" and "predecessor" not in evidence
+        else set()
+    )
+
+
 class _Event(_Evidence):
     version: Literal[1] = 1
     operation_id: str
     sequence: int = Field(ge=0, lt=MAX_EVENTS)
     previous: str
     event: Literal[
+        "mobile_prepared",
+        "mobile_path_intended",
+        "mobile_path_staged",
+        "mobile_claim_intended",
+        "mobile_claim_observed",
+        "mobile_capture_intended",
+        "mobile_capture_staged",
+        "mobile_capture_verified",
+        "mobile_source_empty",
+        "mobile_history_intended",
+        "mobile_history_staged",
+        "mobile_history_observed",
+        "mobile_history_verified",
+        "mobile_path_observed",
+        "mobile_owner_opened",
+        "mobile_owner_retired",
+        "mobile_mode_intended",
+        "mobile_mode_observed",
+        "mobile_sidecars_observed",
+        "mobile_committed",
+        "mobile_successor_intended",
+        "mobile_rollback_started",
+        "mobile_rollback_stage_intended",
+        "mobile_rollback_stage_observed",
+        "mobile_rollback_move_intended",
+        "mobile_rollback_move_observed",
+        "mobile_rollback_metadata_intended",
+        "mobile_rollback_metadata_observed",
+        "mobile_rolled_back",
         "candidate_staged",
         "prepublication_aborted",
         "prepared",
@@ -645,6 +1601,8 @@ def _validate(
     *,
     historical: bool = False,
 ) -> dict:
+    if event.startswith("mobile_") or (prior and prior[0].event == "mobile_prepared"):
+        return _validate_mobile(event, evidence, prior)
     events = [record.event for record in prior]
     lifecycle = [
         value
@@ -1576,15 +2534,60 @@ class Journal:
                 raise ValueError("journal_not_private")
             self._identity = info.st_dev, info.st_ino
 
+    @classmethod
+    def _open_existing(cls, root, operation_id, *, _budget, _custody):
+        """Observe existing native history without any creation fallback."""
+        if (
+            cls is not Journal
+            or type(operation_id) is not str
+            or not 0 < len(operation_id) <= 256
+            or "\0" in operation_id
+        ):
+            raise ValueError("operation_id_invalid")
+        if _custody.close_failed:
+            raise OSError("capture_resource_close_failed")
+        allowed, reason = qualified_for("admission", root)
+        if not allowed:
+            raise OSError(reason)
+        _budget.reserve(4096 + 32 * len(str(root)) + 8 * len(operation_id))
+        path = root / ("operation-" + hashlib.sha256(operation_id.encode()).hexdigest())
+        with _custody.pinned_directory(path) as parent:
+            info = os.fstat(parent)
+            if info.st_uid != os.geteuid() or info.st_mode & 0o077:
+                raise ValueError("journal_not_private")
+            journal = object.__new__(Journal)
+            journal.operation_id, journal.root = operation_id, path
+            journal._identity = info.st_dev, info.st_ino
+        return journal
+
     @contextmanager
-    def _locked(self, *, exclusive: bool):
-        with pinned_directory(self.root) as parent:
+    def _locked(self, *, exclusive: bool, _custody=None):
+        from .mobile_journal_frame import _current
+        from .mobile_preview_budget import read_options
+
+        _, _custody = read_options(custody=_custody)
+
+        frame = _current(self)
+        if frame is not None:
+            if exclusive:
+                raise ValueError("mobile_nested_journal_write_forbidden")
+            # The lexical native owner still holds the actual exclusive lock.
+            # Installed capture checks may read that same frame without opening
+            # a second flock and blocking their own operation.
+            frame.check()
+            yield frame.parent
+            frame.check()
+            return
+        pin = pinned_directory if _custody is None else _custody.pinned_directory
+        with pin(self.root) as parent:
             info = os.fstat(parent)
             if (info.st_dev, info.st_ino) != self._identity or info.st_mode & 0o077:
                 raise ValueError("journal_identity_changed")
             lock = os.open(
                 "journal.lock", os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent
             )
+            if _custody is not None:
+                _custody.fds.append(lock)
             try:
                 info = os.fstat(lock)
                 if (
@@ -1600,27 +2603,93 @@ class Journal:
                     raise ValueError("journal_lock_changed")
                 yield parent
             finally:
-                os.close(lock)
+                if _custody is None:
+                    os.close(lock)
+                else:
+                    _custody.close_descriptor(lock)
+                    _custody.fds.remove(lock)
 
-    def _records(self, parent: int) -> list[_Event]:
-        names = sorted(
-            name
-            for name in os.listdir(parent)
-            if name
-            not in {"journal.lock", "verified-manifest.json", "restore-plan.json"}
-        )
+    def _records(self, parent: int, *, _budget=None, _custody=None) -> list[_Event]:
+        from .mobile_journal_frame import _current
+        from .mobile_preview_budget import read_options
+
+        _budget, _custody = read_options(_budget, _custody)
+
+        frame = _current(self, parent)
+        if frame is not None:
+            if _budget is not None and _budget is not frame.budget:
+                raise ValueError("mobile_native_budget_changed")
+            frame.verify()
+            return frame.records
+        return self._parse_records(parent, _budget=_budget, _custody=_custody)
+
+    def _parse_records(self, parent: int, *, _budget=None, _custody=None):
+        """Original full parser; fixed native ancestor custody also supplies its FD."""
+        info = os.fstat(parent)
+        if (info.st_dev, info.st_ino) != self._identity:
+            raise ValueError("journal_directory_changed")
+        claim_present = False
+        if _budget is not None:
+            if _custody is None:
+                raise ValueError("mobile_native_custody_required")
+            names = []
+            iterator = os.scandir(parent)
+            _custody.directory_iterators.append(iterator)
+            try:
+                for entry in iterator:
+                    if entry.name == "mobile-source-claim.json":
+                        claim_present = True
+                        continue
+                    if entry.name in {
+                        "journal.lock",
+                        "verified-manifest.json",
+                        "restore-plan.json",
+                    }:
+                        continue
+                    _budget.value(entry.name)
+                    _budget.container(1)
+                    names.append(entry.name)
+                    if len(names) > MAX_EVENTS:
+                        raise ValueError("journal_limit")
+            finally:
+                _custody.close_directory_iterator(iterator)
+            names.sort()
+        else:
+            names = sorted(
+                name
+                for name in os.listdir(parent)
+                if name
+                not in {"journal.lock", "verified-manifest.json", "restore-plan.json"}
+            )
+        if _budget is None and "mobile-source-claim.json" in names:
+            claim_present = True
+            names.remove("mobile-source-claim.json")
         if len(names) > MAX_EVENTS:
             raise ValueError("journal_limit")
-        return parse_event_records(
-            self.operation_id,
-            (
-                (name, _read(parent, name, max_bytes=RECOVERY_RECORD_BYTES))
-                for name in names
-            ),
-        )
+
+        def members():
+            for name in names:
+                raw = _read(
+                    parent,
+                    name,
+                    max_bytes=RECOVERY_RECORD_BYTES,
+                    _budget=_budget,
+                    _custody=_custody,
+                )
+                if _budget is not None:
+                    _budget.value(raw, text_copies=4)
+                yield name, raw
+
+        records = parse_event_records(self.operation_id, members())
+        from .mobile_lineage import _validate_local_claim
+
+        _validate_local_claim(self, parent, records, claim_present, _budget, _custody)
+        return records
 
     def record(self, event: str, evidence: Mapping[str, object]) -> None:
         """Flush one strictly typed exclusive record; failed writes remain evidence."""
+        if event.startswith("mobile_"):
+            raise ValueError("mobile_native_session_required")
         if event in {
             "prepublication_aborted",
             "move_intended",
@@ -1695,9 +2764,19 @@ class Journal:
             )
         flush_directory(parent)
 
-    def _append(self, parent: int, event: str, evidence: Mapping[str, object]) -> None:
+    def _append(
+        self,
+        parent: int,
+        event: str,
+        evidence: Mapping[str, object],
+        *,
+        _budget=None,
+        _custody=None,
+    ) -> None:
         """Append while the caller retains this operation's exclusive lock."""
-        records = self._records(parent)
+        records = self._records(parent, _budget=_budget, _custody=_custody)
+        if _budget is not None:
+            _budget.value(evidence, text_copies=4)
         validated = _validate(event, evidence, records)
         record = _Event(
             operation_id=self.operation_id,
@@ -1725,10 +2804,33 @@ class Journal:
         generation,
         replacement_profiles=(),
         incoming_credentials=None,
+        _source_archive=None,
+        _source_read_budget=None,
+        _source_journal=None,
+        _source_session=None,
+        _source_cancel=None,
     ):
         """Bind an explicit local publication context; never infer its scope."""
         from .publication import _prepare
 
+        source_options = {}
+        if any(
+            value is not None
+            for value in (
+                _source_archive,
+                _source_read_budget,
+                _source_journal,
+                _source_session,
+                _source_cancel,
+            )
+        ):
+            source_options = {
+                "_source_archive": _source_archive,
+                "_source_read_budget": _source_read_budget,
+                "_source_journal": _source_journal,
+                "_source_session": _source_session,
+                "_source_cancel": _source_cancel,
+            }
         _prepare(
             self,
             candidate,
@@ -1739,6 +2841,7 @@ class Journal:
             generation,
             replacement_profiles=replacement_profiles,
             incoming_credentials=incoming_credentials,
+            **source_options,
         )
 
     def record_candidate(self, stage, plan, archive):

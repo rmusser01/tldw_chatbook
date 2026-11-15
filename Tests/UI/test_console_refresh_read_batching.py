@@ -2,16 +2,32 @@
 
 import asyncio
 import threading
+from contextlib import ExitStack, closing
+from inspect import iscoroutinefunction
 from types import SimpleNamespace
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunStatus
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.UI.Console_Modules.agent import ConsoleAgentController
 
 pytestmark = pytest.mark.bootstrap_profile
+
+
+@pytest.fixture
+def open_runs():
+    from tldw_chatbook.DB.console_execution_owner import ConsoleExecutionOwner
+
+    with ExitStack() as stack:
+        def open_db(path, client_id):
+            owner = stack.enter_context(ConsoleExecutionOwner.acquire(path))
+            return stack.enter_context(
+                closing(owned_agent_runs_db(path, client_id, execution_owner=owner))
+            )
+
+        yield open_db
 
 
 def _agent(bridge):
@@ -19,6 +35,8 @@ def _agent(bridge):
     runtime = SimpleNamespace(agent_bridge=bridge)
 
     def run_worker(operation, **_kwargs):
+        if iscoroutinefunction(operation):
+            operation = operation()
         task = asyncio.create_task(operation)
         tasks.append(task)
         return task
@@ -90,10 +108,11 @@ def _historical_bridge(database):
 async def test_cold_fleet_and_overview_share_one_counted_historical_read_off_ui(
     tmp_path,
     monkeypatch,
+    open_runs,
 ):
     from tldw_chatbook.Backup_Recovery import storage_admission as storage
 
-    database = AgentRunsDB(tmp_path / "fleet-history.sqlite", "fleet-history")
+    database = open_runs(tmp_path / "fleet-history.sqlite", "fleet-history")
     try:
         bridge, child = _historical_bridge(database)
         agent, tasks = _agent(bridge)
@@ -155,11 +174,12 @@ async def test_historical_projection_rejects_changed_owner_and_captures_database
     tmp_path,
     monkeypatch,
     mutation,
+    open_runs,
 ):
     from tldw_chatbook.Chat.console_agent_bridge import AgentLiveSnapshot
 
-    old_db = AgentRunsDB(tmp_path / "old-history.sqlite", "old-history")
-    new_db = AgentRunsDB(tmp_path / "new-history.sqlite", "new-history")
+    old_db = open_runs(tmp_path / "old-history.sqlite", "old-history")
+    new_db = open_runs(tmp_path / "new-history.sqlite", "new-history")
     entered, release = threading.Event(), threading.Event()
     try:
         bridge, _child = _historical_bridge(old_db)
@@ -207,8 +227,8 @@ async def test_historical_projection_rejects_changed_owner_and_captures_database
 @pytest.mark.asyncio
 async def test_cancelled_historical_projection_retires_and_retries(
     tmp_path, monkeypatch
-):
-    database = AgentRunsDB(tmp_path / "cancel-history.sqlite", "cancel-history")
+, open_runs):
+    database = open_runs(tmp_path / "cancel-history.sqlite", "cancel-history")
     entered, release, retired = threading.Event(), threading.Event(), threading.Event()
     try:
         bridge, child = _historical_bridge(database)
@@ -243,8 +263,8 @@ async def test_cancelled_historical_projection_retires_and_retries(
 
 
 @pytest.mark.asyncio
-async def test_active_refresh_batches_count_reads_off_ui_thread(tmp_path):
-    database = AgentRunsDB(tmp_path / "agent-counts.sqlite", "refresh-counts")
+async def test_active_refresh_batches_count_reads_off_ui_thread(tmp_path, open_runs):
+    database = open_runs(tmp_path / "agent-counts.sqlite", "refresh-counts")
     try:
         primary = database.create_run(conversation_id="conv", agent_kind="primary")
         child = database.create_run(
@@ -274,9 +294,9 @@ async def test_active_refresh_batches_count_reads_off_ui_thread(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_old_profile_count_worker_cannot_publish_into_new_bridge(tmp_path):
-    old_db = AgentRunsDB(tmp_path / "old.sqlite", "old-counts")
-    new_db = AgentRunsDB(tmp_path / "new.sqlite", "new-counts")
+async def test_old_profile_count_worker_cannot_publish_into_new_bridge(tmp_path, open_runs):
+    old_db = open_runs(tmp_path / "old.sqlite", "old-counts")
+    new_db = open_runs(tmp_path / "new.sqlite", "new-counts")
     release = threading.Event()
     entered = threading.Event()
     try:
@@ -310,8 +330,8 @@ async def test_old_profile_count_worker_cannot_publish_into_new_bridge(tmp_path)
 
 
 @pytest.mark.asyncio
-async def test_alternating_browser_row_sets_do_not_restart_pending_counts(tmp_path):
-    database = AgentRunsDB(tmp_path / "alternating.sqlite", "alternating-counts")
+async def test_alternating_browser_row_sets_do_not_restart_pending_counts(tmp_path, open_runs):
+    database = open_runs(tmp_path / "alternating.sqlite", "alternating-counts")
     try:
         primary = database.create_run(conversation_id="conv", agent_kind="primary")
         database.create_run(
@@ -335,10 +355,10 @@ async def test_alternating_browser_row_sets_do_not_restart_pending_counts(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_cancelled_count_refresh_remains_retryable(tmp_path, monkeypatch):
+async def test_cancelled_count_refresh_remains_retryable(tmp_path, monkeypatch, open_runs):
     from tldw_chatbook.DB import base_db
 
-    database = AgentRunsDB(tmp_path / "cancelled.sqlite", "cancelled-counts")
+    database = open_runs(tmp_path / "cancelled.sqlite", "cancelled-counts")
     entered, release = asyncio.Event(), asyncio.Event()
     try:
         bridge = _Bridge(database)

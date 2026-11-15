@@ -747,12 +747,12 @@ def test_owner_idle_close_never_aborts_a_straggler_write(owner: str, tmp_path: P
     import threading
     import time
 
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from Tests.agent_runs_owner import owned_agent_runs_db
     from tldw_chatbook.DB.RAG_Indexing_DB import RAGIndexingDB
     from tldw_chatbook.RAG_Search.ingestion_indexing import _retire_indexing_db
 
     if owner == "agent_runs":
-        db = AgentRunsDB(tmp_path / "agent_runs.db")
+        db = owned_agent_runs_db(tmp_path / "agent_runs.db")
         close = db.close_idle_connections  # what the runtime's dispose runs
     else:
         db = RAGIndexingDB(tmp_path / "rag_indexing.db")
@@ -812,11 +812,11 @@ def test_registry_stays_flat_when_a_finite_read_closes_its_own_handle(
         core_closing,
         core_operation,
     )
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from Tests.agent_runs_owner import owned_agent_runs_db
     from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
 
     db = (
-        AgentRunsDB(tmp_path / "agent_runs.db")
+        owned_agent_runs_db(tmp_path / "agent_runs.db")
         if store == "agent_runs"
         else LibraryCollectionsDB(tmp_path / "collections.db")
     )

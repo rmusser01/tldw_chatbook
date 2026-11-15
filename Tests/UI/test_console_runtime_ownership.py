@@ -105,18 +105,7 @@ def _register_runtime_database_owners(monkeypatch, owned_console_apps):  # noqa:
 #: (`UI/Persona_Modules/personas_preview_controller.py`).
 _RUNTIME_OWNED_CONSTRUCTIONS = ("ConsoleChatStore", "ConsoleChatController")
 
-#: ADR-234: the served MobileChatService is the sanctioned second
-#: construction site -- the parent-process engine binding the spike proved
-#: (see backlog/decisions/234-served-mobile-companion-surface.md and the
-#: binding spike Docs/superpowers/spikes/2026-10-15-mobile-engine-binding-spike.md).
-#: Prefixes are matched against the construction site's package-relative
-#: path, so an entry covers exactly the files it names. Any NEW foreign
-#: construction site must be registered here with an ADR that justifies
-#: it, or the ownership pin below fails.
-_SANCTIONED_FOREIGN_SITES: dict[str, tuple[str, ...]] = {
-    "ConsoleChatStore": ("tldw_chatbook/Web_Server/mobile_service.py",),
-    "ConsoleChatController": ("tldw_chatbook/Web_Server/mobile_service.py",),
-}
+_SANCTIONED_FOREIGN_SITES: dict[str, tuple[str, ...]] = {}
 
 _PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "tldw_chatbook"
 _RUNTIME_MODULE = "tldw_chatbook/Chat/console_runtime.py"
@@ -214,6 +203,9 @@ def test_runtime_owned_custody_tracks_only_lifetime_handles():
         "configuration",
         "attachment_ids",
         "staged_evidence_launch",
+        "input_origin",
+        "command_id",
+        "command_inputs",
         "one_shot_prefill",
         "one_shot_prefill_revision",
         "draft_revision",
@@ -223,7 +215,10 @@ def test_runtime_owned_custody_tracks_only_lifetime_handles():
         "_pressed_attachment_generation",
         "_recovery_user_origin",
     }
+    assert request.input_origin == "composer"
+    assert request.command_id is None
     private_witnesses = {
+        "command_inputs",
         "_pressed_inputs",
         "_pressed_stash",
         "_pressed_attachment_generation",
@@ -633,10 +628,8 @@ def _construction_sites(class_name: str) -> list[str]:
 def test_console_runtime_is_the_single_construction_site():
     """PIN (characterization): only the runtime builds the store/controller.
 
-    ADR-234 sanctions exactly one foreign construction site per token --
-    the served MobileChatService parent-process engine -- registered in
-    `_SANCTIONED_FOREIGN_SITES`. A new foreign site must be registered
-    there with an ADR that justifies it, not silence this pin.
+    ADR-244 retires the former mobile parent engine. No foreign production
+    construction site is sanctioned; mobile routes use the native runtime.
     """
     for token in _RUNTIME_OWNED_CONSTRUCTIONS:
         sites = _construction_sites(token)
@@ -1010,10 +1003,16 @@ async def test_project_binding_selection_closes_when_owning_session_closes(
 
 @pytest.mark.asyncio
 async def test_project_binding_selection_fails_closed_on_app_dispose():
+    closed = []
+
+    async def close_saved_session_operations():
+        closed.append(True)
+
     runtime = ConsoleRuntime(SimpleNamespace())
     runtime._chat_store = SimpleNamespace(
         active_session_id="session-a",
         sessions=lambda: [SimpleNamespace(id="session-a")],
+        close_saved_session_operations=close_saved_session_operations,
     )
     task = asyncio.create_task(
         runtime._select_project_instruction_binding(
@@ -1023,6 +1022,7 @@ async def test_project_binding_selection_fails_closed_on_app_dispose():
     await asyncio.sleep(0)
     await runtime.dispose()
     assert await asyncio.wait_for(task, timeout=1) == ("cancel", None)
+    assert closed == [True]
 
 
 def _project_notice_runtime() -> ConsoleRuntime:
@@ -1847,8 +1847,11 @@ def _post_reconciliation_admission_screen(monkeypatch, live_reason=None):
         workers.append((coroutine.cr_code.co_name, kwargs.get("group")))
         coroutine.close()
 
+    def after_refresh(callback, *args, **kwargs):
+        refreshed.append((callback, args, kwargs))
+
     screen.set_interval = interval
-    screen.call_after_refresh = refreshed.append
+    screen.call_after_refresh = after_refresh
     screen.run_worker = run_worker
     return screen, intervals, refreshed, workers
 
@@ -1907,9 +1910,9 @@ async def test_captured_attach_timer_overlap_rearms_real_sync_worker(monkeypatch
         callback for _, callback in intervals if callback.__name__ == "_poll_transcript"
     )
     after_refresh = next(
-        callback
-        for callback in refreshed
-        if callback.__name__ == "_sync_native_console_chat_ui"
+        args[0]
+        for callback, args, kwargs in refreshed
+        if callback is screen.run_worker and kwargs.get("group") == "console-sync"
     )
     entered, release = asyncio.Event(), asyncio.Event()
 

@@ -18,7 +18,6 @@ from tldw_chatbook.Utils.filesystem_identity import (
     DirectoryIdentityError,
     directory_identity_from_stat,
 )
-from tldw_chatbook.Utils.path_validation import fold_path_part
 
 InstructionKind = Literal["override", "standard"]
 InstructionOutcomeCode = Literal[
@@ -201,6 +200,8 @@ def path_is_excluded(path: Path, excluded: frozenset[Path]) -> bool:
     """
     if not excluded:
         return False
+    from tldw_chatbook.Utils.path_validation import fold_path_part
+
     try:
         resolved_key = tuple(
             fold_path_part(part) for part in path.resolve(strict=False).parts
@@ -1325,6 +1326,8 @@ def remote_path_is_excluded(
     """
     if not excluded:
         return False
+    from tldw_chatbook.Utils.path_validation import fold_path_part
+
     parts = tuple(fold_path_part(part) for part in PurePosixPath(relative_posix).parts)
     for entry in excluded:
         if entry.is_absolute() or ".." in entry.parts:

@@ -1660,6 +1660,7 @@ class ConsoleLeftRail(Vertical):
         compact = without_meter < max(1, frame.styles.gutter.height * 2)
         if compact != radio.has_class("voice-compact"):
             radio.set_compact(compact)
+            section.request_reconcile()
             self.call_after_refresh(self.request_allocation_reconcile)
             return
         available_rows = max(

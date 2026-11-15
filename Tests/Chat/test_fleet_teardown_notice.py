@@ -25,6 +25,7 @@ import time
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Chat.test_child_run_scope_ordering import _survivor_bridge
 from Tests.Chat.test_console_agent_bridge import (
     _fence,
@@ -34,7 +35,6 @@ from Tests.Chat.test_console_agent_bridge import (
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunState, ConsoleRunStatus
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 
@@ -105,7 +105,7 @@ async def test_a_survivor_only_teardown_is_reported_as_continuing_not_cancelled(
     )
     # The ground truth: the run the old copy called cancelled finished
     # done, durably, read through a fresh DB handle.
-    fresh = AgentRunsDB(tmp_path / "runs.db", client_id="verifier")
+    fresh = owned_agent_runs_db(tmp_path / "runs.db", client_id="verifier")
     rows = [r for r in fresh.list_runs(session.id) if r["agent_kind"] == "subagent"]
     assert [r["status"] for r in rows] == ["done"], (
         f"the survivor must have completed after teardown: {rows}"

@@ -548,8 +548,12 @@ async def test_endpoint_command_create_lands_on_a_pair_in_pick_mode(
     async with harness.run_test(size=(160, 48)) as pilot:
         console = harness.screen
         await _wait_for_selector(console, pilot, "#console-settings-summary")
-        console.action_open_console_new_endpoint()
+        # The summary can mount while first-run setup still owns the screen.
+        dispatched = False
         for _ in range(60):
+            if not dispatched and not console._console_setup_modal_blocking():
+                console.action_open_console_new_endpoint()
+                dispatched = True
             await pilot.pause(0.02)
             if isinstance(harness.screen, ConsoleEndpointTemplateModal):
                 break
@@ -1040,7 +1044,7 @@ async def test_refused_chat_settings_test_blocks_console_until_one_retry(
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_shared_evidence_change_refreshes_the_console_once(request):
+async def test_shared_evidence_change_refreshes_the_console_once(request, monkeypatch):
     """TASK-33005.2 (AC#6): a result settled elsewhere reaches the Console
     through the idle poll's existing gate, in exactly one refresh."""
     from Tests.UI.test_console_provider_apply_defaults_flow import (
@@ -1165,16 +1169,22 @@ async def test_shared_evidence_change_refreshes_the_console_once(request):
         import os
 
         from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+        from tldw_chatbook.LLM_Calls import anthropic_subscription as subscription
 
         selected = os.environ["TLDW_CONFIG_PATH"]
         snapshot = console._console_credential_snapshot
-        os.environ["TLDW_CONFIG_PATH"] = selected + ".other"
-        try:
+        revision = subscription.subscription_readiness_revision()
+        with monkeypatch.context() as changed:
+            changed.setenv("TLDW_CONFIG_PATH", selected + ".other")
+            # A source change alone is not a credential-poll signal.
+            changed.setattr(
+                subscription, "subscription_readiness_revision", lambda: revision + 1
+            )
             with pytest.raises(RecoveryRequired):
                 console._poll_console_credential_readiness()
+                # The first cold poll may hand the read off-loop.
+                console._poll_console_credential_readiness()
             assert console._console_credential_snapshot == snapshot
-        finally:
-            os.environ["TLDW_CONFIG_PATH"] = selected
         console._poll_console_credential_readiness()
         assert console._console_credential_snapshot == snapshot
 

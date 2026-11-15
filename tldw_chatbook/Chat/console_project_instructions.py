@@ -11,7 +11,10 @@ from urllib.parse import urlsplit, urlunsplit
 
 from httpx import InvalidURL, URL
 
-from tldw_chatbook.Provider_Contract.provider_continuation import EPHEMERAL_ORIGIN_KEY  # noqa: F401  (re-export)
+from tldw_chatbook.Provider_Contract.provider_continuation import (  # noqa: F401 - compatibility exports
+    EPHEMERAL_ORIGIN_KEY,
+    PROJECT_INSTRUCTION_ROW_KEY,
+)
 # TASK-36517: the endpoint contract's label rule, so "_" hosts key and label.
 from tldw_chatbook.Provider_Contract.provider_endpoint_contract import valid_dns_label
 

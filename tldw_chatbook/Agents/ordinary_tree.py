@@ -424,39 +424,66 @@ class OrdinaryTurn:
             raise RuntimeError("ordinary Library construction resource changed")
 
     def bind_library_provider(self, provider, names):
+        from .library_rag_tool_provider import LibraryRagToolProvider
+
         self.check_library_factory()
         if any(
             self.catalog_permits("library", name) and name not in self.library_maximum
             for name in names
         ):
             raise RuntimeError("ordinary Library catalog widened")
-        service = getattr_static(provider, "_service", None)
-        if not self.footprint.opaque:
-            from tldw_chatbook.Agents import library_tool_provider
-            from tldw_chatbook.Library import local_library_tool_service
-
+        if type(provider) is LibraryRagToolProvider:
+            backend_field = "_rag_service"
+            missing = object()
+            service = getattr_static(provider, backend_field, missing)
             if (
-                not library_tool_provider.is_native_library_provider(provider)
-                or type(service)
-                is not local_library_tool_service._NATIVE_ORDINARY_LIBRARY_CLASS
+                service is missing
+                or service is not self.library_services.get(backend_field, service)
+                or (
+                    not self.footprint.opaque
+                    and (
+                        backend_field not in self.library_services
+                        or service is not None
+                    )
+                )
             ):
-                raise RuntimeError("ordinary Library source outside bounded maximum")
-            for name, original in self.library_services.items():
-                if getattr_static(service, name, None) is not original:
-                    raise RuntimeError("ordinary Library backend changed")
-        self.library_providers[provider] = (service, frozenset(names))
+                raise RuntimeError("ordinary Library RAG backend changed")
+        else:
+            backend_field = "_service"
+            service = getattr_static(provider, backend_field, None)
+            if not self.footprint.opaque:
+                from tldw_chatbook.Agents import library_tool_provider
+                from tldw_chatbook.Library import local_library_tool_service
+
+                if (
+                    not library_tool_provider.is_native_library_provider(provider)
+                    or type(service)
+                    is not local_library_tool_service._NATIVE_ORDINARY_LIBRARY_CLASS
+                ):
+                    raise RuntimeError(
+                        "ordinary Library source outside bounded maximum"
+                    )
+                for name, original in self.library_services.items():
+                    if getattr_static(service, name, None) is not original:
+                        raise RuntimeError("ordinary Library backend changed")
+        self.library_providers[provider] = (backend_field, service, frozenset(names))
 
     def check_library_call(self, provider, name):
         self.check_library_factory()
-        service, names = self.library_providers[provider]
+        backend_field, service, names = self.library_providers[provider]
+        missing = object() if backend_field == "_rag_service" else None
         if (
             name not in names
-            or getattr_static(provider, "_service", None) is not service
+            or getattr_static(provider, backend_field, missing) is not service
         ):
             raise RuntimeError("ordinary Library dispatch source changed")
-        if not self.footprint.opaque and any(
-            getattr_static(service, name, None) is not original
-            for name, original in self.library_services.items()
+        if (
+            backend_field == "_service"
+            and not self.footprint.opaque
+            and any(
+                getattr_static(service, name, None) is not original
+                for name, original in self.library_services.items()
+            )
         ):
             raise RuntimeError("ordinary Library backend changed")
 

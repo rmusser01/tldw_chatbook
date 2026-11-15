@@ -139,6 +139,13 @@ def test_native_policy_poll_does_not_block_ui_while_config_writer_is_active(tmp_
 _RETAINED = (
     _RESPONSIVE.split("async def main():")[0]
     + r"""
+# A warm native read can return while the config writer is still held.
+def read():
+ entered.set()
+ enabled=original()
+ assert release.wait(20)
+ return enabled
+runtime._canvas_enabled_reader=read
 async def main():
  worker.start();assert await asyncio.to_thread(held.wait,10)
  watchdog=threading.Timer(15,unblock);watchdog.start()
@@ -210,7 +217,9 @@ _RESTART = (
 reads=[]
 def read():
  reads.append(threading.get_ident());entered.set()
- return original()
+ enabled=original()
+ assert release.wait(20)
+ return enabled
 runtime._canvas_enabled_reader=read
 async def main():
  worker.start();assert await asyncio.to_thread(held.wait,10)
@@ -629,9 +638,8 @@ async def test_identity_releases_unissued_read_and_accepts_unchanged_install(
                 assert logical is not None
                 token = logical.begin(projection)
                 assert token is not None and token.active
-                projection.run(
-                    lambda: None, life=0.0
-                )  # Existing checked-read owner/API.
+                # Establish READY with one real off-loop read before testing refusal.
+                projection.run(lambda: None, life=0.0, _wait_for_config=True)
                 await until(lambda: not projection.pending, timeout=30)
                 assert projection.value == old_value
                 assert spend._same_readiness_key(projection.key, old_key)

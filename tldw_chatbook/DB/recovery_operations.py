@@ -19,106 +19,16 @@ from tldw_chatbook.Backup_Recovery.models import (
     discovery_context,
     storage_logical_id,
 )
-from tldw_chatbook.Backup_Recovery.profile_paths import database_path, user_data_dir
-from tldw_chatbook.DB.recovery_sqlite import _checked_capture, _validate_sqlite
+from tldw_chatbook.DB.recovery_sqlite import (
+    _checked_capture,  # noqa: F401 - Live compatibility binding.
+    _read_bounded_catalog,
+    _split_statistics,
+    _validate_sqlite,  # noqa: F401 - Live compatibility binding.
+)
 from tldw_chatbook.DB.recovery_workflow_schema import (
-    WORKFLOW_MIGRATION,
+    WORKFLOW_MIGRATION as WORKFLOW_MIGRATION,
     workflow_catalog,
 )
-
-
-def _sqlite_inventory_status(
-    config, path, *, owner, setting_name=None, optional_default=False
-):
-    """Recognize observable absence only for an explicitly optional default.
-
-    This cannot prove historical never-use after all deletion evidence is gone.
-    Existing files, explicit selectors and residual SQLite state are never unused.
-    """
-    from tldw_chatbook.Backup_Recovery.file_inventory import _inventory_root
-    from tldw_chatbook.Backup_Recovery.profile_paths import (
-        DATABASE_PATHS,
-        custom_database_input,
-        setting,
-    )
-
-    item = _inventory_root(path, owner=owner, external=False)
-    if item.status != "unused":
-        return "unsupported" if item.status == "included_directory" else item.status
-    if not optional_default:
-        return "missing_required"
-    if setting_name:
-        row = next(row for row in DATABASE_PATHS if row[1] == setting_name)
-        legacy = "~/.local/share/tldw_cli/" + row[3] if row[3] else None
-        if (
-            custom_database_input(setting(config, "database", setting_name), legacy)
-            is not None
-        ):
-            return "missing_required"
-    suffixes = ("-wal", "-shm", "-journal")
-    if owner in {"tts.profile_store", "tts.references"}:
-        suffixes += (".lock",)
-    for suffix in suffixes:
-        sidecar = _inventory_root(Path(str(path) + suffix), owner=owner, external=False)
-        if sidecar.status != "unused":
-            return "missing_required" if sidecar.status == "included" else "unavailable"
-    return "unused"
-
-
-@dataclass(frozen=True)
-class _SQLiteDeclaration:
-    owner_id: str
-    setting_name: str | None
-    leaf: str
-    versions: tuple[int, ...]
-    schemas: tuple[tuple[int, tuple[str, ...]], ...]
-    dependencies: tuple[str, ...] = ()
-    activation_required: bool = True
-    optional_default: bool = False
-
-    def discover(self, config: Mapping[str, object]) -> tuple[StorageItem, ...]:
-        context = discovery_context(config)
-        if self.setting_name:
-            path = database_path(config, self.setting_name)
-        elif self.owner_id == "db.agent_runs":
-            path = database_path(config, "chachanotes_db_path").parent / self.leaf
-        else:
-            path = user_data_dir(config) / self.leaf
-        status = _sqlite_inventory_status(
-            config,
-            path,
-            owner=self.owner_id,
-            setting_name=self.setting_name,
-            optional_default=self.optional_default,
-        )
-        return (
-            StorageItem(
-                self.owner_id,
-                storage_logical_id(context, self.owner_id),
-                path,
-                status,
-                tuple(
-                    storage_logical_id(context, owner)
-                    for owner in ("config",) + self.dependencies
-                ),
-            ),
-        )
-
-    def schema_policy(self) -> SchemaPolicy:
-        return SchemaPolicy(self.owner_id, self.versions, self.schemas, ())
-
-    def relocate(self, candidate: Path, mapping: Mapping[str, Path]) -> None:
-        """Validate immutable historical bytes, granting no execution authority.
-
-        Historical IDs, leases, pending states and paths are evidence, not local
-        claims. Staged restore and the durable activation ledger (tasks17/20/21)
-        own fresh local identities and reviewed bindings; this method never
-        starts a runtime constructor or rewrites history to look locally approved.
-        """
-        issues = self.validate(candidate)
-        if issues:
-            raise ValueError(issues[0])
-
 
 _WORKSPACES_SCHEMA = (
     (
@@ -195,47 +105,6 @@ _WORKSPACES_ARCHIVE_V9_TO_V10_SQL = (
 )
 
 
-class _WorkspacesAdapter(_SQLiteDeclaration):
-    def schema_policy(self) -> SchemaPolicy:
-        return SchemaPolicy(
-            self.owner_id,
-            self.versions,
-            self.schemas,
-            ((9, 10, _WORKSPACES_ARCHIVE_V9_TO_V10_SQL),),
-        )
-
-    def validate(self, candidate: Path) -> tuple[str, ...]:
-        from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
-
-        try:
-            with closing(
-                connect_private_sqlite(
-                    "recovery.operations.workspaces", candidate, read_only=True
-                )
-            ) as connection:
-                return _validate_sqlite(
-                    connection,
-                    self.versions,
-                    self.schemas,
-                    version_query="SELECT MAX(version) FROM schema_version",
-                )
-        except (OSError, ValueError, sqlite3.Error):
-            return ("operational_validation_unavailable",)
-
-    def capture(self, item: StorageItem, destination: Path, cancel: Event) -> None:
-        from tldw_chatbook.DB.private_sqlite import copy_private_sqlite
-
-        with _checked_capture(
-            self.owner_id, item, destination, cancel, self.validate
-        ) as guard:
-            copy_private_sqlite(
-                "recovery.operations.workspaces",
-                item.path,
-                destination,
-                progress_guard=guard,
-            )
-
-
 _AGENT_RUNS_SCHEMA = (
     (
         18,
@@ -281,6 +150,10 @@ _AGENT_RUNS_V21_TABLES = (
         "CREATE TABLE agent_runs (\n                    id TEXT PRIMARY KEY,\n                    conversation_id TEXT NOT NULL,\n                    parent_run_id TEXT,\n                    agent_kind TEXT NOT NULL,\n                    task TEXT,\n                    status TEXT NOT NULL,\n                    steps TEXT NOT NULL DEFAULT '[]',\n                    result TEXT,\n                    budget TEXT,\n                    created_at TEXT NOT NULL,\n                    updated_at TEXT NOT NULL,\n                    assistant_message_id TEXT,\n                    agent_definition TEXT,\n                    definition_fingerprint TEXT,\n                    wake_delivered_at TEXT,\n                    -- v11 (fleet PR3b Task 4, spec SS6): when this run is\n                    -- a CONTINUATION of a finished sub-agent -- a NEW run\n                    -- seeded from the old one's retained in-memory\n                    -- transcript via send_to_agent -- this records the\n                    -- run it resumed from. NULL for every ordinary run.\n                    -- Lineage only: parent_run_id still points at the\n                    -- RESUMING turn's primary, never at the old run.\n                    resumed_from_run_id TEXT,\n                    -- v14 (ADR-080): the stable parent Trace event that\n                    -- caused this run to exist. NULL for primary and\n                    -- legacy runs whose precise cause was not captured.\n                    spawn_event_id TEXT,\n                    budget_tokens INTEGER CHECK (\n                        budget_tokens IS NULL OR\n                        (typeof(budget_tokens) = 'integer' AND budget_tokens >= 0)\n                    ),\n                    -- v21 (ADR-344, TASK-32477; planned as v16, renumbered\n                    -- past dev's v16-v20 via #2641 and #2665): the\n                    -- resolved-target snapshot -- where this run's agent\n                    -- ACTUALLY went after preset routing resolved\n                    -- (provider, model, base_url, and the merged params as\n                    -- a raw JSON object string). Written once at spawn\n                    -- (Task 6); read back verbatim on resume/continuation\n                    -- (Task 8). NULL for every pre-v21 row and for runs\n                    -- spawned without routing resolution.\n                    resolved_provider TEXT,\n                    resolved_model TEXT,\n                    resolved_base_url TEXT,\n                    resolved_params_json TEXT\n                , work_chain_id TEXT REFERENCES automatic_work_chains(id))",
     ),
     (
+        "CREATE TABLE agent_definitions (\n                    id TEXT PRIMARY KEY,\n                    name TEXT NOT NULL,\n                    description TEXT NOT NULL DEFAULT '',\n                    instructions TEXT NOT NULL DEFAULT '',\n                    tool_allowlist TEXT NOT NULL DEFAULT '[]',\n                    model TEXT NOT NULL DEFAULT '',\n                    -- v21 (ADR-147, TASK-32477): preset routing -- the\n                    -- provider this definition pins ('' = inherit the\n                    -- caller's provider at spawn) and its sampling-param\n                    -- overrides as a JSON object string ('{}' = none).\n                    provider TEXT NOT NULL DEFAULT '',\n                    params_json TEXT NOT NULL DEFAULT '{}',\n                    enabled INTEGER NOT NULL DEFAULT 1,\n                    max_wall_seconds REAL,\n                    deleted INTEGER NOT NULL DEFAULT 0,\n                    created_at TEXT NOT NULL,\n                    updated_at TEXT NOT NULL\n                )",
+        "CREATE TABLE agent_runs (\n                    id TEXT PRIMARY KEY,\n                    conversation_id TEXT NOT NULL,\n                    parent_run_id TEXT,\n                    agent_kind TEXT NOT NULL,\n                    task TEXT,\n                    status TEXT NOT NULL,\n                    steps TEXT NOT NULL DEFAULT '[]',\n                    result TEXT,\n                    budget TEXT,\n                    created_at TEXT NOT NULL,\n                    updated_at TEXT NOT NULL,\n                    assistant_message_id TEXT,\n                    agent_definition TEXT,\n                    definition_fingerprint TEXT,\n                    wake_delivered_at TEXT,\n                    -- v11 (fleet PR3b Task 4, spec SS6): when this run is\n                    -- a CONTINUATION of a finished sub-agent -- a NEW run\n                    -- seeded from the old one's retained in-memory\n                    -- transcript via send_to_agent -- this records the\n                    -- run it resumed from. NULL for every ordinary run.\n                    -- Lineage only: parent_run_id still points at the\n                    -- RESUMING turn's primary, never at the old run.\n                    resumed_from_run_id TEXT,\n                    -- v14 (ADR-080): the stable parent Trace event that\n                    -- caused this run to exist. NULL for primary and\n                    -- legacy runs whose precise cause was not captured.\n                    spawn_event_id TEXT,\n                    budget_tokens INTEGER CHECK (\n                        budget_tokens IS NULL OR\n                        (typeof(budget_tokens) = 'integer' AND budget_tokens >= 0)\n                    ),\n                    -- v21 (ADR-147, TASK-32477; planned as v16, renumbered\n                    -- past dev's v16-v20 via #2641 and #2665): the\n                    -- resolved-target snapshot -- where this run's agent\n                    -- ACTUALLY went after preset routing resolved\n                    -- (provider, model, base_url, and the merged params as\n                    -- a raw JSON object string). Written once at spawn\n                    -- (Task 6); read back verbatim on resume/continuation\n                    -- (Task 8). NULL for every pre-v21 row and for runs\n                    -- spawned without routing resolution.\n                    resolved_provider TEXT,\n                    resolved_model TEXT,\n                    resolved_base_url TEXT,\n                    resolved_params_json TEXT\n                , work_chain_id TEXT REFERENCES automatic_work_chains(id))",
+    ),
+    (
         "CREATE TABLE agent_definitions (\n                    id TEXT PRIMARY KEY,\n                    name TEXT NOT NULL,\n                    description TEXT NOT NULL DEFAULT '',\n                    instructions TEXT NOT NULL DEFAULT '',\n                    tool_allowlist TEXT NOT NULL DEFAULT '[]',\n                    model TEXT NOT NULL DEFAULT '',\n                    enabled INTEGER NOT NULL DEFAULT 1,\n                    deleted INTEGER NOT NULL DEFAULT 0,\n                    created_at TEXT NOT NULL,\n                    updated_at TEXT NOT NULL\n                , max_wall_seconds REAL, provider TEXT NOT NULL DEFAULT '', params_json TEXT NOT NULL DEFAULT '{}')",
         "CREATE TABLE agent_runs (\n                    id TEXT PRIMARY KEY,\n                    conversation_id TEXT NOT NULL,\n                    parent_run_id TEXT,\n                    agent_kind TEXT NOT NULL,\n                    task TEXT,\n                    status TEXT NOT NULL,\n                    steps TEXT NOT NULL DEFAULT '[]',\n                    result TEXT,\n                    budget TEXT,\n                    created_at TEXT NOT NULL,\n                    updated_at TEXT NOT NULL,\n                    assistant_message_id TEXT,\n                    agent_definition TEXT,\n                    definition_fingerprint TEXT,\n                    wake_delivered_at TEXT,\n                    -- v11 (fleet PR3b Task 4, spec SS6): when this run is\n                    -- a CONTINUATION of a finished sub-agent -- a NEW run\n                    -- seeded from the old one's retained in-memory\n                    -- transcript via send_to_agent -- this records the\n                    -- run it resumed from. NULL for every ordinary run.\n                    -- Lineage only: parent_run_id still points at the\n                    -- RESUMING turn's primary, never at the old run.\n                    resumed_from_run_id TEXT,\n                    -- v14 (ADR-080): the stable parent Trace event that\n                    -- caused this run to exist. NULL for primary and\n                    -- legacy runs whose precise cause was not captured.\n                    spawn_event_id TEXT,\n                    budget_tokens INTEGER CHECK (\n                        budget_tokens IS NULL OR\n                        (typeof(budget_tokens) = 'integer' AND budget_tokens >= 0)\n                    )\n                , work_chain_id TEXT REFERENCES automatic_work_chains(id), resolved_provider TEXT, resolved_model TEXT, resolved_base_url TEXT, resolved_params_json TEXT)",
     ),
@@ -324,69 +197,6 @@ _AGENT_RUNS_MIGRATION_18_21 = (
     "INSERT INTO schema_version (version) VALUES (20)",
     "INSERT INTO schema_version (version) VALUES (21)",
 )
-
-
-class _AgentRunsAdapter(_SQLiteDeclaration):
-    def _validate_connection(self, connection):
-        from .recovery_goal_schema import validate_goal_rows
-        from .recovery_workflow_schema import validate_workflow_rows
-
-        legacy = _legacy_workflow_version(connection)
-        return validate_goal_rows(connection) + validate_workflow_rows(
-            connection, schema_version=None if legacy is None else legacy + 1
-        )
-
-    def schema_policy(self) -> SchemaPolicy:
-        return SchemaPolicy(
-            self.owner_id,
-            self.versions,
-            self.schemas,
-            (
-                (18, 21, _AGENT_RUNS_MIGRATION_18_21),
-                (21, 22, _AGENT_RUNS_MIGRATION_21_22),
-                (22, 23, _AGENT_RUNS_MIGRATION_22_23),
-                (23, 24, GOAL_MIGRATION),
-                (24, 25, REVIEW_BOUNDARY_MIGRATION),
-                (25, 26, WORKFLOW_MIGRATION),
-                (26, 27, WORKFLOW_ADMISSION_MIGRATION),
-                (27, 28, WORKFLOW_CHECKPOINT_MIGRATION),
-                (28, 29, WORKFLOW_WINDOW_MIGRATION),
-                (29, 30, WORKFLOW_REPAIR_INPUT_MIGRATION),
-                (30, 31, WORKFLOW_RECOVERY_REVIEW_MIGRATION),
-            ),
-        )
-
-    def validate(self, candidate: Path) -> tuple[str, ...]:
-        from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
-
-        try:
-            with closing(
-                connect_private_sqlite(
-                    "recovery.operations.agent_runs", candidate, read_only=True
-                )
-            ) as connection:
-                return _validate_sqlite(
-                    connection,
-                    self.versions,
-                    self.schemas,
-                    version_query="SELECT MAX(version) FROM schema_version",
-                    allow_statistics=True,
-                )
-        except (OSError, ValueError, sqlite3.Error):
-            return ("operational_validation_unavailable",)
-
-    def capture(self, item: StorageItem, destination: Path, cancel: Event) -> None:
-        from tldw_chatbook.DB.private_sqlite import copy_private_sqlite
-
-        with _checked_capture(
-            self.owner_id, item, destination, cancel, self.validate
-        ) as guard:
-            copy_private_sqlite(
-                "recovery.operations.agent_runs",
-                item.path,
-                destination,
-                progress_guard=guard,
-            )
 
 
 _SUBSCRIPTIONS_SCHEMA = (
@@ -1039,379 +849,6 @@ _SUBSCRIPTIONS_SCHEMA = (
 )
 
 
-def _briefing_relocation_authorizer(read_authorizer):
-    """Permit only the installed locator update in a disposable candidate."""
-
-    def authorize(action, first, second, database, source):
-        if source is None and (
-            action == sqlite3.SQLITE_TRANSACTION
-            and database is None
-            and first in {"BEGIN", "COMMIT", "ROLLBACK"}
-            or action == sqlite3.SQLITE_UPDATE
-            and database == "main"
-            and (first, second) == ("briefing_audio", "file_path")
-        ):
-            return sqlite3.SQLITE_OK
-        return read_authorizer(action, first, second, database, source)
-
-    return authorize
-
-
-class _SubscriptionsAdapter(_SQLiteDeclaration):
-    def schema_policy(self) -> SchemaPolicy:
-        migration = Path(__file__).with_name("migrations") / "subscriptions_v2_to_v3_url_provenance.sql"
-        statements = []
-        pending = ""
-        for line in migration.read_text(encoding="utf-8").splitlines(keepends=True):
-            pending += line
-            if sqlite3.complete_statement(pending):
-                statements.append(pending)
-                pending = ""
-        if pending.strip():
-            raise ValueError("incomplete_provenance_migration")
-        return SchemaPolicy(self.owner_id, self.versions, self.schemas, ((2, 3, tuple(statements)),))
-
-    def relocate_restore(
-        self, item: StorageItem, candidate: Path, mapping: Mapping[str, Path]
-    ) -> None:
-        """Relocate only completed rows through their original declared asset IDs."""
-        from tldw_chatbook.Backup_Recovery.models import DiscoveryContext
-        from tldw_chatbook.Backup_Recovery.recovery_files import _tree_member_id
-        from tldw_chatbook.Backup_Recovery.sqlite_validation import _Restrictions
-        from tldw_chatbook.DB.private_sqlite import open_recovery_validation
-
-        parts = item.logical_id.split(":")
-        if (
-            item.owner != self.owner_id
-            or len(parts) != 3
-            or parts[0] != "profile"
-            or parts[2] != self.owner_id
-            or not parts[1]
-        ):
-            raise ValueError("briefing_audio_mapping_required")
-        context = DiscoveryContext(Path("/historical-selector-not-opened"), parts[1])
-        with (
-            open_recovery_validation(
-                self.owner_id, candidate, writable=True
-            ) as connection,
-            connection,
-        ):
-            restrictions = _Restrictions(connection)
-            connection.set_authorizer(
-                _briefing_relocation_authorizer(restrictions.authorize)
-            )
-            connection.execute("BEGIN IMMEDIATE")
-            issues = self._validate_catalog(connection)
-            if issues:
-                raise ValueError(issues[0])
-            updates = []
-            for row_id, value in connection.execute(
-                "SELECT id,file_path FROM briefing_audio WHERE status='complete'"
-            ):
-                if (
-                    not isinstance(value, str)
-                    or not Path(value).is_absolute()
-                    or ".." in Path(value).parts
-                ):
-                    raise ValueError("briefing_audio_mapping_required")
-                original = Path(value)
-                key = _tree_member_id(
-                    context, "subscriptions.assets", original.parent, original
-                )
-                selected = mapping.get(key)
-                if (
-                    key not in item.dependencies
-                    or not isinstance(selected, Path)
-                    or not selected.is_absolute()
-                    or ".." in selected.parts
-                    or selected.name != original.name
-                ):
-                    raise ValueError("briefing_audio_mapping_required")
-                if str(selected) != value:
-                    updates.append((str(selected), row_id))
-            connection.executemany(
-                "UPDATE briefing_audio SET file_path=? WHERE id=?", updates
-            )
-
-    def validate_restore_dependencies(
-        self,
-        item: StorageItem,
-        candidate: Path,
-        candidates: Mapping[str, Path],
-        *,
-        topology: Mapping[str, tuple[str, str | None, str, str]],
-    ) -> tuple[str, ...]:
-        """Bind relocated rows to the selected config and original finite topology.
-
-        Archive and publication fingerprints check bytes; this hook checks the
-        declared relationship and regular candidate, without opening source paths.
-        """
-        import tomllib
-
-        from tldw_chatbook.Backup_Recovery.recovery_files import _RawDeclaration
-        from tldw_chatbook.Backup_Recovery.storage_admission import _read_recovery_file
-        from tldw_chatbook.DB.private_sqlite import open_recovery_validation
-
-        parts = item.logical_id.split(":")
-        if (
-            item.owner != self.owner_id
-            or len(parts) != 3
-            or parts[0] != "profile"
-            or parts[2] != self.owner_id
-            or not parts[1]
-        ):
-            return ("invalid_dependency_context",)
-        issues = self.validate_restore(item, candidate)
-        if issues:
-            return issues
-        try:
-            with open_recovery_validation(
-                self.owner_id, candidate, writable=False
-            ) as connection:
-                paths = tuple(
-                    row[0]
-                    for row in connection.execute(
-                        "SELECT file_path FROM briefing_audio WHERE status='complete'"
-                    )
-                )
-            if not paths:
-                return ()
-            config_key = f"profile:{parts[1]}:config"
-            if config_key not in item.dependencies or config_key not in candidates:
-                return ("dependency_unavailable",)
-            config = tomllib.loads(
-                _read_recovery_file(
-                    "config", candidates[config_key], max_bytes=16 * 1024**2
-                ).decode("utf-8")
-            )
-            root = user_data_dir(config) / "briefing_audio"
-            prefix = f"profile:{parts[1]}:subscriptions.assets:"
-            for value in paths:
-                if (
-                    not isinstance(value, str)
-                    or not Path(value).is_absolute()
-                    or ".." in Path(value).parts
-                    or Path(value).parent != root
-                ):
-                    return ("dependency_unavailable",)
-                matches = []
-                for key in item.dependencies:
-                    if not key.startswith(prefix) or key not in candidates:
-                        continue
-                    record = topology.get(key)
-                    if record is None:
-                        continue
-                    root_id, parent_id, relative, kind = record
-                    if (
-                        kind == "file"
-                        and relative == Path(value).name
-                        and parent_id == root_id
-                        and root_id.startswith(prefix)
-                        and topology.get(root_id) == (root_id, None, "", "directory")
-                    ):
-                        matches.append(key)
-                if len(matches) != 1 or _RawDeclaration(
-                    "subscriptions.assets"
-                ).validate(candidates[matches[0]]):
-                    return ("dependency_unavailable",)
-            return ()
-        except (OSError, ValueError, sqlite3.Error):
-            return ("dependency_unavailable",)
-
-    def discover(self, config: Mapping[str, object]) -> tuple[StorageItem, ...]:
-        from dataclasses import replace
-
-        from tldw_chatbook.Backup_Recovery.recovery_files import _tree_member_id
-        from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
-
-        item = super().discover(config)[0]
-        if item.status != "included":
-            return (item,)
-        if self.validate(item.path):
-            return (replace(item, status="unsupported"),)
-        root = user_data_dir(config) / "briefing_audio"
-        try:
-            with closing(
-                connect_private_sqlite(
-                    "recovery.operations.subscriptions", item.path, read_only=True
-                )
-            ) as connection:
-                paths = tuple(
-                    row[0]
-                    for row in connection.execute(
-                        "SELECT file_path FROM briefing_audio WHERE status='complete'"
-                    )
-                )
-            dependencies = list(item.dependencies)
-            for value in paths:
-                if (
-                    not isinstance(value, str)
-                    or Path(value).parent != root
-                    or Path(value).name in ("", ".", "..")
-                ):
-                    return (replace(item, status="unsupported"),)
-                dependencies.append(
-                    _tree_member_id(
-                        discovery_context(config),
-                        "subscriptions.assets",
-                        root,
-                        Path(value),
-                    )
-                )
-            return (replace(item, dependencies=tuple(dict.fromkeys(dependencies))),)
-        except (OSError, ValueError, sqlite3.Error):
-            return (replace(item, status="unavailable"),)
-
-    def validate_dependencies(
-        self, item: StorageItem, candidate: Path, candidates: Mapping[str, Path]
-    ) -> tuple[str, ...]:
-        from tldw_chatbook.Backup_Recovery.models import DiscoveryContext
-        from tldw_chatbook.Backup_Recovery.recovery_files import (
-            _RawDeclaration,
-            _tree_member_id,
-        )
-        from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
-
-        parts = item.logical_id.split(":")
-        if (
-            item.owner != self.owner_id
-            or len(parts) != 3
-            or parts[0] != "profile"
-            or parts[2] != self.owner_id
-            or not parts[1]
-        ):
-            return ("invalid_dependency_context",)
-        issues = self.validate(candidate)
-        if issues:
-            return issues
-        context = DiscoveryContext(Path("/historical-selector-not-opened"), parts[1])
-        try:
-            with closing(
-                connect_private_sqlite(
-                    "recovery.operations.subscriptions", candidate, read_only=True
-                )
-            ) as connection:
-                for (value,) in connection.execute(
-                    "SELECT file_path FROM briefing_audio WHERE status='complete'"
-                ):
-                    if (
-                        not isinstance(value, str)
-                        or not Path(value).is_absolute()
-                        or ".." in Path(value).parts
-                    ):
-                        return ("dependency_unavailable",)
-                    path = Path(value)
-                    key = _tree_member_id(
-                        context, "subscriptions.assets", path.parent, path
-                    )
-                    if (
-                        key not in item.dependencies
-                        or key not in candidates
-                        or _RawDeclaration("subscriptions.assets").validate(
-                            candidates[key]
-                        )
-                    ):
-                        return ("dependency_unavailable",)
-            return ()
-        except (OSError, ValueError, sqlite3.Error):
-            return ("dependency_unavailable",)
-
-    def _validate_catalog(self, connection: sqlite3.Connection) -> tuple[str, ...]:
-        issues = _validate_sqlite(
-            connection,
-            self.versions,
-            self.schemas,
-            version_query="SELECT MAX(version) FROM schema_version",
-        )
-        if issues:
-            return issues
-        if connection.execute(
-            "SELECT 1 FROM sqlite_schema WHERE name='db_schema_version'"
-        ).fetchone():
-            stamp = connection.execute(
-                "SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema'"
-            ).fetchone()
-            actual = tuple(
-                row[0]
-                for row in connection.execute(
-                    "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"
-                )
-            )
-            if stamp not in _subscriptions_chachanotes_stamps(actual):
-                return ("unsupported_schema_version",)
-        return ()
-
-    def validate_restore(self, item: StorageItem, candidate: Path) -> tuple[str, ...]:
-        """Inspect disposable bytes without caching them as immutable live sources."""
-        from tldw_chatbook.DB.private_sqlite import open_recovery_validation
-
-        if item.owner != self.owner_id:
-            return ("invalid_dependency_context",)
-        try:
-            with open_recovery_validation(
-                self.owner_id, candidate, writable=False
-            ) as connection:
-                return self._validate_catalog(connection)
-        except (OSError, ValueError, sqlite3.Error):
-            return ("operational_validation_unavailable",)
-
-    def validate(self, candidate: Path) -> tuple[str, ...]:
-        from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
-
-        try:
-            with closing(
-                connect_private_sqlite(
-                    "recovery.operations.subscriptions", candidate, read_only=True
-                )
-            ) as connection:
-                return self._validate_catalog(connection)
-        except (OSError, ValueError, sqlite3.Error):
-            return ("operational_validation_unavailable",)
-
-    def capture(self, item: StorageItem, destination: Path, cancel: Event) -> None:
-        from tldw_chatbook.DB.private_sqlite import copy_private_sqlite
-
-        with _checked_capture(
-            self.owner_id, item, destination, cancel, self.validate
-        ) as guard:
-            copy_private_sqlite(
-                "recovery.operations.subscriptions",
-                item.path,
-                destination,
-                progress_guard=guard,
-            )
-
-
-def recovery_adapters() -> tuple[OwnerAdapter, ...]:
-    return (
-        _WorkspacesAdapter(
-            "db.workspaces",
-            "workspaces_db_path",
-            "tldw_chatbook_workspaces.db",
-            (10, 9, 8),
-            _WORKSPACES_SCHEMA,
-            (),
-        ),
-        _AgentRunsAdapter(
-            "db.agent_runs",
-            None,
-            "agent_runs.db",
-            (18, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31),
-            (*_AGENT_RUNS_SCHEMA, *_LEGACY_WORKFLOW_SCHEMAS),
-            ("db.chachanotes.primary",),
-            optional_default=True,
-        ),
-        _SubscriptionsAdapter(
-            "db.subscriptions",
-            "subscriptions_db_path",
-            "tldw_chatbook_subscriptions.db",
-            (3, 2),
-            _SUBSCRIPTIONS_SCHEMA,
-            (),
-        ),
-    )
-
-
 # ADR-219: exact constructor-captured v22 object deltas; all v18/v21 variants remain.
 _AGENT_RUNS_V22_REMOVED = (
     "CREATE TABLE automatic_work_chains (\n    id TEXT PRIMARY KEY,\n    conversation_id TEXT NOT NULL,\n    root_submission_id TEXT NOT NULL UNIQUE,\n    limits_json TEXT NOT NULL,\n    status TEXT NOT NULL DEFAULT 'active'\n        CHECK (status IN ('active', 'paused', 'review_required')),\n    pause_reason TEXT,\n    created_at REAL NOT NULL,\n    started_at REAL,\n    deadline_at REAL,\n    clock_owner_id TEXT,\n    started_monotonic REAL,\n    last_observed_at REAL NOT NULL\n)",
@@ -1519,6 +956,8 @@ _SUBSCRIPTIONS_SCHEMA += (
 
 def _subscriptions_chachanotes_stamps(schema):
     """Return embedded stamps for a matched complete Subscription catalog."""
+    if schema in _SUBSCRIPTIONS_MOBILE_V87_SCHEMAS:
+        return ((87,),)
     if schema in _SUBSCRIPTIONS_MIXINS_V86_SCHEMAS:
         return ((86,),)
     if schema in _SUBSCRIPTIONS_ARCHIVE_V85_SCHEMAS:
@@ -1547,18 +986,19 @@ def _subscriptions_chachanotes_stamps(schema):
 
 
 _AGENT_RUNS_V22_FRESH_CHAIN = "CREATE TABLE automatic_work_chains (\n    id TEXT PRIMARY KEY,\n    conversation_id TEXT NOT NULL,\n    root_submission_id TEXT NOT NULL UNIQUE,\n    limits_json TEXT NOT NULL,\n    status TEXT NOT NULL DEFAULT 'active'\n        CHECK (status IN ('active', 'paused', 'review_required')),\n    pause_reason TEXT,\n    created_at REAL NOT NULL,\n    started_at REAL,\n    deadline_at REAL,\n    clock_owner_id TEXT,\n    started_monotonic REAL,\n    last_observed_at REAL NOT NULL,\n    allowance_root_chain_id TEXT REFERENCES automatic_work_chains(id)\n)"
-_AGENT_RUNS_SCHEMA += (
+_AGENT_RUNS_SCHEMA += tuple(
     (
         22,
         tuple(
             _AGENT_RUNS_V22_FRESH_CHAIN
             if sql.startswith("CREATE TABLE automatic_work_chains ")
             else sql
-            for sql in next(
-                schema for version, schema in _AGENT_RUNS_SCHEMA if version == 22
-            )
+            for sql in schema
         ),
-    ),
+    )
+    for version, schema in _AGENT_RUNS_SCHEMA
+    if version == 22
+    and any(definitions in schema for definitions, _runs in _AGENT_RUNS_V21_TABLES[:2])
 )
 
 
@@ -1619,13 +1059,13 @@ _AGENT_RUNS_SCHEMA += tuple(
     for version, catalog in _AGENT_RUNS_SCHEMA
     if version == 22
 )
-_AGENT_RUNS_SCHEMA += (
+_AGENT_RUNS_SCHEMA += tuple(
     (
         23,
         tuple(
-            _AGENT_RUNS_V23_FRESH_TABLES[0]
+            tables[0]
             if item.startswith("CREATE TABLE agent_definitions ")
-            else _AGENT_RUNS_V23_FRESH_TABLES[1]
+            else tables[1]
             if item.startswith("CREATE TABLE agent_runs ")
             else _AGENT_RUNS_V23_WAKE_TABLES[0]
             if item.startswith("CREATE TABLE automatic_wake_attempts ")
@@ -1638,7 +1078,14 @@ _AGENT_RUNS_SCHEMA += (
                 )
             )
         ),
-    ),
+    )
+    for tables in (
+        _AGENT_RUNS_V23_FRESH_TABLES,
+        (
+            "CREATE TABLE agent_definitions (\n                    id TEXT PRIMARY KEY,\n                    name TEXT NOT NULL,\n                    description TEXT NOT NULL DEFAULT '',\n                    instructions TEXT NOT NULL DEFAULT '',\n                    tool_allowlist TEXT NOT NULL DEFAULT '[]',\n                    model TEXT NOT NULL DEFAULT '',\n                    -- v21 (ADR-147, TASK-32477): preset routing -- the\n                    -- provider this definition pins ('' = inherit the\n                    -- caller's provider at spawn) and its sampling-param\n                    -- overrides as a JSON object string ('{}' = none).\n                    provider TEXT NOT NULL DEFAULT '',\n                    params_json TEXT NOT NULL DEFAULT '{}',\n                    fallback_models_json TEXT NOT NULL DEFAULT '[]',\n                    enabled INTEGER NOT NULL DEFAULT 1,\n                    max_wall_seconds REAL,\n                    deleted INTEGER NOT NULL DEFAULT 0,\n                    created_at TEXT NOT NULL,\n                    updated_at TEXT NOT NULL\n                )",
+            "CREATE TABLE agent_runs (\n                    id TEXT PRIMARY KEY,\n                    conversation_id TEXT NOT NULL,\n                    parent_run_id TEXT,\n                    agent_kind TEXT NOT NULL,\n                    task TEXT,\n                    status TEXT NOT NULL,\n                    steps TEXT NOT NULL DEFAULT '[]',\n                    result TEXT,\n                    budget TEXT,\n                    created_at TEXT NOT NULL,\n                    updated_at TEXT NOT NULL,\n                    assistant_message_id TEXT,\n                    agent_definition TEXT,\n                    definition_fingerprint TEXT,\n                    wake_delivered_at TEXT,\n                    -- v11 (fleet PR3b Task 4, spec SS6): when this run is\n                    -- a CONTINUATION of a finished sub-agent -- a NEW run\n                    -- seeded from the old one's retained in-memory\n                    -- transcript via send_to_agent -- this records the\n                    -- run it resumed from. NULL for every ordinary run.\n                    -- Lineage only: parent_run_id still points at the\n                    -- RESUMING turn's primary, never at the old run.\n                    resumed_from_run_id TEXT,\n                    -- v14 (ADR-080): the stable parent Trace event that\n                    -- caused this run to exist. NULL for primary and\n                    -- legacy runs whose precise cause was not captured.\n                    spawn_event_id TEXT,\n                    budget_tokens INTEGER CHECK (\n                        budget_tokens IS NULL OR\n                        (typeof(budget_tokens) = 'integer' AND budget_tokens >= 0)\n                    ),\n                    -- v21 (ADR-147, TASK-32477; planned as v16, renumbered\n                    -- past dev's v16-v20 via #2641 and #2665): the\n                    -- resolved-target snapshot -- where this run's agent\n                    -- ACTUALLY went after preset routing resolved\n                    -- (provider, model, base_url, and the merged params as\n                    -- a raw JSON object string). Written once at spawn\n                    -- (Task 6); read back verbatim on resume/continuation\n                    -- (Task 8). NULL for every pre-v21 row and for runs\n                    -- spawned without routing resolution.\n                    resolved_provider TEXT,\n                    resolved_model TEXT,\n                    resolved_base_url TEXT,\n                    resolved_params_json TEXT,\n                    fallback_targets_json TEXT,\n                    active_fallback_index INTEGER NOT NULL DEFAULT 0\n                , work_chain_id TEXT REFERENCES automatic_work_chains(id))",
+        ),
+    )
 )
 _AGENT_RUNS_MIGRATION_22_23 = (
     "ALTER TABLE agent_definitions ADD COLUMN fallback_models_json TEXT NOT NULL DEFAULT '[]'",
@@ -1767,9 +1214,10 @@ _AGENT_RUNS_SCHEMA += tuple(
 
 # ADR-207: v3 is an atomic provenance data migration, with unchanged exact DDL.
 # Keep every previously qualified physical lineage at both supported versions.
-_SUBSCRIPTIONS_SCHEMA = tuple((3, schema) for version, schema in _SUBSCRIPTIONS_SCHEMA
-                              if version == 2) + _SUBSCRIPTIONS_SCHEMA
-
+_SUBSCRIPTIONS_SCHEMA = (
+    tuple((3, schema) for version, schema in _SUBSCRIPTIONS_SCHEMA if version == 2)
+    + _SUBSCRIPTIONS_SCHEMA
+)
 
 
 _AGENT_RUNS_SCHEMA += tuple(
@@ -1865,11 +1313,12 @@ def _build_legacy_workflow_schemas():
 _LEGACY_WORKFLOW_SCHEMAS = _build_legacy_workflow_schemas()
 
 
-def _legacy_workflow_version(connection):
+def _legacy_workflow_version(connection, *, read_catalog=_read_bounded_catalog):
     tables = {
         row[0]
         for row in connection.execute(
-            "SELECT name FROM sqlite_schema WHERE type='table'"
+            "SELECT name FROM sqlite_schema WHERE type='table' "
+            "AND name IN ('workflow_runs','automatic_review_boundary_claims')"
         )
     }
     if "workflow_runs" not in tables or "automatic_review_boundary_claims" in tables:
@@ -1877,18 +1326,19 @@ def _legacy_workflow_version(connection):
     row = connection.execute("SELECT MAX(version) FROM schema_version").fetchone()
     if row is None or type(row[0]) is not int:
         return None
-    catalog = tuple(
-        item[0]
-        for item in connection.execute(
-            "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"
-        )
-    )
+
+    rows = read_catalog(connection)
+    try:
+        base, _stats = _split_statistics(rows)
+    except ValueError:
+        return None
+    catalog = tuple(item[3] for item in base if item[3] is not None)
     return row[0] if (row[0], catalog) in _LEGACY_WORKFLOW_SCHEMAS else None
 
 
-def _legacy_workflow_upgrade(connection):
+def _legacy_workflow_upgrade(connection, *, read_catalog=_read_bounded_catalog):
     """Return one installed additive bridge only for an exact legacy catalog."""
-    version = _legacy_workflow_version(connection)
+    version = _legacy_workflow_version(connection, read_catalog=read_catalog)
     if version is None:
         return None
     statements = list(REVIEW_BOUNDARY_MIGRATION[:-1])
@@ -1909,3 +1359,106 @@ def _legacy_workflow_upgrade(connection):
         for current in range(26, 32)
     )
     return 31, tuple(statements)
+
+
+from .mobile_import_authority import AGENT_RUNS_MIGRATION, WORKSPACE_MIGRATION
+
+# Read the same installed DDL without importing Console receipt models
+# into constructor-free offline recovery.
+COMMAND_RECEIPT_MIGRATION = tuple(
+    statement.strip()
+    for statement in (
+        Path(__file__).with_name("migrations")
+        / "agent_runs_v31_to_v32_console_command_receipts.sql"
+    )
+    .read_text(encoding="utf-8")
+    .split(";")
+    if statement.strip()
+)
+
+_AGENT_RUNS_SCHEMA += tuple(
+    (32, tuple(sorted(catalog + COMMAND_RECEIPT_MIGRATION[:-1], key=_installed_schema_order)))
+    for version, catalog in _AGENT_RUNS_SCHEMA
+    if version == 31
+)
+_AGENT_RUNS_SCHEMA += tuple(
+    (
+        33,
+        tuple(sorted(catalog + AGENT_RUNS_MIGRATION[:-1], key=_installed_schema_order)),
+    )
+    for version, catalog in _AGENT_RUNS_SCHEMA
+    if version == 32
+)
+_WORKSPACES_SCHEMA += tuple(
+    (11, tuple(sorted(catalog + WORKSPACE_MIGRATION[:-1], key=_installed_schema_order)))
+    for version, catalog in _WORKSPACES_SCHEMA
+    if version == 10
+)
+
+
+# ADR-244: preserve all native shared-file lineages and append only receipts.
+from .mobile_import_authority import CHAT_MIGRATION
+
+_SUBSCRIPTIONS_MOBILE_V87_SCHEMAS = tuple(
+    tuple(sorted(schema + CHAT_MIGRATION, key=_installed_schema_order))
+    for schema in _SUBSCRIPTIONS_MIXINS_V86_SCHEMAS
+)
+_SUBSCRIPTIONS_SCHEMA += tuple(
+    (version, schema)
+    for schema in _SUBSCRIPTIONS_MOBILE_V87_SCHEMAS
+    for version in (2, 3)
+)
+
+
+_COMPAT_ADAPTER_EXPORTS = (
+    "_AgentRunsAdapter",
+    "_SQLiteDeclaration",
+    "_SubscriptionsAdapter",
+    "_WorkspacesAdapter",
+    "_briefing_relocation_authorizer",
+    "_sqlite_inventory_status",
+    "database_path",
+    "recovery_adapters",
+    "user_data_dir",
+)
+
+
+def __getattr__(name: str):
+    if name in _COMPAT_ADAPTER_EXPORTS:
+        from tldw_chatbook.Backup_Recovery import sqlite_adapters
+
+        return getattr(sqlite_adapters, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__():
+    return sorted(set(globals()) | set(_COMPAT_ADAPTER_EXPORTS))
+
+
+__all__ = (
+    "sqlite3",
+    "closing",
+    "dataclass",
+    "Path",
+    "Event",
+    "Mapping",
+    "OwnerAdapter",
+    "SchemaPolicy",
+    "StorageItem",
+    "discovery_context",
+    "storage_logical_id",
+    "CHACHANOTES_V81_SCHEMAS",
+    "CHACHANOTES_V82_SCHEMAS",
+    "CHACHANOTES_V83_SCHEMAS",
+    "CHACHANOTES_V84_SCHEMAS",
+    "CHACHANOTES_V85_SCHEMAS",
+    "CHACHANOTES_V86_SCHEMAS",
+    "GOAL_MIGRATION",
+    "goal_catalog",
+    "REVIEW_BOUNDARY_MIGRATION",
+    "review_boundary_catalogs",
+    "COMMAND_RECEIPT_MIGRATION",
+    "AGENT_RUNS_MIGRATION",
+    "WORKSPACE_MIGRATION",
+    "CHAT_MIGRATION",
+) + tuple(name for name in _COMPAT_ADAPTER_EXPORTS if not name.startswith("_"))

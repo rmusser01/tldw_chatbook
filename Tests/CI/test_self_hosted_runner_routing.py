@@ -1,4 +1,4 @@
-"""ADR-359: opt-in local capacity must preserve hosted and fork routing."""
+"""ADR-360: opt-in local capacity must preserve hosted and fork routing."""
 
 from pathlib import Path
 

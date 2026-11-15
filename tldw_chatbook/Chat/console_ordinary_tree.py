@@ -723,7 +723,12 @@ def _capture_library_maximum(tree):
     ):
         return False
     direct = tree.configuration.tool_configuration.get("direct_library_tools", True)
-    names = tuple(LIBRARY_TOOL_DESCRIPTORS) if direct else ("search_rag",)
+    if direct:
+        names = tuple(LIBRARY_TOOL_DESCRIPTORS)
+    else:
+        from tldw_chatbook.Agents.library_rag_tool_provider import RAG_TOOL_NAME
+
+        names = (RAG_TOOL_NAME,)
     tree.library_maximum = frozenset(
         name for name in names if tree.catalog_permits("library", name)
     )
@@ -739,6 +744,7 @@ def _capture_library_maximum(tree):
     # original artifact/index destination contract at this boundary.
     if not direct:
         service = getattr_static(tree.app, "library_rag_search_service", None)
+        tree.library_services["_rag_service"] = service
         tree.local_source_values += (
             (tree.app, "library_rag_search_service", service, None),
         )

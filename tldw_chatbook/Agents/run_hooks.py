@@ -718,19 +718,9 @@ class _HookProtocol(asyncio.SubprocessProtocol):
 def _kill_process_group(pid: int) -> None:
     """Kill the original group even after its leader has been reaped."""
     try:
-        if sys.platform == "win32":
-            subprocess.run(
-                ["taskkill", "/F", "/T", "/PID", str(pid)],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                check=False,
-                timeout=1,
-            )
-        else:
-            # start_new_session makes the pid the group id. getpgid(pid)
-            # cannot recover it once a short-lived leader has exited.
-            os.killpg(pid, signal.SIGKILL)
-    except (OSError, subprocess.TimeoutExpired):
+        # start_new_session makes the pid the group id, even after leader exit.
+        os.killpg(pid, signal.SIGKILL)
+    except OSError:
         pass
 
 
@@ -740,6 +730,8 @@ async def _capture_hook(
     closed: threading.Event | None,
     launch_guard: Callable[..., AbstractContextManager[None]],
 ) -> tuple[int, _HookProtocol, bool]:
+    if sys.platform == "win32":
+        return await _capture_windows_hook(target, payload, closed, launch_guard)
     spec = target.spec
     protocol = _HookProtocol()
     transport = None
@@ -777,7 +769,7 @@ async def _capture_hook(
                     lambda: protocol,
                     *spec.command,
                     cwd=cwd,
-                    start_new_session=(sys.platform != "win32"),
+                    start_new_session=True,
                 )
             except (OSError, ValueError):
                 if native is not None and protocol.transport is None:
@@ -848,6 +840,128 @@ async def _capture_hook(
                     )
                 except TimeoutError:
                     logger.warning("run-hooks: bounded process reap expired")
+
+
+async def _capture_windows_hook(
+    target: HookTarget,
+    payload: dict[str, Any],
+    closed: threading.Event | None,
+    launch_guard: Callable[..., AbstractContextManager[None]],
+) -> tuple[int, _HookProtocol, bool]:
+    """Run an ordinary hook inside the existing suspended Windows Job launcher."""
+    from tldw_chatbook.Notes.git_process_containment import (
+        ProcessTreeAdmissionError,
+        ProcessTreeController,
+    )
+
+    from .legacy_hook_ownership import current_target
+
+    if current_target() is not None:
+        raise RuntimeError("native hook group proof unavailable")
+    if closed is not None and closed.is_set():
+        raise RuntimeError("engine closed")
+    spec = target.spec
+    cwd = str(validate_existing_absolute_directory(payload["cwd"]))
+    payload = dict(payload, cwd=cwd)
+    stdin = json.dumps(payload).encode("utf-8")
+    data = payload.get("data", {})
+    tool_name = data.get("tool_name") if isinstance(data, dict) else None
+    controller = ProcessTreeController()
+    capture = _HookProtocol()
+    tree = None
+    tasks = ()
+    settled = False
+    timed_out = False
+
+    async def read(stream, fd):
+        while chunk := await stream.read(HOOK_IO_BUDGET_BYTES):
+            capture.pipe_data_received(fd, chunk)
+            await asyncio.sleep(0)
+
+    async def write(stream):
+        try:
+            stream.write(stdin)
+            await stream.drain()
+        except BrokenPipeError:
+            pass  # Like asyncio subprocess pipes, a short hook may exit unread.
+        finally:
+            stream.close()
+
+    try:
+        with ExitStack() as authority:
+            try:
+                authority.enter_context(launch_guard(target, tool_name=tool_name))
+            except HookLaunchRefused:
+                raise
+            except Exception:  # noqa: BLE001 - authority failure cannot fail open
+                raise HookLaunchRefused("Hook authority unavailable at launch.") from None
+            if closed is not None and closed.is_set():
+                raise RuntimeError("engine closed")
+            try:
+                tree = await controller.spawn_windows_hook(
+                    *spec.command,
+                    cwd=cwd,
+                )
+            except ProcessTreeAdmissionError as error:
+                tree = error.tree
+                raise
+
+        process = tree.process
+        deadline = time.monotonic() + spec.timeout_s
+        tasks = tuple(
+            asyncio.create_task(io)
+            for io in (
+                write(process.stdin),
+                read(process.stdout, 1),
+                read(process.stderr, 2),
+            )
+        )
+        pending = set(tasks)
+        while True:
+            if closed is not None and closed.is_set():
+                raise RuntimeError("engine closed")
+            if not pending:
+                settled = await controller.wait(tree, timeout=0)
+                if process.returncode is not None:
+                    break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                timed_out = True
+                break
+            delay = min(0.05, remaining)
+            if pending:
+                done, pending = await asyncio.wait(
+                    pending, timeout=delay, return_when=asyncio.FIRST_COMPLETED
+                )
+                for task in done:
+                    task.result()
+            else:
+                await asyncio.sleep(delay)
+    finally:
+        try:
+            if tree is not None and not settled:
+                clock = asyncio.get_running_loop().time
+                cleanup_deadline = clock() + HOOK_POST_KILL_REAP_TIMEOUT_S
+                if not await controller.stop_windows_hook(tree, deadline=cleanup_deadline):
+                    raise RuntimeError("Windows hook cleanup unproven")
+                if tasks:
+                    remaining = max(0, cleanup_deadline - clock())
+                    _, pending = await asyncio.wait(tasks, timeout=remaining)
+                    if pending:
+                        raise RuntimeError("Windows hook pipe cleanup unproven")
+        finally:
+            try:
+                if tree is not None:
+                    # A failed proof still closes the kill-on-close Job handle.
+                    controller.close(tree)
+            finally:
+                for task in tasks:
+                    task.cancel()
+                if tasks:
+                    await asyncio.gather(*tasks, return_exceptions=True)
+    if process.returncode is None:
+        raise RuntimeError("Windows hook exit status unavailable")
+    return process.returncode, capture, timed_out
 
 
 def _run_hook(

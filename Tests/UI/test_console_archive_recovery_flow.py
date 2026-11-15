@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 from textual.widgets import Input, Select, Static
+from textual.worker import get_current_worker
 
 from Tests.Chat.test_archive_recovery_operations import (
     recovery_stores as recovery_stores,  # noqa: PLC0414 - pytest fixture re-export
@@ -36,6 +37,7 @@ from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_execution_owner import ConsoleExecutionOwner
 from tldw_chatbook.Chat.console_library_policy import ConsoleAutoRetrieve
 from tldw_chatbook.Chat.console_runtime import (
     dispose_console_runtime,
@@ -171,147 +173,157 @@ async def mounted_recovery(
     gateway.search_arguments = search_arguments
     gateway.destination_snapshots = []
     gateway.source = source
-    runs_db = AgentRunsDB(tmp_path / "runs.sqlite", "recovery-ui")
-    bridge = ConsoleAgentBridge(
-        agent_runs_db=runs_db,
-        store=store,
-        provider_gateway=gateway,
-        native_tools_enabled=lambda: True,
-    )
-    controller = ConsoleChatController(
-        store=store,
-        provider_gateway=gateway,
-        agent_runtime_enabled=True,
-        agent_bridge=bridge,
-        library_provider_factory=lambda context: (
-            LibraryToolProvider(
-                LocalLibraryToolService(
-                    conversation_service=app.local_chat_conversation_service
+    with ConsoleExecutionOwner.acquire(tmp_path / "runs.sqlite") as execution_owner:
+        runs_db = AgentRunsDB(
+            tmp_path / "runs.sqlite", "recovery-ui", execution_owner=execution_owner
+        )
+        bridge = ConsoleAgentBridge(
+            agent_runs_db=runs_db,
+            store=store,
+            provider_gateway=gateway,
+            native_tools_enabled=lambda: True,
+        )
+        controller = ConsoleChatController(
+            store=store,
+            provider_gateway=gateway,
+            agent_runtime_enabled=True,
+            agent_bridge=bridge,
+            library_provider_factory=lambda context: (
+                LibraryToolProvider(
+                    LocalLibraryToolService(
+                        conversation_service=app.local_chat_conversation_service
+                    )
                 )
-            )
-            if direct
-            else LibraryRagToolProvider(None)
-        ),
-    )
-    owner = ensure_console_runtime(app)
-    owner.set_chat_store(store)
-    owner.set_provider_gateway(gateway)
-    owner.set_agent_bridge(bridge)
-    owner.set_chat_controller(controller)
-    recovery = owner.ensure_archive_recovery()
-    controller._archive_recovery_runtime = recovery
-    host = ConsoleHarness(app)
-    # The unmounted runtime owner schedules UI callbacks on the mounted host.
-    monkeypatch.setattr(app, "call_later", host.call_later)
-    turn = None
-    try:
-        async with host.run_test(size=size) as pilot:
-            await wait_until(
-                pilot, lambda: bool(host.screen.query("#console-native-transcript"))
-            )
-            console = host.screen
-            console._console_agent_bridge = bridge
+                if direct
+                else LibraryRagToolProvider(None)
+            ),
+        )
+        owner = ensure_console_runtime(app)
+        owner.set_chat_store(store)
+        owner.set_provider_gateway(gateway)
+        owner.set_agent_bridge(bridge)
+        owner.set_chat_controller(controller)
+        recovery = owner.ensure_archive_recovery()
+        controller._archive_recovery_runtime = recovery
+        host = ConsoleHarness(app)
+        # The unmounted runtime owner schedules UI callbacks on the mounted host.
+        monkeypatch.setattr(app, "call_later", host.call_later)
+        turn = None
+        try:
+            async with host.run_test(size=size) as pilot:
+                await wait_until(
+                    pilot, lambda: bool(host.screen.query("#console-native-transcript"))
+                )
+                console = host.screen
+                console._console_agent_bridge = bridge
 
-            def configuration(sid):
-                captured = _execution_configuration(
-                    sid,
-                    direct=direct,
-                    native_tools=True,
-                    agent_runtime=True,
-                    scratch_space=controller._scratch_spaces.snapshot(sid),
+                def configuration(sid):
+                    captured = _execution_configuration(
+                        sid,
+                        direct=direct,
+                        native_tools=True,
+                        agent_runtime=True,
+                        scratch_space=controller._scratch_spaces.snapshot(sid),
+                    )
+                    return replace(
+                        captured,
+                        tool_configuration={
+                            **captured.tool_configuration,
+                            "local_tools_enabled": LOCAL_TOOLS_DEFAULT_ENABLED,
+                        },
+                        library_policy_maximum=source.library_policy_holder.snapshot,
+                        provider_selection=replace(
+                            captured.provider_selection, explicit_model="gpt-4o"
+                        ),
+                    )
+
+                monkeypatch.setattr(
+                    console._session,
+                    "_build_console_turn_execution_context",
+                    configuration,
                 )
-                return replace(
-                    captured,
-                    tool_configuration={
-                        **captured.tool_configuration,
-                        "local_tools_enabled": LOCAL_TOOLS_DEFAULT_ENABLED,
-                    },
-                    library_policy_maximum=source.library_policy_holder.snapshot,
-                    provider_selection=replace(
-                        captured.provider_selection, explicit_model="gpt-4o"
+                # TASK-38701: leave controller.app alone. The Console rebinds it to
+                # its app_instance on every _ensure_console_chat_controller, and a
+                # turn's preparation reads refuse when it changes under them. A
+                # host swapped in here was flipped back mid-turn under load.
+                await console._sync_native_console_chat_ui()
+                await wait_until(
+                    pilot,
+                    lambda: console._archive_recovery_view().is_answerable(source.id),
+                    lambda: (
+                        console.is_mounted,
+                        console.is_current,
+                        owner.view is console,
+                        store.active_session_id,
+                        bool(console.query("#recovery-confirm")),
                     ),
                 )
-
-            monkeypatch.setattr(
-                console._session, "_build_console_turn_execution_context", configuration
-            )
-            # TASK-38701: leave controller.app alone. The Console rebinds it to
-            # its app_instance on every _ensure_console_chat_controller, and a
-            # turn's preparation reads refuse when it changes under them. A
-            # host swapped in here was flipped back mid-turn under load.
-            await console._sync_native_console_chat_ui()
-            await wait_until(
-                pilot,
-                lambda: console._archive_recovery_view().is_answerable(source.id),
-                lambda: (
-                    console.is_mounted,
-                    console.is_current,
-                    owner.view is console,
-                    store.active_session_id,
-                    bool(console.query("#recovery-confirm")),
-                ),
-            )
-            from tldw_chatbook.UI.Console_Modules.wiring import (
-                _admit_console_turn_to_runtime,
-            )
-
-            if gateway_override is not None:
-                initial = _admit_console_turn_to_runtime(
-                    console, "Initial local turn", source.id
+                from tldw_chatbook.UI.Console_Modules.wiring import (
+                    _admit_console_turn_to_runtime,
                 )
-                await owner.wait_for_turn(initial)
-                gateway.local_turn = False
-            turn_id = _admit_console_turn_to_runtime(
-                console, "Find my archived chat", source.id
-            )
-            turn = asyncio.create_task(owner.wait_for_turn(turn_id))
-            if entry == "button":
-                # Search-only production finishes before its result card is used.
-                await asyncio.wait_for(asyncio.shield(turn), 60)
-            await wait_until(
-                pilot,
-                lambda: bool(console.query(".archive-recovery-results")),
-                lambda: (
-                    controller.run_state_for(source.id),
-                    gateway.tools_seen,
-                    gateway.messages_seen,
-                ),
-            )
-            console._console_composer_or_none().load_draft("Unrelated unfinished draft")
-            await console._sync_native_console_chat_ui()
-            if entry == "button":
-                await turn
-            else:
+
+                if gateway_override is not None:
+                    initial = _admit_console_turn_to_runtime(
+                        console, "Initial local turn", source.id
+                    )
+                    await owner.wait_for_turn(initial)
+                    gateway.local_turn = False
+                turn_id = _admit_console_turn_to_runtime(
+                    console, "Find my archived chat", source.id
+                )
+                turn = asyncio.create_task(owner.wait_for_turn(turn_id))
+                if entry == "button":
+                    # Search-only production finishes before its result card is used.
+                    await asyncio.wait_for(asyncio.shield(turn), 60)
                 await wait_until(
-                    pilot, lambda: console.query_one("#recovery-confirm").parent.display
+                    pilot,
+                    lambda: bool(console.query(".archive-recovery-results")),
+                    lambda: (
+                        controller.run_state_for(source.id),
+                        gateway.tools_seen,
+                        gateway.messages_seen,
+                    ),
                 )
-            assert controller._agent_bridge is bridge and owner.agent_bridge is bridge
-            yield SimpleNamespace(
-                app=app,
-                db=db,
-                target_id=target_id,
-                message_id=message_id,
-                original_leaf_id=message_id,
-                controller=controller,
-                source=source,
-                store=store,
-                gateway=gateway,
-                owner=owner,
-                recovery=recovery,
-                host=host,
-                pilot=pilot,
-                console=console,
-                turn=turn,
-            )
-    finally:
-        try:
-            await dispose_console_runtime(app)
+                console._console_composer_or_none().load_draft(
+                    "Unrelated unfinished draft"
+                )
+                await console._sync_native_console_chat_ui()
+                if entry == "button":
+                    await turn
+                else:
+                    await wait_until(
+                        pilot,
+                        lambda: console.query_one("#recovery-confirm").parent.display,
+                    )
+                assert (
+                    controller._agent_bridge is bridge and owner.agent_bridge is bridge
+                )
+                yield SimpleNamespace(
+                    app=app,
+                    db=db,
+                    target_id=target_id,
+                    message_id=message_id,
+                    original_leaf_id=message_id,
+                    controller=controller,
+                    source=source,
+                    store=store,
+                    gateway=gateway,
+                    owner=owner,
+                    recovery=recovery,
+                    host=host,
+                    pilot=pilot,
+                    console=console,
+                    turn=turn,
+                )
         finally:
-            if turn is not None:
-                if not turn.done():
-                    turn.cancel()
-                await asyncio.gather(turn, return_exceptions=True)
-            runs_db.close()
+            try:
+                await dispose_console_runtime(app)
+            finally:
+                if turn is not None:
+                    if not turn.done():
+                        turn.cancel()
+                    await asyncio.gather(turn, return_exceptions=True)
+                runs_db.close()
 
 
 async def click(rig, selector):
@@ -547,25 +559,27 @@ async def test_native_result_refresh_remains_manual_and_imported_json_is_inert(
         assert rig.console.query("#recovery-manual-library")
         from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
+        navigation_workers = []
+
         async def navigate_to_manual_library(event):
+            navigation_workers.append(get_current_worker())
             await rig.host.push_screen(LibraryScreen(rig.app))
 
         monkeypatch.setattr(
             rig.app, "handle_screen_navigation", navigate_to_manual_library
         )
         await click(rig, "#recovery-manual-library")
-        # The screen is visible before its navigation worker applies the scope.
+        # A mounted Library precedes this worker's archive-scope application.
         await wait_until(
             rig.pilot,
-            lambda: (
-                isinstance(rig.host.screen, LibraryScreen)
-                and not any(
-                    worker.group == "archive-recovery-library"
-                    and not worker.is_finished
-                    for worker in rig.host.workers
-                )
-            ),
+            lambda: bool(navigation_workers) and navigation_workers[0].is_finished,
         )
+        assert len(navigation_workers) == 1
+        navigation_worker = navigation_workers[0]
+        assert navigation_worker.node is rig.host
+        assert navigation_worker.group == "archive-recovery-library"
+        await navigation_worker.wait()
+        assert isinstance(rig.host.screen, LibraryScreen)
         assert rig.host.screen._conversation_recovery().scope == "all"
         assert rig.store.active_session_id == imported.id
 

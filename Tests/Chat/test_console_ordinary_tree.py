@@ -515,6 +515,86 @@ async def test_original_unknown_library_factory_is_opaque_before_construction(
         assert '"items"' in str(h.gateway.payloads[-1]), h.gateway.payloads[-1]
 
 
+@pytest.mark.parametrize("mode", ["native_without_index", "native_backend", "custom"])
+async def test_ordinary_rag_keeps_the_exact_admitted_backend(reference_host, mode):
+    import json
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents.library_rag_tool_provider import (
+        RAG_TOOL_NAME,
+        LibraryRagToolProvider,
+    )
+    from tldw_chatbook.Agents.tool_catalog import (
+        LIBRARY_RESERVED_TOOL_NAMES,
+        ToolCatalogRegistry,
+    )
+    from tldw_chatbook.Chat.console_chat_models import ConsoleSubmissionOrigin
+    from tldw_chatbook.Chat.console_library_policy import ConsoleAssistantLibraryAccess
+    from tldw_chatbook.Chat.console_ordinary_tree import (
+        _OrdinaryTurn,
+        _capture_library_maximum,
+    )
+
+    h = reference_host
+    backend = object() if mode == "native_backend" else None
+    h.app.library_rag_search_service = backend
+    provider = LibraryRagToolProvider(backend)
+    factory = h.runtime._library_provider_factory
+    h.controller._library_provider_factory = (
+        (lambda _context: provider) if mode == "custom" else factory
+    )
+    config = await h.controller.capture_turn_configuration_snapshot(h.session.id)
+    config = replace(
+        config,
+        library_policy_maximum=SimpleNamespace(
+            assistant_access=ConsoleAssistantLibraryAccess.ALLOWED
+        ),
+        tool_configuration={**config.tool_configuration, "direct_library_tools": False},
+    )
+    tree = _OrdinaryTurn(
+        h.controller, h.session, config, ConsoleSubmissionOrigin.MANUAL, None, True
+    )
+    tree.catalog_permits = lambda source, _name: source == "library"
+    tree.footprint = SimpleNamespace(opaque=_capture_library_maximum(tree))
+    assert tree.footprint.opaque == (mode != "native_without_index")
+    assert tree.library_maximum == {RAG_TOOL_NAME}
+
+    registry = ToolCatalogRegistry()
+    authority = provider.issue_builtin_authority(
+        reserved_names=LIBRARY_RESERVED_TOOL_NAMES,
+        assistant_access=ConsoleAssistantLibraryAccess.ALLOWED,
+    )
+    assert registry.register_builtin_library_provider(provider, authority)
+    names = tuple(entry.name for entry in provider.list_catalog())
+    with pytest.raises(RuntimeError, match="ordinary Library catalog widened"):
+        tree.bind_library_provider(provider, (*names, "library_list_conversations"))
+    if mode != "custom":
+        with pytest.raises(RuntimeError, match="ordinary Library"):
+            tree.bind_library_provider(LibraryRagToolProvider(object()), names)
+    tree.bind_library_provider(provider, names)
+    tree.bind_catalog(registry, names)
+    tree.check_library_call(provider, RAG_TOOL_NAME)
+    outcome = provider.invoke(RAG_TOOL_NAME, {"query": "q"})
+    assert outcome.ok is False and outcome.content == ""
+    error = json.loads(outcome.error)["error"]
+    assert error["code"] == "index_unavailable" and error["retryable"] is False
+
+    provider._rag_service = object()
+    with pytest.raises(RuntimeError, match="ordinary Library dispatch source changed"):
+        tree.check_library_call(provider, RAG_TOOL_NAME)
+    del provider._rag_service
+    with pytest.raises(RuntimeError, match="ordinary Library dispatch source changed"):
+        tree.check_library_call(provider, RAG_TOOL_NAME)
+    provider._rag_service = backend
+    if mode != "custom":
+        h.app.library_rag_search_service = object()
+        with pytest.raises(
+            RuntimeError, match="ordinary local resource maximum changed"
+        ):
+            tree.check_library_call(provider, RAG_TOOL_NAME)
+
+
 async def test_custom_change_review_reader_never_runs_before_ordinary_admission(
     ordinary_host,
 ):

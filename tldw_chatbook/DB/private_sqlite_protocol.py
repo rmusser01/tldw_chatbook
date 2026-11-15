@@ -8,7 +8,7 @@ import struct
 from dataclasses import asdict, dataclass, fields
 from typing import BinaryIO
 
-VERSION = 1
+VERSION = 2
 MAX_BODY_BYTES = 65536
 MAX_NESTING = 8
 TTS_OPERATIONS = frozenset(
@@ -51,6 +51,7 @@ ARTIFACT_STATUSES = frozenset(
 )
 PRIVATE_REASONS = frozenset(
     {
+        "private_sqlite_mode_change_refused",
         "missing_sqlite_artifact",
         "non_regular_sqlite_artifact",
         "unsafe_sqlite_artifact",
@@ -156,6 +157,7 @@ class PrepareRequest:
     writable: bool
     create_if_missing: bool
     preserve_source_mode: bool
+    require_private_mode: bool = False
 
     def __post_init__(self) -> None:
         if type(self.path) is not str or not self.path or "\x00" in self.path:
@@ -166,12 +168,15 @@ class PrepareRequest:
                 self.writable,
                 self.create_if_missing,
                 self.preserve_source_mode,
+                self.require_private_mode,
             )
         ):
             raise ProtocolError()
         if self.create_if_missing and not self.writable:
             raise ProtocolError()
-        if self.preserve_source_mode and (self.writable or self.create_if_missing):
+        if self.preserve_source_mode and (
+            self.writable or self.create_if_missing or self.require_private_mode
+        ):
             raise ProtocolError()
 
 
@@ -269,6 +274,7 @@ def validate_payload(payload: object) -> dict[str, object]:
                 "writable",
                 "create_if_missing",
                 "preserve_source_mode",
+                "require_private_mode",
             }:
                 raise ProtocolError()
             request = PrepareRequest(
@@ -279,9 +285,12 @@ def validate_payload(payload: object) -> dict[str, object]:
                         "writable",
                         "create_if_missing",
                         "preserve_source_mode",
+                        "require_private_mode",
                     )
                 }
             )
+            if request.require_private_mode and operation != "prepare":
+                raise ProtocolError()
             if operation == "pin_source" and (
                 request.writable or request.create_if_missing
             ):

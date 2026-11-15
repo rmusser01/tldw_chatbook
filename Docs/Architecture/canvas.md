@@ -25,6 +25,22 @@ This document describes Canvas: the conversation-owned, local-first artifact sys
 | Persistence | `DB/migrations/chachanotes_v66_to_v67_canvas_revisions.sql`, `DB/canvas_payload_validation.py`, `DB/ChaChaNotes_DB.py` | `canvas_documents`/`canvas_revisions`/`canvas_conversation_hints` + 6 triggers; insert-time sha256/bytes CHECK via a custom DB function |
 | Message cards | `Chat/message_metadata.py` | `CanvasCardMetadata` / origin metadata |
 
+Native `CanvasScope` captures the actual Console session's immutable `ephemeral`
+state at all four native factories. Canonical saved session IDs can equal their
+conversation IDs; equality does not classify storage. Native authority refuses
+unknown or non-boolean state, while legacy data-only scopes retain their existing
+explicit lower API contract. Scope, selection, publication and bridge revalidation
+include this fact; promotion still requires the original retained native owner.
+No client field, transport schema, permission or owner fallback is added (ADR-244,
+R180). Interactive HTML import uses the same native state.
+
+The shared strict UTF-8 text and opaque-ID value validators live in the pure
+kernel module `Utils/text.py`. `Canvas/limits.py` retains their direct canonical
+exports, the legacy `CanvasLimitError` name and all Canvas-specific ceilings and
+validators. DB command receipts/history and worker-result windows use the kernel
+validator directly; it preserves nonempty string identity and the original256
+encoded-byte bound without loading the Canvas runtime or config.
+
 ## Tools
 
 Five tools, all reserved-prefixed: `canvas_list`, `canvas_read`, `canvas_create`, `canvas_update`, `canvas_guide` (mutations = create/update; classification `REVERSIBLE_CONVERSATION_LOCAL`). The names stay reserved even when Canvas is unavailable. Guidance is offer-first: the companion skill (`Docs/Examples/skills/canvas/`) is user-invocable only, and bare `$canvas` prompts clarify rather than assume.

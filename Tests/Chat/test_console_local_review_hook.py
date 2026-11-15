@@ -16,18 +16,18 @@ from types import SimpleNamespace
 
 import pytest
 
+import tldw_chatbook.Chat.console_chat_controller as controller_mod
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Agents.hook_test_utils import trusted_hook_engine
 from Tests.private_profile import private_profile_test
-
-import tldw_chatbook.Chat.console_chat_controller as controller_mod
 from tldw_chatbook.Agents.agent_models import (
     RUN_DONE,
     AgentConfig,
     ModelTurn,
-    normalize_tool_review,
     ToolCall,
     ToolLoadSelection,
     ToolResult,
+    normalize_tool_review,
 )
 from tldw_chatbook.Agents.agent_runtime import LoopDeps, run_agent_loop
 from tldw_chatbook.Agents.local_tool_provider import (
@@ -42,13 +42,14 @@ from tldw_chatbook.Agents.mcp_tool_provider import (
 )
 from tldw_chatbook.Agents.run_context import use_run_id
 from tldw_chatbook.Chat.console_chat_controller import (
-    ConsoleChatController,
     USER_DENIED_REFUSAL,
-    watchlists_operation_receipt_ids,
+    ConsoleChatController,
     build_combined_review_hook,
     build_local_review_hook,
+    watchlists_operation_receipt_ids,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleEgressClass,
     ConsoleLibraryItemScopeSnapshot,
@@ -62,18 +63,17 @@ from tldw_chatbook.Chat.console_library_policy import (
     ConsoleLibraryPolicySnapshot,
 )
 from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_turn_context import (
     ConsoleTurnConfigurationSnapshot,
     ConsoleTurnExecutionContext,
 )
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
-from tldw_chatbook.Subscriptions.local_watchlists_service import LocalWatchlistsService
-from tldw_chatbook.Subscriptions.watchlist_bundle_service import WatchlistBundleService
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.runtime_policy.bootstrap import default_runtime_policy_path
 from tldw_chatbook.runtime_policy.source_state import RuntimeSourceStateStore
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
+from tldw_chatbook.Subscriptions.local_watchlists_service import LocalWatchlistsService
+from tldw_chatbook.Subscriptions.watchlist_bundle_service import WatchlistBundleService
 
 ASK = EffectiveToolState(state="ask", origin="global_default")
 ALLOW = EffectiveToolState(state="allow", origin="tool_override")
@@ -1900,7 +1900,6 @@ def test_run_reply_wraps_the_review_chain_with_pretooluse_hooks(tmp_path, reques
         ConsoleProviderResolution,
         ProviderToolCalls,
     )
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     engine = _deny_fs_tools_engine(tmp_path)
 
@@ -1940,7 +1939,7 @@ def test_run_reply_wraps_the_review_chain_with_pretooluse_hooks(tmp_path, reques
             ["done."],
         ]
     )
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     request.addfinalizer(db.close)
     store = ConsoleChatStore()
     session = store.ensure_session()

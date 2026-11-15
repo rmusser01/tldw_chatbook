@@ -66,10 +66,11 @@ the providers, which are all deliberately dependency-light.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, Iterator, Literal
+from typing import Any, Literal
 
 
 #: task-31382: a sub-agent display label is cut here so a card title or a
@@ -267,3 +268,68 @@ def current_agent_sources(controller: object | None = None) -> Any | None:
 def current_agent_source_issuance() -> list[Any] | None:
     """Return the active holder for the Console source preparation callback."""
     return _AGENT_SOURCE_ISSUANCE.get()
+
+
+_MODEL_RUN_CANCELLATION: ContextVar[tuple[str, str, Callable[[], bool]] | None] = (
+    ContextVar("model_run_cancellation", default=None)
+)
+
+
+@contextmanager
+def use_model_run_cancellation(predicate: Callable[[], bool]) -> Iterator[None]:
+    """Carry the native rejection probe and reset its context token on exit.
+
+    Args:
+        predicate: The current native run's unchanged LoopDeps.should_cancel.
+
+    Yields:
+        None while the exact actor and predicate are bound to this context.
+
+    Raises:
+        ValueError: The native actor or callable predicate is missing or invalid.
+    """
+    actor = current_run_actor()
+    if (
+        actor is None
+        or type(actor.run_id) is not str
+        or not actor.run_id
+        or type(actor.kind) is not str
+        or actor.kind not in {"primary", "subagent"}
+        or not callable(predicate)
+    ):
+        raise ValueError("model_run_cancellation_unavailable")
+    token = _MODEL_RUN_CANCELLATION.set((actor.run_id, actor.kind, predicate))
+    try:
+        yield
+    finally:
+        _MODEL_RUN_CANCELLATION.reset(token)
+
+
+def current_model_run_cancellation() -> tuple[str, str, Callable[[], bool]] | None:
+    """Return the rejection probe belonging to the exact current native actor.
+
+    Returns:
+        The run ID, kind and original callable; None only for unbound legacy use.
+
+    Raises:
+        ValueError: Native state is partial, invalid, noncallable or mismatched.
+    """
+    actor = current_run_actor()
+    bound = _MODEL_RUN_CANCELLATION.get()
+    if actor is None and bound is None:
+        return None
+    if (
+        actor is None
+        or type(actor.run_id) is not str
+        or not actor.run_id
+        or type(actor.kind) is not str
+        or actor.kind not in {"primary", "subagent"}
+        or type(bound) is not tuple
+        or len(bound) != 3
+        or type(bound[0]) is not str
+        or type(bound[1]) is not str
+        or not callable(bound[2])
+        or (actor.run_id, actor.kind) != bound[:2]
+    ):
+        raise ValueError("model_run_cancellation_unavailable")
+    return bound

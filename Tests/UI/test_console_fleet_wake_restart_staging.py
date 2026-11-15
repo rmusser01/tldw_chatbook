@@ -22,15 +22,15 @@ failed twice, plus one recorded window needing a ruling:
 from __future__ import annotations
 
 import asyncio
-
 import time
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Chat.test_console_fleet_wake import (
-    _RecordingWakeGateway,
     _controller_rig,
     _drain,
+    _RecordingWakeGateway,
     _survivor,
     _terminal_subagent_run,
 )
@@ -50,7 +50,6 @@ from tldw_chatbook.Chat.console_fleet_attention import bump_fleet_unseen_revisio
 from tldw_chatbook.Chat.conversation_local_marks_service import (
     ConversationLocalMarksService,
 )
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.config import load_settings, save_setting_to_cli_config
 
 
@@ -200,7 +199,7 @@ async def test_opening_a_marked_conversation_delivers_without_a_keystroke(
     )
     # The durable state a settled-while-away survivor leaves behind, seeded
     # into the SAME sibling runs DB the screen's bridge will open.
-    runs_db = AgentRunsDB(tmp_path / "agent_runs.db", client_id="seed")
+    runs_db = owned_agent_runs_db(tmp_path / "agent_runs.db", client_id="seed")
     _parent, run_id = _terminal_subagent_run(
         runs_db, "conv-marked", result="staged background answer"
     )

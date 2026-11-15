@@ -21,11 +21,12 @@ from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission as storag
 from tldw_chatbook.Backup_Recovery.activation import ActivationStore, bind_activation
 from tldw_chatbook.Backup_Recovery.control_records import admission_authority, register_pending
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.agent_models import AgentConfig, AgentDefinition, RUN_DONE
 from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
 data = config.get_user_data_dir()
-db = AgentRunsDB(data/'agent_runs.db', client_id='test')
+db = owned_agent_runs_db(data/'agent_runs.db', client_id='test')
 definition = AgentDefinition(name='saved', description='saved definition', instructions='saved')
 db.create_agent_definition(definition)
 db.close()

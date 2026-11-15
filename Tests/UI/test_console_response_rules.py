@@ -57,14 +57,14 @@ _HOLD_SECONDS = 60.0
 _BLOCKED_LOOP_SECONDS = 10.0
 
 
-async def _until(predicate, what, step=None):
+async def _until(predicate, what, step=None, *, timeout=_STATE_SECONDS):
     """Wait, bounded, until ``predicate()``; fail naming ``what`` (TASK-39166)."""
     try:
-        async with asyncio.timeout(_STATE_SECONDS):
+        async with asyncio.timeout(timeout):
             while not predicate():
                 await (step() if step is not None else asyncio.sleep(0.01))
     except TimeoutError:
-        pytest.fail(f"{what}: not within {_STATE_SECONDS:g} s")
+        pytest.fail(f"{what}: not within {timeout:g} s")
 
 
 async def _until_set(event, what):
@@ -83,10 +83,11 @@ class _UiLoopWatch:
     it records the loop thread's stack, sets ``fired`` and calls ``on_block``.
     """
 
-    def __init__(self, on_block):
+    def __init__(self, on_block, *, blocked_seconds=_BLOCKED_LOOP_SECONDS):
         self._loop = asyncio.get_running_loop()
         self._loop_thread = threading.get_ident()
         self._on_block = on_block
+        self._blocked_seconds = blocked_seconds
         self._done = threading.Event()
         self.fired = threading.Event()
         self.stack: list[str] = []
@@ -110,7 +111,7 @@ class _UiLoopWatch:
                 self._loop.call_soon_threadsafe(ran.set)
             except RuntimeError:  # the loop closed with the test
                 return
-            deadline = time.monotonic() + _BLOCKED_LOOP_SECONDS
+            deadline = time.monotonic() + self._blocked_seconds
             while not ran.wait(0.05):
                 if self._done.is_set():
                     return
@@ -124,7 +125,7 @@ class _UiLoopWatch:
 
     def failure(self, what: str) -> str:
         return (
-            f"{what}: the UI loop ran no callback for {_BLOCKED_LOOP_SECONDS:g} s"
+            f"{what}: the UI loop ran no callback for {self._blocked_seconds:g} s"
             " while the rebuild held config:\n" + "".join(self.stack[-14:])
         )
 
@@ -440,10 +441,21 @@ async def test_canonical_settings_opens_global_rules_before_console_visit(tmp_pa
 
 @pytest.mark.asyncio
 async def test_active_run_copy_takes_priority_over_an_earlier_rule_verdict(tmp_path):
+    from tldw_chatbook.Chat.console_configuration_preparation import (
+        standard_console_configuration_sources,
+    )
+
     async with mounted_rules_console(tmp_path) as case:
+        # The seeded history skips the send that would prepare these sources.
+        trust = await case.app.ensure_local_skill_trust_service()
+        assert case.app.local_skills_service.trust_service is trust
+        assert standard_console_configuration_sources(
+            case.app, case.chats, case.controller, session_id=case.session_id
+        )
         seed_answer(case)
         learned = await case.rules.learn(case.session_id, "The answer omitted evidence")
         assert learned.state == "active", (learned.reason, case.failures)
+        assert case.rules.state(case.session_id).assessment is not None
         entered, release = asyncio.Event(), asyncio.Event()
 
         case.primary_entered, case.primary_release = entered, release
@@ -603,6 +615,30 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
             owner.set_chat_store(original_store)
             await owner.dispose()
         return
+
+    startup_sync_dispatched = set()
+    if deferral != "none":
+        from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+        call_after_refresh = ChatScreen.call_after_refresh
+
+        def observe_startup_sync(screen, callback, *args, **kwargs):
+            if (
+                callback == screen.run_worker
+                and args == (screen._sync_native_console_chat_ui,)
+                and kwargs.get("group") == "console-sync"
+                and kwargs.get("exclusive") is False
+            ):
+
+                def dispatch():
+                    callback(*args, **kwargs)
+                    startup_sync_dispatched.add(screen)
+
+                return call_after_refresh(screen, dispatch)
+            return call_after_refresh(screen, callback, *args, **kwargs)
+
+        monkeypatch.setattr(ChatScreen, "call_after_refresh", observe_startup_sync)
+
     async with mounted_rules_console(tmp_path) as case:
         other_session_id = case.chats.create_session(activate=False).id
         if deferral != "none":
@@ -612,23 +648,41 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
             assert case.console._console_config_snapshot_is_disk_loaded(
                 case.host.app_config
             )
+            # Establish the mounted state before sending; startup and post-send
+            # control-bar settling share the original two-second allowance.
+            loop = asyncio.get_running_loop()
+            readiness_deadline = loop.time() + 2
+            try:
+                async with asyncio.timeout_at(readiness_deadline):
+                    # The attach flag can precede its startup worker dispatch.
+                    while (
+                        not case.console._console_attach_reconciled
+                        or case.console._console_control_bar_sync_scheduled
+                        or case.console not in startup_sync_dispatched
+                    ):
+                        await asyncio.sleep(0.01)
+            except TimeoutError as error:
+                error.add_note(
+                    "Console startup readiness: "
+                    f"attach_reconciled={case.console._console_attach_reconciled}, "
+                    f"control_sync_scheduled={case.console._console_control_bar_sync_scheduled}, "
+                    f"startup_sync_dispatched={case.console in startup_sync_dispatched}"
+                )
+                raise
+            remaining = readiness_deadline - loop.time()
             seed_answer(case)
             case.helper_entered, case.helper_release = asyncio.Event(), asyncio.Event()
             complaint = "/omfg Include evidence in the answer"
             case.composer.load_draft(complaint)
             case.console.query_one("#console-send-message", Button).press()
-            await _until_set(case.helper_entered, "the /omfg helper's request")
+            async with asyncio.timeout(5):
+                await case.helper_entered.wait()
             await case.pilot.pause()
             await _until(
-                lambda: case.console._console_attach_reconciled
-                and not case.console._console_control_bar_sync_scheduled,
-                "the attach reconcile and its control-bar sync",
-                lambda: case.pilot.pause(0.01),
+                lambda: not case.console._console_control_bar_sync_scheduled,
+                "Console control-bar sync settling before the rebuild hold",
+                timeout=remaining,
             )
-            # Attach readiness precedes its queued full-refresh callback.
-            refreshed = asyncio.Event()
-            case.console.call_after_refresh(refreshed.set)
-            await _until_set(refreshed, "the attach's queued full refresh")
             assert case.console._console_credential_poll_timer is not None
             source = case.rules._sources[case.session_id]
             assert case.rules.acceptance_current(source)
@@ -642,7 +696,7 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
                     with config._settings_rebuild_lock():
                         config._invalidate_config_caches()
                         held.set()
-                        assert release.wait(_HOLD_SECONDS), "config holder was not released"
+                        assert release.wait(5), "config holder was not released"
                 except BaseException as error:  # noqa: BLE001 - asserted after thread retirement.
                     errors.append(error)
 
@@ -655,13 +709,13 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
                 return result
 
             holder = threading.Thread(target=hold_rebuild)
-            watch = _UiLoopWatch(release.set)
+            watch = _UiLoopWatch(release.set, blocked_seconds=2)
             expired = watch.fired
             if deferral == "maintenance":
                 case.console._console_sync_maintenance_close_admission()
             try:
                 holder.start()
-                assert held.wait(_STATE_SECONDS), "the holder never took the rebuild lock"
+                assert held.wait(3), "the holder never took the rebuild lock"
                 watch.start()
                 with monkeypatch.context() as observer:
                     observer.setattr(case.console, "_sync_console_control_bar", observed_sync)
@@ -713,6 +767,7 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
                         and "Testing rule" in _run_text(case.console)
                     ),
                     "Stop returning the rule phase to idle and clearing 'Testing rule'",
+                    timeout=1,
                 )
                 assert not expired.is_set(), watch.failure("Stop")
                 assert not release.is_set()
@@ -735,12 +790,11 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
                     print("Blocked UI stack:\n" + "".join(watch.stack))
                 case.helper_release.set()
                 try:
-                    async with asyncio.timeout(_STATE_SECONDS):
+                    async with asyncio.timeout(5):
                         await case.rules.helpers.wait_for_cleanup()
                 except TimeoutError:
                     pytest.fail(
-                        "the response-rule helpers did not clean up within "
-                        f"{_STATE_SECONDS:g} s"
+                        "the response-rule helpers did not clean up within 5 s"
                     )
                 from textual.worker import WorkerCancelled
 
@@ -752,16 +806,14 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
             assert case.rules.helpers.unsettled_count == 0
             assert case.composer.draft_text() == complaint
             assert case.learning_results and case.learning_results[-1][0] != "active"
-            # TASK-39166: wait on what is read next. The flag can clear before
-            # a later sync hides Stop (1 of 10 whole-file runs at load ~51).
-            await _until(
-                lambda: not case.console._console_control_bar_sync_scheduled
-                and not stop.display
-                and "Testing rule" not in _run_text(case.console),
-                "the control-bar sync deferred during the hold hiding Stop "
-                "and 'Testing rule'",
-                lambda: case.pilot.pause(0.01),
-            )
+            # A later sync can still own the rendered Stop state and rule text.
+            async with asyncio.timeout(5):
+                while (
+                    case.console._console_control_bar_sync_scheduled
+                    or stop.display
+                    or "Testing rule" in _run_text(case.console)
+                ):
+                    await case.pilot.pause(0.01)
             assert "Testing rule" not in _run_text(case.console)
             assert not stop.display
             assert case.rules.state(case.session_id).phase == "idle"

@@ -38,13 +38,10 @@ Upstream guards only the outer `query_one(SelectCurrent)` — the case where
 the `Select`'s own children are missing. It does not guard the narrower case
 where `SelectCurrent` exists but its `#label` child does not.
 
-The fix here is deliberately *not* a catch-and-carry-on. It is gated on
-`_pruning`/`_closing`, which mean "Textual has already committed to removing
-this widget from the DOM". A pruning widget is never painted again, so
-declining to initialise it loses nothing: there is no stale-placeholder
-failure mode, because there is no surface left to be stale. Any *other* way
-of arriving at a half-composed `Select` is a different bug and still raises
-loudly, which is what we want.
+During app shutdown, `Widget.mount_all` can also skip child creation as
+soon as `App.exit()` sets its exit flag, before the widget is marked for
+pruning or closing. These terminal states can skip painting. An incomplete
+live `Select` still raises at the original child lookup.
 
 Screens whose reactives recompose while background workers are still
 running — anything of the "a full-screen `recompose=True` reactive rebuilds
@@ -53,6 +50,7 @@ every region" shape — should use this class instead of `Select`.
 
 from __future__ import annotations
 
+from textual._context import NoActiveAppError
 from textual.widgets import Select
 
 __all__ = ["PruneSafeSelect", "PruneSafeSelectCompatibilityError"]
@@ -125,7 +123,7 @@ class PruneSafeSelect(Select):
     """A `Select` that declines to touch its children once it is pruning.
 
     Behaviourally identical to `textual.widgets.Select` in every state
-    except `_pruning`/`_closing`, where the two mount-time steps that reach
+    except during app exit, pruning or closing, when the mount-time steps that reach
     into children stop doing so rather than raising `NoMatches`. Non-DOM
     state (`_value`) is still kept in sync — see `_watch_value`.
 
@@ -153,6 +151,14 @@ class PruneSafeSelect(Select):
         super().__init__(*args, **kwargs)
         _require_internals(self, _GUARDED_FLAGS, "attribute")
 
+    def _is_tearing_down(self) -> bool:
+        if self._pruning or self._closing:
+            return True
+        try:
+            return self.app._exit
+        except NoActiveAppError:
+            return False
+
     def _setup_options_renderables(self) -> None:
         """Skip the `query_one(SelectOverlay)` rebuild while pruning.
 
@@ -160,7 +166,7 @@ class PruneSafeSelect(Select):
         child mounted by `Select.compose`, so on a pruned-mid-compose
         `Select` it may not exist at all.
         """
-        if self._pruning or self._closing:
+        if self._is_tearing_down():
             return
         super()._setup_options_renderables()
 
@@ -195,7 +201,7 @@ class PruneSafeSelect(Select):
         back and never re-fires. If this class ever survives such an upgrade,
         that revival path needs an explicit repaint, not just this sync.
         """
-        if self._pruning or self._closing:
+        if self._is_tearing_down():
             # The one non-DOM statement of `Select._watch_value`.
             self._value = value
             return

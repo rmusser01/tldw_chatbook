@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Chat.test_console_send_diagnostics import sinks  # noqa: F401
 from Tests.Chat.test_console_trace_current_turn_transforms import (  # noqa: F401
     make_database,
@@ -39,7 +40,6 @@ from tldw_chatbook.Chat.console_context_policy import (
 from tldw_chatbook.Chat.console_prepared_request import MEMORY_OPEN_TAG
 from tldw_chatbook.Chat.console_trace_native_reader import ConsoleTraceNativeReader
 from tldw_chatbook.Chat.console_trace_runtime import ConsoleTraceBoundaryFactory
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -71,7 +71,9 @@ def harness(trace_harness, tmp_path, request, monkeypatch):  # noqa: F811
     trace_harness.rechecks = rechecks
     controller = trace_harness.controller
     if request.param == "agent":
-        runs = AgentRunsDB(tmp_path / "agent_runs.sqlite", client_id="task33621")
+        runs = owned_agent_runs_db(
+            tmp_path / "agent_runs.sqlite", client_id="task33621"
+        )
         controller.update_agent_runtime(
             enabled=True,
             bridge=ConsoleAgentBridge(

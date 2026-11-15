@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.UI.consolidated_css import APP_STYLESHEETS
 from Tests.UI.test_console_inspector_section import _SectionHarness
 from Tests.UI.test_console_parallel_runs import _assert_painted_at_own_region
@@ -13,7 +14,6 @@ from tldw_chatbook.Chat.console_agent_bridge import (
     ConsoleAgentBridge,
     _subagent_summaries_from_fleet,
 )
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.UI.Console_Modules.agent import (
     _fleet_row_from_handle,
     _fleet_row_from_record,
@@ -98,7 +98,7 @@ async def test_reopened_child_paints_saved_target_or_honest_unavailable(
     tmp_path, legacy, monkeypatch
 ):
     path = tmp_path / "runs.db"
-    db = AgentRunsDB(path, client_id="test")
+    db = owned_agent_runs_db(path, client_id="test")
     run_id = db.create_run(
         conversation_id="c",
         agent_kind="subagent",
@@ -117,7 +117,7 @@ async def test_reopened_child_paints_saved_target_or_honest_unavailable(
         )
     )
     db.close()
-    reopened = AgentRunsDB(path, client_id="reopened")
+    reopened = owned_agent_runs_db(path, client_id="reopened")
     try:
         record = reopened.get_run(run_id)
         summary = ConsoleAgentBridge.historical_subagent_summary(record)

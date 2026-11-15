@@ -20,12 +20,14 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from loguru import logger
 
+from tldw_chatbook.DB.console_execution_owner import ConsoleExecutionOwner
 from tldw_chatbook.Workspaces.change_bounds import (
     DEFAULT_RETENTION_DAYS,
     change_review_setting,
@@ -200,6 +202,7 @@ def run_retention_for_app(
     db_path: Path | str,
     *,
     service: ShadowRepoService | None = None,
+    execution_owner: ConsoleExecutionOwner | None = None,
 ) -> PruneReport | None:
     """One maintenance-path retention pass for the production layout.
 
@@ -209,6 +212,7 @@ def run_retention_for_app(
             uses).
         service: Injection seam for tests; defaults to the app's shadow
             service.
+        execution_owner: The App runtime's current physical run-store lease.
 
     Returns:
         The pass report, or ``None`` when git is unavailable or the pass
@@ -221,7 +225,9 @@ def run_retention_for_app(
             service = ShadowRepoService()
         if not service.available:
             return None
-        runs_db = AgentRunsDB(Path(db_path).parent / "agent_runs.db")
+        runs_db = AgentRunsDB(
+            Path(db_path).parent / "agent_runs.db", execution_owner=execution_owner
+        )
         try:
             return prune_change_history(runs_db, service)
         finally:
@@ -231,3 +237,29 @@ def run_retention_for_app(
     except Exception:  # noqa: BLE001 -- maintenance must never crash the app
         logger.opt(exception=True).warning("change_review: retention pass failed")
         return None
+
+
+def run_retention_with_app_owner(
+    self: object,
+    db_path: str | Path,
+    run_retention_for_app: Callable[..., object],
+    *,
+    source_globals: Mapping[str, object],
+) -> None:
+    from tldw_chatbook.Backup_Recovery.activation import execution_scope
+
+    with execution_scope(
+        ("db.agent_runs",), source_globals["Path"](db_path).parent / "agent_runs.db"
+    ) as allowed:
+        if allowed:
+            from tldw_chatbook.Chat.console_runtime import (
+                ensure_console_runtime,
+            )
+
+            runtime = ensure_console_runtime(self)
+            run_retention_for_app(
+                db_path,
+                execution_owner=runtime.ensure_execution_owner(
+                    source_globals["Path"](db_path).parent / "agent_runs.db"
+                ),
+            )

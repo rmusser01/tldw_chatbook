@@ -27,12 +27,12 @@ import sqlite3
 
 import pytest
 
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from Tests.agent_runs_owner import owned_agent_runs_db
 
 
 @pytest.fixture
 def db(tmp_path):
-    handle = AgentRunsDB(tmp_path / "runs.db", client_id="wake-test")
+    handle = owned_agent_runs_db(tmp_path / "runs.db", client_id="wake-test")
     yield handle
     handle.close()
 
@@ -158,7 +158,7 @@ def test_marking_delivered_removes_a_run_from_the_owed_set_exactly_once(db):
     )
     assert db.get_run(survivor_id)["wake_delivered_at"] == stamped_at
 
-    fresh = AgentRunsDB(db.db_path_str, client_id="wake-test-2")
+    fresh = owned_agent_runs_db(db.db_path_str, client_id="wake-test-2")
     try:
         assert fresh.undelivered_wake_runs("conv-wake") == [], (
             "the delivered ledger must be durable: a fresh handle on the "
@@ -206,7 +206,7 @@ def test_an_old_file_without_the_ledger_column_gains_it_on_reopen(db, tmp_path):
     finally:
         raw.close()
 
-    reopened = AgentRunsDB(db.db_path_str, client_id="wake-test-3")
+    reopened = owned_agent_runs_db(db.db_path_str, client_id="wake-test-3")
     try:
         assert [run["id"] for run in reopened.undelivered_wake_runs("conv-wake")] == [
             survivor_id

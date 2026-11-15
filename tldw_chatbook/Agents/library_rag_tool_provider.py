@@ -45,14 +45,6 @@ from tldw_chatbook.Library.library_expand_policy import (
     EXPANDABLE_SOURCE_TYPES,
     expand_hint,
 )
-from tldw_chatbook.Library.library_local_rag_search_service import (
-    KEYWORD_SEAM_DIAGNOSTICS_KEY,
-    SEAM_STATUS_FAILED,
-)
-from tldw_chatbook.Library.library_rag_service import (
-    LibraryRagSearchRequest,
-    run_library_rag_search,
-)
 from tldw_chatbook.Library.library_tool_contract import (
     ERROR_INDEX_UNAVAILABLE,
     ERROR_INVALID_ARGUMENT,
@@ -378,6 +370,11 @@ class LibraryRagToolProvider(_BuiltinLibraryAuthorityIssuer):
                 "configure Library RAG retrieval to enable this tool.",
                 retryable=False,
             )
+        from tldw_chatbook.Library.library_rag_service import (
+            LibraryRagSearchRequest,
+            run_library_rag_search,
+        )
+
         request = LibraryRagSearchRequest(
             query=query,
             source_types=source_types,
@@ -429,6 +426,11 @@ class LibraryRagToolProvider(_BuiltinLibraryAuthorityIssuer):
         # collapse that task removed from the user-facing panel. Surfaced as
         # a dedicated key (at most four short seam names, so the bounding
         # loop below is unaffected) plus the same sentence the panel renders.
+        from tldw_chatbook.Library.library_local_rag_search_service import (
+            KEYWORD_SEAM_DIAGNOSTICS_KEY,
+            SEAM_STATUS_FAILED,
+        )
+
         failed_seams = sorted(
             {
                 str(entry.get("seam"))

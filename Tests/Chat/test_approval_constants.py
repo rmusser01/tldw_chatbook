@@ -90,3 +90,25 @@ def test_widget_reexports_formatting_helpers() -> None:
     for name in ("summarize_arguments", "summarize_row_arguments", "format_context_line",
                  "_summarize_arguments", "RATIONALE_DISPLAY_CAP", "CONTEXT_LABEL"):
         assert getattr(card, name) is getattr(fmt, name)
+
+    from tldw_chatbook.Chat import approval_review as review
+
+    assert review.format_redacted_arguments is fmt.format_redacted_arguments
+
+
+def test_native_and_phone_approval_options_have_one_canonical_owner() -> None:
+    from tldw_chatbook.Chat import approval_constants as constants
+    from tldw_chatbook.Chat import approval_review as review
+    from tldw_chatbook.Widgets.Chat_Widgets import chat_approval_card as card
+
+    assert (
+        review.APPROVAL_OPTIONS is card.APPROVAL_OPTIONS is constants.APPROVAL_OPTIONS
+    )
+    assert (
+        review.approval_options is card.approval_options is constants.approval_options
+    )
+    assert constants.approval_options(["approve_once", "deny"]) == [
+        ("Once", "approve_once"),
+        ("Deny", "deny"),
+    ]
+    assert constants.approval_options(["unknown"]) == list(constants.APPROVAL_OPTIONS)

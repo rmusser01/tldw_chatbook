@@ -210,6 +210,7 @@ from pathlib import Path
 from tldw_chatbook import config
 from tldw_chatbook.Chat import console_agent_bridge as bridge_source
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Tools import workspace_file_roots as roots
 from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
@@ -217,7 +218,7 @@ from tldw_chatbook.Agents import run_log
 from tldw_chatbook.UI.Console_Modules import run_log_probe_scope as scope
 route,outcome=sys.argv[1:]
 root=Path.home()
-runs=AgentRunsDB(root/'runs.sqlite',client_id='finite-probe')
+runs=owned_agent_runs_db(root/'runs.sqlite',client_id='finite-probe')
 run_id=runs.create_run(conversation_id='conversation',agent_kind='primary')
 bridge=bridge_source.ConsoleAgentBridge(agent_runs_db=runs,store=None,provider_gateway=None)
 db=None

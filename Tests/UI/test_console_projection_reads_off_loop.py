@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import threading
+from contextlib import contextmanager
 
 import pytest
 
@@ -82,6 +83,37 @@ def _project(console) -> tuple[bool, _NativeOperations]:
     with _NativeOperations() as ops:
         result = console._sync_console_rail_and_controls()
     return result, ops
+
+
+@contextmanager
+def _checked_display_without_admission_contention(projection, monkeypatch, deadline):
+    """Isolate display age and render order from an unrelated coordinator holder."""
+    from tldw_chatbook.Backup_Recovery import storage_admission
+
+    status = spend._checked_display_status
+    lock = storage_admission._lock
+    loop = asyncio.get_running_loop()
+    owner_thread = threading.get_ident()
+    owner = asyncio.current_task()
+
+    def check(current):
+        if (
+            current is not projection
+            or threading.get_ident() != owner_thread
+            or asyncio.current_task() is not owner
+        ):
+            return status(current)
+        assert lock.acquire(timeout=max(0.0, deadline - loop.time())), (
+            "the storage coordinator remained busy during the freshness check"
+        )
+        try:
+            return status(current)
+        finally:
+            lock.release()
+
+    with monkeypatch.context() as checked:
+        checked.setattr(spend, "_checked_display_status", check)
+        yield
 
 
 async def _fresh_display(console):
@@ -144,30 +176,45 @@ async def test_a_projection_rereads_an_aging_display_ahead_of_its_expiry(
             # Run work: the poll's timer exists (held: this test ticks nothing).
             console._start_console_transcript_sync_timer()
             console._console_transcript_sync_timer.pause()
-            await until(lambda: not projection.pending, timeout=30)
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + 30
+            await until(lambda: not projection.pending, timeout=deadline - loop.time())
 
             # Past half its life: the projection renders the current display
             # and starts the next read.
             clock.now += 0.6
-            result, ops = _project(console)
+            with _checked_display_without_admission_contention(
+                projection, monkeypatch, deadline
+            ):
+                result, ops = _project(console)
             assert result is True and ops.main == 0
             assert projection.pending, "no read started ahead of the expiry"
-            await until(lambda: not projection.pending, timeout=30)
+            deadline = loop.time() + 30
+            await until(lambda: not projection.pending, timeout=deadline - loop.time())
+            assert projection.at == clock.now
 
             # 1.2 s after the first read, 0.6 s after the second: fresh.
             clock.now += 0.6
-            result, ops = _project(console)
+            with _checked_display_without_admission_contention(
+                projection, monkeypatch, deadline
+            ):
+                result, ops = _project(console)
             assert result is True
             assert ops.main == 0, (
                 f"an expired display cost {ops.main} checked config operation(s) "
                 "on the UI loop"
             )
             console._stop_console_transcript_sync_timer()
-            await until(lambda: not projection.pending, timeout=30)
+            deadline = loop.time() + 30
+            await until(lambda: not projection.pending, timeout=deadline - loop.time())
+            assert projection.at == clock.now
 
             # With no run poll the display is re-read only once it expires.
             clock.now += 0.6
-            assert _project(console)[0] is True
+            with _checked_display_without_admission_contention(
+                projection, monkeypatch, deadline
+            ):
+                assert _project(console)[0] is True
             assert not projection.pending, "an idle projection re-read ahead"
 
 
@@ -184,7 +231,7 @@ async def test_a_warm_up_rereads_a_display_near_expiry_so_its_render_accepts_it(
     at load 9-11). The warm-up now re-reads a display past half its life, the
     share the run poll's projections already refresh ahead at.
     """
-    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+    from tldw_chatbook.Backup_Recovery import storage_admission
 
     clock = _install_clock(monkeypatch)
     host, gateway, _timeline = build()
@@ -193,18 +240,33 @@ async def test_a_warm_up_rereads_a_display_near_expiry_so_its_render_accepts_it(
             console, _composer = await ready_console(host, pilot, gateway)
             projection = await _fresh_display(console)
             console._stop_console_transcript_sync_timer()  # No run poll.
-            await until(lambda: not projection.pending, timeout=30)
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + 30
+            await until(lambda: not projection.pending, timeout=deadline - loop.time())
 
             clock.now += projection.max_age - 0.01
             assert await projection.warm()
             assert projection.at == clock.now, "warm-up retained the aging display"
-            # A busy coordinator also refuses fresh displays; isolate expiry here.
-            assert storage._lock.acquire(timeout=30), "storage coordinator stayed busy"
-            try:
-                clock.now += 0.05  # The FULL sync's own render takes time.
+            clock.now += 0.05  # The FULL sync's own render takes time.
+            status = spend._checked_display_status
+            lock = storage_admission._lock
+
+            def check_age_after_admission(current):
+                if current is not projection:
+                    return status(current)
+                # Isolate proof age from unrelated admission contention.
+                # The original status still checks custody and freshness.
+                assert lock.acquire(timeout=max(0.0, deadline - loop.time())), (
+                    "the storage coordinator remained busy during the freshness check"
+                )
+                try:
+                    return status(current)
+                finally:
+                    lock.release()
+
+            with monkeypatch.context() as checked:
+                checked.setattr(spend, "_checked_display_status", check_age_after_admission)
                 result, _ops = _project(console)
-            finally:
-                storage._lock.release()
             assert result is True, (
                 "the render refused the display its warm-up had just handed back"
             )
@@ -253,7 +315,11 @@ async def test_a_full_sync_slower_than_the_display_life_does_not_replay_itself(
             reads: list = []
             after_transcript: list = []
 
+            owner = asyncio.current_task()
+
             async def slow_transcript(*args, **kwargs):
+                if asyncio.current_task() is not owner:
+                    return await real(*args, **kwargs)
                 # Load stretched the FULL's awaits.
                 clock.now += projection.max_age * stretch["share"]
                 result = await real(*args, **kwargs)
@@ -283,15 +349,21 @@ async def test_a_full_sync_slower_than_the_display_life_does_not_replay_itself(
             async def unparseable(*args, **kwargs):
                 raise RuntimeError("config.toml is unparseable")
 
+            await until(
+                lambda: not console._console_sync_in_progress
+                and not _replay_pending(console)
+                and not console._console_control_bar_sync_scheduled,
+                timeout=30,
+            )
             monkeypatch.setattr(
                 console_preparation_reads, "run_preparation_read", unparseable
             )
-            await until(lambda: not projection.pending, timeout=30)
             projection._retry_delay = spend.RETRY_FIRST_DELAY  # A read failed.
             refresh = projection._refresh
 
             def counting_refresh(key):
-                reads.append(key)
+                if asyncio.current_task() is owner:
+                    reads.append(key)
                 return refresh(key)
 
             projection._refresh = counting_refresh
@@ -299,7 +371,8 @@ async def test_a_full_sync_slower_than_the_display_life_does_not_replay_itself(
             rail = config_sync.sync_console_rail_visibility
 
             def counting_rail(screen):
-                at_rail.append(len(reads))
+                if asyncio.current_task() is owner:
+                    at_rail.append(len(reads))
                 return rail(screen)
 
             monkeypatch.setattr(
@@ -460,15 +533,26 @@ async def test_explicit_syncs_of_a_run_start_share_the_next_ticks_projection(
                 console, "_sync_console_rail_and_controls", counting_project
             )
 
+            loop = asyncio.get_running_loop()
+            projection = spend.ConsoleReadinessConfigProjection.for_screen(console)
+
             async def settled_sync(*, elapsed: float = 0.0) -> None:
-                await until(sync_settled, timeout=30)
+                deadline = loop.time() + 30
+                await until(sync_settled, timeout=deadline - loop.time())
                 # Background syncs must settle before the measured interval starts.
                 clock.now += elapsed
-                await console._sync_native_console_chat_ui()
+                with _checked_display_without_admission_contention(
+                    projection, monkeypatch, deadline
+                ):
+                    await console._sync_native_console_chat_ui()
 
             async def tick() -> None:
-                await until(sync_settled, timeout=30)
-                await timer._callback()
+                deadline = loop.time() + 30
+                await until(sync_settled, timeout=deadline - loop.time())
+                with _checked_display_without_admission_contention(
+                    projection, monkeypatch, deadline
+                ):
+                    await timer._callback()
 
             try:
                 # A poll may skip work already served by the natural startup poll.
@@ -527,6 +611,10 @@ async def test_explicit_syncs_of_a_run_start_share_the_next_ticks_projection(
             finally:
                 gateway.validation_release.set()
                 timer.resume()
+                await until(
+                    lambda: not console._console_runtime().has_custodied_turns(),
+                    timeout=30,
+                )
 
 
 @pytest.mark.asyncio
@@ -609,7 +697,7 @@ async def test_run_poll_settles_streaming_header_before_ready_composer(monkeypat
     async with host.run_test(size=(160, 45)) as pilot:
         with eager_tasks():
             console, composer = await ready_console(host, pilot, gateway)
-            await _fresh_display(console)
+            display = await _fresh_display(console)
             console._stop_console_transcript_sync_timer()
             controller = console._ensure_console_chat_controller()
             store = controller.store
@@ -633,7 +721,16 @@ async def test_run_poll_settles_streaming_header_before_ready_composer(monkeypat
                 speaker = console.query_one_optional(selector, Static)
                 return "" if speaker is None else speaker.render().plain
 
-            await until(lambda: composer.run_active and "Streaming…" in speaker_text())
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + 15
+            await until(
+                lambda: composer.run_active
+                and "Streaming…" in speaker_text()
+                and not console._console_sync_in_progress
+                and not console._console_control_bar_sync_scheduled
+                and not _replay_pending(console),
+                timeout=deadline - loop.time(),
+            )
 
             ready_headers = []
             sync_action_state = composer.sync_action_state
@@ -650,22 +747,45 @@ async def test_run_poll_settles_streaming_header_before_ready_composer(monkeypat
             )
             prepare = ConsoleChangeReviewProjection.prepare
             obsolete = asyncio.Event()
+            held = asyncio.Event()
+            release = asyncio.Event()
+            poll = asyncio.current_task()
 
             async def defer_once(projection):
-                if not obsolete.is_set():
-                    obsolete.set()
-                    return False
+                if projection is console._change_review_projection:
+                    if asyncio.current_task() is poll and not obsolete.is_set():
+                        obsolete.set()
+                        return False
+                    if obsolete.is_set() and not release.is_set():
+                        assert console._console_sync_in_progress
+                        assert not console._console_control_bar_replay_whole_sync
+                        held.set()
+                        await release.wait()
                 return await prepare(projection)
 
             with monkeypatch.context() as deferred:
                 deferred.setattr(ConsoleChangeReviewProjection, "prepare", defer_once)
-                await config_sync.run_periodic_console_sync(
-                    composer_run_controls.sync_poll_display_ui, console
-                )
-                await asyncio.wait_for(obsolete.wait(), timeout=15)
-                assert not ready_headers
-                assert composer.run_active
-                assert "Streaming…" in speaker_text()
+                deadline = loop.time() + 15
+                try:
+                    await config_sync.run_periodic_console_sync(
+                        composer_run_controls.sync_poll_display_ui, console
+                    )
+                    await asyncio.wait_for(
+                        obsolete.wait(), timeout=deadline - loop.time()
+                    )
+                    assert not ready_headers
+                    assert composer.run_active
+                    assert "Streaming…" in speaker_text()
+                    await asyncio.wait_for(held.wait(), timeout=deadline - loop.time())
+                    with _checked_display_without_admission_contention(
+                        display, monkeypatch, deadline
+                    ):
+                        assert console._sync_console_control_bar() is True
+                    assert not ready_headers
+                    assert composer.run_active
+                    assert "Streaming…" in speaker_text()
+                finally:
+                    release.set()
 
             # The coalesced replay reads the now-current projection.
             await until(lambda: bool(ready_headers))
@@ -1550,7 +1670,7 @@ async def test_refused_core_pushes_stop_replaying_an_unreadable_config_and_say_s
             assert shown == [True, False]
 
 
-def _refused_warm_up(monkeypatch, console):
+def _refused_warm_up(monkeypatch, console, *, before_refusal=None):
     """Observe FULL's warm-up, replay timers and results (TASK-38696).
 
     Returns ``(refusing, warms, armed, fulls, during, delays)``: set
@@ -1573,6 +1693,8 @@ def _refused_warm_up(monkeypatch, console):
             while during:
                 during.pop(0)()
             if refusing[0]:
+                if before_refusal is not None:
+                    await before_refusal(projection)
                 return False
         return await real_warm(projection)
 
@@ -1687,6 +1809,157 @@ async def test_a_refused_full_sync_backs_off_and_renders_once_the_refusal_clears
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["projection", "rail"])
+@private_profile_test
+async def test_a_refused_full_render_backs_off_after_successful_warm_up(
+    request, monkeypatch, phase
+):
+    from tldw_chatbook.Backup_Recovery import storage_admission
+
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, _composer = await ready_console(host, pilot, gateway)
+            await pilot.pause(1.0)
+            await _fresh_display(console)
+            refusing, _warms, armed, fulls, _during, _delays = _refused_warm_up(
+                monkeypatch, console
+            )
+            refusing[0] = False  # The real warm-up is allowed to succeed.
+            console.run_worker(
+                console._sync_native_console_chat_ui(),
+                exclusive=True,
+                group="console-sync",
+            )
+            await until(
+                lambda: any(ok for _at, ok in fulls)
+                and not console._console_sync_in_progress
+                and not console._console_control_bar_sync_scheduled
+                and not console._console_control_bar_replay_whole_sync
+                and console._console_warm_refusals == 0,
+                timeout=30,
+            )
+            armed.clear()
+
+            owner, name = (
+                (console, "_sync_console_rail_and_controls")
+                if phase == "projection"
+                else (config_sync, "sync_console_rail_visibility")
+            )
+            render = getattr(owner, name)
+            blocked = []
+            block = True
+
+            def checked_render(*args, **kwargs):
+                if not block:
+                    return render(*args, **kwargs)
+                held, release = threading.Event(), threading.Event()
+
+                def hold():
+                    with storage_admission._lock:
+                        held.set()
+                        release.wait(3)
+
+                holder = threading.Thread(target=hold)
+                holder.start()
+                try:
+                    assert held.wait(3)
+                    result = render(*args, **kwargs)
+                    blocked.append(result)
+                    return result
+                finally:
+                    release.set()
+                    holder.join(3)
+                    assert not holder.is_alive()
+
+            monkeypatch.setattr(owner, name, checked_render)
+            console.run_worker(
+                console._sync_native_console_chat_ui(),
+                exclusive=True,
+                group="console-sync",
+            )
+            await until(lambda: len(armed) >= 3, timeout=20)
+            assert blocked and all(result is False for result in blocked)
+            assert [delay for _at, delay, _timer in armed[:3]] == pytest.approx(
+                [0.2, 0.4, 0.8]
+            )
+
+            block = False
+            asked = asyncio.get_running_loop().time()
+            console.run_worker(
+                console._sync_native_console_chat_ui(),
+                exclusive=True,
+                group="console-sync",
+            )
+            await until(lambda: any(ok for at, ok in fulls if at >= asked), timeout=30)
+            assert console._console_warm_refusals == 0
+            assert not console._console_control_bar_replay_whole_sync
+
+
+@pytest.mark.asyncio
+async def test_a_later_direct_render_keeps_its_own_deferral():
+    from contextvars import copy_context
+    from types import SimpleNamespace
+
+    scheduled = []
+    screen = SimpleNamespace(
+        _console_sync_in_progress=True,
+        _console_sync_maintenance_paused=True,
+        _request_console_control_bar_sync=lambda *, delayed: scheduled.append(delayed),
+    )
+    captured = []
+
+    def direct():
+        return config_sync.run_console_presentation_sync(screen, lambda: None)
+
+    async def child():
+        return direct()
+
+    def render():
+        captured.append(copy_context())
+        with eager_tasks():
+            worker = asyncio.create_task(child())
+        assert worker.done() and worker.result() is False
+        assert scheduled == [True]
+        return True
+
+    assert config_sync._render_full_presentation(screen, render)
+    assert captured[0].run(direct) is False
+    assert scheduled == [True, True]
+
+
+@pytest.mark.parametrize("retry_raises", [False, True])
+@pytest.mark.asyncio
+async def test_a_full_render_error_preserves_a_nested_deferral(retry_raises):
+    from types import SimpleNamespace
+
+    body_error = RuntimeError("full render failed")
+    retry_error = ValueError("retry could not arm")
+    scheduled = []
+
+    def request(*, delayed):
+        scheduled.append(delayed)
+        if retry_raises:
+            raise retry_error
+
+    screen = SimpleNamespace(
+        _console_sync_in_progress=True,
+        _console_sync_maintenance_paused=True,
+        _request_console_control_bar_sync=request,
+    )
+
+    def render():
+        assert config_sync.run_console_presentation_sync(screen, lambda: None) is False
+        raise body_error
+
+    with pytest.raises(RuntimeError) as raised:
+        config_sync._render_full_presentation(screen, render)
+    assert scheduled == [True]
+    assert raised.value is body_error
+    assert raised.value.__cause__ is (retry_error if retry_raises else None)
+
+
+@pytest.mark.asyncio
 @private_profile_test
 async def test_a_successful_readiness_read_during_a_backoff_renders_at_once(
     request, monkeypatch
@@ -1697,34 +1970,180 @@ async def test_a_successful_readiness_read_during_a_backoff_renders_at_once(
     warm-up's backoff that full sync used to defer to the pending replay, so
     the Console stayed unrendered until the backoff ran out (up to 5 s).
     """
+    from tldw_chatbook.Chat import console_preparation_reads
+
     host, gateway, _timeline = build()
     async with host.run_test(size=(160, 45)) as pilot:
         with eager_tasks():
             console, _composer = await ready_console(host, pilot, gateway)
             await pilot.pause(1.0)
             loop = asyncio.get_running_loop()
-            refusing, _warms, armed, fulls, _during, _delays = _refused_warm_up(
-                monkeypatch, console
-            )
-            console.run_worker(
-                console._sync_native_console_chat_ui(),
-                exclusive=True,
-                group="console-sync",
-            )
-            armed_at, delay, _timer = await _fresh_backoff(armed, 1.6)
-            refusing[0] = False
             projection = spend.ConsoleReadinessConfigProjection.for_screen(console)
-            projection.key = None  # The read lands as a change, so it publishes.
-            asked = loop.time()
-            projection.run(lambda: None)  # The projection's own read starts.
-            await until(
-                lambda: any(ok for when, ok in fulls if when >= asked), timeout=30
+            read_ready = asyncio.Event()
+            publish = asyncio.Event()
+            issuing = False
+            staged_attempt = None
+            setup_tasks = set()
+            setup_timers = []
+            setup_retired = False
+            run_preparation_read = console_preparation_reads.run_preparation_read
+
+            async def stage_read(reader, **kwargs):
+                owned = (
+                    kwargs["creator"] is projection
+                    and reader is projection.read_current
+                    and (issuing or projection._admission is staged_attempt)
+                    and projection._admission is not None
+                )
+                if owned:
+                    setup_tasks.add(asyncio.current_task())
+                result = await run_preparation_read(reader, **kwargs)
+                if owned:
+                    assert result._display_proof is not None and not projection._reads
+                    read_ready.set()
+                    await publish.wait()
+                return result
+
+            def checked_read_ready():
+                nonlocal issuing, staged_attempt
+                if read_ready.is_set():
+                    return True
+                if not projection.pending:
+                    projection.key = None  # Publish a genuinely changed read.
+                    issuing = True
+                    try:
+                        projection.run(lambda: None)
+                        staged_attempt = projection._admission
+                    finally:
+                        issuing = False
+                return False
+
+            def retire_setup_retries():
+                nonlocal setup_retired
+                setup_retired = True
+                for timer in setup_timers:
+                    timer.stop()
+
+            async def before_refusal(owner):
+                if console._console_warm_refusals != 3 or setup_retired:
+                    return
+                assert owner is projection
+                await until(checked_read_ready, timeout=20)
+                retire_setup_retries()
+
+            monkeypatch.setattr(
+                console_preparation_reads, "run_preparation_read", stage_read
             )
-            rendered = next(when for when, ok in fulls if ok and when >= asked)
-            assert rendered < armed_at + delay, (
-                f"the published read rendered {rendered - asked:.2f} s after it "
-                f"started, after its pending {delay} s backoff had run out"
+            refusing, _warms, armed, _fulls, _during, _delays = _refused_warm_up(
+                monkeypatch, console, before_refusal=before_refusal
             )
+            set_timer = console.set_timer
+
+            def observe_setup_retry(delay, callback=None, *args, **kwargs):
+                if (
+                    callback != projection._retry
+                    or asyncio.current_task() not in setup_tasks
+                ):
+                    return set_timer(delay, callback, *args, **kwargs)
+
+                # The setup poll owns these retries until the live replay is armed.
+                timer = set_timer(delay, lambda: None, *args, **kwargs)
+                setup_timers.append(timer)
+                return timer
+
+            monkeypatch.setattr(console, "set_timer", observe_setup_retry)
+            try:
+                async with asyncio.timeout(20):
+                    console.run_worker(
+                        console._sync_native_console_chat_ui(),
+                        exclusive=True,
+                        group="console-sync",
+                    )
+                    armed_at, delay, timer = await _fresh_backoff(armed, 1.6)
+                assert read_ready.is_set()
+                assert console._console_replay_backoff_timer is timer
+
+                run_worker = console.run_worker
+                after_refresh = console.call_after_refresh
+                publication_task = None
+                publication_finished = asyncio.Event()
+                replaying = False
+                render_workers = []
+                render_results = []
+                cuts = []
+                stop = timer.stop
+
+                def observe_stop():
+                    cuts.append(asyncio.current_task())
+                    return stop()
+
+                def observe_worker(work, *args, **kwargs):
+                    if kwargs.get("group") == "console-readiness-publication":
+                        sync = work
+
+                        async def publish_read():
+                            nonlocal publication_task
+                            publication_task = asyncio.current_task()
+                            try:
+                                return await sync()
+                            finally:
+                                publication_finished.set()
+
+                        work = publish_read
+                    if replaying and kwargs.get("group") == "console-sync":
+                        sync = work
+
+                        async def render():
+                            with _checked_display_without_admission_contention(
+                                projection, monkeypatch, asked + 30
+                            ):
+                                result = await sync()
+                            render_results.append((loop.time(), result))
+                            return result
+
+                        worker = run_worker(render, *args, **kwargs)
+                        render_workers.append(worker)
+                        return worker
+                    return run_worker(work, *args, **kwargs)
+
+                def observe_replay(callback, *args, **kwargs):
+                    if (
+                        asyncio.current_task() is publication_task
+                        and callback == console._run_coalesced_control_bar_sync
+                    ):
+
+                        def replay():
+                            nonlocal replaying
+                            replaying = True
+                            try:
+                                return callback(*args, **kwargs)
+                            finally:
+                                replaying = False
+
+                        return after_refresh(replay)
+                    return after_refresh(callback, *args, **kwargs)
+
+                monkeypatch.setattr(timer, "stop", observe_stop)
+                monkeypatch.setattr(console, "run_worker", observe_worker)
+                monkeypatch.setattr(console, "call_after_refresh", observe_replay)
+                refusing[0] = False
+                asked = loop.time()
+                publish.set()
+                async with asyncio.timeout_at(asked + 30):
+                    await publication_finished.wait()
+                    assert cuts == [publication_task]
+                    await until(lambda: bool(render_workers), timeout=30)
+                    assert await render_workers[0].wait() is True
+                [(rendered, result)] = render_results
+                assert result is True
+                assert rendered < armed_at + delay, (
+                    f"the published read rendered {rendered - asked:.2f} s after it "
+                    f"started, after its pending {delay} s backoff had run out"
+                )
+                assert len(render_workers) == 1
+            finally:
+                retire_setup_retries()
+                publish.set()
 
 
 @pytest.mark.asyncio
@@ -1921,6 +2340,72 @@ async def test_a_full_sync_asked_for_during_a_pause_runs_once_after_resume(
                 f"the paused request replayed {len(launched)} times after resume"
             )
             assert not backoff_deliveries, "the stopped backoff timer still delivered"
+
+
+@pytest.mark.parametrize("explicit", ["none", "before", "after", "rearmed"])
+def test_fixed_core_release_does_not_shorten_the_full_backoff(monkeypatch, explicit):
+    from types import SimpleNamespace
+
+    now = [100.0]
+    timers, core, full = [], [], []
+    monkeypatch.setattr(config_sync, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    monkeypatch.setattr(config_sync, "sync_console_core_state", core.append)
+    screen = SimpleNamespace(
+        _console_control_bar_replay_whole_sync=True,
+        _console_sync_in_progress=False,
+        _console_config_handoffs={"core": SimpleNamespace(eligible=lambda: True)},
+        _sync_native_console_chat_ui=lambda: "whole",
+        set_timer=lambda delay, callback: timers.append((delay, callback)),
+        run_worker=lambda work, **kwargs: full.append((work, kwargs)),
+    )
+    expected_full = [
+        (screen._sync_native_console_chat_ui, {"exclusive": True, "group": "console-sync"})
+    ]
+    screen._request_console_control_bar_sync = lambda *, delayed=False: (
+        config_sync.request_control_bar_sync(screen, delayed)
+    )
+    screen._run_coalesced_control_bar_sync = lambda: (
+        config_sync.run_coalesced_control_bar_sync(screen, lambda _screen: False)
+    )
+
+    config_sync.request_control_bar_sync(screen, True)
+    if explicit in {"before", "rearmed"}:
+        config_sync.cut_replay_backoff(screen, False)
+    if explicit == "rearmed":
+        screen._console_sync_in_progress = True
+        now[0] += 0.2
+        timers.pop(0)[1]()
+        screen._console_sync_in_progress = False
+    config_sync.request_control_bar_sync(screen, 1.6)
+    if explicit == "after":
+        config_sync.cut_replay_backoff(screen, False)
+        config_sync.request_control_bar_sync(screen, 3.2)
+    assert [delay for delay, _ in timers] == [0.2]
+    now[0] += 0.2
+    timers.pop(0)[1]()
+    if explicit != "none":
+        assert full == expected_full
+        assert timers == []
+        return
+    assert core == [screen]
+    assert full == []
+    assert [delay for delay, _ in timers] == [pytest.approx(1.4)]
+
+    now[0] = 101.6
+    timers.pop(0)[1]()
+    assert core == [screen]
+    assert full == expected_full
+
+
+def test_a_long_full_render_refusal_streak_stays_at_the_retry_cap():
+    from types import SimpleNamespace
+
+    screen = SimpleNamespace(_console_warm_refusals=5)
+    assert config_sync.full_sync_replay_delay(screen) == pytest.approx(3.2)
+    screen._console_warm_refusals = 6
+    assert config_sync.full_sync_replay_delay(screen) == spend.RETRY_MAX_DELAY
+    screen._console_warm_refusals = 1025
+    assert config_sync.full_sync_replay_delay(screen) == spend.RETRY_MAX_DELAY
 
 
 def test_a_closing_console_arms_no_replay_and_counts_no_refusal():

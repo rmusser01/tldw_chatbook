@@ -8,6 +8,7 @@ import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook import config as config_module
 from tldw_chatbook.Agents.agent_models import RUN_DONE
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
@@ -15,13 +16,11 @@ from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.MCP.permission_store import (
     MCPPermissionStore,
     definition_hash,
     resolve_effective_state,
 )
-
 
 UAT_MESSAGE = "Hi from tldw_Chatbook!"
 SEED_LINE = "UAT seed: this note belongs to the configured workspace."
@@ -158,7 +157,7 @@ def test_console_agent_reads_then_updates_configured_workspace_note(
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )
     bridge = ConsoleAgentBridge(
-        agent_runs_db=AgentRunsDB(tmp_path / "profile" / "runs.db", client_id="uat"),
+        agent_runs_db=owned_agent_runs_db(tmp_path / "profile" / "runs.db", client_id="uat"),
         store=store,
         provider_gateway=gateway,
         native_tools_enabled=lambda: False,
