@@ -1323,6 +1323,11 @@ jobs:
     # 32-52. The inventory's response-rule node also runs in console-p0-gate,
     # so the exclusive recovered-suites and Architecture guard jobs cannot
     # take the file.
+    #
+    # The program's Phase 3 tests, in no PR lane before: the sandboxed ones
+    # go before the TASK-39114 files, and the bootstrap-profile ones
+    # (module marker, Tests/DB) after them, last (TASK-32873). Their 191
+    # tests took 2.5 min serially in this job's install set at load ~50.
     name: PR Fast Lane (architecture-review tests)
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
@@ -1365,8 +1370,28 @@ jobs:
             Tests/test_config_load_settings_table_guard.py \
             Tests/Performance/test_boot_css_byte_budget.py \
             Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet \
+            Tests/Architecture/test_server_service_client_protocols.py \
+            Tests/Utils/test_doctor.py::test_run_doctor_uses_the_supplied_integrity_check \
+            Tests/Utils/test_doctor.py::test_integrity_check_over_no_database_reports_it_unavailable \
+            Tests/Utils/test_doctor.py::test_doctor_command_checks_the_services_bundle_database \
+            Tests/MCP/test_local_runtime_delegate.py \
+            Tests/Tools/test_document_expansion_tool.py::test_without_host_storage_every_source_reports_its_database_unavailable \
+            Tests/Tools/test_note_tool_user_id.py::test_registrar_storage_is_resolved_at_call_time \
+            Tests/Tools/test_note_tool_user_id.py::test_note_tools_without_a_host_database_report_it_unavailable \
+            Tests/App/test_chachanotes_fts_backfill_worker.py \
+            Tests/Backup_Recovery/test_unsaved_editors.py::test_console_unknown_draft_shape_refuses_instead_of_clean \
+            Tests/Backup_Recovery/test_unsaved_editors.py::test_console_transition_and_send_stashes_are_not_reconciled \
             Tests/DB/test_private_sqlite.py \
             Tests/DB/test_private_sqlite_inventory.py \
+            Tests/Architecture/test_application_services_bundle.py \
+            Tests/Chat/test_console_initial_hook_review.py::test_console_runtime_reads_no_private_screen_attribute \
+            Tests/Chat/test_console_initial_hook_review.py::test_private_screen_read_detector_catches_each_shape \
+            Tests/Chat/test_console_initial_hook_review.py::test_every_view_seam_console_runtime_looks_up_exists_on_chat_screen \
+            Tests/DB/test_semantic_coordination_port.py \
+            Tests/DB/test_chat_record_hashing_port.py \
+            Tests/DB/test_chachanotes_v53_safe_capture_trim.py::test_v53_without_the_trimming_port_fails_closed_and_stays_v52 \
+            Tests/DB/test_chachanotes_v53_safe_capture_trim.py::test_fresh_database_opens_without_the_trimming_port \
+            Tests/DB/test_chachanotes_bare_open_self_migration.py::test_a_bare_open_of_a_v52_safe_capture_fails_closed_and_stays_v52 \
             --timeout=180 \
             --tb=short
 
