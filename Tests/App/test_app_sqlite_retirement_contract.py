@@ -130,6 +130,25 @@ async def test_live_tracked_chat_cursor_survives_refused_retirement(app):
     _assert_closed(connection)
 
 
+async def test_chat_retirement_does_not_block_the_loop_on_another_writer(app):
+    """PR #3536 review I3: the Chat close ran `wal_checkpoint(TRUNCATE)` on the
+    loop and waited out the 15 s busy_timeout while another writer held the DB."""
+    import time
+
+    connection = app.chachanotes_db._local.conn
+    holder = sqlite3.connect(app.chachanotes_db.db_path_str, isolation_level=None)
+    holder.execute("BEGIN IMMEDIATE")
+    try:
+        started = time.monotonic()
+        await LifecycleMixin._retire_app_sqlite_handles(app)
+        took = time.monotonic() - started
+    finally:
+        holder.rollback()
+        holder.close()
+    assert took < 1.0, took
+    _assert_closed(connection)
+
+
 @pytest.mark.parametrize(
     "index",
     range(5),

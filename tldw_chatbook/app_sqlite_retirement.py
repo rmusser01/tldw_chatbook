@@ -123,7 +123,9 @@ async def retire_app_sqlite_handles(app: Any) -> None:
                     continue
                 await evaluations.aclose()
             elif name == "Chat":
-                owner.close_connection()  # Current-thread handle, not shared owner admission.
+                # Current-thread handle, not shared owner admission. No TRUNCATE
+                # checkpoint: it would block the loop on another writer's lock.
+                owner.close_connection(checkpoint=False)
             elif not _close_settled_core_cache(owner):
                 incomplete.append(name)
                 continue
