@@ -85,9 +85,12 @@ GENERATION_KEYRINGS = (
 )
 
 # Coverage issues that limit recovery readiness without making the stored-data
-# snapshot inconsistent: values needing manual application, and Personal
-# Context link keys, which are never captured by design (TASK-40135).
+# snapshot inconsistent: values needing manual application, Personal Context
+# link keys, which are never captured by design (TASK-40135), and the skill
+# trust keys' keyring cache, which a restored trust store asks to unlock
+# again (TASK-41123).
 MANUAL_CREDENTIAL_ISSUES = (
     "credential_manual_recovery_required:",
     "credential_personal_context_link_keys_excluded:",
+    "credential_skill_trust_manual_unlock_required:",
 )
