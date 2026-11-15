@@ -905,6 +905,15 @@ async def test_console_active_run_queues_without_a_screen_worker(monkeypatch):
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
+        # The faked active run below stands for an earlier send, which only
+        # follows a settled attach. Queued before it, the send captures the
+        # still-cold skill sources as a deferred capture, and sealing the
+        # queued capture refuses with "Original queued skill preparation
+        # changed; send again." (TASK-40714 review).
+        await until(
+            lambda: console._console_attach_reconciled
+            and not console._console_attach_reconcile_running
+        )
 
         controller = console._ensure_console_chat_controller()
         monkeypatch.setattr(

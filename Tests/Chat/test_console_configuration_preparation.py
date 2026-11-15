@@ -536,3 +536,59 @@ async def test_received_profile_depth_capture_uses_lightweight_metadata():
         assert not controller._preparation_reads and not runtime._preparation_reads
     finally:
         await runtime.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("store_state", ["bound", "unbound", "replaced_reader"])
+async def test_unbound_mcp_store_is_no_mcp_source_on_the_runtime_route(
+    runtime_case, monkeypatch, tmp_path, store_state
+):
+    """TASK-40714: the runtime route captures an unbound store as no MCP.
+
+    The store is built the way Windows builds it, without pinned I/O at its
+    bind. A stock-typed service with a replaced reader is still refused.
+    """
+    from tldw_chatbook.Backup_Recovery import mcp_source_participants, raw_participants
+    from tldw_chatbook.Chat.console_configuration_preparation import (
+        capture_console_turn_configuration_owned,
+        standard_console_configuration_sources,
+    )
+    from tldw_chatbook.MCP.local_store import LocalMCPStore
+
+    case = runtime_case
+    service = case.app.unified_mcp_service
+    if store_state != "bound":
+        real_bind = mcp_source_participants.bind
+
+        def bind_without_pinned_io(source):
+            with monkeypatch.context() as patch:
+                patch.setattr(raw_participants, "_pinned_io_available", lambda: False)
+                return real_bind(source)
+
+        monkeypatch.setattr(mcp_source_participants, "bind", bind_without_pinned_io)
+        store = LocalMCPStore(tmp_path / "local_mcp_store.json")
+        assert store not in mcp_source_participants._BINDINGS
+        monkeypatch.setattr(service.local_service, "store", store)
+    if store_state == "replaced_reader":
+        original = service.get_kill_switch
+        monkeypatch.setattr(
+            service, "get_kill_switch", lambda *a, **k: original(*a, **k), raising=False
+        )
+    eligible = standard_console_configuration_sources(
+        case.app, case.store, case.controller, session_id=case.session.id
+    )
+    assert eligible is (store_state != "replaced_reader")
+    if store_state != "unbound":
+        return
+    result = await capture_console_turn_configuration_owned(
+        case.app,
+        case.store,
+        case.session.id,
+        selection=_selection(case),
+        creator=case.controller,
+        reads=case.controller._preparation_reads,
+        require_current=lambda: None,
+    )
+    assert dict(result.mcp_definition_maximum) == {}
+    assert result.mcp_definition_sources == ()
+    assert result.mcp_definition_complete is True
