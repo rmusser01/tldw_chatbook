@@ -254,7 +254,7 @@ async def test_slow_canvas_swap_is_not_raced_by_the_media_browse_sync() -> None:
             # Items and Reader are retained siblings now. Settle the page in
             # the same pump window as the scheduled Reader exit continuation.
             screen._media_controller._exit_library_media_viewer()
-            screen._sync_library_media_browse_state(None)
+            screen._media_controller._sync_library_media_browse_state(None)
             fired.append("browse-sync")
             for _ in range(15):
                 await pilot.pause(0.02)

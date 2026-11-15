@@ -1317,7 +1317,7 @@ def test_row_press_and_open_by_id_cancel_a_pending_resume():
     pinned at the source level because the handlers need a live screen."""
     import inspect
 
-    row_src = inspect.getsource(LibraryScreen.handle_library_media_row)
+    row_src = inspect.getsource(LibraryMediaController.handle_library_media_row)
     open_src = inspect.getsource(LibraryScreen._open_library_item_by_id)
     assert "_cancel_pending_review_set_resume()" in row_src
     assert "_cancel_pending_review_set_resume()" in open_src

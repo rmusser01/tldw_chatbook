@@ -479,6 +479,31 @@ _MEDIA_CLUSTER_METHOD_NAMES: tuple[str, ...] = (
     "handle_library_media_delete_selected",
     "handle_library_media_edit_save",
     "handle_library_media_export_selected",
+    # TASK-36952.3.3 (2026-11-15): select mode, the browse request and sync,
+    # the type filter and the take-note action -- 23 bodies.
+    "_clear_library_media_selection_for_scope_change",
+    "_exit_library_media_select_mode",
+    "_library_media_list_unselectable",
+    "_library_media_select_enter_available",
+    "_library_media_type_options",
+    "_notify_library_media_selection_discarded",
+    "_request_library_media_browse",
+    "_request_library_media_type",
+    "_start_library_note_from_media_source",
+    "_stop_library_media_filter_timer",
+    "_stop_library_media_selection_debounce",
+    "_sync_library_media_browse_state",
+    "_take_library_media_note",
+    "_toggle_library_media_select_mode",
+    "action_library_media_take_note",
+    "action_library_media_toggle_row_selection",
+    "handle_library_media_empty_clear_type",
+    "handle_library_media_empty_import",
+    "handle_library_media_row",
+    "handle_library_media_select_toggle",
+    "handle_library_media_take_note",
+    "handle_library_media_type_choice",
+    "handle_library_media_type_filter_pressed",
 )
 
 #: The names above that are ``@staticmethod`` on ``LibraryScreen``. Their
@@ -554,6 +579,14 @@ _MEDIA_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
         "_notify_library_media_edit_warning",
         "_save_library_media_edit",
         "_undo_library_media_bulk_delete",
+        # TASK-36952.3.3: 7 of its 23 movers, by the same census.
+        "_clear_library_media_selection_for_scope_change",
+        "_library_media_type_options",
+        "_notify_library_media_selection_discarded",
+        "_request_library_media_type",
+        "_start_library_note_from_media_source",
+        "_take_library_media_note",
+        "_toggle_library_media_select_mode",
     }
 )
 
@@ -630,7 +663,7 @@ _MEDIA_CLUSTER_SCREEN_DELEGATOR_ABSENT: frozenset[str] = (
 #:
 #: Grouped exactly as the controller's own constructor groups them.
 _MEDIA_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
-    # -- framework services, live-read from the screen on every access (16)
+    # -- framework services, live-read from the screen on every access (17)
     "app",
     "app_instance",
     "call_after_refresh",
@@ -648,7 +681,9 @@ _MEDIA_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
     "size",
     # TASK-36952.3.1: `_toggle_library_media_find`, a mover, calls it
     "notify",
-    # -- shared shell state this cluster READS (getter-only accessors) (12)
+    # TASK-36952.3.3: `action_library_media_take_note`, a mover, calls it
+    "check_action",
+    # -- shared shell state this cluster READS (getter-only accessors) (14)
     "_library_canvas_projection_depth",
     "_library_compose_generation",
     "_library_list_entry_focus_deadline",
@@ -662,6 +697,10 @@ _MEDIA_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
     "_local_source_records",
     # TASK-36952.3.2: the three moved delete/Undo bodies adjust the Media count
     "_local_source_counts",
+    # TASK-36952.3.3: `_take_library_media_note` reads the Notes controller and
+    # writes a field on the Notes state object
+    "_notes_controller",
+    "_notes_state",
     # task-32350 (critique #10 review, finding 10): THREE more screen names
     # are read by this controller and are deliberately NOT listed --
     # `_library_loaded`, `_library_lookup_error` and `_local_source_counts`,
@@ -714,13 +753,17 @@ _MEDIA_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
     "_invalidate_library_workspace_depth_state",
     "_library_open_choice_strip",
     "_library_workspace_depth_state",
+    # TASK-36952.3.3: shell helpers its movers call (29 -> 33)
+    "_arm_stage_pick_landing",
+    "_cancel_pending_review_set_resume",
+    "_focus_library_list_entry_if_current",
+    "_select_library_rail_row",
     # -- named late-binding callables for the excluded media methods a mover
     #    still calls (35; TASK-36952.3.1 moved 5 of them here: 30;
-    #    TASK-36952.3.2 moved 2 more: 28)
+    #    TASK-36952.3.2 moved 2 more: 28; TASK-36952.3.3 moved 6 more: 22)
     "_arm_library_media_return_settlement",
     "_build_library_media_trash_state",
     "_capture_library_media_loaded_progress",
-    "_clear_library_media_selection_for_scope_change",
     "_commit_library_media_return",
     "_exit_library_media_trash",
     "_library_media_analysis_provider_reason",
@@ -732,19 +775,14 @@ _MEDIA_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
     "_library_media_settlement_tree",
     "_library_media_trash_focus_selectors",
     "_library_media_trash_retry_visible",
-    "_library_media_type_options",
     "_library_media_viewer_state_cached",
     "_reconcile_library_media_stage_presentation",
     "_refresh_library_media_detail",
-    "_request_library_media_browse",
     "_restore_library_media_loaded_progress",
     "_sanitize_media_field",
     "_save_library_media_analysis",
-    "_stop_library_media_filter_timer",
-    "_sync_library_media_browse_state",
     "_sync_library_media_reader_layout_from_shell",
     "_sync_library_media_trash_state",
-    "_toggle_library_media_select_mode",
 )
 
 
@@ -776,8 +814,10 @@ def test_media_cluster_method_names_are_genuinely_media_named() -> None:
     # viewer-back / Console handoff bodies moved off the screen.
     # 2026-11-15, TASK-36952.3.2: 166 -> 190, the 24 mutation-interlock,
     # delete, Undo, export and edit-save bodies.
-    assert len(_MEDIA_CLUSTER_METHOD_NAMES) == 190, (
-        f"expected 190 moved names, got {len(_MEDIA_CLUSTER_METHOD_NAMES)}"
+    # 2026-11-15, TASK-36952.3.3: 190 -> 213, the 23 select-mode, browse,
+    # type-filter and take-note bodies.
+    assert len(_MEDIA_CLUSTER_METHOD_NAMES) == 213, (
+        f"expected 213 moved names, got {len(_MEDIA_CLUSTER_METHOD_NAMES)}"
     )
     assert len(set(_MEDIA_CLUSTER_METHOD_NAMES)) == len(_MEDIA_CLUSTER_METHOD_NAMES), (
         "duplicate entries in _MEDIA_CLUSTER_METHOD_NAMES"
@@ -952,8 +992,11 @@ def test_media_controller_binds_every_name_its_moved_bodies_use() -> None:
     # moved methods (-5); `notify` and five shell helpers were bound (+6).
     # 2026-11-15, TASK-36952.3.2: 93 -> 92. Two late-binding callbacks became
     # moved methods (-2); the `_local_source_counts` getter was bound (+1).
-    assert len(_MEDIA_CONTROLLER_BOUND_NAMES) == 92, (
-        f"expected 92 bound names, got {len(_MEDIA_CONTROLLER_BOUND_NAMES)}"
+    # 2026-11-15, TASK-36952.3.3: 92 -> 93. Six pinned late-binding callbacks
+    # became moved methods (-6); `check_action`, the `_notes_controller` and
+    # `_notes_state` getters and four shell helpers were bound (+7).
+    assert len(_MEDIA_CONTROLLER_BOUND_NAMES) == 93, (
+        f"expected 93 bound names, got {len(_MEDIA_CONTROLLER_BOUND_NAMES)}"
     )
     assert len(set(_MEDIA_CONTROLLER_BOUND_NAMES)) == len(
         _MEDIA_CONTROLLER_BOUND_NAMES

@@ -720,7 +720,7 @@ async def test_media_trash_entry_requests_one_independent_initial_page():
             await _wait_for_selector(screen, pilot, "#library-media-trash-open")
             # These are genuine normal-Media scope values. Trash must never
             # inherit them when its independent page owner begins.
-            screen._request_library_media_type("audio", focus_identity=None)
+            screen._media_controller._request_library_media_type("audio", focus_identity=None)
             await _wait_for_condition(
                 pilot,
                 lambda: (
@@ -3330,10 +3330,10 @@ def _trash_view_fake(
         _disarm_library_media_return_for_route_change=lambda: None,
     )
     fake._exit_library_media_select_mode = types.MethodType(
-        LibraryScreen._exit_library_media_select_mode, fake
+        LibraryMediaController._exit_library_media_select_mode, fake
     )
     fake._notify_library_media_selection_discarded = types.MethodType(
-        LibraryScreen._notify_library_media_selection_discarded, fake
+        LibraryMediaController._notify_library_media_selection_discarded, fake
     )
     fake._build_library_media_trash_state = types.MethodType(
         LibraryScreen._build_library_media_trash_state, fake

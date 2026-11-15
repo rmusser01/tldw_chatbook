@@ -260,6 +260,24 @@ def test_on_screen_suspend_stops_every_timer_in_isolation() -> None:
     # construction, hence the explicit seed, exactly like the
     # `_ingest_state`/`_prompts_state` seeds below.
     screen._media_state = LibraryMediaState()
+    # (TASK-36952.3.3) The two media debounce stops are media-controller
+    # bodies now; the hook reaches them through the screen's one-line
+    # delegators, so a `__new__` screen needs a `_media_controller` too: a
+    # duck-typed one over the SAME `_media_state`, the real bodies bound to it.
+    from types import MethodType, SimpleNamespace
+
+    from tldw_chatbook.UI.Library_Modules.library_media_controller import (
+        LibraryMediaController,
+    )
+
+    media_seed = SimpleNamespace(_media_state=screen._media_state)
+    media_seed._stop_library_media_selection_debounce = MethodType(
+        LibraryMediaController._stop_library_media_selection_debounce, media_seed
+    )
+    media_seed._stop_library_media_filter_timer = MethodType(
+        LibraryMediaController._stop_library_media_filter_timer, media_seed
+    )
+    screen._media_controller = media_seed
     # (wave-6 task 3) The prompts search-debounce timer is a
     # `LibraryPromptsState` field, not a flat screen attribute -- the
     # screen's generated shim block was deleted in the prompts cleanup PR,
