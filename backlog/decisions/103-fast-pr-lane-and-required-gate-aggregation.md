@@ -513,8 +513,8 @@ all existing selectors remain exactly once across the three required profiles.
 job of its own, `backup-owner-suites-dev` ("Backup_Recovery owner suites (push
 to dev)"), runs the 13 Backup_Recovery owner suites that ran on no lane (27 of
 their nodes had gone red on dev unseen, TASK-40306) and the restore-journal
-file, whole, with 7 red nodes deselected by name (11 at first; review
-r14bk-rev1 re-admitted three, TASK-40307; TASK-41116 one more), on every push to dev and
+file, whole, with 5 red nodes deselected by name (11 at first; review
+r14bk-rev1 re-admitted three, TASK-40307; TASK-41116 three more), on every push to dev and
 never on a pull request, like `library-shell-dev`. It is not in the required
 check's `needs`, so no PR runner and no PR verdict: the counts above are
 unchanged (30 concurrent test runners, 31 with perf-guard, 48 eligible test
