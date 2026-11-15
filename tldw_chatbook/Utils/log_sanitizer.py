@@ -458,6 +458,50 @@ _PRIVATE_KEY_BLOCK = re.compile(
     r"-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----[\s\S]*?"
     r"(?:-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----|$)"
 )
+#: Stripe/Svix webhook signing secrets and Groq keys (TASK-40301): masked in
+#: logs and shared Trace bundles, but in neither stored trace projection,
+#: whose output must not change for history already stored.
+_LOG_ONLY_CREDENTIALS = (
+    re.compile(r"(?<![A-Za-z0-9_-])whsec_[A-Za-z0-9+/]{24,}={0,2}(?![A-Za-z0-9_-])"),
+    re.compile(r"(?<![A-Za-z0-9_-])gsk_[A-Za-z0-9]{20,}(?![A-Za-z0-9_-])"),
+)
+_TOKEN_CREDENTIALS = (
+    *_STANDALONE_CREDENTIALS,
+    *_UNDERSCORE_KEY_CREDENTIALS,
+    *_LOG_ONLY_CREDENTIALS,
+)
+#: Credential-shaped forms of three log rules (TASK-40301 review I2). Logs
+#: and the stored trace projections keep the broader rules, which also match
+#: code and docs a shared bundle must keep: ``f"Bearer {api_key}"``,
+#: ``Bearer <token>``, ``ssh://git@github.com/...``, prose naming a PEM
+#: header. Here a Bearer token starts with a token character and runs 8
+#: non-space characters (review r14ep-rev2 C1: Sanctum's ``5|<secret>``),
+#: user info has a password or a 16-character user part (M-f: ``jdoe1234@``
+#: stays), and an unterminated private key has a base64 body, after any
+#: ``Proc-Type``/``DEK-Info`` header lines (M-g).
+_BEARER_TOKEN = re.compile(
+    r"(?<![A-Za-z0-9_-])(Bearer\s+)([A-Za-z0-9_.~+/=-]\S{7,})", re.IGNORECASE
+)
+_URL_CREDENTIAL_USERINFO = re.compile(
+    r"(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*://"
+    r"(?:[^/?#\s@:]*:[^/?#\s@]*|[^/?#\s@:]{16,})@",
+    re.IGNORECASE,
+)
+_PRIVATE_KEY_CREDENTIAL = re.compile(
+    r"-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----"
+    r"(?:[\s\S]*?-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----"
+    r"|\s*(?:[A-Za-z-]+:[^\n]*\n)*\s*[A-Za-z0-9+/]{16,}[\s\S]*)"
+)
+#: Every credential value shape logs mask, in its credential-shaped form. A
+#: shared Trace bundle masks with this same tuple (TASK-40301), so the export
+#: cannot drift from logs again; logs apply the token rules as they are and
+#: broader forms of the other three.
+CREDENTIAL_VALUE_PATTERNS = (
+    _PRIVATE_KEY_CREDENTIAL,
+    _URL_CREDENTIAL_USERINFO,
+    _BEARER_TOKEN,
+    *_TOKEN_CREDENTIALS,
+)
 
 
 def _sanitize_diagnostic_text(text: str) -> str:
@@ -480,11 +524,7 @@ def _sanitize_diagnostic_text(text: str) -> str:
     )
     result = _DIAGNOSTIC_URL_USERINFO.sub(r"\1" + REDACTION_MARKER + "@", result)
     result = _BEARER.sub(r"\1" + REDACTION_MARKER, result)
-    for pattern in (
-        *_STANDALONE_CREDENTIALS,
-        *_UNDERSCORE_KEY_CREDENTIALS,
-        *_DIAGNOSTIC_PII_PATTERNS,
-    ):
+    for pattern in (*_TOKEN_CREDENTIALS, *_DIAGNOSTIC_PII_PATTERNS):
         result = pattern.sub(REDACTION_MARKER, result)
     return result
 

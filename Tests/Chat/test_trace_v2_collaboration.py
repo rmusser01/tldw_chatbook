@@ -444,6 +444,148 @@ def test_the_credential_classes_masked_before_are_still_masked(
     assert body.encode() not in serialized
 
 
+_FAKE = "DONOTUSEEXAMPLEONLY"
+#: TASK-40301: every credential shape the log sanitizer masks, as
+#: (fake value, the part that must not survive). Each value is assembled from
+#: fragments so no committed line holds a token-shaped literal (secret
+#: scanners and GitHub push protection match the literal).
+_LOG_SANITIZER_SHAPES = {
+    "google": ("AIza" + "DO_NOT_USE_EXAMPLE_ONLY_" + "0" * 11, None),
+    **{
+        f"github-gh{kind}": ("gh" + kind + "_" + _FAKE + "a" * 22, None)
+        for kind in "pousr"
+    },
+    "github-pat": ("github" + "_pat_" + _FAKE + "a" * 20, None),
+    "huggingface": ("hf" + "_" + _FAKE + "a" * 16, None),
+    **{
+        f"slack-xox{kind}": ("xox" + kind + "-1234567890-" + _FAKE, None)
+        for kind in "baprs"
+    },
+    **{
+        f"aws-{prefix.lower()}": (prefix + "DONOTUSEEXAMPLE1", None)
+        for prefix in ("AKIA", "ASIA", "AGPA", "AIDA", "AROA")
+    },
+    "jwt": (
+        "eyJ" + "hbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0" + ".DONOTUSEEXAMPLE1",
+        None,
+    ),
+    "openai-project": ("sk" + "-proj-" + _FAKE + "_123456", None),
+    "anthropic": ("sk" + "-ant-api03-" + _FAKE + "_123456", None),
+    "anthropic-oauth": ("sk" + "-ant-oat01-" + _FAKE + "_123456", None),
+    "openrouter": ("sk" + "-or-v1-" + _FAKE + "aaaaaaaa", None),
+    "stripe-underscore": ("sk" + "_live_" + _FAKE + "a1B2c3D4e5", None),
+    "webhook-secret": ("whsec" + "_" + _FAKE + "a1B2" * 4, None),
+    "groq": ("gsk" + "_" + _FAKE + "a1B2" * 6, None),
+    # The secret part must vanish, not only the whole string (review
+    # r14ep-rev2 C1: masking "Bearer tok" alone left the rest).
+    "bearer-any-token": ("Bearer " + "tok!en$" + _FAKE, _FAKE),
+    # Review r14ep-rev2 C1: Laravel Sanctum's ``<id>|<secret>`` token.
+    "bearer-sanctum": ("Authorization: Bearer " + "5|" + _FAKE, _FAKE),
+    "url-user-only": ("https://" + _FAKE + "@example.com/repo.git", _FAKE),
+    "pem-unterminated": (
+        "-----BEGIN PRIVATE KEY-----\n" + _FAKE + "-PEM-BODY",
+        _FAKE + "-PEM-BODY",
+    ),
+    # Review r14ep-rev2 M-g: a truncated legacy encrypted key, headers first.
+    "pem-encrypted-unterminated": (
+        "-----BEGIN RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\n"
+        "DEK-Info: AES-128-CBC,0A\n\nMIIEv" + _FAKE,
+        "MIIEv" + _FAKE,
+    ),
+}
+
+
+@pytest.mark.parametrize("profile", ["safe_summary", "redacted_diagnostic", "full_trace"])
+@pytest.mark.parametrize("name", sorted(_LOG_SANITIZER_SHAPES))
+def test_every_shape_the_log_sanitizer_masks_is_masked_in_a_shared_bundle(
+    name: str, profile: str
+) -> None:
+    """TASK-40301 AC#1/AC#2: the export kept its own credential list, so a
+    GitHub, Hugging Face, Google, Slack, AWS session or JWT token (and
+    ``whsec_``/``gsk_``, in neither list) shipped verbatim in a preview, a
+    payload value and a payload key, while logs masked the same text."""
+    from tldw_chatbook.Utils.log_sanitizer import sanitize_string
+
+    secret, body = _LOG_SANITIZER_SHAPES[name]
+    body = body or secret
+    assert body not in sanitize_string(f"request failed: {secret}")
+
+    serialized, payload = _export_bytes_with(secret, profile)
+
+    assert body.encode() not in serialized
+    assert any(
+        item["reason"] in {"credential", "credential_key"}
+        for item in payload["manifest"]["redaction_provenance"]
+    )
+
+
+def test_the_bundle_masks_with_the_log_sanitizers_own_patterns() -> None:
+    """TASK-40301: one source of truth, so the two lists cannot drift again."""
+    from tldw_chatbook.Utils import log_sanitizer
+
+    shared = log_sanitizer.CREDENTIAL_VALUE_PATTERNS
+    assert set(map(id, shared)) <= set(map(id, trajectory_export._CREDENTIAL_VALUE_RES))
+    for pattern in (
+        *log_sanitizer._STANDALONE_CREDENTIALS,
+        *log_sanitizer._UNDERSCORE_KEY_CREDENTIALS,
+    ):
+        assert pattern in shared
+
+
+#: TASK-40301 review r14ep-rev1 I2: code and docs that only look like a
+#: credential (a template, a placeholder, a shell variable, the user-only
+#: ``git@`` form, prose naming a PEM header).
+_LOOK_ALIKE_TEXTS = (
+    'headers = {"Authorization": f"Bearer {api_key}"}',
+    "curl -H 'Authorization: Bearer <token>' https://api.example.com",
+    'export AUTH="Bearer $OPENAI_API_KEY"',
+    "git clone ssh://git@github.com/org/repo.git",
+    # Review r14ep-rev2 M-f: ordinary user names.
+    "git clone https://jdoe1234@bitbucket.org/team/repo.git",
+    "scp file ssh://username@server.example.com/x",
+    "A PEM file begins with -----BEGIN PRIVATE KEY----- then base64 lines.",
+)
+
+
+@pytest.mark.parametrize("profile", ["safe_summary", "redacted_diagnostic", "full_trace"])
+@pytest.mark.parametrize("text", _LOOK_ALIKE_TEXTS)
+def test_code_and_docs_that_only_look_like_credentials_survive_a_shared_bundle(
+    text: str, profile: str
+) -> None:
+    """TASK-40301 review I2: the log rules for Bearer, URL user info and an
+    unterminated private key also masked these in a new export and refused an
+    older bundle holding them. The bundle uses their credential-shaped forms,
+    so these survive and import, while real ones stay masked (the shapes
+    test above) and refused (the import test below)."""
+    assert trajectory_export._credential_text(text) == (text, False)
+
+    _serialized, payload = _export_bytes_with(text, profile)
+
+    assert not any(
+        item["reason"] in {"credential", "credential_key"}
+        for item in payload["manifest"]["redaction_provenance"]
+    )
+    older = _build(_snapshot())
+    older["events"][0]["payload"]["result"] = text
+    trajectory_import.load_imported_trace(_resign(older))
+
+
+def test_an_older_bundle_holding_a_newly_masked_shape_is_refused_on_import() -> None:
+    """TASK-40301 AC#3: a bundle exported before the export masked these
+    shapes can still hold one verbatim; import refuses it as it refuses any
+    bundle with credential material, and asks for a privacy-safe export."""
+    secret, _body = _LOG_SANITIZER_SHAPES["github-ghp"]
+    payload = _build(_snapshot())
+    payload["events"][0]["payload"]["result"] = f"cloned with {secret}"
+    _resign(payload)
+
+    with pytest.raises(
+        trajectory_import.TrajectoryImportError,
+        match="credentials are forbidden",
+    ):
+        trajectory_import.load_imported_trace(payload)
+
+
 def test_preflight_has_one_decision_per_material_field_without_count_drift() -> None:
     snapshot = _snapshot(
         _record(

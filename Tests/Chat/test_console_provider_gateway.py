@@ -607,7 +607,8 @@ async def test_capture_on_sanitizes_verified_shadow_before_adapter_entry() -> No
 
     resolution = ConsoleProviderResolution(
         provider="openai",
-        base_url="https://api.openai.com/v1?token=also-secret",
+        # TASK-40300 review I1: a query is refused at dispatch now.
+        base_url="https://api.openai.com/v1",
         model="gpt-4.1",
         ready=True,
         execution_key="openai",
@@ -1802,7 +1803,7 @@ async def test_capture_on_verifies_llamacpp_literal_payload_before_adapter(
 
     resolution = ConsoleProviderResolution(
         provider="llama_cpp",
-        base_url="http://127.0.0.1:8080?token=endpoint-secret",
+        base_url="http://127.0.0.1:8080",
         model="local-model",
         ready=True,
         execution_key="llama_cpp",
@@ -1854,7 +1855,7 @@ async def test_llamacpp_shadow_matches_actual_http_url_and_json() -> None:
 
     resolution = ConsoleProviderResolution(
         provider="llama_cpp",
-        base_url="localhost:8080/v1?token=endpoint-secret#fragment",
+        base_url="localhost:8080/v1",
         model="local-model",
         ready=True,
         execution_key="llama_cpp",
@@ -3459,7 +3460,7 @@ async def test_resolve_for_send_blocks_generic_base_url_override_that_differs_fr
         ConsoleProviderSelection(
             provider="ollama",
             explicit_model="llama3",
-            base_url="http://user:secret@127.0.0.1:9999/v1",
+            base_url="http://127.0.0.1:9999/v1",
         )
     )
 
@@ -3467,8 +3468,21 @@ async def test_resolve_for_send_blocks_generic_base_url_override_that_differs_fr
     assert SAVE_ENDPOINT_ACTION_LABEL in resolved.visible_copy
     assert "Selected endpoint: http://127.0.0.1:9999/v1" in resolved.visible_copy
     assert "Saved endpoint: http://127.0.0.1:11434" in resolved.visible_copy
-    assert "user" not in resolved.visible_copy
-    assert "secret" not in resolved.visible_copy
+
+    # TASK-40300: user info is refused before the unsaved guard, as readiness
+    # already refused it, and the copy names no part of it.
+    with_user_info = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="ollama",
+            explicit_model="llama3",
+            base_url="http://user:secret@127.0.0.1:9999/v1",
+        )
+    )
+
+    assert with_user_info.ready is False
+    assert with_user_info.visible_copy == (
+        "Provider blocked: Endpoint URL must not include user information."
+    )
 
 
 @pytest.mark.asyncio
@@ -3642,10 +3656,9 @@ async def test_gateway_attaches_on_device_destination_after_llamacpp_normalizati
 
 @pytest.mark.asyncio
 async def test_gateway_unknown_custom_destination_identity_is_credential_free():
-    endpoint = (
-        "https://user:URL-SECRET@models.example.test:8443/private/v1"
-        "?api_key=URL-SECRET#fragment"
-    )
+    # TASK-40300: user info, a query or a fragment is refused at send now
+    # (``test_a_configured_endpoint_with_user_info_or_a_query_is_refused``).
+    endpoint = "https://models.example.test:8443/private/v1"
     gateway = ConsoleProviderGateway(
         config_provider=lambda: {
             "api_settings": {
@@ -3670,8 +3683,39 @@ async def test_gateway_unknown_custom_destination_identity_is_credential_free():
     )
     assert resolved.resolved_destination.egress_class is ConsoleEgressClass.UNKNOWN
     rendered = repr(resolved.resolved_destination)
-    for secret in ("user", "URL-SECRET", "CONFIG-SECRET", "private", "api_key"):
+    for secret in ("CONFIG-SECRET", "private"):
         assert secret not in rendered
+
+
+@pytest.mark.asyncio
+async def test_a_configured_endpoint_with_user_info_or_a_query_is_refused():
+    """TASK-40300: the endpoint contract refuses these on every path; the
+    send's copy names no part of the value."""
+    endpoint = (
+        "https://user:URL-SECRET@models.example.test:8443/private/v1"
+        "?api_key=URL-SECRET#fragment"
+    )
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {
+                "openai": {
+                    "api_key": "CONFIG-SECRET",
+                    "model": "gpt-test",
+                    "api_base_url": endpoint,
+                }
+            }
+        },
+        environ={},
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="openai", explicit_model="gpt-test")
+    )
+
+    assert resolved.ready is False
+    assert resolved.visible_copy == (
+        "Provider blocked: Endpoint URL must not include a query."
+    )
 
 
 @pytest.mark.asyncio
@@ -3816,7 +3860,8 @@ async def test_resolve_for_send_blocks_malformed_generic_base_url_without_crashi
     )
 
     assert resolved.ready is False
-    assert SAVE_ENDPOINT_ACTION_LABEL in resolved.visible_copy
+    # TASK-40300: the endpoint contract refuses it first, as readiness does.
+    assert resolved.visible_copy == "Provider blocked: Endpoint URL is malformed."
 
 
 @pytest.mark.asyncio
@@ -4352,6 +4397,9 @@ async def test_console_send_leaves_base_url_unpinned_in_default_case(
 
     The kwarg stays absent so each adapter keeps resolving its own default
     (including any legacy-section endpoint) exactly as before the fix.
+    HuggingFace is the exception (TASK-40300 review r14ep-rev5): its adapter
+    reads ``huggingface_api`` unpinned, whatever Console checked, so it is
+    always pinned to the endpoint Console checked.
     """
 
     calls: list[dict[str, object]] = []
@@ -4387,7 +4435,10 @@ async def test_console_send_leaves_base_url_unpinned_in_default_case(
         )
     ] == ["ok"]
 
-    assert "api_base_url" not in calls[0]
+    if provider_key == "huggingface":
+        assert calls[0]["api_base_url"] == resolution.base_url
+    else:
+        assert "api_base_url" not in calls[0]
 
 
 @pytest.mark.asyncio
@@ -9590,7 +9641,7 @@ async def test_stream_without_usage_leaves_signals_none() -> None:
 def _auxiliary_resolution(**overrides) -> ConsoleProviderResolution:
     values = {
         "provider": "OpenAI",
-        "base_url": "https://api.example.test/v1?token=ENDPOINT-CANARY",
+        "base_url": "https://api.example.test/ENDPOINT-CANARY/v1",
         "model": "gpt-test",
         "ready": True,
         "readiness_key": "openai",
@@ -9899,7 +9950,7 @@ async def test_auxiliary_completion_is_one_shot_nonstreaming_and_tool_free() -> 
     call = calls[0]
     assert call == {
         "api_endpoint": "openai",
-        "api_base_url": "https://api.example.test/v1?token=ENDPOINT-CANARY",
+        "api_base_url": "https://api.example.test/ENDPOINT-CANARY/v1",
         "system_message": "OPTIMIZER-CANARY",
         "messages_payload": [{"role": "user", "content": "USER-CANARY"}],
         "api_key": "API-KEY-CANARY",

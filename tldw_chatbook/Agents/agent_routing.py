@@ -430,6 +430,7 @@ def freeze_spawn_target(
     """Freeze execution and its configured/default or owned selected endpoint."""
     from tldw_chatbook.Chat.console_provider_endpoints import (
         DEFAULT_LLAMACPP_BASE_URL,
+        console_own_table_endpoint,
         effective_provider_endpoint,
     )
     from tldw_chatbook.Chat.console_provider_support import (
@@ -457,8 +458,14 @@ def freeze_spawn_target(
 
                     base_url = normalize_qwencloud_base_url(settings.get("api_base_url"))
                 else:
-                    base_url = effective_provider_endpoint(
-                        identity.readiness_key, None, settings
+                    # TASK-40300 review r14ep-rev5: the endpoint a Console send
+                    # to ``execution`` uses (MLX-LM's host and port, an
+                    # adapter's own table), not only Console's table.
+                    base_url = console_own_table_endpoint(
+                        execution,
+                        app_config,
+                        effective_provider_endpoint(identity.readiness_key, None, settings),
+                        settings,
                     )
                     record = RECORDS_BY_KEY.get(execution)
                     if base_url is None and record is not None:
@@ -469,6 +476,22 @@ def freeze_spawn_target(
                     "fallback endpoint settings are invalid",
                     level=target.source,
                 ) from exc
+    if base_url:
+        # TASK-40300 review I1: a frozen endpoint the contract refuses would
+        # otherwise reach the adapter through the run's dispatch overlay.
+        from tldw_chatbook.Chat.custom_endpoint_registry import split_custom_endpoint_id
+        from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+            endpoint_refusal,
+        )
+
+        identity = resolve_console_provider_identity(execution)
+        refusal = endpoint_refusal(
+            "llama_cpp" if identity.uses_direct_llama_path else identity.readiness_key,
+            base_url,
+            custom_endpoint=bool(split_custom_endpoint_id(target.provider)),
+        )
+        if refusal:
+            raise RoutingError("provider_not_ready", refusal, level=target.source)
     return SpawnTarget(
         target.provider, target.model, base_url, target.params, target.source, execution
     )

@@ -22,6 +22,7 @@ from pydantic import BaseModel, field_validator
 
 from tldw_chatbook.Chat.console_provider_support import MODEL_FIELD_LABELS
 from tldw_chatbook.Chat.console_session_settings import normalize_llamacpp_base_url
+from tldw_chatbook.Provider_Contract.provider_endpoint_contract import endpoint_refusal
 from tldw_chatbook.Provider_Contract.sampling_params import (
     params_to_dict,
     params_to_tuple,
@@ -260,6 +261,8 @@ def _custom_endpoints_section(
 
 def load_custom_endpoints(
     app_config: Mapping[str, object],
+    *,
+    include_refused: bool = False,
 ) -> dict[str, CustomEndpointEntry]:
     """Return valid entries keyed by slug, dropping invalid ones.
 
@@ -272,13 +275,78 @@ def load_custom_endpoints(
             (``custom_endpoints`` at the top level) or the normalized
             ``load_settings()`` shape (nested under
             ``COMPREHENSIVE_CONFIG_RAW``).
+        include_refused: Also return each entry ``validate_entry`` refused
+            (its URL, name or params) whose slug is valid, built from its
+            raw fields, after the valid ones, so Settings can list, edit or
+            delete it instead of it vanishing (TASK-40300).
 
     Returns:
         Valid :class:`CustomEndpointEntry` values keyed by slug; empty when
         the ``custom_endpoints`` table is absent or malformed.
     """
+    entries, refused = _load_custom_endpoints(app_config)
+    if include_refused:
+        entries.update((slug, entry) for slug, (entry, _reason) in refused.items())
+    return entries
+
+
+def custom_endpoint_refusals(app_config: Mapping[str, object]) -> dict[str, str]:
+    """Why each refused entry with a valid slug was not loaded (TASK-40300).
+
+    Args:
+        app_config: The full CLI config mapping.
+
+    Returns:
+        The first ``validate_entry`` reason, keyed by slug; a URL reason is
+        the endpoint contract's, which names no part of the value.
+    """
+    return {
+        slug: reason
+        for slug, (_entry, reason) in _load_custom_endpoints(app_config)[1].items()
+    }
+
+
+def missing_custom_endpoint_copy(app_config: Mapping[str, object], provider: str) -> str:
+    """What a chat on a ``custom-ep:`` id with no loaded entry reads (TASK-40300).
+
+    Args:
+        app_config: The full CLI config mapping.
+        provider: The chat's provider id.
+
+    Returns:
+        For an entry refused at load, its reason and where to fix it (review
+        r14ep-rev2 M-d); for one that is gone, the restore copy. Settings
+        can fix a URL or a name, not a family or sampling params (review
+        r14ep-rev3 Mi-1).
+    """
+    from tldw_chatbook.Chat.console_provider_endpoints import (
+        CUSTOM_ENDPOINT_NOT_CONFIGURED_COPY,
+    )
+
+    slug = split_custom_endpoint_id(provider) or ""
+    refused = _load_custom_endpoints(app_config)[1].get(slug)
+    if refused is None:
+        return CUSTOM_ENDPOINT_NOT_CONFIGURED_COPY
+    entry, reason = refused
+    params = _custom_endpoints_section(app_config)[slug].get("params")
+    where = (
+        "Fix it in config.toml, or delete the entry in Settings ▸ Custom endpoints."
+        if entry.family not in ENDPOINT_FAMILIES
+        or reason in validate_sampling_params(params if isinstance(params, Mapping) else {})
+        else "Fix it in Settings ▸ Custom endpoints."
+    )
+    return f"Provider blocked: this custom endpoint is not loaded: {reason.rstrip('.')}. {where}"
+
+
+def _load_custom_endpoints(
+    app_config: Mapping[str, object],
+) -> tuple[
+    dict[str, CustomEndpointEntry], dict[str, tuple[CustomEndpointEntry, str]]
+]:
+    """Return the valid entries, and the refused ones with their reasons."""
     raw_section = _custom_endpoints_section(app_config)
     entries: dict[str, CustomEndpointEntry] = {}
+    refused: dict[str, tuple[CustomEndpointEntry, str]] = {}
     for slug, raw_entry in raw_section.items():
         if not isinstance(raw_entry, Mapping):
             logger.warning("custom endpoint '%s' ignored: malformed section", slug)
@@ -312,6 +380,25 @@ def load_custom_endpoints(
             )
         if reasons:
             logger.warning("custom endpoint '%s' ignored: %s", slug, "; ".join(reasons))
+            if isinstance(slug, str) and SLUG_PATTERN.fullmatch(slug):
+                try:
+                    params = params_to_tuple(config.params)
+                except (TypeError, ValueError):
+                    params = ()
+                refused[slug] = (
+                    CustomEndpointEntry(
+                        slug=slug,
+                        display_name=display_name.strip() or slug,
+                        family=family,
+                        base_url=_normalize_base_url(family, base_url),
+                        api_key_env=config.api_key_env,
+                        api_key=config.api_key,
+                        models=config.models,
+                        created_from=config.created_from,
+                        params=params,
+                    ),
+                    reasons[0],
+                )
             continue
         warn_key = (slug, config.api_key_env or "")
         if (
@@ -339,7 +426,7 @@ def load_custom_endpoints(
             created_from=config.created_from,
             params=params_to_tuple(config.params),
         )
-    return entries
+    return entries, refused
 
 
 def entry_for(
@@ -437,6 +524,26 @@ def build_entry_mutation(
     return {f"custom_endpoints.{entry.slug}": values}
 
 
+def validate_display_name(display_name: str) -> list[str]:
+    """Return the display-name errors ``validate_entry`` starts with.
+
+    A rename checks only this, so a refused entry can still be renamed
+    (TASK-40300 review r14ep-rev2 M-c).
+
+    Args:
+        display_name: Candidate display name.
+
+    Returns:
+        At most one error; empty when the name is valid.
+    """
+    name = display_name.strip() if isinstance(display_name, str) else ""
+    if not name:
+        return [_DISPLAY_NAME_REQUIRED_COPY]
+    if len(name) > _MAX_DISPLAY_NAME_LENGTH:
+        return [_DISPLAY_NAME_TOO_LONG_COPY]
+    return []
+
+
 def validate_entry(
     display_name: str,
     family: str,
@@ -448,7 +555,8 @@ def validate_entry(
 
     Checks a non-blank display name of at most 80 characters, a known
     family, and a base URL that passes ``validate_url`` after
-    family-appropriate normalization. URL checking is skipped for unknown
+    family-appropriate normalization and that the provider endpoint contract
+    accepts for the family's provider. URL checking is skipped for unknown
     families (there is no normalization rule to apply). When ``params`` is
     given, its ``validate_sampling_params`` errors are appended after the
     structural checks (likewise skipped for unknown families, which return
@@ -463,16 +571,19 @@ def validate_entry(
     Returns:
         Error messages in display order; empty when the candidate is valid.
     """
-    errors: list[str] = []
-    name = display_name.strip() if isinstance(display_name, str) else ""
-    if not name:
-        errors.append(_DISPLAY_NAME_REQUIRED_COPY)
-    elif len(name) > _MAX_DISPLAY_NAME_LENGTH:
-        errors.append(_DISPLAY_NAME_TOO_LONG_COPY)
+    errors = validate_display_name(display_name)
     if family not in ENDPOINT_FAMILIES:
         errors.append(f"Unknown endpoint family: {family}.")
         return errors
-    if not validate_url(_normalize_base_url(family, base_url)):
+    # TASK-40300: the endpoint contract refuses for the family's provider too
+    # (a zone id, ``-bad.corp``, ``127.1``, an IDN, ``host..``, a query), with
+    # its own reason; an OpenAI-compatible entry reads as its engine does.
+    url_error = endpoint_refusal(
+        family_execution_key(family), str(base_url or ""), custom_endpoint=True
+    )
+    if url_error:
+        errors.append(url_error)
+    elif not validate_url(_normalize_base_url(family, base_url)):
         errors.append(_INVALID_BASE_URL_COPY)
     errors.extend(validate_sampling_params(params or {}))
     return errors

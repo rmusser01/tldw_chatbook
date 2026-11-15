@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, replace
+import functools
 import json
 from pathlib import Path
 import zlib
@@ -388,6 +389,81 @@ def test_new_legacy_row_after_logical_completion_reopens_checkpoint(
     assert reopened.processed_rows == 1
     assert reopened.logical_complete is True
     assert LegacyTraceNormalizer(db).read_calls(second_message_id)
+
+
+#: TASK-40303: a bare key credentials-v1 never masked (fake, split at the prefix).
+_V1_UNMASKED_KEY = "sk" + "_live_" + "DONOTUSEEXAMPLEONLY" + "a1B2c3D4e5" * 2
+
+
+def test_a_v1_legacy_ledger_keeps_migrating_new_exchanges_under_v2(
+    db: CharactersRAGDB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TASK-40303: the legacy policy id was one fixed row. A profile that
+    normalized an exchange before credentials-v2 holds it tagged
+    credentials-v1, so every later legacy batch raised
+    ``TraceIdentityConflict``, rolled back and was retried forever."""
+    from tldw_chatbook.Chat import (
+        console_exchange_capture,
+        console_trace_legacy,
+        console_trace_repository,
+    )
+    from tldw_chatbook.Chat.console_trace_projection import project_capture_for_viewer
+    from tldw_chatbook.Chat.console_trace_redaction import (
+        READABLE_CREDENTIAL_FILTER_VERSIONS,
+        CredentialSanitizer,
+    )
+    from tldw_chatbook.Chat.console_trace_repository import TraceIdentityConflict
+    from tldw_chatbook.Chat.trace_export_profiles import TraceViewerProfile
+
+    conversation_id = db.add_conversation({"title": "legacy v1 ledger"})
+    assert conversation_id is not None
+    old_message_id = _message(db, conversation_id, "answer-0")
+    # Capture and normalize it as the app did before 2026-11-06: under v1.
+    v1 = functools.partial(CredentialSanitizer, version="credentials-v1")
+    monkeypatch.setattr(console_trace_legacy, "CREDENTIAL_FILTER_VERSION", "credentials-v1")
+    monkeypatch.setattr(console_exchange_capture, "CredentialSanitizer", v1)
+    monkeypatch.setattr(console_trace_repository, "CredentialSanitizer", v1)
+    old = replace(_capture(0), response={"content": f"use {_V1_UNMASKED_KEY}"})
+    _insert_exchange(db, message_id=old_message_id, capture=old)
+    maintenance = LegacyTraceMaintenance(db)
+    assert maintenance.run_batch().logical_complete is True
+    monkeypatch.undo()
+
+    new_message_id = _message(db, conversation_id, "answer-1")
+    _insert_exchange(db, message_id=new_message_id, capture=_capture(1))
+    try:
+        reopened = maintenance.run_batch()
+    except TraceIdentityConflict:  # the runtime loop logs it and retries forever
+        reopened = None
+
+    assert reopened is not None and reopened.logical_complete is True
+    with db.transaction() as cursor:
+        policies = cursor.execute(
+            """SELECT policy.policy_id, policy.credential_filter_version
+                 FROM console_trace_calls AS call
+                 JOIN console_trace_policies AS policy USING (policy_id)
+                ORDER BY call.turn_id = ?""",
+            (new_message_id,),
+        ).fetchall()
+        assert cursor.execute("SELECT COUNT(*) FROM message_exchanges").fetchone()[0] == 0
+    # AC#3: the v1 row is not rewritten; the new call binds a v2 row of its own.
+    assert [tuple(row) for row in policies] == [
+        ("00000000-0000-4000-8000-000000000097", "credentials-v1"),
+        (policies[1][0], "credentials-v2"),
+    ]
+    assert policies[1][0] != policies[0][0]
+    # A new filter version needs its own legacy policy id, or this conflicts again.
+    assert set(console_trace_legacy._LEGACY_POLICY_IDS) == (
+        READABLE_CREDENTIAL_FILTER_VERSIONS
+    )
+    # AC#2: the call bound to the v1 policy still reads, and re-masks on read.
+    normalizer = LegacyTraceNormalizer(db)
+    assert normalizer.read_calls(new_message_id)
+    (old_call,) = normalizer.read_calls(old_message_id)
+    assert _V1_UNMASKED_KEY in json.dumps(old_call.capture.response)  # stored as v1 left it
+    for profile in TraceViewerProfile:
+        shown = project_capture_for_viewer(old_call.capture, profile)
+        assert _V1_UNMASKED_KEY not in json.dumps(shown.response), profile
 
 
 def test_a_pass_with_known_work_skips_the_idle_check(

@@ -6,8 +6,10 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse, urlunparse
 
+from tldw_chatbook.Provider_Contract import ChatConfigurationError
 from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
     URL_BASED_PROVIDER_KEYS,
+    endpoint_refusal,
     normalize_generic_endpoint_for_compare as normalize_generic_endpoint_for_compare,
     read_schemeless_loopback,
     resolve_provider_endpoint,
@@ -29,9 +31,11 @@ UNSAVED_ENDPOINT_COPY = (
 #: its docs) when nothing is configured. The stock `llama-server` port 8080 is
 #: covered by local discovery candidates, not by this default.
 DEFAULT_LLAMACPP_BASE_URL = "http://127.0.0.1:9099"
-INVALID_LLAMACPP_BASE_URL_COPY = (
-    "Provider blocked: invalid llama.cpp base URL. "
-    "Use an http(s) URL such as http://127.0.0.1:9099."
+#: A ``custom-ep:`` id with no configured entry (removed, or skipped at load);
+#: the send and readiness both say it (TASK-40302).
+CUSTOM_ENDPOINT_NOT_CONFIGURED_COPY = (
+    "Provider blocked: this custom endpoint is no longer configured. "
+    "Restore its entry or choose another provider before sending."
 )
 _ENDPOINT_SETTING_KEYS = (
     "api_base_url",
@@ -133,6 +137,8 @@ def effective_provider_endpoint(
     provider_key: str,
     selected_endpoint: str | None,
     provider_settings: Mapping[str, object],
+    *,
+    custom_endpoint: bool = False,
 ) -> str | None:
     """Resolve the exact endpoint a provider call would use at this moment.
 
@@ -144,11 +150,17 @@ def effective_provider_endpoint(
         provider_key: Normalized provider readiness key.
         selected_endpoint: Optional Console-selected endpoint.
         provider_settings: Provider-specific configuration mapping.
+        custom_endpoint: True for a custom endpoint entry, which the contract
+            reads as its engine does (TASK-40300 review r14ep-rev2 M-a: a
+            relaxed base pasted with ``/models`` sent to
+            ``.../models/chat/completions``).
 
     Returns:
         Effective endpoint to pin into the provider resolution, or ``None``
         when the provider has neither a configured nor built-in endpoint.
     """
+    if custom_endpoint and provider_key == "custom":
+        provider_key = "custom_hosted"
     if isinstance(selected_endpoint, str) and selected_endpoint.strip():
         return _effective_contract_endpoint(provider_key, selected_endpoint)
     if provider_key == "huggingface" and _huggingface_router_mode(provider_settings):
@@ -225,9 +237,116 @@ CONDITIONAL_BASE_URL_EXECUTION_KEYS = frozenset(
 #: config raw, so a schemeless endpoint readiness reads as http:// went as
 #: typed. Every primary send pins the resolved base for them; shared by the
 #: gateway kwargs builders and the trace verifier's reconstruction (r11g-rev3).
+#: MLX-LM joins them (TASK-40300 review r14ep-rev3 follow-up and rev4 C-1):
+#: Console checks and pins the URL MLX-LM builds from its own ``host`` and
+#: ``port`` (``http://127.0.0.1:8080/v1`` when unset), never the ``api_url``
+#: in its table, which the adapter ignores.
 CONFIG_READING_LOCAL_EXECUTION_KEYS = frozenset(
-    {"aphrodite", "koboldcpp", "oobabooga", "tabbyapi"}
+    {"aphrodite", "koboldcpp", "local_mlx_lm", "oobabooga", "tabbyapi"}
 )
+#: Where an adapter reads its endpoint when the request pins none, in its own
+#: order, when that is not its ``api_settings`` table under the dispatch name
+#: (TASK-40300 review r14ep-rev3 I-1/I-3: ``[api_settings.ooba_api] api_ip``
+#: was sent to unchecked).
+_ADAPTER_OWN_ENDPOINTS: dict[str, tuple[tuple[str, ...], ...]] = {
+    "openai": (("openai_api", "api_base_url"),),
+    "anthropic": (("anthropic_api", "api_base_url"),),
+    "huggingface": (("huggingface_api", "api_base_url"),),
+    "local-llm": (
+        ("api_settings", "local-llm", "api_url"),
+        ("api_settings", "local-llm", "api_ip"),
+    ),
+    "custom-openai-api": (("api_settings", "custom", "api_url"),),
+    "custom-openai-api-2": (("custom_openai_api_2", "api_ip"),),
+    "oobabooga": (("api_settings", "ooba_api", "api_ip"),),
+    "aphrodite": (("api_settings", "aphrodite_api", "api_url"),),
+    "tabbyapi": (("api_settings", "tabby_api", "api_url"),),
+    "koboldcpp": (("api_settings", "koboldcpp", "api_url"),),
+}
+
+
+#: Adapters that always build their endpoint themselves (MLX-LM's host and
+#: port) and ignore any URL in their ``api_settings`` table.
+ADAPTER_ONLY_ENDPOINT_KEYS = frozenset({"mlx_lm", "local_mlx_lm"})
+
+
+def adapter_own_endpoint(
+    dispatch: str, app_config: Mapping[str, object]
+) -> str | None:
+    """The endpoint ``dispatch``'s adapter sends to when the request pins none.
+
+    Covers what Console's ``api_settings`` lookup misses: the adapter's own
+    table, MLX's host and port, and an engine preset's shipped default.
+
+    Args:
+        dispatch: The ``chat_api_call`` endpoint name.
+        app_config: The loaded configuration.
+
+    Returns:
+        That endpoint, read as Console reads a configured one, or None.
+    """
+    from tldw_chatbook.provider_registry import RECORDS_BY_KEY
+
+    legacy_hf = app_config.get("huggingface_api")
+    if dispatch == "huggingface" and isinstance(legacy_hf, Mapping):
+        if _huggingface_router_mode(legacy_hf):
+            # Router mode reads the router base, as chat_with_huggingface does.
+            return effective_provider_endpoint(dispatch, None, legacy_hf)
+    for path in _ADAPTER_OWN_ENDPOINTS.get(dispatch, ()):
+        value: object = app_config
+        for key in path:
+            value = value.get(key) if isinstance(value, Mapping) else None
+        if isinstance(value, str) and value.strip():
+            return _effective_contract_endpoint(dispatch, value.strip())
+    if dispatch in ADAPTER_ONLY_ENDPOINT_KEYS:
+        api_settings = app_config.get("api_settings")
+        table = api_settings.get(dispatch) if isinstance(api_settings, Mapping) else None
+        table = table if isinstance(table, Mapping) else {}
+        return f"http://{table.get('host', '127.0.0.1')}:{table.get('port', 8080)}/v1"
+    record = RECORDS_BY_KEY.get(dispatch)
+    return record.default_base_url if record and record.engine_driven else None
+
+
+#: Console execution keys besides ``CONFIG_READING_LOCAL_EXECUTION_KEYS``
+#: whose adapter reads a table Console's own lookup misses (review r14ep-rev3
+#: and its follow-up: Local LLM's ``api_ip``, Custom OpenAI API 2's top-level
+#: ``api_ip``; rev4 M-4: HuggingFace's ``huggingface_api``).
+_OWN_TABLE_CONSOLE_KEYS = frozenset({"local-llm", "custom-openai-api-2", "huggingface"})
+
+
+def console_own_table_endpoint(
+    execution_key: str,
+    app_config: Mapping[str, object],
+    resolved: str | None,
+    provider_settings: Mapping[str, object],
+    selected: str | None = None,
+) -> str | None:
+    """The endpoint a Console send uses, so its send and readiness check it.
+
+    Normally ``resolved``. An adapter that reads its own table when nothing is
+    pinned uses that table's endpoint instead when neither the chat nor the
+    provider's ``api_settings`` table sets one, so ``[api_settings.ooba_api]
+    api_ip`` is checked and pinned rather than sent to unchecked (TASK-40300
+    review r14ep-rev3 I-3; refusing would break a config that sets only that
+    table). MLX-LM always uses its own host and port (rev4 C-1).
+
+    Args:
+        execution_key: Console's resolved adapter key.
+        app_config: The loaded configuration.
+        resolved: The endpoint Console resolved for the provider.
+        provider_settings: The provider's ``api_settings`` table.
+        selected: The chat's own endpoint, if any.
+
+    Returns:
+        The endpoint the send uses, or None.
+    """
+    if execution_key in ADAPTER_ONLY_ENDPOINT_KEYS:
+        return adapter_own_endpoint(execution_key, app_config)
+    if execution_key in CONFIG_READING_LOCAL_EXECUTION_KEYS | _OWN_TABLE_CONSOLE_KEYS and not (
+        selected or first_configured_endpoint(provider_settings)
+    ):
+        return adapter_own_endpoint(execution_key, app_config) or resolved
+    return resolved
 
 
 def adapter_api_base_url(execution_key: str, base_url: str | None) -> str | None:
@@ -246,24 +365,32 @@ def adapter_api_base_url(execution_key: str, base_url: str | None) -> str | None
 
 
 def meaningful_adapter_base_url(execution_key: str, base_url: str | None) -> str | None:
-    """Pin the resolved endpoint only when it carries real information.
+    """Pin the resolved endpoint when it carries real information.
 
     TASK-2117: a resolution's ``base_url`` always carries SOMETHING -- the
     builtin cloud default when neither a configured
     ``[api_settings.<provider>].api_base_url`` nor a session-selected endpoint
     exists. Forwarding that builtin would pin the adapter to a value it
-    already falls back to on its own, and would shadow endpoints configured
-    in the adapter's OWN legacy config section (``[google]``,
-    ``huggingface_api``) that today win when Console's canonical table is
-    empty. The kwarg is therefore forwarded only when the resolved endpoint
-    differs from the provider's shipped default -- i.e. exactly when a
-    configured or session-selected URL must reach the request.
+    already falls back to on its own, so for these first-party cloud keys the
+    kwarg is forwarded only when the resolved endpoint differs from the
+    provider's shipped default -- i.e. when a configured or session-selected
+    URL must reach the request.
+
+    HuggingFace is the exception (TASK-40300 review r14ep-rev5): it is always
+    pinned, built-in or not. Its adapter otherwise reads ``huggingface_api``
+    (in router mode, its ``router_base_url``), and Console already checks
+    that legacy table itself when ``[api_settings.huggingface]`` has no
+    endpoint (``console_own_table_endpoint``), so the URL pinned is the one
+    Console checked.
     """
     if execution_key not in CONDITIONAL_BASE_URL_EXECUTION_KEYS:
         return None
     if not isinstance(base_url, str) or not base_url.strip():
         return None
-    if base_url == builtin_provider_endpoint(execution_key):
+    # TASK-40300 review r14ep-rev5: HuggingFace is always pinned. Unpinned, its
+    # adapter reads ``huggingface_api`` (and, in router mode, its
+    # ``router_base_url``) whatever Console checked.
+    if base_url == builtin_provider_endpoint(execution_key) and execution_key != "huggingface":
         return None
     return base_url
 
@@ -340,6 +467,58 @@ def unsaved_endpoint_copy(
     return f"{UNSAVED_ENDPOINT_COPY} Selected endpoint: {selected}. Saved endpoint: {configured}."
 
 
+def invalid_llamacpp_base_url_copy(reason: str) -> str:
+    """llama.cpp's refusal copy, naming the contract's reason (TASK-40300 M-b).
+
+    Args:
+        reason: ``endpoint_refusal``'s reason, which names no part of the value.
+
+    Returns:
+        The copy readiness and the send show.
+    """
+    return f"Provider blocked: invalid llama.cpp base URL: {reason}"
+
+
+def refuse_a_refused_endpoint(resolution: object) -> None:
+    """Refuse a dispatch whose endpoint the contract refuses (TASK-40300 I1).
+
+    ``resolve_for_send`` checks the endpoint it resolves, but an agent
+    sub-call or a run snapshot can overlay another ``base_url`` afterwards,
+    so the gateway's stream and auxiliary dispatch check the endpoint they
+    are about to use, before any request, trace shadow or adapter call.
+
+    Args:
+        resolution: The ``ConsoleProviderResolution`` about to be dispatched.
+
+    Raises:
+        ChatConfigurationError: Status-less (nothing reached the provider),
+            with the contract's reason, which names no part of the value.
+    """
+    from tldw_chatbook.Chat.custom_endpoint_registry import split_custom_endpoint_id
+
+    provider = str(getattr(resolution, "provider", "") or "")
+    base_url = getattr(resolution, "base_url", None)
+    if provider in {"llama_cpp", "local_llamacpp"}:
+        error = endpoint_refusal("llama_cpp", base_url or DEFAULT_LLAMACPP_BASE_URL)
+    elif isinstance(base_url, str) and base_url:
+        key = getattr(resolution, "readiness_key", "") or getattr(
+            resolution, "execution_key", ""
+        )
+        error = endpoint_refusal(
+            key or provider,
+            base_url,
+            custom_endpoint=bool(
+                split_custom_endpoint_id(getattr(resolution, "selected_provider", ""))
+            ),
+        )
+    else:
+        return
+    if error:
+        raise ChatConfigurationError(
+            f"Provider blocked: {error}", provider=provider or None, status_code=None
+        )
+
+
 def _effective_contract_endpoint(provider_key: str, endpoint: str) -> str:
     """Resolve endpoint forms only for adapters governed by the new contract.
 
@@ -348,7 +527,9 @@ def _effective_contract_endpoint(provider_key: str, endpoint: str) -> str:
     adapter got it schemeless).
     """
     endpoint = read_schemeless_loopback(endpoint)
-    if provider_key not in {"custom", "custom_2", "llama_cpp", "local_llamacpp"}:
+    if provider_key not in {
+        "custom", "custom_2", "custom_hosted", "llama_cpp", "local_llamacpp"
+    }:
         return endpoint
     resolution = resolve_provider_endpoint(provider_key, endpoint)
     return resolution.persisted_endpoint or endpoint

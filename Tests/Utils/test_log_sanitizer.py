@@ -1379,3 +1379,37 @@ def test_stored_v1_custom_span_inside_a_key_leaves_no_key_fragment(tmp_path) -> 
     assert call.capture.request.get("messages_payload") == [
         {"role": "user", "content": "key [PII omitted] then mail [PII omitted] please"}
     ]
+
+
+@pytest.mark.parametrize(
+    "secret",
+    [
+        _synthetic("whsec", "_DONOTUSEEXAMPLEONLY" + "a1B2" * 4),
+        _synthetic("whsec", "_DONOTUSEEXAMPLEONLY" + "a+B/" * 4 + "=="),
+        _synthetic("gsk", "_DONOTUSEEXAMPLEONLY" + "a1B2" * 6),
+    ],
+    ids=("webhook-secret", "webhook-secret-base64", "groq"),
+)
+def test_webhook_secrets_and_groq_keys_are_masked_in_logs_only(secret) -> None:
+    """TASK-40301 AC#2: ``whsec_`` and ``gsk_`` were in neither the log list
+    nor the Trace export list. Logs mask them now; both stored trace
+    projections stay byte-identical, so no stored history reads as changed."""
+    from tldw_chatbook.Utils.log_sanitizer import (
+        redact_log_line,
+        sanitize_trace_credentials_v1,
+        sanitize_trace_credentials_v2,
+    )
+
+    line = f"webhook verify failed with {secret} for job 7"
+    expected = "webhook verify failed with ***REDACTED*** for job 7"
+    assert sanitize_string(line) == expected
+    assert redact_log_line(line) == expected
+    assert sanitize_trace_credentials_v1(line) == line
+    assert sanitize_trace_credentials_v2(line) == line
+
+
+@pytest.mark.parametrize(
+    "raw", ["whsec_mode is on", "gsk_enabled_for_every_customer_account_today"]
+)
+def test_identifiers_that_share_the_webhook_or_groq_prefix_stay_readable(raw) -> None:
+    assert sanitize_string(raw) == raw

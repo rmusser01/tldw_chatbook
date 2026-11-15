@@ -114,6 +114,7 @@ from ...Chat.custom_endpoint_registry import (
     entry_for,
     load_custom_endpoints,
     split_custom_endpoint_id,
+    validate_display_name,
     validate_entry,
 )
 from ...Chat.local_server_discovery import MODEL_IDS_MAX_COUNT
@@ -19267,7 +19268,7 @@ class SettingsScreen(BaseAppScreen):
         slug = self._custom_endpoint_rename_slug
         if slug is None:
             return
-        entry = load_custom_endpoints(self._custom_endpoints_view_config()).get(slug)
+        entry = load_custom_endpoints(self._custom_endpoints_view_config(), include_refused=True).get(slug)
         if entry is None:
             self._custom_endpoints_report(f"Endpoint '{slug}' is no longer available.")
             return
@@ -19275,10 +19276,8 @@ class SettingsScreen(BaseAppScreen):
             name = self.query_one("#settings-cep-rename-value", Input).value.strip()
         except QueryError:
             return
-        errors = validate_entry(name, entry.family, entry.base_url)
+        errors = validate_display_name(name)  # a refused entry keeps its URL (TASK-40300 M-c)
         if errors:
-            # The loaded entry already passed validation, so any error here
-            # is the display name itself.
             self._custom_endpoints_status_update(errors[0])
             return
         self._custom_endpoints_persist_worker(
@@ -19290,7 +19289,7 @@ class SettingsScreen(BaseAppScreen):
         slug = self._custom_endpoint_edit_slug
         if slug is None:
             return
-        entry = load_custom_endpoints(self._custom_endpoints_view_config()).get(slug)
+        entry = load_custom_endpoints(self._custom_endpoints_view_config(), include_refused=True).get(slug)
         if entry is None:
             self._custom_endpoints_report(f"Endpoint '{slug}' is no longer available.")
             return
@@ -19497,12 +19496,11 @@ class SettingsScreen(BaseAppScreen):
                 self._custom_endpoints_store(),
                 f"{CUSTOM_ENDPOINT_ID_PREFIX}{slug}",
             )
-        except Exception:
+        except Exception as exc:  # a DetachRefused carries its own copy (TASK-40300)
             logger.warning("Failed to detach and delete '%s'.", slug)
             self.app.call_from_thread(
                 self._custom_endpoints_status_update,
-                f"Could not finish detaching '{slug}'; press Detach "
-                "references again to complete it.",
+                getattr(exc, "user_copy", "") or f"Could not finish detaching '{slug}'; press Detach references again to complete it.",
             )
             return
         self.app.call_from_thread(

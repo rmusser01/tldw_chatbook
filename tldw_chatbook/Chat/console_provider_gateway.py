@@ -63,6 +63,9 @@ from tldw_chatbook.Chat.console_provider_endpoints import (
     CONFIG_READING_LOCAL_EXECUTION_KEYS,
     URL_BASED_PROVIDER_KEYS,
     adapter_api_base_url,
+    console_own_table_endpoint,
+    invalid_llamacpp_base_url_copy,
+    refuse_a_refused_endpoint,
     effective_provider_endpoint,
     generic_endpoint_differs,
     meaningful_adapter_base_url,
@@ -70,6 +73,7 @@ from tldw_chatbook.Chat.console_provider_endpoints import (
     unsaved_endpoint_copy,
 )
 from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+    endpoint_refusal,
     read_schemeless_loopback,
 )
 from tldw_chatbook.Chat.console_prepared_request import (
@@ -160,6 +164,7 @@ from tldw_chatbook.Chat.custom_endpoint_registry import (
     custom_endpoint_provider_settings,
     entry_for,
     family_execution_key,
+    missing_custom_endpoint_copy,
     split_custom_endpoint_id,
     CustomEndpointEntry,
 )
@@ -191,7 +196,6 @@ from tldw_chatbook.LLM_Calls.zai import ZAIFinishPolicy
 from tldw_chatbook.config import ProviderSettingsError
 from tldw_chatbook.provider_registry import ENGINE_RECORDS, RECORDS_BY_KEY
 from tldw_chatbook.Utils.egress import capture_rate_limits_for
-from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.sensitive_llm_logging import (
     is_sensitive_llm_request,
     sensitive_llm_request,
@@ -234,10 +238,6 @@ GENERATION_READ_TIMEOUT_SECONDS = 300.0
 Large local models routinely need 60-180s for a non-streamed completion, so
 the owned client must not cap reads at the old 30s ceiling.
 """
-INVALID_LLAMACPP_BASE_URL_COPY = (
-    "Provider blocked: invalid llama.cpp base URL. "
-    "Use an http(s) URL such as http://127.0.0.1:9099."
-)
 UNSUPPORTED_PROVIDER_RESPONSE_COPY = "Provider returned an unsupported response shape."
 NO_PROVIDER_CONTENT_COPY = "Provider returned no assistant content."
 MAX_TRACE_RESPONSE_ITEMS = 1_024
@@ -1875,6 +1875,10 @@ def normalize_llamacpp_base_url(api_url: str | None) -> str:
     if not raw_url:
         return DEFAULT_LLAMACPP_BASE_URL
 
+    # TASK-40300: a query or fragment is never dropped by rebuilding the URL;
+    # the contract refuses the value, so every check after this one must too.
+    if "?" in raw_url or "#" in raw_url:
+        return raw_url
     # TASK-39151: only a loopback spelling typed without a scheme is read as
     # http://, the contract's rule; any other stays schemeless and invalid.
     candidate = read_schemeless_loopback(raw_url)
@@ -3969,13 +3973,13 @@ class ConsoleProviderGateway:
         """
         model = config.explicit_model or config.configured_model
         base_url = normalize_llamacpp_base_url(config.base_url)
-        if not validate_url(base_url):
+        if refusal := endpoint_refusal("llama_cpp", base_url):  # TASK-40300
             return ConsoleProviderResolution(
                 provider="llama_cpp",
                 base_url=config.base_url,
                 model=model,
                 ready=False,
-                visible_copy=INVALID_LLAMACPP_BASE_URL_COPY,
+                visible_copy=invalid_llamacpp_base_url_copy(refusal),
                 readiness_key="llama_cpp",
                 execution_key="llama_cpp",
                 **self._resolution_settings(config),
@@ -4432,10 +4436,7 @@ class ConsoleProviderGateway:
             return self._blocked_resolution(
                 selection,
                 provider=selection.provider,
-                visible_copy=(
-                    "Provider blocked: this custom endpoint is no longer configured. "
-                    "Restore its entry or choose another provider before sending."
-                ),
+                visible_copy=missing_custom_endpoint_copy(app_config, selection.provider),
             )
         if selection.execution_provider:
             # ADR-200: a routed child freezes execution as well as its URL.
@@ -4701,12 +4702,35 @@ class ConsoleProviderGateway:
             # endpoint authority (an edited entry re-resolves on the next
             # send), so a stale session-pinned URL never outranks the entry;
             # every other provider keeps session-selection precedence.
-            effective_base_url = effective_provider_endpoint(
-                identity.readiness_key,
-                custom_entry.base_url
-                if custom_entry is not None and not selection.base_url_is_pinned
-                else selection.base_url,
+            effective_base_url = console_own_table_endpoint(
+                identity.execution_key,
+                app_config,
+                effective_provider_endpoint(
+                    identity.readiness_key,
+                    custom_entry.base_url
+                    if custom_entry is not None and not selection.base_url_is_pinned
+                    else selection.base_url,
+                    provider_settings,
+                    custom_endpoint=custom_entry is not None,
+                ),
                 provider_settings,
+                selection.base_url,
+            )
+
+        # TASK-40300: the endpoint contract decides, before the unsaved guard,
+        # as readiness does; a refused custom entry never falls back to its
+        # raw value.
+        endpoint_error = effective_base_url and endpoint_refusal(
+            identity.readiness_key, effective_base_url, custom_endpoint=bool(custom_entry)
+        )
+        if endpoint_error:
+            return self._blocked_resolution(
+                selection,
+                provider=selection.provider,
+                model=model,
+                visible_copy=f"Provider blocked: {endpoint_error}",
+                readiness_key=identity.readiness_key,
+                execution_key=identity.execution_key,
             )
 
         if identity.execution_key == "qwencloud":
@@ -4978,7 +5002,7 @@ class ConsoleProviderGateway:
             Assistant-visible content chunks.
         """
         normalized_base_url = normalize_llamacpp_base_url(base_url)
-        if not validate_url(normalized_base_url):
+        if endpoint_refusal("llama_cpp", normalized_base_url):
             raise ValueError("invalid llama.cpp base URL")
 
         prepared = self._automatic_local_request(
@@ -5300,7 +5324,7 @@ class ConsoleProviderGateway:
             Assistant-visible completion text.
         """
         normalized_base_url = normalize_llamacpp_base_url(base_url)
-        if not validate_url(normalized_base_url):
+        if endpoint_refusal("llama_cpp", normalized_base_url):
             raise ValueError("invalid llama.cpp base URL")
 
         prepared = self._automatic_local_request(
@@ -5528,6 +5552,7 @@ class ConsoleProviderGateway:
 
         if not isinstance(request, AuxiliaryCompletionRequest):
             raise TypeError("request must be an AuxiliaryCompletionRequest")
+        refuse_a_refused_endpoint(request.resolution)
         if route not in {None, ConsoleRequestRoute.AUTO_COMPACTION}:
             raise TraceProvenanceAlignmentError(
                 "auxiliary completion route is not capture-off"
@@ -5963,6 +5988,7 @@ class ConsoleProviderGateway:
             capture_mode=capture_mode,
             ephemeral=ephemeral,
         )
+        refuse_a_refused_endpoint(resolution)
         if type(dispatch_purpose) is not ConsoleProviderCallPurpose:
             raise TraceProvenanceAlignmentError("provider purpose is invalid")
         if provisional_trace_attempt is not None and (

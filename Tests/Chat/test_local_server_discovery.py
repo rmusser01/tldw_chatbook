@@ -57,6 +57,7 @@ from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import
 )
 from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
     KOBOLDCPP_NATIVE_ROUTE_REFUSAL,
+    REMOTE_ENDPOINT_SCHEME_REQUIRED,
     URL_BASED_PROVIDER_KEYS,
     koboldcpp_native_endpoint,
     koboldcpp_route_refusal,
@@ -1027,9 +1028,6 @@ _NOTICE_KEYS_BEFORE_UNDERSCORES = {
     "http://127.0.0.1:5001/api/v1/generate": (
         "230a4eb202e98922dd8500ab912ba358797508c63878267e0edb3f8a0f2c7295"
     ),
-    "https://bücher.example/v1": (
-        "9c2eb1086a90887408a48e6c5e276b214e1e40d3f0fcd41d8f7b99ef551623a3"
-    ),
     "http://[::1]:8080/v1": (
         "904ad8976b81be75c1b119602a56909d35d01517b07eee0aaa2128ca7ffc98b6"
     ),
@@ -1206,27 +1204,6 @@ def test_zone_less_link_local_and_ula_literals_keep_their_project_identity(
     assert seen["notice_key"] == key
     assert seen["gateway_capture"] == seen["exchange_export"] == identity
     assert seen["trace_final_values"] == identity
-
-
-@pytest.mark.parametrize(
-    ("endpoint", "identity"),
-    [
-        ("http://127.1:5001", "http://127.1:5001"),
-        ("https://bücher.example/v1", "https://xn--bcher-kva.example/v1"),
-        ("http://localhost..:5001", "http://localhost:5001"),
-    ],
-)
-def test_hosts_the_contract_refuses_but_the_send_accepts_keep_their_identity(
-    endpoint, identity
-):
-    """TASK-39150 AC#4, deliberate: the save refuses these hosts, but Console's
-    send still resolves them from a hand-edited config, so refusing them here
-    would only turn such a send with project instructions into a cancelled run
-    and drop its stored consent."""
-    seen = _project_instruction_endpoint_callers(endpoint)
-
-    assert seen["identity"] == identity
-    assert len(seen["notice_key"]) == 64
 
 
 #: TASK-38963: single-label hosts, the Docker Compose service-name shape.
@@ -2324,7 +2301,7 @@ async def test_a_saved_chat_with_a_remote_schemeless_llamacpp_endpoint_sends_not
     from dataclasses import asdict
 
     from tldw_chatbook.Chat.console_provider_endpoints import (
-        INVALID_LLAMACPP_BASE_URL_COPY,
+        invalid_llamacpp_base_url_copy,
     )
     from tldw_chatbook.Chat.console_session_settings import (
         ConsoleSettingsContextEstimate,
@@ -2348,12 +2325,75 @@ async def test_a_saved_chat_with_a_remote_schemeless_llamacpp_endpoint_sends_not
 
     assert seen == []
     assert resolution.ready is False
-    assert resolution.visible_copy == INVALID_LLAMACPP_BASE_URL_COPY
+    # TASK-40300 review r14ep-rev2 M-b: the copy names the contract's reason.
+    assert resolution.visible_copy == invalid_llamacpp_base_url_copy(
+        REMOTE_ENDPOINT_SCHEME_REQUIRED
+    )
     readiness = build_console_settings_readiness(settings, app_config=config, environ={})
     row = build_console_settings_summary_state(
         settings, ConsoleSettingsContextEstimate(None, None, ""), readiness
     ).endpoint_row
     assert row == _ADD_SCHEME_ROW
+
+
+_NO_LONGER_CONFIGURED = (
+    "Provider blocked: this custom endpoint is no longer configured. "
+    "Restore its entry or choose another provider before sending."
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("entry", ["removed", "skipped"])
+async def test_readiness_for_a_missing_custom_endpoint_says_to_restore_its_entry(
+    entry, monkeypatch
+):
+    """TASK-40302 AC#1: a chat on a ``custom-ep:`` id whose entry was removed,
+    or skipped at load (TASK-39151's schemeless remote llama.cpp entry), read
+    "Provider blocked: 'custom_ep:gpu' is not available in Console yet." with
+    the label "Unknown": a missing feature and a mangled internal id, while
+    the send says to restore the entry."""
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_console_settings_readiness,
+    )
+
+    monkeypatch.delenv("TLDW_CONSOLE_LLAMA_CPP_BASE_URL", raising=False)
+    settings, config = _llamacpp_source("custom_entry", "gpu-box.lan:8080")
+    if entry == "removed":
+        del config["custom_endpoints"]
+
+    readiness = build_console_settings_readiness(settings, app_config=config, environ={})
+    resolution = await _resolve_llamacpp_send(settings, config, [])
+
+    # TASK-40300 review r14ep-rev2 M-d: an entry refused at load says why and
+    # where to fix it; one that is gone says to restore it.
+    expected = _NO_LONGER_CONFIGURED if entry == "removed" else (
+        "Provider blocked: this custom endpoint is not loaded: "
+        f"{REMOTE_ENDPOINT_SCHEME_REQUIRED} Fix it in Settings ▸ Custom endpoints."
+    )
+    assert readiness.detail == resolution.visible_copy == expected
+    assert readiness.native_send_supported is False
+    assert readiness.recovery_action == "select_provider"
+    shown = (readiness.label, readiness.detail, readiness.provider_display_name)
+    assert not any("custom_ep" in text or "custom-ep" in text for text in shown), shown
+
+
+def test_a_provider_console_does_not_support_keeps_its_copy():
+    """TASK-40302 AC#2."""
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_console_settings_readiness,
+    )
+
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(provider="future_provider", model="m"),
+        app_config={"api_settings": {}},
+        environ={},
+    )
+
+    assert readiness.blocker == "provider_unsupported"
+    assert readiness.detail == (
+        "Provider blocked: 'future_provider' is not available in Console yet. "
+        "Choose a supported provider."
+    )
 
 
 @pytest.mark.parametrize(
@@ -2533,3 +2573,1188 @@ def test_chat_with_llama_refuses_a_non_http_scheme_without_echoing_it(
     assert calls == []
     for part in ("hunter2", "user:", "gpu-box", "ftp", "htp"):
         assert part not in str(caught.value)
+
+
+#: TASK-40300: one value per rule the endpoint contract refuses that Console's
+#: send and readiness still accepted (``validate_url`` and the scheme rule).
+_CONTRACT_REFUSED_BASES = {
+    "zone-id": "http://[fe80::1%25en0]:8000",
+    "leading-hyphen": "http://-bad.corp:8000",
+    "digit-host": "http://127.1:8000",
+    "idn": "http://bücher.example:8000",
+    "double-dot": "http://localhost..:8000",
+    "query": "http://127.0.0.1:8000?mode=fast",
+    "fragment": "http://127.0.0.1:8000#part",
+    # Review r14ep-rev1 M2.
+    "user-info": "http://user:pw@127.0.0.1:8000",
+}
+#: Values the contract accepts, which resolve as before (AC#3).
+_CONTRACT_ACCEPTED_BASES = (
+    "http://gpu-box.lan:8000",
+    "localhost:8000",
+    "http://kobold_cpp:8000",
+    "http://[fe80::1]:8000",
+    "http://[fd12:3456::9]:8000",
+)
+#: The providers TASK-40300 names; a custom entry exists for three families.
+_ENDPOINT_PROVIDERS = ("vllm", "ollama", "custom", "openai", "koboldcpp", "aphrodite", "llama_cpp")
+_ENTRY_FAMILIES = {"custom": "openai_compatible", "ollama": "ollama", "llama_cpp": "llama_cpp"}
+_SAFE_LOOPBACK = "http://127.0.0.1:9000"
+
+
+def _with_path(provider, base):
+    """``base`` with the provider's route, before any query or fragment."""
+    path = "/api/v1/generate" if provider == "koboldcpp" else "/v1"
+    if provider == "llama_cpp":
+        path = ""
+    cut = min((base.index(c) for c in "?#" if c in base), default=len(base))
+    return base[:cut] + path + base[cut:]
+
+
+def _endpoint_case(provider, source, endpoint):
+    """Settings, config and a send selection holding ``endpoint`` in one place."""
+    from tldw_chatbook.Chat.provider_setup_persistence import provider_endpoint_key
+
+    key = provider_endpoint_key(provider)
+    table = {key: _with_path(provider, _SAFE_LOOPBACK), "model": "m"}
+    if provider == "openai":
+        table["api_key"] = "test-key-not-real"
+    config = {"api_settings": {provider: table}}
+    settings = ConsoleSessionSettings(provider=provider, model="m")
+    pinned = False
+    if source == "session":
+        settings = ConsoleSessionSettings(provider=provider, model="m", base_url=endpoint)
+        pinned = provider != "llama_cpp"  # the live-only path past the unsaved guard
+    elif source == "config":
+        table[key] = endpoint
+    else:
+        config["custom_endpoints"] = {
+            "box": {
+                "display_name": "Box",
+                "family": _ENTRY_FAMILIES[provider],
+                "base_url": endpoint,
+            }
+        }
+        settings = ConsoleSessionSettings(provider="custom-ep:box", model="m")
+    return settings, config, pinned
+
+
+async def _resolve_endpoint_send(settings, config, pinned, seen):
+    """Resolve a send as Console does; every request lands in ``seen``."""
+    from tldw_chatbook.Chat.console_chat_controller import (
+        build_console_provider_selection_from_settings,
+    )
+
+    def handler(request):
+        seen.append(str(request.url))
+        if request.url.path.endswith("/models"):
+            return httpx.Response(200, json=_openai_models_payload("m"))
+        return httpx.Response(200, json={"status": "ok"})
+
+    def adapter(**kwargs):
+        seen.append(f"adapter:{kwargs.get('api_base_url') or kwargs.get('api_url')}")
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: config,
+        environ={},
+        http_client=_client(handler),
+        chat_api_call_fn=adapter,
+    )
+    selection = build_console_provider_selection_from_settings(
+        settings, app_config=config, workspace_context=None
+    )
+    if pinned:
+        selection = ConsoleProviderSelection(
+            provider=selection.provider,
+            base_url=settings.base_url,
+            explicit_model="m",
+            streaming=False,
+            base_url_is_pinned=True,
+        )
+    resolution = await gateway.resolve_for_send(selection)
+    if resolution.ready and not resolution.execution_key.startswith("llama"):
+        [c async for c in gateway.stream_chat(resolution, [{"role": "user", "content": "x"}])]
+    return resolution
+
+
+def _endpoint_cases():
+    for provider in _ENDPOINT_PROVIDERS:
+        for source in ("session", "config", "custom_entry"):
+            if source == "custom_entry" and provider not in _ENTRY_FAMILIES:
+                continue
+            yield provider, source
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shape", sorted(_CONTRACT_REFUSED_BASES))
+@pytest.mark.parametrize(("provider", "source"), list(_endpoint_cases()))
+async def test_an_endpoint_the_contract_refuses_is_never_ready_or_contacted(
+    provider, source, shape, monkeypatch
+):
+    """TASK-40300 AC#1/AC#2/AC#4: Console decided endpoints with
+    ``validate_url`` and the scheme rule only, so a zone id, a leading-hyphen
+    host, ``127.1``, an IDN, ``localhost..``, a query or a fragment from the
+    session, the config or a custom entry read Ready and was probed (llama.cpp)
+    or sent to (the rest), and a refused custom entry fell back to its raw
+    value. The save, Discover and the display already refused all of them."""
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_console_settings_readiness,
+    )
+
+    monkeypatch.delenv("TLDW_CONSOLE_LLAMA_CPP_BASE_URL", raising=False)
+    endpoint = _with_path(provider, _CONTRACT_REFUSED_BASES[shape])
+    assert resolve_provider_endpoint(provider, endpoint).errors, endpoint
+    settings, config, pinned = _endpoint_case(provider, source, endpoint)
+    seen: list[str] = []
+
+    readiness = build_console_settings_readiness(settings, app_config=config, environ={})
+    resolution = await _resolve_endpoint_send(settings, config, pinned, seen)
+
+    assert seen == []
+    assert resolution.ready is False
+    assert readiness.native_send_supported is False
+    if source == "custom_entry":
+        assert resolution.base_url != endpoint  # AC#4: no raw fallback
+        # Review r14ep-rev2 M-d: refused at load, so it says why and where.
+        assert readiness.detail == resolution.visible_copy
+        assert resolution.visible_copy.startswith(
+            "Provider blocked: this custom endpoint is not loaded: Endpoint"
+        ) and resolution.visible_copy.endswith("Fix it in Settings ▸ Custom endpoints.")
+    else:
+        assert readiness.label == "Invalid URL", readiness
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "source", "base"),
+    [
+        (provider, source, base)
+        for provider, source in _endpoint_cases()
+        for base in _CONTRACT_ACCEPTED_BASES
+        # Unchanged: the registry refuses any value typed without a scheme
+        # for its openai_compatible and ollama families.
+        if not (source == "custom_entry" and provider != "llama_cpp" and "://" not in base)
+    ],
+)
+async def test_an_endpoint_the_contract_accepts_resolves_as_before(
+    provider, source, base, monkeypatch
+):
+    """TASK-40300 AC#3: schemed hosts, schemeless loopback spellings, compose
+    names and zone-less link-local or ULA literals still resolve and send."""
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_console_settings_readiness,
+    )
+
+    monkeypatch.delenv("TLDW_CONSOLE_LLAMA_CPP_BASE_URL", raising=False)
+    endpoint = _with_path(provider, base)
+    assert resolve_provider_endpoint(provider, endpoint).errors == ()
+    settings, config, pinned = _endpoint_case(provider, source, endpoint)
+    seen: list[str] = []
+
+    resolution = await _resolve_endpoint_send(settings, config, pinned, seen)
+
+    assert resolution.ready is True, resolution.visible_copy
+    assert seen, "the probe or the send was never made"
+    if not pinned:  # a pinned session endpoint is not the saved one
+        readiness = build_console_settings_readiness(
+            settings, app_config=config, environ={}
+        )
+        assert readiness.blocker is None, readiness
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "gpu-box.lan:8080",
+        "192.168.1.20:8080/v1",
+        "http://localhost..:5001",
+        "http://example.com..:5001/v1",
+        "http://127.1:5001",
+        "https://bücher.example/v1",
+    ],
+)
+def test_project_instructions_give_what_the_send_refuses_the_refused_identity(endpoint):
+    """TASK-40300 AC#5: ``_parse_endpoint`` added ``http://`` to any schemeless
+    endpoint and ``_canonical_hostname`` stripped every trailing dot, so a
+    remote schemeless endpoint and a ``..`` host took the clean host's
+    identity and consent key. Like the send, both are refused now, as are
+    ``127.1`` and an IDN (TASK-39150 AC#4 kept those only while the send
+    accepted them)."""
+    assert _project_instruction_endpoint_callers(endpoint) == (
+        _project_instruction_endpoint_callers("http://-bad.corp:5001/v1")
+    )
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "identity"),
+    [
+        ("http://localhost.:5001", "http://localhost:5001"),
+        ("https://example.com./v1", "https://example.com/v1"),
+        ("localhost:5001/v1", "http://localhost:5001/v1"),
+        ("[::1]:5001", "http://[::1]:5001"),
+    ],
+)
+def test_project_instructions_fold_one_trailing_dot_and_read_loopback_as_http(
+    endpoint, identity
+):
+    """TASK-40300 AC#5: exactly one trailing dot folds, as in the contract,
+    and the loopback spellings typed without a scheme read as ``http://``."""
+    seen = _project_instruction_endpoint_callers(endpoint)
+
+    assert seen["identity"] == identity
+    assert len(seen["notice_key"]) == 64
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "base_url",
+    ["http://127.0.0.1:8080?token=endpoint-secret", "localhost:8080/v1#endpoint-secret"],
+)
+async def test_a_llamacpp_send_never_drops_a_query_to_reach_the_server(base_url):
+    """TASK-40300 AC#2: ``normalize_llamacpp_base_url`` rebuilt the URL with an
+    empty query, so a send for a base URL the contract refuses went to the
+    server anyway. The send refuses it before any request, naming no part of
+    it."""
+    from Tests.Chat.test_console_provider_gateway import _capture_on_prepared_request
+    from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
+    from tldw_chatbook.Chat.console_trace_provenance import (
+        ConsoleRequestRoute,
+        ConsoleTraceCaptureMode,
+    )
+    from tldw_chatbook.Provider_Contract import ChatConfigurationError
+
+    seen: list[str] = []
+
+    def handler(request):
+        seen.append(str(request.url))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    resolution = ConsoleProviderResolution(
+        provider="llama_cpp",
+        base_url=base_url,
+        model="m",
+        ready=True,
+        execution_key="llama_cpp",
+        streaming=False,
+    )
+    bundles: list = []
+    async with _client(handler) as client:
+        gateway = ConsoleProviderGateway(http_client=client, trace_shadow_sink=bundles.append)
+        prepared = _capture_on_prepared_request(gateway, resolution)
+        with pytest.raises((ValueError, ChatConfigurationError)) as caught:
+            [
+                chunk
+                async for chunk in gateway.stream_chat(
+                    resolution,
+                    prepared,
+                    route=ConsoleRequestRoute.FRESH,
+                    capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+                )
+            ]
+
+    assert seen == []
+    assert "endpoint-secret" not in str(caught.value)
+    # Review r14ep-rev1 M3: refused before the trace shadow is built.
+    assert bundles == []
+
+
+@pytest.mark.parametrize("shape", sorted(_CONTRACT_REFUSED_BASES))
+def test_chat_with_llama_refuses_what_the_contract_refuses_without_echoing_it(
+    shape, monkeypatch
+):
+    """TASK-40300: ``chat_with_llama`` shares the llama.cpp normalizer, which
+    no longer drops a query or fragment, so it decides by the contract too;
+    nothing is sent and the message names no part of the value."""
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls_Local as local_calls
+    from tldw_chatbook.Provider_Contract import ChatConfigurationError
+
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        local_calls,
+        "_chat_with_openai_compatible_local_server",
+        lambda **kwargs: calls.append(kwargs) or "ok",
+    )
+    monkeypatch.setattr(
+        local_calls,
+        "get_runtime_config_snapshot",
+        lambda: SimpleNamespace(values={"api_settings": {}}),
+    )
+    endpoint = _CONTRACT_REFUSED_BASES[shape]
+
+    with pytest.raises(ChatConfigurationError) as caught:
+        local_calls.chat_with_llama(
+            [{"role": "user", "content": "x"}],
+            api_url=endpoint,
+            model="m",
+            provider_name="llama_cpp",
+            api_key_resolved=True,
+        )
+
+    assert calls == []
+    for part in (
+        "fe80", "bad.corp", "127.1", "cher", "localhost", "mode=fast", "part", "pw@"
+    ):
+        assert part not in str(caught.value)
+
+
+def _dispatch_resolution(provider, base_url, **fields):
+    from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
+
+    return ConsoleProviderResolution(
+        provider=provider,
+        base_url=base_url,
+        model="m",
+        ready=True,
+        readiness_key=fields.pop("readiness_key", provider),
+        execution_key=fields.pop("execution_key", provider),
+        streaming=False,
+        **fields,
+    )
+
+
+def _recording_gateway(seen):
+    def adapter(**kwargs):
+        seen.append(f"adapter:{kwargs.get('api_base_url')}")
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    def handler(request):
+        seen.append(str(request.url))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    return ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {}},
+        environ={},
+        http_client=_client(handler),
+        chat_api_call_fn=adapter,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shape", sorted(_CONTRACT_REFUSED_BASES))
+@pytest.mark.parametrize("provider", _ENDPOINT_PROVIDERS)
+async def test_a_dispatch_never_reaches_an_endpoint_the_contract_refuses(provider, shape):
+    """TASK-40300 review r14ep-rev1 I1: only ``resolve_for_send`` checked the
+    endpoint, and an agent sub-call's overlay (a frozen spawn target or a run
+    snapshot) replaces ``base_url`` afterwards, so ``127.1``, ``-bad.corp`` or
+    ``?token=`` reached the adapter for every provider but llama.cpp. The
+    stream and the auxiliary dispatch both refuse, with the contract's reason."""
+    from tldw_chatbook.Chat.console_provider_gateway import AuxiliaryCompletionRequest
+
+    endpoint = _with_path(provider, _CONTRACT_REFUSED_BASES[shape])
+    seen: list[str] = []
+    gateway = _recording_gateway(seen)
+    resolution = _dispatch_resolution(provider, endpoint)
+
+    from tldw_chatbook.Provider_Contract import ChatConfigurationError
+
+    with pytest.raises(ChatConfigurationError) as streamed:
+        [c async for c in gateway.stream_chat(resolution, [{"role": "user", "content": "x"}])]
+    with pytest.raises(ChatConfigurationError) as auxiliary:
+        await gateway.complete_auxiliary(
+            AuxiliaryCompletionRequest(
+                resolution=resolution,
+                messages=({"role": "user", "content": "x"},),
+                response_format=None,
+                max_output_tokens=8,
+            )
+        )
+
+    assert seen == []
+    for caught in (streamed, auxiliary):
+        assert caught.value.status_code is None  # nothing reached the provider
+        assert "Provider blocked" in str(caught.value)
+        for part in ("fe80", "bad.corp", "127.1", "cher", "mode=fast", "part", "pw@"):
+            assert part not in str(caught.value)
+
+
+@pytest.mark.parametrize("shape", sorted(_CONTRACT_REFUSED_BASES))
+@pytest.mark.parametrize("provider", ["vllm", "openai", "llama_cpp"])
+def test_a_spawn_target_never_freezes_an_endpoint_the_contract_refuses(provider, shape):
+    """TASK-40300 review r14ep-rev1 I1: ``freeze_spawn_target`` froze any
+    endpoint, which the run's dispatch overlay then sent to."""
+    from tldw_chatbook.Agents.agent_routing import (
+        RoutingError,
+        SpawnTarget,
+        freeze_spawn_target,
+    )
+
+    endpoint = _with_path(provider, _CONTRACT_REFUSED_BASES[shape])
+    target = SpawnTarget(provider, "m", endpoint, (), "override")
+
+    with pytest.raises(RoutingError) as caught:
+        freeze_spawn_target({"api_settings": {}}, target)
+
+    assert caught.value.code == "provider_not_ready"
+    assert caught.value.level == "override"
+    frozen = freeze_spawn_target(
+        {"api_settings": {}}, SpawnTarget(provider, "m", _with_path(provider, _SAFE_LOOPBACK), (), "override")
+    )
+    assert frozen.base_url == _with_path(provider, _SAFE_LOOPBACK)
+
+
+#: TASK-40300, owner decision 2026-11-13 ("Accept them for custom endpoints"):
+#: documented OpenAI-compatible bases whose v1 is not the last path segment.
+_CUSTOM_HOSTED_BASES = (
+    "https://api.deepinfra.com/v1/openai",
+    "https://gateway.ai.cloudflare.com/v1/acct123/gw1/compat",
+)
+
+
+def _entry_config(base_url, family="openai_compatible", slug="box"):
+    return {
+        "api_settings": {},
+        "custom_endpoints": {
+            slug: {"display_name": "Box", "family": family, "base_url": base_url}
+        },
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("base_url", _CUSTOM_HOSTED_BASES)
+async def test_an_openai_compatible_custom_endpoint_keeps_a_v1_that_is_not_last(base_url):
+    """TASK-40300 owner decision 2026-11-13: the registry, readiness, the send,
+    the dispatch and agent routing all read an OpenAI-compatible custom
+    endpoint as its custom-hosted engine does, so these bases load, read
+    Ready and send to ``<base>/chat/completions``; the generic ``custom``
+    provider still refuses them (its reading has no API base of its own)."""
+    from tldw_chatbook.Agents.agent_routing import SpawnTarget, freeze_spawn_target
+    from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_console_settings_readiness,
+    )
+    from tldw_chatbook.Chat.custom_endpoint_registry import load_custom_endpoints
+
+    config = _entry_config(base_url)
+    assert list(load_custom_endpoints(config)) == ["box"]
+    settings = ConsoleSessionSettings(provider="custom-ep:box", model="m")
+    readiness = build_console_settings_readiness(settings, app_config=config, environ={})
+    assert readiness.blocker is None, readiness
+    seen: list[str] = []
+    gateway = _recording_gateway(seen)
+    gateway._config_provider = lambda: config
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="custom-ep:box", explicit_model="m", streaming=False)
+    )
+    assert resolution.ready is True, resolution.visible_copy
+    [c async for c in gateway.stream_chat(resolution, [{"role": "user", "content": "x"}])]
+    assert seen and seen[0].startswith(f"adapter:{base_url}"), seen
+    freeze_spawn_target(config, SpawnTarget("custom-ep:box", "m", base_url, (), "override"))
+
+    assert resolve_provider_endpoint("custom", base_url).errors == (
+        "Endpoint path has ambiguous API suffixes.",
+    )
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/v1/completions",
+        # Review r14ep-rev3: the relaxed reading took these routes as bases.
+        "/v1/embeddings",
+        "/v1/responses",
+        "/v1/chat",
+        "/v1/chat/completions/extra",
+        "/v1/openai/embeddings",
+    ],
+)
+def test_an_api_route_is_not_a_custom_endpoint_base(path):
+    """TASK-40300 owner decision 2026-11-13: a route such as the legacy
+    ``/v1/completions`` is not an API base (a chat would post to
+    ``/v1/completions/chat/completions``), so it stays refused, with the
+    contract's reason."""
+    from tldw_chatbook.Chat.custom_endpoint_registry import (
+        custom_endpoint_refusals,
+        load_custom_endpoints,
+        validate_entry,
+    )
+
+    config = _entry_config(f"http://localhost:8000{path}")
+
+    assert load_custom_endpoints(config) == {}
+    assert custom_endpoint_refusals(config) == {
+        "box": "Endpoint path has ambiguous API suffixes."
+    }
+    assert validate_entry("Box", "openai_compatible", f"http://localhost:8000{path}") == [
+        "Endpoint path has ambiguous API suffixes."
+    ]
+
+
+def test_a_refused_custom_endpoint_is_listed_in_settings_with_its_reason():
+    """TASK-40300 owner decision 2026-11-13: an entry still refused at load was
+    only logged, so it vanished from Settings and could not be fixed there.
+    It is listed after the valid ones with the contract's reason, which never
+    names the value, and Edit and Delete can reach it."""
+    from tldw_chatbook.Chat.custom_endpoint_registry import load_custom_endpoints
+    from tldw_chatbook.UI.Screens.settings_provider_view_model import (
+        custom_endpoint_rows,
+    )
+
+    config = _entry_config("http://127.0.0.1:8000/v1")
+    config["custom_endpoints"]["leaky"] = {
+        "display_name": "Leaky",
+        "family": "openai_compatible",
+        "base_url": "http://127.0.0.1:8000/v1?token=not-a-real-secret",
+    }
+
+    rows = custom_endpoint_rows(config)
+
+    assert [row.key for row in rows] == ["custom-ep:box", "custom-ep:leaky"]
+    assert rows[1].label == "Leaky"
+    assert rows[1].value == (
+        "OpenAI-compatible · not loaded: Endpoint URL must not include a query. · 0 models"
+    )
+    assert "not-a-real-secret" not in rows[1].value
+    assert list(load_custom_endpoints(config)) == ["box"]
+    assert list(load_custom_endpoints(config, include_refused=True)) == ["box", "leaky"]
+
+
+def _summary_calls(provider, api_settings, **extra):
+    """Resolve and run one approval summary; return it and the calls made."""
+    from tldw_chatbook.Chat import permission_summary_service as summary
+
+    config = {
+        "api_settings": api_settings,
+        "permission_summary": {"mode": "always", "provider": provider, "model": "m"},
+        **extra,
+    }
+    calls: list[dict] = []
+    resolution = summary.resolve_permission_summary(config, environ={})
+    out = summary.summarize_pending_round(
+        resolution,
+        [{"role": "user", "content": "hi"}],
+        [{"tool_name": "t", "server_label": "", "description": "", "arguments_summary": ""}],
+        call_fn=lambda **kwargs: calls.append(kwargs)
+        or {"choices": [{"message": {"content": "ok"}}]},
+    )
+    return resolution, out, calls
+
+
+#: Review r14ep-rev3 I-1: the table each adapter reads its endpoint from. The
+#: summary looked settings up by the dispatch name, found nothing for these
+#: but vLLM, and left the call unpinned, so the adapter sent to its own value.
+_SUMMARY_ADAPTER_TABLES = (
+    ("vllm", "vllm", "api_url"),
+    ("local_llm", "local-llm", "api_url"),
+    ("local_llm", "local-llm", "api_ip"),
+    ("custom-openai-api", "custom", "api_url"),
+    ("oobabooga", "ooba_api", "api_ip"),
+)
+
+
+@pytest.mark.parametrize("shape", sorted(_CONTRACT_REFUSED_BASES))
+@pytest.mark.parametrize(("provider", "table", "key"), _SUMMARY_ADAPTER_TABLES)
+def test_the_approval_summary_never_calls_an_endpoint_the_contract_refuses(
+    provider, table, key, shape
+):
+    """TASK-40300 review r14ep-rev2 I2: the approval-round summarizer checked
+    only the provider's credential, then called ``chat_api_call`` with no
+    endpoint, so the adapter read and POSTed to a refused configured value."""
+    endpoint = _with_path("vllm", _CONTRACT_REFUSED_BASES[shape])
+
+    resolution, out, calls = _summary_calls(
+        provider, {table: {key: endpoint, "model": "m"}}
+    )
+
+    assert resolution.active is False
+    assert out is None and calls == []
+
+
+@pytest.mark.parametrize("host", ["127.1", "-bad.corp", "bücher.example", "localhost.."])
+def test_the_approval_summary_never_calls_an_mlx_host_the_contract_refuses(host):
+    """Review r14ep-rev3 I-1: MLX-LM builds its endpoint from ``host`` and
+    ``port``, which the summary never read, so ``host = "127.1"`` was sent to."""
+    resolution, out, calls = _summary_calls("mlx_lm", {"mlx_lm": {"host": host}})
+
+    assert resolution.active is False
+    assert out is None and calls == []
+
+
+@pytest.mark.parametrize(
+    ("provider", "api_settings", "extra", "pinned"),
+    [
+        ("vllm", {"vllm": {"api_url": "http://127.0.0.1:8000/v1"}}, {}, "http://127.0.0.1:8000/v1"),
+        # Review r14ep-rev3 I-1: the adapter's own table, checked and pinned.
+        ("local_llm", {"local-llm": {"api_ip": "http://127.0.0.1:8000/v1"}}, {}, "http://127.0.0.1:8000/v1"),
+        ("oobabooga", {"ooba_api": {"api_ip": "http://127.0.0.1:5000/v1"}}, {}, "http://127.0.0.1:5000/v1"),
+        ("mlx_lm", {"mlx_lm": {"port": 9000}}, {}, "http://127.0.0.1:9000/v1"),
+        (
+            "custom-openai-api-2",
+            {},
+            {"custom_openai_api_2": {"api_ip": "http://127.0.0.1:5000/v1/chat/completions"}},
+            "http://127.0.0.1:5000/v1/chat/completions",
+        ),
+        # Nothing configured: the adapter's own default, never unpinned.
+        ("openai", {"openai": {"api_key": "sk-not-a-real-key-0000"}}, {}, "https://api.openai.com/v1"),
+        ("together", {"together": {"api_key": "not-a-real-key-0000"}}, {}, "https://api.together.xyz/v1"),
+        # Review r14ep-rev4 M-2: chat_with_google never reads a top-level [google].
+        (
+            "google",
+            {"google": {"api_key": "not-a-real-key-0000"}},
+            {"google": {"api_base_url": "http://127.0.0.1:9/v1beta"}},
+            "https://generativelanguage.googleapis.com/v1beta",
+        ),
+    ],
+)
+def test_the_approval_summary_pins_the_endpoint_it_checked(provider, api_settings, extra, pinned):
+    """TASK-40300 review r14ep-rev2 I2: an accepted endpoint is the one the
+    call is pinned to, not whatever the adapter reads (review r14ep-rev3 I-1:
+    always pinned)."""
+    resolution, _out, calls = _summary_calls(provider, api_settings, **extra)
+
+    assert resolution.active is True
+    assert [call["api_base_url"] for call in calls] == [pinned]
+
+
+@pytest.mark.parametrize(
+    ("user", "pinned"),
+    [
+        ({}, "http://127.0.0.1:8080/v1"),
+        ({"api_settings": {"local_mlx_lm": {"port": 9000}}}, "http://127.0.0.1:9000/v1"),
+    ],
+)
+def test_the_approval_summary_pins_mlx_host_and_port_not_its_api_url(user, pinned):
+    """Review r14ep-rev4 C-1: the summary pinned ``[api_settings.local_mlx_lm]
+    api_url``, the shipped placeholder MLX-LM ignores."""
+    from tldw_chatbook.config import _merge_user_config_over_shipped_defaults
+
+    api_settings = _merge_user_config_over_shipped_defaults(user)["api_settings"]
+    resolution, _out, calls = _summary_calls("local_mlx_lm", api_settings)
+
+    assert resolution.active is True
+    assert [call["api_base_url"] for call in calls] == [pinned]
+
+
+def test_the_approval_summary_is_off_with_no_endpoint_to_send_to():
+    """Review r14ep-rev3 I-1: with nothing configured and no built-in endpoint
+    there is nothing checked to pin, so no summary is requested."""
+    resolution, out, calls = _summary_calls("vllm", {})
+
+    assert resolution.active is False
+    assert out is None and calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("base_url", "ready", "pinned"),
+    [
+        ("http://127.1:8000/v1", False, None),
+        ("http://127.0.0.1:8000/v1?token=not-a-real-secret", False, None),
+        ("http://127.0.0.1:8000/v1", True, "http://127.0.0.1:8000/v1"),
+    ],
+)
+async def test_the_image_context_call_never_reaches_a_refused_endpoint(
+    base_url, ready, pinned
+):
+    """TASK-40300 review r14ep-rev2 I2: ``/image``'s conversation-context call
+    took only the resolution's execution key, so the adapter read its own
+    config; it now refuses what a dispatch refuses and pins the endpoint."""
+    from Tests.Chat.test_console_generation_actions import (
+        _bare_generation_screen,
+        _imagegen_cfg,
+    )
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+
+    screen = _bare_generation_screen(ConsoleChatStore())
+    screen._build_console_provider_selection = lambda: "selection"
+
+    class _FakeGateway:
+        async def resolve_for_send(self, _selection):
+            return _dispatch_resolution("vllm", base_url)
+
+    screen._ensure_console_provider_gateway = lambda: _FakeGateway()
+
+    options = await screen._image._console_generate_image_llm_context_options(
+        _imagegen_cfg()
+    )
+
+    assert options.provider_ready is ready
+    if ready:
+        assert options.api_base_url == pinned
+        from dataclasses import replace
+
+        from tldw_chatbook.Chat.console_generate_image import (
+            compose_llm_context_prompt,
+        )
+
+        calls: list[dict] = []
+        compose_llm_context_prompt(
+            [("user", "a red fox at dawn")],
+            replace(
+                options,
+                chat_call=lambda **kwargs: calls.append(kwargs)
+                or {"choices": [{"message": {"content": "a red fox"}}]},
+            ),
+        )
+        assert [call.get("api_base_url") for call in calls] == [pinned]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "pasted",
+    [
+        "https://api.deepinfra.com/v1/openai/models",
+        "https://api.deepinfra.com/v1/openai/chat/completions",
+    ],
+)
+async def test_a_relaxed_custom_endpoint_pasted_with_a_route_sends_to_its_base(pasted):
+    """TASK-40300 review r14ep-rev2 M-a: a relaxed entry's raw value reached the
+    engine, so a base pasted with ``/models`` sent to
+    ``.../models/chat/completions``. The entry is read as its engine reads it."""
+    from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
+
+    config = _entry_config(pasted)
+    seen: list[str] = []
+    gateway = _recording_gateway(seen)
+    gateway._config_provider = lambda: config
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="custom-ep:box", explicit_model="m", streaming=False)
+    )
+    assert resolution.ready is True, resolution.visible_copy
+    [c async for c in gateway.stream_chat(resolution, [{"role": "user", "content": "x"}])]
+
+    assert [s.removesuffix("/chat/completions") for s in seen] == [
+        "adapter:https://api.deepinfra.com/v1/openai"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_llamacpp_readiness_and_send_name_the_contracts_reason():
+    """TASK-40300 review r14ep-rev2 M-b: llama.cpp readiness and the send said
+    only "invalid llama.cpp base URL", while the guide promised the reason."""
+    from tldw_chatbook.Chat.console_provider_endpoints import (
+        invalid_llamacpp_base_url_copy,
+    )
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_console_settings_readiness,
+    )
+
+    settings, config = _llamacpp_source("session", "http://127.1:8080")
+    readiness = build_console_settings_readiness(settings, app_config=config, environ={})
+    resolution = await _resolve_llamacpp_send(settings, config, [])
+
+    expected = invalid_llamacpp_base_url_copy(
+        "Endpoint URL must include a valid host and port."
+    )
+    assert readiness.detail == resolution.visible_copy == expected
+
+
+class _ReferencingStore:
+    """One live session on ``custom-ep:box`` (a minimal Console store)."""
+
+    def __init__(self, base_url=None):
+        self.replaced = []
+        self.base_url = base_url
+
+    def sessions(self):
+        return [SimpleNamespace(id="s1", settings=SimpleNamespace(provider="custom-ep:box"))]
+
+    def session_settings(self, _session_id):
+        return ConsoleSessionSettings(provider="custom-ep:box", model="m", base_url=self.base_url)
+
+    def replace_session_settings(self, session_id, settings):
+        self.replaced.append((session_id, settings))
+
+
+_KEEPS_WORKING = "'Box' keeps working"
+_FIX_WITH_EDIT = "Fix it with Edit"
+_OWN_URL = "keep their own endpoint URL"
+
+
+@pytest.mark.parametrize(
+    ("family", "base_url", "session_url", "says"),
+    [
+        ("openai_compatible", "https://api.deepinfra.com/v1/openai", None, _KEEPS_WORKING),
+        ("openai_compatible", "https://gateway.ai.cloudflare.com/v1/acct123/gw1/compat", None, _KEEPS_WORKING),
+        ("openai_compatible", "http://127.0.0.1:8000/v1?token=not-a-real-secret", None, _FIX_WITH_EDIT),
+        # Review r14ep-rev3 I-2: only the OpenAI-compatible family was checked,
+        # and only the entry's URL, not the one each conversation keeps.
+        ("ollama", "http://127.0.0.1:11434?token=not-a-real-secret", None, _FIX_WITH_EDIT),
+        ("llama_cpp", "http://127.1:8080", None, _FIX_WITH_EDIT),
+        ("openai_compatible", "http://127.0.0.1:8000/v1", "https://api.deepinfra.com/v1/openai", _KEEPS_WORKING),
+        # Review r14ep-rev4 M-1: the entry is fine; Edit cannot fix a
+        # conversation's own URL.
+        ("openai_compatible", "http://127.0.0.1:8000/v1", "http://127.1:8000/v1", _OWN_URL),
+        ("ollama", "http://127.0.0.1:11434", "http://127.1:11434", _OWN_URL),
+    ],
+)
+def test_detach_refuses_to_move_conversations_onto_a_url_the_custom_provider_refuses(
+    family, base_url, session_url, says
+):
+    """TASK-40300 review r14ep-rev2 M-e (coordinator ruling): Detach moves an
+    entry's conversations to the family provider, each with the endpoint it
+    keeps; one that provider refuses is never moved. Nothing changes, and the
+    copy names the entry, never the URL, and says whether the entry keeps
+    working or Edit fixes it."""
+    from tldw_chatbook.UI.Screens.settings_provider_view_model import (
+        DetachRefused,
+        detach_and_delete_entry,
+    )
+
+    store = _ReferencingStore(session_url)
+    config = _entry_config(base_url, family=family)
+
+    with pytest.raises(DetachRefused) as caught:
+        detach_and_delete_entry(config, store, "custom-ep:box")
+
+    assert store.replaced == []
+    copy = caught.value.user_copy
+    assert copy.startswith("Detach blocked:") and "'Box'" in copy
+    assert [phrase for phrase in (_KEEPS_WORKING, _FIX_WITH_EDIT, _OWN_URL) if phrase in copy] == [says]
+    assert "deepinfra" not in copy and "not-a-real-secret" not in copy and "127.1" not in copy
+
+
+def test_detach_moves_conversations_whose_own_url_the_custom_provider_accepts(monkeypatch):
+    """Review r14ep-rev3 I-2: an entry with a base only a named endpoint
+    accepts was refused even when every conversation keeps its own URL, which
+    plain ``custom`` accepts."""
+    from tldw_chatbook.UI.Screens import settings_provider_view_model as view_model
+
+    deleted = []
+    monkeypatch.setattr(
+        view_model,
+        "delete_settings_from_cli_config",
+        lambda section, keys: deleted.append((section, keys)) or True,
+    )
+    store = _ReferencingStore("http://127.0.0.1:8000/v1")
+
+    view_model.detach_and_delete_entry(
+        _entry_config("https://api.deepinfra.com/v1/openai"), store, "custom-ep:box"
+    )
+
+    assert [(sid, s.provider, s.base_url) for sid, s in store.replaced] == [
+        ("s1", "custom", "http://127.0.0.1:8000/v1")
+    ]
+    assert deleted == [("custom_endpoints", ["box"])]
+
+
+@pytest.mark.parametrize(
+    ("params", "copy"),
+    [
+        (
+            {},
+            "Provider blocked: this custom endpoint is not loaded: Endpoint URL "
+            "must not include a query. Fix it in Settings ▸ Custom endpoints.",
+        ),
+        (
+            {"temperature": 5},
+            "Provider blocked: this custom endpoint is not loaded: 'temperature' "
+            "must be between 0.0 and 2.0. Fix it in config.toml, or delete the "
+            "entry in Settings ▸ Custom endpoints.",
+        ),
+        (
+            {"bogus": 1},
+            "Provider blocked: this custom endpoint is not loaded: unknown "
+            "sampling param 'bogus'. Fix it in config.toml, or delete the entry "
+            "in Settings ▸ Custom endpoints.",
+        ),
+    ],
+)
+def test_a_custom_endpoint_not_loaded_says_where_its_reason_can_be_fixed(params, copy):
+    """Review r14ep-rev3 Mi-1: the copy ran the reason into the next sentence
+    and sent a sampling-params refusal to Settings, which cannot edit params."""
+    from tldw_chatbook.Chat.custom_endpoint_registry import missing_custom_endpoint_copy
+
+    url = "http://127.0.0.1:8000/v1?token=not-a-real-secret" if not params else "http://127.0.0.1:8000/v1"
+    config = _entry_config(url)
+    config["custom_endpoints"]["box"]["params"] = params
+
+    assert missing_custom_endpoint_copy(config, "custom-ep:box") == copy
+
+
+def _nested(path, value):
+    """``value`` at ``path`` in an otherwise empty config."""
+    for key in reversed(path):
+        value = {key: value}
+    return {"api_settings": {}, **value}
+
+
+#: Review r14ep-rev3 I-3 and its follow-up: where an adapter reads its
+#: endpoint when Console's table has none; a send went unpinned to it.
+_OWN_TABLE_ADAPTERS = [
+    ("aphrodite", ("api_settings", "aphrodite_api", "api_url")),
+    ("oobabooga", ("api_settings", "ooba_api", "api_ip")),
+    ("custom_2", ("custom_openai_api_2", "api_ip")),
+    # Review r14ep-rev4 I-a.
+    ("local_llm", ("api_settings", "local-llm", "api_ip")),
+]
+
+
+def _merged(user):
+    """``user`` merged over the shipped template, as every config view is."""
+    from tldw_chatbook.config import _merge_user_config_over_shipped_defaults
+
+    return _merge_user_config_over_shipped_defaults(user)
+
+
+async def _assert_refused_without_a_request(provider, config):
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_console_settings_readiness,
+    )
+
+    settings = ConsoleSessionSettings(provider=provider, model="m")
+    seen: list[str] = []
+
+    readiness = build_console_settings_readiness(settings, app_config=config, environ={})
+    resolution = await _resolve_endpoint_send(settings, config, False, seen)
+
+    assert readiness.label == "Invalid URL", readiness
+    assert resolution.ready is False
+    assert seen == []
+
+
+async def _assert_ready_and_pinned(provider, config, pinned):
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_console_settings_readiness,
+    )
+
+    settings = ConsoleSessionSettings(provider=provider, model="m")
+    seen: list[str] = []
+
+    readiness = build_console_settings_readiness(settings, app_config=config, environ={})
+    resolution = await _resolve_endpoint_send(settings, config, False, seen)
+
+    assert readiness.label == "Ready", readiness
+    assert resolution.ready is True, resolution.visible_copy
+    assert [s for s in seen if s.startswith("adapter:")] == [f"adapter:{pinned}"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shape", sorted(_CONTRACT_REFUSED_BASES))
+@pytest.mark.parametrize(("provider", "path"), _OWN_TABLE_ADAPTERS)
+async def test_console_never_sends_to_a_refused_endpoint_in_the_adapters_own_table(
+    provider, path, shape
+):
+    """Review r14ep-rev3 I-3: with the refused URL only in
+    ``[api_settings.aphrodite_api] api_url``, ``[api_settings.ooba_api]
+    api_ip``, Custom OpenAI API 2's ``api_ip`` or Local LLM's ``api_ip``,
+    readiness and the send were Ready with no endpoint, and the adapter
+    POSTed to it."""
+    config = _nested(path, _with_path(provider, _CONTRACT_REFUSED_BASES[shape]))
+
+    await _assert_refused_without_a_request(provider, config)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("provider", "path"), _OWN_TABLE_ADAPTERS)
+async def test_console_checks_and_pins_an_endpoint_in_the_adapters_own_table(
+    provider, path
+):
+    """Review r14ep-rev3 I-3: a config that sets only the adapter's own table
+    keeps working; the send is pinned to the endpoint Console checked."""
+    await _assert_ready_and_pinned(
+        provider, _nested(path, "http://127.0.0.1:5000/v1"), "http://127.0.0.1:5000/v1"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "table"),
+    [
+        ("aphrodite", "aphrodite"),
+        ("oobabooga", "oobabooga"),
+        ("custom_2", "custom_2"),
+        ("local_llm", "local-llm"),
+        ("tabbyapi", "tabbyapi"),
+        ("koboldcpp", "koboldcpp"),
+    ],
+)
+async def test_own_table_adapters_keep_their_shipped_endpoint(provider, table):
+    """Review r14ep-rev4 C-1: on the shipped template, as a real config is
+    built, each adapter keeps the endpoint it was pinned to before."""
+    config = _merged({})
+
+    await _assert_ready_and_pinned(provider, config, config["api_settings"][table]["api_url"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("user", "pinned"),
+    [
+        ({}, "http://127.0.0.1:8080/v1"),
+        ({"api_settings": {"local_mlx_lm": {"host": "localhost", "port": 9000}}}, "http://localhost:9000/v1"),
+    ],
+)
+async def test_mlx_sends_to_its_own_host_and_port_never_the_shipped_api_url(user, pinned):
+    """Review r14ep-rev4 C-1: round 4b pinned ``[api_settings.local_mlx_lm]
+    api_url``, which the shipped template sets to a placeholder and MLX-LM
+    ignores, so every MLX send went there. Console checks and pins the URL MLX-LM
+    builds from its host and port, or its 8080 default."""
+    config = _merged(user)
+    assert config["api_settings"]["local_mlx_lm"]["api_url"] != pinned
+
+    await _assert_ready_and_pinned("mlx_lm", config, pinned)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("host", ["127.1", "-bad.corp", "bücher.example", "localhost.."])
+async def test_console_never_sends_to_a_refused_mlx_host(host):
+    """Review r14ep-rev3 follow-up and rev4 C-1: MLX-LM builds its endpoint from
+    ``[api_settings.local_mlx_lm] host`` and ``port``, so ``host = "127.1"``
+    is refused even with the shipped ``api_url`` merged in."""
+    await _assert_refused_without_a_request(
+        "mlx_lm", _merged({"api_settings": {"local_mlx_lm": {"host": host, "port": 8080}}})
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("legacy", ["http://127.1:8000/v1", "http://127.0.0.1:8000/v1"])
+async def test_huggingface_console_checks_and_pins_its_legacy_table(legacy):
+    """Review r14ep-rev4 M-4: with ``[api_settings.huggingface] api_base_url``
+    blank, Console checked the built-in URL and left the call unpinned, and
+    the adapter posted to ``huggingface_api.api_base_url``."""
+    config = _merged(
+        {"api_settings": {"huggingface": {"api_base_url": "", "api_key": "hf_notarealkey0000000000"}}}
+    )
+    config["huggingface_api"] = {"api_base_url": legacy, "use_router_url_format": False}
+
+    if legacy == "http://127.1:8000/v1":
+        await _assert_refused_without_a_request("huggingface", config)
+    else:
+        await _assert_ready_and_pinned("huggingface", config, legacy)
+
+
+_HF_BUILTIN = "https://api-inference.huggingface.co/v1"
+
+
+def _hf_config(legacy, *, router=False, router_base_url="http://127.1:9000/hf"):
+    """A merged config whose HuggingFace table has no endpoint, with a legacy one."""
+    config = _merged(
+        {"api_settings": {"huggingface": {"api_base_url": "", "api_key": "hf_notarealkey0000000000"}}}
+    )
+    config["huggingface_api"] = {
+        "api_base_url": legacy,
+        "use_router_url_format": router,
+        "router_base_url": router_base_url,
+    }
+    return config
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("config", "chat_endpoint", "pinned"),
+    [
+        # The legacy URL is the built-in one: it was checked, then left unpinned.
+        (_hf_config(_HF_BUILTIN), None, _HF_BUILTIN),
+        # A chat endpoint equal to the built-in one went unpinned, so the
+        # adapter posted to a refused legacy URL.
+        (_hf_config("http://127.1:8000/v1"), _HF_BUILTIN, _HF_BUILTIN),
+        # Router mode reads the router base, which is checked and pinned.
+        (
+            _hf_config(_HF_BUILTIN, router=True, router_base_url="https://router.huggingface.co/hf-inference"),
+            None,
+            "https://router.huggingface.co/hf-inference",
+        ),
+    ],
+)
+async def test_huggingface_is_always_pinned_to_the_endpoint_console_checked(
+    config, chat_endpoint, pinned
+):
+    """Review r14ep-rev5: HuggingFace was unpinned whenever Console's endpoint
+    was the built-in one, and ``chat_with_huggingface`` then read
+    ``huggingface_api`` (or its ``router_base_url``) unchecked."""
+    settings = ConsoleSessionSettings(provider="huggingface", model="m", base_url=chat_endpoint)
+    seen: list[str] = []
+
+    resolution = await _resolve_endpoint_send(settings, config, chat_endpoint is not None, seen)
+
+    assert resolution.ready is True, resolution.visible_copy
+    assert [s for s in seen if s.startswith("adapter:")] == [f"adapter:{pinned}"]
+
+
+@pytest.mark.asyncio
+async def test_huggingface_router_mode_never_reaches_an_unchecked_router_base():
+    """Review r14ep-rev5: in router mode the adapter posted to a refused
+    ``huggingface_api.router_base_url`` while Console checked the built-in URL."""
+    await _assert_refused_without_a_request("huggingface", _hf_config(_HF_BUILTIN, router=True))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("ooba_api", "ready"), [("http://127.1:5000/v1", False), ("http://127.0.0.1:5000/v1", True)])
+async def test_a_blanked_shipped_endpoint_falls_back_to_the_adapters_own_table(ooba_api, ready):
+    """Review r14ep-rev5 (a): on the merged config, a user who blanks the shipped
+    ``[api_settings.oobabooga] api_url`` gets ``[api_settings.ooba_api] api_ip``,
+    checked and pinned."""
+    config = _merged({"api_settings": {"oobabooga": {"api_url": ""}, "ooba_api": {"api_ip": ooba_api}}})
+
+    if ready:
+        await _assert_ready_and_pinned("oobabooga", config, ooba_api)
+    else:
+        await _assert_refused_without_a_request("oobabooga", config)
+
+
+def _frozen_endpoint(config, provider):
+    from tldw_chatbook.Agents.agent_routing import SpawnTarget, freeze_spawn_target
+
+    return freeze_spawn_target(config, SpawnTarget(provider, "m", None, (), "preset")).base_url
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("user", "pinned"),
+    [
+        ({}, "http://127.0.0.1:8080/v1"),
+        ({"api_settings": {"local_mlx_lm": {"host": "localhost", "port": 9000}}}, "http://localhost:9000/v1"),
+    ],
+)
+async def test_a_sub_agent_frozen_on_mlx_posts_to_its_host_and_port(user, pinned):
+    """Review r14ep-rev5: ``freeze_spawn_target`` froze ``[api_settings.
+    local_mlx_lm] api_url``, the shipped placeholder, and a same-provider child,
+    which overlays the frozen endpoint on its own resolution, posted there."""
+    import dataclasses
+
+    config = _merged(user)
+    frozen = _frozen_endpoint(config, "local_mlx_lm")
+    pins: list[str] = []
+
+    def adapter(**kwargs):
+        pins.append(kwargs.get("api_base_url"))
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: config,
+        environ={},
+        http_client=_client(lambda request: httpx.Response(200, json=_openai_models_payload("m"))),
+        chat_api_call_fn=adapter,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="local_mlx_lm", explicit_model="m", streaming=False)
+    )
+    child = dataclasses.replace(resolution, base_url=frozen)
+    [c async for c in gateway.stream_chat(child, [{"role": "user", "content": "x"}])]
+
+    assert frozen == pinned
+    assert pins == [pinned]
+
+
+def test_a_sub_agent_target_freezes_the_endpoint_the_send_checks():
+    """Review r14ep-rev5: a frozen target took only Console's table, so an
+    adapter's own table and HuggingFace's legacy one were never frozen, and a
+    refused legacy URL froze as the built-in one."""
+    from tldw_chatbook.Agents.agent_routing import RoutingError
+
+    ooba = _merged({"api_settings": {"oobabooga": {"api_url": ""}, "ooba_api": {"api_ip": "http://127.0.0.1:5000/v1"}}})
+
+    assert _frozen_endpoint(ooba, "oobabooga") == "http://127.0.0.1:5000/v1"
+    with pytest.raises(RoutingError):
+        _frozen_endpoint(_hf_config("http://127.1:8000/v1"), "huggingface")
+
+
+def test_a_refused_entry_renames_and_counts_but_offers_no_duplicate():
+    """TASK-40300 review r14ep-rev2 M-c: Rename checked the whole entry, so a
+    refused one failed with its URL reason; the section count left it out."""
+    from tldw_chatbook.Chat.custom_endpoint_registry import (
+        validate_display_name,
+        validate_entry,
+    )
+    from tldw_chatbook.UI.Settings_Modules.providers_models_card import (
+        custom_endpoints_summary,
+    )
+
+    config = _entry_config("http://127.0.0.1:8000/v1?token=not-a-real-secret")
+
+    assert validate_display_name("New name") == []
+    assert validate_entry("New name", "openai_compatible", config["custom_endpoints"]["box"]["base_url"])
+    assert validate_display_name(" ") == ["Display name is required."]
+    screen = SimpleNamespace(_custom_endpoints_view_config=lambda: config)
+    assert custom_endpoints_summary(screen).startswith("1 named endpoint ·")

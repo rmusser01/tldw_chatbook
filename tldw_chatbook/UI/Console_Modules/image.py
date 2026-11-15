@@ -619,10 +619,21 @@ class ConsoleImageController:
                 timeout_seconds=cfg.context_llm_timeout_seconds,
                 provider_ready=False,
             )
+        from ...Chat.console_provider_endpoints import (
+            CONDITIONAL_BASE_URL_EXECUTION_KEYS,
+            adapter_api_base_url,
+            meaningful_adapter_base_url,
+            refuse_a_refused_endpoint,
+        )
+
         try:
             selection = self._build_console_provider_selection_fn()
             gateway = self._ensure_console_provider_gateway_fn()
             resolution = await gateway.resolve_for_send(selection)
+            # TASK-40300 review r14ep-rev2 I2: the context call goes straight
+            # to chat_api_call, so it refuses what a dispatch refuses and
+            # pins the endpoint it checked, as the gateway does.
+            refuse_a_refused_endpoint(resolution)
         except Exception as exc:  # noqa: BLE001 - context composition is optional
             logger.debug(
                 "generate-image provider resolution for LLM context failed (exception_type={})",
@@ -642,6 +653,11 @@ class ConsoleImageController:
             api_endpoint=resolution.execution_key or None,
             model=resolution.model,
             api_key=resolution.api_key,
+            api_base_url=(
+                meaningful_adapter_base_url
+                if resolution.execution_key in CONDITIONAL_BASE_URL_EXECUTION_KEYS
+                else adapter_api_base_url
+            )(resolution.execution_key, getattr(resolution, "base_url", None)),
         )
 
     async def _regenerate_console_generation_variant(self, message_id: str) -> None:

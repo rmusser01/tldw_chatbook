@@ -35,7 +35,8 @@ from tldw_chatbook.Chat.console_provider_support import (
 )
 from tldw_chatbook.Chat.console_provider_endpoints import (
     DEFAULT_LLAMACPP_BASE_URL,  # noqa: F401  (re-exported; console_settings_modal imports it from here)
-    INVALID_LLAMACPP_BASE_URL_COPY,
+    console_own_table_endpoint,
+    invalid_llamacpp_base_url_copy,
     URL_BASED_PROVIDER_KEYS,  # also re-exported; console_settings_modal imports it from here
     effective_provider_endpoint,
     first_configured_endpoint,
@@ -52,6 +53,7 @@ from tldw_chatbook.Chat.provider_catalog import (
 from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
     REMOTE_ENDPOINT_SCHEME_REQUIRED,
     canonical_connection_identity,
+    endpoint_refusal,
     read_schemeless_loopback,
     resolve_provider_endpoint,
 )
@@ -114,10 +116,7 @@ from tldw_chatbook.config import (
     resolve_provider_api_key,
 )
 from tldw_chatbook.model_capabilities import anthropic_model_rejects_disabled_thinking
-from tldw_chatbook.Utils.input_validation import (
-    validate_env_var_reference,
-    validate_url,
-)
+from tldw_chatbook.Utils.input_validation import validate_env_var_reference
 from tldw_chatbook.Utils.token_counter import count_tokens_messages
 from tldw_chatbook.Utils.character_display_text import sanitize_character_display_label
 
@@ -346,6 +345,10 @@ def normalize_llamacpp_base_url(api_url: str | None) -> str:
     if not raw_url:
         return DEFAULT_LLAMACPP_BASE_URL
 
+    # TASK-40300: a query or fragment is never dropped by rebuilding the URL;
+    # the contract refuses the value, so every check after this one must too.
+    if "?" in raw_url or "#" in raw_url:
+        return raw_url
     # TASK-39151: only a loopback spelling typed without a scheme is read as
     # http://, the contract's rule; any other stays schemeless and invalid.
     candidate = read_schemeless_loopback(raw_url)
@@ -1850,9 +1853,13 @@ def build_console_settings_readiness(
     from tldw_chatbook.Chat.custom_endpoint_registry import (
         entry_for,
         family_execution_key,
+        missing_custom_endpoint_copy,
+        split_custom_endpoint_id,
     )
 
     entry = entry_for(app_config, settings.provider)
+    # TASK-40302: a custom-ep id whose entry was removed or skipped at load.
+    entry_missing = entry is None and bool(split_custom_endpoint_id(settings.provider))
     canonical_provider = _canonical_chat_provider_id(
         family_execution_key(entry.family) if entry is not None else settings.provider
     )
@@ -1985,20 +1992,27 @@ def build_console_settings_readiness(
 
     provider_supported = provider_key in supported_keys
     execution_supported = provider_key in send_capable_keys
-    # TASK-39151: with no session endpoint, llama.cpp sends to its fallback
-    # chain's endpoint (environment, Console override, config), so check it.
-    checked_url = base_url or (
-        _console_endpoint_restart_fallback(
-            provider_key, provider_settings, app_config, environ
+    # TASK-39151/TASK-40300: with no session endpoint, check the one the send
+    # uses: llama.cpp's fallback chain (environment, Console override,
+    # config), any other provider's configured (or built-in) endpoint.
+    checked_url = base_url
+    if not checked_url and entry is None:
+        checked_url = (
+            _console_endpoint_restart_fallback(
+                provider_key, provider_settings, app_config, environ
+            )
+            if provider_key in {"llama_cpp", "local_llamacpp"}
+            else effective_provider_endpoint(provider_key, None, provider_settings)
         )
-        if entry is None and provider_key in {"llama_cpp", "local_llamacpp"}
-        else None
+    checked_url = console_own_table_endpoint(
+        identity.execution_key, app_config, checked_url, provider_settings, base_url
     )
-    endpoint_invalid = bool(
-        checked_url
-        and _is_url_based_provider(provider_key, provider_settings)
-        and not _valid_base_url(provider_key, checked_url)
+    endpoint_error = (
+        endpoint_refusal(provider_key, checked_url, custom_endpoint=entry is not None)
+        if checked_url
+        else ""
     )
+    endpoint_invalid = bool(endpoint_error)
     invalid_endpoint = (
         _invalid_endpoint_kind(provider_key, checked_url) if endpoint_invalid else None
     )
@@ -2012,7 +2026,7 @@ def build_console_settings_readiness(
 
     blocker: ConsoleSettingsBlockerCode | None
     recovery_action: ConsoleSettingsRecoveryAction | None
-    if not provider_key:
+    if not provider_key or entry_missing:
         blocker, recovery_action = "provider_missing", "select_provider"
     elif not provider_supported or not execution_supported:
         blocker, recovery_action = (
@@ -2051,7 +2065,9 @@ def build_console_settings_readiness(
         blocker, recovery_action = None, None
 
     native_send_supported = blocker is None
-    display_name = provider_display_name(provider_key)
+    display_name = (
+        "Custom endpoint" if entry_missing else provider_display_name(provider_key)
+    )
     if blocker == "endpoint_invalid":
         if not endpoint_invalid:
             # Missing-endpoint copy path (see the endpoint_missing branch
@@ -2062,9 +2078,9 @@ def build_console_settings_readiness(
             detail = readiness.user_message
         else:
             detail = (
-                INVALID_LLAMACPP_BASE_URL_COPY
+                invalid_llamacpp_base_url_copy(endpoint_error)
                 if provider_key in NATIVE_CONSOLE_PROVIDER_KEYS
-                else "Provider blocked: invalid base URL. Use an http(s) URL."
+                else f"Provider blocked: {endpoint_error}"
             )
         label = "Invalid URL"
     elif blocker == "endpoint_not_saved":
@@ -2073,7 +2089,9 @@ def build_console_settings_readiness(
     elif blocker in {"provider_missing", "provider_unsupported"}:
         label = "Unknown"
         detail = readiness.user_message
-        if blocker == "provider_unsupported":
+        if entry_missing:
+            detail = missing_custom_endpoint_copy(app_config, settings.provider)
+        elif blocker == "provider_unsupported":
             detail = (
                 f"Provider blocked: '{provider_key}' is not available in Console yet. "
                 "Choose a supported provider."
@@ -2105,6 +2123,8 @@ def build_console_settings_readiness(
     if provider_configuration_invalid:
         configuration = "incomplete"
         configuration_issue = "invalid_settings"
+    if entry_missing:
+        configuration, configuration_issue = "incomplete", "provider_missing"
 
     return ConsoleSettingsReadiness(
         label=label,
@@ -3245,30 +3265,10 @@ def unsaved_console_endpoint_warning(
 
 
 def _valid_base_url(provider_key: str, base_url: str) -> bool:
-    # TASK-39042: the endpoint contract's scheme rule, the one the send reads
-    # (``effective_provider_endpoint``). Only a loopback spelling may omit
-    # the scheme; llama.cpp's normalizer had added http:// to a remote host.
-    base_url = read_schemeless_loopback(base_url)
-    if "://" not in base_url:
-        return False
-    try:
-        candidate = (
-            normalize_llamacpp_base_url(base_url)
-            if provider_key in NATIVE_CONSOLE_PROVIDER_KEYS
-            else base_url
-        )
-    except ValueError:
-        return False
-    return validate_url(candidate) and _has_valid_url_port(candidate)
-
-
-def _has_valid_url_port(url: str) -> bool:
-    try:
-        parsed = urlparse(url)
-        parsed.port
-    except ValueError:
-        return False
-    return parsed.port is None or 0 < parsed.port <= 65535
+    # TASK-40300: the endpoint contract decides, as the save and the send do
+    # (TASK-39042 took only its scheme rule; ``validate_url`` let a zone id,
+    # ``-bad.corp``, ``127.1``, an IDN and a query through).
+    return not endpoint_refusal(provider_key, base_url)
 
 
 def _float_in_range(value: object, minimum: float, maximum: float) -> bool:

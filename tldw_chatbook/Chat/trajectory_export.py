@@ -61,6 +61,7 @@ from tldw_chatbook.Chat.trajectory import (
     TrajectorySnapshot,
     redact_local_paths,
 )
+from tldw_chatbook.Utils.log_sanitizer import CREDENTIAL_VALUE_PATTERNS
 
 __all__ = [
     "TRAJECTORY_EXPORT_FORMAT",
@@ -298,6 +299,9 @@ _CREDENTIAL_KEY_RE = re.compile(
     re.IGNORECASE,
 )
 _CREDENTIAL_VALUE_RES = (
+    # TASK-40301: every shape the log sanitizer masks, from its own tuple and
+    # first, so its Bearer and user-info rules see the whole value.
+    *CREDENTIAL_VALUE_PATTERNS,
     re.compile(
         r"-----BEGIN [^-\n]*PRIVATE KEY-----.*?"
         r"-----END [^-\n]*PRIVATE KEY-----",

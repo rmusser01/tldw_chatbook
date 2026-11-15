@@ -15,6 +15,7 @@ from ...Chat.custom_endpoint_registry import (
     ENV_VAR_NAME_RULE_COPY,
     CustomEndpointEntry,
     build_entry_mutation,
+    custom_endpoint_refusals,
     derive_slug,
     family_execution_key,
     family_normalizes_like_llama,
@@ -417,14 +418,19 @@ def custom_endpoint_rows(
 
     Returns:
         Rows keyed by the entry's ``custom-ep:<slug>`` provider id; empty
-        when the registry has no valid entries.
+        when the registry has no entries. An entry refused at load follows
+        the valid ones and reads "not loaded" with its reason in place of
+        its endpoint (TASK-40300), so it can be edited or deleted here.
     """
     rows: list[SettingsOverviewRow] = []
-    for entry in load_custom_endpoints(app_config).values():
+    refusals = custom_endpoint_refusals(app_config)
+    for entry in load_custom_endpoints(app_config, include_refused=True).values():
         family_label = _CUSTOM_ENDPOINT_FAMILY_LABELS.get(
             entry.family, entry.family
         )
         endpoint_display = safe_endpoint_display(entry.base_url) or "not set"
+        if entry.slug in refusals:
+            endpoint_display = f"not loaded: {refusals[entry.slug]}"
         model_count = len(entry.models)
         models_label = f"{model_count} model" if model_count == 1 else f"{model_count} models"
         rows.append(
@@ -478,6 +484,62 @@ def _detach_base_url(
     return entry.base_url
 
 
+class DetachRefused(RuntimeError):
+    """Detach would move conversations onto a URL Console refuses (TASK-40300).
+
+    Attributes:
+        user_copy: What the Custom endpoints status line says; it names the
+            entry, never its URL.
+    """
+
+    def __init__(self, user_copy: str) -> None:
+        super().__init__(user_copy)
+        self.user_copy = user_copy
+
+
+def _detach_refusal(entry: CustomEndpointEntry, urls: list[str | None]) -> str:
+    """Why detaching ``entry`` is refused, or "" (review r14ep-rev2 M-e).
+
+    Detach moves each conversation to the family provider with ``urls``, the
+    endpoint each would keep; that provider's reading must accept every one
+    (review r14ep-rev3 I-2: an ollama ``?token=`` entry and a conversation's
+    own relaxed URL moved). An OpenAI-compatible base such as DeepInfra's
+    ``/v1/openai`` that only a named entry accepts (owner decision
+    2026-11-13) gets its own copy: the entry keeps working.
+    """
+    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+        endpoint_refusal,
+    )
+
+    provider = family_execution_key(entry.family)
+    refused = [url for url in urls if endpoint_refusal(provider, url or "")]
+    if not refused:
+        return ""
+    name = entry.display_name
+    if entry.family != "openai_compatible" or any(
+        endpoint_refusal(provider, url or "", custom_endpoint=True) for url in refused
+    ):
+        if entry.base_url not in refused:
+            # Review r14ep-rev4 M-1: only conversations' own URLs are refused,
+            # which Edit cannot change.
+            return (
+                f"Detach blocked: some '{name}' conversations keep their own "
+                "endpoint URL, which Console refuses. Switch those conversations "
+                "to another provider, then delete it."
+            )
+        return (
+            f"Detach blocked: '{name}' conversations would move to an endpoint "
+            "URL Console refuses. Fix it with Edit, or switch those "
+            "conversations to another provider, then delete it."
+        )
+    return (
+        f"Detach blocked: '{name}' conversations use an OpenAI-compatible base "
+        "that only a named endpoint accepts (its v1 is not the last part of the "
+        f"path), so they would lose their endpoint. '{name}' keeps working; "
+        "switch those conversations to another provider, then delete it."
+    )
+
+
 def detach_and_delete_entry(
     app_config: Mapping[str, object],
     store: CustomEndpointReferenceStore | None,
@@ -503,6 +565,8 @@ def detach_and_delete_entry(
         provider_id: A ``custom-ep:<slug>`` id naming a valid entry.
 
     Raises:
+        DetachRefused: Referencing sessions would move onto a URL Console
+            refuses; nothing changes (TASK-40300 review r14ep-rev2 M-e).
         KeyError: Unknown session id reported by the store.
         RuntimeError: The config delete failed (referencing sessions that
             were detached keep their conversation-only endpoints; retrying
@@ -511,23 +575,30 @@ def detach_and_delete_entry(
     slug = split_custom_endpoint_id(provider_id)
     if slug is None:
         return
-    entry = load_custom_endpoints(app_config).get(slug)
+    entry = load_custom_endpoints(app_config, include_refused=True).get(slug)
     if entry is None:
         return
     family_provider = family_execution_key(entry.family)
-    if store is not None:
-        for session_id in conversations_referencing_endpoint(store, provider_id):
-            settings = store.session_settings(session_id)
-            if settings is None:
-                continue
-            store.replace_session_settings(
-                session_id,
-                replace(
-                    settings,
-                    provider=family_provider,
-                    base_url=_detach_base_url(entry, settings),
-                ),
-            )
+    references = (
+        conversations_referencing_endpoint(store, provider_id) if store is not None else []
+    )
+    moves = [
+        (
+            session_id,
+            replace(
+                settings,
+                provider=family_provider,
+                base_url=_detach_base_url(entry, settings),
+            ),
+        )
+        for session_id in references
+        if store is not None
+        and (settings := store.session_settings(session_id)) is not None
+    ]
+    if refusal := _detach_refusal(entry, [settings.base_url for _, settings in moves]):
+        raise DetachRefused(refusal)
+    for session_id, settings in moves:
+        store.replace_session_settings(session_id, settings)
     if not delete_settings_from_cli_config("custom_endpoints", [slug]):
         logger.warning(
             "Custom endpoint '%s' was detached but could not be deleted "
