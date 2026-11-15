@@ -433,7 +433,8 @@ class ConsoleTranscriptSurface(Container):
                     and (runtime.authority_token, runtime.profile_authority)
                     == authority
                     and runtime.chat_store is store
-                    and getattr(screen.app_instance, "console_runtime", None) is runtime
+                    # Dispose latches before it detaches the app's runtime,
+                    # and only dispose ever empties that slot.
                     and not runtime._disposed
                     and store.active_session_epoch() == epoch
                     and store.active_session_id == session_id

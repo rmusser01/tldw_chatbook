@@ -21,15 +21,15 @@ async def retire_app_sqlite_handles(app: Any) -> None:
     from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
     from tldw_chatbook.Evals.eval_orchestrator import EvaluationOrchestrator
 
-    evaluations = getattr(app, "evaluation_orchestrator", None)
+    def read(attribute):
+        try:
+            return attribute()
+        except AttributeError:
+            return None  # An app (or double) that never wired this owner.
+
+    evaluations = read(lambda: app.evaluation_orchestrator)
     owners = (
-        (
-            "Chat",
-            getattr(app, "chachanotes_db", None),
-            CharactersRAGDB,
-            "_local",
-            "conn",
-        ),
+        ("Chat", read(lambda: app.chachanotes_db), CharactersRAGDB, "_local", "conn"),
         (
             "Evaluations",
             getattr(evaluations, "db", None),
@@ -39,21 +39,21 @@ async def retire_app_sqlite_handles(app: Any) -> None:
         ),
         (
             "Collections",
-            getattr(app, "local_library_collections_db", None),
+            read(lambda: app.local_library_collections_db),
             LibraryCollectionsDB,
             "_thread_local",
             "conn",
         ),
         (
             "Subscriptions",
-            getattr(app, "subscriptions_db", None),
+            read(lambda: app.subscriptions_db),
             SubscriptionsDB,
             "_local",
             "conn",
         ),
         (
             "Workspace",
-            getattr(app, "local_workspace_db", None),
+            read(lambda: app.local_workspace_db),
             WorkspaceDB,
             "_thread_local",
             "conn",
