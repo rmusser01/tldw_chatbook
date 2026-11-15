@@ -390,7 +390,7 @@ be committed; unrelated changes untouched", or "1 session note will be
 committed" for a single file. A successful commit is still local: Chatbook
 never starts a push automatically. Its receipt ("Committed 1 session note as
 …; unrelated changes untouched.") appears under the file's save state, above
-Edit and Manage.
+the Edit or Manage pane.
 
 #### Guarded push
 

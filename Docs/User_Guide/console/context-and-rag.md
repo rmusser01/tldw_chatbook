@@ -388,9 +388,9 @@ this, what are my sub-agents doing?* Three collapsible sections sit above
 the "Sources — next send" tray:
 
 **Environment** — the git working tree behind the conversation. It reports
-on the **active workspace's change-review root** (the same tree the
-`Review changes` action opens), so the rail and Change Review can never
-describe different trees. Rows, top to bottom:
+on the **active workspace's change-review root** (the same tree its **Review in
+Change Review…** and **Review & commit…** actions open), so the rail and
+Change Review can never describe different trees. Rows, top to bottom:
 
 A trailing marker on each row's own text says what Enter does to it, since
 the rows otherwise look alike: a `▸` (or `▾` once expanded) means Enter
@@ -407,9 +407,9 @@ the composer draft. A row with none of these is inert — Enter does nothing.
 | **PR ▸** | `PR #N · Open` / `· Draft` / `· Merged`, with `Merged 6d ago` beside a merged one | the PR title with its ± counts (inert) | **Open in browser…**, **+ Add to chat** (pastes a PR summary into the composer) |
 | **checks ▸** | `3 failing checks`, `2 pending checks`, or `12 checks passed` | the failing check names (inert) | **+ Fix — add failure summary to chat** (pastes the failing check names and their details URLs into the composer) |
 
-Both **Changes** actions open Change Review on the working tree; the run
-inspector's **Review changes** and a turn card's **Review** open that run's
-recorded turn instead.
+**Review in Change Review…** and **Review & commit…** open Change Review on
+the working tree; the run inspector's **Review changes** and a turn card's
+**Review** open that run's recorded turn instead.
 
 Large counts compact rather than wrap: a seven-digit pair reads
 `+1.7M −278k` in the rail's 30-column width, and the exact figures stay one

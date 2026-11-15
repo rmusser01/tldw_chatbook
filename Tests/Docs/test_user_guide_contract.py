@@ -11,7 +11,9 @@ out of reach of the guide-only checks. TASK-41101: pages carry no
 from __future__ import annotations
 
 import re
-from pathlib import Path
+from pathlib import Path, PurePath, PureWindowsPath
+
+import pytest
 
 from Tests.Docs.test_console_library_controls_docs import missing_local_links
 from tldw_chatbook.UI.Navigation.shell_destinations import (
@@ -176,12 +178,18 @@ def test_every_user_guide_image_link_resolves() -> None:
 
 # A verification stamp: "Verified against <ref> — <date>", "Re-stamped
 # against", "verified on <branch> from <sha>", "checked against <sha> on
-# <date>", with a date or an @sha within the next 200 characters (stamps wrap
-# across lines). Prose such as "is verified against a live call" has neither.
+# <date>": a date, an @sha or a bare sha follows within 200 characters of the
+# same sentence (stamps wrap across lines, so pages are matched with newlines
+# flattened). "Re-verified live <date>" and a line opening "*Verified" are
+# stamps too. Prose such as "is verified against a live call" is not.
+_STAMP_REF = r"\b20\d\d-\d\d-\d\d\b|@\s*[0-9a-f]{7,}|\b(?=[0-9a-f]*\d)[0-9a-f]{7,40}\b"
 STAMP_RE = re.compile(
-    r"(?i)\b(?:re-?)?(?:verified|stamped|checked)(?:\s+live)?\s+(?:against|on)\b"
-    r"(?=.{0,200}?(?:\b20\d\d-\d\d-\d\d\b|@\s*[0-9a-f]{7,}))"
+    r"\b(?:re-?)?(?:verified|stamped|checked)(?:\s+live)?\s+(?:against|on)\b"
+    rf"(?=(?:(?![.;]\s).){{0,200}}?(?:{_STAMP_REF}))"
+    r"|\b(?:re-?)?verified\s+live\s+20\d\d-\d\d-\d\d\b",
+    re.IGNORECASE,
 )
+ITALIC_STAMP_RE = re.compile(r"^\*(?:re-?)?verified\b", re.IGNORECASE | re.MULTILINE)
 #: Pages whose stamps other tasks remove: TASK-34100.15 AC#7 and
 #: TASK-33910.18 AC#4. Drop a name here when its task lands.
 STAMP_EXEMPT_PAGES = frozenset({
@@ -196,12 +204,19 @@ STAMP_EXEMPT_PAGES = frozenset({
 def _stamp_lines(page: Path) -> list[int]:
     text = page.read_text(encoding="utf-8")
     flat = text.replace("\n", " ")
-    return [text.count("\n", 0, m.start()) + 1 for m in STAMP_RE.finditer(flat)]
+    starts = [m.start() for m in STAMP_RE.finditer(flat)]
+    starts += [m.start() for m in ITALIC_STAMP_RE.finditer(text)]
+    return sorted({text.count("\n", 0, start) + 1 for start in starts})
+
+
+def _guide_name(page: PurePath, guide: PurePath = GUIDE) -> str:
+    """A page's name as STAMP_EXEMPT_PAGES spells it, "/" on every OS."""
+    return page.relative_to(guide).as_posix()
 
 
 def test_user_guide_pages_carry_no_verified_against_stamps() -> None:
     """CLAUDE.md and _template.md: no stamps on a page (TASK-41101)."""
-    pages = {str(page.relative_to(GUIDE)): page for page in sorted(GUIDE.rglob("*.md"))}
+    pages = {_guide_name(page): page for page in sorted(GUIDE.rglob("*.md"))}
     stamped = {
         name: lines
         for name, page in pages.items()
@@ -215,6 +230,33 @@ def test_user_guide_pages_carry_no_verified_against_stamps() -> None:
         name for name in STAMP_EXEMPT_PAGES if not _stamp_lines(pages[name])
     )
     assert not landed, f"Stamp-free now; remove from STAMP_EXEMPT_PAGES: {landed}"
+
+
+def test_stamp_exemptions_match_windows_page_names() -> None:
+    """A Windows path names a Roleplay sub-page with "/" too (r15doc-rev1)."""
+    guide = PureWindowsPath(r"C:\repo\Docs\User_Guide")
+    page = guide / "roleplay-chat-dictionaries" / "lore-books.md"
+    assert _guide_name(page, guide) in STAMP_EXEMPT_PAGES
+
+
+@pytest.mark.parametrize(
+    ("text", "stamped"),
+    [
+        ("*Verified against dev @ 0123456789 — 2026-11-15 (planted).*", True),
+        ("*Verified\nagainst dev\n@ abcdef1 — 2026-09-17*", True),
+        ("Re-verified live 2026-08-11 with the server.", True),
+        ("*Verified against dev 0123456789 (TASK-1).*", True),
+        ("*Verified against `fix/foo` (task-123: something).*", True),
+        ("The key is verified against a live call.", False),
+        ("Each file is verified against that hash. Its id 0123456789 stays.", False),
+        ("It is checked against the allowlist; a reminder due 2026-01-05 fires.", False),
+    ],
+)
+def test_stamp_pattern_tells_stamps_from_prose(text: str, stamped: bool) -> None:
+    """Review r15doc-rev1: a bare sha, "verified live <date>" and an italic
+    "*Verified ..." line are stamps too; prose that verifies is not."""
+    found = bool(STAMP_RE.search(text.replace("\n", " ")) or ITALIC_STAMP_RE.search(text))
+    assert found is stamped
 
 
 async def test_capture_driver_builds_its_gateway_on_the_uat_planner() -> None:

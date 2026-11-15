@@ -3,7 +3,7 @@ id: TASK-41101
 title: "398 legacy 'Verified against' stamp lines remain on 28 User Guide pages, which CLAUDE.md and the page template forbid"
 status: Done
 assignee: ['@claude']
-updated_date: 2026-11-15 18:34
+updated_date: 2026-11-15 19:31
 created_date: 2026-11-15 02:20
 labels:
 - follow-up
@@ -87,4 +87,17 @@ Removed every verification stamp from the User Guide except on the five pages ot
 **Left for follow-ups (body problems found while reading, not stamps):** listed in the round report for the coordinator to file. Examples: library.md's stale "You will probably never see this" callout (contradicted by task-32349); import-and-export step 7 " · attempt 2" vs the code's " · retry N"; skills.md's bold "You can invoke" vs the label "User can invoke"; dated "(Was … superseded by task-N)" history clauses left in several pages; meetings.md sentences about "this page's verification host"; no User Guide home for Change Review's commit/push dialog or for Tool Packs. Inline size notes "(verified at 235x52)" in media-and-conversations and "(verified on tmux 3.6a…)" in console.md were left: they scope a claim to a terminal size or tmux version, not a branch and date.
 
 Files: 30 `Docs/User_Guide` pages, `Tests/Docs/test_user_guide_contract.py`, the 77 named task files above.
+
+**Fix round 1 (review r15doc-rev1).**
+- The test now names pages with `relative_to(GUIDE).as_posix()`. On Windows, `str()` gave `roleplay-chat-dictionaries\lore-books.md`, so the three Roleplay sub-pages were not exempt and `pages[name]` raised KeyError on the nightly windows-latest run. `test_stamp_exemptions_match_windows_page_names` pins this with a `PureWindowsPath`.
+- The stamp pattern now also catches a bare 7-40 character hex sha (`*Verified against dev 0123456789 …*`), "Re-verified live <date>", and any line opening `*Verified` / `*Re-verified` (a stamp with no date, such as ``*Verified against `fix/foo` (task-123: …)*``). Its 200-character window no longer crosses a ". " or ";" sentence break, so "checked against the allowlist; a reminder due 2026-01-05" is prose. `test_stamp_pattern_tells_stamps_from_prose` pins five stamp shapes and three prose sentences.
+- Red evidence:
+  - With the old regex and `str()` names: 5 failed — the Windows name, the three new shapes, and the allowlist prose.
+  - Green: `Tests/Docs` 42 passed.
+- Coverage:
+  - On the base tree cc6006fcf5, the widened pattern catches the same 374 of 390 stamp-ish paragraphs as before. The 16 it does not catch are legitimate prose or mid-paragraph fragments with no date or sha.
+  - On the current pages it finds nothing outside the five exempt pages, so no further stamp needed removing.
+- Copy fixes:
+  - context-and-rag.md names **Review in Change Review…** and **Review & commit…** as the working-tree openers, in the Environment intro and under the rows table (`chat_screen._open_change_review_current_mode`'s ruling).
+  - file-notes.md places the Session Git receipt "above the Edit or Manage pane", matching `#file-notes-action-status` in the compose.
 <!-- SECTION:NOTES:END -->
