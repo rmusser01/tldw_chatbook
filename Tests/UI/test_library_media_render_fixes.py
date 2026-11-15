@@ -32,6 +32,9 @@ from textual.worker import WorkerState
 
 from tldw_chatbook.Library.ingest_analysis import NO_ANALYSIS_PROVIDER_NEXT_STEP
 from tldw_chatbook.Library.library_media_reader_state import set_mode, set_more_open
+from tldw_chatbook.UI.Library_Modules import (
+    library_media_controller as library_media_controller_module,
+)
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.Library.library_media_state import (
     library_media_int_backing_id,
@@ -3448,7 +3451,7 @@ _VIEWER_RECOMPOSE_ANCHOR = re.compile(
 
 def _screen_pump_follow_ups_after_a_viewer_recompose(
     window: int = 14,
-) -> list[tuple[int, str]]:
+) -> list[tuple[str, int, str]]:
     """The task-31950 census: a viewer recompose, then ``screen.call_after_refresh``.
 
     The brief's ``awk`` rule, in Python so it can fail a test: any
@@ -3456,18 +3459,26 @@ def _screen_pump_follow_ups_after_a_viewer_recompose(
     hands the rebuild to the VIEWER's message pump. Those two pumps have no
     ordering, so a follow-up queued that way runs against whichever tree it
     happens to find.
+
+    TASK-36952.3.1: reads the media controller too. The media bodies this
+    census guards are moving there (11 of the screen's 21 anchors moved in
+    that slice alone), and a screen-only read would stay green while
+    checking none of them.
     """
-    source = Path(library_screen_module.__file__).read_text(encoding="utf-8")
-    anchor: int | None = None
-    hits: list[tuple[int, str]] = []
-    for number, line in enumerate(source.splitlines(), start=1):
-        if _VIEWER_RECOMPOSE_ANCHOR.search(line):
-            anchor = number
-            continue
-        if anchor is None or number - anchor > window:
-            continue
-        if "self.call_after_refresh(" in line:
-            hits.append((number, line.strip()))
+    hits: list[tuple[str, int, str]] = []
+    for module in (library_screen_module, library_media_controller_module):
+        path = Path(module.__file__)
+        anchor: int | None = None
+        for number, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            if _VIEWER_RECOMPOSE_ANCHOR.search(line):
+                anchor = number
+                continue
+            if anchor is None or number - anchor > window:
+                continue
+            if "self.call_after_refresh(" in line:
+                hits.append((path.name, number, line.strip()))
     return hits
 
 
