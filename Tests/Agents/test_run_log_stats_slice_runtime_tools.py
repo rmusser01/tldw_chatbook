@@ -179,6 +179,7 @@ def test_unwired_name_falls_through_to_the_permission_gate(name):
 # duplicates rather than strengthens this end-to-end assertion.
 
 
+@pytest.mark.bootstrap_profile
 def test_subagent_cannot_call_run_log_stats_or_run_log_slice(tmp_path, monkeypatch):
     from tldw_chatbook.Agents import run_log as run_log_module
 

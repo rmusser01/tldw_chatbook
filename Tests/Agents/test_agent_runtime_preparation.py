@@ -332,6 +332,7 @@ def test_raised_review_hook_still_runs_dispatch_gate_before_fail_open_dispatch()
     assert events == ["review", ("gate", [call]), ("invoke", "one")]
 
 
+@pytest.mark.bootstrap_profile
 def test_agent_lessons_guidance_recomputes_from_each_effective_schema_set(
     tmp_path,
 ):

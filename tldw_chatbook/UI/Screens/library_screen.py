@@ -3018,12 +3018,11 @@ class LibraryScreen(BaseAppScreen):
                 lambda *a, **k: self._update_library_ingest_gate(*a, **k)
             ),
         )
+        stage_pick_landing = partial(land_stage_pick, self, source=globals())
         self._prompts_controller = LibraryPromptsController(
             self,
             prompts_state_accessor=lambda: self._prompts_state,
-            land_stage_pick=(
-                lambda *a, **k: land_stage_pick(self, *a, source=globals(), **k)
-            ),
+            land_stage_pick=stage_pick_landing,
             arm_library_list_entry_focus=(
                 lambda *a, **k: self._arm_library_list_entry_focus(*a, **k)
             ),
@@ -3116,9 +3115,7 @@ class LibraryScreen(BaseAppScreen):
         self._media_controller = LibraryMediaController(
             self,
             media_state_accessor=lambda: self._media_state,
-            land_stage_pick=(
-                lambda *a, **k: land_stage_pick(self, *a, source=globals(), **k)
-            ),
+            land_stage_pick=stage_pick_landing,
             # -- shared shell state this cluster READS (getter-only).
             library_canvas_projection_depth_accessor=(
                 lambda: self._library_canvas_projection_depth
