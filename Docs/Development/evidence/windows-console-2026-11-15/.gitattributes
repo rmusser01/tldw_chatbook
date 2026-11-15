@@ -1,7 +1,7 @@
-# Preserve receipt/manifest hashes and raw Windows output on every checkout.
-* -text
-*.py text eol=lf
-*.md text eol=lf
+# Preserve hashes and arbitrary raw Windows output as data on every checkout.
+* -text -whitespace
+*.py text eol=lf whitespace=blank-at-eol,blank-at-eof,space-before-tab
+*.md text eol=lf whitespace=blank-at-eol,blank-at-eof,space-before-tab
 *.json linguist-generated=true
 *.log linguist-generated=true
 *.patch linguist-generated=true
