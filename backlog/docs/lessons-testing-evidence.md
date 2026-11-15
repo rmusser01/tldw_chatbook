@@ -25620,3 +25620,9 @@ An expiry-only assertion must establish the coordinator-free render precondition
 
 **What to do.** When you add a `credential_*` issue that only discloses something left out by design, list it in `credential_policies.MANUAL_CREDENTIAL_ISSUES`, and prove the archive with a real Replace restore, not only with capture and preview tests.
 
+## Hook-review fixtures must select their captured Send continuation (#3495, 2026-11-15)
+
+**Incident.** Hosted Console P0 reported four hook-review failures while the same cold-profile cases passed locally. Waiting for actual Console arrival readiness reproduced the refusal-copy failure. The resident runtime owned one turn, `_hooks._busy` was false, and the fixture's replacement of `_prompt_queue.dispatch` was bypassed. That replacement did not select the controller continuation the regression tests intended to exercise. [Failed CI job](https://github.com/rmusser01/tldw_chatbook/actions/runs/43749012857/job/132963725227)
+
+**What worked.** The fixture forwards the registered `_hooks._review` override to its captured original, selecting the custom-adapter path while exercising the real review, consent writes, and final permission check. An assertion at modal mount verifies `_hooks._busy`. The warmed decline and approval controls passed with this selection. The 23-case Windows run had 22 passes and one five-second native-progress diagnostic timeout, which also reproduced with the original recorder. When a regression records a particular controller continuation, select its registered adapter seam and verify that continuation is active before answering the modal.
+
