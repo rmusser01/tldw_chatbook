@@ -275,6 +275,15 @@ identity is reviewed separately. If the current profile changed after the summar
 shown, approval is refused; open **Restored profiles** again and review the new
 summary.
 
+Restored voices and voice profiles have their own review as well. Until you approve
+them, speech start-up stays off: **Current profile** lists `tts / profile store` and
+`tts / voices` under **Needs setup**, followed by a **Speech review** note and
+**Approve voices**. Approving records the review for the generation shown, which
+covers every profile that recovery restored, and approves only those two. Speech
+also needs the restored settings (**Approve settings**) and its model files
+(**Review local model** in **Settings → Library/RAG**, offered for a local HF
+embedding model) approved; it starts from the next start once all three are.
+
 Server sync has its own review too, beside **Approve settings**. A restore brings
 back the old device's sync identity, so server sync (Notes, Chat and Personal
 Context) stays off: otherwise it would act as the device the backup came from.

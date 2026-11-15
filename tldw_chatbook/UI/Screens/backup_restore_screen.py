@@ -962,6 +962,31 @@ class BackupRestoreScreen(Screen):
                         classes="backup-restore-screen-button",
                     )
                 )
+            if current["requirements_checked"] and {
+                "tts.profile_store",
+                "tts.voices",
+            } & set(current["pending_owners"]):
+                # TASK-41119: the speech owners alone, beside the settings review.
+                widgets.append(
+                    Static(
+                        "Speech review\nUntil you approve the restored voices and "
+                        "voice profiles, speech start-up stays off. Approving covers "
+                        "every profile this recovery restored. Speech also needs the "
+                        "restored settings approved (Approve settings) and its model "
+                        "files (Review local model in Settings > Library/RAG), and "
+                        "starts from the next start once all three are approved.",
+                        id="backup-speech-review",
+                        markup=False,
+                    )
+                )
+                widgets.append(
+                    Button(
+                        "Approve voices",
+                        id="backup-approve-speech",
+                        name=current["generation"],
+                        classes="backup-restore-screen-button",
+                    )
+                )
             counts = current.get("sync_identity")
             self._sync_identity_shown = counts if isinstance(counts, dict) else None
             if isinstance(counts, str):
@@ -1114,6 +1139,27 @@ class BackupRestoreScreen(Screen):
             else:
                 code = self.service.issue_code(error)
                 message = f"Settings review unavailable: {self.service.issue_message(code)} ({code})"
+        self._deliver(app, self._config_approval_done, revision, message)
+
+    @on(Button.Pressed, "#backup-approve-speech")
+    def _approve_speech(self, event):
+        event.button.disabled = True
+        self._run_speech_approval(self.app, self._revision, event.button.name)
+
+    @work(exclusive=True, thread=True, group="backup-speech-review")
+    def _run_speech_approval(self, app, revision, generation):
+        try:
+            self.service.approve_speech(generation)
+            message = (
+                "Voices approved. Speech starts from the next start once the "
+                "settings and local model reviews are approved too."
+            )
+        except (OSError, ValueError, RuntimeError) as error:
+            if str(error) == "speech_review_changed":
+                message = "Speech review unavailable: the current profile changed. Review it again."
+            else:
+                code = self.service.issue_code(error)
+                message = f"Speech review unavailable: {self.service.issue_message(code)} ({code})"
         self._deliver(app, self._config_approval_done, revision, message)
 
     @on(Button.Pressed, "#backup-approve-sync-identity")

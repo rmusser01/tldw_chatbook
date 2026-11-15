@@ -1059,3 +1059,90 @@ async def test_restore_retention_review_says_when_the_restore_installs_the_key(
     finally:
         await asyncio.to_thread(service.close)
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["approved", "changed"])
+async def test_restored_profiles_speech_review_approves_voices_alone(
+    tmp_path, monkeypatch, outcome
+):
+    """TASK-41119: while the current generation's speech owners await review,
+    Restored profiles says speech start-up stays off, names the two other
+    reviews speech needs, and offers Approve voices. The button approves the
+    shown generation through ``approve_speech``; then the review goes and the
+    settings review stays. ``changed``: a stale generation is refused and the
+    review stays. The real approval is pinned against an actual activation
+    binding in Tests/Architecture/test_backup_owner_inventory.py.
+    """
+    import asyncio
+    from types import MappingProxyType
+
+    from textual.widgets import Button
+
+    from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+
+    pending = ["config", "tts.profile_store", "tts.voices"]
+    approved = []
+
+    def current_requirements():
+        return MappingProxyType(
+            {
+                "config": str(tmp_path / "config.toml"),
+                "operation_id": "restore",
+                "generation": "generation-1",
+                "required_owners": ("config", "tts.profile_store", "tts.voices"),
+                "pending_owners": tuple(pending),
+                "requirements_checked": True,
+                "needs_setup": bool(pending),
+                "status": "requirements_checked",
+            }
+        )
+
+    def approve_speech(generation):
+        if outcome == "changed":
+            raise ValueError("speech_review_changed")
+        approved.append(generation)
+        pending.remove("tts.profile_store")
+        pending.remove("tts.voices")
+
+    service = RecoveryService(tmp_path / "control")
+    monkeypatch.setattr(service, "current_requirements", current_requirements)
+    monkeypatch.setattr(service, "profiles", lambda: ())
+    monkeypatch.setattr(service, "approve_speech", approve_speech)
+    app = _harness(service)
+    try:
+        async with app.run_test(size=(100, 36)) as pilot:
+            screen = app.screen
+            await pilot.click("#backup-open-profiles")
+            async with asyncio.timeout(10):
+                while not screen.query("#backup-current-requirements"):
+                    await pilot.pause(0.02)
+            assert screen.query("#backup-speech-review"), "no speech review"
+            review = _text(screen, "#backup-speech-review")
+            assert review.startswith("Speech review")
+            assert "speech start-up stays off" in review
+            assert "covers every profile this recovery restored" in review
+            assert "Approve settings" in review and "Review local model" in review
+            button = screen.query_one("#backup-approve-speech", Button)
+            assert str(button.label) == "Approve voices"
+            button.press()
+            async with asyncio.timeout(10):
+                while not _text(screen, "#backup-message"):
+                    await pilot.pause(0.02)
+            message = _text(screen, "#backup-message")
+            if outcome == "changed":
+                assert message == (
+                    "Speech review unavailable: the current profile changed. "
+                    "Review it again."
+                )
+                assert pending == ["config", "tts.profile_store", "tts.voices"]
+                return
+            # The refreshed list: speech review gone, settings review still there.
+            async with asyncio.timeout(10):
+                while screen.query(
+                    "#backup-speech-review, #backup-approve-speech"
+                ) or not screen.query("#backup-config-review"):
+                    await pilot.pause(0.02)
+            assert approved == ["generation-1"]
+            assert message.startswith("Voices approved.")
+    finally:
+        service.close()

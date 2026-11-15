@@ -1273,14 +1273,13 @@ class RecoveryService:
         except (OSError, ValueError, RuntimeError):
             return MappingProxyType(unknown)
 
-    def approve_config(self, generation):
-        """Approve only `config` for the reviewed current generation (TASK-40711).
-
-        This turns model-catalog auto-refresh and workspace change tracking
-        back on. It never approves `runtime.sync_state`: server sync waits for
-        the sync-identity review (TASK-40139; owner ruling of 2026-11-12 in
-        TASK-40137).
-        """
+    @contextmanager
+    def _reviewed_generation(self, generation, owners, changed):
+        """Hold the selected profile's lease and yield the activation store of
+        the reviewed current generation, refusing with ``changed`` unless that
+        generation is still current, requires ``owners`` and is a live paired
+        witness. Approval is per generation, so it covers every profile that
+        recovery restored."""
         from . import bootstrap
         from .activation import ActivationStore
         from .generation_witnesses import _witnesses
@@ -1301,11 +1300,36 @@ class RecoveryService:
             if (
                 witness is None
                 or witness["generation"] != generation
-                or "config" not in witness["owners"]
+                or not set(owners) <= set(witness["owners"])
                 or witness not in _witnesses(selected, lease)
             ):
-                raise ValueError("config_review_changed")
-            ActivationStore(Path(witness["store_root"])).approve(generation, "config")
+                raise ValueError(changed)
+            yield ActivationStore(Path(witness["store_root"]))
+
+    def approve_config(self, generation):
+        """Approve only `config` for the reviewed current generation (TASK-40711).
+
+        This turns model-catalog auto-refresh and workspace change tracking
+        back on. It never approves `runtime.sync_state`: server sync waits for
+        the sync-identity review (TASK-40139; owner ruling of 2026-11-12 in
+        TASK-40137).
+        """
+        with self._reviewed_generation(
+            generation, ("config",), "config_review_changed"
+        ) as store:
+            store.approve(generation, "config")
+
+    def approve_speech(self, generation):
+        """Approve only the restored voices and voice profiles (TASK-41119).
+
+        Speech start-up also needs `config` and `models.artifacts`, which keep
+        their own reviews; this approves neither.
+        """
+        with self._reviewed_generation(
+            generation, ("tts.profile_store", "tts.voices"), "speech_review_changed"
+        ) as store:
+            store.approve(generation, "tts.profile_store")
+            store.approve(generation, "tts.voices")
 
     @staticmethod
     def _sync_state_path():

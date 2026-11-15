@@ -1799,10 +1799,23 @@ def test_no_reviewer_approves_the_shared_sync_owners():
             # TASK-40139: the sync-identity review, the only approver of
             # `runtime.sync_state`; it clears the restored identity first.
             ("tldw_chatbook/Sync_Interop/recovery.py", "owner"): 1,
+            # TASK-41119: Backup & Restore's speech review, the only approver
+            # of the two speech owners speech start-up admits through.
+            ("tldw_chatbook/Backup_Recovery/recovery_service.py", "'tts.profile_store'"): 1,
+            ("tldw_chatbook/Backup_Recovery/recovery_service.py", "'tts.voices'"): 1,
         }
     )
     assert {"config", "runtime.sync_state"}.isdisjoint(
         {*mcp_owners, personal_context_owner, plugins_owner, *rag_owners}
+    )
+    assert {"tts.profile_store", "tts.voices"}.isdisjoint(
+        {
+            *mcp_owners,
+            personal_context_owner,
+            plugins_owner,
+            *rag_owners,
+            *sync_identity_owners,
+        }
     )
     assert sync_identity_owners == ("config", "runtime.sync_state")
 
@@ -2003,3 +2016,102 @@ def test_only_the_settings_review_calls_approve_config():
                 uses[path.relative_to(ROOT).as_posix()] += 1
     assert uses == Counter({"tldw_chatbook/UI/Screens/backup_restore_screen.py": 1})
 
+
+_SPEECH_REVIEW = r"""
+import asyncio, os, sys
+from pathlib import Path
+from types import SimpleNamespace
+from Tests.network_guard import install, blocked_attempts
+install()
+import keyring
+from keyring.backends.null import Keyring
+keyring.set_keyring(Keyring())
+from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission as storage
+from tldw_chatbook.Backup_Recovery.activation import ActivationStore, bind_activation
+from tldw_chatbook.Backup_Recovery.control_records import admission_authority, register_pending
+from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+# Imported before binding, as the app is: config computes its client id on import.
+from tldw_chatbook import app_speech
+state = sys.argv[1]
+selector = Path(os.environ['TLDW_CONFIG_PATH'])
+data = selector.parent.parent / 'data'
+selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir="' + str(data) + '"\n')
+selector.chmod(0o600)
+root = bootstrap.default_bootstrap_root()
+startup = storage._startups.pop((os.getpid(), str(root)), None)
+if startup: startup.close()
+authority = admission_authority(root)
+authority.register('profile', (selector.parent, data))
+control = selector.parent.parent / 'operation'
+control.mkdir(mode=0o700)
+register_pending(root, 'restore', ('profile',), control, (selector,))
+# Exactly the owners speech start-up admits through (app_speech.py).
+OWNERS = ('config', 'models.artifacts', 'tts.profile_store', 'tts.voices')
+with authority.maintenance(('profile',), 2) as session:
+    bind_activation(root, 'restore', selector, 'generation', OWNERS, session=session)
+(root / ('pending-' + bootstrap._key('restore') + '.json')).unlink()
+store = ActivationStore(control / 'activation')
+SPEECH = ('tts.profile_store', 'tts.voices')
+service = RecoveryService(selector.parent.parent / 'jobs')
+try:
+    # The existing reviews: settings (TASK-40711) and the local model review.
+    service.approve_config('generation')
+    store.approve('generation', 'models.artifacts')
+    before = service.current_requirements()
+    assert before['pending_owners'] == SPEECH, dict(before)
+    if state == 'approved':
+        try:
+            service.approve_speech('another-generation')
+        except ValueError as error:
+            assert str(error) == 'speech_review_changed', error
+        else:
+            raise AssertionError('a stale review approved speech')
+        service.approve_speech('generation')
+    after = service.current_requirements()
+finally:
+    service.close()
+approved = state == 'approved'
+assert after['pending_owners'] == (() if approved else SPEECH), dict(after)
+assert [store.allowed('generation', owner) for owner in SPEECH] == [approved] * 2
+
+# Speech start-up: the admitted initializer runs only once speech is approved.
+effects = []
+async def initialize():
+    effects.append('speech started')
+    return 'handler'
+app = SimpleNamespace(_speech_initialization_allowed=lambda kind: True)
+for kind in ('tts', 'stts'):
+    result = asyncio.run(app_speech._run_speech_initialization(app, kind, initialize))
+    assert result == ('handler' if approved else None), (kind, result)
+assert effects == (['speech started'] * 2 if approved else []), effects
+assert not blocked_attempts(), blocked_attempts()
+print('retired and reopened')
+"""
+
+
+@pytest.mark.parametrize("state", ["pending", "approved"])
+def test_the_speech_review_turns_speech_start_up_back_on(tmp_path, state):
+    """TASK-41119: speech start-up admits through `config`, `models.artifacts`,
+    `tts.profile_store` and `tts.voices`, and nothing approved the two speech
+    owners, so speech stayed off after every restore. With the settings and
+    local model reviews done, speech stays off while Backup & Restore's speech
+    review is pending, and starts once `approve_speech` approves the reviewed
+    generation's speech owners; a stale generation is refused."""
+    from Tests.Backup_Recovery.test_home_citation_retirement import _run
+
+    _run(tmp_path, state, "speech_review", script=_SPEECH_REVIEW, timeout=90)
+
+
+def test_only_the_speech_review_calls_approve_speech():
+    """TASK-41119: like `approve_config`, `approve_speech` approves its owners
+    for every profile its generation restored, so only Backup & Restore's
+    reviewed **Approve voices** may call it."""
+    uses = Counter()
+    for path in sorted((ROOT / "tldw_chatbook").rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        if "approve_speech" not in text:
+            continue
+        for node in ast.walk(ast.parse(text)):
+            if isinstance(node, ast.Attribute) and node.attr == "approve_speech":
+                uses[path.relative_to(ROOT).as_posix()] += 1
+    assert uses == Counter({"tldw_chatbook/UI/Screens/backup_restore_screen.py": 1})
