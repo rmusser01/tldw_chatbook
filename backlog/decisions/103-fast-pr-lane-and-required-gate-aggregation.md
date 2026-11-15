@@ -147,7 +147,7 @@ cron entry on `dev`.
   derived-artifact checks. As amended on 2026-09-27 that was two fast lanes
   (at most two runners at a time), three runners with the one routine
   path-scoped guard (perf-guard), instead of approximately thirteen. It has
-  grown since: the UI lane currently runs 36 shards, with at most 18 UI jobs running at once (TASK-37236, TASK-37266..37268 and the
+  grown since: the UI lane currently runs 38 shards, with at most 19 UI jobs running at once (TASK-37236, TASK-37266..37268 and the
   dated capacity amendments below), the Console P0 gate is a third lane (TASK-33621.27), and the PR
   Fast Lane's admission-sensitive half (two jobs since TASK-35575, three since Roleplay frame B2b), the Dreams
   tracking tests, the Dreams and Guardian boundary contracts, the
@@ -155,7 +155,7 @@ cron entry on `dev`.
   recovered suites are jobs of their own (TASK-34916, TASK-34929,
   TASK-34986, TASK-38989, PR #3399, owner decision 2026-11-06), so an
   ordinary unlabeled,
-  non-GGUF PR now requests 30 test runners in parallel, 31 with perf-guard
+  non-GGUF PR now requests 31 test runners in parallel, 32 with perf-guard
   (see the dated notes below).
 - That figure is not a global maximum. The two path-scoped GGUF
   evidence matrices can add six jobs, and a synchronize event on a PR carrying
@@ -403,14 +403,15 @@ Even ideal balance at 27 shards has a lower-bound forecast of 1027.70 seconds un
 
 ## Amendment (2026-10-28, TASK-37266..37268): enroll native publication and export controls
 
-Current UI lane: 36 shards. The current total is 48 eligible test jobs per PR
+Current UI lane: 38 shards. The current total is 50 eligible test jobs per PR
 (2026-11-02: includes the third admission-sensitive lane; 2026-11-06: and the
 Architecture guard contracts job, TASK-38989, and the architecture-review
 tests' own job, `pr-fast-lane-arch`, split out of the PR Fast Lane at its
 35-min cap, PR #3399; 2026-11-07: and `recovered-suites` and four more UI
-shards, below).
+shards, below; 2026-11-13: and two more Console P0 profile jobs, TASK-40724;
+2026-11-15: and two more UI shards, below).
 As of this amendment, the `max-parallel: 17` ceiling (18 since 2026-11-07,
-below), minimal dependencies, serial execution, 20-minute job cap,
+19 since 2026-11-15, below), minimal dependencies, serial execution, 20-minute job cap,
 180-second test timeout and fail-closed required aggregation remain unchanged.
 All 1,140 inherited selectors remain exactly once. The 43 new concrete native
 cases and the previously unenrolled canonical-class governance control bring
@@ -511,7 +512,8 @@ all existing selectors remain exactly once across the three required profiles.
 job of its own, `backup-owner-suites-dev` ("Backup_Recovery owner suites (push
 to dev)"), runs the 13 Backup_Recovery owner suites that ran on no lane (27 of
 their nodes had gone red on dev unseen, TASK-40306) and the restore-journal
-file, whole, with 11 red nodes deselected by name, on every push to dev and
+file, whole, with 8 red nodes deselected by name (11 at first; review
+r14bk-rev1 re-admitted three, TASK-40307), on every push to dev and
 never on a pull request, like `library-shell-dev`. It is not in the required
 check's `needs`, so no PR runner and no PR verdict: the counts above are
 unchanged (30 concurrent test runners, 31 with perf-guard, 48 eligible test
@@ -520,3 +522,34 @@ jobs per PR). A dev push starts one more job, about 40 runner-minutes. It runs
 its two rollback files alone would take over an hour. Three local runs took
 31-43 min at load 22-57 on a shared 18-core host, so its step cap is 50 min
 and its job cap 55; the first CI runs should set both.
+
+## Amendment (2026-11-15, TASK-39144): 38 shards, 19 at once
+
+Owner decision, relayed by the coordinator at the round-14 closeout: "38
+shards, 19 at once". Round 14 appended 111 census entries (2145 in all), each
+charged its local serial time from its task's notes, about 36 pytest min.
+Replayed over the 25 latest PR runs whose 36 UI shards all finished
+(2026-11-14 03:20Z to 19:32Z: 17 on GitHub-hosted runners, 8 on the
+self-hosted runners of ADR-359), each entry at its slowest, the census carries
+about 493 worst-case pytest min: a 13.7-min floor a shard at 36, so no re-deal
+of 36 keeps every job 5 min under the 20-min cap. At 38,
+`scripts/ui_lane_shard_replay.py --rebalance 13.0` (46 swaps) puts every
+shard at 12.94-12.99 pytest min; 12.97 is the floor.
+
+Against the measured slowest job per shard over those runs (the census before
+round 14, replayed the same way), a GitHub-hosted job ran a median 1.82 min
+above its replay (0.57-4.25) and a self-hosted job 0.58 min above (-1.03 to
+3.08). The 38-shard deal therefore projects about 14.8 min a job at the median
+on GitHub-hosted runners and about 13.5 on self-hosted ones.
+
+The UI matrix runs 38 shards with `max-parallel: 19`: still two waves of UI
+jobs on GitHub-hosted runners, so no wall-clock change per PR there; on the
+self-hosted fleet (ADR-359, eight test slots) the slots, not this ceiling,
+bound how many run at once. From dev's counts before this change
+(30 concurrent test runners, 31 with perf-guard, 48 eligible test jobs), the
+two new shard jobs make 50 eligible test jobs per PR, and the one-higher
+ceiling makes 31 concurrent test runners, 32 counting perf-guard.
+`Tests/CI/test_ui_lane_shard_count_statements.py` derives all three from the
+workflow. At 38 the census has no re-deal margin left: the next tail entries
+need another shard-count decision.
+

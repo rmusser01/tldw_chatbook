@@ -1,10 +1,10 @@
 ---
 id: TASK-39130
 title: "Six Library UI tests are red on dev and run on no lane: an entry canvas sync, two Media side-by-side cases, the Notes export key and two persisted reader reads"
-status: In Progress
+status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-13 03:11'
+updated_date: '2026-11-15 02:15'
 created_date: 2026-11-07 02:03
 labels:
 - follow-up
@@ -41,9 +41,9 @@ Found in round 11 of the 2026-10-23 burn-down; checked on dev 2684e5453f, 2026-1
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Each of the six nodes passes on dev, or is retired with the commit that changed the behaviour it pinned named in the notes; each red is shown first with the same command
+- [x] #1 Each of the six nodes passes on dev, or is retired with the commit that changed the behaviour it pinned named in the notes; each red is shown first with the same command
 - [x] #2 Each node is classified as test drift or a product defect; a product defect gets a test that is red before its fix
-- [ ] #3 The six nodes run on a PR lane (UI census tail entries of about 30 s each), with measured times recorded; never the fast PR contract
+- [x] #3 The six nodes run on a PR lane (UI census tail entries of about 30 s each), with measured times recorded; never the fast PR contract
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -77,3 +77,6 @@ Found in round 11 of the 2026-10-23 burn-down; checked on dev 2684e5453f, 2026-1
 **2026-11-12 (round-13 closeout).** The sixth node, `Tests/UI/test_library_media_side_by_side.py::test_compact_media_viewer_back_empty_page_focuses_recovery_control`, is still red at the round-13 stack top 8b633d0101 ("Empty viewer return did not focus the Import recovery action; focus is None."). TASK-40293 now owns its fix and its lane, together with the four Library shell entry-focus nodes that share the entry-focus arm.
 
 **2026-11-13 (round 14, base 26b2e677dd, after the architecture phase-3 merges).** The six nodes together (run.sh, `-n 4`, load 64-69): 5 passed; `test_library_media_side_by_side.py::test_compact_media_viewer_back_empty_page_focuses_recovery_control` failed as before: "Empty viewer return did not focus the Import recovery action; focus is None." No Library product file changed between ae9f9e8d21 and this base except this task's own commit 6e7eec930b, so the defect is unchanged. Its fix belongs to TASK-40293 (To Do, AC#2 and AC#4), which is not this stream's; AC#1 and AC#3 stay open until it lands. A note for that fix: `_library_media_empty_list_fallback_target` tries `#library-media-type-filter` before `#library-media-empty-import` (task-32213), so a fix that only arms the list entry focus would land on `type:`, not on Import; TASK-40293 AC#2 accepts "a visible recovery control or list control", so the test's Import pin may need to follow whichever control the fix picks.
+
+**2026-11-15 (round-14 closeout, stack top c7d4a41717 on dev beab5c1e4e): all six pass and all six are laned; Done.** TASK-40293 fixed the sixth node's defect in this stack (49e127a794, 5573a5b70a, 0e04928097: an emptied compact Media page lands focus on its Import recovery action) and appended it at the UI census tail. The six nodes, in one run.sh batch with TASK-39152's remaining nodes at `-n 4`, three runs at load 34-46: 6 of 6 passed every run (no marker added; the four mounted nodes carry their own `bootstrap_profile`, the two persisted reads are private-profile children). Each of the six is a UI census entry at the stack top, so AC#3 holds with the lane times recorded above (the sixth: 15.6 s call, 31.9 s whole, TASK-40293's census comment).
+

@@ -4,7 +4,7 @@ title: "Six UI Fast Lane shards already run 15.0-16.9 min of their 20 min cap, s
 status: In Progress
 assignee: ['@claude']
 created_date: 2026-11-07 02:28
-updated_date: '2026-11-12 19:56'
+updated_date: '2026-11-15 06:20'
 labels:
 - follow-up
 - ci
@@ -166,3 +166,61 @@ The after column is 14.87-14.90 on every shard with the untimed entries at 1.0 t
   - Charging them at 3.29 replays this deal at a max of 13.4, and 17 more swaps would bring it back to 13.3.
 - **The margin is now gone.** The floor is 13.24 a shard, so the next tail entries cannot be absorbed by a re-deal. That needs the owner's shard-count decision (37 shards would replay at about 12.9).
 - **Checks.** The entry set is unchanged (2028; `MINIMUM_FILES` stays 2028). The census header now describes this deal and how to charge on a quiet host.
+
+**AC#1 after the round-13 deal (round-14 closeout, 2026-11-15; read-only `gh` on `derived-artifacts.yml`). Not met.** Round 13 merged at 2026-11-12 20:37Z (dev 4b90eb860b). Since then dev has only appended census entries at the tail (1455ceeb96 +1, 531acb8cdc +6), so every earlier entry keeps its shard. Read: every PR run created from 2026-11-12 20:30Z to the listing at 2026-11-15 00:58Z (134 PR runs with UI jobs), taking the 88 in which all 36 UI shards finished (success or failure). Since #3529 (merged 2026-11-14 17:22Z) PR jobs run on self-hosted runners (`tldw-ci-test`); that PR's own runs did too. The two runner kinds are kept apart:
+- **GitHub-hosted (`ubuntu-latest`), 79 runs** (43306757484, 2026-11-12 21:05Z, to 43614165778, 2026-11-14 16:10Z). 25 of 36 shards passed 15 min at least once. The worst: shard 15 at 19.13 (run 43315451147), shard 3 at 18.53 (43461560641), shards 16 at 17.78, 5 and 19 at 17.53, 9 at 17.32 and 7 at 17.20. Shard 16 is the systematic one: median 14.72, over 15 in 37 of 79 runs. Shard 3 (19 of 79) and shard 5 (13 of 79) follow.
+- **Self-hosted, 9 runs** (43519057842, 2026-11-13 22:24Z, to 43621261326, 2026-11-14 17:28Z; six are #3529's own PR runs, three came after it merged). Every shard's slowest job is 9.87-14.97 min: shard 3 14.97 (43620841946), shard 16 14.90 (43621134977), shard 5 14.57. So all 36 are 5 min under the cap, but with 0.03-0.43 min to spare on shards 3, 5 and 16, and over 9 runs, not the 12 this criterion asks for. Six more self-hosted runs had fewer than 36 shards finished.
+- **Reading.** On the hardware PRs now use, the deal holds the margin so far, barely. On GitHub-hosted runners (which PRs return to if the routing is reverted) it does not: shard 16 sits on the 15-min line. This criterion stays open until 12 self-hosted runs with every shard finished are recorded (9 so far). The census also grew by this round's tail entries since the deal, so the next read should name the deal it measures.
+
+Per shard (minutes, slowest finished job; runs as above):
+
+| Shard | GitHub-hosted slowest (run) | median | runs over 15 | Self-hosted slowest (run) |
+|---|---|---|---|---|
+| 1 | 15.65 (43352647859) | 12.90 | 3 of 79 | 14.03 (43620841946) |
+| 2 | 15.58 (43487098385) | 12.22 | 1 of 79 | 12.28 (43539534151) |
+| 3 | 18.53 (43461560641) | 13.25 | 19 of 79 | 14.97 (43620841946) |
+| 4 | 15.55 (43324072512) | 12.92 | 1 of 79 | 12.98 (43621134977) |
+| 5 | 17.53 (43398660691) | 14.15 | 13 of 79 | 14.57 (43620841946) |
+| 6 | 14.33 (43322446796) | 11.78 | 0 of 79 | 12.45 (43539534151) |
+| 7 | 17.20 (43368849944) | 12.95 | 1 of 79 | 12.92 (43539534151) |
+| 8 | 15.42 (43461093022) | 12.93 | 3 of 79 | 13.72 (43621134977) |
+| 9 | 17.32 (43347732794) | 13.10 | 3 of 79 | 13.35 (43620841946) |
+| 10 | 14.92 (43377188324) | 12.45 | 0 of 79 | 12.72 (43621261326) |
+| 11 | 14.97 (43376469788) | 12.40 | 0 of 79 | 12.50 (43548543910) |
+| 12 | 15.60 (43379840549) | 12.20 | 1 of 79 | 12.38 (43612634465) |
+| 13 | 15.77 (43461231048) | 12.50 | 2 of 79 | 13.25 (43557511010) |
+| 14 | 16.18 (43547251067) | 13.37 | 6 of 79 | 13.08 (43620841946) |
+| 15 | 19.13 (43315451147) | 12.80 | 8 of 79 | 13.32 (43557511010) |
+| 16 | 17.78 (43491262486) | 14.72 | 37 of 79 | 14.90 (43621134977) |
+| 17 | 15.58 (43369049379) | 12.53 | 2 of 79 | 13.02 (43621134977) |
+| 18 | 15.27 (43551904218) | 11.93 | 1 of 79 | 12.07 (43621261326) |
+| 19 | 17.53 (43468362487) | 12.75 | 5 of 79 | 12.42 (43621134977) |
+| 20 | 14.82 (43461231048) | 12.77 | 0 of 79 | 13.13 (43620841946) |
+| 21 | 16.12 (43461231048) | 12.63 | 2 of 79 | 13.05 (43621261326) |
+| 22 | 13.55 (43330912705) | 11.77 | 0 of 79 | 11.90 (43620841946) |
+| 23 | 14.12 (43595218971) | 12.15 | 0 of 79 | 12.82 (43620841946) |
+| 24 | 15.42 (43324066851) | 12.72 | 1 of 79 | 12.65 (43621261326) |
+| 25 | 15.98 (43398660691) | 12.73 | 1 of 79 | 12.87 (43620841946) |
+| 26 | 15.98 (43461198245) | 12.55 | 3 of 79 | 13.40 (43548543910) |
+| 27 | 13.07 (43307798365) | 10.60 | 0 of 79 | 10.92 (43620841946) |
+| 28 | 12.25 (43598709405) | 9.87 | 0 of 79 | 9.87 (43620841946) |
+| 29 | 15.22 (43347732794) | 12.10 | 2 of 79 | 12.15 (43519057842) |
+| 30 | 15.60 (43382204664) | 13.03 | 1 of 79 | 13.50 (43620841946) |
+| 31 | 14.67 (43461198245) | 11.70 | 0 of 79 | 12.32 (43621134977) |
+| 32 | 16.33 (43395893969) | 12.35 | 1 of 79 | 12.00 (43621134977) |
+| 33 | 15.42 (43598709405) | 12.22 | 2 of 79 | 12.22 (43621134977) |
+| 34 | 15.60 (43346597851) | 13.15 | 5 of 79 | 13.20 (43621134977) |
+| 35 | 13.42 (43567900224) | 11.45 | 0 of 79 | 11.68 (43621134977) |
+| 36 | 14.50 (43491660299) | 12.45 | 0 of 79 | 12.82 (43620841946) |
+
+**Round-14 closeout, Part D (2026-11-15, the round-14 stack on dev ecad404bd4): 38 shards, 19 at once.**
+- **Owner decision, relayed by the coordinator:** "38 shards, 19 at once".
+- **Change.** `ui-fast-lane`'s matrix goes from 36 to 38 shards and `max-parallel` from 18 to 19. Every shard-count statement follows: the workflow comment, the census header (`Current UI lane`, `round-robin over`), the checker's `Current UI lane` line, the replay's usage lines (`--shards 38`, `--rebalance 13.0`), the two `Tests/CI` matrix pins (`test_ci_queue_pressure_contract.py::_assert_ui_capacity`, `test_derived_artifacts_workflow.py`), and ADR-103 (dated amendment; 50 eligible test jobs, 31 concurrent test runners, 32 with perf-guard, from dev's 48 / 30 / 31).
+- **Weights.** Read-only `gh`: the 25 latest PR runs with all 36 UI shards finished, 2026-11-14 03:20Z (43551098837) to 19:32Z (43632652505): 17 GitHub-hosted, 8 self-hosted (43557511010, 43565526841, 43612634465, 43620841946, 43621134977, 43621261326, 43628541939, 43632652505; checked per run with read-only `gh`, review r14cl-rev1). The per-kind offsets below were computed per job from each job's runner, so the split error did not reach them. Failed shard logs (33) were left out, so 867 shard logs. Each entry is charged at its slowest run. The 2034 entries dev carries are all timed by those logs.
+- **Charges.** All 111 round-14 tail entries, each at its local serial time recorded in its own task's notes; no entry lacked a record. 2,174.8 s in all (36.2 min). Per task: TASK-40311 254 / 43 / 87 s (loaded 38-47); TASK-40712 33 / 18; TASK-40308 30 / 34; TASK-40320 23.3 and 16.5 (whole files); TASK-40319's 20 nodes 24.8-55.5 s and TASK-40318's 13 cases 34.0-62.2 s (load 55-67); TASK-40322's 10 nodes 0.3-12.5 s and TASK-40323's 48 nodes 0.3-9.7 s (setup + call + teardown, load 19-26); TASK-40324 7.8; TASK-40293 31.9, 15, 15; TASK-40327 24.4; TASK-40328 14.4, 11.9, 28.2; TASK-40300 24; TASK-38948 9.43 / 6.59 (this closeout, load 34). Two of the 111 (the 100 ms nodes) were also timed in some PR logs (6.3 / 6.7 s); the charge replaces that.
+- **Replay** (`scripts/ui_lane_shard_replay.py`, through run.sh): the census carries 492.8 worst-case pytest min, a 13.69 floor at 36 and 12.97 at 38. As listed it replays at 10.4-17.9 at 36 and 9.4-19.3 at 38. `--rebalance 12.9` cannot be reached (113 swaps, it ends at the floor). `--shards 38 --rebalance 13.0 --write` took 46 swaps (90 entries moved, 6 of them round-14's) and every shard now replays at **12.94-12.99 pytest min**. Entry set and comments unchanged (2145, floor 2145).
+- **Projected job time.** Model check on the census before round 14 (dev's 2034, 36 shards, same logs): the measured slowest job per shard ran a median 1.82 min above its replay on GitHub-hosted runners (0.57 to 4.25) and 0.58 min above on self-hosted ones (-1.03 to 3.08). Per-job setup (job minutes less pytest's own seconds) is a median 0.99 min GitHub-hosted and 1.46 self-hosted. So the 38-shard deal projects **about 14.8 min a job at the median on GitHub-hosted runners and about 13.5 on self-hosted ones**; the high ends (up to about 17.2 and 16.1) come from runs whose own change slowed a shard, such as `codex/shared-console-mobile-pr`.
+- **AC#1 stays open.** It needs 12 PR runs after this change, which only exist after the merge. Before it, there are 11 complete self-hosted PR runs since round 13 (the 9 counted in Part A plus 43628541939 and 43632652505; 8 of the 11 are in the weight set above), and the newest, 43632652505 (2026-11-14 19:32Z, `codex/shared-console-mobile-pr`), finished shards 16, 19 and 3 at 15.73 (failed), 15.68 and 15.62 min: not 5 min under the cap. The other new one, 43628541939, peaked at 14.08 (shard 3).
+- **No margin left.** At 38 the floor (12.97) is the target, so the next tail entries need another shard-count decision; the census header says so.
+- **Checks** (run.sh, 2026-11-15). Census checker: OK, 2145 entries, floor 2145. `Tests/CI` at `-n 4`: 1640 passed, 1 skipped (load 44-48); its shard-count statements pin derives 38 shards, 50 eligible test jobs, 31 runners and 32 with perf-guard from the workflow. Size ratchets (module, screen, Library modules), serial: 282 passed. Preflight passed.
+

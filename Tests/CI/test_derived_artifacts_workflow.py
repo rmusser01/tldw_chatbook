@@ -182,8 +182,11 @@ def test_ui_fast_lane_runs_the_census_in_serial_round_robin_shards():
     # TASK-39144 (owner decision 2026-11-07, "36 shards, 18 at once"): no
     # re-deal of 34 kept every shard's slowest job 5 min under the cap once
     # the round-12 tail entries joined; 18 at once keeps two waves.
-    assert strategy["matrix"]["shard"] == list(range(1, 37))
-    assert strategy["max-parallel"] == 18
+    # Round-14 closeout (owner decision relayed 2026-11-15, "38 shards, 19 at
+    # once"): with round 14's tail entries the census floor at 36 was 13.7
+    # pytest min a shard; 38 re-deals to 12.94-12.99, still two waves.
+    assert strategy["matrix"]["shard"] == list(range(1, 39))
+    assert strategy["max-parallel"] == 19
     assert job["timeout-minutes"] == 20
 
     install = next(
@@ -681,7 +684,9 @@ def test_library_shell_runs_by_node_on_dev_pushes_only_and_is_never_required():
     # TASK-38948 (owner decision 2026-11-10, "Off the gate, reorder next"): the
     # 100 ms Send-feedback nodes keep running on dev pushes, once (the first
     # shard) and whatever that shard's own result, as the job's last step with
-    # the UI lane's flags, and stay off the PR gate until CI shows them passing.
+    # the UI lane's flags. CI showed them passing (16 of 16 cases in eight
+    # dev-push runs, 2026-11-13..15), so they are back on the UI census by node
+    # (2026-11-15, round-14 closeout); the watch step stays.
     watch = job["steps"][-1]
     assert watch["name"] == "Watch the 100 ms Send-feedback nodes"
     assert watch["if"] == "${{ !cancelled() && strategy.job-index == 0 }}"
@@ -701,8 +706,9 @@ def test_library_shell_runs_by_node_on_dev_pushes_only_and_is_never_required():
     census = (PROJECT_ROOT / "scripts" / "ui_pr_gate_census.txt").read_text(
         encoding="utf-8"
     )
-    assert not any(node in census for node in watched)
-    assert "Tests/UI/test_console_received_intent_feedback.py\n" not in census
+    census_entries = set(census.splitlines())
+    assert all(node in census_entries for node in watched)
+    assert "Tests/UI/test_console_received_intent_feedback.py" not in census_entries
 
 
 def test_library_shell_shards_partition_the_kept_nodes():

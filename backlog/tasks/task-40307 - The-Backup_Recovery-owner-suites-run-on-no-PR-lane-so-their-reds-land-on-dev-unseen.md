@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-11-12 19:36
-updated_date: 2026-11-13 08:22
+updated_date: '2026-11-15 02:25'
 labels:
 - follow-up
 - tests
@@ -67,3 +67,5 @@ Found in round 13 of the 2026-10-23 burn-down (census stream fix round). Checked
 - **Back in the job (review r14bk-rev1):** `test_config_sibling_capture.py::...[sidebar]` and `::...[custom]` now use the idle wait (`idle=60`, cap 280 s) and passed at load 17-37. `test_operational_owners.py::test_dormant_tamagotchi_path_constructors_have_no_installed_call_sites` was drift from 94e25526d9 (TASK-32905): the footer pet's `ConfigFileStorage()` in `Widgets/AppFooterStatus.py` is the installed `tamagotchi.config` owner's path. The census now allows exactly that one call (by file and constructor, not line), so the SQLiteStorage, JSONStorage and NotesMirror guards stay on.
 - **Pins.** `ARCHITECTURE_GUARD_TARGETS` gains the two TASK-40310 journal nodes (`test_publication_crashes.py::test_append_and_flush_handle_each_record_once`, `::test_cached_journal_history_still_refuses_changed_records`), so PRs run them while the file stays whole only in the dev-push job. `Tests/CI/test_ci_queue_pressure_contract.py`: `DEV_PUSH`, `BACKUP_OWNER_SUITE_TARGETS`, `BACKUP_OWNER_SUITES_DESELECTED` and `test_backup_owner_suites_run_on_dev_pushes_only_and_are_never_required` (the dev-push `if` equal to `library-shell-dev`'s, outside the aggregate's needs and verdicts, exact command, install line, step budget inside the job cap, no file listed whole elsewhere, the detached node still in `architecture-guards`). `Tests/CI/test_derived_artifacts_workflow.py`: the job order.
 - **Files.** `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`, `Tests/CI/test_derived_artifacts_workflow.py`, `backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md`.
+
+**2026-11-15 (round-14 closeout).** Both criteria wait on CI, not on code: AC#1's job time needs the first CI run of `backup-owner-suites-dev`, and AC#2 needs that first dev push after this stack merges to be green. Neither can be met before the merge. The Actor Pack later-rollback tests TASK-40305 left unlaned (`test_created_persona_subtree_rollback.py`) run whole in this job. The 8 deselected nodes are TASK-41116; the drain and builtin time-limit flakes in this job's files are TASK-41117; the persona reopen-child lock flake is TASK-41115.
