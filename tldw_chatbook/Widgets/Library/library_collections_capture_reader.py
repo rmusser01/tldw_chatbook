@@ -203,7 +203,8 @@ async def recompose_capture_panes(
 
     Only the scope rows and the Items and Work panes recompose, never the
     screen, and only when their presentation changed or their last recompose
-    never finished; a control the rebuild removed is focused again by id.
+    never finished; a control the rebuild removed is focused again by id, or
+    the content's first control when it is gone (TASK-41126).
 
     Args:
         screen: The Library screen (a ``BaseAppScreen``) hosting the panes.
@@ -236,9 +237,12 @@ async def recompose_capture_panes(
         await pane.recompose()
         pane._half_built = False
     screen.sweep_stale_mouse_capture()
-    # Textual moved focus off the removed widget; put it back by id.
+    # Textual moved focus off the removed widget. Restore it as a whole-screen
+    # recompose does: the same id if focusable, else the content's first control.
     if focus_id and getattr(screen.focused, "id", None) != focus_id:
-        for target in screen.query(f"#{focus_id}"):
+        targets = [target for target in screen.query(f"#{focus_id}") if target.focusable]
+        target = targets[0] if targets else screen._first_focusable_in_content()
+        if target is not None:
             target.focus()
     return True
 

@@ -479,6 +479,133 @@ async def test_rail_press_recomposes_library_once_and_loads_captures_in_place(
 
 @pytest.mark.asyncio
 @pytest.mark.bootstrap_profile  # the Library harness's profile (TASK-39141)
+async def test_collections_actions_repaint_their_panes_without_a_library_recompose(
+    monkeypatch, tmp_path
+):
+    """TASK-41126: an action repaints the reader panes, not the Library screen.
+
+    Each of these used to end in a whole-screen recompose (one per action,
+    two for a capture). Counts ``compose_content`` from each action until the
+    panes show its result; focus lands where that recompose's restore put it:
+    the same control, or the content's first one when the control is gone.
+    One launch runs them in turn (the UI lane has no time to spare).
+    """
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    composes = []
+    compose_content = LibraryScreen.compose_content
+
+    def counting_compose_content(screen):
+        composes.append(screen)
+        return compose_content(screen)
+
+    monkeypatch.setattr(LibraryScreen, "compose_content", counting_compose_content)
+    app, _scope, _identities = await _seed()
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = await _open(host, pilot)
+        engine = screen._library_collections_capture_controller
+
+        def rows() -> int:
+            return len(screen.query(".library-collections-item-row"))
+
+        def work():
+            return screen.query_one("#library-collections-work").presentation
+
+        async def act(action, target, done, *, kept_focus=True):
+            if target is not None:
+                control = await _wait_for_selector(screen, pilot, target)
+                control.focus()
+                await _wait_for_condition(
+                    pilot, lambda: screen.focused is control, message="Never focused"
+                )
+            focused_id = getattr(screen.focused, "id", None)
+            await pilot.pause()
+            composes.clear()
+            if target is not None:
+                await pilot.press("enter")
+            else:
+                # The FileSave callback's own call (the completion path).
+                await screen._export_library_collection_legacy_recovery(
+                    tmp_path / "legacy.json"
+                )
+            await _wait_for_condition(
+                pilot,
+                lambda: done() and not screen._recompose_required,
+                message=f"{action} never settled",
+            )
+            for _ in range(3):
+                await pilot.pause()
+            assert not composes, f"{len(composes)} Library recomposes for one {action}"
+            expected = (
+                screen.query_one(f"#{focused_id}")
+                if kept_focus
+                else screen._first_focusable_in_content()
+            )
+            assert screen.focused is expected, (action, screen.focused, expected)
+
+        await _wait_for_condition(
+            pilot,
+            lambda: rows() == 2
+            and not any(
+                not worker.is_finished
+                and worker.group == "library_collections_capture_entry"
+                for worker in screen.app.workers
+            ),
+            message="Collections entry never settled",
+        )
+        scope_row = "#library-collections-scope-saved"
+        await act(
+            "scope change",
+            scope_row,
+            lambda: work().active_scope == "saved"
+            and not engine.state.page_loading
+            and not engine.state.detail_loading
+            and str(screen.query_one(scope_row, Button).label).startswith("▸"),
+        )
+
+        await _activate(
+            screen, host, pilot, "#library-collections-mode-highlights", "Highlights"
+        )
+        quote = await _wait_for_selector(
+            screen, pilot, "#library-collections-highlight-quote"
+        )
+        quote.text = "A quoted line"
+        await act(
+            "annotate",
+            "#library-collections-highlight-save",
+            lambda: work().action_status == "Highlight saved."
+            and bool(screen.query(".library-collections-highlight-delete")),
+        )
+
+        await _activate(screen, host, pilot, "#library-collections-quick-capture", "Quick")
+        url = await _wait_for_selector(screen, pilot, "#library-collections-capture-url")
+        url.value = "https://example.test/gamma"
+        await act(
+            "capture",
+            "#library-collections-capture-save",
+            lambda: rows() == 3 and work().action_status.startswith("Saved"),
+            kept_focus=False,
+        )
+
+        await _activate(screen, host, pilot, "#library-collections-more", "More")
+        await _activate(screen, host, pilot, "#library-collections-hard-delete", "Delete")
+        await act(
+            "delete",
+            "#library-collections-hard-delete-confirm",
+            lambda: rows() == 2 and not engine.state.page_loading,
+            kept_focus=False,
+        )
+
+        await act(
+            "legacy recovery export",
+            None,
+            lambda: work().action_status.startswith("Legacy recovery export"),
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile  # the Library harness's profile (TASK-39141)
 async def test_a_pane_repaint_cancelled_mid_recompose_is_rebuilt_by_the_next():
     """TASK-40328 review r14ls-rev1: a cancelled repaint never strands a pane.
 

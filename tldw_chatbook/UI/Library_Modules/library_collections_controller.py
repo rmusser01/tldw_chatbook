@@ -159,6 +159,7 @@ class LibraryCollectionsController:
         self._set_library_collections_capture_controller_fn = (
             set_library_collections_capture_controller
         )
+        self._pane_sync_lock = asyncio.Lock()
 
     # -- framework services: live-read properties, never snapshotted -----
 
@@ -422,7 +423,16 @@ class LibraryCollectionsController:
         return request
 
     def _refresh_library_collections_capture_reader(self) -> None:
-        """Recompose the destination-owned capture panes from controller state."""
+        """TASK-41126: repaint the panes in place once the current message is done."""
+        if (
+            self.is_mounted
+            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS
+        ):
+            self._capture_reader_annotation_draft()
+            self._screen.call_next(self._sync_library_collections_capture_panes)
+
+    def _recompose_library_collections_screen(self) -> None:
+        """Recompose the whole screen: the fallback when no panes are mounted."""
         if (
             self.is_mounted
             and self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS
@@ -442,14 +452,17 @@ class LibraryCollectionsController:
 
     async def _sync_library_collections_capture_panes(self) -> None:
         """TASK-40328: re-render the capture panes in place (whole screen without)."""
-        self._capture_reader_annotation_draft()
-        presentation = self._library_collections_capture_presentation()
-        if not await recompose_capture_panes(self._screen, presentation):
-            self._refresh_library_collections_capture_reader()
-        elif (rail := self._screen._active_library_rail()) is not None:
-            # The rail row and Details read the count this load produced; the
-            # retired whole-screen recompose used to repaint them (r14ls-rev1).
-            self._screen._sync_library_rail_state(rail)
+        # One sync at a time: the entry worker's and the actions' must never
+        # recompose one pane at once (TASK-41126).
+        async with self._pane_sync_lock:
+            self._capture_reader_annotation_draft()
+            presentation = self._library_collections_capture_presentation()
+            if not await recompose_capture_panes(self._screen, presentation):
+                self._recompose_library_collections_screen()
+            elif (rail := self._screen._active_library_rail()) is not None:
+                # The rail row and Details read the count this load produced; the
+                # retired whole-screen recompose used to repaint them (r14ls-rev1).
+                self._screen._sync_library_rail_state(rail)
         self.call_after_refresh(
             self._sync_library_collections_reader_layout_from_shell
         )

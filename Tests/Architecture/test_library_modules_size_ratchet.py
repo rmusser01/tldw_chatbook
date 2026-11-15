@@ -164,8 +164,11 @@ _BUDGETS: dict[str, int] = {
     # count and Details in place: 1698 -> 1702 (measured). Review r14ls-rev2:
     # the first layout sync retries the restore's focus id: 1702 -> 1714
     # (measured). Review r14ls-rev3: only while focus is still on the exact
-    # grip the restore parked it on: 1714 -> 1720 (measured).
-    "tldw_chatbook/UI/Library_Modules/library_collections_controller.py": 1720,
+    # grip the restore parked it on: 1714 -> 1720 (measured). 2026-11-15,
+    # TASK-41126: every Collections action repaints the panes in place through
+    # one serialized sync (the whole-screen recompose kept as its fallback):
+    # 1720 -> 1733 (measured).
+    "tldw_chatbook/UI/Library_Modules/library_collections_controller.py": 1733,
     # TASK-32659: bounded saved-search loading, including authority/request fencing.
     "tldw_chatbook/UI/Library_Modules/library_collections_saved_search_controller.py": 49,
     # TASK-33628.10: 976 -> 964. The ensure-selection decision moved to

@@ -3126,3 +3126,7 @@ Tests/UI/test_console_live_work_handoffs.py::test_a_cut_media_or_note_excerpt_is
 Tests/UI/test_console_live_work_handoffs.py::test_a_cut_media_or_note_excerpt_is_staged_as_partial[note]
 Tests/UI/test_console_live_work_handoffs.py::test_a_partial_tray_row_shows_partial_before_a_long_title[235x52]
 Tests/UI/test_console_live_work_handoffs.py::test_a_partial_tray_row_shows_partial_before_a_long_title[211x44]
+# TASK-41126 (2026-11-15): Collections actions (scope change, annotate,
+# capture, delete, legacy recovery export) repaint the reader panes with no
+# Library recompose; one launch, 40.5 s call / 65.6 s serial at load 84-86.
+Tests/UI/test_library_collection_reader_journeys.py::test_collections_actions_repaint_their_panes_without_a_library_recompose
