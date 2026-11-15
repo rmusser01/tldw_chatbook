@@ -519,8 +519,9 @@ parent's turn sealed. The light/full tool surface is fixed at admission and the
 reply cannot widen it, so a light-surface turn does not count Canvas, chatbook's
 own MCP tools or the local tools the light surface does not offer (its file
 write tools among them). The per-run run-log directory under the first writable
-binding is private storage and declares no project write, so two agent chats on
-the same writable project run at once until one of them really writes. The
+binding is private storage and declares no project write (only a read of that
+root), so two agent chats on the same writable project run at once until one of
+them really writes; the run log never creates or writes through a link. The
 runtime's own app with no Personal Context service cached yet counts as bounded;
 a custom cached service stays OPAQUE.
 
