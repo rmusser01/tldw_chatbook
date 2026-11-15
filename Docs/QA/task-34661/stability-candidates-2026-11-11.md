@@ -1454,3 +1454,46 @@ all six raw arms with host receipts, the original failure logs, and the
 129-entry verified `viewport-screen-sha256.txt` are local under
 `/private/tmp/pr3536-viewport-kcTsyhaZ`. No new ADR was needed for
 this discarded test of ADR-365's existing viewport boundary.
+
+### Cold saved-chat handoff trace
+
+Three fresh 120×50 Terminal.app 470.2 profiles ran the exact
+`f497f8d3e9` baseline and the same sealed corpus. The original two
+Active switches preceded each `perf-00000` cold open. The private
+observer timed original calls and native TTY flushes. An initial copied
+window title prevented the first launcher from attaching. The corrected
+driver attached to that verified window before any measured input.
+One-minute host load at the start and end of the measured runs was
+17.56→16.98, 16.98→20.22, and 20.22→35.59 on 18 CPUs.
+
+Times in the table are milliseconds elapsed from Return.
+
+| Run | Busy flush | Saved tree loaded | Runtime hydrated | Resume returned | Exact target ready | Modal dismissed | Usable TTY frame |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| R1 | 53.40 | 335.60 | 491.43 | 1855.76 | 1918.73 | 1919.38 | 2017.11 |
+| R2 | 40.91 | 343.88 | 508.76 | 1843.47 | 1997.78 | 1998.78 | 2100.94 |
+| R3 | 49.79 | 306.69 | 496.77 | 1749.59 | 1850.91 | 1851.42 | 1965.38 |
+
+Dismissal followed the exact-target readiness check in 0.51–1.00 ms.
+Switcher paint totaled 382–497 ms before the first usable frame, with
+zero measured after that readiness check. The largest wall-time
+interval was runtime hydration return through saved-chat resume
+completion, 1.25–1.36 s. It includes scope and token preparation,
+session activation, and Console projection. The trace does not isolate
+their individual costs or attribute the full interval to one stage.
+
+The corrected observer took the oldest marker from the selected
+transcript. All three cold runs saw message 2 at the oldest frame and
+message 24 again at the tail. Each ran the full 13-second observation
+and retained over nine seconds after the scroll round trip. All
+confirmed exact identity, tabs, composer focus, and ordinary Ctrl+Q
+retirement with zero private DB descriptors. Busy paint passed in all
+three. Every cold run missed the 50 ms limit before readiness (91.99,
+129.93 and 110.87 ms). The extended maxima were 344.98, 356.89 and
+318.65 ms. All three occurred after the scroll round trip and
+overlapped 271–310 ms of main-thread generation-two collection.
+
+The evidence did not support a switcher handoff change. Production
+source and the 50/100 ms limits were preserved. TASK-31966 stays open.
+The raw traces, startup-label failure and 63 verified hashes are local
+under `/private/tmp/pr3536-cold-handoff-5GsdAo91`.
