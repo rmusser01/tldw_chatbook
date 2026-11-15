@@ -12,4 +12,4 @@ Findings addressed:
 
 Final source/evidence review: no remaining Critical or Important finding. Native admission, fresh effect-time scope, actual Worker identity, local-pause retry, physical shutdown ownership and deadlines remain intact. Two child-process test budgets become 120s for startup/seeding/exit; internal safety and profile bounds remain unchanged.
 
-The report retains worse first-return attachments and worst sampled overshoot, and does not claim a uniform or general latency win. Review itself did not execute tests; root verification is recorded in the test/profile receipts. Final publication must preserve the staged harness digests from those receipts.
+The report retains worse first-return attachments and worst sampled overshoot, and does not claim a uniform or general latency win. Review itself did not execute tests; root verification is recorded in the test/profile receipts. Publication verification passes: all four staged harness blobs exactly match the executed receipt digests, including native CRLF. See harness-git-qualification.json.

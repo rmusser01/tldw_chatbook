@@ -25,7 +25,7 @@
 - [x] Record measured cost, one hypothesis and exact bounded correction before product edits.
 - [x] Add a causal RED control, implement the minimal correction, and run GREEN plus connected source/custom/persisted/cancellation/Close coverage.
 - [x] Freeze actual baseline/candidate sources and run serial comparison cohorts with unchanged guards and bounds; record incomplete outcomes without aggregating them into a speed claim.
-- [ ] Review source and evidence, complete scoped static checks, clean only owned temporary roots, and update PR3572 with auto-merge off.
+- [x] Review source and evidence, complete scoped static checks, clean only owned temporary roots, and update PR3572 with auto-merge off.
 
 ## Evidence-led hypotheses
 
