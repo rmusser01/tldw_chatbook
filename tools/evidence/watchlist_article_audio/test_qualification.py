@@ -1,11 +1,13 @@
 """Real parser and numerical measurement checks; no audio-device access."""
 
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 import warnings
 import wave
 
@@ -19,6 +21,7 @@ from qualification import (
     marker_signal,
     measure_match,
     parse_stats_position,
+    resolve_ffplay,
     select_fresh,
 )
 
@@ -185,6 +188,31 @@ class CliTests(unittest.TestCase):
             self.assertEqual(receipt["full_gate"], "unqualified")
             self.assertEqual(set(receipt["native_platforms"].values()), {"unqualified"})
             self.assertNotIn("executable", receipt)
+
+
+class ResolutionTests(unittest.TestCase):
+    def test_explicit_default_and_custom_chocolatey_shims_are_refused(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            base = Path(scratch)
+            custom = base / "alternate-install"
+            with patch.dict(
+                os.environ, {"ProgramData": scratch, "ChocolateyInstall": str(custom)}
+            ):
+                for folder in [base / "chocolatey" / "bin", custom / "bin"]:
+                    folder.mkdir(parents=True)
+                    shim = folder / "ffplay.exe"
+                    shim.write_bytes(b"fixture only: must never execute")
+                    # Exercise normalization before the shim-location check.
+                    explicit = folder / ".." / "bin" / "ffplay.exe"
+                    with self.subTest(folder=folder), self.assertRaises(ValueError):
+                        resolve_ffplay(str(explicit))
+
+    def test_explicit_direct_payload_file_remains_accepted(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            payload = Path(scratch) / "chocolatey" / "lib" / "ffmpeg" / "ffplay.exe"
+            payload.parent.mkdir(parents=True)
+            payload.write_bytes(b"fixture only: must never execute")
+            self.assertEqual(resolve_ffplay(str(payload)), payload.resolve())
 
 
 if __name__ == "__main__":
