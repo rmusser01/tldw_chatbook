@@ -341,4 +341,4 @@ a529dbd3ed0b13502b8d100e3053e0bea5baa119
 # handoff) moved byte-for-byte into LibraryMediaController; the one token
 # edit is ruling R2's dropped `self._media_controller.` hop. Test edits are
 # receiver-only, AST-proven against the parent.
-a2aca6bd4f6566bb43989cd339890595adc0d228
+79625b5ce9e22be1ebe3e574156959884c9685c3
