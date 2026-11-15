@@ -324,8 +324,12 @@ async def test_enter_with_popup_closed_sends_normally():
         submit_spy = await _spy_submit_draft(console)
 
         console.query_one("#console-send-message", Button).press()
-        await pilot.app.workers.wait_for_complete()
-        await pilot.pause()
+        # 3e618d7119 receives a stock Send into runtime custody: submit_draft
+        # runs on the runtime's task, not a Textual worker (TASK-41139).
+        for _ in range(300):
+            if submit_spy.await_count:
+                break
+            await pilot.pause(0.1)
         submit_spy.assert_awaited()
 
 

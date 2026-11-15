@@ -3111,3 +3111,8 @@ Tests/UI/test_library_git_row_shutdown.py
 # with no database yet (serial with the lane's flags 24.3 s, 18.1 s of call,
 # load 104-111).
 Tests/UI/test_backup_known_profiles.py
+# TASK-41139 (2026-11-15): the popup-closed Send node and the visit dispatch
+# file, re-pinned to the received Send (3e618d7119) and to the app's own first
+# Console visit (bootstrap_profile).
+Tests/UI/test_console_command_popup.py::test_enter_with_popup_closed_sends_normally
+Tests/UI/test_console_visit_dispatch_dedupe.py
