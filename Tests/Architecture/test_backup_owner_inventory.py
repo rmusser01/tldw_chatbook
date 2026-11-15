@@ -1485,6 +1485,21 @@ def test_actor_pack_and_reaction_trees_have_their_own_review_labels():
     assert len(set(labels)) == len(persona), labels
 
 
+def test_every_installed_backup_owner_has_its_own_review_label():
+    """TASK-41111: every installed owner can reach a review (archive Contents,
+    dependency groups, portable relocation), so each has its own name there;
+    ``recovery.credentials`` is the credential material include-mode capture
+    adds. A newly installed owner fails here until it is named."""
+    from tldw_chatbook.Backup_Recovery.owner_registry import install_adapters
+    from tldw_chatbook.Backup_Recovery.recovery_service import _OWNER_LABELS
+
+    owners = [adapter.owner_id for adapter in install_adapters()]
+    owners.append("recovery.credentials")
+    assert [owner for owner in owners if owner not in _OWNER_LABELS] == []
+    labels = [_OWNER_LABELS[owner] for owner in owners]
+    assert len(set(labels)) == len(labels), sorted(labels)
+
+
 # TASK-40134: the Personal Context repository is a captured backup owner. These
 # fixtures use the in-memory key protector; no test here reaches an OS keyring.
 
