@@ -241,6 +241,18 @@ def test_widen_refuses_recovery_protection_and_foreign_custody(tmp_path, native)
         activity.widen_to_opaque(claim, owner=begin(), footprint=bounded)
 
 
+def test_never_widened_claim_refuses_a_missing_footprint(tmp_path, native):
+    # A claim that never widened has no pre-widening footprint to match None.
+    _, begin = native
+    activity = WorktreeActivity()
+    owner = begin()
+    claim = activity.try_acquire(
+        owner=owner, footprint=WorktreeFootprint(reads=(_scope(tmp_path, "file"),))
+    )
+    with pytest.raises(ValueError):
+        activity.validate_claim(claim, owner=owner, footprint=None)
+
+
 @pytest.mark.parametrize("settle_first", [False, True])
 def test_release_needs_positive_drain_and_durable_settlement(
     tmp_path, native, settle_first

@@ -458,9 +458,16 @@ def _capture_maximum(tree, *, hook_read=None):
     automatic = current_automatic_work()
     goal = automatic.goal if automatic is not None else None
     goal_scope = goal.goal.request.tool_scope if goal is not None else None
+    from tldw_chatbook.Agents import plain_chat_tool_surface as surface
+
+    # The light surface keeps only these local tools (TASK-40715); the rest
+    # are composed but never offered, so they grant no maximum or record.
+    light_local = frozenset(
+        (*surface.LIGHT_SURFACE_TOOL_NAMES, *surface.LIGHT_SURFACE_LOCAL_OPT_INS)
+    )
     catalog_allowed = lambda source, name: (
         goal_scope is None or f"{source}:{name}" in goal_scope.catalog_tools
-    )
+    ) and not (tree.light_surface and source == "local" and name not in light_local)
     tree.catalog_permits = lambda source, name: (
         advertised(name) and catalog_allowed(source, name)
     )

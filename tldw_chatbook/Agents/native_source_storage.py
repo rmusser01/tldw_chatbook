@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import threading
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
@@ -16,12 +17,23 @@ from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
 
 
+_RETAINED_ON_THREAD = threading.local()
+
+
 @contextmanager
 def _retained_source_stack(tree, databases):
-    """Retain the original tree until native scopes and handles return."""
+    """Retain the original tree until native scopes and handles return.
+
+    Inside this thread's own outer retention of the same tree, a handle opened
+    here belongs to the outer stack's operation owner, which closes it later
+    (``operation_owned_connection`` defers to the outermost owner). So a nested
+    stack checks no handles; the outer one checks them when it exits.
+    """
+    held = vars(_RETAINED_ON_THREAD).setdefault("trees", [])
+    nested = tree in held
     locals_and_handles = []
     for database in dict.fromkeys(db for db in databases if db is not None):
-        if getattr(database, "is_memory_db", False):
+        if nested or getattr(database, "is_memory_db", False):
             continue
         namespace = vars(database)
         local = namespace.get("_local") or namespace.get("_thread_local")
@@ -29,28 +41,34 @@ def _retained_source_stack(tree, databases):
             locals_and_handles.append((local, getattr(local, "conn", None)))
     cleanup = [False]
     body_error = None
-    with tree.retain_source_scope(_cleanup_state=cleanup):
-        try:
-            with ExitStack() as stack:
-                try:
-                    yield stack
-                except BaseException as error:
-                    body_error = error
-                    raise
-        except BaseException as error:
-            if error is body_error and all(
-                getattr(local, "conn", None) is original
-                for local, original in locals_and_handles
-            ):
+    held.append(tree)
+    try:
+        with tree.retain_source_scope(_cleanup_state=cleanup):
+            try:
+                with ExitStack() as stack:
+                    try:
+                        yield stack
+                    except BaseException as error:
+                        body_error = error
+                        raise
+            except BaseException as error:
+                if error is body_error and all(
+                    getattr(local, "conn", None) is original
+                    for local, original in locals_and_handles
+                ):
+                    cleanup[0] = True
+                raise
+            else:
+                if not all(
+                    getattr(local, "conn", None) is original
+                    for local, original in locals_and_handles
+                ):
+                    raise RuntimeError(
+                        "original source database handle did not return"
+                    )
                 cleanup[0] = True
-            raise
-        else:
-            if not all(
-                getattr(local, "conn", None) is original
-                for local, original in locals_and_handles
-            ):
-                raise RuntimeError("original source database handle did not return")
-            cleanup[0] = True
+    finally:
+        held.remove(tree)
 
 
 class _AgentSources:

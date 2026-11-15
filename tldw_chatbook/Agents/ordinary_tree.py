@@ -33,9 +33,9 @@ def widen_refusal(tool_name, refused):
     """The tool error the model sees when a turn's claim cannot widen."""
     if str(refused) == "worktree_activity_busy":
         return (
-            f"{tool_name} is unavailable while another chat's turn is running: "
-            "it needs the workspace to itself. Continue without it, or retry "
-            "after that turn finishes."
+            f"{tool_name} is unavailable while other workspace activity is "
+            "running: it needs the workspace to itself. Continue without it, "
+            "or retry after that activity finishes."
         )
     return f"{tool_name} is unavailable: this turn has already closed."
 
@@ -237,12 +237,15 @@ class OrdinaryTurn:
                 or spec.worktree_effect != self.local_maximum[name]
             ):
                 raise RuntimeError("ordinary local catalog widened")
+        # A writable root needs write coverage only when a reachable tool can
+        # write (the light surface reaches none, TASK-40715).
+        writes = any(self.local_maximum[name] == "write" for name in reachable)
         if not self.footprint.opaque:
             for authority in (provider._admitted_roots or {}).values():
                 if is_remote(authority.root):
                     raise RuntimeError("ordinary local root widened to SSH")
                 root = local_root_path(authority.root, site="ordinary maximum")
-                self._require_covered_root(root, write=authority.allow_write)
+                self._require_covered_root(root, write=authority.allow_write and writes)
             self._require_covered_root(provider._root, write=False)
             if provider._spill_dir is not None:
                 self._require_covered_root(provider._spill_dir.parent, write=True)
@@ -767,13 +770,13 @@ class OrdinaryTurn:
 
         Sub-agents and skill installs/scripts declare no footprint, so the claim
         widens when the turn actually uses one (TASK-40715). Never waits: another
-        live claim refuses with ``worktree_activity_busy``.
+        live claim refuses with ``worktree_activity_busy``. An already-OPAQUE
+        claim already covers the effect, even after the turn sealed: fleet
+        children outlive their parent's submission.
         """
-        self.check()
-        if self.sealed or self.runtime._disposed or self.controller._disposed:
-            raise CapacityRefused("ordinary_turn_closed")
         if self.footprint.opaque:
             return
+        self._require_open()
         try:
             footprint = self.activity.widen_to_opaque(
                 self.claim, owner=self.owner, footprint=self.footprint
@@ -784,7 +787,13 @@ class OrdinaryTurn:
             raise CapacityRefused("worktree_activity_busy")
         self.footprint = footprint
 
+    def _require_open(self):
+        self.check()
+        if self.sealed or self.runtime._disposed or self.controller._disposed:
+            raise CapacityRefused("ordinary_turn_closed")
+
     def attach(self, owner):
+        self._require_open()
         self.widen()
         for source in self.snapshot_sources:
             try:

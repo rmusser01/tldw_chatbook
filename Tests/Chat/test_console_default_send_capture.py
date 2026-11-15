@@ -6,6 +6,9 @@ top; the ``full_tools`` case also turns Full agent tools on), mounts it
 headless, sends the first chat through the real composer, and holds that
 provider call. A second chat then goes through the Console's own pre-send
 capture. ``chat_api_call`` is the only replaced boundary.
+
+``writable`` sends both chats, through that same pre-send capture, in one
+workspace with two writable folder bindings.
 """
 
 import json
@@ -27,6 +30,7 @@ network_guard.install()
 real_profile_guard.install()
 from loguru import logger
 logger.remove()
+MODE = sys.argv[2]
 
 
 async def exercise():
@@ -37,6 +41,12 @@ async def exercise():
     from tldw_chatbook import app as app_source
     from tldw_chatbook.Chat import Chat_Functions
     from tldw_chatbook.Chat import console_ordinary_tree as ordinary
+    from tldw_chatbook.Chat.console_configuration_preparation import (
+        standard_console_configuration_sources,
+    )
+    from tldw_chatbook.Chat.console_project_instructions import (
+        ProjectInstructionControlState,
+    )
     from tldw_chatbook.UI.Console_Modules.wiring import _precapture_turn_authority
 
     facts = {"captures": [], "calls": []}
@@ -47,12 +57,17 @@ async def exercise():
         configuration = tree.configuration
         facts["captures"].append({
             "opaque": footprint.opaque,
+            "writes": sorted(str(scope.path) for scope in footprint.writes),
+            "local_writes": sorted(
+                name for name, effect in tree.local_maximum.items() if effect == "write"
+            ),
             "agent_eligible": tree.agent_eligible,
             "personal_native": tree.personal_native,
             "personal_cached": tree.personal_service is not None,
             "other_providers": sorted(tree.other_maximum),
             "mcp_servers": sorted({row[1] for row in configuration.mcp_definition_sources}),
             "mcp_pending": configuration.mcp_capture_pending,
+            "skill_pending": configuration.skill_capture_pending,
         })
         return footprint
 
@@ -95,26 +110,60 @@ async def exercise():
             assert await _until(
                 lambda: screen._console_attach_reconciled
                 and not screen._console_attach_reconcile_running, 30)
-            first = store.ensure_session()
-            facts["first_agent_eligible"] = controller._agent_dispatch_is_eligible(first, prefill=None)
-            composer = screen._console_composer_or_none()
-            composer.load_draft("first default chat")
-            composer.screen.set_focus(composer)
-            assert await _until(lambda: app.focused is composer, 5)
-            _key(app, "enter", "\r")
-            assert await _until(entered.is_set, 60), facts
-            other = store.create_session(workspace_id=first.workspace_id)
-            try:
-                prepared = await _precapture_turn_authority(screen, other.id)
+
+            async def send(session, text):
+                prepared = await _precapture_turn_authority(screen, session.id)
                 with prepared():
-                    configuration = screen._session._build_console_turn_execution_context(other.id)
-                    result = await asyncio.wait_for(controller.submit_draft(
-                        "second default chat", session_id=other.id,
-                        configuration=configuration), 60)
+                    configuration = screen._session._build_console_turn_execution_context(
+                        session.id)
+                    return await asyncio.wait_for(controller.submit_draft(
+                        text, session_id=session.id, configuration=configuration), 60)
+
+            if MODE == "writable":
+                registry = app.workspace_registry_service
+                registry.create_workspace(workspace_id="shared", name="Shared")
+                for name in ("project", "second-project"):
+                    project = Path(os.environ["XDG_DATA_HOME"]).parent / name
+                    project.mkdir()
+                    registry.add_folder_binding("shared", project, allow_write=True)
+                state = ProjectInstructionControlState.legacy_disabled()
+                first, other = (
+                    store.create_session(workspace_id="shared", project_instruction_state=state)
+                    for _ in range(2)
+                )
+            else:
+                first = store.ensure_session()
+            # A Send made while startup's skill sources are still cold captures
+            # OPAQUE by design (pending capture); measure the settled Console.
+            assert await _until(lambda: standard_console_configuration_sources(
+                app, store, controller, session_id=first.id), 30)
+            facts["first_agent_eligible"] = controller._agent_dispatch_is_eligible(first, prefill=None)
+            if MODE == "writable":
+                first_send = asyncio.ensure_future(send(first, "first default chat"))
+            else:
+                composer = screen._console_composer_or_none()
+                composer.load_draft("first default chat")
+                composer.screen.set_focus(composer)
+                assert await _until(lambda: app.focused is composer, 5)
+                _key(app, "enter", "\r")
+            assert await _until(entered.is_set, 60), facts
+            if MODE != "writable":
+                # Only now: a new chat would otherwise take the composer's Send.
+                other = store.create_session(workspace_id=first.workspace_id)
+            try:
+                result = await send(other, "second default chat")
                 facts["second"] = [result.accepted, result.visible_copy]
+                if result.accepted:
+                    # Both provider calls are open at once: real concurrency.
+                    facts["concurrent"] = await _until(
+                        lambda: any("second default chat" in c for c in facts["calls"]), 30)
             finally:
                 release.set()
+            if MODE == "writable":
+                await first_send
             assert await _until(lambda: not runtime._ordinary_turns, 30)
+            runs = controller._agent_bridge._db.list_runs(first.persisted_conversation_id)
+            facts["first_runs"] = sorted([row["agent_kind"], row["status"]] for row in runs)
     finally:
         release.set()
         print("FACTS " + json.dumps(facts, sort_keys=True, default=str), flush=True)
@@ -129,7 +178,7 @@ with user_fixture_default_owner():
         "[splash_screen]\nenabled=false\n"
         '[api_settings.openai]\napi_key="fixture-not-a-real-key"\n'
         '[chat_defaults]\nprovider="openai"\nmodel="gpt-4o-mini"\n'
-        + ("[tools]\nfull_agent_tools_enabled=true\n" if sys.argv[2] == "full_tools" else ""),
+        + ("[tools]\nfull_agent_tools_enabled=true\n" if MODE == "full_tools" else ""),
         encoding="utf-8",
     )
     selected.chmod(0o600)
@@ -137,7 +186,7 @@ with user_fixture_default_owner():
 """
 
 
-@pytest.mark.parametrize("surface", ["default", "full_tools"])
+@pytest.mark.parametrize("surface", ["default", "writable", "full_tools"])
 def test_default_config_second_chat_reaches_provider_while_first_reply_runs(
     tmp_path, surface
 ):
@@ -146,16 +195,26 @@ def test_default_config_second_chat_reaches_provider_while_first_reply_runs(
         encoding="utf-8", errors="replace"
     )
     facts = json.loads(log.split("FACTS ", 1)[1].splitlines()[0])
+    why = json.dumps(facts, sort_keys=True)  # untruncated in a failure
     first = facts["captures"][0]
-    assert facts["first_agent_eligible"] and first["agent_eligible"], facts
+    assert facts["first_agent_eligible"] and first["agent_eligible"], why
+    assert facts["first_runs"] == [["primary", "done"]], why
     if surface == "default":
-        # Nothing the light surface offers is undeclarable: both chats run.
-        assert not first["opaque"], facts
-        assert facts["second"][0] is True, facts
-        assert any("second default chat" in call for call in facts["calls"]), facts
+        # Nothing the light surface offers is undeclarable: both chats run,
+        # their provider calls open at once.
+        assert not first["opaque"], why
+        assert facts["second"][0] is True, why
+        assert facts["concurrent"], why
+    elif surface == "writable":
+        # The light surface offers no local write tool, so the maximum counts
+        # none, and its real composition still binds and replies (first_runs).
+        # The agent run-log root (the first writable binding) is still a
+        # declared project write, so the second chat stays busy here.
+        assert not first["opaque"], why
+        assert first["local_writes"] == [], why
     else:
         # Full agent tools still count Canvas and chatbook's MCP tools up front.
-        assert first["opaque"], facts
-        assert "canvas" in first["other_providers"], facts
-        assert "builtin:tldw_chatbook" in first["mcp_servers"], facts
-        assert facts["second"] == [False, BUSY], facts
+        assert first["opaque"], why
+        assert "canvas" in first["other_providers"], why
+        assert "builtin:tldw_chatbook" in first["mcp_servers"], why
+        assert facts["second"] == [False, BUSY], why

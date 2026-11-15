@@ -209,7 +209,7 @@ async def test_spawn_conflicting_with_another_running_turn_is_refused_not_awaite
         await blocking
     assert attached == [], "the spawn joined a claim it could not widen"
     assert len(spawn_payloads) == 2, "the spawning turn did not carry on"
-    assert "spawn_subagent is unavailable while another chat's turn is running" in str(
+    assert "spawn_subagent is unavailable while other workspace activity is running" in str(
         spawn_payloads[1]
     )
     rows = h.database.list_runs(spawning.persisted_conversation_id)
@@ -306,7 +306,7 @@ async def test_skill_effect_widens_the_claim_or_is_refused_while_another_turn_ru
     assert len(acting_payloads) == 2, "the acting turn did not carry on"
     if contended:
         assert effects == []
-        assert f"{tool} is unavailable while another chat's turn is running" in (
+        assert f"{tool} is unavailable while other workspace activity is running" in (
             str(acting_payloads[1])
         )
     else:
@@ -385,3 +385,74 @@ async def test_light_surface_fixed_at_capture_cannot_widen_at_reply(
     finally:
         held.release.set()
         await task
+
+
+async def test_fleet_child_runs_a_script_after_its_parent_and_the_claim_then_retires(
+    ordinary_host, monkeypatch
+):
+    """A fleet child outlives its parent's submission (sealed turn).
+
+    Its ``run_skill_script`` still runs under the turn's widened claim, and
+    once the child returns the turn retires: another chat's Send is accepted.
+    """
+    from Tests.Chat.test_console_agent_bridge import SUBAGENT_PROMPT_PREFIX
+    from Tests.console_provider_doubles import provider_resolution
+
+    monkeypatch.setenv("TLDW_AGENTS_MAX_LIVE_SUBAGENTS", "3")
+    monkeypatch.setenv("TLDW_AGENTS_AUTOWAKE_ENABLED", "false")
+    h = ordinary_host
+    acting = _chat(h)
+    effects = []
+    h.bridge._skills_service = _ScriptSkills(
+        lambda: effects.append((_turn(h, acting).sealed, _turn(h, acting).footprint.opaque))
+    )
+    h.controller.set_pending_skill_script = lambda *args, **kwargs: None
+    parent_finished = threading.Event()
+    child_payloads = []
+
+    class Gateway(_RecordingGateway):
+        async def resolve_for_send(self, selection):
+            # A child run needs the continuation fields a real resolution has.
+            return provider_resolution(
+                provider="llama_cpp", model="m", continuation_protocol=None, api_mode=None
+            )
+
+        async def stream_chat(self, resolution, messages, **kwargs):
+            self.payloads.append(messages)
+            system = str(messages[0].get("content", "")) if messages else ""
+            if system.startswith(SUBAGENT_PROMPT_PREFIX):
+                child_payloads.append(messages)
+                if len(child_payloads) == 1:
+                    assert await asyncio.to_thread(parent_finished.wait, 20)
+                    yield fence(
+                        "run_skill_script",
+                        {"skill": "demo", "script": "scripts/x.py", "args": []},
+                    )
+                else:
+                    yield "child done"
+                return
+            if len(self.payloads) == 1:
+                yield fence(SPAWN_TOOL_NAME, {"task": "CHILD-TASK outlive the parent"})
+            else:
+                yield "parent done"
+
+    _install(h, Gateway())
+    try:
+        result = await asyncio.wait_for(
+            h.controller.submit_draft("spawn chat", session_id=acting.id), 30
+        )
+        assert result.accepted, result.visible_copy
+        tree = _turn(h, acting)
+        assert tree.sealed and tree.footprint.opaque
+        with pytest.raises(CapacityRefused, match="ordinary_turn_closed"):
+            tree.attach(object())  # no new child joins a sealed turn
+    finally:
+        parent_finished.set()
+    await asyncio.wait_for(until(lambda: len(child_payloads) == 2), 20)
+    assert effects == [(True, True)], (
+        "the child's script did not run after its parent sealed: "
+        + str(child_payloads[1][-1])
+    )
+    await asyncio.wait_for(until(lambda: tree.retired.done()), 20)
+    result = await h.controller.submit_draft("other chat", session_id=_chat(h).id)
+    assert result.accepted, "the turn's claim outlived its child"

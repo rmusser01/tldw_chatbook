@@ -483,7 +483,10 @@ class WorktreeActivity:
             state is None
             or state.custody is not claim
             # A widened claim still covers its original bounded footprint.
-            or footprint not in (state.footprint, state.widened_from)
+            or (
+                footprint != state.footprint
+                and (state.widened_from is None or footprint != state.widened_from)
+            )
             or member is None
             or member.owner is not owner
             or member.drained is not None
