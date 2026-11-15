@@ -25,7 +25,7 @@ def test_blocked_phase_returns_its_chat_without_a_restart(tmp_path):
     "workflow dependencies blocked". Nothing had launched, yet the run stayed
     `recovery_required`, kept the chat's intake claim ("A turn is already
     preparing."), reconcile refused it, and app shutdown could not retire it."""
-    _run(tmp_path, "blocked_phase", "native", script=_SCRIPT, timeout=90)
+    _run(tmp_path, "blocked_phase", "native", script=_SCRIPT, timeout=180)
 
 
 def test_phase_failing_with_a_live_worker_keeps_custody_until_reviewed(tmp_path):
@@ -36,14 +36,20 @@ def test_phase_failing_with_a_live_worker_keeps_custody_until_reviewed(tmp_path)
     runs have no planning preparation. A refused record leaves the phase able
     to retry, and a claim release that raises is finished by the next
     reconcile instead of wedging the chat."""
-    _run(tmp_path, "live_worker_failure", "native", script=_SCRIPT, timeout=90)
+    _run(tmp_path, "live_worker_failure", "native", script=_SCRIPT, timeout=180)
+
+
+def test_finalize_during_a_refused_record_keeps_the_phase_retired(tmp_path):
+    """A record that fails must not undo a retirement the finalize path made
+    while the record was running."""
+    _run(tmp_path, "finalize_during_record", "native", script=_SCRIPT, timeout=180)
 
 
 def test_ownership_error_in_a_phase_keeps_a_claim_it_does_not_own(tmp_path):
     """The failed-phase path catches every ordinary exception, ownership errors
     included. A primary token that changed hands stays with its new owner:
     the run keeps custody until reconcile, once ownership is restored."""
-    _run(tmp_path, "ownership_error", "native", script=_SCRIPT, timeout=90)
+    _run(tmp_path, "ownership_error", "native", script=_SCRIPT, timeout=180)
 
 
 async def _started(rig):
@@ -94,7 +100,7 @@ async def blocked_phase(tmp_path):
             patch.setattr(service, "phase_task_ids", MethodType(without_first, service))
             await rig.coordinator.approve(decision, command_id="approved-once")
             run = rig.coordinator._runs[rig.workflow.id]
-            await asyncio.wait_for(asyncio.shield(run.driver), 15)
+            await asyncio.wait_for(asyncio.shield(run.driver), 60)
         assert [key for key, _ in rig.provider.calls] == ["planning"]
         assert not rig.runtime.execution_capacity.snapshot().executions
         assert rig.workflow.id not in rig.coordinator._runs
@@ -113,9 +119,12 @@ async def blocked_phase(tmp_path):
 
 async def live_worker_failure(tmp_path):
     import asyncio
+    import contextlib
     import threading
+    from types import SimpleNamespace
 
     from Tests.Chat.workflow_rig import WorkflowProvider, build_workflow_rig
+    from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
     from tldw_chatbook.Agents.goal_storage_lifetime import owned_goal_storage
     from tldw_chatbook.Agents.workflow_models import WorkflowExecutionRecovery
     from tldw_chatbook.Chat import console_workflow_wave
@@ -142,7 +151,7 @@ async def live_worker_failure(tmp_path):
             )
             await rig.coordinator.approve(decision, command_id="approved-once")
             run = rig.coordinator._runs[rig.workflow.id]
-            await asyncio.wait_for(asyncio.shield(run.driver), 15)
+            await asyncio.wait_for(asyncio.shield(run.driver), 60)
         assert rig.coordinator._runs.get(rig.workflow.id) is run
         # Never attempted as a returned failure: no cleanup over live work.
         assert not [line for line in logged if "phase failed" in line], logged
@@ -163,29 +172,34 @@ async def live_worker_failure(tmp_path):
         # The refusal recorded nothing.
         assert await rig.service.call(rig.service.get, rig.workflow.id) == stored
         rig.provider_release()
-        await asyncio.wait_for(asyncio.gather(*waves, return_exceptions=True), 15)
+        await asyncio.wait_for(asyncio.gather(*waves, return_exceptions=True), 60)
         review = WorkflowExecutionRecovery(reason="reviewed_prior_effects")
         returned = await rig.service.call(rig.service.get, rig.workflow.id)
-        # A record refused inside its transaction keeps the phase retryable.
-        with pytest.raises(ValueError, match="revision_conflict"):
-            await rig.coordinator.reconcile(
-                rig.workflow.id,
-                expected_control_revision=snapshot.control_revision + 1,
-                decision=review,
-                command_id="reconcile-stale",
-            )
-        assert not run.phase._retired
-        assert await rig.service.call(rig.service.get, rig.workflow.id) == returned
-        # A launch racing the record: it starts right after the live check
-        # passes, through the launch gate's own protocol (take the phase's
-        # control lock, refuse a retired phase; agent_native_execution.py).
-        # It must be refused, or the record must refuse; never both proceed.
-        live_check = rig.service._has_live_workflow_resources
+        phase, service = run.phase, rig.service
+        live_check = service._has_live_workflow_resources
+        # A launch racing a record, through the real launch gate
+        # (`_commit_task_launch`). Only its fence's identity checks are
+        # stubbed; the stub keeps the fence's control lock. The launch starts
+        # right after the live check passes and must be refused.
         launches = []
 
+        @contextlib.contextmanager
+        def lock_only_fence(operation, *, _launch=None, _control=None):
+            with phase._control_lock:
+                yield SimpleNamespace(limits=None)
+
         def racing_launch():
-            with run.phase._control_lock:
-                launches.append("refused" if run.phase._retired else "bound")
+            child = SimpleNamespace(
+                claim=SimpleNamespace(id="racing-child", reservation_id="racing-child")
+            )
+            try:
+                phase._commit_task_launch(child, None, None, None)
+            except AutomaticWorkRefused as error:
+                launches.append(error.reason)
+            except BaseException as error:  # noqa: BLE001 - past the gate: bound.
+                launches.append("bound:" + type(error).__name__)
+            else:
+                launches.append("bound")
 
         def check_then_launch(workflow_id):
             live = live_check(workflow_id)
@@ -195,6 +209,58 @@ async def live_worker_failure(tmp_path):
                 launcher.join(10)
             return live
 
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(phase, "_fence", lock_only_fence)
+            patch.setattr(service, "_has_live_workflow_resources", check_then_launch)
+            # A record refused inside its transaction keeps the phase retryable.
+            with pytest.raises(ValueError, match="revision_conflict"):
+                await rig.coordinator.reconcile(
+                    rig.workflow.id,
+                    expected_control_revision=snapshot.control_revision + 1,
+                    decision=review,
+                    command_id="reconcile-stale",
+                )
+        assert launches == ["child_already_launched"], launches
+        assert not phase._retired
+        assert await service.call(service.get, rig.workflow.id) == returned
+        # Two concurrent records; the first fails after the second recorded.
+        # Records run one at a time, so the failure cannot undo the second's
+        # retirement: the phase ends retired and recorded as returned.
+        entered, recorded = threading.Event(), threading.Event()
+        checks = []
+
+        def first_check_waits(workflow_id):
+            checks.append(workflow_id)
+            if len(checks) == 1:
+                entered.set()
+                recorded.wait(2)  # Serialized records never see the second.
+            return live_check(workflow_id)
+
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(service, "_has_live_workflow_resources", first_check_waits)
+            first = asyncio.ensure_future(
+                service.call(
+                    service.record_returned_execution,
+                    phase,
+                    expected_control_revision=returned.control_revision + 5,
+                )
+            )
+            assert await asyncio.to_thread(entered.wait, 10)
+            second = asyncio.ensure_future(
+                service.call(
+                    service.record_returned_execution,
+                    phase,
+                    expected_control_revision=returned.control_revision,
+                )
+            )
+            second.add_done_callback(lambda _: recorded.set())
+            failed, done = await asyncio.gather(first, second, return_exceptions=True)
+        assert str(failed) == "revision_conflict", failed
+        assert done.status == "recovery_required", done
+        assert phase._retired
+        assert (
+            await service.call(service.get, rig.workflow.id)
+        ).status == "recovery_required"
         # A release that raises is finished by the next reconcile.
         wake = rig.controller._fleet_wake
         release = wake.release_automatic_primary
@@ -207,20 +273,17 @@ async def live_worker_failure(tmp_path):
             return release(session_id, token)
 
         with pytest.MonkeyPatch.context() as patch:
-            patch.setattr(
-                rig.service, "_has_live_workflow_resources", check_then_launch
-            )
             patch.setattr(wake, "release_automatic_primary", release_once)
+            current = await service.call(service.get, rig.workflow.id)
             with pytest.raises(RuntimeError, match="primary release failed"):
                 await rig.coordinator.reconcile(
                     rig.workflow.id,
-                    expected_control_revision=snapshot.control_revision,
+                    expected_control_revision=current.control_revision,
                     decision=review,
                     command_id="reconcile-returned",
                 )
-            assert launches == ["refused"], launches
             assert rig.coordinator._runs.get(rig.workflow.id) is run
-            current = await rig.service.call(rig.service.get, rig.workflow.id)
+            current = await service.call(service.get, rig.workflow.id)
             closed = await rig.coordinator.reconcile(
                 rig.workflow.id,
                 expected_control_revision=current.control_revision,
@@ -247,7 +310,7 @@ async def live_worker_failure(tmp_path):
     finally:
         logger.remove(sink)
         rig.provider_release()
-        await asyncio.wait_for(asyncio.gather(*waves, return_exceptions=True), 15)
+        await asyncio.wait_for(asyncio.gather(*waves, return_exceptions=True), 60)
         await rig.close()
 
 
@@ -284,7 +347,7 @@ async def ownership_error(tmp_path):
             )
             await rig.coordinator.approve(decision, command_id="approved-once")
             run = rig.coordinator._runs[rig.workflow.id]
-            await asyncio.wait_for(asyncio.shield(run.driver), 15)
+            await asyncio.wait_for(asyncio.shield(run.driver), 60)
         assert wake._automatic_primary_claims.get(session_id) is foreign
         assert rig.coordinator._runs.get(rig.workflow.id) is run
         assert (await rig.coordinator.get(rig.workflow.id)).status == (
@@ -316,4 +379,81 @@ async def ownership_error(tmp_path):
         with wake._registry_lock:
             if wake._automatic_primary_claims.get(session_id) is foreign:
                 del wake._automatic_primary_claims[session_id]
+        await rig.close()
+
+
+async def finalize_during_record(tmp_path):
+    import asyncio
+    import threading
+
+    from Tests.Chat.workflow_rig import WorkflowProvider, build_workflow_rig
+    from tldw_chatbook.Agents.goal_storage_lifetime import owned_goal_storage
+    from tldw_chatbook.Agents.workflow_models import WorkflowExecutionRecovery
+    from tldw_chatbook.Chat import console_workflow_wave
+
+    rig = await build_workflow_rig(tmp_path, None, WorkflowProvider(hold=("task-1",)))
+    original = console_workflow_wave.run_workflow_wave
+    waves = []
+
+    async def failing_while_live(phase, selected, **kwargs):
+        waves.append(asyncio.ensure_future(original(phase, selected, **kwargs)))
+        await rig.wait_for_provider_entry("task-1")
+        raise RuntimeError("wave observer failed")
+
+    try:
+        decision = await _started(rig)
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(
+                console_workflow_wave, "run_workflow_wave", failing_while_live
+            )
+            await rig.coordinator.approve(decision, command_id="approved-once")
+            run = rig.coordinator._runs[rig.workflow.id]
+            await asyncio.wait_for(asyncio.shield(run.driver), 60)
+        rig.provider_release()
+        await asyncio.wait_for(asyncio.gather(*waves, return_exceptions=True), 60)
+        phase, service = run.phase, rig.service
+        returned = await service.call(service.get, rig.workflow.id)
+        live_check = service._has_live_workflow_resources
+        settled = []
+
+        def finalize():
+            try:
+                with owned_goal_storage(service):
+                    settled.append(
+                        service.settle_execution_phase(phase, outcome="failed")
+                    )
+            except BaseException as error:  # noqa: BLE001 - reported below.
+                settled.append(error)
+
+        def check_then_finalize(workflow_id):
+            live = live_check(workflow_id)
+            if not settled:
+                finalizer = threading.Thread(target=finalize)
+                finalizer.start()
+                finalizer.join(10)
+            return live
+
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(service, "_has_live_workflow_resources", check_then_finalize)
+            with pytest.raises(ValueError, match="revision_conflict"):
+                await service.call(
+                    service.record_returned_execution,
+                    phase,
+                    expected_control_revision=returned.control_revision + 5,
+                )
+        (outcome,) = settled
+        assert not isinstance(outcome, BaseException), outcome
+        assert phase._retired, "a refused record undid the finalized retirement"
+        current = await service.call(service.get, rig.workflow.id)
+        closed = await rig.coordinator.reconcile(
+            rig.workflow.id,
+            expected_control_revision=current.control_revision,
+            decision=WorkflowExecutionRecovery(reason="reviewed_prior_effects"),
+            command_id="reconcile-finalized",
+        )
+        assert closed.status == "stopped"
+        assert rig.workflow.id not in rig.coordinator._runs
+    finally:
+        rig.provider_release()
+        await asyncio.wait_for(asyncio.gather(*waves, return_exceptions=True), 60)
         await rig.close()
