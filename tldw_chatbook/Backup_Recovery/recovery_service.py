@@ -1093,6 +1093,40 @@ class RecoveryService:
         except (OSError, ValueError, RuntimeError):
             return MappingProxyType(unknown)
 
+    def approve_config(self, generation):
+        """Approve only `config` for the reviewed current generation (TASK-40711).
+
+        This turns model-catalog auto-refresh and workspace change tracking
+        back on. It never approves `runtime.sync_state`: server sync waits for
+        the sync-identity review (TASK-40139; owner ruling of 2026-11-12 in
+        TASK-40137).
+        """
+        from . import bootstrap
+        from .activation import ActivationStore
+        from .generation_witnesses import _witnesses
+        from .storage_admission import acquire_storage
+
+        selected = bootstrap.effective_config_path()
+        with acquire_storage(selected) as lease:
+            root, _ = lease.execution_context(selected)
+            _, profiles, _ = bootstrap._control_records(root)
+            witness = next(
+                (
+                    row.get("activation")
+                    for row in profiles
+                    if row["selector"] == str(selected)
+                ),
+                None,
+            )
+            if (
+                witness is None
+                or witness["generation"] != generation
+                or "config" not in witness["owners"]
+                or witness not in _witnesses(selected, lease)
+            ):
+                raise ValueError("config_review_changed")
+            ActivationStore(Path(witness["store_root"])).approve(generation, "config")
+
     def profiles(self):
         """Enumerate locally associated restored profiles and recheck launch evidence."""
         from . import bootstrap

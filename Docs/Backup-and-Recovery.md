@@ -251,6 +251,20 @@ refresh. Use the owning feature's explicit recovery review when available; one
 feature's approval does not approve another. Unavailable review controls leave the
 corresponding capability inactive.
 
+Restored settings have their own review. Until you approve them, model-catalog
+auto-refresh and workspace change tracking stay off: **Current profile** lists
+`config` under **Needs setup**, followed by a **Settings review** note and
+**Approve settings**. Approving records the review for the generation shown, which
+covers every profile that recovery restored, and turns both back on: workspace change
+tracking at once, model-catalog auto-refresh from the next start. Local model files
+(downloading, installing, activating or using them) and speech start-up also need
+these settings, but each needs its own review as well, so approving settings alone
+does not turn them on. It approves nothing else, and it does not resume server
+sync: sync calls stay refused (`sync_activation_required`) until the restored sync
+identity is reviewed separately. If the current profile changed after the summary was
+shown, approval is refused; open **Restored profiles** again and review the new
+summary.
+
 Plugins restore only onto the profile and data folder they came from: their
 registry and authority record those folder paths, so restoring them into a
 separate profile, or after the profile's data folder moved, is refused with
