@@ -6,7 +6,7 @@ from typing import Any
 
 
 async def retire_app_sqlite_handles(app: Any) -> None:
-    """Retire settled app caches, preserving native borrowers (ADR225)."""
+    """Retire settled app caches; a handle still in use is left open (ADR225)."""
     from tldw_chatbook.Backup_Recovery import storage_admission as storage
     from tldw_chatbook.Backup_Recovery.participants import (
         close_settled_core_cache,
@@ -59,9 +59,6 @@ async def retire_app_sqlite_handles(app: Any) -> None:
             "conn",
         ),
     )
-    borrowed_owner, borrowed_connection = getattr(
-        app, "_chat_sqlite_borrowed", (None, None)
-    )
     incomplete = []
     for name, owner, source_type, local_attribute, connection_attribute in owners:
         if type(owner) is not source_type or owner.is_memory_db:
@@ -73,13 +70,6 @@ async def retire_app_sqlite_handles(app: Any) -> None:
             connection = core_cached_connection(
                 owner, getattr(cache, connection_attribute, None)
             )
-            if (
-                name == "Chat"
-                and owner is borrowed_owner
-                and connection is borrowed_connection
-                and connection is not None
-            ):
-                continue
             participant = repository_participant(owner)
             current_thread = threading.current_thread()
             with storage._lock:

@@ -407,8 +407,6 @@ class LifecycleMixin:
             db = getattr(self, name, None)
             if db is None or db.is_memory_db:
                 continue
-            if name == "chachanotes_db" and getattr(self, "_chat_sqlite_borrowed", (None,))[0] is db:
-                continue  # Only the post-unmount path may retire a replacement.
             try:
                 if name == "chachanotes_db" and getattr(self, "_startup_chachanotes_db", None) is db:
                     idle = await asyncio.to_thread(db.close_idle_connections, owner_only=True)

@@ -51,7 +51,6 @@ def app(tmp_path):
         ),
         subscriptions_db=SubscriptionsDB(tmp_path / "subscriptions.sqlite"),
         local_workspace_db=WorkspaceDB(tmp_path / "workspace.sqlite"),
-        _chat_sqlite_borrowed=(None, None),
     )
     yield application
     # Cleanup is deliberately after native assertions, never their proof.
@@ -68,23 +67,6 @@ async def test_cold_handles_really_close_and_retirement_is_repeat_safe(app):
     for connection in connections:
         _assert_closed(connection)
     await LifecycleMixin._retire_app_sqlite_handles(app)
-
-
-@pytest.mark.parametrize("replace", [False, True], ids=["warm-borrower", "replacement"])
-async def test_shared_chat_borrower_is_preserved_by_native_identity(app, replace):
-    db = app.chachanotes_db
-    previous = db.get_connection()
-    app._chat_sqlite_borrowed = (db, previous)
-    if replace:
-        db.close_connection()
-    current = db.get_connection()
-    await LifecycleMixin._retire_app_sqlite_handles(app)
-    if replace:
-        assert current is not previous
-        _assert_closed(current)
-    else:
-        assert current is previous
-        assert current.execute("SELECT 1").fetchone()[0] == 1
 
 
 @pytest.mark.parametrize(
