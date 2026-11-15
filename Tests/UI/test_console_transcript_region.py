@@ -498,6 +498,82 @@ async def test_cancelled_in_place_switch_accounts_for_actual_row_retirement(
 
 @pytest.mark.asyncio
 @pytest.mark.bootstrap_profile
+@pytest.mark.parametrize(
+    "cancel", [True, False], ids=["cancel-staging", "evict-after-publication"]
+)
+async def test_frozen_setup_row_owes_compaction_when_viewport_retires(
+    monkeypatch, cancel
+):
+    from tldw_chatbook.UI.Console_Modules import transcript as transcript_region
+    from tldw_chatbook.Utils import ui_responsiveness
+
+    epoch = 0
+    refreezer = ui_responsiveness.IdleHeapRefreezer(enabled=lambda: False)
+    monkeypatch.setattr(ui_responsiveness, "_HEAP_REFREEZER", refreezer)
+    monkeypatch.setattr(transcript_region, "heap_freeze_epoch", lambda: epoch)
+    host = _ready_console_host()
+    async with host.run_test(size=(120, 50)) as pilot:
+        console = await _mounted_console(host, pilot)
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session()
+        second = store.create_session(title="Second", activate=False)
+        third = store.create_session(title="Third", activate=False)
+        for session in (first, second, third):
+            store.append_message(
+                session.id, role=ConsoleMessageRole.USER, content="Row"
+            )
+        await console._sync_native_console_transcript()
+        await pilot.pause()
+        surface = console.query_one(ConsoleTranscriptSurface)
+        first_view = surface.transcript
+        candidate = None
+        refresh = ConsoleTranscript.refresh_messages
+        staged = asyncio.Event()
+        release = asyncio.Event()
+        switch = None
+
+        async def hold_first_refresh(viewport):
+            nonlocal candidate
+            if asyncio.current_task() is switch and viewport is not first_view:
+                candidate = viewport
+                staged.set()
+                await release.wait()
+            await refresh(viewport)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(ConsoleTranscript, "refresh_messages", hold_first_refresh)
+            store.switch_session(second.id)
+            switch = asyncio.create_task(console._sync_native_console_transcript())
+            try:
+                await asyncio.wait_for(staged.wait(), 5)
+                assert surface.transcript is first_view
+                assert candidate is not None and candidate.is_attached
+                assert candidate._row_widgets["empty"].is_attached
+                epoch += 1
+                assert not refreezer.compaction_due()
+                if not cancel:
+                    release.set()
+                    await asyncio.wait_for(switch, 5)
+            finally:
+                if not switch.done():
+                    switch.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await switch
+
+        if not cancel:
+            assert surface.transcript is candidate
+            store.switch_session(first.id)
+            await console._sync_native_console_transcript()
+            assert candidate.is_attached and not candidate.display
+            assert not refreezer.compaction_due()
+            store.switch_session(third.id)
+            await console._sync_native_console_transcript()
+        assert not candidate.is_attached
+        assert refreezer.compaction_due()
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_active_switch_reuses_previous_rows_and_reprojects_background_edit(
     monkeypatch,
 ):

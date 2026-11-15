@@ -1682,3 +1682,10 @@ cancellation before removal and cancellation after the old row is detached.
 The existing refreeze request and collector policy in
 [ADR-198](../../../backlog/decisions/198-gc-policy-freeze-boot-heap.md)
 still apply.
+
+Re-review found a freeze window before a new viewport's first refresh. Its
+setup row was already mounted when a worker-thread freeze ran. With the
+first record deferred to reconciliation, the rejected candidate and the
+later-evicted candidate both left frozen widgets without reporting debt.
+The first record now precedes that refresh. The mounted cases exercise
+both staging cancellation and publication followed by eviction.

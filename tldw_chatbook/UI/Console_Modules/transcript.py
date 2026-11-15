@@ -466,8 +466,7 @@ class ConsoleTranscriptRegion(Vertical):
         transcript.note_follow_intent()
 
 
-#: Screen attribute: the ``((session, conversation), freeze epoch)`` the
-#: transcript last showed when an idle heap re-freeze was requested for it.
+#: The viewport's ``((session, conversation), freeze epoch)`` for its row graph.
 _REFREEZE_PAINTED_ATTRIBUTE = "_console_heap_refreeze_painted"
 
 
@@ -516,6 +515,9 @@ def stage_console_transcript_refreeze(
         screen._current_console_conversation_id(),
     )
     viewport._console_heap_refreeze_projection_key = key
+    # A new viewport already owns its mounted setup row before its first refresh.
+    if getattr(viewport, _REFREEZE_PAINTED_ATTRIBUTE, None) is None:
+        note_console_transcript_rows_projected(viewport, key)
     requested = getattr(screen, "_console_heap_refreeze_requested_key", None)
     if requested != key:
         screen._console_heap_refreeze_requested_key = key
