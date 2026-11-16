@@ -170,7 +170,9 @@ _BUDGETS: dict[str, int] = {
     # 1720 -> 1733 (measured). 2026-11-15, TASK-41130: a first visit's layout is
     # resolved from the screen's width (one resolver shared with the layout
     # sync) and the r14ls-rev2/rev3 focus retry is gone: 1733 -> 1740 (measured).
-    "tldw_chatbook/UI/Library_Modules/library_collections_controller.py": 1740,
+    # 2026-11-16, TASK-41126 review r15lc-rev1: the saved-search page repaint
+    # takes the same pane-sync lock: 1740 -> 1741 (measured).
+    "tldw_chatbook/UI/Library_Modules/library_collections_controller.py": 1741,
     # TASK-32659: bounded saved-search loading, including authority/request fencing.
     "tldw_chatbook/UI/Library_Modules/library_collections_saved_search_controller.py": 49,
     # TASK-33628.10: 976 -> 964. The ensure-selection decision moved to

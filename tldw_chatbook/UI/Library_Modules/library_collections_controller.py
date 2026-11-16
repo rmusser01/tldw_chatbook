@@ -687,11 +687,12 @@ class LibraryCollectionsController:
             or self._library_selected_row_id != LIBRARY_ROW_BROWSE_COLLECTIONS
         ):
             return
-        try:
-            rows = self.query_one("#library-collections-scopes")
-        except (NoMatches, QueryError):
-            return
-        await rows.show_page(self._library_collections_capture_presentation(), opener)
+        async with self._pane_sync_lock:  # serialized with the pane syncs
+            try:
+                rows = self.query_one("#library-collections-scopes")
+            except (NoMatches, QueryError):
+                return
+            await rows.show_page(self._library_collections_capture_presentation(), opener)
 
     @on(Input.Submitted, "#library-collections-filter")
     async def filter_library_collection_captures(
