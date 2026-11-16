@@ -3497,12 +3497,9 @@ DELETE FROM keywords
                                 f"db_sha256={self._db_diagnostic_ref} "
                                 f"exception_type={type(exc).__name__}"
                             )
-                            # Don't proceed to checkpoint if rollback fails and we're still in transaction potentially
-                            # However, conn.close() below should still be attempted.
+                            # Still in a transaction: skip the checkpoint, still close.
 
-                    # Checkpoint WAL only if not in a failed transaction state that prevents it
-                    # and WAL mode is active.
-                    # We assume if conn.in_transaction is false now, any transaction was committed/rolled back.
+                    # Checkpoint a WAL only outside a transaction (rolled back above).
                     if not conn.in_transaction:  # Re-check after potential rollback
                         mode_row = conn.execute("PRAGMA journal_mode;").fetchone()
                         if mode_row and mode_row[0].lower() == "wal":
@@ -3512,6 +3509,9 @@ DELETE FROM keywords
                                     f"db_sha256={self._db_diagnostic_ref} "
                                     f"thread={threading.get_ident()}."
                                 )
+                                # TASK-41115: never wait; a pending TRUNCATE holds the writer
+                                # lock while it waits for readers, failing other writers.
+                                conn.execute("PRAGMA busy_timeout = 0")
                                 conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
                                 logger.debug(
                                     f"WAL checkpoint TRUNCATE executed "

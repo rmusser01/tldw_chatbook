@@ -1,8 +1,10 @@
 ---
 id: TASK-41115
 title: "The persona later-rollback test's reopen child fails 'database is locked' on add_note about once in 50 fixture builds at load 36 or more"
-status: To Do
+status: In Progress
+assignee: ['@claude']
 created_date: 2026-11-15 02:20
+updated_date: 2026-11-16 21:39
 labels:
 - follow-up
 - backup
@@ -30,3 +32,10 @@ Filed in round 14 of the 2026-10-23 burn-down (closeout, 2026-11-15). Checked ag
 - [ ] #1 The holder of the write lock is identified from a captured failure (local under load or CI) and recorded
 - [ ] #2 The product or fixture cause is fixed, and the file passes 20 runs at -n 4 under load 40 or more
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Capture: repeat the file's fixture-building nodes (`-k refuses_unproved_graph -n 4`, each worker builds the module fixture) in parallel lanes until a reopen child fails `database is locked`. The fixture's failure note keeps only the record's last 6000 characters, which cut the error code; replace it with a compact summary (wait time, SQLite error name, transaction entry, each thread's name and top frames).
+2. Name the holder from the captured thread record, confirm the SQLite mechanism with a standalone probe, and record both.
+3. Fix the product or fixture cause with a test red first where it can be made deterministic.
+4. Run the whole file 20 times at `-n 4` with the load average at or above 40, and record each run's load and result.

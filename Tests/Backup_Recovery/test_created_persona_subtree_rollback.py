@@ -166,7 +166,7 @@ print('NATIVE_NESTED_PERSONA_REPLACEMENT_COMPLETE',flush=True)
 """
 
 _REOPEN = r"""
-import asyncio,hashlib,json,sys
+import asyncio,hashlib,json,sys,threading,time
 from pathlib import Path
 from Tests.network_guard import install
 install()
@@ -182,8 +182,14 @@ async def run():
  async with initial_screen_observation(app), app.run_test(size=(120,40)):
   notes={row['title']:row['content'] for row in app.chachanotes_db.list_notes()}
   assert notes['Original source']=='Before replacement for source' and 'Original target' not in notes
-  with observe_notes_write_failure(Path.home()/'persona-note-write.log',app.chachanotes_db):
-   app.chachanotes_db.add_note('After nested pack replacement','New current data must enter the later safety copy.')
+  started=time.monotonic()
+  try:
+   with observe_notes_write_failure(Path.home()/'persona-note-write.log',app.chachanotes_db):
+    app.chachanotes_db.add_note('After nested pack replacement','New current data must enter the later safety copy.')
+  except BaseException:
+   # TASK-41115: how long the INSERT waited, and the thread names the record's idents belong to.
+   (Path.home()/'persona-note-write-context.json').write_text(json.dumps({'waited':round(time.monotonic()-started,3),'names':{str(t.ident):t.name for t in threading.enumerate()}}))
+   raise
   pack=Path(json.loads((Path.home()/'operation.json').read_text())['pack'])
   files={path.relative_to(pack).as_posix():hashlib.sha256(path.read_bytes()).hexdigest() for path in pack.rglob('*') if path.is_file()}
   (Path.home()/'current-persona.json').write_text(json.dumps(files))
@@ -298,21 +304,43 @@ print('NATIVE_NESTED_PERSONA_LATER_COMPLETE',flush=True)
 _HANG_SECONDS = 60
 
 
+def _note_write_summary(home):
+    """TASK-41115: the failed add_note's error, its wait and every thread's
+    top frames, compact enough that the failure report keeps all of it."""
+    import json
+
+    record = json.loads((home / "persona-note-write.log").read_text("utf-8"))
+    context = home / "persona-note-write-context.json"
+    context = json.loads(context.read_text("utf-8")) if context.is_file() else {}
+    names = context.get("names", {})
+    error = {key: value for key, value in record["error"].items() if key != "frames"}
+    lines = [
+        f"add_note waited {context.get('waited', '?')} s; error {error}; "
+        f"transaction {record['transaction_entry']}"
+    ]
+    for thread in record["threads"]:
+        frames = " < ".join(
+            f"{frame['file']}:{frame['function']}:{frame['line']}"
+            for frame in thread["frames"][:12]
+        )
+        lines.append(f"{names.get(str(thread['thread']), thread['thread'])}: {frames}")
+    return "\n".join(lines)
+
+
 def _prepare_native(tmp_path):
+    # TASK-41115: at load 83-106 the capture child outlasted its fixed 120 s in
+    # every fixture build while busy. Like the replacement (TASK-40306), each
+    # fixture child now fails only once it uses no CPU, under a 600 s cap.
     for label in ("source", "target"):
         home = tmp_path / label
         (home / ".config/tldw_cli").mkdir(parents=True, mode=0o700)
-        _child(
-            home,
-            _SEED_PERSONA,
-            "seed-persona",
-            timeout=480 if sys.platform == "win32" else 70,
-        )
+        _child(home, _SEED_PERSONA, "seed-persona", timeout=600, idle=_HANG_SECONDS)
     _child(
         tmp_path / "source",
         _CAPTURE,
         "persona-capture",
-        timeout=480 if sys.platform == "win32" else 120,
+        timeout=600,
+        idle=_HANG_SECONDS,
     )
     # TASK-40306: two whole-profile replaces (the credential review aborts the
     # first), built by every xdist worker. On a loaded host the child outlasted
@@ -329,14 +357,14 @@ def _prepare_native(tmp_path):
             tmp_path / "target",
             _REOPEN,
             "persona-reopen",
-            timeout=300 if sys.platform == "win32" else 90,
+            timeout=600,
+            idle=_HANG_SECONDS,
         )
     except AssertionError as failure:
         # TASK-40306: one reopen failed `database is locked` on add_note under
         # load and its thread record was lost with the basetemp; keep it.
-        record = tmp_path / "target" / "persona-note-write.log"
-        if record.is_file():
-            failure.add_note(record.read_text(encoding="utf-8")[-6000:])
+        if (tmp_path / "target" / "persona-note-write.log").is_file():
+            failure.add_note(_note_write_summary(tmp_path / "target"))
         raise
     return tmp_path / "target"
 
@@ -455,7 +483,10 @@ def native_persona_negatives(tmp_path_factory):
         "foreign-owner",
     ],
 )
-@pytest.mark.timeout(3600 if sys.platform == "win32" else 600)
+# TASK-41115: a node's timeout also covers the module fixture it builds. At
+# load 75-90 that build outlasted 600 s while busy, so the cap now sits above
+# the fixture's five child caps (600 s each) plus this node's own child.
+@pytest.mark.timeout(3600)
 def test_native_persona_mapping_refuses_unproved_graph(native_persona_negatives, case):
     output = _child(native_persona_negatives, _NEGATIVE, case, timeout=60)
     assert "NATIVE_PERSONA_NEGATIVE_COMPLETE" in output
@@ -542,7 +573,7 @@ print('NATIVE_PERSONA_OVERLAP_REFUSED',case,flush=True)
         "ancestor-replaced",
     ],
 )
-@pytest.mark.timeout(3600 if sys.platform == "win32" else 600)
+@pytest.mark.timeout(3600)  # As above.
 def test_native_persona_retirement_keeps_ancestor_exclusion(
     native_persona_negatives, case
 ):

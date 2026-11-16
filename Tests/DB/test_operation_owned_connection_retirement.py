@@ -142,6 +142,55 @@ def test_owned_cleanup_deadline_bounds_checkpoint_with_live_reader(tmp_path):
         db.close_connection()
 
 
+def test_closing_worker_does_not_hold_other_writers_behind_a_live_reader(tmp_path):
+    """TASK-41115: a finite worker's close (``run_owned_db_call`` passes no
+    deadline) ran ``wal_checkpoint(TRUNCATE)`` with the 15 s busy timeout. A
+    pending TRUNCATE checkpoint holds the WAL writer lock while it waits for
+    readers, so the app's own writes stalled behind it, and under load
+    ``add_note`` failed ``database is locked``."""
+    import sys
+    import time
+
+    path = tmp_path / "close-checkpoint.sqlite"
+    db = CharactersRAGDB(path, "close-checkpoint")
+    reader = sqlite3.connect(path)
+    executor = ThreadPoolExecutor(max_workers=1)
+    worker = {}
+    try:
+        reader.execute("BEGIN")
+        reader.execute("SELECT COUNT(*) FROM notes").fetchone()
+        db.add_note("Seed", "WAL frames newer than the reader's snapshot.")
+
+        def read():
+            worker["ident"] = threading.get_ident()
+            with operation_owned_connection(db):
+                db.get_connection().execute("SELECT COUNT(*) FROM notes").fetchone()
+
+        future = executor.submit(read)
+        # Write while the worker closes its handle (or once it has closed).
+        deadline = time.monotonic() + 10
+        while not future.done() and time.monotonic() < deadline:
+            frame = sys._current_frames().get(worker.get("ident"))
+            names = set()
+            while frame is not None:
+                names.add(frame.f_code.co_name)
+                frame = frame.f_back
+            if "_close_connection_handle" in names:
+                break
+            time.sleep(0.005)
+        started = time.monotonic()
+        db.add_note("Main", "A write while another thread closes.")
+        waited = time.monotonic() - started
+        future.result(timeout=20)
+        assert reader.in_transaction
+        assert waited < 3, f"the write waited {waited:.1f}s behind a closing worker"
+    finally:
+        reader.rollback()
+        reader.close()
+        executor.shutdown(wait=True)
+        db.close_connection()
+
+
 def test_cleanup_deadline_preserves_borrowed_timeout_and_transaction(tmp_path):
     db = CharactersRAGDB(tmp_path / "borrowed-deadline.sqlite", "borrowed-deadline")
     try:
