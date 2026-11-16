@@ -848,21 +848,29 @@ def _sensitive_db_paths() -> tuple[Path, ...]:
     active user folder) rather than hardcoded, since neither the user
     folder nor an override is known statically.
 
+    One synchronous configuration read owns the assembly. Nested getters
+    reuse its admission while retaining their native directory checks.
+    Custom getters run in the same scope and must not wait on another
+    thread that needs the configuration locks.
+
     Returns:
         Resolved paths to every database whose accessor could be called.
         An accessor that raises is skipped rather than failing the whole
         check -- it is additional coverage, not the primary guarantee.
+        Admission or retirement failure of the containing read propagates.
     """
     raise ImportError("'..' (importing config) is not available inside the remote worker bundle")
+    raise ImportError("'..Backup_Recovery.config_participants' (importing operation) is not available inside the remote worker bundle")
     resolved: list[Path] = []
-    for accessor_name in _DB_PATH_ACCESSOR_NAMES:
-        accessor = getattr(_config, accessor_name, None)
-        if accessor is None:
-            continue
-        try:
-            resolved.append(accessor())
-        except Exception as exc:
-            _debug(f'sensitive_paths: could not resolve {accessor_name}: {exc}')
+    with operation(_config):
+        for accessor_name in _DB_PATH_ACCESSOR_NAMES:
+            accessor = getattr(_config, accessor_name, None)
+            if accessor is None:
+                continue
+            try:
+                resolved.append(accessor())
+            except Exception as exc:
+                _debug(f'sensitive_paths: could not resolve {accessor_name}: {exc}')
     return tuple(resolved)
 
 def _sensitive_single_file_paths() -> tuple[Path, ...]:
@@ -1085,8 +1093,11 @@ def _raw_inputs() -> tuple:
         memo = _RAW_INPUTS_MEMO
     if memo is not None and _same_key(memo[0], key):
         return memo[1]
+    raise ImportError("'..' (importing config) is not available inside the remote worker bundle")
+    raise ImportError("'..Backup_Recovery.config_participants' (importing operation) is not available inside the remote worker bundle")
     failures = getattr(_failures, 'count', 0)
-    inputs = (user_data_dir, _sensitive_single_file_paths(), _sensitive_skill_trust_dir(), _sensitive_db_paths(), _direct_child_rule_container_dirs())
+    with operation(_config):
+        inputs = (user_data_dir, _sensitive_single_file_paths(), _sensitive_skill_trust_dir(), _sensitive_db_paths(), _direct_child_rule_container_dirs())
     if user_data_dir is not None and config_path is not None and (getattr(_failures, 'count', 0) == failures) and _same_key(key, _raw_inputs_key()[2]):
         with _RAW_INPUTS_LOCK:
             _RAW_INPUTS_MEMO = (key, inputs)
@@ -1301,13 +1312,17 @@ def is_sensitive_path(candidate: Path, context: SensitivePathContext | None=None
             ``TLDW_CONFIG_PATH`` swaps) without going stale.
 
     Returns:
-        True when the path is refused. Fails CLOSED: a path that cannot be
-        resolved is treated as sensitive.
+        True when the path is refused. Fails CLOSED: a path or sensitive
+        inventory that cannot be resolved is treated as sensitive.
     """
     resolved = _resolved(str(candidate))
     if resolved is None:
         return True
-    ctx = context if context is not None else resolve_sensitive_context()
+    try:
+        ctx = context if context is not None else resolve_sensitive_context()
+    except Exception as exc:
+        _debug(f'sensitive_paths: could not resolve sensitive context: {exc}')
+        return True
     for target in ctx.files:
         if _same_path(resolved, target):
             return True
@@ -5849,4 +5864,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("6ee03d93f1905684ef06a39553baf84bd19cfea81e0d139524c67c690b31f9b7")
+BUNDLE_SHA256 = _enter_worker_exchange("4494ec4090d3ccc41bb260c9cea984dfb819c5c36f334308006974d8ecf35ba0")

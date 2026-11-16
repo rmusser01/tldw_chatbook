@@ -687,6 +687,12 @@ def _cadence(screen: Any) -> _Cadence:
     return cadence
 
 
+def defer_preparing_poll(screen: Any) -> bool:
+    """Leave repeated presentation work to the existing post-start poll."""
+    _cadence(screen).owed = True
+    return False
+
+
 async def run_periodic_console_sync(
     sync: Callable[..., Awaitable[Any]], *args: Any
 ) -> Any:

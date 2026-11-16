@@ -3106,3 +3106,10 @@ Tests/UI/test_console_received_intent_feedback.py::test_actual_send_paints_sendi
 Tests/UI/test_library_file_notes_git.py::test_a_git_row_fit_during_partial_removal_ends_quietly
 # TASK-41248: native partial-unmount callback regression and live-row controls.
 Tests/UI/test_library_git_row_shutdown.py
+# TASK-34601.1 / PR3534 (2026-11-15): promoted preparation transitions and
+# same-owner transcript inputs; append without moving existing shard entries.
+# Rebased after the Session Git entry; current hosted costs remain unmeasured.
+# All 2147 prior entries and existing job limits stay fixed.
+Tests/UI/test_console_poll_reconciliation.py::test_promoted_manual_polls_keep_saved_transcript_without_repeating_reads[send-button]
+Tests/UI/test_console_transcript_context_projection.py::test_same_owner_context_display_can_be_read_without_restarting_io
+Tests/UI/test_console_poll_reconciliation.py::test_promoted_manual_polls_keep_saved_transcript_without_repeating_reads[enter]

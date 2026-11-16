@@ -1169,6 +1169,7 @@ def bind_preparing_screen_sources(screen_type) -> None:
         "_ensure_console_agent_bridge",
         "_ensure_console_chat_store",
         "_ensure_console_chat_controller",
+        "_current_console_run_status_value",
         "_sync_console_native_session_tabs",
         "_sync_native_console_chat_ui",
     )
@@ -1269,6 +1270,8 @@ def poll_source(self) -> dict | None:
         "registry_generation": generation,
         "session": session,
         "settings": session.settings,
+        "inputs": store.session_input_snapshot(session.id),
+        "staged_evidence": runtime.snapshot_console_staged_evidence(session.id),
         "bridge": controller._agent_bridge,
         "runtime_bridge": runtime._agent_bridge,
         "membership": tuple(store.sessions()),
@@ -1308,8 +1311,66 @@ def poll_source_is_current(self, captured: dict | None) -> bool:
     )
 
 
+def preparing_poll_inputs_current(self, captured: dict) -> bool:
+    """Keep the completed FULL's resident inputs, including accepted clearing."""
+    if not captured["store"].session_inputs_are_current(captured["inputs"]):
+        return False
+    before = captured["staged_evidence"]
+    current = captured["runtime"].snapshot_console_staged_evidence(
+        captured["session"].id
+    )
+    return current[0] is before[0] and current[1:] == before[1:]
+
+
+def _promoted_preparing_poll_current(self, source: dict, record) -> bool:
+    """Read existing custody/preparation owners; never authorize a Send with UI."""
+    from ...Chat.console_chat_models import ConsoleRunStatus
+    from ...Chat.console_send_start import custody_send_start_open
+    from ...Chat.console_turn_preparation import ConsoleTurnPreparationState
+    from .console_spend_projection import console_transcript_context_inputs
+
+    controller, store = source["controller"], source["store"]
+    if (
+        not custody_send_start_open(record.task)
+        or record.request.session_id != record.session_id
+        or record.request.turn_id != record.turn_id
+        or controller.run_state.status not in {
+            ConsoleRunStatus.VALIDATING, ConsoleRunStatus.STREAMING
+        }
+        or getattr(self, "_console_config_handoffs", None)
+        or not preparing_poll_inputs_current(self, source)
+        or any(
+            controller.pending_round_kinds(session.id)
+            for session in source["membership"]
+        )
+        or getattr(getattr(self, "_task_resume_state", None), "pending_approval", None)
+    ):
+        return False
+    with controller._active_submit_tasks_lock:
+        preparation = store.preparation_for_session(record.session_id)
+        if (
+            controller._active_submit_tasks.get(record.task) != record.session_id
+            or preparation is None
+            or controller._active_submit_preparations.get(record.task)
+            != preparation.preparation_id
+            or preparation.origin != "manual"
+            or preparation.pause_kind is not None
+            or preparation.state not in {
+                ConsoleTurnPreparationState.PREPARING,
+                ConsoleTurnPreparationState.READY,
+                ConsoleTurnPreparationState.COMMITTING,
+                ConsoleTurnPreparationState.ACCEPTED,
+                ConsoleTurnPreparationState.DISPATCH_STARTED,
+            }
+        ):
+            return False
+    return console_transcript_context_inputs(
+        self, controller, record.session_id, refresh=False
+    ) is not None
+
+
 def preparing_poll_record(self):
-    """Select only a sole, unchanged stock manual receipt for display work."""
+    """Select only a sole, unchanged stock manual preparation for display work."""
     from tldw_chatbook.Chat.console_chat_models import ConsoleSubmissionOrigin
     from tldw_chatbook.Chat.console_configuration_preparation import (
         capture_console_received_configuration_preparation,
@@ -1397,21 +1458,25 @@ def preparing_poll_record(self):
     if (
         record.store is not store
         or record.session_id != source["session"].id
-        or record.request is not None
         or record.task is None
         or record.task.done()
         or intent is None
         or intent.queue_revision is not None
         or claim is None
         or claim.origin is not ConsoleSubmissionOrigin.MANUAL
-        or not store.received_turn_is_current(claim)
-        or not store.session_inputs_are_current(intent.inputs)
         or intent.view_attachment_generation != source["visit"].generation
         or capture_console_received_configuration_preparation(
             source["app"], store, controller, session_id=record.session_id
         )
         is None
     ):
+        return None
+    if record.request is None:
+        if not store.received_turn_is_current(claim) or not store.session_inputs_are_current(
+            intent.inputs
+        ):
+            return None
+    elif not _promoted_preparing_poll_current(self, source, record):
         return None
     context_provider = controller._turn_context_provider
     if context_provider is not None and (
@@ -1430,8 +1495,11 @@ def preparing_poll_record(self):
         intent.session_id
     )
     if (
-        launch is not intent.staged_evidence_launch
-        or launch_revision != intent.staged_evidence_revision
+        record.request is None
+        and (
+            launch is not intent.staged_evidence_launch
+            or launch_revision != intent.staged_evidence_revision
+        )
         or controller._provider_selection() != intent.selection.provider_selection
         # Stock provider-direct chats have no bridge without a chat DB.
         or source["bridge"] is None
@@ -1534,6 +1602,8 @@ _PREPARING_HELPERS = tuple(
         preparing_display_read,
         poll_source,
         poll_source_is_current,
+        preparing_poll_inputs_current,
+        _promoted_preparing_poll_current,
         preparing_poll_record,
         sync_poll_display_ui,
         _preparing_methods_current,

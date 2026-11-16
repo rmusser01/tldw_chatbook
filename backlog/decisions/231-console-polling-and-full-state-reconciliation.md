@@ -68,3 +68,41 @@ owners. Pressed fallback custody starts the existing transcript poll only for it
 original attached generation; a failed presentation handoff cannot undo already
 accepted custody. This reconciliation does not qualify the broader polling or
 whole-path latency proposal.
+
+### Promoted manual preparation display amendment — 2026-11-15
+
+Selected for PR3534 under the owner's resumed latency work and six-second merge
+gate; implementation and native qualification remain pending. The wider polling
+proposal remains Proposed. A stock full-app Windows Send takes38.259/55.197/
+54.747s with the original coordinator; diagnostic periodic deferral measures
+16.367/19.647/15.186s on the same source. Host variation prevents a precise saving
+claim, but the comparison justifies reducing repeated display I/O on this route.
+
+Keep the accepted unpromoted branch intact. A promoted manual branch may narrow
+only while the sole original custody task still owns the current preparation
+and its own existing SendStart has not ended at provider entry or completion.
+Use the controller's task-to-preparation map and the store's current preparation;
+promotion replaces the received claim and successful save changes draft revisions.
+Do not weaken the received-claim predicate or invent revision offsets. The
+completed-FULL witness must cover relevant resident input/policy revisions:
+changed inputs require one original FULL pass before later unchanged polls narrow.
+Do not extend the separate three-second synchronous display-I/O exception.
+
+Within existing sync exclusion, retain speech/H3 reconciliation, draft display,
+current tabs, original transcript publication/acknowledgement and resident Send
+feedback. On this qualified promoted branch, defer routine retrieval-summary,
+character-browser, readiness/config and rail/inspector refreshes. Transcript
+context presentation may reuse an already available same-owner display without
+scheduling refresh; unavailable or changed ownership restores FULL. This evidence
+is display-only and cannot authorize capture, persistence or provider dispatch.
+Mark work owed using the existing cadence and return deferred so polling remains
+live. No new scheduler, cache, authority token or preparation owner is introduced.
+
+Recheck qualification after retained awaits. Pending FULL, changed settings,
+runtime/Canvas publication, roleplay persistence/identity changes, human decisions,
+other active sessions, custom callbacks, cancellation and terminal settlement
+retain FULL. Explicit FULL dominates and retains its trailing replay. Preserve
+the original final FULL, post-await stop predicate and survivor handoff. A narrow
+pass cannot complete attachment or terminal settlement. Qualify real Enter/button
+and producer transitions with held original callbacks before release; diagnostics
+or count reductions alone do not satisfy the six-second or feedback contracts.

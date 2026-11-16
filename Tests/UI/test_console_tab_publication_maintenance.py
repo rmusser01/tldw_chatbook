@@ -376,7 +376,9 @@ def _publication_quiet(console, projection) -> bool:
 
 async def _quiet(pilot, console, projection) -> bool:
     """Wait for ``_publication_quiet``; it still holds when this returns True."""
-    return await _settle(pilot, lambda: _publication_quiet(console, projection))
+    # The predicate already proves the screen pump is idle. Repeated Pilot
+    # barriers add message-pump work while its native readiness readers settle.
+    return await _loop_wait(lambda: _publication_quiet(console, projection))
 
 
 async def _loop_wait(predicate, *, timeout: float = 10.0) -> bool:

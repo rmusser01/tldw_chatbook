@@ -1809,3 +1809,184 @@ TASK-33620.15.47. The Linux rows cannot change, because Linux keeps the fallback
 - A failure before commit, including a store read the pause refuses, removes the attempt's own files before the lease closes, so a drain never completes over an uncommitted asset.
 - After the persona commit nothing removes files: a refused intent cleanup (a pause beginning in that window) returns the committed actor with `cleanup_pending`, and startup `recover()` finishes the committed intent if the persona store is unchanged; a persona edit in between leaves it quarantined (`authority_mismatch`), and later activations then refuse `actor_pack_creation_blocked` (existing coordinator rule).
 - Rejected: registering activation as a Persona Visual or Shared Visual Identity producer. Those bridges authenticate their own modules' callsites and candidate objects; activation has neither, and a third copy of that machinery buys no stronger guarantee for immutable files that one call creates and removes.
+
+### 2026-11-15 amendment (TASK-34601.1): bounded sensitive database-path reads
+
+`Utils.sensitive_paths._sensitive_db_paths` may assemble its database path tuple
+inside one existing `config_participants.operation(config)`. The thirteen public
+getters still run, with their current override/path semantics and fresh native
+directory checks. Nested reads reuse that operation's checked admission and
+ordinary configuration lock order. The scope ends before the tuple is returned;
+it never spans an await, provider dispatch or another preparation stage.
+
+Custom getters remain callable within this synchronous configuration read scope.
+They must not wait on work in another thread that needs the configuration locks.
+This is a documented read boundary, not a stock-function identity optimization.
+No new source validator, authorization cache, native actor or snapshot lifetime
+is introduced.
+
+An individual getter failure retains its additive `_debug` treatment, which
+prevents raw-input memo publication. Existing nested failure rollback remains.
+Admission, selection and physical-retirement failures of the outer operation
+propagate before publication, without retry or a successful empty tuple. The
+original raw-input keys on both sides of assembly remain authoritative.
+
+Original native evidence shows 26 acquisitions for thirteen default paths.
+Reducing that count is a focused regression criterion, not a whole-Send speed
+claim. Retention and PR3534 merge qualification require the complete sequential
+Windows timings described in
+[the implementation plan](../../Docs/superpowers/plans/2026-11-15-windows-send-latency.md).
+
+### 2026-11-15 amendment (TASK-34601.1): related permission-store admission
+
+The installed raw MCP permission participant may admit its declared main,
+temporary and backup paths through one existing
+`acquire_storage(primary, related_paths=companions)` operation, as config
+members already do. Selection remains restricted to the checked MCP route and
+installed participant owner `mcp.permissions`. Every declared member still
+receives the original pre/post-count scope check, parent pin and preflight.
+No payload, authorization verdict, path proof or native lease is reused across
+operations or awaits.
+
+The canonical MCP observation lease remains separate when its path differs from
+the primary selection. Failure, pause, physical retirement and ordinary custom
+source routing remain unchanged. This groups admission work before any effect;
+it does not omit the permission load's publication observation or reuse the
+pre-save switch value after save. Native controls must prove the full member set,
+outside-scope/changed-member refusal and retained close behavior before adoption.
+### Construction-local MCP canonical admission — 2026-11-15
+
+PR3534 selects retention of one installed permission source's canonical admission
+during the existing synchronous raw.scope construction. Original-call attribution
+finds nine canonical acquisitions before raw operation publication, in selection,
+member declaration, participant validation and preflight. Grouping payload members
+alone changes twelve total acquisitions to ten; this construction change targets
+two total admissions, pending native verification.
+
+Derive the canonical path using the existing installed binding check, acquire its
+ordinary lease under the existing acquisition, and pass a local retained map to
+the private MCP selectors. Each existing selected_path/observed call still reads
+fresh generation witnesses and validates execution context. Do not reuse witness
+or selected-path results, publish an active operation early, or introduce a new
+global/thread-local owner. Move the lease into the existing state leases/holds
+when available; scope cleanup retains responsibility before that transfer.
+
+Keep full related-member admission separate: a canonical-only lease cannot admit
+temporary/backup files, and a recovered source may use a different selected
+directory. Do not pre-admit unused canonical sidecars. Preserve the final binding,
+pause and path checks, payload observation publication, source replacement refusal
+and uncertain native retirement. Active operations use existing mcp_observation.
+Custom/uninstalled sources retain their existing route. Native counts, changed
+source controls and whole-Send comparisons must qualify this contract before
+release; no caching or relaxed native authority is selected.
+
+### Explicit MCP validation and pure construction metadata — 2026-11-15
+
+The current-source sparse census finds nine recovery-witness derivations per
+generation-selected MCP construction. Five occur while helpers obtain structural
+metadata: members, history classification and participant registration/validation.
+Separately measured witness work is material;
+thread-inclusive times overlap and do not establish an additive Send saving.
+
+For installed local/context/permission sources using the shared recovery-selection
+contract, retain the initial validated source
+declaration only inside that synchronous construction. Pass the already known
+owner/selected/installed facts to pure member/history classification and the
+existing participant registration, rather than deriving recovery state again as
+a side effect of metadata access. Do not introduce a witness cache, reusable
+snapshot, new lease owner, global/TLS record or cross-await authority.
+
+This narrowly amends the preceding prohibition on selected-result reuse for
+those structural helpers. Initial selection, the fresh pre-source-lock gate,
+post-wait preflight, late gate before publication and active custody/parent checks
+remain live. Preflight still observes actual main/backup inode identities. Preserve recovery
+readability/approval, effect-time file-open checks and checked-read final
+publication; source/config/generation drift must refuse before payload access.
+Structural drift can now surface at the next explicit gate rather than an
+intermediate helper. Custom and uninstalled routes retain their original path.
+
+Use the same retained canonical plus separately admitted full-member group for
+these sources, including recovered canonical/selected divergence. This replaces
+LocalMCPStore's observed repeated canonical acquisitions with the permission
+route's existing ownership. Preserve all pause/uncertain-close ownership.
+Qualify source-mutex drift, changed config/recovery, exact-file
+sidecars, recovered destinations, corrupt-backup effects and physical retirement
+before release. Building a declaration is never permission to read a payload.
+
+### Per-owner facts inside one execution gate — 2026-11-15
+
+Windows attribution places the large post-save delay in guarded preparation;
+the original save/history/workspace callbacks are small. Source review finds
+five control-record reads and four registry reads in a successful two-owner
+execution_scope: a source-scope read, then separate startup and activation
+reads for each owner. Preserve every existing nested guarded entry and every
+actual owner approval. Removing a nested gate is not selected.
+
+Within activation_permission's stock startup route, read controls and registry
+once for that owner, then use bootstrap's existing _startup_permission_from_controls
+and the unchanged activation-policy body. Keep execution_scope and its separate
+source-scope read entirely unchanged. This reduces a two-owner gate from five to
+three control reads and from four to two registry reads, and also removes the
+duplication in other public single-owner callers. Do not retain facts across
+owners, another call, an await or another thread; this is local data, not a new
+authority object or cache.
+
+A retained source lease does not prevent new pending intent from being published.
+The next owner's read must therefore remain fresh and refuse pending intent,
+lost paired history or changed approvals. Keep the original required/approval
+reads, validation of each owner identifier and owner order, including duplicates.
+Keep exact actual lease/selector checks, path=None and empty-owner behavior, and
+the distinction between names=None (ordinary-only observation) and an admitted
+namespace tuple. Ordinary-only reads must still refuse restored/shared evidence.
+
+Public activation_permission and startup_permission signatures and custom
+behavior remain supported. A replaced startup binding or code uses the original
+startup callback followed by fresh activation controls/registry reads. Pin the
+startup implementation in its defining module, so an override installed before
+activation import is not mistaken for stock code. Public startup_permission stays
+unchanged, including its permissive inspection behavior for activation-only
+corruption. Activation permission already required full control validation before
+allowing execution. No execution-loop bypass or private source API is introduced.
+
+Keep acquisition, borrowed-lease ownership, native reader cleanup and final
+lease retirement unchanged. Native positive counts and between-owner pending/
+paired-history negatives precede implementation qualification, followed by
+shared-source, invalid-owner, custom callback, unqualified ordinary, retarget,
+revocation and uncertain-retirement controls. The narrower scalar change trades
+one extra source read for a smaller implementation and naturally preserved custom
+callbacks; this count reduction is not a whole-Send latency claim.
+
+### One owned permission read for the Console preview — 2026-11-15
+
+The qualified stock tool-surface preview may use its existing captured permission
+source's checked payload read instead of forwarding through three nested guarded
+getter/load scopes. This is one synchronous observation, not permission reuse
+between preparation stages or authority to execute a tool.
+
+The private owned-load helper accepts an explicit, default-off publication
+observation option. Only this preview opts in: after the original payload body,
+observe the same permission publication inside its original mutation fence.
+Retain source/currentness checks before and after the body, the outer final
+native check and exact source receipt, producer ownership and physical retirement.
+Existing snapshot callers retain their previous default behavior. A custom
+fallback uses the original load, whose own observation must not be repeated.
+
+Preserve the preview's optional failure policy and stock callback qualification;
+unsupported or changed callbacks keep their original path. Recovery approval,
+kill-switch and effect-time permission checks stay fresh at actual execution.
+Qualify actual payload/observation counts, native scopes and retirement, changed
+sources, recovered writes, repeated cancellation and late revocation before
+release. No provider wait or await occurs inside the owned read.
+
+### Cold sensitive-input assembly — 2026-11-15
+
+Extend the existing finite configuration-read assembly to the cold unresolved
+sensitive-path tuple: single-file paths, skill trust, database paths and direct
+child containers share one synchronous configuration operation. The first live
+memo key and hit path remain unchanged; the original final live key check and
+memo publication occur after scope retirement. All public getters, additive
+failure diagnostics, rollback and path checks remain. Custom synchronous getters
+follow the same configuration-lock contract as the existing database assembly.
+No native facts or authorization results are retained beyond the original memo
+policy. The focused original-function control reduces16 admissions to at most6;
+that is count evidence, not an accepted whole-Send latency result.

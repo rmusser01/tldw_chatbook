@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+from contextlib import nullcontext
 
 import pytest
 
@@ -348,10 +349,27 @@ def test_unheld_pending_namespace_is_refused_before_requirement_write(tmp_path):
 
 
 def test_custom_control_root_must_be_private_and_disjoint_before_write(tmp_path):
+    from tldw_chatbook.Utils.platform_files import os as native_os
+
     fixture = pending(tmp_path)
-    fixture[1].chmod(0o755)
-    with pytest.raises((ValueError, RuntimeError)):
-        bind(fixture)
+    if os.name == "nt":
+        from Tests.Backup_Recovery.windows_acl_fixture import preserve_windows_dacl
+
+        posture = preserve_windows_dacl(fixture[1])
+    else:
+        posture = nullcontext()
+    with posture:
+        if os.name == "nt":
+            subprocess.run(
+                ["icacls", str(fixture[1]), "/grant", "*S-1-1-0:(R)"],
+                check=True,
+                capture_output=True,
+            )
+        else:
+            fixture[1].chmod(0o755)
+        assert native_os.stat(fixture[1]).st_mode & 0o044
+        with pytest.raises((ValueError, RuntimeError)):
+            bind(fixture)
     assert not (fixture[1] / "activation").exists()
 
 

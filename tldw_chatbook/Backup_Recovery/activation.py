@@ -69,10 +69,22 @@ def activation_permission(
         _identifier(owner)
         selected = lexical_path(config_selector or bootstrap.effective_config_path())
         root = lexical_path(bootstrap_root or bootstrap.default_bootstrap_root())
-        if not bootstrap.startup_permission(selected, root)[0]:
-            return False
-        _, profiles, associations = bootstrap._control_records(root)
-        registry = bootstrap._registry(root)
+        startup = bootstrap.startup_permission
+        if (
+            startup is bootstrap._STARTUP_PERMISSION_SOURCE[0]
+            and startup.__code__ is bootstrap._STARTUP_PERMISSION_SOURCE[1]
+        ):
+            pending, profiles, associations = bootstrap._control_records(root)
+            registry = bootstrap._registry(root)
+            if not bootstrap._startup_permission_from_controls(
+                selected, root, pending, profiles, registry
+            )[0]:
+                return False
+        else:
+            if not bootstrap.startup_permission(selected, root)[0]:
+                return False
+            _, profiles, associations = bootstrap._control_records(root)
+            registry = bootstrap._registry(root)
         names = set()
         if namespaces is not None:
             names.update(Admission._names(namespaces))

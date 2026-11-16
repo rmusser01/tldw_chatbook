@@ -293,6 +293,15 @@ def _source_references(app, store, creator, session, *, _unused_trust=None):
     )
 
 
+def _ready_configuration_references(app, store, creator, session):
+    """Build and classify resident references for this synchronous caller only."""
+    try:
+        refs = _source_references(app, store, creator, session)
+        return refs if _standard_configuration_references(app, refs) else None
+    except (AttributeError, TypeError, ValueError, RecoveryRequired):
+        return None
+
+
 def standard_console_configuration_sources(
     app, store, creator, *, session_id: str
 ) -> bool:
@@ -303,9 +312,7 @@ def standard_console_configuration_sources(
         )
         if session is None:
             return False
-        return _standard_configuration_references(
-            app, _source_references(app, store, creator, session)
-        )
+        return _ready_configuration_references(app, store, creator, session) is not None
     except (AttributeError, TypeError, ValueError, RecoveryRequired):
         return False
 
@@ -1274,9 +1281,8 @@ def capture_console_received_configuration_preparation(
         trust_source = None
         trust_initial = ()
         trust_functions = ()
-        if not standard_console_configuration_sources(
-            app, store, creator, session_id=session_id
-        ):
+        refs = _ready_configuration_references(app, store, creator, session)
+        if refs is None:
             checked = _resident_skill_wiring()
             if checked is None:
                 return None
@@ -1302,11 +1308,11 @@ def capture_console_received_configuration_preparation(
                 _function_record(trust_source.source_current),
                 _function_record(trust_source.current),
             )
-        refs = _source_references(
-            app, store, creator, session, _unused_trust=trust_source
-        )
-        if not _standard_configuration_references(app, refs):
-            return None
+            refs = _source_references(
+                app, store, creator, session, _unused_trust=trust_source
+            )
+            if not _standard_configuration_references(app, refs):
+                return None
         preparation = ConsoleReceivedConfigurationPreparation(
             app,
             store,

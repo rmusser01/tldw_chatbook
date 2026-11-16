@@ -128,6 +128,14 @@ def note_provider_request() -> None:
         start.end()
 
 
+def custody_send_start_open(task: asyncio.Task | None) -> bool:
+    """Read the exact custody task's start, independent of display-age pruning."""
+    if type(task) is not asyncio.Task or task.done() or task.cancelling():
+        return False
+    start = task.get_context().get(_BOUND)
+    return type(start) is SendStart and not start.ended
+
+
 def send_start_open(owner: Any, limit: float) -> bool:
     """Whether a send on ``owner`` is accepted and has not reached its provider.
 

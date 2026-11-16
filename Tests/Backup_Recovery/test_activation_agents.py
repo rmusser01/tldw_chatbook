@@ -14,7 +14,7 @@ sys.modules.setdefault('parakeet_mlx', types.ModuleType('parakeet_mlx'))
 route, state = sys.argv[1:]
 selector = Path(os.environ['TLDW_CONFIG_PATH'])
 base = selector.parent.parent
-selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir="' + str(base/'data') + '"\n[agents]\nmax_live_subagents=1\n')
+selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir="' + (base/'data').as_posix() + '"\n[agents]\nmax_live_subagents=1\n')
 selector.chmod(0o600)
 from tldw_chatbook import config
 from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission as storage

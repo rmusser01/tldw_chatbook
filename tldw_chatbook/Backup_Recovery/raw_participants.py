@@ -162,11 +162,11 @@ def participant_identity(participant):
     return state
 
 
-def _participant_state(participant):
+def _participant_state(participant, *, retained=None):
     state = participant_identity(participant)
     source = state.source()
     if state.owner.startswith("mcp."):
-        bound = mcp_sources.binding(source)
+        bound = mcp_sources.binding(source, retained=retained)
         if bound is None or not bound[2] or bound[1] != state.selected:
             raise bootstrap.RecoveryRequired("raw_source_selection_changed")
     if state.owner == "chat.dictionaries":
@@ -307,12 +307,12 @@ def _register_raw_participant(source, owner, selected):
             raise bootstrap.RecoveryRequired("raw_source_selection_changed")
         return participant
 
-def _raw_participant(source):
+def _raw_participant(source, *, retained=None):
     """Only installed actual sources; this does not qualify capture inventory."""
     if not _pinned_io_available():
         raise bootstrap.RecoveryRequired("raw_participant_not_installed")
     settings_binding = (
-        mcp_sources.binding(source)
+        mcp_sources.binding(source, retained=retained)
         or dictionary_files.binding(source)
         or chat_sources.binding(source)
         or config_files.binding(source)
@@ -355,7 +355,7 @@ def _raw_participant(source):
             raise bootstrap.RecoveryRequired("raw_participant_not_installed")
     selected = lexical_path(selected)
     participant = _register_raw_participant(source, owner, selected)
-    state = _participant_state(participant)
+    state = _participant_state(participant, retained=retained)
     with storage._lock:
         if participant_identity(participant) is not state:
             raise bootstrap.RecoveryRequired("raw_participant_not_installed")
@@ -607,14 +607,16 @@ def _retire(state):
     return True
 
 
-def _selection(source, route, template, user_template, selected_read):
+def _selection(
+    source, route, template, user_template, selected_read, *, retained=None
+):
     if route == "hook_permissions":
         selected = _hook_permissions_selection(source)
         if selected_read is not None and lexical_path(selected_read) != selected:
             raise bootstrap.RecoveryRequired("raw_source_selection_changed")
         return selected, True, False
     if route == mcp_sources.ROUTE:
-        return mcp_sources.selection(source)
+        return mcp_sources.selection(source, retained=retained)
     if route == dictionary_files.ROUTE:
         return dictionary_files.selection(source)
     if route in chat_sources.ROUTES:
@@ -836,11 +838,30 @@ def scope(
     source_lock = None
     locked = False
     body_completed = False
+    canonical = None
+    canonical_lease = None
+    mcp_arguments = {}
     try:
         attempt = storage._Acquisition()  # before selectors, authority or path IO
         pinned = _pinned_io_available()
+        kind = (
+            mcp_sources._kind(source)
+            if route == mcp_sources.ROUTE and pinned else None
+        )
+        if (
+            kind is not None
+            and kind[1] in mcp_sources.GENERATION_SELECTED_OWNERS
+            and type(source) is kind[0]
+            and source in mcp_sources._BINDINGS
+        ):
+            # Canonical observation and payload members retain separate admission.
+            # Initial selection and each explicit validation gate stay fresh.
+            canonical = mcp_sources.canonical_path(source)
+            canonical_lease = storage.acquire_storage(canonical)
+            mcp_arguments = {"retained": {canonical: canonical_lease}}
+            attempt.check()
         selected, installed, directory_only = _selection(
-            source, route, template, user_template, selected_read
+            source, route, template, user_template, selected_read, **mcp_arguments
         )
         if (
             route
@@ -852,6 +873,10 @@ def scope(
         ):
             raise bootstrap.RecoveryRequired("raw_source_selection_changed")
         installed = installed and pinned
+        declaration = (
+            (kind[1], selected, installed)
+            if canonical_lease is not None and installed else None
+        )
         if route == mcp_sources.ROUTE and not installed:
             pinned = False
         paths = () if directory_only else (selected,)
@@ -878,7 +903,11 @@ def scope(
                 source, selected, route, selected_read
             )
         if route == mcp_sources.ROUTE:
-            paths, temporaries = mcp_sources.members(source, selected)
+            paths, temporaries = (
+                mcp_sources.members(source, selected, declared_owner=declaration[0])
+                if declaration is not None
+                else mcp_sources.members(source, selected, **mcp_arguments)
+            )
         if route == "hook_permissions":
             paths += (selected.with_name(selected.name + ".lock"),)
         temporary = None
@@ -919,7 +948,8 @@ def scope(
                     directories += (base,)
         if (
             route == mcp_sources.ROUTE
-            and mcp_sources.binding(source)[0] == "mcp.history"
+            and declaration is None
+            and mcp_sources.binding(source, **mcp_arguments)[0] == "mcp.history"
         ):
             directories += (parent,) if parent not in directories else ()
         if route == "runtime_read":
@@ -942,8 +972,14 @@ def scope(
             # Constructor directory selection is complete before binding.
             if route == "template_directory":
                 source.user_templates_dir = selected
-            participant = _raw_participant(source)
-            binding = _participant_state(participant)
+            if declaration is not None:
+                if not _pinned_io_available():
+                    raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+                participant = _register_raw_participant(source, *declaration[:2])
+                binding = participant_identity(participant)
+            else:
+                participant = _raw_participant(source, **mcp_arguments)
+                binding = _participant_state(participant, **mcp_arguments)
             if (
                 binding.owner
                 not in {
@@ -975,7 +1011,11 @@ def scope(
             source_lock = source._mcp_source_lock
         if route in config_files.ROUTES:
             source_lock = source._config_file_lock()
-        gate = _participant_state(participant) if participant is not None else None
+        gate = (
+            _participant_state(participant, **mcp_arguments)
+            if participant is not None
+            else None
+        )
         with storage._changed:
             attempt.check()
             if participant is not None:
@@ -1029,6 +1069,14 @@ def scope(
             pinned=pinned,
             temporary=temporary,
             temporaries=temporaries,
+            leases=[canonical_lease] if canonical_lease is not None else [],
+            holds=(
+                [storage._holds.get(canonical_lease._key)]
+                if canonical_lease is not None
+                else []
+            ),
+            mcp_canonical=canonical,
+            mcp_observation_lease=canonical_lease,
             config_generation=(
                 source._CONFIG_GENERATION
                 if route in {"config_data", "config_default_root", "config_chat_dicts", "config_models"}
@@ -1038,6 +1086,7 @@ def scope(
         with storage._changed:
             _states[operation] = state
             storage._raw_operations.add(operation)
+            canonical_lease = None  # The registered state now owns retirement.
         # Every publication/creation target is admitted before any side effect.
         admission_paths = (
             ((parent,) if route in {"pet", "theme_directory"} else ())
@@ -1059,10 +1108,14 @@ def scope(
                 ))
                 state.holds.append(storage._holds.get(state.leases[-1]._key))
             attempt.check()
-        elif route in config_files.ROUTES:
-            # All config members use the selected profile's same native group.
+        elif route in config_files.ROUTES or (
+            route == mcp_sources.ROUTE
+            and gate is not None
+            and gate.owner in mcp_sources.GENERATION_SELECTED_OWNERS
+        ):
+            # These declared members use the selected profile's same native group.
             # Check every member together rather than reopening its control tree
-            # once per lock, backup and temporary file on each cached config read.
+            # once per lock, backup and temporary file on each read.
             attempt.check()
             state.leases.append(storage.acquire_storage(
                 admission_paths[0], related_paths=admission_paths[1:]
@@ -1075,21 +1128,21 @@ def scope(
                 state.leases.append(storage.acquire_storage(path))
                 state.holds.append(storage._holds.get(state.leases[-1]._key))
                 attempt.check()
-        if (
-            route == mcp_sources.ROUTE
-            and participant is not None
-            and state.mcp_observation_lease is None
-        ):
+        if route == mcp_sources.ROUTE and participant is not None:
             canonical = mcp_sources.canonical_path(source)
-            state.mcp_canonical = canonical
-            if canonical == admission_paths[0]:
-                state.mcp_observation_lease = state.leases[0]
+            if state.mcp_observation_lease is not None:
+                if state.mcp_canonical != canonical:
+                    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
             else:
-                attempt.check()
-                state.mcp_observation_lease = storage.acquire_storage(canonical)
-                state.leases.append(state.mcp_observation_lease)
-                state.holds.append(storage._holds.get(state.leases[-1]._key))
-                attempt.check()
+                state.mcp_canonical = canonical
+                if canonical == admission_paths[0]:
+                    state.mcp_observation_lease = state.leases[0]
+                else:
+                    attempt.check()
+                    state.mcp_observation_lease = storage.acquire_storage(canonical)
+                    state.leases.append(state.mcp_observation_lease)
+                    state.holds.append(storage._holds.get(state.leases[-1]._key))
+                    attempt.check()
         if pinned:
             fd = _pin_parent(state, anchor)
             state.pins[anchor] = fd
@@ -1101,7 +1154,7 @@ def scope(
             # Keep the actual admission result, even if native exclusion exists.
             state.identities[anchor] = anchor_identity
         if route == mcp_sources.ROUTE:
-            mcp_sources.preflight(state)
+            mcp_sources.preflight(state, **mcp_arguments)
         if route == dictionary_files.ROUTE:
             dictionary_files.pin_inputs(state)
         if route == "theme_directory" or (route == "pet" and writing):
@@ -1110,7 +1163,11 @@ def scope(
             settings_files.check_export_parent(state)
         if _raw_holds_pause_requested(state.holds):
             raise bootstrap.RecoveryRequired("storage_locally_paused")
-        gate = _participant_state(participant) if participant is not None else None
+        gate = (
+            _participant_state(participant, **mcp_arguments)
+            if participant is not None
+            else None
+        )
         with storage._changed:
             attempt.check()
             if participant is not None:
@@ -1134,6 +1191,8 @@ def scope(
     finally:
         _local.operation = None
         try:
+            if canonical_lease is not None:
+                canonical_lease.close()
             if operation is not None:
                 state = _states[operation]
                 state.active = False

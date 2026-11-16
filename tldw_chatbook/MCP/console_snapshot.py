@@ -619,7 +619,7 @@ class _CapturedSources:
             self.require_current()
         return self.permission
 
-    def read_permission_payload(self):
+    def read_permission_payload(self, *, observe_publication=False):
         """Load stock policy within the existing checked source operation."""
         permission = self.permission_owner()
         reader = self.permission_reader
@@ -637,7 +637,10 @@ class _CapturedSources:
             ](permission, captured):
                 raise RecoveryRequired("mcp_source_selection_changed")
             return helpers["_load_in_owned_scope"](
-                permission, getattr(raw._local, "operation", None), captured
+                permission,
+                getattr(raw._local, "operation", None),
+                captured,
+                observe_publication=observe_publication,
             )
 
         result, receipt = _checked_read(permission, read)

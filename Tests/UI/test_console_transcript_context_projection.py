@@ -136,6 +136,38 @@ async def test_context_publication_reopens_unchanged_transcript_gate(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_same_owner_context_display_can_be_read_without_restarting_io(tmp_path):
+    """An expired presentation can be retained only until its exact owner changes."""
+    database, store, controller, screen, tasks = _screen(tmp_path)
+    try:
+        snapshot = spend.ConsoleContextReadSnapshot.for_screen(screen, max_age=1.0)
+        session_id = store.active_session_id
+        assert await snapshot.warm(controller, session_id)
+        published = snapshot.value
+        assert published is not None
+        snapshot.at = snapshot.config_projection.at = 0.0
+        scheduled = len(tasks)
+        with _actual_calls(controller) as calls:
+            read = getattr(snapshot, "current_inputs", None)
+            assert callable(read), "No same-owner presentation read avoids scheduling I/O"
+            assert read(controller, session_id) is published
+            assert len(tasks) == scheduled
+            assert calls == {"config": 0, "live_policy": 0}
+            # A real transcript mutation invalidates the old presentation. The
+            # no-refresh read cannot return it or launch work for the new owner.
+            store.append_message(
+                session_id, role=ConsoleMessageRole.USER, content="New input"
+            )
+            assert read(controller, session_id) is None
+            assert len(tasks) == scheduled
+            assert calls == {"config": 0, "live_policy": 0}
+        assert snapshot.value is published
+    finally:
+        await asyncio.gather(*tasks, return_exceptions=True)
+        database.close()
+
+
+@pytest.mark.asyncio
 async def test_streaming_transcript_keeps_painting_during_original_native_context_read(
     tmp_path,
 ):

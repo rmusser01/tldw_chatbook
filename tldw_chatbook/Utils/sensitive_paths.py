@@ -373,22 +373,30 @@ def _sensitive_db_paths() -> tuple[Path, ...]:
     active user folder) rather than hardcoded, since neither the user
     folder nor an override is known statically.
 
+    One synchronous configuration read owns the assembly. Nested getters
+    reuse its admission while retaining their native directory checks.
+    Custom getters run in the same scope and must not wait on another
+    thread that needs the configuration locks.
+
     Returns:
         Resolved paths to every database whose accessor could be called.
         An accessor that raises is skipped rather than failing the whole
         check -- it is additional coverage, not the primary guarantee.
+        Admission or retirement failure of the containing read propagates.
     """
     from .. import config as _config
+    from ..Backup_Recovery.config_participants import operation
 
     resolved: list[Path] = []
-    for accessor_name in _DB_PATH_ACCESSOR_NAMES:
-        accessor = getattr(_config, accessor_name, None)
-        if accessor is None:
-            continue
-        try:
-            resolved.append(accessor())
-        except Exception as exc:  # noqa: BLE001 - defensive, additive coverage only
-            _debug(f"sensitive_paths: could not resolve {accessor_name}: {exc}")
+    with operation(_config):
+        for accessor_name in _DB_PATH_ACCESSOR_NAMES:
+            accessor = getattr(_config, accessor_name, None)
+            if accessor is None:
+                continue
+            try:
+                resolved.append(accessor())
+            except Exception as exc:  # noqa: BLE001 - defensive, additive coverage only
+                _debug(f"sensitive_paths: could not resolve {accessor_name}: {exc}")
     return tuple(resolved)
 
 
@@ -651,14 +659,20 @@ def _raw_inputs() -> tuple:
         memo = _RAW_INPUTS_MEMO
     if memo is not None and _same_key(memo[0], key):
         return memo[1]
+    from .. import config as _config
+    from ..Backup_Recovery.config_participants import operation
+
     failures = getattr(_failures, "count", 0)
-    inputs = (
-        user_data_dir,
-        _sensitive_single_file_paths(),
-        _sensitive_skill_trust_dir(),
-        _sensitive_db_paths(),
-        _direct_child_rule_container_dirs(),
-    )
+    # These synchronous getters share admission, not their live path checks.
+    # Retire the read before checking the final key or publishing the memo.
+    with operation(_config):
+        inputs = (
+            user_data_dir,
+            _sensitive_single_file_paths(),
+            _sensitive_skill_trust_dir(),
+            _sensitive_db_paths(),
+            _direct_child_rule_container_dirs(),
+        )
     # The accessors read the live config and environment, so inputs built
     # while either moved describe some other key; keeping them could serve a
     # deny list with a gap once the override returns to this key's value.
@@ -927,14 +941,18 @@ def is_sensitive_path(
             ``TLDW_CONFIG_PATH`` swaps) without going stale.
 
     Returns:
-        True when the path is refused. Fails CLOSED: a path that cannot be
-        resolved is treated as sensitive.
+        True when the path is refused. Fails CLOSED: a path or sensitive
+        inventory that cannot be resolved is treated as sensitive.
     """
     resolved = _resolved(str(candidate))
     if resolved is None:
         return True
 
-    ctx = context if context is not None else resolve_sensitive_context()
+    try:
+        ctx = context if context is not None else resolve_sensitive_context()
+    except Exception as exc:  # noqa: BLE001 - unavailable policy refuses access
+        _debug(f"sensitive_paths: could not resolve sensitive context: {exc}")
+        return True
 
     # Every comparison below goes through `_compare_key` (TASK-19800): a
     # case-variant spelling reaches the same file on a case-insensitive

@@ -1614,6 +1614,11 @@ class ConsoleContextReadSnapshot:
         self.at = time.monotonic()
         return True
 
+    def current_inputs(self, controller: Any, session_id: str) -> tuple | None:
+        """Read an existing same-owner display without starting refresh work."""
+        key = self._cache_key(controller, session_id)
+        return self.value if key is not None and key == self.key else None
+
     def inputs(self, controller: Any, session_id: str) -> tuple:
         """Read cheap UI state, scheduling finite work for cold/expired owners."""
         if self.config_projection is not None:
@@ -1666,10 +1671,29 @@ class ConsoleContextReadSnapshot:
             )
 
 
+def console_context_inputs(
+    controller: Any, session_id: str, *, screen: Any, estimate_ttl_seconds: Callable,
+) -> tuple:
+    """Keep the wired display read late-bound to the screen's current snapshot."""
+    return ConsoleContextReadSnapshot.for_screen(
+        screen, max_age=estimate_ttl_seconds()
+    ).inputs(controller, session_id)
+
+
+_CONTEXT_INPUTS_DELEGATE = (console_context_inputs, console_context_inputs.__code__)
+_CONTEXT_SNAPSHOT_READERS = tuple(
+    (name, method, method.__code__)
+    for name in ("inputs", "current_inputs", "_cache_key", "_key")
+    for method in (getattr(ConsoleContextReadSnapshot, name),)
+)
+
+
 def console_transcript_context_inputs(
     screen: Any,
     controller: Any,
     session_id: str,
+    *,
+    refresh: bool = True,
 ) -> tuple | None:
     """Share disposable memory display inputs without holding transcript paint."""
     from ...Chat.console_chat_controller import (
@@ -1713,6 +1737,35 @@ def console_transcript_context_inputs(
             ):
                 break
         else:
+            if not refresh:
+                from ..Screens import chat_screen
+
+                snapshot = getattr(screen, "_console_context_read_snapshot", None)
+                reader = screen._context_spend._context_inputs
+                delegate, delegate_code = _CONTEXT_INPUTS_DELEGATE
+                ttl, ttl_code = chat_screen._CONSOLE_ESTIMATE_TTL_READER
+                if (
+                    type(snapshot) is ConsoleContextReadSnapshot
+                    and snapshot.screen is screen
+                    and stock_native_methods(snapshot, _CONTEXT_SNAPSHOT_READERS)
+                    and _handoff_projection_is_stock(snapshot.config_projection)
+                    and type(reader) is partial
+                    and reader.func is delegate
+                    and delegate is console_context_inputs
+                    and delegate.__code__ is delegate_code
+                    and delegate.__defaults__ is None
+                    and delegate.__kwdefaults__ is None
+                    and not reader.args
+                    and reader.keywords.keys() == {"screen", "estimate_ttl_seconds"}
+                    and reader.keywords["screen"] is screen
+                    and reader.keywords["estimate_ttl_seconds"] is ttl
+                    and ttl is chat_screen._console_settings_estimate_ttl_seconds
+                    and ttl.__code__ is ttl_code
+                    and ttl.__defaults__ is None
+                    and ttl.__kwdefaults__ is None
+                ):
+                    return snapshot.current_inputs(controller, session_id)
+                return None
             return screen._context_spend._context_inputs(controller, session_id)
     return None  # The transcript retains its original post-gate custom read.
 

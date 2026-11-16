@@ -17,6 +17,7 @@ from . import bootstrap, profile_paths
 from . import storage_admission as storage
 
 ROUTE = "mcp_store"
+GENERATION_SELECTED_OWNERS = frozenset({"mcp.local", "mcp.permissions", "mcp.context"})
 _BINDINGS = weakref.WeakKeyDictionary()
 _SOURCES = (
     ("local_store", "LocalMCPStore", "mcp.local", "local_mcp_store.json"),
@@ -50,14 +51,16 @@ class _Binding:
     selected: Path
 
 
-def _selected(source, owner, canonical):
-    if owner in {"mcp.local", "mcp.permissions", "mcp.context"}:
+def _selected(source, owner, canonical, *, retained=None):
+    if owner in GENERATION_SELECTED_OWNERS:
         from ..MCP.recovery_activation import selected_path
         from . import raw_participants as raw
 
         if getattr(source, "_recovery_original_path", None) != canonical:
             return canonical
-        return selected_path(canonical, retained=raw.mcp_observation(source, canonical))
+        if retained is None:
+            retained = raw.mcp_observation(source, canonical)
+        return selected_path(canonical, retained=retained)
     return canonical
 
 
@@ -122,7 +125,7 @@ def bind(source):
         _BINDINGS[source] = _Binding(cls, config, profile, selected)
 
 
-def binding(source):
+def binding(source, *, retained=None):
     kind = _kind(source)
     if kind is None:
         return None
@@ -152,6 +155,7 @@ def binding(source):
                 source,
                 owner,
                 profile_paths.lexical_path(profile_paths.user_data_dir(data) / leaf),
+                retained=retained,
             )
             != selected
         ):
@@ -159,15 +163,19 @@ def binding(source):
     return owner, selected, bound is not None
 
 
-def selection(source):
-    bound = binding(source)
+def selection(source, *, retained=None):
+    bound = binding(source, retained=retained)
     if bound is None:
         raise bootstrap.RecoveryRequired("mcp_source_not_supported")
     return bound[1], bound[2], False
 
 
-def members(source, selected):
-    owner = binding(source)[0]
+def members(source, selected, *, retained=None, declared_owner=None):
+    """Derive members from a live binding or the constructor's checked owner."""
+    owner = (
+        binding(source, retained=retained)[0]
+        if declared_owner is None else declared_owner
+    )
     if owner == "mcp.history":
         targets = (selected, selected.with_name(selected.name + ".1"))
         temps = {p: p.parent / f".{p.name}.{secrets.token_hex(8)}.tmp" for p in targets}
@@ -192,8 +200,8 @@ def _identity(state, path):
     return info.st_dev, info.st_ino
 
 
-def preflight(state):
-    owner = binding(state.source)[0]
+def preflight(state, *, retained=None):
+    owner = binding(state.source, retained=retained)[0]
     targets = (state.selected,)
     if owner == "mcp.permissions":
         targets += (state.selected.with_suffix(state.selected.suffix + ".bak"),)

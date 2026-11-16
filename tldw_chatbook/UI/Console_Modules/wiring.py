@@ -1489,7 +1489,7 @@ def build_console_controllers(
         record_timer_stopped=lambda name: screen._record_ui_timer_stopped(name),
         push_inspector=lambda **kwargs: screen._push_console_inspector(**kwargs),
         context_window_for_display=lambda settings: spend.cached_context_window_for_display(screen, screen._ensure_console_provider_gateway(), settings),
-        context_inputs=lambda controller, session_id: spend.ConsoleContextReadSnapshot.for_screen(screen, max_age=estimate_ttl_seconds()).inputs(controller, session_id),
+        context_inputs=partial(spend.console_context_inputs, screen=screen, estimate_ttl_seconds=estimate_ttl_seconds),
         display_pricing_catalog=lambda: display_pricing_catalog(),
         build_cost_snapshot=lambda *args, **kwargs: build_cost_snapshot(*args, **kwargs),
         build_context_estimate=lambda *args, **kwargs: build_context_estimate(*args, **kwargs),

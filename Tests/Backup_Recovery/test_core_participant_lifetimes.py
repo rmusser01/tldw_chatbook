@@ -1,6 +1,8 @@
 """Core database maintenance must preserve actual borrower/native lifetimes."""
 
-import select
+# Imported pytest fixtures are referenced by their parameter names.
+# ruff: noqa: F401, F811
+
 import sqlite3
 import time
 
@@ -15,6 +17,7 @@ from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
 
 from Tests.Backup_Recovery.test_admission import launch, line, release
 from Tests.Backup_Recovery.test_participant_lifetimes import local_root
+from Tests.subprocess_pipes import pipe_ready
 
 
 CORE_TYPES = (
@@ -58,7 +61,7 @@ def test_failed_explicit_native_close_preserves_owner_reference(
         assert cached_connection(owner) is connection
         assert connection.execute("SELECT 42").fetchone()[0] == 42
         assert not pause.drain(time.monotonic() + 0.02)
-        assert not select.select([child.stdout], [], [], 0.02)[0]
+        assert not pipe_ready(child.stdout, 0.02)
     finally:
         monkeypatch.setattr(connection, "close", real_close)
         real_close()
@@ -111,7 +114,10 @@ def test_admitted_transaction_finishes_but_escaped_cursor_keeps_native_hold(
         with owner.transaction() as work:
             work.execute("CREATE TABLE phase3_result (value TEXT)")
             work.execute("INSERT INTO phase3_result VALUES ('committed')")
-            cursor = work.execute("SELECT value FROM phase3_result")
+            # This borrower is caller-owned. CharactersRAGDB closes the cursor
+            # it lends as work when the managed transaction exits.
+            cursor = get_connection(owner).cursor()
+            cursor.execute("SELECT value FROM phase3_result")
             pause = storage._begin_local_pause()
             participant.close_admission()
             # The exact live transaction can finish its originally admitted scope.
@@ -125,7 +131,7 @@ def test_admitted_transaction_finishes_but_escaped_cursor_keeps_native_hold(
             with owner.transaction():
                 pytest.fail("new transaction entered after pause")
         child = launch(local_root / "admission", "maintenance", ("bootstrap.unbound",))
-        assert not select.select([child.stdout], [], [], 0.02)[0]
+        assert not pipe_ready(child.stdout, 0.02)
         cursor.close()
         # Explicit close by the source owner is the borrower retirement boundary.
         owner.close()
@@ -706,11 +712,11 @@ pause.resume()
     try:
         assert line(writer) == "unmatched-live"
         maintainer = launch(root / "admission", "maintenance", ("bootstrap.unbound",))
-        assert not select.select([maintainer.stdout], [], [], 0.03)[0]
+        assert not pipe_ready(maintainer.stdout, 0.03)
         writer.stdin.write("close\n")
         writer.stdin.flush()
         assert line(writer) == "unmatched-unqualified"
-        assert not select.select([maintainer.stdout], [], [], 0.03)[0]
+        assert not pipe_ready(maintainer.stdout, 0.03)
         writer.stdin.write("exit\n")
         writer.stdin.flush()
         assert writer.wait(timeout=5) == 0, writer.stderr.read()

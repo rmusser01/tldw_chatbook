@@ -535,6 +535,9 @@ def startup_permission(config_selector: Path, bootstrap_root: Path) -> tuple[boo
         return False, "recovery_scope_uncertain"
 
 
+_STARTUP_PERMISSION_SOURCE = (startup_permission, startup_permission.__code__)
+
+
 def _startup_permission_from_controls(
     selector: Path, bootstrap_root: Path, pending, profiles, registry
 ) -> tuple[bool, str]:

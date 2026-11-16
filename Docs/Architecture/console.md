@@ -57,6 +57,12 @@ ordinary source requests, preserving each explicit beat. Cheap actor/session/man
 motion facts are checked before painting without copying the transcript. See
 [portrait ownership and preparation](./character-chat.md#local-portrait-performance-attachments).
 
+Received configuration capture builds and classifies resident references once on
+the successful stock path. The result belongs only to that synchronous capture;
+later currentness checks rebuild references. Cold-trust qualification retains its
+separate fresh capture, and unavailable or custom sources retain their existing
+fallback. No display or configuration authority is cached across calls.
+
 Console skill discovery (`UI/Console_Modules/skill.py`) prepares cold trust with its existing App worker, then recaptures the current stock source before reading context. The original decorated `SkillsScopeService.get_context(mode="local")` runs through `run_preparation_read`, including local-content admission, policy enforcement and catalog/trust checks. Runtime preparation-read tracking retains the physical call through cancellation and shutdown; source and view attachment checks gate publication afterward. Custom context, catalog, policy, disabled-builtins and trust-status callbacks retain the direct path. This changes scheduling only: no catalog cache, permission verdict reuse, or display proof is used as execution authority (ADR-126/230/231; TASK-35590).
 
 Cold context and cost estimates share tokenizer preparation with `ConsoleReadinessConfigProjection` (TASK-35591). The selected stock model/provider's original custom-tokenizer manager admission and encoding load run as finite, runtime-observed preparation reads, outside the config operation. Display estimates remain unavailable until their own request completes; model, manager, mapping, source and view changes invalidate readiness. Recorded provider usage still supplies Current spend while preparation is unavailable, provided every contributing history row has usage; mixed estimated history stays unavailable rather than reporting a partial total. Fingerprint, cache-break and Next-send estimates wait for readiness, and readiness participates in the settled display-cache key. The original token arithmetic and live action counters are unchanged. Custom callbacks and heuristic custom-tokenizer directory selection retain their direct path; this optimization covers cold stock backends and exact custom mappings, not long-text counting CPU or arbitrary extension callbacks. Backend loading errors remain unavailable and retry on the existing bounded display cadence.
@@ -72,6 +78,11 @@ FULL synchronization awaits the existing stock `ConsoleReadinessConfigProjection
 Console/Canvas configuration scheduling follows [ADR-121's staged handoff](../../backlog/decisions/121-local-versioned-canvas-artifacts-and-browser-sandbox.md#staged-console-handoff-opportunity-2026-11-07-before-successor-implementation). Canonical Canvas background polls may decline either native config lock or a qualified temporary UI handoff; a declined poll is unavailable, never an enabled or restart-disable verdict. `config_sync` records owed CORE work inactive until the original stock off-loop warm stage, then carries the exact current successful receipt through physical read retirement into one guarded callback attempt. Identity joins only its actual issued publication, including `changed=False`. Warm failure, source/visit loss, cancellation, maintenance, visibility/view loss or a dropped replay retire the handoff; it also ends after that attempt while ordinary replay may remain owed. The coalesced callback lives in `config_sync.run_coalesced_control_bar_sync`; the whole watcher lives in `Canvas.config_policy._watch_runtime_canvas_policy`, reached through the runtime's live namespace delegate. Original CORE/draft/workspace ordering, 0.2/0.25 s cadences, effect-time checks, restart latch, custom-reader fallback and physical native-read custody remain intact. Physical presentation latency is qualified separately.
 
 Stock capacity and history preflights use `Chat/console_tool_surface_preview.py::owned_preflight_tool_surface` to prepare the light-surface permission-switch read through the existing finite preparation owner. Branch selection and schema planning remain on the caller loop; only the current pass's boolean crosses the worker boundary. Source, session, callback and shutdown checks gate consumption, and cancellation waits for physical retirement. Direct synchronous previews and custom callbacks retain their existing route. The result is an estimate, not execution authority; dispatch and tool invocation retain their own fresh gates (ADR-230; TASK-34601.1).
+
+The qualified preview reads its captured permission payload directly through that
+owner and observes publication inside the original mutation fence. Its final
+native source check still follows publication. This avoids repeated forwarding
+scopes without reusing the result between pre-save, post-save or execution checks.
 
 Finite preparation callbacks temporarily use at most1ms interpreter thread handoffs to reduce scheduling convoys across fresh native reads (TASK-34406.11, ADR230). The existing bookkeeping lock counts overlapping physical callbacks; last exit restores the prior value if still owned. Lower prior or later different external settings remain. This affects interpreter scheduling only: original source, permission, native ownership and cancellation checks are unchanged.
 
@@ -109,6 +120,25 @@ transcript. The memo key retains reader binding/code/default identities, refusin
 custom results after a stock reader is restored. Custom callbacks keep their
 original synchronous post-gate path and call cadence. Branch-memory validation,
 finite native retirement, freshness deadlines and live action reads are unchanged.
+
+During a sole stock manual turn's promoted preparation, routine polls may reuse
+the existing completed-FULL source and same-owner context display until that
+custody task's own provider request (ADR-231, TASK-34601.1). The controller's
+task/preparation map and store preparation retain ownership; saved clearing and
+new input require a fresh FULL witness. Tabs, original transcript publication,
+acknowledgement, recovery and resident Sending/Waiting feedback remain live.
+Routine retrieval, character, readiness/config and rail refreshes stay owed on
+the existing cadence. Unknown/custom sources, input/settings changes, pending
+decisions, explicit FULL, provider entry, cancellation and terminal transitions
+restore FULL. `ConsoleContextReadSnapshot.current_inputs` never schedules work
+and cannot supply Send authority. This is a bounded display route, not a promise
+that every retained transcript/recovery helper performs no native I/O.
+
+The mounted Console imports its acknowledgement dependency before accepting the
+first press. Mount creates no acknowledgement or turn owner; Enter and Send still
+create those through the existing action path. Direct/unmounted callers retain
+the lazy helper. This makes the first Sending paint independent of a race with
+the idle pre-import pass, within the unchanged startup budgets.
 
 Attach/resume reconciliation launches from a synchronous after-refresh callback
 into the finite `console-attach-reconciliation` view worker (TASK-35614).

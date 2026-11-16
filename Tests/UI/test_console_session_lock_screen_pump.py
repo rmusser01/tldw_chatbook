@@ -21,6 +21,7 @@ parked screen pump: a circular wait only a test can make. No production code
 takes the session locks except the tab publication itself.
 """
 
+import json
 import time
 
 import pytest
@@ -66,7 +67,42 @@ async def test_tab_holder_finishes_while_the_screen_pump_waits_for_it(request):
         keeper = controller.store.active_session_id
         await _show_tabs(console, pilot, {keeper})
         projection = spend.ConsoleReadinessConfigProjection.for_screen(console)
-        assert await _quiet(pilot, console, projection)
+        quiet = await _quiet(pilot, console, projection)
+        if not quiet:
+            request.getfixturevalue("record_property")(
+                "initial_publication_quiet_state",
+                json.dumps(
+                    {
+                        "attach_reconciled": console._console_attach_reconciled,
+                        "attach_running": console._console_attach_reconcile_running,
+                        "message_queue_empty": console._message_queue.empty(),
+                        "next_callbacks": len(console._next_callbacks),
+                        "callbacks": len(console._callbacks),
+                        "pump_awaiting": _awaiting(console._task)[:16],
+                        "sync_requested": console._console_sync_requested,
+                        "sync_in_progress": console._console_sync_in_progress,
+                        "tab_sync_calls": console._console_session_tabs_sync_calls,
+                        "replay_whole_sync": getattr(
+                            console, "_console_control_bar_replay_whole_sync", False
+                        ),
+                        "projection_pending": projection.pending,
+                        "unfinished_workers": [
+                            (
+                                worker.group,
+                                worker.state.name,
+                                _awaiting(worker._task)[:16],
+                            )
+                            for worker in [
+                                worker
+                                for worker in console.app.workers
+                                if worker.node is console and not worker.is_finished
+                            ][:8]
+                        ],
+                    },
+                    sort_keys=True,
+                ),
+            )
+        assert quiet
         surface = console.query_one("#console-session-surface", ConsoleSessionSurface)
         added = {
             controller.new_session(title=f"Held publication {number}").id

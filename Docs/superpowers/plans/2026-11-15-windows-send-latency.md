@@ -1,0 +1,863 @@
+# Windows Send latency implementation plan
+
+> **For agentic workers:** Use superpowers:executing-plans. Root owns integration and all native testing/timing. Agents implement only their explicitly assigned files; no concurrent native runs.
+
+**Goal:** Qualify PR3534 below six seconds from actual Enter/Send action to provider-adapter entry on Windows, preserving feedback and saved-turn correctness.
+
+**Architecture:** Extend the existing finite configuration/preparation owners where measured redundant work occurs. Keep every effect-time permission check and physical native retirement. No lease spans provider I/O or awaits.
+
+**Tech Stack:** Python, Textual, SQLite, existing native storage admission.
+
+**Spec:** ../specs/2026-10-06-console-send-preparation-architecture-design.md, amended by the owner's 2026-11-15 six-second merge gate and authorization to refactor.
+
+ADR required: yes, amend existing ADR126 for bounded configuration-read assembly and ADR231 for promoted manual preparation polls.
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md; backlog/decisions/231-console-polling-and-full-state-reconciliation.md; existing ADR230 continues to govern Send preparation ownership.
+Reason: reuse existing native operations and display owners without changing durable dispatch or authorization.
+
+## Constraints and review focus
+
+- Each first and later Send sample, for both routes, must be below six seconds; no average substitutes for a failed sample. Provider response time and application boot are separate.
+- Native runs remain sequential. Diagnostic instrumentation and concurrent host load are recorded; uninstrumented measurements qualify release.
+- Preserve all public path getters, custom overrides, per-getter additive failures and no memo publication after failure.
+- Configuration admission/retirement errors propagate; do not retry a partly retired read or treat it as an empty successful deny list.
+- Custom getters remain callable under the normal configuration read scope. Keep path selection, source drift, parent posture, pause and cancellation checks.
+- Save failure keeps the draft. Waiting for reply, Streaming and owned shutdown must remain verified for Enter and Send.
+
+## Task 1 — Attribute the complete event-to-dispatch path
+
+Files: Tests/Performance/test_console_send_wall_clock.py; external diagnostic plugin and isolated native receipts.
+
+- [x] Route the existing full-app diagnostic through actual Enter and button events using the production task factory.
+- [x] Record original-source first-send failure (86.908 seconds) and focused native RED (26 admissions for 13 database paths).
+- [x] Complete the diagnostic with explicit ready-composer preconditions and per-owner inclusive cost attribution. All three sends, persisted responses and trace settlement must finish; preserve failures as evidence.
+
+## Task 2 — Group related configuration reads
+
+Files: tldw_chatbook/Utils/sensitive_paths.py; Tests/Utils/test_sensitive_config_read_scope.py; ADR126.
+
+Interface: _sensitive_db_paths() -> tuple[Path, ...] retains its signature and all 13 actual getters. One config_participants.operation(config) owns the synchronous assembly; nested getters reuse its checked admission.
+
+- [x] Native RED asserts original output parity and at most two storage acquisitions, and fails at 26.
+- [ ] Add custom/failed getter, no-partial-memo, changed selection and failed retirement controls appropriate to the selected scope.
+- [x] Enclose the existing loop in the existing operation; retain per-getter try/_debug and let scope-level failures escape.
+- [ ] Run the focused native regression, affected config/companion/run-log controls and lint. Expected: all pass without changing native checks or deadlines.
+- [ ] Compare complete uninstrumented first/later sends. Keep only a justified change; further measured causes require a scoped plan amendment before implementation.
+
+## Task 3 — Coordinator experiment, deferred after comparison
+
+Disposition: removed from PR3534. The prototype passed its concurrency controls
+and integration checks, but did not establish a whole-Send speed benefit. With
+the same diagnostic periodic-poll deferral, the original coordinator measured
+16.367/19.647/15.186s and the prototype 23.115/23.230/17.878s; host variation
+prevents a precise regression claim. Both fail the release gate. Preserve the
+prototype patch/test in task artifacts for separate review. The following is the
+historical experimental plan, not selected production behavior.
+
+Files: tldw_chatbook/Backup_Recovery/storage_admission.py; tldw_chatbook/Backup_Recovery/participants.py; Tests/Backup_Recovery/test_core_operation_coordinator_io.py; ADR126.
+
+Interface: existing _check_operation still invokes the original native path proof. It may return a short-lived binding snapshot for an immediate in-memory recheck at the consuming critical section. No native result is cached for another operation. Acquisition scope/control derivation remains fresh before and after counting its lease.
+
+- [ ] Run held-original-I/O REDs for core access/getter/nested operation/initializer and both settled admission observations. Another worker must acquire the coordinator before native proof is released. Direct checks must refuse registration, lease, repository binding and path changes during that proof.
+- [ ] Separate current in-memory custody checks from original native path proof. Revalidate the exact bindings afterward; preserve accepted-operation behavior during pause and all native retirement.
+- [ ] Move outer caller critical sections and both admission scope/control observations off native I/O. Pending acquisitions and counted leases stay registered throughout. Recheck attempt/captured hold identity and names atomically with counting or publication; retain retry/refusal semantics.
+- [ ] Run the new controls and existing initialization, core-lifetime, path-replacement and evidence-reuse tests. Expected: all pass with unchanged safety budgets.
+- [ ] Repeat the complete full-app profile and ordinary sequential timings. Investigate remaining measured work only if the six-second gate still fails.
+
+ADR required: yes, scoped clarification of existing ADR126's raw native-proof pattern for core and admission proof. No new coordinator, connection pool or cache.
+
+## Task 3b — Group declared permission-store members
+
+Files: tldw_chatbook/Backup_Recovery/raw_participants.py and focused MCP/raw
+admission tests. Shared-preparation lane owns these files; root owns tests and
+integration. Controller/display lane remains source review until its bounded
+proposal is reviewed.
+
+ADR required: yes, amend existing ADR126 for this installed owner.
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: use the existing related-path admission contract for the permission
+participant without creating a new snapshot, lease lifetime or authority cache.
+
+- [ ] Add an original-call native control that requires one direct admission
+  carrying all declared permission members; confirm RED on three admissions.
+- [ ] In the existing raw admission branch, select only the checked MCP route
+  and installed participant owner mcp.permissions. Group admission_paths using
+  the existing related_paths argument; preserve all pins, preflight and separate
+  canonical observation lease.
+- [ ] Update the old scalar count oracle only alongside full-member and retirement
+  assertions. Verify changed/outside member, pause, failed close and custom/source
+  routes; run affected tests sequentially.
+- [ ] Measure the original complete Send route and retain only demonstrated
+  improvement with unchanged correctness.
+
+Cross-pass preview reuse is not selected: ordinary permission.load publishes an
+observation which the existing owned payload helper omits. Grouping admission
+preserves that behavior without broadening the preview contract.
+
+## Task 3c — Preserve progress without repeating routine preparation reads
+
+Files: existing console_send_start, composer_run_controls, config_sync,
+chat_screen and console_spend_projection owners, plus focused UI controls.
+Controller/display lane owns these files; root owns integration/native runs.
+
+ADR required: yes, bounded amendment to existing ADR231.
+ADR path: backlog/decisions/231-console-polling-and-full-state-reconciliation.md.
+Reason: extend the accepted manual preparation display route through the same
+turn's promoted preparation until its own provider request, while preserving FULL.
+
+- [ ] Establish RED for original promoted preparation polling and the retained
+  task's SendStart after the unrelated three-second display window is pruned.
+- [ ] Preserve the existing unpromoted route. Qualify promoted work through the
+  original task-to-preparation map, current store preparation, completed FULL
+  source and resident input/policy revisions. Unknown or changed owners stay FULL.
+- [ ] Keep speech/H3 handling, draft synchronization, original tabs/transcript
+  publication and immediate feedback. Defer routine retrieval, character,
+  readiness/config and rail reads on this qualified route. Read only an existing
+  same-owner context display without scheduling its refresh; missing evidence
+  falls back to FULL. Keep existing cadence work owed and the poll alive.
+- [ ] Preserve explicit FULL dominance and post-await currentness. Verify saved
+  draft/new edits, provider entry across an await, pending decisions, settings/
+  runtime/Canvas/roleplay changes, other sessions, cancellation and terminal
+  handoff through the existing producers. No manual sync substitutes for them.
+- [ ] Run both event routes on final integrated sources; report quiet individual
+  action-to-adapter samples separately from diagnostic and counterfactual runs.
+
+## Task 3d — Retain one canonical admission during permission-scope construction
+
+Files: raw_participants, mcp_source_participants and focused permission tests.
+Shared-preparation lane owns these files; root owns native verification.
+
+ADR required: yes, amend existing ADR126.
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: nine repeated canonical admissions occur inside one synchronous raw-scope
+construction. Retain one existing lease while keeping every fresh witness read.
+
+- [ ] Add a native original-call regression requiring two total admissions per
+  installed permission read: one canonical observer and one full member group.
+  Confirm RED on the grouped candidate's ten admissions, with original witnesses,
+  payload publication and retirement assertions unchanged.
+- [ ] Derive the installed canonical path using the existing pure binding check,
+  acquire its lease under the existing acquisition, and pass a construction-local
+  retained map through the private MCP selection/binding/member/participant gates.
+  Every selected_path call still invokes original observed/_witnesses; no witness
+  or selection result is memoized. Keep state inactive until original publication.
+- [ ] Transfer the early lease into the existing state's leases/holds when state
+  is constructed; scope cleanup owns it before that point. Keep separate related-
+  member admission, since canonical-only authority does not cover main/tmp/bak.
+  Recovered sources must not pre-admit unused canonical sidecars. Active operation
+  checks continue using existing mcp_observation with no new owner or TLS registry.
+- [ ] Verify source/config/recovery changes, custom sources, preflight pause,
+  missing/exact-file member enrollment, exceptional construction and uncertain
+  native close. Keep fresh final checks, refusal boundaries and physical cleanup.
+- [ ] Measure original whole Send after integration with Task3c; no admission
+  count or instrumented duration substitutes for the six-second merge gate.
+
+## Task 3e — Separate MCP declaration from live validation
+
+Files: raw_participants, mcp_source_participants, focused permission/member and
+filesystem-wait tests. Shared-preparation lane owns implementation; root runs native tests.
+
+ADR required: yes, amend existing ADR126.
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: structural metadata access currently repeats recovery-file validation
+inside one synchronous constructor; make the remaining validation boundaries explicit.
+
+- [x] Establish RED for the five structural witness derivations per installed
+  generation-selected MCP construction: member declaration, history classification
+  and participant registration/helper validation. Test local/context/permission
+  sources under their common recovery-selection contract.
+- [x] Reuse only this construction's already validated owner/selected/installed
+  declaration through pure helpers and existing participant registration. Keep
+  the custom/uninstalled routes unchanged; no witness cache, new owner or TLS state.
+- [x] Preserve initial selection, fresh pre-lock, post-wait preflight and late
+  publication checks, active custody/parent checks, readability approval,
+  file-open and checked-read final publication. Drift may refuse at the next
+  explicit boundary; no payload access may precede that validation.
+- [ ] Verify changed source/config/generation, source-mutex pause, exact-file
+  sidecars, recovered destinations, construction failure and physical uncertain
+  close, plus original permission behavior. Extend existing canonical retention
+  and related-member admission to the same generation-selected source family;
+  canonical and selected members remain independently admitted (two acquisitions).
+
+## Task 3f — Build resident configuration references once per capture
+
+Files: Chat/console_configuration_preparation.py and its focused configuration
+capture tests. Controller/display lane owns implementation; root integrates.
+
+ADR required: no new ADR.
+ADR path: backlog/decisions/230-console-send-preparation-and-io-ownership.md.
+Reason: remove repeated metadata construction within an existing synchronous
+capture, preserving owners, callbacks, awaits and all freshness/refusal boundaries.
+
+- [x] Establish RED for repeated original reference construction/classification
+  on the successful stock capture; preserve custom and cold-trust paths.
+- [x] Share the local successful classification with capture assembly. Do not
+  retain it across calls/awaits or remove any preparing_poll_record recheck.
+- [ ] Verify missing/cold proofs, custom factories/loaders, bound/unbound/replaced
+  MCP readers and changed-owner/config refusals, then integrated UI/Send controls.
+
+## Task 4 — Qualify and integrate
+
+Files: existing feedback/shutdown tests, task34601.1 and Docs/Development/console-optimization-review-list.md.
+
+- [ ] Run both event routes sequentially on the final integrated source with real private-profile storage. Record each cold/warm action-to-adapter sample and host conditions.
+- [ ] Run current targeted feedback, save-failure/draft, permission and physical-shutdown checks. Expected: existing budgets and contracts pass.
+- [ ] Update the deferred optimization list and implementation evidence. Obtain independent review and fix material findings.
+- [ ] Push with lease protection, resolve current-head review threads and pass PR CI. Re-arm auto-merge only after the six-second gate passes. Follow queue rebases through CI and actual merge.
+
+## Execution record
+
+Baseline ccb453d001 on dev cc6006fcf593: PR auto-merge disabled. The first full-app Enter sample was 86.908 seconds on a loaded host; it is a failure, not a release qualification. The diagnostic's second send did not establish readiness and is being corrected before using warm samples. The focused original-function native count is 26 admissions for 13 getters.
+
+Ruling: preserve native authorization through the existing operation rather than add stock-function provenance machinery. Custom getters are still invoked, now within a documented synchronous configuration read scope; extensions must not wait on another thread that needs the same configuration locks.
+
+Configuration batch native controls: four pass in41.85s (pr3534-config-scope-green-1). The completed diagnostic pr3534-six-second-costs-enter-3 records Enter-to-adapter37.060/33.032/26.771s, three saved user/assistant pairs and complete traces. It separately reports1.430s awaiting the original onboarding publication before the second eligible Send. No producer or capture gate was bypassed. First-send core checks entered with the coordinator held1553times, totaling4.794s inside those nested diagnostic spans; these figures do not establish whole-path savings. The six-second gate remains unmet.
+
+Coordinator RED: nine failures and one pass in12.96s. All ten new controls pass
+after the change. The first integrated run exposed an inappropriate use of the
+reuse-selector helper as final hold authority; the final check now tests actual
+hold readiness/stop/error. Existing paused-startup readmission then reproduced
+the reviewer's subclass finding (three failures, one pass) and was corrected with
+the existing pause-owned subclass check. Both ordinary and cancelled native
+startup readmission, real app startup/capture handoff, and shutdown checks pass.
+
+Remaining qualification repairs before release:
+- Compare eleven core-lifetime failures with exact dev cc600. Ten use WinSock
+  select on process pipes; one assumes the managed ChaChaNotes cursor survives
+  its owner's documented close. If baseline confirms these, use existing
+  pipe_ready and a distinct caller-owned cursor without weakening exclusion.
+- Add a regression for unavailable sensitive-context resolution. The public
+  is_sensitive_path predicate must fail closed, including after a changed config
+  selection; the failed assembly must still propagate internally and never memoize.
+- A symlink privilege failure in the existing sensitive-path test is an explicit
+  host limitation. Preserve symlink coverage on capable platforms rather than
+  change machine privileges or replace the native check with a mock.
+
+The exact dev cc600 baseline reproduced twelve failures and passed the config
+retarget test. Eleven failures were the existing lifetime fixture issues; the
+twelfth was the host's unavailable symlink privilege. Reusing the existing
+cross-platform pipe observer and creating a distinct caller-owned cursor
+preserves the original exclusion assertions and time bounds. The public
+sensitive predicate now refuses an unavailable inventory; internal assembly
+still raises without memo publication. The combined lifetime, coordinator and
+sensitive-config controls pass: 76 tests in 149.44s
+(pr3534-lifetime-and-sensitive-green-1), with unchanged source throughout.
+
+Benchmark correction: the previous test wrapped gateway.resolve_for_send to
+choose streaming. This fails the production native-method identity check and
+uses the resolver's default worker path, omitting the owned preparation runner
+and its bounded interpreter handoff. Those elapsed/census receipts describe
+that custom resolver route and cannot qualify stock Send. The diagnostic now
+sets actual session streaming state and asserts the original provider resolver
+methods remain installed. Custody/stage observers and the controlled adapter
+seam were separately audited; no additional identity bypass was found.
+
+The measured recurring display work remains a candidate, not an implemented
+optimization: readiness configuration, character context and context-input
+refreshes recur during the whole send/completion phase. Counted phase work is
+not all pre-adapter work, and thread spread alone does not prove simultaneous
+contention. Re-measure the corrected original route before expanding polling
+behavior or introducing additional preparation batching.
+
+Corrected stock-resolver quiet baseline with the original coordinator:
+38.259/55.197/54.747s (pr3534-original-coordinator-stock-enter-1). The identical
+source with diagnostic-only periodic display deferral measured
+16.367/19.647/15.186s (pr3534-coordinator-control-periodic-enter-1). Both completed
+three saved replies and trace settlement with unchanged sources. This is
+directional evidence under variable host load, not an exact saving or release
+qualification. Task3c selects a bounded production route rather than the
+diagnostic's blanket periodic deferral. All samples still fail six seconds.
+
+Permission-member RED: the original scope makes three scalar admissions for
+main/tmp/bak; the new regression requires one original admission carrying all
+three and verifies physical retirement first (pr3534-permission-group-red-1,
+one intended failure in14.76s). No scope or native deadline changed.
+
+Task3c original-callback RED: three intended failures in88.65s; the exact custody
+reader and no-refresh display reader were absent, and original promoted polls
+never qualified. The first candidate passes all four focused checks in146.30s,
+including Enter and button with original post-save history held. Independent
+review identified a custom terminal-status getter not covered by source guards;
+the candidate now requires that existing getter to remain stock. Added promoted
+input/settings, pending FULL, provider, Stop and terminal transition checks await
+their separate run.
+
+Task3d RED: two intended failures in15.54s, ten acquisitions instead of two and
+no retained canonical custody at the pre-State construction boundary. Candidate
+verification passes fifteen of eighteen checks in204.45s, including every new
+count/construction/drift case, both original permission witness/context counts,
+preflight pause, exact-file refusal, changed configuration and corrupt backup.
+Three related-path fixtures fail during their initial enrollment before the
+changed permission route; those remain unresolved. Exact dev also fails its
+post-close0.1s maintenance check. A separate original dev exception-chain probe
+confirms Windows1314 behind the moved-alias failure; the test now uses the existing
+real directory-alias helper. Original dev confirms the MCP subprocess pipe
+select failures; existing pipe_ready replaces those calls at unchanged bounds.
+
+The integrated quiet stock Enter comparison still FAILS the merge gate:
+59.957/45.006/33.006s (pr3534-integrated-preparation-stock-enter-1), with all three
+saved replies/trace settlement and unchanged sources. The functional held-state
+qualification does not establish ordinary-app eligibility or a latency saving.
+Next diagnostic observes original poll-source/qualification returns without
+replacing those functions, before selecting another change.
+
+The passive original-return diagnostic confirms ordinary-app promoted polling
+qualifies (pr3534-ordinary-poll-qualification-1). Its resident registry is present;
+the missing-registry hypothesis is disproved. Instrumented Send samples are
+31.504/32.755/24.018s with complete replies and traces. Qualification is therefore
+not the remaining main cause. Separate the retained display cost from preparation
+using the existing diagnostic-only periodic deferral before another product edit.
+These are attribution runs, not release timing evidence.
+
+Three further native construction controls pass in22.64s
+(pr3534-canonical-construction-edges-1): source drift while the source mutex is
+held, pause cancellation during that wait, and actual uncertain descriptor close
+preserving native exclusion against an independent maintainer. The extended UI
+transition run failed both cases before its intended edges: settings Apply is
+deliberately disabled during the run, and this early preparation state has no
+visible Stop action. Correct those probes to exercise supported configuration
+publication and exact custody cancellation; do not claim visible Stop coverage
+from that cancellation control. Existing Stop/shutdown qualification remains due.
+
+Current-source diagnostic periodic deferral still takes22.528/20.873/19.955s
+(pr3534-current-periodic-counterfactual-1); all three replies and trace settlements
+complete, with original non-display guards and restoration intact. Deferring polls
+alone cannot qualify this candidate. The original-return census records89/78/59
+completed promoted polls and11/10/14 FULL-bodied returns. Repeated eligibility
+performs resident metadata checks, with no direct native read found in the stock
+source graph; count alone does not establish its CPU cost. Next sparse census
+measures original native acquisition/witness boundaries and the synchronous
+eligibility envelope, without changing product functions.
+
+The next related-file/transition selection passes8/9 in132.86s
+(pr3534-related-and-promoted-edges-2): all seven related-path controls and button
+custody cancellation pass. The earlier enrollment failures did not recur, so their
+cause remains unproved. Enter fails while closing the read-only modal before its
+intended subsequent transition probes. The fixture's class-only open predicate
+does not establish mounted readiness; preserve the close policy and time bound
+while observing that precondition and any failure state.
+
+The sparse census on unchanged integrated source completes75.464/65.291/71.017s
+sends under heavy host load, with zero observer errors and restored original
+functions (pr3534-sparse-native-and-enter-transition-1). Native acquisition starts
+are349/324/352 across threads; their inclusive wall times overlap and are not
+additive savings. Witness construction repeats nine times per permission scope:
+45/54/54 of85/93/93 total witness derivations. Existing helper/source review
+identifies five structural derivations that can be separated from explicit live
+validation; Task3e selects that bounded refactor. Eligibility itself consumes
+4.953/5.047/5.125 seconds of main-thread CPU across2176/2257/2194 calls. Task3f
+selects the demonstrated duplicate resident classification within each capture,
+while retaining every callback/await recheck. Readiness projection still performs
+27/24/32 native reads; its explicit FULL demand producers remain under investigation.
+
+Task3e/3f RED completes seven intended failures in56.35s with unchanged sources
+(pr3534-live-gates-and-reference-red-1). All six ordinary/recovered MCP cases
+complete original load, active checks, physical retirement and historical-byte
+controls before reporting nine construction witnesses instead of four. Three
+successful captures each build/classify references twice; stale-owner refusals
+remain correct. Required PR census validation and four exact workflow contract
+tests pass; hosted CI and final Windows qualification remain outstanding.
+
+The current native MCP lifetime/refusal selection passes all27 cases in426.49s
+(pr3534-mcp-lifetime-negatives-1), including uncertain-close exclusion. The Enter
+transition probe now reaches modal closure, changed configuration, pending FULL
+and provider handback, then fails its immediate assertion after Task.done before
+the original done callback retires custody. Its corrected wait includes that
+retirement within the same60-second bound; terminal qualification awaits rerun.
+
+The first integrated Task3e/3f selection completes58passes/8failures in669.07s
+with unchanged sources (pr3534-live-gates-and-reference-green-1). The new original
+capture count and all four MCP construction gates pass. Three recovered count
+cases omit the existing missing-parent admission from their expected member
+group; the fixture now includes it and asserts no directory creation. A stale
+ephemeral-MCP expectation and four older cold-receipt assertions/timeouts are
+being compared with exact dev before attribution. Recovery approval, source/config/
+generation drift, pause, sidecar exclusion and uncertain-close controls pass.
+
+Independent review identifies one removed cheap native-posture check at direct
+participant registration. Its new mid-construction demotion regression must fail
+on the candidate, then the original refusal must be restored without rebuilding
+recovery witnesses. The existing before-scope demotion control does not cover
+this interval. No release qualification is claimed from this intermediate run.
+
+The original pinned-posture check is restored, without an additional recovery
+witness. Its exact mid-construction regression first failed, then passed in the
+23-case integrated construction/UI selection (189.38s,
+pr3534-construction-and-ui-green-2). Both promoted UI routes complete their
+configuration, FULL-demand, provider and custody-retirement transitions. Button
+cancellation uses the exact custody task; this is not visible Stop coverage.
+Exact dev cc600 reproduces the stale ephemeral-MCP parity expectation. The
+corrected parity fixture preserves field equality and fresh-source controls.
+
+The latest uninstrumented stock Enter run still fails the merge gate:
+77.244/44.322/22.795s (pr3534-live-gates-stock-enter-1). All three replies and
+traces finish with unchanged source. Saved-to-trace-reservation intervals are
+57.907/24.986/13.658s. Pre-run host CPU samples were37.0–41.2 percent; they do
+not describe host load during the sends or support a comparison with older runs.
+
+The first readiness-publication diagnostic is invalid for attribution. Its
+foreground target resolved to the shared contextlib.helper code object and
+filled the2048-row cap within1.4s of every action, before durable acceptance.
+The sends complete38.200/42.321/26.778s and observer state is restored, but those
+truncated rows cannot select a product change. Resolve decorated targets to
+their exact original bodies, verify source/qualname and add a shared-wrapper
+collision self-check before the next native diagnostic.
+
+Read-only Windows source review narrows the finite DB grouping candidate.
+The existing process-group predicate already excluded unsupported hosts before
+its mechanical rename. NativeAgentSources.activate owns source execution and
+connections but does not establish core_operation, while Windows maintenance
+workers already guard their execution and Chat DB connection. Removing that
+platform gate is therefore neither a proven batching fix nor a selected change.
+If attribution identifies AgentRuns bootstrap, consider its synchronous initial
+row/lifecycle cluster under the existing exact-DB operation and connection owner,
+preserving independent transactions and best-effort lifecycle errors. Do not
+span provider I/O, custom callbacks or awaits with that native scope.
+
+Windows cold-receipt oracle follow-up (pr3534-cold-native-oracles-green-1):
+the native_managed case passes in64.23s, including unchanged receipt identity,
+trust publication and physical retirement. The native case hits its original
+70-second child deadline before finishing; the combined run is1pass/1failure
+in139.75s with unchanged source. Keep that timeout unresolved; the supported-host
+ordinary-tree oracle correction alone does not qualify this route's performance.
+
+The corrected original-body readiness census completes52.808/31.480/32.610s
+(pr3534-readiness-attribution-enter-2,221.45s overall). All replies/traces finish;
+sources stay unchanged. Local events remain below caps, with zero observer errors
+and complete restoration; callback wall overhead is0.108/0.069/0.072s. There are
+21/18/15 readiness refreshes but only1/1/0 changed publications, both from owner-key
+changes. No value/policy/pricing/model-cap/tokenizer change fires. In send2, the
+sole publication's concurrent FULL already owes its replay and returns immediately;
+send3 starts9 FULL enqueues with no readiness publication. This disproves changed
+readiness publication as the repeated demand source in these samples. Do not
+implement the proposed same-owner publication cadence change from this evidence.
+
+Foreground rows in that diagnostic are absent because its identity filter reads
+an instance dictionary slot while the real screen exposes the controller through
+a property. Readiness rows remain valid; the foreground envelopes do not. Use the
+benchmark's already captured actual controller/bridge owners, with an absent-slot
+regression and required-stage coverage checks before the next run. Never infer
+zero foreground work from the empty filtered census.
+
+The exact-owner foreground diagnostic is valid (pr3534-readiness-attribution-enter-3):
+49.756/53.543/28.351s; all four required original targets are observed in each
+phase, with zero missing targets, caps or source errors and complete restoration.
+Ten postcommit effects are seen per send. Trace-request assembly takes about
+0.057s; identity/owner/workspace/history publication together takes about
+0.54/0.76/0.50s, and the checkpoint transition0.35–0.62s. They are not the large
+post-save stall. Provider-entry effect to the original agent-reply body spans
+6.795/7.303/4.396s; that route awaits the existing guarded maintenance call creating
+the automatic-work chain and enters the checked-generation wrapper's fresh
+response-rule resolution before the observed original body. The whole interval
+cannot be assigned solely to maintenance admission. Original bridge-preparation entry to adapter spans
+18.727/22.754/6.496s. These are nested elapsed regions, not additive savings.
+The three provider/coroutine spans intentionally remain open at the adapter cutoff.
+
+### Task3g investigation — consolidate facts inside one existing execution gate
+
+Files under review: Backup_Recovery/activation.py and focused native activation
+controls. Shared-preparation lane owns the new test file; root owns native RED,
+integration and the decision to implement after independent contract review.
+
+ADR required: yes, amend existing126 before product implementation.
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: per-call recovery fact capture is a security/service contract; every
+existing guarded entry and actual owner approval must remain fresh.
+
+Source review finds five control-record reads and four registry reads in one
+successful execution_scope(('config', owner), path): the source-scope check plus
+startup and activation checks repeated for both owners. Keep every launch and
+nested entry gate, exact retained lease check and final effect ordering. Select
+no cross-call cache and no broader lease lifetime. The final reviewed candidate
+changes only activation_permission's stock startup route: one fresh control/
+registry read serves startup and the unchanged activation-policy body for that
+owner. Keep execution_scope and its source-scope read entirely unchanged. A
+two-owner gate targets three control reads and two registry reads. A replaced
+startup binding/code retains the original callback then fresh activation reads.
+Pending intent can be published while a lease is held; each owner's fresh call
+retains its original refusal. Keep every actual generation required/approval read.
+The narrower change also benefits scalar callers and avoids an execution-loop
+bypass or new source-scope API; the earlier two-control-read variant is unselected.
+
+- [x] Establish ordinary and approved-recovered native original-call count REDs,
+  with real allowed results and physical/borrowed-lease retirement qualified.
+- [x] Review paired-record loss, pending intent, source/config drift, shared
+  namespaces, custom callbacks, revocation, read failures and physical close.
+- [x] Amend ADR126 and implement only the reviewed finite gate; run its native
+  negative controls and the original recovered-agent launch cases sequentially.
+- [x] Repeat original complete Send measurements; keep the six-second merge gate.
+
+Current feedback/shutdown qualification (pr3534-feedback-stop-shutdown-current-1):
+5pass/1failure in180.63s. Both actual Enter/button feedback-state cases pass
+through held preparation and provider wait; visible Stop retains the draft and
+the native-helper shutdown control confirms physical cleanup. Button also passes
+the first-feedback/input100ms control. Enter fails the unchanged first-feedback
+budget at156.25ms loop CPU/168.77ms wall. This is an unresolved speed failure,
+not an oversubscribed-host wall-only miss. Compare the exact case with clean
+dev before choosing a UI change; physical terminal verification remains separate.
+
+The exact Enter first-frame control also fails on clean dev cc600
+(pr3534-feedback-enter-dev-baseline-1): 529.10ms wall/234.375ms loop CPU,
+97.65s overall. This establishes a pre-existing failure, not an exemption from
+the immediate-feedback requirement or a measured PR speed improvement. A narrow
+original-function observer will attribute action-to-first-frame before any UI edit.
+
+Task3g RED1/RED2 are invalid as count comparisons: all four cases fail during
+fixture setup before the monitored gate (43.61/36.23s). Adding the existing
+Windows default-owner context did not fix the cause. The actual child traceback
+shows TOMLDecodeError: Invalid hex value at line4 column15: the reused setup
+writes an unescaped Windows data path into a TOML basic string. Correct only the
+new fixture's path serialization with Path.as_posix(), retain native ownership,
+all original checks and bounds, and rerun before implementation.
+
+Task3g RED3 is valid (pr3534-execution-gate-read-red-3,52.95s): ordinary and
+approved-recovered scopes both return allowed, preserve the borrowed lease and
+physical exclusion, retire and reopen successfully, then fail exactly at five
+control/four registry reads instead of three/two. Their gate durations are
+0.0579/0.1150s; these small isolated fixtures are not whole-Send savings. Both
+next-owner pending-intent and paired-history-loss refusal controls pass. Proceed
+with the reviewed scalar-only change and custom-startup compatibility controls.
+
+The additional native-save/shutdown selection passes all nine cases
+(pr3534-native-save-shutdown-current-1,47.87s) on frozen integrated source.
+Repeated close/dispose cancellation retains actual native work through retirement;
+cancelled saves preserve original/newer drafts and do not dispatch; a normal save
+releases native ownership before provider wait; unrelated submit tails do not
+extend the native drain; bounded UI reconciliation retires during shutdown for
+both native variants. This is targeted lifetime evidence, not whole-app exit or
+physical-terminal verification.
+
+Task3g native integration (pr3534-execution-gate-read-green-1,131.14s): all
+seven new regression/negative cases pass, as do71 existing paired-history,
+shared-owner, corruption, safe-startup and registry controls. One existing
+private-control-root test fails because its chmod(0755) fixture does not make a
+Windows directory's DACL public. Compare that exact test with dev and use the
+existing native ACL fixture for this negative control; do not weaken the refusal.
+Independent source review found no actionable issue in the scalar patch.
+
+### Task3h — own immediate-feedback imports at Console mount
+
+ADR required: no; implement the existing immediate-feedback contract
+within ADR097's unchanged boot ratchets and ADR231's existing display lifecycle.
+ADR path: backlog/decisions/097-boot-budget-ratchets.md;
+backlog/decisions/231-console-polling-and-full-state-reconciliation.md.
+Reason: a normal module dependency moves to its existing component mount;
+no new owner, scheduler, cache, native permission or dispatch boundary is added.
+
+The valid first-frame trace passes narrowly at97.907ms wall/93.75ms loop CPU;
+32.786ms is cold acknowledgement import (including7.995ms sent_draft), versus
+0.405ms actual request handling. The existing idle pre-import pass is routes-first
+and races immediate Send; moving those routes again would revisit an earlier
+Library regression. Import only the acknowledgement dependency at original
+ChatScreen.on_mount entry, creating no acknowledgement/flight/native owners.
+Keep the existing lazy helper for direct/unmounted callers. Both modules' screen
+imports are function-local, so this introduces no import cycle.
+
+- [x] Establish a fresh-process original Enter RED proving the mounted Console
+  still owes acknowledgement imports before action, without warming the fixture.
+- [x] Add only the existing-helper import at mount; update stale lifecycle prose.
+- [x] Run both original100ms feedback/input cases and import-cycle controls.
+- [x] Run the unchanged ui_ready module census. Expect two added modules; if the
+  ratchet fails, remove equivalent unnecessary boot cost before adopting. Do not
+  raise limits or hide work behind an after-refresh race.
+- [ ] Verify whole-Send timing on integrated source; this addresses first paint,
+  not a claimed solution to the multi-second dispatch delay.
+
+The first scalar timing launch was refused before any app process because the
+caller pre-created the runner-owned result directory. Keep it excluded. The
+corrected quiet run (pr3534-scalar-activation-stock-enter-2,172.17s) completes all
+three saved responses/traces on unchanged source:27.7965/27.0485/21.4130s from
+actual Enter to the stock provider's controlled final adapter. Every sample fails
+the six-second gate. Pre-run host CPU samples48.2–56.7 percent do not characterize
+the sends or establish a causal comparison with older runs. The scalar refactor
+qualifies reduced read duplication, not release performance.
+
+Task3h original Enter RED is valid: both acknowledgement modules are absent after
+the original mounted-ready wait, before any helper call/action. The combined
+selection passes the actual Windows unsafe-DACL refusal plus all five exact CI
+target/job controls (pr3534-feedback-import-red-acl-green-1,1fail/6pass,51.47s).
+The one-line mount import is implemented for native feedback and unchanged
+startup-budget verification; it creates no acknowledgement or flight owner.
+
+Task3h first integrated selection (pr3534-mounted-feedback-and-boot-budget-1,
+210.82s) passes Enter's unchanged feedback/input budget and the import-cycle
+control. Button misses the100ms wall gate narrowly (78.125ms loop CPU), so it
+remains unresolved. The unchanged ui_ready census reports1043 against1040;
+new residents versus the pinned snapshot are the two acknowledgement modules,
+provider_setup_facts and windows_files. Compare clean dev before attributing all
+three excess modules to this PR. Select the existing ADR097 remedy: defer
+DictionaryPicker and ConsoleScopePickerModal to their explicit open handlers,
+including DictionaryPicker's Personas edge and both ScopePicker edges. These
+widgets do not participate in mount, readiness, publication proofs or Send.
+This targets two-module payback without raising either boot/pre-import limit;
+verify actual residency and the existing modal-action controls afterward.
+
+Clean dev cc600 itself measures1041 against1040 on Windows
+(pr3534-ui-ready-dev-baseline-1,153.52s), with provider_setup_facts/windows_files
+added versus the pinned snapshot. Pay back that existing one-module excess too:
+defer chat_events_console_dictionaries from its sole ChatScreen eager import to
+the same explicit attach/detach workers. Its four functions have no mount,
+readiness, registration or source-witness role; shared dependencies are already
+resident. Together these are local import deferrals for dictionary/scope actions,
+not new startup scheduling. Verify unchanged boot and pre-import budgets plus
+existing scope-modal, dictionary-modal and dictionary-service controls.
+
+Task3g's original seven recovered-agent launch states pass after serializing the
+Windows TOML fixture path with Path.as_posix(). The new regression consumes that
+same fixture directly; its expanded child bytes are unchanged by this cleanup.
+The private-control-root chmod failure reproduces on clean dev. Using the existing
+exact-path Windows DACL fixture makes the original public-read refusal pass,
+without changing the native posture checks. Both fixes are test portability only.
+
+Task3h payback verification (pr3534-feedback-import-payback-1,228.58s) passes
+both original feedback/input cases, the unchanged ui_ready census (1037/1040),
+and first-send warmup (94/94). Enter/button Sending frames are91.064/96.574ms;
+input frames12.336/13.609ms. Pending USER frames are separately168.971/181.001ms.
+These are supplied headless frames, not physical terminal flush. Sources and HEAD
+remain unchanged. The separate registry pre-import pass fails560/558 modules;
+investigate its added module set against dev before attributing it to this change.
+No budget rises. The six-second whole-Send gate remains open.
+
+The three modal-action checks fail identically on clean dev cc600
+(pr3534-modal-actions-dev-baseline-1,38.47s): raw_source_selection_changed occurs
+in fixture/config setup before their changed action imports. Apply the existing
+per-node bootstrap_profile convention to those three tests, leaving their actions,
+assertions and source-selection checks intact; native rerun is pending. The other
+four dictionary picker/service controls already pass.
+
+### Task3i — use single-widget lookup for recovery display controls
+
+ADR required: no.
+ADR path: N/A; this is a mechanical UI lookup change within ADR231's existing
+recovery publication and currentness contract.
+Reason: the current original-source py-spy capture attributes8.16 sampled
+main-thread seconds to archive-recovery sync in its60-second window. Its
+single-surface lookup alone spends5.38 in DOMQuery materialization. The installed
+Textual query_one API already provides ID lookup and node-change invalidation.
+Use that existing API; add no view-level cache, new lifecycle or authority token.
+The sampled window includes first Send, settlement and part of the next Send;
+these inclusive sample weights are neither CPU seconds nor predicted savings.
+
+Root owns archive_recovery.py and integrated native verification. Replace the
+three single-target query/truthiness/first sequences in _surface, _confirmation
+and sync with query_one and the same missing-node result. Preserve the existing
+duck-typed surfaces, actual mounted/attached checks, post-await currentness,
+decision/receipt ownership and all multiple-result queries. Existing mounted
+card tests cover retiring nodes, missing controls, remount, source replacement
+and app exit; no mirrored implementation test or timing-budget change is needed.
+
+- [x] Attribute the original UI cost in a complete, source-stable Send capture.
+- [x] Review Textual lookup/invalidation semantics and the existing lifetime tests.
+- [x] Apply only the three lookup substitutions; run the affected mounted cases.
+- [ ] Repeat quiet first/later Enter and button sends sequentially on integration.
+
+Task3h pre-import correction: DictionaryPicker's package imports three additional
+Persona modules. Deferring its eager edge moved those modules into the later
+registry pass. Restore the original DictionaryPicker imports and instead defer
+the action-only character picker, whose package/dependencies remain resident.
+Retain the scope picker and dictionary-service deferrals. Expected counts are
+1040 ui_ready,557 registry-pass and94 first-send modules; verify all unchanged
+ratchets and the actual character-picker actions/lifetimes before qualification.
+
+Task3i and picker integration (pr3534-recovery-lookup-and-picker-actions-1,
+259.03s): all25 targeted mounted-action and physical-lifetime cases pass on
+unchanged source. The three modal tests now reach and pass their actual actions.
+Recovery controls remain correct during partial removal, unmount, chat replacement,
+queued old events and app exit. All seven picker native ownership cases pass,
+including repeated cancellation and borrowed connections. Independent review of
+the three lookup substitutions found no actionable issue. No whole-Send gain is
+claimed until the unprofiled integrated run completes.
+
+The exact clean-dev registry-pass control confirms557/558 modules and
+427289/427830 LOC (pr3534-preimport-pass-dev-baseline-1,37.89s). This establishes
+the original DictionaryPicker deferral's marginal regression; the replacement
+remains subject to the unchanged budgets on integrated source.
+
+The unprofiled integrated run (pr3534-query-lookup-enter-and-budgets-1,395.15s)
+records24.473/21.642/21.889s, all three turns saved and traces settled, with
+unchanged source. Every sample still fails six seconds. All unchanged startup
+budgets now pass:1040/1040 ui_ready,557/558 registry-pass modules and94/94
+first-send warmup. Button feedback passes; Enter misses100ms at115ms wall with
+93.75ms loop CPU. Keep that failure open, without changing the threshold.
+
+Current periodic-only discriminator (pr3534-current-periodic-discriminator-1)
+records14.464/14.706/12.182s with69/58/61 routine Console polls deferred until
+adapter entry. Explicit FULL requests and all native/action authority stay live;
+guards have no reported identity exceptions and callbacks restore. All turns
+save and settle. This isolates only routine Console demand and cannot qualify
+production latency; neither this run nor the quiet run meets the merge gate.
+
+Extend Task3i with one additional existing presence-only query in session-tab
+sync: untyped query_one/NoMatches for the workflow line, followed by the same
+controller check and select_chat callback only when found. Keep all lock/await
+rechecks and callback ordering. Do not change the left-rail multi-match loop.
+The current first-feedback trace remains valid and misses narrowly at101.529ms
+wall/78.125ms CPU: acknowledgement imports are resident, on_key takes0.708ms,
+paint takes14.103ms including7.374ms tabs, and the natural compositor starts
+at83.822ms. This motivates the same measured lookup cleanup, not a new scheduler
+or weakened paint budget. Run the existing tab-lock/source/custom-adapter controls
+and both original feedback cases on the changed source.
+
+Task3i workflow lookup selection (pr3534-tab-lookup-feedback-1,236.52s):
+both original feedback/input cases pass, at87.932ms Enter and95.554ms button;
+pending USER frames are175.165/163.705ms. Both session-controller cases pass.
+Four checks fail before their intended lifetime assertions: the screen-pump
+fixture cannot establish its initial quiet state, and the three tab-boundary
+observers reject the original replay worker's bound async method or overflow
+their event cap. The current dev source already uses that bound-method worker.
+Compare the quiet failure against dev; correct only the observer's valid worker
+shape and add bounded failure diagnostics without growing time/event limits.
+ADR required:no; these are test-oracle/diagnostic corrections, not lifecycle changes.
+
+The periodic-disabled30-second py-spy capture (pr3534-pyspy-periodic-1) records
+one19.3047s first Send on unchanged source, including a12.4880s saved-to-trace
+interval. It defers93 routine polls while explicit FULL and native work remain
+live. The sampler exits normally and restores its hook; the original scenario
+then fails because the composer is still blocked before the second Send. This
+is incomplete attribution only, not three-turn correctness or latency evidence.
+Inspect the finite foreground work and the post-turn readiness state separately.
+
+### Task3j — share the scalar paired-generation control observation
+
+ADR required:no new ADR; apply ADR126's existing fresh scalar-decision rule,
+already used by Task3g, to the generation-witness reader.
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: `_paired_witnesses` calls the stock startup reader and then rereads the
+same control records and registry for one synchronous decision. Use the existing
+startup-from-controls helper only when its defining startup callback remains
+stock. Custom or replaced startup callbacks retain their original route.
+
+Shared preparation lane owns generation_witnesses.py and an off-tree focused
+regression patch; root owns integration and all native runs. Keep source-scope
+admission, every raw construction gate, required generation records and all later
+fresh witness calls unchanged. Add no cache or retained authority across calls.
+
+- [ ] Establish native RED for duplicate original control/registry observations
+  in one decision; qualify separate decisions, paired histories and custom paths.
+- [ ] Share only that decision's detached observations through the existing
+  helper and preserve refusal/error behavior and custom callback signatures.
+- [ ] Run original witness/history/source-drift controls and focused lint.
+- [ ] Include this change in quiet integrated timings; the sampled startup share
+  is under one second across two workers and is not an additive saving estimate.
+
+Task3j disposition: deferred, no product change. The approved-history count
+control proves2/2 observations instead of1/1 and both custom startup controls
+pass. The ordinary test's namespace-exclusion fixture was invalid; its corrected
+artifact remains external. Source review then finds a real policy distinction:
+startup's _records omits activation-file reads and normalizes base-control
+failures, whereas the later full read exposes specific activation failures.
+RAG and recovery UI consume those distinctions. A direct shared full read would
+change them. Preserve the proposal for review instead of adding retry or error
+projection complexity to this latency fix.
+
+### Task3k — remove preview permission forwarding scopes
+
+ADR required:yes, bounded clarification of the existing checked-read contract.
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: use the existing captured permission source and owned payload reader
+for one preview observation; do not retain data or admission between reads.
+
+The normal preview getter forwards through nested guarded load methods. Select
+the existing _CapturedSources.read_permission_payload/_load_in_owned_scope
+route only under its existing stock/currentness qualification. Add a private
+keyword-only observe_publication=False option. The preview opts in to the same
+permission-publication observation inside the original mutation fence; other
+snapshot callers retain the default. Original custom fallback load already
+observes and must not be observed twice. Preserve producer lifetime, optional
+failure policy, final native check/receipt, source currentness and retirement.
+
+Baseline lane owns off-tree patches for MCP/permission_store.py,
+MCP/console_snapshot.py, Chat/console_tool_surface_preview.py and a distinct
+focused test. Root applies tests first and owns native verification.
+
+- [x] Native RED: one actual preview payload/observation with three forwarding
+  scopes; pin the selected one-scope behavior only after native retirement.
+- [x] Implement the opt-in observation and qualified preview call; retain all
+  original construction gates, declared members and custom fallbacks.
+- [ ] Verify observation, changed sources, cancellation, failed reads and late
+  permission revocation through original controls, then integrated Send timing.
+
+Task3k original native RED (pr3534-preview-forwarding-red-1,98.60s): enabled
+and killed cases reach only the final3-versus1 scope failure after proving one
+payload/observation, original result, two leases and physical retirement. All four
+missing/corrupt/custom/default-publication controls pass. Source hashes match.
+
+Task3i observer qualification (pr3534-tab-native-tripwire-and-quiet-1,149.24s):
+all three actual tab-owner drift cases and the deliberate Windows native-I/O
+tripwire pass with the4096-event cap unchanged. Windows metadata observation is
+limited to its original warm-settings purpose; source/lease/descriptor and
+current-owner retirement checks remain intact. The remaining screen-pump case
+fails its pre-test quiet predicate on dev and integration. Its bounded receipt
+shows an idle message pump and pending native readiness/hook workers, not a held
+tab lock. Before changing production behavior, use the existing event-loop-only
+wait for this passive predicate instead of repeated Pilot message-pump barriers.
+Keep the exact predicate and ten-second deadline; qualify the real held-lock case
+and existing maintenance-drain case. ADR required:no, test observation only.
+
+Task3k integrated GREEN (pr3534-preview-forwarding-green-and-pump-1,309.57s):
+all38 cases pass with source_changed empty and HEAD fixed. The eight focused
+controls qualify one scope, one payload/publication, custom fallback, missing
+and corrupt reads, default nonpublication, final native check after publication,
+and refusal after source retargeting. The entire original preview preparation
+suite preserves cancellation, late revocation and callback checks. Independent
+source review finds no issue. Append the new file to admission lane2 without
+reordering prior targets or changing deadlines; quiet integrated timings remain.
+
+The same run qualifies Task3i's passive quiet wait: both the actual tab holder
+against the screen message pump and original coalesced maintenance drain pass.
+Only the test's wait mechanism changed; its predicate and ten-second deadline
+remain. The Windows-only metadata calibration is a local native qualification;
+it does not add a new Windows CI job.
+
+### Task3l — group the cold sensitive-input assembly
+
+ADR required:no new ADR; extend ADR126's bounded configuration-read assembly.
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: FOLLOWUP29's original capture locates repeated configuration reads in
+one synchronous raw-input miss. The13 DB getters already share one scope;
+single-file, skill-trust and direct-child rules still acquire separately.
+
+Root owns Utils/sensitive_paths.py and Tests/Utils/test_sensitive_config_read_scope.py.
+Keep the first live _raw_inputs_key read and memo-hit route unchanged. On a miss,
+construct the existing input tuple inside one config_participants.operation.
+Keep all original getters, per-getter failure behavior and native checks. Perform
+the original final live key check and memo publication only after the new scope
+has physically retired. No new cache, dropped getter or moved key authority.
+Custom getters execute synchronously under the same configuration lock contract
+already used by the DB getter group. A failure cannot publish a partial memo.
+
+- [x] Establish original native RED for one cold assembly's duplicate admissions,
+  with result parity and actor-local restoration before the count assertion.
+- [x] Group only the existing tuple and qualify original/custom/failure controls,
+  changed environment and retirement refusal without enlarging budgets.
+- [ ] Retain only after integrated timing and correctness checks.
+
+Task3k quiet qualification still fails the required performance:
+pr3534-preview-forwarding-enter-1 records32.222/13.468/12.971s;
+pr3534-preview-forwarding-button-1 records15.310/13.526/16.133s.
+All six turns save, reply and settle their traces; sources remain unchanged.
+No sample meets six seconds. Whole-Send savings are not established by these
+unpaired variable runs, and the PR remains unarmed.
+
+Task3l RED (pr3534-cold-input-assembly-red-1,21.12s) fails only the count:
+16 admissions exceed6, after output parity, actor-local restoration and current
+memo-key checks. The changed-environment no-memo control passes. GREEN
+(pr3534-cold-input-assembly-green-1,91.75s) passes52 targeted cases, with the
+existing Windows symlink-privilege skip. All6 configuration-scope controls and
+4 CI target contracts pass; source/head stay fixed. The count is now at most6.
+The count test does not independently establish native HANDLE closure; the
+existing config-operation retirement contract and separate lifetime controls
+remain responsible for that guarantee. Independent review finds no production
+issue. Scoped lint passes except three unchanged UI diagnostics outside this
+change; the new preview test's formatting is corrected.
+
+Regenerate the derived remote worker after the sensitive-source change. Its
+existing import-closure check gives the expected RED naming only _raw_inputs;
+add that lazy laptop-only builder to the existing refusal allowlist. Supported
+remote callers provide their detached context and never enter it. Run the whole
+remote-bundle test file, retaining its stdlib-only and byte-reproducibility checks.
+
+Task3l bundle integration passes16 cases with the existing POSIX-only fcntl
+skip in8.15s (pr3534-sensitive-bundle-green-1); source/head remain fixed.
+Quiet Enter (pr3534-cold-input-enter-1,130.86s) completes all three saved and
+settled turns at17.421/14.209/13.512s, source_changed empty. The six-second gate
+still fails; the cold grouping has not established a whole-path saving.

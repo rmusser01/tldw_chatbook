@@ -1086,6 +1086,9 @@ MINIMUM_FILES = 2145
 MINIMUM_FILES = 2146
 # TASK-41248 adds the two-case Session Git row shutdown regression module.
 MINIMUM_FILES = 2147
+# TASK-34601.1 / PR3534 (2026-11-15): append the two promoted-poll route
+# selectors and the same-owner transcript-input control without moving entries.
+MINIMUM_FILES = 2150
 
 
 def read_census(path: Path) -> list[str]:

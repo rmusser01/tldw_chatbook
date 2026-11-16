@@ -465,6 +465,9 @@ _STUB_RAISE_ALLOWED = frozenset(
         # holds its stubbed config import; reached only through it, so it
         # raises (fails closed) exactly where that function did.
         "_raw_inputs_key",
+        # The cold assembly shares a laptop configuration operation. Remote
+        # callers supply their detached sensitive context and never enter it.
+        "_raw_inputs",
     }
 )
 

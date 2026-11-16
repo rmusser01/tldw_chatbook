@@ -8,6 +8,7 @@ import pytest
 
 from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission as storage
 from Tests.Backup_Recovery.test_participant_lifetimes import local_root
+from Tests.subprocess_pipes import pipe_ready
 
 
 def _scope_loads(monkeypatch, stub):
@@ -286,9 +287,12 @@ def test_permission_preflight_pause_has_no_payload_or_backup_effects(
     original = storage.acquire_storage
     pauses = []
 
-    def acquired(path=None):
-        lease = original(path)
-        if path is not None and str(path).endswith(".bak") and not pauses:
+    def acquired(path=None, *, related_paths=()):
+        lease = original(path, related_paths=related_paths)
+        if not pauses and any(
+            member is not None and str(member).endswith(".bak")
+            for member in (path, *related_paths)
+        ):
             pauses.append(storage._begin_local_pause())
         return lease
 
@@ -346,7 +350,6 @@ def test_actual_native_uncertainty_retains_source_and_independent_lease(
     if _private_child(request, f"{point}-{timing}"):
         return
     import os
-    import select
     import stat
     from tldw_chatbook.Backup_Recovery import raw_participants as raw
     from tldw_chatbook.Utils import private_paths
@@ -458,7 +461,7 @@ def test_actual_native_uncertainty_retains_source_and_independent_lease(
     try:
         assert not participant.drain(time.monotonic() + 0.02)
         assert not pause.drain(time.monotonic() + 0.02)
-        assert not select.select([observer.stdout], [], [], 0.06)[0]
+        assert not pipe_ready(observer.stdout, 0.06)
     finally:
         observer.kill()
         observer.wait(timeout=5)
@@ -472,7 +475,6 @@ def test_independent_maintainer_enters_after_history_rotation_native_close(
     if _private_child(request, "rotation-observer"):
         return
     import os
-    import select
     from tldw_chatbook.Backup_Recovery import raw_participants as raw
     from tldw_chatbook.Utils import private_paths
 
@@ -498,7 +500,7 @@ def test_independent_maintainer_enters_after_history_rotation_native_close(
                 local_root / "admission", "maintenance", ("bootstrap.unbound",)
             )
             observers.append(observer)
-            assert not select.select([observer.stdout], [], [], 0.05)[0]
+            assert not pipe_ready(observer.stdout, 0.05)
 
     monkeypatch.setattr(private_paths, "_native_close", closed)
     try:

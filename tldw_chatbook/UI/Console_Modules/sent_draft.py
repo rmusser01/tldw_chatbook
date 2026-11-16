@@ -27,8 +27,8 @@ A capture is spent once a send took it: committed, or sent and retired
 capture is dropped instead of sending the same text twice. A clear or a new
 draft spends nothing: a press made before it still sends what it captured.
 
-Imported on the first send only, so it adds nothing to the ADR-097 boot
-census.
+Imported with the acknowledgement dependency at Console mount, before the first
+Send. ADR-097's unchanged boot census counts this initialization cost.
 """
 
 from __future__ import annotations

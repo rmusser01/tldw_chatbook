@@ -82,7 +82,6 @@ from ...Widgets.Console import (
     ConsoleWorkspaceRenameModal,
     ConsoleWorkspaceSwitcherModal,
 )
-from ...Widgets.Console.console_scope_picker_modal import ConsoleScopePickerModal
 from ...Widgets.glyph_fallback import resolve_glyph
 from ...Widgets.project_skills_import_modal import maybe_offer_project_skills_import
 from ...Workspaces import (
@@ -5722,6 +5721,8 @@ class ConsoleWorkspaceController:
                 exclusive=True,
                 group="console-workspace-scope-save",
             )
+
+        from ...Widgets.Console.console_scope_picker_modal import ConsoleScopePickerModal
 
         self.push_screen(
             ConsoleScopePickerModal(

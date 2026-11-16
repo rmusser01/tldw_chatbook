@@ -4,6 +4,36 @@ This document describes the ADR-126 complete local backup and restore subsystem:
 
 Qualification keeps native identity and operation verdicts fresh on every call. Only parsed installed evidence is cached, by its path and descriptor-verified file generation (device, file identity, size, nanosecond modification and change times). Windows uses native ChangeTime. Changed, missing, malformed or concurrently replaced evidence is refused; a prior refusal is never retained as an authorization cache.
 
+Sensitive database-path assembly uses one synchronous
+`config_participants.operation(config)` for its related public getters. Nested
+reads retain their native checks and reuse the operation's admission. Custom
+getters execute within that configuration scope. An individual getter failure
+prevents memo publication; outer admission or retirement failure propagates before
+returning a tuple. See ADR126's 2026-11-15 amendment.
+
+On a cold sensitive-input miss, the single-file, skill-trust, database and
+container getters share that same finite owner. The first live key/hit route is
+unchanged; final key validation and memo publication follow scope retirement.
+
+Installed local/context/permission operations admit their selected members as one
+related-path group, including the permission backup. During construction,
+`raw_participants.scope` retains one separate canonical observation lease. Initial
+selection supplies structural owner/path facts to member declaration and existing
+participant registration. Four live gates still derive fresh recovery witnesses:
+initial selection, pre-source-lock validation, post-wait preflight and final
+publication. Active operations and file effects retain their original checks.
+The existing raw state takes ownership before publication and preserves failure,
+pause and native retirement behavior. A recovered destination keeps its canonical
+observer distinct from the selected member group. This synchronous declaration
+is not a reusable witness or payload cache. The permission-load observation still
+belongs to each read, including separate pre-save and post-save preview passes.
+
+Each stock `activation_permission` call reads control records and the registry
+once for its startup and owner-policy checks. The next owner reads fresh facts;
+generation requirements and approvals remain live. Replaced startup callbacks
+retain the public callback followed by fresh activation reads. Execution scopes,
+their source checks, and retained native lease lifetimes are unchanged.
+
 ## Authoritative files
 
 | Concern | File | Key symbols |
@@ -179,3 +209,11 @@ a plugin root by name. The owner is activation-required:
 generation that lists `plugins` is unapproved, and `PluginService` approves it once
 its authority recovery completes. The keyring generation marker is never captured,
 so a restored profile without it reports `recovery_required`.
+
+Qualified Console tool-surface previews use the existing captured permission
+payload reader with an opt-in publication observation inside the mutation fence.
+This removes same-source getter/load forwarding scopes, while the outer checked
+read still validates native source state after publication and before returning
+its receipt. Other captured readers do not publish by default; custom load paths
+retain their original signature and single observation. Every later preview and
+execution-time permission check reads afresh (PR3534; ADR126).

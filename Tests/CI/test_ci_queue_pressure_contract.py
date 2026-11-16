@@ -350,6 +350,11 @@ FAST_LANE_TARGETS = (
     "Tests/MCP/test_control_plane_permissions.py::test_remember_exact_inputs_writer_failure_preserves_error_and_stale_rule",
     "Tests/MCP/test_unified_control_plane_service.py::test_remember_exact_inputs_persistence_failure_keeps_current_call",
     "Tests/Canvas/test_canvas_kill_switch.py",
+    # TASK-34601.1 / PR3534: finite native source/config ownership; each
+    # fixture selects its own source or runs in a private-profile child.
+    "Tests/Backup_Recovery/test_permission_member_admission.py",
+    "Tests/Utils/test_sensitive_config_read_scope.py",
+    "Tests/Backup_Recovery/test_execution_activation_reads.py",
 )
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.
@@ -982,6 +987,8 @@ ADMISSION_2_TARGETS = (
     # TASK-37600: character launch selection and modal resume (bootstrap_profile).
     "Tests/UI/test_console_session_controller.py::test_character_launch_uses_worked_chat_pair_over_stale_controls",
     "Tests/UI/test_console_session_controller.py::test_character_launch_aligns_workspace_before_modal_resume",
+    "Tests/Chat/test_console_preview_permission_forwarding.py",
+    "Tests/Chat/test_console_configuration_preparation.py::test_received_configuration_builds_fresh_resident_references_once_per_capture",
 )
 
 #: The third admission-sensitive job's invocation, exactly, in order (Roleplay
