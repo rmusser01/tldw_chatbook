@@ -1213,6 +1213,8 @@ class TldwCli(
         # here, at exit (`_shutdown_console_runtime`).
         self.console_needs_attention = False
         self.console_runtime: ConsoleRuntime | None = ConsoleRuntime(self)
+        # The disposed runtime after quit, so late access cannot rebuild it.
+        self.retired_console_runtime: ConsoleRuntime | None = None
         self._console_runtime_shutdown_task: asyncio.Task[None] | None = None
         self.generated_video_store = _build_generated_video_store()
         # TASK-13157: snapshot any TOML parse failure `load_settings()` just

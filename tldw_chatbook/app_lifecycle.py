@@ -408,10 +408,7 @@ class LifecycleMixin:
             if db is None or db.is_memory_db:
                 continue
             try:
-                if name == "chachanotes_db" and getattr(self, "_startup_chachanotes_db", None) is db:
-                    idle = await asyncio.to_thread(db.close_idle_connections, owner_only=True)
-                else:
-                    idle = await asyncio.to_thread(db.close_idle_connections)
+                idle = await asyncio.to_thread(db.close_idle_connections)
             except Exception as exc:  # noqa: BLE001 - quit must go on regardless
                 idle = False
                 self.loguru_logger.error(

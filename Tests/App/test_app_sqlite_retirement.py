@@ -61,7 +61,10 @@ async def test_real_app_shutdown_retires_constructor_sqlite_handles(
                 retained.append(name)
         assert retained == [], f"Constructor SQLite handles remain live: {retained}"
         if sibling is not None:
-            assert previous.execute("SELECT 1").fetchone()[0] == 1
+            # TASK-38955: quit closes every idle handle on the file, including
+            # one held by another CharactersRAGDB instance (e.g. Notes' own).
+            with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+                previous.execute("SELECT 1")
     finally:
         if sibling is not None:
             sibling.close()

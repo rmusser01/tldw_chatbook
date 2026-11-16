@@ -3,6 +3,10 @@
 Task: TASK-34661. Policy and this written implementation contract were approved
 by the user in this chat on 2026-10-07. Execute inline in the existing worktree.
 
+> Superseded in part on 2026-11-16: Chat borrower tracking is gone and quit
+> closes every idle Chat handle on the file. See the amendment in
+> [ADR-225](../../../backlog/decisions/225-app-scoped-sqlite-retirement.md).
+
 ## Goal and evidence
 
 Retire SQLite handles that this application actually owns, after their producers

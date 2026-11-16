@@ -75,3 +75,19 @@ unchanged bounded drain. Budget expiry does not cancel that physical owner's
 task or certify retirement: active native ownership still reports incomplete.
 The stricter incomplete result applies only to exact file-backed AgentRuns;
 in-memory/custom owners retain their original close-error compatibility.
+
+## Amendment — 2026-11-16 (PR #3536 review)
+
+- **Chat has no borrower any more.** TASK-36947.6 removed the shared config
+  Chat owner, so the app always opens its own Chat database and the borrower
+  capture never held anything in production. It is removed. Quit closes every
+  idle registered handle on the Chat file, a sibling `CharactersRAGDB`
+  instance's (e.g. Notes' per-user one) included, as TASK-38955 requires
+  (owner decision, 2026-11-16).
+- **Incomplete retirement is exposed, not fatal.** `SqliteRetirementIncomplete`
+  is logged with owner categories only; it never fails quit, loses a pending
+  recovery restart, or skips later app-owned teardown.
+- **No loop-blocking checkpoint.** The Chat retirement close skips the
+  `TRUNCATE` checkpoint, which could wait out the 15 s `busy_timeout` on
+  another writer's lock.
+- The disposed Console runtime is retained on `app.retired_console_runtime`.

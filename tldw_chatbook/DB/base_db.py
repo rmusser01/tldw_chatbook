@@ -362,7 +362,7 @@ class SQLiteConnectionQuiescenceRegistry:
             connection.close()
             self.unregister(connection)
 
-    def close_if_idle(self, repository: object | None = None, *, owner_only: bool = False) -> bool:
+    def close_if_idle(self, repository: object | None = None) -> bool:
         """Close every registered handle now, or none while any is in use.
 
         Unlike a quiescence barrier it sets no barrier: a fresh acquisition
@@ -380,7 +380,7 @@ class SQLiteConnectionQuiescenceRegistry:
             while a barrier, acquisition, managed use, core operation or
             transaction is active.
         """
-        from tldw_chatbook.Backup_Recovery.participants import core_operation_active, repository_participant
+        from tldw_chatbook.Backup_Recovery.participants import core_operation_active
 
         with self._condition:
             if (
@@ -390,14 +390,7 @@ class SQLiteConnectionQuiescenceRegistry:
                 or (repository is not None and core_operation_active(repository))
             ):
                 return False
-            if owner_only:
-                from tldw_chatbook.Backup_Recovery import storage_admission as storage
-
-                with storage._lock:
-                    owned = set(repository_participant(repository).connections)
-                connections = tuple(c for c in self._connections.values() if c in owned)
-            else:
-                connections = tuple(self._connections.values())
+            connections = tuple(self._connections.values())
             for connection in connections:
                 try:
                     if connection.in_transaction:

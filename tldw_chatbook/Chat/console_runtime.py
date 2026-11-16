@@ -6959,7 +6959,10 @@ def ensure_console_runtime(app: Any, *, view: Any | None = None) -> ConsoleRunti
         ConsoleRuntime: The runtime `view` should use.
     """
     runtime = getattr(app, CONSOLE_RUNTIME_ATTR, None)
-    retired = getattr(app, "_retired_console_runtime", None)
+    try:
+        retired = app.retired_console_runtime
+    except AttributeError:  # `None` and app doubles never declare it.
+        retired = None
     if not isinstance(runtime, ConsoleRuntime) and isinstance(retired, ConsoleRuntime):
         return retired
     if not isinstance(runtime, ConsoleRuntime) and view is not None:
@@ -7032,7 +7035,7 @@ async def dispose_console_runtime(app: Any, *, view: Any | None = None) -> None:
     await runtime.dispose()
     if not runtime.hooks_v2_cleanup_pending:
         with contextlib.suppress(AttributeError, TypeError):
-            app._retired_console_runtime = runtime
+            app.retired_console_runtime = runtime
         _attach(app, None)
 
 
