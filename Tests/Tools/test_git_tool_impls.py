@@ -15,6 +15,8 @@ from pathlib import Path
 
 import pytest
 
+from Tests.Backup_Recovery.config_test_support import select_config_source
+
 from tldw_chatbook.Tools import git_tool_impls
 from tldw_chatbook.Tools.git_tool_impls import (
     GitCommandResult,
@@ -32,6 +34,14 @@ GIT_AVAILABLE = shutil.which("git") is not None
 pytestmark = pytest.mark.skipif(
     not GIT_AVAILABLE, reason="git is not available on this system"
 )
+
+
+@pytest.fixture(autouse=True)
+def _selected_config_source(monkeypatch, isolate_test_environment):
+    """Keep a real selected config and each case's private HOME and Git repo."""
+    select_config_source(
+        monkeypatch, isolate_test_environment / "config" / "config.toml"
+    )
 
 
 def _git(repo: Path, *args: str) -> None:
