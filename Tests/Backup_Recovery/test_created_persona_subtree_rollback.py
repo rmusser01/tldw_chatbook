@@ -564,7 +564,10 @@ def test_native_persona_retirement_keeps_ancestor_exclusion(
 #   changed         back up, add a second pack, restore, roll the restore back
 #   created-source  back up a profile holding one pack (for created-target)
 #   created-target  restore that backup into a profile that never had either
-#                   tree, then roll the restore back
+#                   tree nor a persona store, then roll the restore back
+#   nested-target   restore that backup into a profile holding another pack,
+#                   so the restore creates a pack folder inside each existing
+#                   root, then roll the restore back (TASK-41113)
 _ACTOR_TREES_ROLLBACK = r"""
 import hashlib,json,os,subprocess,sys
 from pathlib import Path
@@ -606,11 +609,9 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 root=get_user_data_dir()
 db=CharactersRAGDB(database_path(tomllib.loads(selector.read_text()),'chachanotes_db_path'),'actor-pack-rollback')
 if sys.argv[1]=='populate':
-    # A profile with a persona of its own, which never imported an Actor Pack.
-    try:
-        build_persona_service(db).create_persona_profile({'name':'Existing persona'})
-    finally:
-        db.close_connection()
+    # A profile with no persona and no Actor Pack: the restore creates the
+    # persona store file as well as both trees (TASK-41113).
+    db.close_connection()
     print(json.dumps({'root':str(root)}))
     raise SystemExit(0)
 from Tests.Actor_Packs.test_actor_pack_activation import _persona_runtime_section,_shared_visual_section,_write_archive
@@ -720,15 +721,30 @@ try:
         root=Path(first['root'])
         backup(service,root,Path.home()/'created.tldw-backup.zip')
         (Path.home()/'created-trees.json').write_text(json.dumps(trees(root)))
-    else:
-        assert route=='created-target',route
+    elif route=='created-target':
         root=Path(produce('populate')['root'])
+        store=root/'tldw_chatbook_personas.json'
         assert not (root/'actor_packs').exists() and not (root/'visual_identities').exists()
+        assert not store.exists()
         operation=restore(service,shared/'created.tldw-backup.zip')
         incoming=json.loads((shared/'created-trees.json').read_text())
         assert incoming and trees(root)==incoming,'restore did not create both trees'
-        # The prior state had neither tree: the rollback retires what it created.
+        assert store.is_file(),'restore did not create the persona store'
+        # The prior state had neither tree nor a persona store: the rollback
+        # retires what the restore created.
         roll_back(service,operation,root,{})
+        assert not store.exists(),'rollback kept the created persona store'
+    else:
+        assert route=='nested-target',route
+        root=Path(produce('prepare','223e4567-e89b-42d3-a456-426614174000')['root'])
+        before=trees(root)
+        incoming=json.loads((shared/'created-trees.json').read_text())
+        assert before and not set(before)&set(incoming),(before,incoming)
+        operation=restore(service,shared/'created.tldw-backup.zip')
+        assert trees(root)==incoming,'restore did not replace the target pack'
+        # The restore created the source's pack folder inside each existing
+        # root and retired the target's own; the rollback reverses both.
+        roll_back(service,operation,root,before)
 finally:
     service.close()
 assert not network_guard.blocked_attempts()
@@ -774,6 +790,33 @@ def test_later_rollback_of_a_restore_that_created_actor_pack_trees(tmp_path):
     _run(
         tmp_path / "created-target",
         "created-target",
+        "rollback",
+        script=_ACTOR_TREES_ROLLBACK,
+        timeout=4000 if sys.platform == "win32" else 1100,
+    )
+
+
+# Above the two children's summed budgets on every platform.
+@pytest.mark.timeout(5700 if sys.platform == "win32" else 1500)
+def test_later_rollback_of_a_restore_that_created_nested_actor_pack_folders(tmp_path):
+    """TASK-41113 AC2: restore a backup holding one pack into a profile that
+    holds another, so the restore creates the incoming pack's folder inside
+    both existing roots, then roll that restore back later. Both trees come
+    back byte for byte."""
+    from Tests.Backup_Recovery.test_home_citation_retirement import _run
+
+    for name in ("created-source", "nested-target"):
+        (tmp_path / name).mkdir(mode=0o700)
+    _run(
+        tmp_path / "created-source",
+        "created-source",
+        "backup",
+        script=_ACTOR_TREES_ROLLBACK,
+        timeout=1500 if sys.platform == "win32" else 300,
+    )
+    _run(
+        tmp_path / "nested-target",
+        "nested-target",
         "rollback",
         script=_ACTOR_TREES_ROLLBACK,
         timeout=4000 if sys.platform == "win32" else 1100,
