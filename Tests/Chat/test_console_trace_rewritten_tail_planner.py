@@ -278,12 +278,15 @@ def test_equal_count_unrelated_completed_witness_does_not_hide_rewritten_tail(
     assert admission.descriptors == changed
 
 
-def test_a_compacted_history_is_bounded_by_the_replacement_range(chat_factory):
-    """ADR-337 keeps the 256-node range: a longer history stays refused.
+def test_a_compacted_history_wider_than_one_replacement_is_planned_as_a_chain(
+    chat_factory,
+):
+    """One replacement spans at most 256 sequences; a longer history chains.
 
     Compact now on a chat whose recorded history holds more than 256 rows
-    still stops at the card (TASK-33621.29 review). Lifting that needs a
-    durable-format decision, tracked separately.
+    stopped at the card (TASK-33621.29 review). The owner approved recording
+    it as a chain of links of at most 256 sequences (TASK-38298, ADR-337
+    amendment 2026-11-06). Up to 256 rows it stays one ordinary replacement.
     """
 
     outcomes = {}
@@ -294,29 +297,33 @@ def test_a_compacted_history_is_bounded_by_the_replacement_range(chat_factory):
         chat.remember(rows[-3])
         current = chat.add(rows[-1], "after compaction")
         incoming = [rows[-2], rows[-1], current]
-        if recorded == 256:
-            admission = chat.prepare(incoming, current)
-            assert admission.rewritten_tail.memory_anchor is True
-            outcomes[recorded] = (
-                admission.replacement_range.start_sequence,
-                admission.replacement_range.end_sequence,
-            )
-        else:
-            outcomes[recorded] = chat.refusal(incoming, current)
+        admission = chat.prepare(incoming, current)
+        assert admission.rewritten_tail.memory_anchor is True
+        replaced = admission.replacement_range
+        outcomes[recorded] = (
+            (replaced.start_sequence, replaced.end_sequence),
+            [(link.start_sequence, link.end_sequence) for link in replaced.chain],
+        )
 
-    assert outcomes == {256: (0, 255), 257: ["count_or_span"]}
+    assert outcomes == {
+        256: ((0, 255), []),
+        257: ((0, 256), [(0, 255), (256, 256)]),
+    }
 
 
 def test_a_rewritten_tail_is_bounded_by_its_sequence_span_not_its_row_count(
     chat_factory,
 ):
-    """Dead sequences inside the range count toward the 256-node bound.
+    """Dead sequences inside a link count toward its 256-sequence bound.
 
     An earlier replacement leaves its replaced rows' sequences inside the next
     range. Here 131 live rows span 261 sequences, which one replacement cannot
-    store. Admitting the rewrite reached the over-span fallback: it recorded
-    an omission in place of the first new row and kept every old row in the
-    surface, so the trace no longer matched what the provider received.
+    store. Admitting it as one replacement reached the over-span fallback: it
+    recorded an omission in place of the first new row and kept every old row
+    in the surface, so the trace no longer matched what the provider received.
+    It is now planned as a chain whose links are cut by stored sequence
+    (TASK-38298); Tests/Chat/test_console_trace_chained_replacement.py writes
+    and reads it back.
     """
 
     chat = chat_factory()
@@ -340,6 +347,10 @@ def test_a_rewritten_tail_is_bounded_by_its_sequence_span_not_its_row_count(
     chat.remember(later[-3])
     current = chat.add(later[-1], "after compaction")
 
-    assert chat.refusal([later[-2], later[-1], current], current) == [
-        "count_or_span"
-    ]
+    admission = chat.prepare([later[-2], later[-1], current], current)
+
+    assert chat.refusals == []
+    assert [
+        (link.start_sequence, link.end_sequence)
+        for link in admission.replacement_range.chain
+    ] == [(0, 255), (256, 260)]
