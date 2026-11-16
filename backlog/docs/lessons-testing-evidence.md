@@ -25626,3 +25626,16 @@ An expiry-only assertion must establish the coordinator-free render precondition
 
 **What worked.** The fixture forwards the registered `_hooks._review` override to its captured original, selecting the custom-adapter path while exercising the real review, consent writes, and final permission check. An assertion at modal mount verifies `_hooks._busy`. The warmed decline and approval controls passed with this selection. The 23-case Windows run had 22 passes and one five-second native-progress diagnostic timeout, which also reproduced with the original recorder. When a regression records a particular controller continuation, select its registered adapter seam and verify that continuation is active before answering the modal.
 
+## A remaining child does not make a pruning widget safe (TASK-41218, 2026-11-15)
+
+**Incident.** PR #3524's UI shard 7 raised `NoMatches` for the Session Git
+row's secondary line from its deferred `_fit_copy` during teardown.
+TASK-36527 had left that fitter unchanged because its row probes passed and
+`not self.children` was assumed to cover pruning. A real removal with only the
+primary child's exit held reproduced the crash: the row remained mounted, attached and pruning
+after its secondary exited, with one child still present.
+
+**What to do.** Guard deferred DOM projection against pruning as well as
+detachment. To pin a teardown race, hold one child's real exit and await its
+sibling's exit; a fully removed or childless widget misses partial teardown.
+

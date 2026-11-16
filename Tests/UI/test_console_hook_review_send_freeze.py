@@ -174,7 +174,6 @@ async def _pump_runs(pump, seconds: float = 2.0) -> bool:
 
 def _record_dispatch(console) -> list[str]:
     calls: list[str] = []
-
     # These tests exercise the hook controller's captured continuation. Once
     # arrival setup is ready, stock received-intent admission bypasses dispatch
     # below. Select the registered custom-review seam while retaining the exact
@@ -253,7 +252,7 @@ async def _assert_pumps_run(host, console, when: str) -> None:
     assert await _pump_runs(console), f"{when}: the Console message pump is blocked"
 
 
-def _answer(host, modal, answer: str) -> None:
+async def _answer(host, modal, answer: str) -> None:
     if answer == "escape":
         _key(host, "escape")
         return
@@ -261,7 +260,13 @@ def _answer(host, modal, answer: str) -> None:
         "allow-all": "console-hooks-allow-all",
         "not-now": "console-hooks-cancel",
     }
-    modal.query_one(f"#{button_id[answer]}", Button).focus()
+    button = modal.query_one(f"#{button_id[answer]}", Button)
+    button.focus()
+    # Widget.focus schedules app.call_later; driver input must wait for focus.
+    assert await _until(
+        lambda: host.screen is modal and host.focused is button and not button.disabled,
+        5,
+    ), f"{answer}: the enabled hook-review button never received focus"
     _key(host, "enter", "\r")
 
 
@@ -299,7 +304,7 @@ async def test_a_declined_send_review_settles_and_keeps_the_draft(
         )
         try:
             await _assert_pumps_run(host, console, f"{route}, review open")
-            _answer(host, modal, answer)
+            await _answer(host, modal, answer)
             assert await _until(lambda: host.screen is console, 5), (
                 f"{route}: {answer} never reached the hook review"
             )
@@ -395,7 +400,7 @@ async def test_allow_all_resumes_the_captured_send_exactly_once(route, hook_file
         )
         try:
             await _assert_pumps_run(host, console, f"{route}, review open")
-            _answer(host, modal, "allow-all")
+            await _answer(host, modal, "allow-all")
             assert await _until(lambda: calls == [DRAFT], 5), (
                 f"{route}: the approved Send never dispatched: {calls!r}"
             )
@@ -459,7 +464,7 @@ async def _run_navigated_review(host, *, route, answer, notices):
         )
         try:
             await _assert_pumps_run(host, console, f"{route}, review open")
-            _answer(host, modal, answer)
+            await _answer(host, modal, answer)
             if answer == "allow-all":
                 assert await _until(lambda: calls == [DRAFT], 5), (
                     f"{route}: the approved Send never dispatched: {calls!r}"
@@ -502,7 +507,7 @@ async def test_a_handed_off_send_records_its_reviewed_outcome(hook_file, monkeyp
             "send-button", host, pilot
         )
         try:
-            _answer(host, modal, "allow-all")
+            await _answer(host, modal, "allow-all")
             assert await _until(
                 lambda: (
                     ("hook_review_continuation", "sent")
@@ -591,7 +596,7 @@ async def test_spoken_send_acknowledges_the_reviewed_outcome(
         await asyncio.sleep(0.1)
         try:
             assert said == [], "acknowledged before the review was answered"
-            _answer(host, modal, answer)
+            await _answer(host, modal, answer)
             await asyncio.wait_for(worker.wait(), 10)
             assert said == [spoken]
             assert calls == sent

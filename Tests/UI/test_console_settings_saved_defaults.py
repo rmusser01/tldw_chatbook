@@ -485,7 +485,7 @@ async def test_saving_an_endpoint_the_contract_refuses_shows_its_reason(
         await settle(pilot, app)
         assert results == []
         error = modal.query_one("#console-settings-error", Static)
-        assert str(error.content) == "Endpoint must be a valid http(s) URL."
+        assert str(error.content) == reason
         assert "sk-secret123" not in str(error.content)
 
         modal.query_one("#console-settings-base-url", Input).value = fixed

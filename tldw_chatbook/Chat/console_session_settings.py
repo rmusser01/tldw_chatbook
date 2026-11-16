@@ -1818,9 +1818,9 @@ def validate_console_session_settings(
     if (
         base_url
         and _is_url_based_provider(provider_key, provider_settings)
-        and not _valid_base_url(provider_key, base_url)
+        and (refusal := endpoint_refusal(provider_key, base_url))
     ):
-        errors.append(f"{MODEL_FIELD_LABELS['endpoint']} must be a valid http(s) URL.")
+        errors.append(refusal)
 
     return errors
 
@@ -3262,13 +3262,6 @@ def unsaved_console_endpoint_warning(
         f"Endpoint {display} is saved for this session only and will not "
         "survive a restart. Use Save as default (or Settings) to keep it."
     )
-
-
-def _valid_base_url(provider_key: str, base_url: str) -> bool:
-    # TASK-40300: the endpoint contract decides, as the save and the send do
-    # (TASK-39042 took only its scheme rule; ``validate_url`` let a zone id,
-    # ``-bad.corp``, ``127.1``, an IDN and a query through).
-    return not endpoint_refusal(provider_key, base_url)
 
 
 def _float_in_range(value: object, minimum: float, maximum: float) -> bool:

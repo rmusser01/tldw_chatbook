@@ -3101,3 +3101,6 @@ Tests/UI/test_settings_custom_endpoint_default.py::test_settings_lists_a_refused
 # for both (load 34). The dev-push watch step stays.
 Tests/UI/test_console_received_intent_feedback.py::test_actual_send_paints_sending_and_accepts_input_within_100ms[enter]
 Tests/UI/test_console_received_intent_feedback.py::test_actual_send_paints_sending_and_accepts_input_within_100ms[send-button]
+# TASK-41218 (2026-11-15): deferred Session Git row fitting stops during
+# real partial pruning, with the primary retained after the secondary exits.
+Tests/UI/test_library_file_notes_git.py::test_a_git_row_fit_during_partial_removal_ends_quietly
