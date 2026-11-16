@@ -492,6 +492,17 @@ _LOG_SANITIZER_SHAPES = {
         "DEK-Info: AES-128-CBC,0A\n\nMIIEv" + _FAKE,
         "MIIEv" + _FAKE,
     ),
+    # TASK-41133: compound labels logs mask, with values no token rule knows
+    # (each label split, so no committed line holds a whole assignment).
+    "label-client-secret-query": (
+        "?client_id=app&client" + "_secret=GOCSPX-" + _FAKE + "&grant_type=code",
+        "GOCSPX-" + _FAKE,
+    ),
+    "label-refresh-token-yaml": ("refresh" + "_token: 1//0g" + _FAKE, "1//0g" + _FAKE),
+    "label-json-in-text": ('{"client' + '_secret": "' + _FAKE + '9a8b"}', _FAKE + "9a8b"),
+    "label-header": ("X-Auth" + "-Token: " + _FAKE + "5150", _FAKE + "5150"),
+    "label-env": ("AWS_SECRET" + "_ACCESS_KEY=wJalr/" + _FAKE, "wJalr/" + _FAKE),
+    "label-password": ("db" + "_password=hunter2" + _FAKE, "hunter2" + _FAKE),
 }
 
 
@@ -519,6 +530,23 @@ def test_every_shape_the_log_sanitizer_masks_is_masked_in_a_shared_bundle(
     )
 
 
+def test_the_bundle_masks_compound_labels_with_the_log_sanitizers_own_labels() -> None:
+    """TASK-41133: a compound label the logs name a credential is masked in a
+    shared bundle, and a PII label they also mask is not, from one list."""
+    from tldw_chatbook.Utils import log_sanitizer
+
+    value = "DONOTUSE" + "123456789"
+    for label in sorted(log_sanitizer._DIAGNOSTIC_CREDENTIAL_LABELS):
+        if "_" not in label:
+            continue
+        for spelled in (label, label.upper().replace("_", "-")):
+            masked, changed = trajectory_export._credential_text(f"{spelled}={value}")
+            assert changed and value not in masked, spelled
+    for label in sorted(log_sanitizer._DIAGNOSTIC_PII_LABELS):
+        text = f"{label}={value}"
+        assert trajectory_export._credential_text(text) == (text, False), label
+
+
 def test_the_bundle_masks_with_the_log_sanitizers_own_patterns() -> None:
     """TASK-40301: one source of truth, so the two lists cannot drift again."""
     from tldw_chatbook.Utils import log_sanitizer
@@ -544,6 +572,16 @@ _LOOK_ALIKE_TEXTS = (
     "git clone https://jdoe1234@bitbucket.org/team/repo.git",
     "scp file ssh://username@server.example.com/x",
     "A PEM file begins with -----BEGIN PRIVATE KEY----- then base64 lines.",
+    # TASK-41133: compound credential labels over code, placeholders and
+    # prose, and labels that are not credentials (user names among them).
+    "creds = oauth.fetch_token(url, client_secret=client_secret)",
+    'client_secret = os.environ["CLIENT_SECRET"]',
+    "refresh_token: <your refresh token>",
+    "export CLIENT_SECRET=${CLIENT_SECRET}",
+    "Set client_secret: it comes from the provider console.",
+    "user_name=alice1987 logged in, username: jdoe1234",
+    "max_tokens=4096, next_page_token=CAESBggDEAEYAQ",
+    "client_secret=[credential redacted]",
 )
 
 

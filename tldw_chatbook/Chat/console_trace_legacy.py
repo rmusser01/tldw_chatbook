@@ -48,6 +48,7 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 _LEGACY_POLICY_IDS = {
     "credentials-v1": "00000000-0000-4000-8000-000000000097",
     "credentials-v2": "00000000-0000-4000-8000-000000000098",
+    "credentials-v3": "00000000-0000-4000-8000-000000000099",
 }
 _LEGACY_JSON_VERSION = "canonical-json-v1"
 _LEGACY_MEDIA_TYPE = "application/json"

@@ -190,71 +190,96 @@ def _apply_replacements(text: str, spans: list[tuple[int, int]]) -> str:
     return "".join(parts)
 
 
-def _is_sensitive_diagnostic_key(key: object) -> bool:
-    """Recognize credential/PII labels without hiding every key or token."""
+#: Labels that name a credential in a diagnostic line. TASK-41133 split them
+#: from the PII labels below so a shared Trace bundle masks these alone.
+_DIAGNOSTIC_CREDENTIAL_LABELS = frozenset(
+    {
+        "password",
+        "passwd",
+        "pwd",
+        "passphrase",
+        "secret",
+        "token",
+        "api_key",
+        "apikey",
+        "authorization",
+        "proxy_authorization",
+        "cookie",
+        "set_cookie",
+        "credential",
+        "credentials",
+        "private_key",
+        "access_token",
+        "refresh_token",
+        "auth_token",
+        "api_token",
+        "session_token",
+        "client_secret",
+        "ocp_apim_subscription_key",
+        "aws_secret_access_key",
+        "secret_access_key",
+        "secret_key",
+        "bearer_token",
+    }
+)
+_DIAGNOSTIC_CREDENTIAL_SUFFIXES = (
+    "_api_key",
+    "_api_key_fallback",
+    "_apikey",
+    "_password",
+    "_passphrase",
+    "_secret",
+    "_auth_token",
+    "_api_token",
+    "_access_token",
+    "_refresh_token",
+    "_session_token",
+)
+_DIAGNOSTIC_PII_LABELS = frozenset(
+    {
+        "email",
+        "email_address",
+        "phone",
+        "phone_number",
+        "ssn",
+        "user",
+        "username",
+        "postal_address",
+        "street_address",
+        "passport_number",
+        "credit_card",
+        "card_number",
+    }
+)
+#: Labels that describe a value rather than hold it (``api_key_env_var``).
+_DIAGNOSTIC_METADATA_SUFFIXES = (
+    "_env_var",
+    "_configured",
+    "_present",
+    "_source",
+    "_name",
+)
+
+
+def _is_credential_label(key: object) -> bool:
+    """Whether a diagnostic label names a credential (not PII)."""
     normalized = str(key).casefold().replace("-", "_")
-    if normalized.endswith(("_env_var", "_configured", "_present", "_source", "_name")):
-        return normalized in {"full_name", "first_name", "last_name", "user_name"}
+    if normalized.endswith(_DIAGNOSTIC_METADATA_SUFFIXES):
+        return False
     return (
-        normalized
-        in {
-            "password",
-            "passwd",
-            "pwd",
-            "passphrase",
-            "secret",
-            "token",
-            "api_key",
-            "apikey",
-            "authorization",
-            "proxy_authorization",
-            "cookie",
-            "set_cookie",
-            "credential",
-            "credentials",
-            "private_key",
-            "access_token",
-            "refresh_token",
-            "auth_token",
-            "api_token",
-            "session_token",
-            "client_secret",
-            "email",
-            "email_address",
-            "phone",
-            "phone_number",
-            "ssn",
-            "user",
-            "username",
-            "postal_address",
-            "street_address",
-            "passport_number",
-            "credit_card",
-            "card_number",
-            "ocp_apim_subscription_key",
-            "aws_secret_access_key",
-            "secret_access_key",
-            "secret_key",
-            "bearer_token",
-        }
-        or normalized.endswith(
-            (
-                "_api_key",
-                "_api_key_fallback",
-                "_apikey",
-                "_password",
-                "_passphrase",
-                "_secret",
-                "_auth_token",
-                "_api_token",
-                "_access_token",
-                "_refresh_token",
-                "_session_token",
-            )
-        )
+        normalized in _DIAGNOSTIC_CREDENTIAL_LABELS
+        or normalized.endswith(_DIAGNOSTIC_CREDENTIAL_SUFFIXES)
         or normalized.startswith("x_")
         and normalized.endswith(("_token", "_key"))
     )
+
+
+def _is_sensitive_diagnostic_key(key: object) -> bool:
+    """Recognize credential/PII labels without hiding every key or token."""
+    normalized = str(key).casefold().replace("-", "_")
+    if normalized.endswith(_DIAGNOSTIC_METADATA_SUFFIXES):
+        return normalized in {"full_name", "first_name", "last_name", "user_name"}
+    return normalized in _DIAGNOSTIC_PII_LABELS or _is_credential_label(key)
 
 
 def _protocol_value_end(text: str, start: int, end: int) -> int:
@@ -402,16 +427,28 @@ def sanitize_trace_credentials_v1(text: str) -> str:
 _UNDERSCORE_KEY_CREDENTIALS = (
     re.compile(r"(?<![A-Za-z0-9_-])[rs]k_(?:live|test)_[A-Za-z0-9]{24,}(?![A-Za-z0-9_-])"),
 )
+#: Stripe/Svix webhook signing secrets and Groq keys (TASK-40301): masked in
+#: logs, shared Trace bundles and, from credentials-v3 on, stored traces
+#: (TASK-41133). Not in v1 or v2, whose stored output must not change.
+_V3_KEY_CREDENTIALS = (
+    re.compile(r"(?<![A-Za-z0-9_-])whsec_[A-Za-z0-9+/]{24,}={0,2}(?![A-Za-z0-9_-])"),
+    re.compile(r"(?<![A-Za-z0-9_-])gsk_[A-Za-z0-9]{20,}(?![A-Za-z0-9_-])"),
+)
 
 
-def trace_credentials_v2_spans(text: str) -> list[tuple[int, int]]:
-    """Code-point spans the v2 projection masks beyond v1 in ``text``.
+def trace_credential_key_spans(text: str) -> list[tuple[int, int]]:
+    """Code-point spans of the keys a newer projection masks beyond v1.
 
-    A stored v1 policy's frozen PII spans are applied to its v1 projection;
-    a span that cuts one of these keys is widened over it first, so no key
-    fragment survives the v2 masks (TASK-39123).
+    A stored v1 or v2 policy's frozen PII spans are applied to its own
+    projection; a span that cuts one of these keys is widened over it first,
+    so no key fragment survives the current masks (TASK-39123, TASK-41133).
+    A key the stored projection already masked is no longer in its text.
     """
-    return [m.span() for p in _UNDERSCORE_KEY_CREDENTIALS for m in p.finditer(text)]
+    return [
+        m.span()
+        for p in (*_UNDERSCORE_KEY_CREDENTIALS, *_V3_KEY_CREDENTIALS)
+        for m in p.finditer(text)
+    ]
 
 
 def sanitize_trace_credentials_v2(text: str) -> str:
@@ -428,6 +465,24 @@ def sanitize_trace_credentials_v2(text: str) -> str:
     """
     result = sanitize_trace_credentials_v1(text)
     for pattern in _UNDERSCORE_KEY_CREDENTIALS:
+        result = pattern.sub(REDACTION_MARKER, result)
+    return result
+
+
+def sanitize_trace_credentials_v3(text: str) -> str:
+    """The credentials-v3 trace projection: v2 plus `whsec_` and `gsk_` keys.
+
+    New traces are stored under it, and every read, export and share of a
+    stored v1 or v2 trace re-applies it (TASK-41133).
+
+    Args:
+        text: The string to sanitize.
+
+    Returns:
+        ``sanitize_trace_credentials_v2(text)`` with those keys masked.
+    """
+    result = sanitize_trace_credentials_v2(text)
+    for pattern in _V3_KEY_CREDENTIALS:
         result = pattern.sub(REDACTION_MARKER, result)
     return result
 
@@ -458,17 +513,10 @@ _PRIVATE_KEY_BLOCK = re.compile(
     r"-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----[\s\S]*?"
     r"(?:-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----|$)"
 )
-#: Stripe/Svix webhook signing secrets and Groq keys (TASK-40301): masked in
-#: logs and shared Trace bundles, but in neither stored trace projection,
-#: whose output must not change for history already stored.
-_LOG_ONLY_CREDENTIALS = (
-    re.compile(r"(?<![A-Za-z0-9_-])whsec_[A-Za-z0-9+/]{24,}={0,2}(?![A-Za-z0-9_-])"),
-    re.compile(r"(?<![A-Za-z0-9_-])gsk_[A-Za-z0-9]{20,}(?![A-Za-z0-9_-])"),
-)
 _TOKEN_CREDENTIALS = (
     *_STANDALONE_CREDENTIALS,
     *_UNDERSCORE_KEY_CREDENTIALS,
-    *_LOG_ONLY_CREDENTIALS,
+    *_V3_KEY_CREDENTIALS,
 )
 #: Credential-shaped forms of three log rules (TASK-40301 review I2). Logs
 #: and the stored trace projections keep the broader rules, which also match
@@ -502,6 +550,53 @@ CREDENTIAL_VALUE_PATTERNS = (
     _BEARER_TOKEN,
     *_TOKEN_CREDENTIALS,
 )
+
+
+#: A compound credential label (TASK-41133) and a credential-shaped value:
+#: one run of 8 or more token characters holding a digit or one of
+#: ``~+/=-``, bare or quoted whole. Code (``client_secret=client_secret``,
+#: ``os.environ[...]``), placeholders (``<token>``, ``${SECRET}``) and prose
+#: stay readable; an all-letter secret does too.
+_CREDENTIAL_LABEL_ASSIGNMENT = re.compile(
+    r"""
+    (?<![A-Za-z0-9_.-])
+    (?P<label_quote>["']?)
+    (?P<label>[A-Za-z0-9]+(?:[_.-][A-Za-z0-9]+)+)
+    (?P=label_quote)
+    [ \t]*[:=][ \t]*
+    (?P<value_quote>["']?)
+    (?P<value>(?=[A-Za-z0-9_.~+/=-]*[0-9~+/=-])[A-Za-z0-9_.~+/=-]{8,})
+    (?P=value_quote)
+    (?![A-Za-z0-9_.~+/=-])
+    """,
+    re.VERBOSE,
+)
+
+
+def mask_credential_labels(text: str, marker: str = REDACTION_MARKER) -> str:
+    """Mask credential-shaped values under compound credential labels.
+
+    The labels are the ones diagnostics mask (``client_secret=``,
+    ``refresh_token:``, ``X-Auth-Token:``); PII labels such as ``user_name=``
+    are left alone. Logs mask every value under such a label; a shared Trace
+    bundle, which must keep code and docs, uses this credential-shaped form
+    (TASK-41133).
+
+    Args:
+        text: Text that may hold ``label=value`` or ``label: value`` pairs.
+        marker: What replaces each masked value.
+
+    Returns:
+        The text with those values replaced and everything else unchanged.
+    """
+
+    def mask(match: re.Match[str]) -> str:
+        if not _is_credential_label(match.group("label")):
+            return match.group()
+        start, end = match.span("value")
+        return text[match.start() : start] + marker + text[end : match.end()]
+
+    return _CREDENTIAL_LABEL_ASSIGNMENT.sub(mask, text)
 
 
 def _sanitize_diagnostic_text(text: str) -> str:
