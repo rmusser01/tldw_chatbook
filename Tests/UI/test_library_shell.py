@@ -34243,6 +34243,54 @@ async def test_escape_from_create_and_add_from_files_lands_on_the_blank_notes_pa
         await assert_blank_center_landing("Import once ‹ Notes")
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "size", [(60, 20), (100, 30), (120, 36), (235, 52)], ids=lambda s: f"{s[0]}x{s[1]}"
+)
+async def test_media_to_notes_switch_never_leaves_focus_on_a_hidden_media_row(
+    size,
+) -> None:
+    """TASK-41129: a Media -> Notes switch that leaves focus on a Media row.
+
+    A rail click or Enter moves focus to the rail row first; a switch that
+    does not (``press()`` here, as any code-driven selection does) hid the
+    Media canvas with focus inside it. Textual's reset then moved focus to a
+    hidden sibling row, which revoked the Notes entry focus: at 120x36 and
+    235x52 keys stayed on the hidden ``#library-media-row-0``.
+    """
+    app = _build_test_app()
+    _seed_conversations(
+        app, _two_conversations(), notes=_two_notes(), media=_two_media_items()
+    )
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=size) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_MEDIA}").press()
+        row = await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                not screen._library_pending_list_entry_focus
+                and row in screen.focus_chain
+            ),
+            message="Media entry did not settle with its rows reachable.",
+        )
+        screen.set_focus(row)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.focused is row,
+            message="Could not focus the Media row.",
+        )
+
+        screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_NOTES}").press()
+        await _wait_for_notes_entry_focus_landing(screen, pilot)
+        await pilot.pause(0.3)
+        assert screen.focused is screen.query(".library-notes-row").first()
+        assert screen.focused in screen.focus_chain
+
+
 def test_library_note_ctrl_s_is_unavailable_while_save_remains_explicit() -> None:
     notes_ctrl_s_bindings = [
         binding
