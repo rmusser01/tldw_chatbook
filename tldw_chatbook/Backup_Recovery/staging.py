@@ -924,8 +924,7 @@ def stage_restore(
                     )
                 if issues:
                     raise ValueError(issues[0])
-            if plan.local_snapshot is None:
-                _stamp_personal_context(doc, plan, selected, extracted, stage)
+            _stamp_personal_context(doc, plan, selected, extracted, stage)
         validated = {
             key: reader._hash(path, cancel)
             for key, path in extracted.items()
@@ -1274,6 +1273,7 @@ def _stamp_personal_context(doc, plan, selected, extracted, stage):
     """TASK-40135: point each restored Personal Context copy at its key or marker.
 
     The keyring entry itself is written just before publication (replacement).
+    A later rollback changes a copy only when its own account is gone (TASK-41122).
     """
     from tldw_chatbook.Personal_Context.recovery import (
         recovery_adapters,
@@ -1324,6 +1324,7 @@ def _stamp_personal_context(doc, plan, selected, extracted, stage):
             ),
             account=restore_account(stage, key),
             isolated=isolated,
+            rollback=plan.local_snapshot is not None,
         )
         issues = owner.validate(extracted[key])
         if issues:

@@ -654,6 +654,7 @@ class RecoveryService:
             except Exception:
                 self._link_pending_candidate(operation, None, plan=plan)
                 raise
+            _verify_personal_context(self, operation, plan)  # TASK-41122
             self._update(
                 operation,
                 phase="restoration_validated",

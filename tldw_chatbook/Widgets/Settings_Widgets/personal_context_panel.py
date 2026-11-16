@@ -43,6 +43,7 @@ from ...Personal_Context.recovery import (
     approve_restore_review,
     restore_review,
 )
+from ...Personal_Context.repository_keys import DAMAGED_SCOPE
 from ...Personal_Context.runtime_policy import AgentAuthority
 from ...Personal_Context.service import (
     PersonalContextService,
@@ -149,6 +150,35 @@ _RESTORE_REVIEW_COPY = {
         "not be read. Reopen this page later to check again; the profile stays usable here."
     ),
 }
+# TASK-40140/41121: what the review removes, counted by kind, in this order.
+_DAMAGED_NOUNS = {
+    "record": ("record", "records"),
+    "proposal": ("proposal", "proposals"),
+    "manifest": ("older profile version", "older profile versions"),
+    "scope": ("older scope version", "older scope versions"),
+    "outbox": ("queued sync change", "queued sync changes"),
+    "undo": ("undo entry", "undo entries"),
+    "record_link": ("record link", "record links"),
+    "scope_binding": ("workspace mapping", "workspace mappings"),
+    "runtime_policy": ("agent access setting", "agent access settings"),
+}
+# TASK-41121 AC#2: a damaged current scope cannot be removed (NEEDS_CONTEXT).
+_DAMAGED_SCOPE_COPY = (
+    "A damaged scope can't be read, and removing it would leave its records "
+    "without a scope, so the restored profile was not re-encrypted or confirmed. "
+    "Restore Personal Context again from another backup, or roll the restore "
+    "back in Backup & Restore > Recovery copies."
+)
+
+
+def _damaged_copy(counts: dict[str, int]) -> str:
+    parts = [
+        f"{counts[kind]} damaged {nouns[counts[kind] != 1]}"
+        for kind, nouns in _DAMAGED_NOUNS.items()
+        if counts.get(kind)
+    ]
+    listed = parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
+    return listed + " can't be read and will be removed"
 
 
 def _bounded_label(value: object, *, limit: int = 80) -> str:
@@ -263,7 +293,7 @@ class PersonalContextSettingsPanel(Vertical):
         self._load_generation = 0
         self._proposal_review: PersonalContextProposalReviewModal | None = None
         self._restore_review: str | None = None
-        self._damaged_records = 0
+        self._damaged: dict[str, int] = {}
 
     def on_mount(self) -> None:
         self.load_records(retry_locked=True)
@@ -313,14 +343,15 @@ class PersonalContextSettingsPanel(Vertical):
             return
         path = self._repository_path(service)
         review = None if path is None else restore_review(path)
-        damaged = 0
+        damaged: dict[str, int] = {}
         if review in {REVIEW_AVAILABLE, RESTORED_LINK_STATE}:
-            # TASK-40140, owner decision 2026-11-14: counted before confirming.
-            count = getattr(service, "damaged_record_count", None)
+            # TASK-40140/41121, owner decisions 2026-11-14 and 2026-11-15:
+            # counted by kind before confirming.
+            count = getattr(service, "damaged_object_counts", None)
             try:
-                damaged = int(count()) if callable(count) else 0
+                damaged = dict(count()) if callable(count) else {}
             except Exception:
-                damaged = 0
+                damaged = {}
         self.app.call_from_thread(
             self._apply_snapshot, generation, snapshot, service, review, damaged
         )
@@ -354,18 +385,16 @@ class PersonalContextSettingsPanel(Vertical):
         snapshot: PersonalContextSettingsSnapshot,
         service: PersonalContextService | None = None,
         review: str | None = None,
-        damaged: int = 0,
+        damaged: dict[str, int] | None = None,
     ) -> None:
         if generation != self._load_generation:
             return
         if service is not None:
             self._service = service
-        review_changed = (review, damaged) != (
-            self._restore_review,
-            self._damaged_records,
-        )
+        damaged = damaged or {}
+        review_changed = (review, damaged) != (self._restore_review, self._damaged)
         self._restore_review = review
-        self._damaged_records = damaged
+        self._damaged = damaged
         self.load_failed = False
         self.snapshot = snapshot
         if review_changed:
@@ -648,14 +677,9 @@ class PersonalContextSettingsPanel(Vertical):
                 classes="settings-inline-guidance",
             )
             if self._restore_review in {REVIEW_AVAILABLE, RESTORED_LINK_STATE}:
-                if self._damaged_records:
+                if any(self._damaged.values()):
                     yield Static(
-                        (
-                            "1 damaged record can't be read and will be removed"
-                            if self._damaged_records == 1
-                            else f"{self._damaged_records} damaged records can't "
-                            "be read and will be removed"
-                        ),
+                        _damaged_copy(self._damaged),
                         id="personal-context-restore-review-damaged",
                         classes="settings-inline-guidance",
                         markup=False,
@@ -1003,12 +1027,12 @@ class PersonalContextSettingsPanel(Vertical):
         elif button_id == "personal-context-restore-review":
             path = self._repository_path(self._service)
             service = self._service
-            damaged = self._damaged_records
+            damaged = self._damaged
 
             def review() -> None:
                 # TASK-40140, owner decision 2026-11-13: re-encrypt first, so a
                 # failure leaves the profile readable and the review offered.
-                # Owner decision 2026-11-14: the damaged records shown go too.
+                # Owner decisions 2026-11-14/15: the damaged objects shown go too.
                 try:
                     service.reencrypt_after_restore(expected_damaged=damaged)
                 except BaseException:
@@ -1515,7 +1539,12 @@ class PersonalContextSettingsPanel(Vertical):
             self.app.call_from_thread(self._mutation_key_collision)
         except ProfileConflictError:
             self.app.call_from_thread(self._mutation_conflict)
-        except Exception:
+        except Exception as error:
+            if getattr(error, "reason_code", None) == DAMAGED_SCOPE:
+                self.app.call_from_thread(
+                    self.notify, _DAMAGED_SCOPE_COPY, severity="error", markup=False
+                )
+                return
             if reload_removed_on_failure:
                 try:
                     snapshot = self._require_service().settings_snapshot()

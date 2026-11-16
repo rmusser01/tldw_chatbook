@@ -1949,22 +1949,25 @@ class PersonalContextService:
             self._locked_reason = None
             self._profile_present_hint = False
 
-    def reencrypt_after_restore(self, *, expected_damaged: int = 0) -> str:
+    def reencrypt_after_restore(
+        self, *, expected_damaged: Mapping[str, int] | None = None
+    ) -> str:
         """Re-encrypt this profile under a fresh key (TASK-40140).
 
         Owner decision 2026-11-13: part of confirming "Review restored
         profile". The old key's account stays while a recovery copy may name it.
-        Owner decision 2026-11-14: the ``expected_damaged`` unreadable record
-        versions the review showed are removed in the same step.
+        Owner decisions 2026-11-14 and 2026-11-15: the unreadable versions the
+        review showed, counted by kind in ``expected_damaged``, are removed in
+        the same step.
         """
         from .recovery import reencrypt_profile
 
         with self._destructive_lifecycle_lock:
             return reencrypt_profile(self._repo(), expected_damaged=expected_damaged)
 
-    def damaged_record_count(self) -> int:
-        """Stored record versions no key can read; the review shows the count."""
-        return self._repo().damaged_record_versions()
+    def damaged_object_counts(self) -> dict[str, int]:
+        """Stored versions no key can read, by kind; the review shows them."""
+        return self._repo().damaged_versions()
 
     def finish_secure_removal(self) -> None:
         """Retry key-custody deletion without creating a new profile generation."""

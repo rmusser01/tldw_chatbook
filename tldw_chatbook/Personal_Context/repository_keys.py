@@ -17,7 +17,8 @@ import hmac
 import re
 import secrets
 import sqlite3
-from collections.abc import Iterator
+from collections import Counter
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import closing, contextmanager, suppress
 
 from .key_protector import (
@@ -53,6 +54,23 @@ RESTORE_REASONS = frozenset(
     }
 )
 KEY_MISMATCH = "personal_context_key_mismatch"
+# TASK-41121, owner decision 2026-11-15 ("no": damaged objects other than
+# records must not block the restored-profile review). Each kind re-encryption
+# removes when no key reads a version of it, with the local row that names that
+# version (table, id column, version column). A current manifest or scope never
+# goes: every record needs them, so a damaged one refuses by name.
+_DROPPABLE = {
+    "record": None,
+    "proposal": None,
+    "manifest": None,
+    "scope": None,
+    "outbox": ("encrypted_outbox", "outbox_id", "envelope_version"),
+    "undo": ("local_undo", "undo_id", "encrypted_undo_version"),
+    "record_link": ("local_record_links", "record_id", "encrypted_link_version"),
+    "scope_binding": ("local_scope_bindings", "scope_id", "encrypted_binding_version"),
+    "runtime_policy": ("local_runtime_policy", "scope_id", "encrypted_policy_version"),
+}
+DAMAGED_SCOPE = "personal_context_damaged_scope"
 
 
 def _locked(message: str, reason: str) -> ProfileLockedError:
@@ -222,50 +240,67 @@ class RepositoryKeyCustody:
                     self._protector.delete(account)
             raise
 
-    def damaged_record_versions(self) -> int:
-        """How many stored record versions no key can read (TASK-40140).
-
-        Owner decision 2026-11-14: the review shows this count, and
-        re-encryption removes them. Read-only.
+    def damaged_versions(self) -> dict[str, int]:
+        """How many stored versions no key can read, by kind (TASK-40140,
+        TASK-41121). The review shows these counts, and re-encryption removes
+        them. Read-only.
         """
 
         self._require_keys()
         with closing(self._connect()) as connection:
             connection.execute("BEGIN")
             try:
-                rows = connection.execute(
-                    "SELECT * FROM encrypted_objects WHERE object_type = 'record'"
-                ).fetchall()
-                return sum(1 for row in rows if self._reads(row) is None)
+                rows = connection.execute("SELECT * FROM encrypted_objects").fetchall()
+                return dict(
+                    Counter(
+                        row["object_type"]
+                        for row in rows
+                        if self._reads(connection, row) is None
+                    )
+                )
             finally:
                 connection.rollback()
 
-    def _reads(self, row) -> bytes | None:
-        """The row's plaintext, or None when it fails authentication (a record
-        only; any other damaged object still refuses)."""
+    def _reads(self, connection, row) -> bytes | None:
+        """The row's plaintext, or None when it fails authentication and its
+        kind can go (``_DROPPABLE``). A damaged current manifest or scope, or
+        an unknown kind, still refuses."""
         from .repository import ProfileIntegrityError
 
         try:
             return self._decrypt_row_authenticated(row)
         except ProfileIntegrityError:
-            if row["object_type"] != "record":
+            kind = row["object_type"]
+            if kind not in _DROPPABLE:
+                raise
+            if kind in ("manifest", "scope") and connection.execute(
+                "SELECT 1 FROM object_heads WHERE object_type = ? "
+                "AND object_id = ? AND version_id = ?",
+                (kind, row["object_id"], row["version_id"]),
+            ).fetchone():
+                if kind == "scope":
+                    raise _locked("A current scope is damaged.", DAMAGED_SCOPE) from None
                 raise
             return None
 
     def reencrypt_profile(
-        self, *, keep_old_account: bool, expected_damaged: int = 0
+        self,
+        *,
+        keep_old_account: bool,
+        expected_damaged: Mapping[str, int] | None = None,
+        on_kept: Callable[[str], None] | None = None,
     ) -> str:
         """Re-encrypt every row under a fresh encryption key (TASK-40140).
 
         The integrity key and link state stay; ``key_version`` goes up. The new
         key goes into a new, unused account first; one transaction then rewrites
         every row and names that account, so an interruption leaves either the
-        old rows naming the old key or the new rows naming the new one. Record
-        versions no key can read are removed in that same transaction, but only
-        as many as the review showed (``expected_damaged``; owner decision
-        2026-11-14). The old account is deleted only after the new one opens the
-        database, and only when the caller knows no retained restore copy can
-        name it.
+        old rows naming the old key or the new rows naming the new one. Versions
+        no key can read are removed in that same transaction, but only as many of
+        each kind as the review showed (``expected_damaged``; owner decisions
+        2026-11-14 and 2026-11-15). The old account is deleted only after the new
+        one opens the database, and only when the caller knows no retained
+        restore copy can name it; a kept one is passed to ``on_kept``.
 
         Returns:
             The new account.
@@ -294,7 +329,7 @@ class RepositoryKeyCustody:
                 damaged = []
                 for row in rows:
                     key = (row["object_type"], row["object_id"], row["version_id"])
-                    plaintext = self._reads(row)
+                    plaintext = self._reads(connection, row)
                     if plaintext is None:
                         damaged.append(key)
                         continue
@@ -312,8 +347,8 @@ class RepositoryKeyCustody:
                             *key,
                         ),
                     )
-                if len(damaged) != expected_damaged:
-                    raise ProfileLockedError("Damaged records changed since review.")
+                if Counter(key[0] for key in damaged) != Counter(expected_damaged or {}):
+                    raise ProfileLockedError("Damaged objects changed since review.")
                 self._remove_damaged(connection, damaged)
                 connection.execute(
                     "UPDATE profile_meta SET key_account = ? WHERE singleton = 1",
@@ -335,14 +370,25 @@ class RepositoryKeyCustody:
                 connection.rollback()
         if not keep_old_account:
             self._protector.delete(old_account)
+        elif on_kept is not None:
+            on_kept(old_account)
         return account
 
     def _remove_damaged(self, connection, damaged) -> None:
-        """Drop unreadable record versions with what points at them: a head
-        (the record goes; it already reads under no key), queued envelopes with
-        their encrypted bodies and heads, and quarantine notes. Readable history
-        and notes that name no version stay."""
+        """Drop unreadable versions with what points at them: a head (the
+        object goes; it already reads under no key), queued envelopes with their
+        encrypted bodies and heads, quarantine notes, and the local row naming
+        the version (an outbox entry, undo, record link, workspace mapping or
+        agent access setting). Readable history and notes that name no version
+        stay."""
         for key in damaged:
+            if pointer := _DROPPABLE[key[0]]:
+                table, id_column, version_column = pointer
+                connection.execute(
+                    f"DELETE FROM {table} WHERE {id_column} = ? "  # nosec B608 - fixed names
+                    f"AND {version_column} = ?",
+                    key[1:],
+                )
             for outbox_id, envelope_version in connection.execute(
                 "SELECT outbox_id, envelope_version FROM encrypted_outbox "
                 "WHERE object_type = ? AND object_id = ? AND version_id = ?",
