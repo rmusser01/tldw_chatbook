@@ -1019,7 +1019,8 @@ _BUDGETS: dict[str, int] = {
     # TASK-37762, 2026-11-12: +8, a named custom endpoint's empty or
     # unreadable stream is retried without streaming; exact measurement after
     # rebasing onto dev 4b90eb860b (8337 -> 8345, inside dev's 8364 row).
-    "tldw_chatbook/Chat/console_provider_gateway.py": 8345,
+    # 2026-11-16: re-measured after rebasing onto dev 1a1f00c052 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 8345 -> 8371.
+    "tldw_chatbook/Chat/console_provider_gateway.py": 8371,
     # 2026-10-27, TASK-33620.15.22 (owner decision: a fix over a size ratchet
     # raises the row with a dated comment; never squeeze code to fit):
     # 7024 -> 7043 (+19). Send's readiness gets one owner,
