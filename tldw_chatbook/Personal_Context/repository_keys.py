@@ -76,7 +76,7 @@ def stored_restore_marker(db_path: Path) -> str | None:
     try:
         with closing(
             connect_private_sqlite(
-                "recovery.personal_context.repository", db_path, read_only=True
+                "personal_context.restore_marker", db_path, read_only=True
             )
         ) as connection:
             row = connection.execute(

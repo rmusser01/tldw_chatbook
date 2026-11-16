@@ -1641,3 +1641,73 @@ GitHub reports the published a676555a66 checkpoint conflicts with current dev
 5e3c8b2bd4 and has scheduled no new pull_request runs. Preserve a local checkpoint,
 rebase onto current dev, resolve the actual conflicts and reverify affected
 boundaries before pushing. Auto-merge remains off throughout integration.
+
+The rebase onto5e3c8b2bd4 is complete atb34dc71753. Only the UI census conflicted:
+retain dev's2147 entries in order, then append the three PR nodes and set the
+measured floor to2150. The census checker and142 CI contracts pass (28.52s).
+Push uses an exact lease againsta676555a66; auto-merge remains off.
+
+### Task3w — separate remote result types from SSH execution imports
+
+ADR required:no.
+ADR path:N/A; existing ADR181's transport/status contracts remain unchanged.
+Reason: mechanical extraction of unchanged data types, preserving legacy public
+exports and all transport behavior; no new execution or authority boundary.
+
+1. Use the current cold diagnostic: remote status imports transport and the
+   remote worker bundle solely to access its enum/result types (0.231s inclusive).
+2. Add a fresh-process regression that exercises actual cache transitions and
+   response classification, then requires transport implementation to remain cold.
+3. Move the enum and two result dataclasses unchanged into a dependency-leaf
+   models module. Import them from status; re-export them from the original
+   transport module. Keep native transport registrations, protocol and bundle
+   content untouched.
+4. Verify the original RED, all cache/classification cases, legacy type exports
+   and relevant transport tests. Preserve CI selection and measure both Windows
+   Send routes sequentially; no release qualification from import counts alone.
+
+The rebased quiet button run completes all three saved replies and traces at
+6.748/5.817/5.635s (pr3534-dev5e3-quiet-button-1, 64.53s). Source and HEAD remain
+fixed; the cold sample fails the release gate. Task3w's original-source regression
+then fails only its final dependency assertion after actual cache transitions and
+response classification pass (pr3534-remote-status-import-red-1, 2.92s).
+The three extracted type ASTs and all remaining transport behavior ASTs are
+unchanged. Native transport registration and the generated worker remain intact.
+The bash-based transport suite is selected for hosted Linux CI, alongside the
+portable cache/import regressions; it is not claimed as Windows SSH coverage.
+
+Task3w passes 191 targeted cases (16.04s), but its first quiet Enter run measures
+24.000/25.114/23.576s. The exact pre-extraction comparison measures
+7.802/5.877/4.947s. A second original-source run was inadvertently labelled
+pr3534-remote-types-quiet-enter-2 after a CRLF-sensitive restoration assertion
+failed; its 9.227/6.796/6.204s is original-source evidence, not candidate evidence.
+The exact candidate was subsequently restored using normalized text equality.
+Keep all receipts; neither comparison proves a causal timing change.
+
+### Task3v CI ownership correction
+
+Current-head hosted CI reproduces two missed ownership obligations: the moved
+marker reader still names the recovery module's SQLite owner, and the persistence
+census still points to the old function location. Add a module-owned read-only
+marker policy with no backup/capture authority, select it at the marker reader,
+and relocate the two inventory rows. Keep all SQL, path validation, source-mode
+preservation and error behavior. First prove writable creation is refused by the
+new owner, then verify the original marker cases and both exact CI failures.
+ADR required: no new ADR. Existing ADR029's module-owned SQLite registration and
+ADR126's explicit persistence inventory apply; this does not grant new authority.
+
+The new owner refuses writable creation after the original-source missing-owner
+RED (2.34s). Both reported CI contracts, the complete SQLite inventory checks,
+original restored-marker/readonly cases and unchanged module-size ratchets pass
+278 cases in 275.87s (pr3534-marker-owner-green-1). The 4035-line SQLite ceiling is
+unchanged; the existing notification-owner rationale was shortened without
+changing that owner's policy. Scoped Ruff F checks pass.
+
+The integrated quiet Enter run measures 7.739/5.405/4.693s
+(pr3534-remote-types-owner-quiet-enter-1, 66.00s), with fixed source and HEAD;
+all three saved replies and traces complete. Cold Send still fails six seconds.
+Independent source review finds no critical/important blocker in the type move,
+read-only policy, public exports, inventories or CI selection. It ran no tests
+and makes no speed claim. The current Linux 3.12 tool job exhausted its existing
+15-minute job budget after checkout consumed 11m21s; dependency installation took
+21s and earlier tool groups passed. Do not widen test or job timeouts for that run.

@@ -8,6 +8,8 @@ import subprocess
 import sys
 from textwrap import dedent
 
+import pytest
+
 
 def test_missing_keyring_status_reads_marker_without_backup_catalogs(tmp_path):
     script = dedent(
@@ -51,3 +53,12 @@ def test_missing_keyring_status_reads_marker_without_backup_catalogs(tmp_path):
     )
     assert result.returncode == 0, result.stdout[-2000:] + result.stderr[-4000:]
     assert 'locked status preserved without backup catalogs' in result.stdout
+
+
+def test_restore_marker_owner_refuses_writable_creation(tmp_path):
+    from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+
+    destination = tmp_path / "absent.db"
+    with pytest.raises(ValueError, match="read-only"):
+        connect_private_sqlite("personal_context.restore_marker", destination)
+    assert not destination.exists()

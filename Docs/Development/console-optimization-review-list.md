@@ -2912,11 +2912,15 @@ behavior. Original-source import RED and150 targeted checks qualify the change.
 Quiet Enter6.276/5.742/4.696s still misses the cold-send gate; host variation and
 the instrumented preceding run prevent claiming a causal whole-Send saving.
 
-**Cold SSH status dependencies (deferred,2026-11-16).**
+**Task3w — cold SSH status dependencies (selected, 2026-11-16).**
 The local-only first-request planner imports remote_binding_status, which imports
 transport result types and thereby the worker bundle (0.231s inclusive status
 import;0.139s bundle import in the current diagnostic). A data-only result/type
 module could separate status rendering from transport implementation. Existing
 transport registration and public imports must remain compatible; no blind
-lazy wrapper or identity-check replacement is selected. Measure the dependency
-separately if cold latency still requires it after current-dev integration.
+lazy wrapper or identity-check replacement is selected. After the rebased cold
+button send still measured 6.748s, the original-source regression reproduced the
+dependency closure after actual status behavior passed. Move the unchanged enum
+and two result dataclasses to a dependency-leaf module, retaining the original
+transport exports. Native and hosted checks plus fresh whole-Send measurements
+remain required; the import duration is not an end-to-end saving claim.
