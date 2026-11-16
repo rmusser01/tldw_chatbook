@@ -55,7 +55,7 @@ pull-request update.
    (Clarified 2026-09-27: since TASK-32908 the fast test runs as two parallel jobs,
    PR Fast Lane and UI Fast Lane; see Consequences.)
 
-## Amendment (2026-08-30, TASK-25705) — adopted
+## Amendment (2026-08-30, TASK-25705) â€” adopted
 
 The `dev` protection rule applies the existing required context to
 administrators and requires the result against the latest base revision:
@@ -147,7 +147,7 @@ cron entry on `dev`.
   derived-artifact checks. As amended on 2026-09-27 that was two fast lanes
   (at most two runners at a time), three runners with the one routine
   path-scoped guard (perf-guard), instead of approximately thirteen. It has
-  grown since: the UI lane currently runs 38 shards, with at most 19 UI jobs running at once (TASK-37236, TASK-37266..37268 and the
+  grown since: the UI lane currently runs 40 shards, with at most 19 UI jobs running at once (TASK-37236, TASK-37266..37268 and the
   dated capacity amendments below), the Console P0 gate is a third lane (TASK-33621.27), and the PR
   Fast Lane's admission-sensitive half (two jobs since TASK-35575, three since Roleplay frame B2b), the Dreams
   tracking tests, the Dreams and Guardian boundary contracts, the
@@ -367,7 +367,7 @@ Three observed 17-shard layouts failed through timeouts despite limited-prefix
 reordering; separate assertion failures remain failures to repair, not timing
 passes. The last observed checkout consumed 289 seconds in shard 1 and 131 in
 shard 13 before pytest could use the remaining job budget. Call-only tail models
-also omitted roughly 50–145 seconds of per-case teardown in many jobs. Keeping
+also omitted roughly 50â€“145 seconds of per-case teardown in many jobs. Keeping
 most positions fixed and treating checkout variance as a fixed per-shard cost
 did not provide reliable capacity.
 
@@ -403,7 +403,7 @@ Even ideal balance at 27 shards has a lower-bound forecast of 1027.70 seconds un
 
 ## Amendment (2026-10-28, TASK-37266..37268): enroll native publication and export controls
 
-Current UI lane: 38 shards. The current total is 50 eligible test jobs per PR
+Current UI lane: 40 shards. The current total is 52 eligible test jobs per PR
 (2026-11-02: includes the third admission-sensitive lane; 2026-11-06: and the
 Architecture guard contracts job, TASK-38989, and the architecture-review
 tests' own job, `pr-fast-lane-arch`, split out of the PR Fast Lane at its
@@ -553,3 +553,39 @@ ceiling makes 31 concurrent test runners, 32 counting perf-guard.
 workflow. At 38 the census has no re-deal margin left: the next tail entries
 need another shard-count decision.
 
+
+
+## PR3569 resync (2026-11-15, dev cc6006fc)
+
+Retain the round-14 owner's 19-job concurrency limit and 13.0-minute pytest
+replay target. All 2145 upstream selectors remain alongside 27 Textual
+follow-up cases, for 2172 entries. The matrix grows from 38 to 40 shards;
+concurrency stays 19, with three scheduling waves, 52 eligible test jobs and
+unchanged peak concurrency of 31 test runners (32 with perf-guard). All new
+upstream lanes, job/test deadlines and required aggregation remain intact.
+
+The current model recovers the upstream decision's exact 25-run / 867-green-job
+window (17 hosted run sets, eight self-hosted), reusing three cached runs and
+recovering only missing logs. Every original 2034 selector is timed. All 111
+upstream task-note charges are explicit and sum to 2174.82 seconds, matching
+the earlier rounded 2174.8. Current available attempts yield 492.943253 total
+upstream pytest minutes, slightly above the prior rounded 492.8; the difference
+is disclosed, not forced down. The older PR model's weights and reserves are
+not carried into this fresh model. The 27 cases retain 1385.997 measured
+Windows seconds, for a modeled total of 516.043203 minutes.
+
+Thirty-nine shards have a 13.231877-minute ideal floor, above the upstream
+13.0 target. Forty shards, with 36 swaps, reach a 12.997614-minute maximum.
+The upstream median model offsets project about 14.817614 minutes on hosted
+runners and 13.577614 on self-hosted runners; these are estimates, not a promise
+of per-job headroom. Multiplying only the 27 Windows charges by 2.61 requires
+43 shards in the sensitivity model (34 swaps, maximum 12.995365); it remains
+an uncalibrated sensitivity, not the count-setting assumption. New-order CI
+execution and TASK-39144's post-change observations remain pending.
+
+Fresh measured weights, separate serial/Windows charges, run identities and a
+portable reproduction command are retained under
+`Docs/superpowers/qa/2026-11-14-textual-pattern-followups/ci/resync-cc6006fc/`.
+Earlier QA artifacts retain their own dated scope and are not relabeled as this
+model's evidence. This directly implements the existing scaling policy; no new
+ADR or runtime boundary is introduced.

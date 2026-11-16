@@ -19,10 +19,10 @@ SettingsConfigAdapter`` reach panel saves too.
 Network and Providers & Models are served wholly by their panels: the
 screen compares neither category. Providers & Models' detail pane, card
 handlers and helpers still live on the screen, and its panel calls them.
-Speech & TTS goes through ``SpeechTTSCategoryPanel``, a thin adapter that
-routes its mounted widget's own contract (``has_unsaved_changes`` /
-``request_save`` / ``revert_to_saved``) through the same registry; its
-detail pane is still built by the screen.
+Speech & TTS owns its rendering, scope, navigation and leave routing through
+``SpeechTTSCategoryPanel``. Its widget retains validation, persistence and
+runtime cleanup. Ordinary shell queries use the detached safe snapshot;
+consequential actions capture pending mounted edits before deciding.
 """
 
 from __future__ import annotations
@@ -32,6 +32,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Protocol
 
+from loguru import logger
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -39,7 +40,11 @@ from textual.css.query import QueryError
 from textual.widget import Widget
 from textual.widgets import Button, Input, Select, Static
 
-from ...state.settings_config_models import SettingsCategoryId
+from ...state.settings_config_models import SettingsCategoryId, SettingsDraft
+from ..Speech.speech_settings_contracts import SpeechTTSNavigationTarget
+from ...Widgets.Settings_Widgets.speech_tts_panel_types import (
+    SpeechTTSPanelDraftSnapshot,
+)
 from ...Widgets.Settings_Widgets.speech_tts_settings_panel import (
     SpeechTTSSettingsPanel,
 )
@@ -133,6 +138,22 @@ class SettingsCategoryPanel(Protocol):
     #: also drops the provider form's pending echo suppressions, which are
     #: Providers & Models' state still kept on the screen.
     keeps_field_focus: bool = False
+    #: Whether F1 may promise a retained draft after a category switch.
+    keeps_draft_on_category_switch: bool = True
+
+    def search_navigation_context(self, query: str) -> Mapping[str, object]:
+        """Bounded context for category-search selection."""
+        return {"category": self.category.value}
+
+    def leave_category(
+        self, screen: SettingsScreen, category_value: str, restore_focus: bool
+    ) -> bool:
+        """True when this panel handles/defer its category switch."""
+        return False
+
+    async def confirm_leave(self, screen: SettingsScreen) -> bool:
+        """Resolve pending work before destination dismissal."""
+        return True
 
     def unsaved_count(self, screen: SettingsScreen) -> int:
         """How many fields are unsaved (the banner's "N unsaved")."""
@@ -413,41 +434,120 @@ class NetworkPanel(SettingsCategoryPanel):
 
 
 class SpeechTTSCategoryPanel(SettingsCategoryPanel):
-    """Speech & TTS: routes the mounted widget's own contract through here.
-
-    ponytail: a thin adapter, not a full move. Still in the screen:
-
-    - the detail pane, ``SettingsScreen._render_speech_tts_detail`` (its names
-      are patched on the screen module by many tests);
-    - the dirty banner's leave wording, its F1 note and its navigation
-      context;
-    - the category-leave guard in ``_select_category``. It asks the live
-      widget (``has_unsaved_changes()`` collects visible fields the
-      ``_settings_drafts`` mirror has not heard of yet) and the audio_cpp
-      cleanup, not this adapter. ``revert`` below reads the widget the same
-      way, while ``has_unsaved_changes`` reads the mirror (as at base).
-
-    Routing the guard here first needs one unsaved answer for Speech (live
-    widget or mirror) for every caller. Move all of these when Speech moves
-    for real.
-    """
+    """Global Speech category routing; widget persistence/runtime ownership stays put."""
 
     category = SettingsCategoryId.SPEECH_TTS
     commit_model = CommitModel("staged", "Draft — save with s")
+    keeps_draft_on_category_switch = False
 
     def render(self, screen: SettingsScreen) -> ComposeResult:
-        yield from screen._render_speech_tts_detail()
+        from ..Screens import settings_screen as symbols
+
+        (
+            audio_cpp_observation,
+            provider_configuration_revisions,
+            provider_runtime_revisions,
+            provider_applied_configuration_revisions,
+        ) = screen._speech_tts_cached_runtime_state()
+        try:
+            app_config = symbols.get_runtime_config_snapshot().values
+            speech_tts_config = app_config if isinstance(app_config, Mapping) else {}
+            speech_tts_state = symbols.load_global_speech_tts_state(speech_tts_config)
+        except (OSError, TypeError, ValueError):
+            speech_tts_config = {}
+            speech_tts_state = symbols.load_global_speech_tts_state({})
+        if not screen._speech_tts_profile_choices_requested:
+            screen._speech_tts_profile_choices_requested = True
+            screen._load_speech_tts_default_profile_choices()
+        # The complete snapshot restores edits and their saved baseline. Its
+        # privacy projection strips source/credential metadata, so let the
+        # existing widget constructor rehydrate that metadata from fresh config.
+        restoring_snapshot = screen._speech_tts_draft_snapshot is not None
+        widget = symbols.SpeechTTSSettingsPanel(
+            state=(
+                speech_tts_state
+                if restoring_snapshot
+                else screen._speech_tts_draft_state or speech_tts_state
+            ),
+            original_state=(
+                speech_tts_state
+                if restoring_snapshot
+                else screen._speech_tts_original_state
+            ),
+            configure_provider=screen._speech_tts_configure_provider,
+            draft_snapshot=screen._speech_tts_draft_snapshot,
+            draft_snapshot_published=lambda owner, snapshot: self.publish(
+                screen, owner, snapshot
+            ),
+            profiles=screen._speech_tts_profile_choices,
+            profiles_unavailable=screen._speech_tts_profile_choices_unavailable,
+            config_snapshot=speech_tts_config,
+            audio_cpp_observation=audio_cpp_observation,
+            audio_cpp_configuration_revision=provider_runtime_revisions.get(
+                "audio_cpp"
+            ),
+            provider_configuration_revisions=provider_configuration_revisions,
+            provider_runtime_revisions=provider_runtime_revisions,
+            provider_applied_configuration_revisions=(
+                provider_applied_configuration_revisions
+            ),
+            runtime_status_store=symbols.speech_tts_runtime_status_store(
+                screen.app_instance
+            ),
+            provider_test_evidence=symbols.process_provider_test_evidence_store(
+                screen.app_instance
+            ),
+            audio_cpp_result_cleanup_pending=(screen.audio_cpp_result_cleanup_pending),
+            audio_cpp_result_cleanup_mounted=(
+                screen._mark_audio_cpp_result_panel_mounted
+            ),
+            id="settings-speech-tts-panel",
+        )
+        screen._speech_tts_draft_owner = widget
+        yield widget
 
     def has_unsaved_changes(self, screen: SettingsScreen) -> bool:
-        # Mirrored from the widget's DraftModified messages.
-        draft = screen._settings_drafts.get(self.category)
-        return bool(draft and draft.is_dirty)
+        snapshot = screen._speech_tts_draft_snapshot
+        return snapshot is not None and snapshot.has_unsaved_changes()
 
     def unsaved_count(self, screen: SettingsScreen) -> int:
         snapshot = screen._speech_tts_draft_snapshot
-        if snapshot is None:
-            return super().unsaved_count(screen)
-        return snapshot.unsaved_field_count()
+        return snapshot.unsaved_field_count() if snapshot is not None else 0
+
+    def capture(self, screen: SettingsScreen, widget: SpeechTTSSettingsPanel) -> None:
+        """Publish one live capture before a consequential action."""
+        widget.capture_draft_snapshot()
+
+    def publish(
+        self,
+        screen: SettingsScreen,
+        owner: SpeechTTSSettingsPanel,
+        snapshot: SpeechTTSPanelDraftSnapshot,
+    ) -> None:
+        """Reject obsolete projections and messages from resolved/replaced owners."""
+        if (
+            screen.active_category != self.category.value
+            or owner is screen._speech_tts_closed_owner
+            or owner is not screen._speech_tts_draft_owner
+        ):
+            return
+        previous = screen._speech_tts_draft_snapshot
+        if previous is not None and snapshot.draft_revision < previous.draft_revision:
+            return
+        screen._speech_tts_configure_provider = snapshot.configure_provider
+        screen._speech_tts_draft_snapshot = snapshot
+        if snapshot.has_unsaved_changes():
+            screen._speech_tts_draft_state = copy.deepcopy(snapshot.state)
+            screen._speech_tts_original_state = copy.deepcopy(snapshot.original_state)
+            draft = screen._settings_drafts.setdefault(
+                self.category, SettingsDraft(category=self.category)
+            )
+            draft.set_value("speech_tts_panel", False, True)
+        else:
+            screen._speech_tts_draft_state = None
+            screen._speech_tts_original_state = None
+            screen._settings_drafts.pop(self.category, None)
+        screen._update_draft_status_widgets(self.category)
 
     def request_save(self, screen: SettingsScreen) -> None:
         widget = self._mounted(screen)
@@ -458,25 +558,188 @@ class SpeechTTSCategoryPanel(SettingsCategoryPanel):
         widget = self._mounted(screen)
         if widget is None:
             return
-        if not widget.has_unsaved_changes():
+        self.capture(screen, widget)
+        if not self.has_unsaved_changes(screen):
             screen.app.notify(NO_CHANGES_TO_REVERT_COPY, severity="information")
             return
         screen.run_worker(widget.revert_to_saved(), exclusive=False)
 
     def scope_text(self, screen: SettingsScreen) -> ScopeText:
         return ScopeText(
-            banner="Application-wide defaults; Studio preferences remain separate.",
+            banner=(
+                "Leaving Speech & TTS resolves this draft: save or discard first."
+                if self.has_unsaved_changes(screen)
+                else "Application-wide defaults; Studio preferences remain separate."
+            ),
             guided=(
                 "Guided edits: Save or Revert changes."
                 if self.has_unsaved_changes(screen)
                 else "Guided edits: change a field first."
             ),
+            banner_revert_hint=False,
         )
+
+    def search_navigation_context(self, query: str) -> Mapping[str, object]:
+        provider = self.provider_from_search(query)
+        return {
+            "category": self.category.value,
+            **({"provider": provider} if provider else {}),
+        }
+
+    def navigate(self, screen: SettingsScreen, context: Mapping[str, object]) -> bool:
+        from ..Screens import settings_screen as symbols
+
+        allowed_keys = {"category", "provider", "intent"}
+        if not set(context).issubset(allowed_keys):
+            logger.debug("Ignoring unsafe Speech Settings navigation context")
+            return True
+        navigation_target: SpeechTTSNavigationTarget | None = None
+        if "provider" in context or "intent" in context:
+            navigation_target = symbols.speech_tts_navigation_target_from_context(
+                {key: value for key, value in context.items() if key != "category"}
+            )
+            if navigation_target is None:
+                logger.debug("Ignoring invalid Speech Settings navigation target")
+                return True
+            self.stage_navigation_target(screen, navigation_target)
+        else:
+            screen._speech_tts_navigation_target = None
+        screen._clear_navigation_provider_context()
+        screen._select_category(self.category.value, restore_focus=True)
+        screen._after_category_panes(lambda: self.apply_navigation_target(screen))
+        return True
+
+    def leave_category(
+        self, screen: SettingsScreen, category_value: str, restore_focus: bool
+    ) -> bool:
+        if (
+            category_value == self.category.value
+            or not screen.is_mounted
+            or screen._speech_tts_leave_bypass
+        ):
+            return False
+        try:
+            widget = screen.query_one(
+                "#settings-speech-tts-panel", SpeechTTSSettingsPanel
+            )
+        except QueryError:
+            return False
+        self.capture(screen, widget)
+        if not (
+            self.has_unsaved_changes(screen)
+            or widget.audio_cpp_result_cleanup_pending()
+        ):
+            return False
+        if not screen._speech_tts_leave_in_progress:
+            screen._speech_tts_leave_in_progress = True
+            screen.run_worker(
+                self._confirm_category_leave(screen, category_value, restore_focus),
+                group="settings-speech-category-leave",
+                exclusive=True,
+                exit_on_error=False,
+            )
+        return True
+
+    async def confirm_leave(self, screen: SettingsScreen) -> bool:
+        try:
+            widget = screen.query_one(
+                "#settings-speech-tts-panel", SpeechTTSSettingsPanel
+            )
+        except QueryError:
+            return True
+        allowed = await widget.confirm_leave()
+        if allowed:
+            screen._clear_speech_tts_draft_cache()
+        return allowed
+
+    async def _confirm_category_leave(
+        self, screen: SettingsScreen, category_value: str, restore_focus: bool
+    ) -> None:
+        try:
+            if not await self.confirm_leave(screen):
+                return
+            screen._speech_tts_leave_bypass = True
+            screen._select_category(category_value, restore_focus=restore_focus)
+        finally:
+            screen._speech_tts_leave_bypass = False
+            screen._speech_tts_leave_in_progress = False
+
+    def stage_navigation_target(
+        self,
+        screen: SettingsScreen,
+        target: SpeechTTSNavigationTarget,
+    ) -> None:
+        """Cache a target only when no mounted panel can guard the switch."""
+
+        screen._speech_tts_navigation_target = target
+        try:
+            screen.query_one(
+                "#settings-speech-tts-panel",
+                SpeechTTSSettingsPanel,
+            )
+        except QueryError:
+            screen._speech_tts_configure_provider = target.provider_id
+
+    def apply_navigation_target(self, screen: SettingsScreen) -> None:
+        """Restore a bounded Speech provider/intent without invoking work."""
+        from ...Widgets.select_values import assign_select_value
+        from ..Screens import settings_screen as symbols
+
+        target = screen._speech_tts_navigation_target
+        if (
+            target is None
+            or screen.active_category != SettingsCategoryId.SPEECH_TTS.value
+        ):
+            return
+        try:
+            provider_select = screen.query_one(
+                "#settings-speech-configure-provider",
+                Select,
+            )
+            if provider_select.value != target.provider_id:
+                # TASK-32533: the target's provider id is validated against
+                # BUILT_IN_TTS_PROVIDER_IDS, but this select is built from the
+                # separate BUILT_IN_TTS_PROVIDER_ORDER display tuple -- the two
+                # are hand-maintained, and a value only one of them lists would
+                # raise InvalidSelectValueError here.
+                assign_select_value(provider_select, target.provider_id)
+            focus_selector = (
+                "#settings-speech-audio_cpp-base-url"
+                if target.provider_id == "audio_cpp"
+                and target.intent is symbols.SpeechTTSNavigationIntent.CONFIGURE
+                else "#settings-speech-configure-provider"
+            )
+            screen.query_one(focus_selector).focus()
+        except QueryError:
+            return
+        screen._speech_tts_navigation_target = None
+
+    @staticmethod
+    def provider_from_search(query_text: str) -> str | None:
+        """Return a canonical built-in TTS provider named by a search query."""
+        query = query_text.strip().lower()
+        aliases = {
+            "audio.cpp": "audio_cpp",
+            "audio_cpp": "audio_cpp",
+            "openai": "openai",
+            "elevenlabs": "elevenlabs",
+            "kokoro": "kokoro",
+            "chatterbox": "chatterbox",
+            "higgs": "higgs",
+            "alltalk": "alltalk",
+            "omnivoice": "omnivoice",
+        }
+        for alias, provider_id in aliases.items():
+            if alias in query:
+                return provider_id
+        return None
 
     @staticmethod
     def _mounted(screen: SettingsScreen) -> SpeechTTSSettingsPanel | None:
         try:
-            return screen.query_one("#settings-speech-tts-panel", SpeechTTSSettingsPanel)
+            return screen.query_one(
+                "#settings-speech-tts-panel", SpeechTTSSettingsPanel
+            )
         except QueryError:
             screen.app.notify(
                 "Speech & TTS Settings are not available.", severity="warning"

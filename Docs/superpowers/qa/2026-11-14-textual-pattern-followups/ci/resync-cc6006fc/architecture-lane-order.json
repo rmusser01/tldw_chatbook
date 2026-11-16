@@ -1,0 +1,272 @@
+{
+  "inspection": "Static module/direct selected-test decorators across all42Architecturetargets; newmountedselectorislast,afterexistingterminalprivacyfile.",
+  "count": 42,
+  "targets": [
+    {
+      "position": 1,
+      "target": "Tests/Architecture/test_actor_pack_boundary.py",
+      "module_bootstrap_profile": false,
+      "explicit_bootstrap_test_names": []
+    },
+    {
+      "position": 2,
+      "target": "Tests/Architecture/test_app_extracted_patch_targets.py",
+      "module_bootstrap_profile": false,
+      "explicit_bootstrap_test_names": [
+        "test_source_derived_bindings_match_runtime_globals"
+      ]
+    },
+    {
+      "position": 3,
+      "target": "Tests/Architecture/test_bare_chat_screen_shells_wire_their_controllers.py",
+      "module_bootstrap_profile": false,
+      "explicit_bootstrap_test_names": []
+    },
+    {
+      "position": 4,
+      "target": "Tests/Architecture/test_console_fleet_ownership.py",
+      "module_bootstrap_profile": false,
+      "explicit_bootstrap_test_names": []
+    },
+    {
+      "position": 5,
+      "target": "Tests/Architecture/test_framework_armed_clock_inventory.py",
+      "module_bootstrap_profile": false,
+      "explicit_bootstrap_test_names": []
+    },
+    {
+      "position": 6,
+      "target": "Tests/Architecture/test_library_cluster_membership_census.py",
+      "module_bootstrap_profile": false,
+      "explicit_bootstrap_test_names": []
+    },
+    {
+      "position": 7,
+      "target": "Tests/Architecture/test_library_export_wiring.py",
+      "module_bootstrap_profile": false,
+      "explicit_bootstrap_test_names": []
+    },
+    {
+      "position": 8,
+      "target": "Tests/Architecture/test_persona_buddy_boundary.py",
+      "module_bootstrap_profile": false,
+      "explicit_bootstrap_test_names": []
+    },
+    {
+      "position": 9,
+      "target": "Tests/Architecture/test_persona_visual_runtime_boundary.py",
+      "module_bootstrap_profile": false,
+      "explicit_bootstrap_test_names": []
+    },
+    {
+      "position": 10,
+      "target": "Tests/Architecture/test_profile_owned_path_inventory.py::test_inventory_scanner_class_names_follow_public_style_contract",
+      "module_bootstrap_profile": false,
+      "explicit_bootstrap_test_names": []
+    },
+    {
+      "position": 11,
+      "target": "Tests/Architecture/test_profile_owned_path_inventory.py::test_scanner_reports_embedded_and_multiline_physical_lines",
+      "module_bootstrap_profile": false,
+      "explicit_bootstrap_test_names": []
+    },
+    {
+      "position": 12,
+      "target": "Tests/Architecture/test_profile_owned_path_inventory.py::test_scanner_detects_direct_indirect_and_join_function_roots",
+      "module_bootstrap_profile": false,
+      "explicit_bootstrap_test_names": []
+    },
+    {
+      "position": 13,
+      "target": "Tests/Architecture/test_profile_owned_path_inventory.py::test_scanner_detects_join_components_that_contain_a_complete_root",
+      "module_bootstrap_profile": false,
+      "explicit_bootstrap_test_names": []
+    },
+    {
+      "position": 14,
+      "target": "Tests/Architecture/test_profile_owned_path_inventory.py::test_scanner_distinguishes_matching_join_shapes_by_owner_context",
+      "module_bootstrap_profile": false,
+      "explicit_bootstrap_test_names": []
+    },
+    {
+      "position": 15,
+      "target": "Tests/Architecture/test_profile_owned_path_inventory.py::test_scanner_ignores_comments_and_actual_docstrings",
+      "module_bootstrap_profile": false,
+      "explicit_bootstrap_test_names": []
+    },
+    {
+      "position": 16,
+      "target": "Tests/Architecture/test_profile_owned_path_inventory.py::test_reconcile_rejects_duplicates_new_counts_and_stale_rules",
+      "module_bootstrap_profile": false,
+      "explicit_bootstrap_test_names": []
+    },
+    {
+      "position": 17,
+      "target": "Tests/Architecture/test_profile_owned_path_inventory.py::test_reconcile_describes_duplicate_and_empty_exception_rules",
+      "module_bootstrap_profile": false,
+      "explicit_bootstrap_test_names": []
+    },
+    {
+      "position": 18,
+      "target": "Tests/Architecture/test_profile_owned_path_inventory.py::test_reconcile_rejects_a_scanner_detected_duplicate_literal",
+      "module_bootstrap_profile": false,
+      "explicit_bootstrap_test_names": []
+    },
+    {
+      "position": 19,
+      "target": "Tests/Architecture/test_profile_owned_path_inventory.py::test_production_profile_owned_path_inventory_is_exact",
+      "module_bootstrap_profile": false,
+      "explicit_bootstrap_test_names": []
+    },
+    {
+      "position": 20,
+      "target": "Tests/Architecture/test_profile_owned_path_inventory.py::test_exception_rules_are_sorted_by_inventory_identity",
+      "module_bootstrap_profile": false,
+      "explicit_bootstrap_test_names": []
+    },
+    {
+      "position": 21,
+      "target": "Tests/Architecture/test_profile_owned_path_inventory.py::test_shared_asset_exceptions_are_explicit",
+      "module_bootstrap_profile": false,
+      "explicit_bootstrap_test_names": []
+    },
+    {
+      "position": 22,
+      "target": "Tests/Architecture/test_profile_owned_path_inventory.py::test_base_data_dir_census_detects_qualified_and_aliased_consumers",
+      "module_bootstrap_profile": false,
+      "explicit_bootstrap_test_names": []
+    },
+    {
+      "position": 23,
+      "target": "Tests/Architecture/test_profile_owned_path_inventory.py::test_compatibility_and_runtime_policy_constants_have_no_new_runtime_owners",
+      "module_bootstrap_profile": false,
+      "explicit_bootstrap_test_names": []
+    },
+    {
+      "position": 24,
+      "target": "Tests/Architecture/test_profile_owned_path_inventory.py::test_python_outside_the_package_and_tests_parses",
+      "module_bootstrap_profile": false,
+      "explicit_bootstrap_test_names": []
+    },
+    {
+      "position": 25,
+      "target": "Tests/Architecture/test_progress_widget_clock_guard.py",
+      "module_bootstrap_profile": false,
+      "explicit_bootstrap_test_names": []
+    },
+    {
+      "position": 26,
+      "target": "Tests/Architecture/test_recovery_entrypoints.py",
+      "module_bootstrap_profile": false,
+      "explicit_bootstrap_test_names": []
+    },
+    {
+      "position": 27,
+      "target": "Tests/Architecture/test_task2062_3_legacy_downloader_retirement.py",
+      "module_bootstrap_profile": false,
+      "explicit_bootstrap_test_names": []
+    },
+    {
+      "position": 28,
+      "target": "Tests/Architecture/test_worker_exclusive_group_inventory.py",
+      "module_bootstrap_profile": false,
+      "explicit_bootstrap_test_names": []
+    },
+    {
+      "position": 29,
+      "target": "Tests/Persona_Buddy/test_controller_failure_logging.py",
+      "module_bootstrap_profile": false,
+      "explicit_bootstrap_test_names": []
+    },
+    {
+      "position": 30,
+      "target": "Tests/Architecture/test_backup_owner_inventory.py",
+      "module_bootstrap_profile": false,
+      "explicit_bootstrap_test_names": []
+    },
+    {
+      "position": 31,
+      "target": "Tests/Backup_Recovery/test_detached_layout.py::test_actor_pack_persona_images_are_validated_in_a_detached_source",
+      "module_bootstrap_profile": false,
+      "explicit_bootstrap_test_names": []
+    },
+    {
+      "position": 32,
+      "target": "Tests/Backup_Recovery/test_publication_crashes.py::test_append_and_flush_handle_each_record_once",
+      "module_bootstrap_profile": false,
+      "explicit_bootstrap_test_names": []
+    },
+    {
+      "position": 33,
+      "target": "Tests/Backup_Recovery/test_publication_crashes.py::test_cached_journal_history_still_refuses_changed_records",
+      "module_bootstrap_profile": false,
+      "explicit_bootstrap_test_names": []
+    },
+    {
+      "position": 34,
+      "target": "Tests/test_persistent_diagnostic_boundary.py",
+      "module_bootstrap_profile": false,
+      "explicit_bootstrap_test_names": []
+    },
+    {
+      "position": 35,
+      "target": "Tests/Utils/test_log_sanitizer.py",
+      "module_bootstrap_profile": false,
+      "explicit_bootstrap_test_names": []
+    },
+    {
+      "position": 36,
+      "target": "Tests/Architecture/test_no_undefined_module_globals.py",
+      "module_bootstrap_profile": false,
+      "explicit_bootstrap_test_names": []
+    },
+    {
+      "position": 37,
+      "target": "Tests/Architecture/test_console_realtime_controller_boundary.py",
+      "module_bootstrap_profile": false,
+      "explicit_bootstrap_test_names": []
+    },
+    {
+      "position": 38,
+      "target": "Tests/Architecture/test_console_review_selection_controller_boundary.py",
+      "module_bootstrap_profile": false,
+      "explicit_bootstrap_test_names": []
+    },
+    {
+      "position": 39,
+      "target": "Tests/Architecture/test_console_wave6_inventory.py",
+      "module_bootstrap_profile": false,
+      "explicit_bootstrap_test_names": []
+    },
+    {
+      "position": 40,
+      "target": "Tests/Backup_Recovery/test_restore_plan_excluded_directories.py",
+      "module_bootstrap_profile": false,
+      "explicit_bootstrap_test_names": []
+    },
+    {
+      "position": 41,
+      "target": "Tests/Architecture/test_persistent_terminal_privacy_boundary.py",
+      "module_bootstrap_profile": false,
+      "explicit_bootstrap_test_names": [
+        "test_app_owned_terminal_session_leaves_live_console_boundaries_free"
+      ]
+    },
+    {
+      "position": 42,
+      "target": "Tests/Architecture/test_library_media_wiring.py::test_emptied_page_focus_callback_retains_admitted_owner",
+      "module_bootstrap_profile": false,
+      "explicit_bootstrap_test_names": [
+        "test_emptied_page_focus_callback_retains_admitted_owner"
+      ]
+    }
+  ],
+  "preexisting_mixed_profile_exception": {
+    "position": 2,
+    "target": "Tests/Architecture/test_app_extracted_patch_targets.py",
+    "test": "test_source_derived_bindings_match_runtime_globals",
+    "present_at_upstream_cc6006fc": true,
+    "changed_by_this_route": false
+  },
+  "ordering_scope": "No target follows newlyenrolledbootstrapselector; upstreammixedprofileplacementisrecordednotrewritten."
+}

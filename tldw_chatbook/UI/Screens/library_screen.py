@@ -405,6 +405,7 @@ from ...Widgets.workbench_focus import (
     widget_has_visible_region,
 )
 from ...Widgets.Library import (
+    LIBRARY_ADAPTIVE_READER_GRIP_CLASS,
     AdaptiveReaderShellResized,
     CollectionsCaptureReaderPresentation,
     LIBRARY_SKILLS_FILTER_ID,
@@ -17254,6 +17255,7 @@ class LibraryScreen(BaseAppScreen):
             self._media_state.type_filter = applied.media_type
         controller = self._library_media_browse_controller
         applied_selection_id = ""
+        reader_was_reset = False
         if (
             applied is not None
             and not controller.loading
@@ -17307,29 +17309,13 @@ class LibraryScreen(BaseAppScreen):
                 )
             ):
                 self._reset_library_media_reader_to_no_selection()
-                # task-32086 (critique #8 gap in 32043): the reset above cleared
-                # the Reader SESSION, but this seam's tail rebuilds ONLY the
-                # Items pane (``_sync_library_canvas``) and leaves the sibling
-                # ``LibraryMediaViewer`` painting the filtered-out document --
-                # "Media (0)" beside a full stale item with "‹ Back" into an
-                # empty list. The delete path clears the identical split-brain
-                # with a whole-screen recompose (``_delete_library_media_
-                # selection``'s tail); mirror it here so the Reader actually
-                # repaints its "Select a media item…" placeholder. This fires
-                # only on a settled 0-result filter that was holding a loaded
-                # Reader -- as rare as a delete, and never on a page turn
-                # (non-empty ``retained_items``) or mid-load (``loading``
-                # short-circuits the whole block), so the recompose cost is
-                # the delete path's own one-shot completion, not a hot path.
-                if self.is_mounted:
-                    self.refresh(recompose=True)
-                    if focus_identity:
-                        self.call_after_refresh(
-                            self._focus_library_control, focus_identity
-                        )
-                    else:  # TASK-40293: land focus the reset strands.
-                        self._media_controller._land_library_media_emptied_page()
-                return
+                reader_was_reset = True
+                # Patch the Reader's no-selection surface too (task-32086),
+                # without replacing the filter being edited (TASK-37360).
+                # The normal tail below publishes Items and restores focus.
+                viewer = self._mounted_library_media_viewer()
+                if viewer is not None:
+                    self._sync_library_media_viewer_state(viewer)
         if (
             applied_selection_id
             and self._media_state.reader_session.selected_id != applied_selection_id
@@ -17384,6 +17370,8 @@ class LibraryScreen(BaseAppScreen):
         if (
             not exact_pending_return
             and pending_entry_focus_generation is None
+            # Reset recovery outranks implicit parking, not an explicit request.
+            and not (reader_was_reset and focus_identity is None)
             and isinstance(focused_id, str)
             and focused_id
             and any(widget.id == "library-media-canvas" for widget in focused.ancestors)
@@ -17438,6 +17426,41 @@ class LibraryScreen(BaseAppScreen):
                 if focus_identity
                 else None
             )
+            if then is None and reader_was_reset:
+                # Capture ownership before either deferred completion boundary.
+                empty_page_result = controller.applied_result
+                empty_page_generation = self._library_list_entry_focus_generation
+                empty_page_focus = focused
+
+                def empty_page_is_current() -> bool:
+                    current_focus = self.focused
+                    return (
+                        controller.applied_result is empty_page_result
+                        and applied == controller.requested_scope
+                        and not controller.loading
+                        and not controller.retained_items
+                        and self._media_state.view == "list"
+                        and empty_page_generation
+                        == self._library_list_entry_focus_generation
+                        and not self._library_pending_list_entry_focus
+                        and not self._media_state.find_focus_pending
+                        and (
+                            current_focus is empty_page_focus
+                            or current_focus is None
+                            or not current_focus.is_attached
+                            or current_focus.has_class(
+                                LIBRARY_ADAPTIVE_READER_GRIP_CLASS
+                            )
+                        )
+                    )
+
+                def land_emptied_page() -> None:
+                    if empty_page_is_current():
+                        self._media_controller._land_library_media_emptied_page(
+                            is_current=empty_page_is_current
+                        )
+
+                then = land_emptied_page
         if pending_entry_focus_generation is not None:
             # Canvas recompose temporarily drops DOM focus outside Media.
             # Treat that automatic fallback as part of this guarded restore;

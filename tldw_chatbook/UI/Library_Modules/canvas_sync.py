@@ -1100,6 +1100,9 @@ def _sync_library_canvas(
         if kind == "landing":
             canvas.set_deferred_sync_guard(deferred_guard)
         follow_up_canvas = canvas
+        if kind == "media":
+            # Media keeps its filter/chrome mounted; only results recompose.
+            follow_up_canvas = canvas.results
         if (
             note_work is not None
             and not notes_editor_owned

@@ -52,6 +52,14 @@ initial readers share one outcome.
 
 Media canvas views: list / viewer / trash through one shared builder. Read-it-later is a `MediaReadItLaterState` row in the media DB (Home deep-links via the browse-subview context); reading progress is upserted per item and surfaced through the reading service. Saving a single reading item deliberately restores a trashed duplicate (an explicit user decision); the **bulk** import path stays non-restoring.
 
+Media browse publication retains the filter `Input` and recomposes only the
+`LibraryMediaResults` subtree. The mounted field owns the current editing draft;
+loading and accepted results must not overwrite it with an older query. Explicit
+Clear remains a controller action. The applied-scope line describes the accepted
+results independently of that draft. `canvas_sync` sends post-recompose focus and
+action callbacks to the results owner, and an empty result updates the mounted
+Reader without replacing the filter (TASK-37360).
+
 `LibraryMediaController._restore_library_media_focus` delegates its captured
 focus restoration to the existing `canvas_sync` owner. The synchronous focus
 write records the exact programmatic target until its native focus event is

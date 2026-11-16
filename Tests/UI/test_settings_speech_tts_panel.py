@@ -3480,8 +3480,10 @@ async def test_speech_save_and_revert_clicks_work_while_a_field_is_focused(
             "#settings-speech-tts-panel",
             SpeechTTSSettingsPanel,
         )
-        request_save = Mock()
-        revert_to_saved = AsyncMock()
+        save_received = asyncio.Event()
+        revert_received = asyncio.Event()
+        request_save = Mock(side_effect=save_received.set)
+        revert_to_saved = AsyncMock(side_effect=revert_received.set)
         panel.request_save = request_save
         panel.revert_to_saved = revert_to_saved
         configure = screen.query_one("#settings-speech-configure-provider", Select)
@@ -3492,36 +3494,41 @@ async def test_speech_save_and_revert_clicks_work_while_a_field_is_focused(
             "#settings-speech-openai-base-url",
             timeout=4.0,
         )
+        await _settle(pilot)
         panel = screen.query_one(
             "#settings-speech-tts-panel",
             SpeechTTSSettingsPanel,
         )
         panel.request_save = request_save
         panel.revert_to_saved = revert_to_saved
-        # Let the provider-change rebuild's focus restoration finish (it
-        # re-asserts the pre-change focus after the card swap) before the
-        # endpoint takes focus, so the clicks below really start focused.
-        await pilot.pause(0.5)
         endpoint = screen.query_one("#settings-speech-openai-base-url", Input)
 
-        endpoint.focus()
-        await pilot.pause()
-        assert pilot.app.focused is endpoint
-        target = screen.query_one("#settings-speech-save", Button)
-        target.scroll_visible(animate=False)
-        await pilot.pause()
-        assert pilot.app.focused is endpoint
+        async def show_action(selector: str) -> None:
+            endpoint.focus()
+            # Complete the field's scheduled focus scroll before scrolling
+            # its action into view; otherwise the later focus scroll can
+            # move the action back outside the viewport during a click.
+            await pilot.wait_for_scheduled_animations()
+            target = screen.query_one(selector, Button)
+            target.scroll_visible(animate=False, immediate=True)
+            await pilot.wait_for_scheduled_animations()
+            assert screen.query_one(SpeechTTSSettingsPanel) is panel
+            assert screen._speech_tts_draft_owner is panel
+            assert pilot.app.focused is endpoint
+            assert not target.disabled
+            assert 0 <= target.region.y < target.region.bottom <= pilot.app.size.height
+            assert (
+                pilot.app.get_widget_at(target.region.x, target.region.y)[0] is target
+            )
+
+        await show_action("#settings-speech-save")
         assert await pilot.click("#settings-speech-save")
+        await asyncio.wait_for(save_received.wait(), timeout=2.0)
         request_save.assert_called_once_with()
 
-        endpoint.focus()
-        await pilot.pause()
-        assert pilot.app.focused is endpoint
-        target = screen.query_one("#settings-speech-revert", Button)
-        target.scroll_visible(animate=False)
-        await pilot.pause()
-        assert pilot.app.focused is endpoint
+        await show_action("#settings-speech-revert")
         assert await pilot.click("#settings-speech-revert")
+        await asyncio.wait_for(revert_received.wait(), timeout=2.0)
         revert_to_saved.assert_awaited_once_with()
 
 

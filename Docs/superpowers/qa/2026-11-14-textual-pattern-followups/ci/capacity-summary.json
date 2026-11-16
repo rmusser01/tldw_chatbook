@@ -1,0 +1,383 @@
+{
+  "historical_runs": 31,
+  "historical_green_shards": 1034,
+  "recent_runs": 3,
+  "recent_green_shards": 108,
+  "inherited_entries": 2034,
+  "new_entries": 27,
+  "total_entries": 2103,
+  "base_envelope_minutes": 476.64,
+  "observed_base_minutes": 467.07816271666667,
+  "reserve_minutes": 9.561837283333318,
+  "reserve_distribution": "proportional to recovered measured inherited entry weights; explicit assumption, not observed timing",
+  "inherited_cost_factor": 1.0204715999303389,
+  "new_raw_windows_seconds": {
+    "Tests/UI/test_library_media_filter_typing.py::test_paced_native_typing_keeps_prefix_focus_and_caret": 31.103,
+    "Tests/UI/test_library_media_filter_typing.py::test_zero_results_backspace_and_clear_keep_the_filter_control[wide]": 21.922,
+    "Tests/UI/test_library_media_filter_typing.py::test_zero_results_backspace_and_clear_keep_the_filter_control[compact]": 20.644,
+    "Tests/UI/test_library_media_filter_typing.py::test_older_completion_keeps_newer_native_edit_and_selection": 20.876,
+    "Tests/UI/test_library_media_filter_typing.py::test_accepted_older_completion_keeps_newer_native_draft": 24.509,
+    "Tests/UI/test_settings_context_memory_event_origin.py::test_context_refresh_keeps_nine_clean_fields_out_of_unrelated_draft": 97.295,
+    "Tests/UI/test_settings_context_memory_event_origin.py::test_context_validation_save_and_confirmed_revert_use_real_writer": 81.539,
+    "Tests/UI/test_settings_context_memory_event_origin.py::test_context_queued_real_edits_survive_refresh_for_all_nine_controls": 59.423,
+    "Tests/UI/test_settings_context_memory_event_origin.py::test_context_refresh_preserves_raw_percent_and_editing_context": 62.162,
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_category_leave_outcome[discard-True]": 61.777,
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_category_leave_outcome[save-True]": 72.552,
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_category_leave_outcome[save-False]": 75.88,
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_pending_edit_capture_rejects_older_queued_projection": 69.28,
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_repaint_uses_snapshot_without_collecting_fields": 50.255,
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_snapshot_cleanup_is_dirty_even_without_counted_fields[False]": 33.751,
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_snapshot_cleanup_is_dirty_even_without_counted_fields[True]": 33.955,
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_actions_capture_pending_edit_before_changed_delivery": 54.911,
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_widget_save_captures_pending_edit_in_shell": 49.396,
+    "Tests/UI/test_settings_speech_tts_panel.py::test_dirty_speech_category_cancel_preserves_owner_draft_and_focus": 47.82,
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_model_library_route_bypass_contract[True]": 64.252,
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_model_library_route_bypass_contract[False]": 65.488,
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_navigation_rejects_extra_payload_contract[extra0]": 38.159,
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_navigation_rejects_extra_payload_contract[extra1]": 40.834,
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_navigation_rejects_extra_payload_contract[extra2]": 42.241,
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_model_library_cleanup_fence_contract": 63.109,
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_same_category_navigation_contract[deep-link]": 52.33,
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_same_category_navigation_contract[search]": 50.534
+  },
+  "new_case_sources": [
+    {
+      "junit": ".test-tmp/textual-1378-3/final-regressions-01/result.xml",
+      "sha256": "4f2bbeeee2e1d02f594b59f46eb5d28ff56a67a6044d7ba2eeb4ac94bce17078",
+      "matched_green_nodes": [
+        "Tests/UI/test_settings_speech_category_ownership.py::test_speech_category_leave_outcome[discard-True]",
+        "Tests/UI/test_settings_speech_category_ownership.py::test_speech_category_leave_outcome[save-True]",
+        "Tests/UI/test_settings_speech_category_ownership.py::test_speech_category_leave_outcome[save-False]",
+        "Tests/UI/test_settings_speech_category_ownership.py::test_speech_pending_edit_capture_rejects_older_queued_projection",
+        "Tests/UI/test_settings_speech_category_ownership.py::test_speech_repaint_uses_snapshot_without_collecting_fields",
+        "Tests/UI/test_settings_speech_category_ownership.py::test_speech_snapshot_cleanup_is_dirty_even_without_counted_fields[False]",
+        "Tests/UI/test_settings_speech_category_ownership.py::test_speech_snapshot_cleanup_is_dirty_even_without_counted_fields[True]",
+        "Tests/UI/test_settings_speech_category_ownership.py::test_speech_actions_capture_pending_edit_before_changed_delivery",
+        "Tests/UI/test_settings_speech_category_ownership.py::test_speech_widget_save_captures_pending_edit_in_shell",
+        "Tests/UI/test_settings_speech_tts_panel.py::test_dirty_speech_category_cancel_preserves_owner_draft_and_focus"
+      ]
+    },
+    {
+      "junit": ".test-tmp/textual-1378-3/audio-cleanup-02/result.xml",
+      "sha256": "f4683ffbcb667103f323c91532a3e2913a5c15c9bb3b5a0470b835096bbbb288",
+      "matched_green_nodes": [
+        "Tests/UI/test_settings_speech_category_ownership.py::test_speech_model_library_route_bypass_contract[True]",
+        "Tests/UI/test_settings_speech_category_ownership.py::test_speech_model_library_route_bypass_contract[False]"
+      ]
+    },
+    {
+      "junit": ".test-tmp/textual-1378-3/compatibility-01/result.xml",
+      "sha256": "c5d1ea70c1b818c0b81bb569c542637c50c1dcb0071c52aa2bbfa0a0471f33b2",
+      "matched_green_nodes": [
+        "Tests/UI/test_settings_speech_category_ownership.py::test_speech_navigation_rejects_extra_payload_contract[extra0]",
+        "Tests/UI/test_settings_speech_category_ownership.py::test_speech_navigation_rejects_extra_payload_contract[extra1]",
+        "Tests/UI/test_settings_speech_category_ownership.py::test_speech_navigation_rejects_extra_payload_contract[extra2]"
+      ]
+    },
+    {
+      "junit": ".test-tmp/textual-1378-3/cleanup-ui-boundary/result.xml",
+      "sha256": "2ab55e6e5d02b81e3db2182d5792dc76bd07f070fb7855a987281f49978bc69d",
+      "matched_green_nodes": [
+        "Tests/UI/test_settings_speech_category_ownership.py::test_speech_model_library_cleanup_fence_contract"
+      ]
+    },
+    {
+      "junit": ".test-tmp/textual-1378-3/fix1-navigation/result.xml",
+      "sha256": "d5570f0e2789ea45aab6fad4f952334b0be4ee7d6c59e8271b737a91cd8e7bb0",
+      "matched_green_nodes": [
+        "Tests/UI/test_settings_speech_category_ownership.py::test_speech_same_category_navigation_contract[deep-link]",
+        "Tests/UI/test_settings_speech_category_ownership.py::test_speech_same_category_navigation_contract[search]",
+        "Tests/UI/test_settings_speech_category_ownership.py::test_speech_pending_edit_capture_rejects_older_queued_projection",
+        "Tests/UI/test_settings_speech_category_ownership.py::test_speech_widget_save_captures_pending_edit_in_shell",
+        "Tests/UI/test_settings_speech_category_ownership.py::test_speech_actions_capture_pending_edit_before_changed_delivery"
+      ]
+    },
+    {
+      "junit": ".test-tmp/textual-37360/green-scope-owner/result.xml",
+      "sha256": "c2647e6c510a040562ec1e077a8ab627da89ca3ca853b45edca4242c001f1abe"
+    },
+    {
+      "junit": ".test-tmp/textual-40969/green-context-01/result.xml",
+      "sha256": "950467ea118d641b6544fc19a475a25ecaf82129f6067e31ef351556fde7bd12"
+    }
+  ],
+  "setup_allowance_minutes": 1.7,
+  "pytest_target_minutes": 13.3,
+  "job_timeout_minutes": 20,
+  "max_parallel": 18,
+  "model_source_sha256": "55bec6982499c1005324bcc1fc7c5e7120dcf78a59f722aea641111773aaed6c",
+  "smallest_passing_1.0": 40,
+  "smallest_passing_2.61": 43,
+  "scenarios": [
+    {
+      "name": "reserved_raw",
+      "shards": 38,
+      "total_minutes": 530.8432833333333,
+      "floor_minutes": 13.969560087719296,
+      "feasible": false
+    },
+    {
+      "name": "reserved_raw",
+      "shards": 39,
+      "total_minutes": 530.8432833333333,
+      "floor_minutes": 13.611366239316238,
+      "feasible": false
+    },
+    {
+      "name": "reserved_raw",
+      "shards": 40,
+      "total_minutes": 530.8432833333333,
+      "floor_minutes": 13.271082083333331,
+      "feasible": true,
+      "maximum_minutes": 13.287801207276376,
+      "minimum_minutes": 13.245328695605531,
+      "swaps": 61
+    },
+    {
+      "name": "reserved_raw",
+      "shards": 41,
+      "total_minutes": 530.8432833333333,
+      "floor_minutes": 12.947397154471544,
+      "feasible": true,
+      "maximum_minutes": 13.249462172918495,
+      "minimum_minutes": 12.723322597029636,
+      "swaps": 38
+    },
+    {
+      "name": "reserved_raw",
+      "shards": 42,
+      "total_minutes": 530.8432833333333,
+      "floor_minutes": 12.639125793650791,
+      "feasible": true,
+      "maximum_minutes": 13.267440806146476,
+      "minimum_minutes": 12.084074019832723,
+      "swaps": 23
+    },
+    {
+      "name": "exact_cases_only",
+      "shards": 40,
+      "total_minutes": 530.12995,
+      "floor_minutes": 13.253248750000001,
+      "feasible": true,
+      "maximum_minutes": 13.291665283980114,
+      "minimum_minutes": 13.215486934478504,
+      "swaps": 58
+    },
+    {
+      "name": "windows_2.61_sensitivity",
+      "shards": 41,
+      "total_minutes": 568.0342028333333,
+      "floor_minutes": 13.85449275203252,
+      "feasible": false
+    },
+    {
+      "name": "windows_2.61_sensitivity",
+      "shards": 43,
+      "total_minutes": 568.0342028333333,
+      "floor_minutes": 13.210097740310077,
+      "feasible": true,
+      "maximum_minutes": 13.2993703373667,
+      "minimum_minutes": 13.010346960580874,
+      "swaps": 31
+    },
+    {
+      "name": "windows_2.61_sensitivity",
+      "shards": 42,
+      "total_minutes": 568.0342028333333,
+      "floor_minutes": 13.524623876984126,
+      "feasible": false,
+      "reason": "ideal floor exceeds13.3 target"
+    }
+  ],
+  "assumptions": [
+    "Historical rounded floor13.24 times36 is retained as476.64 inherited minutes.",
+    "Reserve distribution follows observed weights proportionally and is not observed timing.",
+    "Raw Windows JUnit time is a charge scenario; unchanged Media/Context controls were slower locally than recent CI.",
+    "2.61 is a sensitivity multiplier only, not a Windows-to-CI calibration.",
+    "1.7-minute setup is retained historical allowance, not a guarantee.",
+    "37+ shards add a third scheduling wave with max-parallel18.",
+    "Recovered31 historical run sets differ from original28 due to available reruns; only successful UI jobs are used.",
+    "Forty-two incoming dev selectors are priced separately from original historical weights and27Windows charges.",
+    "Incoming listed case times sum1823.4s; the documented whole-run differences42.8s are an explicit reserve, not observed per-entry work or claimed setup.",
+    "Windows2.61 sensitivity applies only to the original27Windows charges; upstream loaded-host charges and reserves stay unchanged."
+  ],
+  "applied_shards": 40,
+  "applied_swaps": 61,
+  "eligible_test_jobs": 52,
+  "peak_all_test_runners": 30,
+  "peak_with_perf_guard": 31,
+  "new_selector_order": [
+    "Tests/UI/test_library_media_filter_typing.py::test_paced_native_typing_keeps_prefix_focus_and_caret",
+    "Tests/UI/test_library_media_filter_typing.py::test_zero_results_backspace_and_clear_keep_the_filter_control[wide]",
+    "Tests/UI/test_library_media_filter_typing.py::test_zero_results_backspace_and_clear_keep_the_filter_control[compact]",
+    "Tests/UI/test_library_media_filter_typing.py::test_older_completion_keeps_newer_native_edit_and_selection",
+    "Tests/UI/test_library_media_filter_typing.py::test_accepted_older_completion_keeps_newer_native_draft",
+    "Tests/UI/test_settings_context_memory_event_origin.py::test_context_refresh_keeps_nine_clean_fields_out_of_unrelated_draft",
+    "Tests/UI/test_settings_context_memory_event_origin.py::test_context_validation_save_and_confirmed_revert_use_real_writer",
+    "Tests/UI/test_settings_context_memory_event_origin.py::test_context_queued_real_edits_survive_refresh_for_all_nine_controls",
+    "Tests/UI/test_settings_context_memory_event_origin.py::test_context_refresh_preserves_raw_percent_and_editing_context",
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_category_leave_outcome[discard-True]",
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_category_leave_outcome[save-True]",
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_category_leave_outcome[save-False]",
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_pending_edit_capture_rejects_older_queued_projection",
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_repaint_uses_snapshot_without_collecting_fields",
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_snapshot_cleanup_is_dirty_even_without_counted_fields[False]",
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_snapshot_cleanup_is_dirty_even_without_counted_fields[True]",
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_actions_capture_pending_edit_before_changed_delivery",
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_widget_save_captures_pending_edit_in_shell",
+    "Tests/UI/test_settings_speech_tts_panel.py::test_dirty_speech_category_cancel_preserves_owner_draft_and_focus",
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_same_category_navigation_contract[deep-link]",
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_same_category_navigation_contract[search]",
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_model_library_cleanup_fence_contract",
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_model_library_route_bypass_contract[True]",
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_model_library_route_bypass_contract[False]",
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_navigation_rejects_extra_payload_contract[extra0]",
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_navigation_rejects_extra_payload_contract[extra1]",
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_navigation_rejects_extra_payload_contract[extra2]",
+    "Tests/UI/test_plugin_review.py::test_refresh_growth_keeps_focused_action_and_cleaned_status_painted",
+    "Tests/UI/test_plugin_review.py::test_action_inputs_hide_without_losing_drafts_or_keyboard_focus",
+    "Tests/UI/test_plugin_review.py::test_confirmed_profile_save_survives_close_during_child_prune",
+    "Tests/UI/test_plugins_browse.py::test_import_preview_review_buttons_state_why_and_never_open",
+    "Tests/UI/test_plugins_browse.py::test_review_dialog_load_failure_stays_in_the_dialog",
+    "Tests/UI/test_plugins_browse.py::test_restored_plugins_recover_from_the_plugins_screen",
+    "Tests/UI/test_plugins_browse.py::test_reset_after_restore_sets_plugins_aside_and_kept_data_reattaches",
+    "Tests/UI/test_workspace_archive_async_completion.py",
+    "Tests/UI/test_settings_workspaces_category.py::test_workspaces_category_registered_and_immediate",
+    "Tests/UI/test_settings_workspaces_category.py::test_create_rename_archive_unarchive_flow",
+    "Tests/UI/test_settings_workspaces_category.py::test_activation_failure_surfaces_inline_but_creates_workspace",
+    "Tests/UI/test_settings_workspaces_category.py::test_compact_overview_keeps_a_painted_recovery_action",
+    "Tests/UI/test_settings_workspaces_category.py::test_default_workspace_card_is_protected",
+    "Tests/UI/test_settings_workspaces_category.py::test_archived_workspace_card_offers_only_unarchive",
+    "Tests/UI/test_settings_workspaces_category.py::test_folder_bindings_add_toggle_remove_and_inline_errors",
+    "Tests/UI/test_settings_workspaces_category.py::test_pane_refreshes_after_external_registry_change",
+    "Tests/UI/test_settings_workspaces_category.py::test_resume_refreshes_workspaces_pane_only_when_active",
+    "Tests/UI/test_settings_workspaces_category.py::test_scope_inspector_shows_immediate_actions_not_read_only",
+    "Tests/UI/test_settings_workspaces_category.py::test_overview_pins_workspaces_recovery_copy",
+    "Tests/UI/test_settings_workspaces_category.py::test_change_review_toggle_flips_and_persists",
+    "Tests/UI/test_settings_workspaces_category.py::test_change_review_stale_toggle_reports_conflict_and_refreshes",
+    "Tests/UI/test_settings_workspaces_category.py::test_change_review_unavailable_consent_has_no_toggle",
+    "Tests/UI/test_settings_workspaces_category.py::test_change_review_failed_root_offers_one_retry_without_paths",
+    "Tests/UI/test_settings_workspaces_category.py::test_change_review_preparing_is_explicitly_non_blocking",
+    "Tests/UI/test_settings_workspaces_category.py::test_change_review_git_absent_shows_honest_copy",
+    "Tests/UI/test_settings_workspaces_category.py::test_change_review_global_kill_disclosed_in_settings",
+    "Tests/UI/test_settings_workspaces_category.py::test_settings_archived_label_and_restore_name_preserve_active_workspace",
+    "Tests/UI/test_settings_workspaces_category.py::test_settings_archive_receipt_undo_without_switching",
+    "Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_workspace_lifecycle_feedback_is_visible[rename_error]",
+    "Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_workspace_lifecycle_feedback_is_visible[rename_success]",
+    "Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_workspace_lifecycle_feedback_is_visible[restore_error]",
+    "Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_workspace_lifecycle_feedback_is_visible[archive]",
+    "Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_workspace_lifecycle_feedback_is_visible[create_error]",
+    "Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_partial_create_keeps_the_committed_workspace_clear[retry]",
+    "Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_partial_create_keeps_the_committed_workspace_clear[keep]",
+    "Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_partial_create_keeps_the_committed_workspace_clear[escape]",
+    "Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_workspace_lifecycle_completion_keeps_context[activate]",
+    "Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_workspace_lifecycle_completion_keeps_context[restore]",
+    "Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_workspace_lifecycle_completion_keeps_context[literal_archive]",
+    "Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_create_dialog_uses_the_current_theme_surface[textual-dark]",
+    "Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_create_dialog_uses_the_current_theme_surface[textual-light]",
+    "Tests/UI/test_workspace_archive_review_regressions.py"
+  ],
+  "final_order_sha256": "902b1a8204594c8a4238796743d0844a736567e3868a72c83f84d930b113b57f",
+  "base_commit": "6b947be8288bdb4a92e48339a23b98da81f3ba94",
+  "local_charge_rule": "slowest successful Speech case across listed receipts; final green Media/Context JUnit times; values are raw Windows measurements, not CI predictions",
+  "new_matrix_ci_execution_observed": false,
+  "rebased_dev_entries": 2076,
+  "upstream_added_entries": 42,
+  "upstream_listed_seconds": 1823.4,
+  "upstream_reserve_seconds": 42.79999999999995,
+  "upstream_charged_seconds": 1866.2,
+  "prior_head": "6b947be8288bdb4a92e48339a23b98da81f3ba94",
+  "pinned_dev": "2ff0e9a5e5f29566c92ea3f49c82776b57eacfe9",
+  "prior_snapshot": "pre-rebase-6b947be828/",
+  "arithmetic": {
+    "plugin_seconds": 499.0,
+    "workspace_category_listed_seconds": 682.5,
+    "workspace_lifecycle_listed_seconds": 602.1,
+    "archive_files_seconds": 39.8,
+    "incoming_listed_seconds": 1823.4,
+    "incoming_explicit_reserve_seconds": 42.8,
+    "incoming_charged_seconds": 1866.2,
+    "previous_total_minutes": 499.73995,
+    "rebased_total_minutes": 530.8432833333333
+  },
+  "prior_local_validation_pre_rebase_6b947be828": {
+    "census_checker": {
+      "entries": 2061,
+      "floor": 2061,
+      "passed": true
+    },
+    "checker_replay_tests_before_count": {
+      "passed": 104,
+      "failures": 0,
+      "errors": 0,
+      "skips": 0,
+      "seconds": 53.81,
+      "junit_sha256": "39830559b1a90612220742e27ceea8bcc6437a339ce8188416068fb4553c5b4e"
+    },
+    "affected_count_and_workflow_guards": {
+      "passed": 9,
+      "failures": 0,
+      "errors": 0,
+      "skips": 0,
+      "seconds": 9.78,
+      "junit_sha256": "c694e94b63b0526b177cb92b340340e0abe2a6bced7a5fee16206184a0f58534"
+    },
+    "portable_replay_final_census_matches": true,
+    "portable_replay_base_34_swaps_matches": true,
+    "scoped_git_diff_check": true,
+    "ruff_findings_before": 1,
+    "ruff_findings_after": 1,
+    "ruff_new_findings": 0,
+    "inherited_ruff_finding": "scripts/ui_lane_shard_replay.py B905 zip() without explicit strict=",
+    "format_baseline_files_unchanged": [
+      "Tests/CI/test_ci_queue_pressure_contract.py",
+      "Tests/CI/test_derived_artifacts_workflow.py",
+      "scripts/ui_lane_shard_replay.py"
+    ],
+    "new_reproducer_lint_and_format_pass": true,
+    "full_suite_run": false
+  },
+  "local_validation": {
+    "pinned_dev": "2ff0e9a5e5f29566c92ea3f49c82776b57eacfe9",
+    "census_checker": {
+      "entries": 2103,
+      "floor": 2103,
+      "passed": true
+    },
+    "affected_count_workflow_and_incoming_lane_guards": {
+      "passed": 12,
+      "failures": 0,
+      "errors": 0,
+      "skips": 0,
+      "seconds": 20.72,
+      "junit_sha256": "205f9ed9931ec421b734bd1d620a1071c290bd5783505ac1932556ccceb87b16"
+    },
+    "portable_replay_final_census_matches": true,
+    "portable_replay_prior_census_61_swaps_matches": true,
+    "scoped_git_diff_check": true,
+    "ruff_findings_before": 1,
+    "ruff_findings_after": 1,
+    "ruff_new_findings": 0,
+    "inherited_ruff_finding": "scripts/ui_lane_shard_replay.py B905 zip() without explicit strict=",
+    "format_baseline_files_unchanged": [
+      "Tests/CI/test_ci_queue_pressure_contract.py",
+      "Tests/CI/test_derived_artifacts_workflow.py",
+      "scripts/ui_lane_shard_replay.py"
+    ],
+    "checker_and_current_reproducer_format_pass": true,
+    "full_suite_run": false
+  },
+  "applied_model": {
+    "total_pytest_minutes": 530.8432833333333,
+    "floor_minutes": 13.271082083333331,
+    "maximum_pytest_minutes": 13.287801207276376,
+    "minimum_pytest_minutes": 13.245328695605531,
+    "setup_allowance_minutes": 1.7,
+    "projected_max_job_minutes": 14.987801207276375,
+    "projected_headroom_minutes": 5.012198792723624,
+    "swaps": 61,
+    "shards": 40,
+    "max_parallel": 18,
+    "waves": 3
+  }
+}

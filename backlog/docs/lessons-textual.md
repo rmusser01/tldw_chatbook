@@ -10,6 +10,22 @@ decays into folklore, and folklore gets ignored. If you add one, bring the incid
 
 ---
 
+## Rehydrate presentation metadata when restoring a sanitized draft
+
+**TASK-1378.3, 2026-11-15.** The Speech category migration used its safe
+`SpeechTTSPanelDraftSnapshot.state` as a live constructor seed. That snapshot
+intentionally clears credential/source metadata. Ordinary edits and category
+leave tests passed, but the mounted dirty same-category navigation/recompose
+scenario raised `KeyError('openai')` when the credential row rebuilt. The
+widget's existing restore path preserved draft values and the saved baseline,
+then rehydrated metadata from the supplied seed; the new seed had none.
+
+**What to do.** Keep the sanitized snapshot authoritative for retained edits
+and cheap dirty/count queries. Supply presentation metadata through the
+existing fresh-config/owner seam when reconstructing the form. Exercise a
+dirty same-category round trip through a credential-bearing provider; a
+successful Save or leave alone does not prove that remount can rebuild it.
+
 ## A widget `query_one` can find has not necessarily composed its own children
 
 **TASK-36382, 2026-10-23.** `test_unfed_remount_restores_depth_and_running_state`
@@ -2664,3 +2680,20 @@ nodes had been red for weeks; a `set_focus` wrapper with a short stack, plus a l
 **Incident.** The compact Notes Preview lost its remembered offset after a compact -> wide -> compact round trip on a busy machine. A probe of every `_restore_library_notes_scroll_offset` call showed the whole restore chain (`call_later` and `call_after_refresh` hops) running while the Preview was still 0 wide with `max_scroll_y` 0, so `scroll_to(y=2)` clamped to 0; the Preview laid out seconds later and nothing restored again. A first fix re-queued the last restore through `call_after_refresh` up to 40 more times: all 40 ran in about 200 ms with the owner still unlaid out (45 of 46 restores at range 0), because a hop with no pending layout returns at once. What worked: when the restore clamps, park it on the owner and `watch(owner, "virtual_size", ...)`; the layout that gives the owner its range fires the watcher and the rerun lands.
 
 **What to do.** When a deferred restore depends on a widget's layout, key it on that widget's own layout signal (`virtual_size`, a `Resize`, or a widget message such as `Markdown.TableOfContentsUpdated`), not on a count of refresh hops. Check whether the restore actually held (`round(scroll_y) == target`) instead of assuming it.
+
+## Numeric draft equality does not preserve the editor's raw text (TASK-40969, 2026-11-15)
+
+**Incident.** Mounted Console context-memory regressions showed a temporary sync
+flag allowing queued refresh echoes to insert all nine untouched fields into an
+unrelated dirty draft. The same refresh replaced pending real edits. Reusing the
+existing synchronous watcher and native `prevent(Changed)` addresses event origin,
+but the percentage field also lost keyboard text `85.` to canonical `85`.
+A stricter clean-field probe lost `80.` to `80` even though its semantic value
+equaled the saved ratio and no dirty key remained.
+
+**What to do.** Suppress synthetic messages at their source and track accepted
+values before queued delivery. When projecting numeric draft values back to an
+editor, compare the current text's parsed meaning first: equal meaning can still
+have user-owned formatting, caret and selection. Include semantic-same raw input
+alongside dirty/invalid text in mounted refresh tests; a dirty-key guard alone
+cannot qualify that case.

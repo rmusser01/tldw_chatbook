@@ -499,6 +499,8 @@ ARCHITECTURE_GUARD_TARGETS = (
     "Tests/Backup_Recovery/test_restore_plan_excluded_directories.py",
     # TASK-39153: last, after every sandboxed suite (one bootstrap_profile node).
     "Tests/Architecture/test_persistent_terminal_privacy_boundary.py",
+    # PR3569: mounted bootstrap-profile focus ownership follows sandboxed suites.
+    "Tests/Architecture/test_library_media_wiring.py::test_emptied_page_focus_callback_retains_admitted_owner",
 )
 
 # The 2026-10-25 architecture-review program's tests, in their own job
@@ -1049,7 +1051,7 @@ def _pytest_targets(run: str) -> tuple[str, ...]:
 
 def _assert_ui_capacity(workflow: dict) -> None:
     strategy = workflow["jobs"]["ui-fast-lane"]["strategy"]
-    assert strategy["matrix"] == {"shard": list(range(1, 39))}
+    assert strategy["matrix"] == {"shard": list(range(1, 41))}
     assert strategy.get("max-parallel") == 19
 
 

@@ -487,7 +487,10 @@ _BUDGETS: dict[str, int] = {
     # and checks the route: 5308 -> 5307.
     # 2026-11-13 restack: TASK-40327's in-place Find bar (+6 on its own base)
     # stacked on TASK-40293's landing: 5307 -> 5313 (measured).
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 5313,
+    # 2026-11-15, TASK-37360 integration review: an optional ownership check
+    # guards the final empty-page focus write, preserving default behavior.
+    # Exact 5,320 lines under the owner-authorized rebase size waiver.
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 5320,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only

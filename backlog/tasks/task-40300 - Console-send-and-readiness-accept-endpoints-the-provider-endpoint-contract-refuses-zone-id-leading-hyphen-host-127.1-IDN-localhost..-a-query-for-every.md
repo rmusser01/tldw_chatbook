@@ -1,28 +1,31 @@
 ---
 id: TASK-40300
-title: "Console send and readiness accept endpoints the provider endpoint contract refuses (zone id, leading-hyphen host, 127.1, IDN, localhost.., a query) for every provider"
+title: >-
+  Console send and readiness accept endpoints the provider endpoint contract
+  refuses (zone id, leading-hyphen host, 127.1, IDN, localhost.., a query) for
+  every provider
 status: Done
-created_date: 2026-11-12 19:36
-updated_date: 2026-11-15 00:28
 assignee:
-- '@claude'
+  - '@claude'
+created_date: 2026-11-12 19:36
+updated_date: '2026-11-15T21:52:00Z'
 labels:
-- follow-up
-- security
-- console
-- providers
-- endpoints
-priority: high
-references:
-- tldw_chatbook/Chat/console_provider_gateway.py
-- tldw_chatbook/Chat/console_provider_endpoints.py
-- tldw_chatbook/Chat/console_session_settings.py
-- tldw_chatbook/Chat/console_project_instructions.py
-- tldw_chatbook/Chat/custom_endpoint_registry.py
-- tldw_chatbook/Provider_Contract/provider_endpoint_contract.py
+  - follow-up
+  - security
+  - console
+  - providers
+  - endpoints
 dependencies:
-- TASK-39150
-- TASK-39151
+  - TASK-39150
+  - TASK-39151
+references:
+  - tldw_chatbook/Chat/console_provider_gateway.py
+  - tldw_chatbook/Chat/console_provider_endpoints.py
+  - tldw_chatbook/Chat/console_session_settings.py
+  - tldw_chatbook/Chat/console_project_instructions.py
+  - tldw_chatbook/Chat/custom_endpoint_registry.py
+  - tldw_chatbook/Provider_Contract/provider_endpoint_contract.py
+priority: high
 ---
 
 ## Description
@@ -53,6 +56,7 @@ Found in round 13 of the 2026-10-23 burn-down (security stream, TASK-39150 and T
 
 ## Implementation Plan
 
+<!-- SECTION:PLAN:BEGIN -->
 1. Re-check each cited line on base 26b2e677dd (generic send resolves raw, readiness checks only session/llama values, llama checks use `validate_url`, normalization drops a query, project-instruction identity prefixes `http://` and strips every trailing dot).
 2. One predicate over the contract (`resolve_provider_endpoint(...).errors`) in `console_provider_endpoints.py`; no new rules.
 3. Route through it: readiness `_valid_base_url` and the value it checks (session, config-held, entry); the gateway's generic send (block before the unsaved guard) and `resolve_llamacpp`; the custom endpoint registry's `validate_entry`.
@@ -61,8 +65,12 @@ Found in round 13 of the 2026-10-23 burn-down (security stream, TASK-39150 and T
 6. Mock-transport tests in `Tests/Chat/test_local_server_discovery.py` for vLLM, Ollama, Custom, OpenAI, KoboldCpp, Aphrodite and llama.cpp x session/config/custom entry x the six refused shapes; query/fragment readiness; accepted values unchanged; custom entry no raw fallback; project identity cases. Red first.
 7. Docs: `Docs/User_Guide/console.md` / `settings.md` where they describe which endpoints are refused.
 
+PR #3569 integration verification: the unchanged endpoint rename test failed with NoMatches while its status region was between child removal and remount after a successful native save. Keep the existing real click, three attempts, four-second polling deadline, final assertion, privacy and persistence checks. Treat only NoMatches from the polling predicate as an in-progress projection, qualify a transient missing status and a permanently missing negative control, then rerun the original mounted endpoint journey. ADR required: no. ADR path: N/A. Reason: test-only synchronization repair for the existing asynchronous region replacement, with no product behavior or endpoint policy change.
+<!-- SECTION:PLAN:END -->
+
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 Console's send, readiness, custom endpoint registry and project-instruction identity now refuse exactly what the provider endpoint contract refuses, for every provider.
 - **Premise held on base 26b2e677dd** (cited lines checked): the generic send resolved through `effective_provider_endpoint` with no endpoint check; readiness checked a session value (or llama.cpp's fallback) with `validate_url` plus the contract's scheme rule only, and never a config-held value for the other providers; `resolve_llamacpp` and both `normalize_llamacpp_base_url` copies used `validate_url` and rebuilt the URL without its query; the registry used `validate_url`; project instructions prefixed `http://` to any schemeless value and stripped every trailing dot.
 - **One predicate, no new rules**: `contract_refuses_endpoint(provider_key, endpoint)` in `console_provider_endpoints.py` is `resolve_provider_endpoint(...).errors` (a key the contract cannot name, such as `local-llm`, reads as `custom`). Routed through it:
@@ -204,3 +212,6 @@ Console's send, readiness, custom endpoint registry and project-instruction iden
 - **Docs.** The `meaningful_adapter_base_url` docstring no longer says `huggingface_api` "today wins" or that every key pins only a non-default URL: HuggingFace is always pinned to the URL Console checked. `settings.md`'s Delete row says the switch-conversations copy fires when the entry's URL is not one of the refused URLs.
 - **Runs.** `./scripts/preflight.sh` passes; `check_markup_interpolation.py` OK; module-size, chat-code-identity, screen-size, Agents/Chat boundary and diagnostic-privacy ratchets: 351 passed. Endpoint and gateway files: 61 passed, 1 failed (deepseek, red at base). `Tests/lint/ruff_gate.py` still fails `ASYNC109: 46 > 45`, the same as at the stream base b5020e9a1e.
 - Files (round 7): `Tests/UI/test_settings_custom_endpoint_default.py`, `tldw_chatbook/Chat/console_provider_endpoints.py`, `Docs/User_Guide/settings.md`.
+
+PR3569 current-dev qualification repaired only the mounted endpoint test polling helper: catch NoMatches around its done predicate during section recomposition, retaining three native click attempts, each four-second window, the final assertion, all endpoint security/persistence assertions and native profile guards. Final helper controls pass transient absence after two checks and still fail permanent absence after three clicks and 12.10 simulated seconds. The unchanged original mounted case passes on the final helper: parent JUnit a2451a47ab2a7348e40d6524cc1904d681ae1a1d34bb1dec01ecfff4a88bac14 and private child b0bd80f6d6e487f58e4384013cb9837c69bc20f8c35b89248078507d3c7fa5a7; source cdb7118b49d49cff9526422b7de2e6f33159fbb8486956edd3bb0d3697ca5f97. Ruff and whitespace checks pass. ADR required: no; test fixture polling correction only. Earlier failure remains documented in Docs/superpowers/qa/2026-11-14-textual-pattern-followups/ci-resync-cc6006fc.md.
+<!-- SECTION:NOTES:END -->

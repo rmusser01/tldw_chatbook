@@ -1,0 +1,422 @@
+{
+  "pinned_dev": "cc6006fcf59328353004206bba8724c399216749",
+  "upstream_decision_commit": "46a9132c3cdd808c8da8bcac5d010c4ebaffc9f1",
+  "upstream_measured_total_minutes": 492.94325261666665,
+  "source_runs": [
+    "43551098837",
+    "43551312407",
+    "43551685833",
+    "43551904218",
+    "43551907473",
+    "43557511010",
+    "43565526841",
+    "43567900224",
+    "43579542540",
+    "43580598818",
+    "43581060650",
+    "43595218971",
+    "43595451755",
+    "43595456109",
+    "43595646381",
+    "43598709405",
+    "43607471818",
+    "43612634465",
+    "43613613143",
+    "43614165778",
+    "43620841946",
+    "43621134977",
+    "43621261326",
+    "43628541939",
+    "43632652505"
+  ],
+  "source_green_jobs": 867,
+  "upstream_envelope_minutes": 492.94325261666665,
+  "upstream_reserve_minutes": 0.0,
+  "upstream_cost_factor": 1.0,
+  "upstream_entries": 2145,
+  "added_entries": 27,
+  "total_entries": 2172,
+  "shards": 40,
+  "max_parallel": 19,
+  "waves": 3,
+  "eligible_test_jobs": 52,
+  "peak_concurrent_test_runners": 31,
+  "peak_including_perf_guard": 32,
+  "applied_swaps": 36,
+  "final_order_sha256": "90d6a7a6486eb037c140ff1bb374f89e8e17f3b5bf61de40864e716bc86ee10f",
+  "inputs_sha256": "eafdfb06f0f450d4eaacba21b892fcbfcb421ba8fd5175054024693db7e5c3ee",
+  "inserted_selector_order": [
+    "Tests/UI/test_library_media_filter_typing.py::test_paced_native_typing_keeps_prefix_focus_and_caret",
+    "Tests/UI/test_library_media_filter_typing.py::test_zero_results_backspace_and_clear_keep_the_filter_control[wide]",
+    "Tests/UI/test_library_media_filter_typing.py::test_zero_results_backspace_and_clear_keep_the_filter_control[compact]",
+    "Tests/UI/test_library_media_filter_typing.py::test_older_completion_keeps_newer_native_edit_and_selection",
+    "Tests/UI/test_library_media_filter_typing.py::test_accepted_older_completion_keeps_newer_native_draft",
+    "Tests/UI/test_settings_context_memory_event_origin.py::test_context_refresh_keeps_nine_clean_fields_out_of_unrelated_draft",
+    "Tests/UI/test_settings_context_memory_event_origin.py::test_context_validation_save_and_confirmed_revert_use_real_writer",
+    "Tests/UI/test_settings_context_memory_event_origin.py::test_context_queued_real_edits_survive_refresh_for_all_nine_controls",
+    "Tests/UI/test_settings_context_memory_event_origin.py::test_context_refresh_preserves_raw_percent_and_editing_context",
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_category_leave_outcome[discard-True]",
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_category_leave_outcome[save-True]",
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_category_leave_outcome[save-False]",
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_pending_edit_capture_rejects_older_queued_projection",
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_repaint_uses_snapshot_without_collecting_fields",
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_snapshot_cleanup_is_dirty_even_without_counted_fields[False]",
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_snapshot_cleanup_is_dirty_even_without_counted_fields[True]",
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_actions_capture_pending_edit_before_changed_delivery",
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_widget_save_captures_pending_edit_in_shell",
+    "Tests/UI/test_settings_speech_tts_panel.py::test_dirty_speech_category_cancel_preserves_owner_draft_and_focus",
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_model_library_route_bypass_contract[True]",
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_model_library_route_bypass_contract[False]",
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_navigation_rejects_extra_payload_contract[extra0]",
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_navigation_rejects_extra_payload_contract[extra1]",
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_navigation_rejects_extra_payload_contract[extra2]",
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_model_library_cleanup_fence_contract",
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_same_category_navigation_contract[deep-link]",
+    "Tests/UI/test_settings_speech_category_ownership.py::test_speech_same_category_navigation_contract[search]"
+  ],
+  "upstream_median_model_offsets": {
+    "github_hosted_minutes": 1.82,
+    "self_hosted_minutes": 0.58
+  },
+  "scenarios": [
+    {
+      "windows_multiplier": 1.0,
+      "shards": 38,
+      "total_minutes": 516.0432026166667,
+      "floor_minutes": 13.580084279385966,
+      "target_minutes": 13.0,
+      "feasible": false
+    },
+    {
+      "windows_multiplier": 1.0,
+      "shards": 39,
+      "total_minutes": 516.0432026166667,
+      "floor_minutes": 13.23187699017094,
+      "target_minutes": 13.0,
+      "feasible": false
+    },
+    {
+      "windows_multiplier": 1.0,
+      "shards": 40,
+      "total_minutes": 516.0432026166667,
+      "floor_minutes": 12.901080065416668,
+      "target_minutes": 13.0,
+      "feasible": true,
+      "maximum_minutes": 12.997614133333334,
+      "minimum_minutes": 12.73966675,
+      "swaps": 36
+    },
+    {
+      "windows_multiplier": 1.0,
+      "shards": 41,
+      "total_minutes": 516.0432026166667,
+      "floor_minutes": 12.586419576016262,
+      "target_minutes": 13.0,
+      "feasible": true,
+      "maximum_minutes": 12.992862916666667,
+      "minimum_minutes": 12.16316265,
+      "swaps": 29
+    },
+    {
+      "windows_multiplier": 2.61,
+      "shards": 38,
+      "total_minutes": 553.2341221166666,
+      "floor_minutes": 14.5587926872807,
+      "target_minutes": 13.0,
+      "feasible": false
+    },
+    {
+      "windows_multiplier": 2.61,
+      "shards": 39,
+      "total_minutes": 553.2341221166666,
+      "floor_minutes": 14.18549031068376,
+      "target_minutes": 13.0,
+      "feasible": false
+    },
+    {
+      "windows_multiplier": 2.61,
+      "shards": 40,
+      "total_minutes": 553.2341221166666,
+      "floor_minutes": 13.830853052916666,
+      "target_minutes": 13.0,
+      "feasible": false
+    },
+    {
+      "windows_multiplier": 2.61,
+      "shards": 43,
+      "total_minutes": 553.2341221166666,
+      "floor_minutes": 12.865909816666665,
+      "target_minutes": 13.0,
+      "feasible": true,
+      "maximum_minutes": 12.9953648,
+      "minimum_minutes": 12.729137150000001,
+      "swaps": 34
+    },
+    {
+      "windows_multiplier": 2.61,
+      "shards": 44,
+      "total_minutes": 553.2341221166666,
+      "floor_minutes": 12.573502775378786,
+      "target_minutes": 13.0,
+      "feasible": true,
+      "maximum_minutes": 12.905357233333332,
+      "minimum_minutes": 12.293153233333333,
+      "swaps": 25
+    },
+    {
+      "windows_multiplier": 2.61,
+      "shards": 42,
+      "floor_minutes": 13.172241002777778,
+      "target_minutes": 13.0,
+      "feasible": false
+    }
+  ],
+  "runner_source_counts": {
+    "github_hosted_runs": 17,
+    "self_hosted_runs": 8,
+    "github_hosted_green_jobs": 599,
+    "self_hosted_green_jobs": 268
+  },
+  "source_run_inventory": [
+    {
+      "id": 43551098837,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/43551098837",
+      "runner_kinds": {
+        "github-hosted": 36
+      }
+    },
+    {
+      "id": 43551312407,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/43551312407",
+      "runner_kinds": {
+        "github-hosted": 35
+      }
+    },
+    {
+      "id": 43551685833,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/43551685833",
+      "runner_kinds": {
+        "github-hosted": 35
+      }
+    },
+    {
+      "id": 43551904218,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/43551904218",
+      "runner_kinds": {
+        "github-hosted": 35
+      }
+    },
+    {
+      "id": 43551907473,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/43551907473",
+      "runner_kinds": {
+        "github-hosted": 36
+      }
+    },
+    {
+      "id": 43557511010,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/43557511010",
+      "runner_kinds": {
+        "self-hosted": 34
+      }
+    },
+    {
+      "id": 43565526841,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/43565526841",
+      "runner_kinds": {
+        "self-hosted": 35
+      }
+    },
+    {
+      "id": 43567900224,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/43567900224",
+      "runner_kinds": {
+        "github-hosted": 35
+      }
+    },
+    {
+      "id": 43579542540,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/43579542540",
+      "runner_kinds": {
+        "github-hosted": 36
+      }
+    },
+    {
+      "id": 43580598818,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/43580598818",
+      "runner_kinds": {
+        "github-hosted": 36
+      }
+    },
+    {
+      "id": 43581060650,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/43581060650",
+      "runner_kinds": {
+        "github-hosted": 35
+      }
+    },
+    {
+      "id": 43595218971,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/43595218971",
+      "runner_kinds": {
+        "github-hosted": 36
+      }
+    },
+    {
+      "id": 43595451755,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/43595451755",
+      "runner_kinds": {
+        "github-hosted": 34
+      }
+    },
+    {
+      "id": 43595456109,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/43595456109",
+      "runner_kinds": {
+        "github-hosted": 35
+      }
+    },
+    {
+      "id": 43595646381,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/43595646381",
+      "runner_kinds": {
+        "github-hosted": 35
+      }
+    },
+    {
+      "id": 43598709405,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/43598709405",
+      "runner_kinds": {
+        "github-hosted": 34
+      }
+    },
+    {
+      "id": 43607471818,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/43607471818",
+      "runner_kinds": {
+        "github-hosted": 36
+      }
+    },
+    {
+      "id": 43612634465,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/43612634465",
+      "runner_kinds": {
+        "self-hosted": 36
+      }
+    },
+    {
+      "id": 43613613143,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/43613613143",
+      "runner_kinds": {
+        "github-hosted": 35
+      }
+    },
+    {
+      "id": 43614165778,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/43614165778",
+      "runner_kinds": {
+        "github-hosted": 35
+      }
+    },
+    {
+      "id": 43620841946,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/43620841946",
+      "runner_kinds": {
+        "self-hosted": 36
+      }
+    },
+    {
+      "id": 43621134977,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/43621134977",
+      "runner_kinds": {
+        "self-hosted": 36
+      }
+    },
+    {
+      "id": 43621261326,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/43621261326",
+      "runner_kinds": {
+        "self-hosted": 34
+      }
+    },
+    {
+      "id": 43628541939,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/43628541939",
+      "runner_kinds": {
+        "self-hosted": 23
+      }
+    },
+    {
+      "id": 43632652505,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/43632652505",
+      "runner_kinds": {
+        "self-hosted": 34
+      }
+    }
+  ],
+  "assumptions": [
+    "Freshupstream25-run867-green-jobwindowrecovered;17hostedand8selfhostedrunsets.",
+    "FailedUIjobsexcluded;2rerunarchivescompletedfromattempt2becauseattempt1is404;3existingcachedrunsreused.",
+    "Actual492.9432526upstreamminutesexceedrounded492.8sousenoadditionalupstreamreserve/factor1.",
+    "All111upstreamserialchargesand27Windowschargesareexplicitseparatefrommeasured2034baseweights.",
+    "Windows2.61appliesonlyto27casesasanuncalibratedsensitivity.",
+    "Medianupstreamoffsets1.82hosted/.58selfareestimates,notmaximumguarantees.",
+    "40shardswith19parallelcreates3waves;newmatrixexecutionand12postchangeobservationsremainpending."
+  ],
+  "validation": {
+    "scope": "Verified 2172-selector resync model; the mounted focus regression is routed separately in the Architecture guard lane.",
+    "census_checker": {
+      "passed": true,
+      "entries": 2172,
+      "floor": 2172
+    },
+    "targeted_ci_cases": {
+      "passed": 15,
+      "failures": 0,
+      "errors": 0,
+      "skips": 0,
+      "seconds": 61.41,
+      "junit_sha256": "2bf8bea306696190755533575ceb0d80e6af710e6be1e370d2afdf6349be7942"
+    },
+    "portable_final_replay_exact": true,
+    "portable_upstream_replay_36_swaps_exact": true,
+    "ruff_baseline_findings": 1,
+    "ruff_current_findings": 1,
+    "new_ruff_findings": 0,
+    "inherited_format_debt_files": [
+      "scripts/ui_lane_shard_replay.py",
+      "Tests/CI/test_ci_queue_pressure_contract.py",
+      "Tests/CI/test_derived_artifacts_workflow.py"
+    ],
+    "checker_and_new_reproducer_format_pass": true,
+    "scoped_diff_check": true,
+    "full_suite_run": false,
+    "new_matrix_ci_execution_observed": false
+  },
+  "architecture_route": {
+    "metadata_file": "architecture-route.json",
+    "metadata_sha256": "f7cf6a9e207366e4e436ff33ac4d8f59901108784e264492213ae35793a2c4d6",
+    "selector": "Tests/Architecture/test_library_media_wiring.py::test_emptied_page_focus_callback_retains_admitted_owner",
+    "passed_cases": 1,
+    "ui_census_changed": false,
+    "route_contract_checks_pending": false,
+    "routing_validation": {
+      "passed": 3,
+      "failures": 0,
+      "errors": 0,
+      "skips": 0,
+      "seconds": 35.05,
+      "junit_sha256": "a76dc837cc43fd3287797521dadd27075b945b3bddd6ea129c93399bff223560",
+      "scope": "Final bootstrap-tail Architecture lane mirror and ordering, plus selector resolution and disjoint targets. These contracts were unchanged by the later loop-capture correction.",
+      "ui_census_entries": 2172,
+      "ui_model_unchanged": true
+    },
+    "source_qualification_limit": "One final mounted bootstrap-profile case loops through 12 ownership scenarios and takes 68.533 seconds in the final receipt. Earlier mounted and unbound timings are historical. The function selector, lane tail, UI census and capacity model remain unchanged.",
+    "held_boundary_scenarios": 12,
+    "local_selector_seconds": 68.533,
+    "qualification_run_seconds": 79.63,
+    "qualification_run_junit_sha256": "5d9d9b9a7567f810d54b445ab30295884285084f66887245a26d53d86b98df12",
+    "route_order_pending_review": false,
+    "final_selector_test_file_sha256": "db39a65102abc45ec227b3bf4f1327373263e5ec1e791b4454d58a6179712af6"
+  }
+}

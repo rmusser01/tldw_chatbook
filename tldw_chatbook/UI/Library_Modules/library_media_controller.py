@@ -4794,16 +4794,19 @@ class LibraryMediaController:
 
         return _restore_library_media_focus(self, previous, globals())
 
-    def _land_library_media_emptied_page(self) -> None:
+    def _land_library_media_emptied_page(
+        self, *, is_current: Callable[[], bool] | None = None
+    ) -> None:
         """Land focus a Reader reset stranded on the emptied page (TASK-40293).
 
-        Called right after the reset's whole-screen recompose is requested.
+        Called after the reset requests or completes results recomposition.
         Focus the user holds outside Media's own panes (the rail search box,
         the nav bar) is left alone. Focus in the Items or Reader pane, on a
         pane grip (Textual parks it there after a prune) or nowhere lands on
         the page's recovery action after the recompose. No list-entry arm:
         Textual's queued grip focus event revoked one. One attempt, no retry:
         a later one could override a user's move or a route switch.
+        An optional caller predicate rechecks ownership at the final write.
         """
 
         def stranded(widget: Widget | None) -> bool:
@@ -4820,7 +4823,11 @@ class LibraryMediaController:
             )
 
         def land() -> None:
-            if not self._screen.is_attached or not owns_focus():
+            if (
+                not self._screen.is_attached
+                or not owns_focus()
+                or (is_current is not None and not is_current())
+            ):
                 return
             target = self._screen._library_media_empty_list_fallback_target()
             if (

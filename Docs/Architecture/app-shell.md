@@ -141,6 +141,27 @@ edits; ordinary refresh retains Input identity, focus and selection. Existing
 Settings draft, validation and Save/confirmed Revert writers retain authority
 under ADR-033/161; this bookkeeping introduces no persistence boundary.
 
+The four context-memory Inputs and five Selects share that pending-edit watcher
+and native message suppression (TASK-40969). Their handlers discard stale and
+projection echoes. Refresh compares numeric/percentage semantics before writing
+an Input, so accepted raw text such as `80.` or invalid `.` remains in the editor
+with its caret/selection, including formatting-only edits without a dirty key.
+The existing percentage conversion, validation and staged Save/confirmed Revert
+remain authoritative under ADR-052/303; `staged_save_ack.py` still captures live
+controls at save boundaries.
+
+`UI/Settings_Modules/category_panels.py::SpeechTTSCategoryPanel` owns Speech
+rendering, scope/help, provider navigation and category/destination leave routing
+(TASK-1378.3). The mounted widget retains global validation, Save/Revert and
+managed-reference cleanup under ADR-303/304; Studio preferences stay separate.
+Rail/banner/count queries share the detached safe draft snapshot, including the
+existing cleanup-only dirty policy (which can have zero counted fields). Actions
+capture pending controls and publish synchronously through one optional widget
+callback. Queued draft messages carry their owner; a resolved/replaced owner or
+older complete revision cannot overwrite the shell's current projection. Runtime
+workers, exact audio.cpp route bypass, leases and retained-state storage stay with
+their existing screen/app owners.
+
 `SettingsScreen._category_action_supported()` supplies category capabilities
 to action dispatch, guided-button composition and the custom footer/F1 help
 (TASK-35678). Focus, dirty state, worker fences, validation and destructive

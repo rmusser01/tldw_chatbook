@@ -374,11 +374,11 @@ from ...TTS.audio_cpp_package_scanner import (
 )
 from ...TTS.audio_cpp_recipes import AudioCppMatchState
 from ..Speech.speech_runtime_status import (
-    speech_tts_navigation_target_from_context,
-    speech_tts_runtime_status_store,
+    speech_tts_navigation_target_from_context,  # noqa: F401 -- late-bound Speech category panel seam
+    speech_tts_runtime_status_store,  # noqa: F401 -- late-bound Speech category panel seam
 )
 from ..Speech.speech_settings_contracts import (
-    SpeechTTSNavigationIntent,
+    SpeechTTSNavigationIntent,  # noqa: F401 -- late-bound Speech category panel seam
     SpeechTTSNavigationTarget,
 )
 from ...Internal_Prompts import authoring as internal_prompts_authoring
@@ -453,8 +453,8 @@ from .settings_storage_defaults import (
 from ..Speech.settings_speech_tts import (
     BUILT_IN_TTS_PROVIDER_ORDER,
     GlobalSpeechTTSState,
-    load_global_speech_tts_state,
-    process_provider_test_evidence_store,
+    load_global_speech_tts_state,  # noqa: F401 -- late-bound Speech category panel seam
+    process_provider_test_evidence_store,  # noqa: F401 -- late-bound Speech category panel seam
 )
 from ..Navigation.main_navigation import NavigateToScreen
 from ..Navigation.conversation_settings_navigation import (
@@ -4006,7 +4006,7 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_provider_model_value = False
         self._syncing_provider_manual = False
         self._syncing_provider_selection = False
-        self._pending_console_input_edits = WeakKeyDictionary[Input, list[str]]()
+        self._pending_console_input_edits = WeakKeyDictionary[Input | Select, list[object]]()
         self._syncing_console_thinking_visibility = False
         toggle_writes = getattr(app_instance, "_settings_console_toggle_writes", None)
         if toggle_writes is None:
@@ -4028,7 +4028,6 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_console_rail_layout_scope = False
         self._syncing_console_rail_label_style = False
         self._syncing_console_defaults = False
-        self._syncing_console_context_memory = False
         self._syncing_console_background_effects = False
         self._syncing_console_os_notifications = False
         self._syncing_provider_context_window = False
@@ -4182,6 +4181,8 @@ class SettingsScreen(BaseAppScreen):
         self._speech_tts_draft_state: GlobalSpeechTTSState | None = None
         self._speech_tts_original_state: GlobalSpeechTTSState | None = None
         self._speech_tts_draft_snapshot: SpeechTTSPanelDraftSnapshot | None = None
+        self._speech_tts_draft_owner: SpeechTTSSettingsPanel | None = None
+        self._speech_tts_closed_owner: SpeechTTSSettingsPanel | None = None
         self._speech_tts_leave_in_progress = False
         self._speech_tts_leave_bypass = False
         self._theme_leave_in_progress = False
@@ -4412,6 +4413,13 @@ class SettingsScreen(BaseAppScreen):
         for panel in self.query(_HOOKS_PANEL_SELECTOR):
             panel.capture()
         state["hooks_snapshot"] = self._hooks_snapshot
+        if self.active_category == SettingsCategoryId.SPEECH_TTS.value:
+            try:
+                panel = self.query_one(SpeechTTSSettingsPanel)
+            except QueryError:
+                pass
+            else:
+                CATEGORY_PANELS[SettingsCategoryId.SPEECH_TTS].capture(self, panel)
         state["settings_drafts"] = copy.deepcopy(self._settings_drafts)
         state["category_panel_states"] = copy.deepcopy(self._category_panel_states)
         if self._advanced_config_settings is not None:
@@ -4422,13 +4430,6 @@ class SettingsScreen(BaseAppScreen):
             except QueryError:
                 pass
             state["raw_config_session"] = self._advanced_config_settings
-        if self.active_category == SettingsCategoryId.SPEECH_TTS.value:
-            try:
-                panel = self.query_one(SpeechTTSSettingsPanel)
-            except QueryError:
-                pass
-            else:
-                self._speech_tts_draft_snapshot = panel.draft_snapshot()
         if self._speech_tts_draft_snapshot is not None:
             # replace() copies every field, so a new one cannot be dropped.
             state["speech_tts_panel_draft"] = replace(self._speech_tts_draft_snapshot)
@@ -5085,7 +5086,8 @@ class SettingsScreen(BaseAppScreen):
         ownership = self._ownership_record(category)
         badge = self._persistence_badge(category)
         badge_note = f"Save contract: {badge}."
-        if badge.startswith(("Draft", "Pending")) and category is not SettingsCategoryId.SPEECH_TTS:
+        panel = CATEGORY_PANELS.get(category)
+        if badge.startswith(("Draft", "Pending")) and (panel is None or panel.keeps_draft_on_category_switch):
             badge_note += (  # TASK-33002.10 (Pending: Network, TASK-1378.1): no room on the State line.
                 " Switching categories keeps the draft; the rail marks it with *."
             )
@@ -10632,23 +10634,8 @@ class SettingsScreen(BaseAppScreen):
 
     @staticmethod
     def _speech_tts_provider_from_search(query_text: str) -> str | None:
-        """Return a canonical built-in TTS provider named by a search query."""
-        query = query_text.strip().lower()
-        aliases = {
-            "audio.cpp": "audio_cpp",
-            "audio_cpp": "audio_cpp",
-            "openai": "openai",
-            "elevenlabs": "elevenlabs",
-            "kokoro": "kokoro",
-            "chatterbox": "chatterbox",
-            "higgs": "higgs",
-            "alltalk": "alltalk",
-            "omnivoice": "omnivoice",
-        }
-        for alias, provider_id in aliases.items():
-            if alias in query:
-                return provider_id
-        return None
+        """Compatibility seam for provider search aliases."""
+        return CATEGORY_PANELS[SettingsCategoryId.SPEECH_TTS].provider_from_search(query_text)
 
     def _submit_category_search(self, query_text: str) -> None:
         query_text = self._sanitize_category_search_query(query_text)
@@ -10656,15 +10643,11 @@ class SettingsScreen(BaseAppScreen):
         self._apply_category_search_filter()
         category_values = self._filtered_category_values(query_text)
         if category_values:
-            speech_target: SpeechTTSNavigationTarget | None = None
-            if category_values[0] == SettingsCategoryId.SPEECH_TTS.value:
-                provider_id = self._speech_tts_provider_from_search(query_text)
-                if provider_id in BUILT_IN_TTS_PROVIDER_ORDER:
-                    speech_target = SpeechTTSNavigationTarget(provider_id)
-                    self._stage_speech_tts_navigation_target(speech_target)
-            self._select_category(category_values[0], restore_focus=True)
-            if speech_target is not None:
-                self._after_category_panes(self._apply_speech_tts_navigation_context)
+            registered = CATEGORY_PANELS.get(category_values[0])
+            if registered is None or not registered.navigate(
+                self, registered.search_navigation_context(query_text)
+            ):
+                self._select_category(category_values[0], restore_focus=True)
             # task-1715: if the query named a field, land ON the field --
             # focusing it also fires its inspector guidance. TASK-23109:
             # only when the match CAME from the field tier -- typing a
@@ -10798,13 +10781,6 @@ class SettingsScreen(BaseAppScreen):
                 return f"State: {unsaved} | Needs correction: {validation.message}"
             if category is SettingsCategoryId.ADVANCED_CONFIG:
                 return f"State: {unsaved} | Draft kept when you leave; use raw editor controls."
-            if category is SettingsCategoryId.SPEECH_TTS:
-                # task-2708: this category resolves its draft through the
-                # leave modal instead of carrying it across a category switch.
-                return (
-                    f"State: {unsaved} | Leaving Speech & TTS resolves this "
-                    "draft: save or discard first."
-                )
             registered = CATEGORY_PANELS.get(category)
             if self._category_action_supported(category, "revert") and (
                 registered is None or registered.scope_text(self).banner_revert_hint
@@ -19967,7 +19943,7 @@ class SettingsScreen(BaseAppScreen):
                     MODEL_FIELD_LABELS["conversation_budget_mode"],
                     classes="settings-input-label",
                 )
-                yield Select(
+                yield self._tracked_console_select(
                     [
                         ("Automatic", ContextBudgetMode.AUTOMATIC.value),
                         ("Custom", ContextBudgetMode.CUSTOM.value),
@@ -19980,7 +19956,7 @@ class SettingsScreen(BaseAppScreen):
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static("Conversation max tokens", classes="settings-input-label")
-                yield Input(
+                yield self._tracked_console_input(
                     value=self._console_input_value(
                         self._console_behavior_value("conversation_budget_tokens")
                     ),
@@ -19994,7 +19970,7 @@ class SettingsScreen(BaseAppScreen):
                     MODEL_FIELD_LABELS["compaction_mode"],
                     classes="settings-input-label",
                 )
-                yield Select(
+                yield self._tracked_console_select(
                     [
                         ("Ask", ContextCompactionMode.ASK.value),
                         ("Automatic", ContextCompactionMode.AUTOMATIC.value),
@@ -20008,7 +19984,7 @@ class SettingsScreen(BaseAppScreen):
                 )
             with Horizontal(classes="settings-input-row settings-select-row"):
                 yield Static("Representation", classes="settings-input-label")
-                yield Select(
+                yield self._tracked_console_select(
                     [
                         (
                             "Text summary",
@@ -20039,7 +20015,7 @@ class SettingsScreen(BaseAppScreen):
             )
             with Horizontal(classes="settings-input-row"):
                 yield Static("Compact at (%)", classes="settings-input-label")
-                yield Input(
+                yield self._tracked_console_input(
                     value=format_ratio_percent(
                         self._console_behavior_value("compaction_trigger_ratio")
                     ),
@@ -20052,7 +20028,7 @@ class SettingsScreen(BaseAppScreen):
                     MODEL_FIELD_LABELS["compaction_target_ratio"],
                     classes="settings-input-label",
                 )
-                yield Input(
+                yield self._tracked_console_input(
                     value=format_ratio_percent(
                         self._console_behavior_value("compaction_target_ratio")
                     ),
@@ -20062,7 +20038,7 @@ class SettingsScreen(BaseAppScreen):
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static("Summary response max", classes="settings-input-label")
-                yield Input(
+                yield self._tracked_console_input(
                     value=self._console_input_value(
                         self._console_behavior_value("compaction_summary_max_tokens")
                     ),
@@ -20078,7 +20054,7 @@ class SettingsScreen(BaseAppScreen):
             )
             with Horizontal(classes="settings-input-row settings-select-row"):
                 yield Static("If compaction fails", classes="settings-input-label")
-                yield Select(
+                yield self._tracked_console_select(
                     [
                         ("Stop and ask", CompactionFailureBehavior.STOP_AND_ASK.value),
                         (
@@ -20099,7 +20075,7 @@ class SettingsScreen(BaseAppScreen):
                     MODEL_FIELD_LABELS["compaction_carry_forward_mode"],
                     classes="settings-input-label",
                 )
-                yield Select(
+                yield self._tracked_console_select(
                     CARRY_FORWARD_OPTIONS,
                     value=str(
                         self._console_behavior_value("compaction_carry_forward_mode")
@@ -22759,56 +22735,6 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             return None
 
-    def _render_speech_tts_detail(self) -> ComposeResult:
-        """Speech & TTS's detail pane, rendered for its registered adapter."""
-        (
-            audio_cpp_observation,
-            provider_configuration_revisions,
-            provider_runtime_revisions,
-            provider_applied_configuration_revisions,
-        ) = self._speech_tts_cached_runtime_state()
-        try:
-            app_config = get_runtime_config_snapshot().values
-            speech_tts_config = (
-                app_config if isinstance(app_config, Mapping) else {}
-            )
-            speech_tts_state = load_global_speech_tts_state(speech_tts_config)
-        except (OSError, TypeError, ValueError):
-            speech_tts_config = {}
-            speech_tts_state = load_global_speech_tts_state({})
-        if not self._speech_tts_profile_choices_requested:
-            self._speech_tts_profile_choices_requested = True
-            self._load_speech_tts_default_profile_choices()
-        yield SpeechTTSSettingsPanel(
-            state=self._speech_tts_draft_state or speech_tts_state,
-            original_state=self._speech_tts_original_state,
-            configure_provider=self._speech_tts_configure_provider,
-            draft_snapshot=self._speech_tts_draft_snapshot,
-            profiles=self._speech_tts_profile_choices,
-            profiles_unavailable=self._speech_tts_profile_choices_unavailable,
-            config_snapshot=speech_tts_config,
-            audio_cpp_observation=audio_cpp_observation,
-            audio_cpp_configuration_revision=provider_runtime_revisions.get(
-                "audio_cpp"
-            ),
-            provider_configuration_revisions=provider_configuration_revisions,
-            provider_runtime_revisions=provider_runtime_revisions,
-            provider_applied_configuration_revisions=(
-                provider_applied_configuration_revisions
-            ),
-            runtime_status_store=speech_tts_runtime_status_store(self.app_instance),
-            provider_test_evidence=process_provider_test_evidence_store(
-                self.app_instance
-            ),
-            audio_cpp_result_cleanup_pending=(
-                self.audio_cpp_result_cleanup_pending
-            ),
-            audio_cpp_result_cleanup_mounted=(
-                self._mark_audio_cpp_result_panel_mounted
-            ),
-            id="settings-speech-tts-panel",
-        )
-
     def _render_detail_pane(self) -> ComposeResult:
         category = SettingsCategoryId(self.active_category)
         if (registered := CATEGORY_PANELS.get(category)) is not None:
@@ -24300,26 +24226,6 @@ class SettingsScreen(BaseAppScreen):
                 "Ignoring unknown Settings navigation category: %s", category_value
             )
             return
-        if category_value == SettingsCategoryId.SPEECH_TTS.value:
-            allowed_keys = {"category", "provider", "intent"}
-            if not set(context).issubset(allowed_keys):
-                logger.debug("Ignoring unsafe Speech Settings navigation context")
-                return
-            navigation_target: SpeechTTSNavigationTarget | None = None
-            if "provider" in context or "intent" in context:
-                navigation_target = speech_tts_navigation_target_from_context(
-                    {key: value for key, value in context.items() if key != "category"}
-                )
-                if navigation_target is None:
-                    logger.debug("Ignoring invalid Speech Settings navigation target")
-                    return
-                self._stage_speech_tts_navigation_target(navigation_target)
-            else:
-                self._speech_tts_navigation_target = None
-            self._clear_navigation_provider_context()
-            self._select_category(category_value, restore_focus=True)
-            self._after_category_panes(self._apply_speech_tts_navigation_context)
-            return
         if category_value == SettingsCategoryId.TOOLS.value:
             # Bounds live in the hub module; None = reject, {} = no state.
             view_state = parse_tools_navigation_context(context)
@@ -24440,53 +24346,9 @@ class SettingsScreen(BaseAppScreen):
         self._update_provider_return_widgets()
         self._focus_navigation_provider_field(target.field)
 
-    def _stage_speech_tts_navigation_target(
-        self,
-        target: SpeechTTSNavigationTarget,
-    ) -> None:
-        """Cache a target only when no mounted panel can guard the switch."""
-
-        self._speech_tts_navigation_target = target
-        try:
-            self.query_one(
-                "#settings-speech-tts-panel",
-                SpeechTTSSettingsPanel,
-            )
-        except QueryError:
-            self._speech_tts_configure_provider = target.provider_id
-
     def _apply_speech_tts_navigation_context(self) -> None:
-        """Restore a bounded Speech provider/intent without invoking work."""
-        from ...Widgets.select_values import assign_select_value
-
-        target = self._speech_tts_navigation_target
-        if (
-            target is None
-            or self.active_category != SettingsCategoryId.SPEECH_TTS.value
-        ):
-            return
-        try:
-            provider_select = self.query_one(
-                "#settings-speech-configure-provider",
-                Select,
-            )
-            if provider_select.value != target.provider_id:
-                # TASK-32533: the target's provider id is validated against
-                # BUILT_IN_TTS_PROVIDER_IDS, but this select is built from the
-                # separate BUILT_IN_TTS_PROVIDER_ORDER display tuple -- the two
-                # are hand-maintained, and a value only one of them lists would
-                # raise InvalidSelectValueError here.
-                assign_select_value(provider_select, target.provider_id)
-            focus_selector = (
-                "#settings-speech-audio_cpp-base-url"
-                if target.provider_id == "audio_cpp"
-                and target.intent is SpeechTTSNavigationIntent.CONFIGURE
-                else "#settings-speech-configure-provider"
-            )
-            self.query_one(focus_selector).focus()
-        except QueryError:
-            return
-        self._speech_tts_navigation_target = None
+        """Compatibility seam for bounded provider navigation."""
+        CATEGORY_PANELS[SettingsCategoryId.SPEECH_TTS].apply_navigation_target(self)
 
     def _apply_navigation_provider_context(
         self,
@@ -24617,19 +24479,8 @@ class SettingsScreen(BaseAppScreen):
         ):
             self._speech_tts_model_library_route_token = None
             return True
-        if self.active_category != SettingsCategoryId.SPEECH_TTS.value:
-            return True
-        try:
-            panel = self.query_one(
-                "#settings-speech-tts-panel",
-                SpeechTTSSettingsPanel,
-            )
-        except QueryError:
-            return True
-        allowed = await panel.confirm_leave()
-        if allowed:
-            self._clear_speech_tts_draft_cache()
-        return allowed
+        current = CATEGORY_PANELS.get(self.active_category)
+        return await current.confirm_leave(self) if current is not None else True
 
     @on(NavigateToScreen)
     def track_speech_tts_navigation_attempt(self, message: NavigateToScreen) -> None:
@@ -25561,36 +25412,12 @@ class SettingsScreen(BaseAppScreen):
         """Forget a logically resolved Speech draft before its pane is removed."""
 
         category = SettingsCategoryId.SPEECH_TTS
+        self._speech_tts_closed_owner = self._speech_tts_draft_owner
         self._speech_tts_draft_state = None
         self._speech_tts_original_state = None
         self._speech_tts_draft_snapshot = None
         self._settings_drafts.pop(category, None)
         self._update_draft_status_widgets(category)
-
-    async def _confirm_speech_tts_category_leave(
-        self,
-        category_value: str,
-        restore_focus: bool,
-    ) -> None:
-        """Resolve the Speech draft before replacing its category pane."""
-
-        try:
-            panel = self.query_one(
-                "#settings-speech-tts-panel",
-                SpeechTTSSettingsPanel,
-            )
-        except QueryError:
-            self._speech_tts_leave_in_progress = False
-            return
-        try:
-            if not await panel.confirm_leave():
-                return
-            self._clear_speech_tts_draft_cache()
-            self._speech_tts_leave_bypass = True
-            self._select_category(category_value, restore_focus=restore_focus)
-        finally:
-            self._speech_tts_leave_bypass = False
-            self._speech_tts_leave_in_progress = False
 
     async def confirm_navigation(self, *, quitting: bool = False) -> bool:
         """Save / Discard / Stay before leaving Settings with an edited theme.
@@ -25782,34 +25609,9 @@ class SettingsScreen(BaseAppScreen):
                     exit_on_error=False,
                 )
             return
-        if (
-            self.active_category == SettingsCategoryId.SPEECH_TTS.value
-            and category_value != SettingsCategoryId.SPEECH_TTS.value
-            and getattr(self, "is_mounted", False)
-            and not self._speech_tts_leave_bypass
-        ):
-            try:
-                panel = self.query_one(
-                    "#settings-speech-tts-panel",
-                    SpeechTTSSettingsPanel,
-                )
-            except QueryError:
-                panel = None
-            if panel is not None and (
-                panel.has_unsaved_changes() or panel.audio_cpp_result_cleanup_pending()
-            ):
-                if not self._speech_tts_leave_in_progress:
-                    self._speech_tts_leave_in_progress = True
-                    self.run_worker(
-                        self._confirm_speech_tts_category_leave(
-                            category_value,
-                            restore_focus,
-                        ),
-                        group="settings-speech-category-leave",
-                        exclusive=True,
-                        exit_on_error=False,
-                    )
-                return
+        current = CATEGORY_PANELS.get(self.active_category)
+        if current is not None and current.leave_category(self, category_value, restore_focus):
+            return
         self._discard_openai_reconnect_review()
         self._discard_local_model_review()
         target = CATEGORY_PANELS.get(category_value)
@@ -26359,22 +26161,7 @@ class SettingsScreen(BaseAppScreen):
     ) -> None:
         """Mirror the self-contained Speech panel's dirty state in the shell."""
         event.stop()
-        category = SettingsCategoryId.SPEECH_TTS
-        self._speech_tts_configure_provider = event.configure_provider
-        self._speech_tts_draft_snapshot = event.snapshot
-        if event.is_modified:
-            self._speech_tts_draft_state = event.state
-            self._speech_tts_original_state = event.original_state
-            draft = self._settings_drafts.setdefault(
-                category,
-                SettingsDraft(category=category),
-            )
-            draft.set_value("speech_tts_panel", False, True)
-        else:
-            self._speech_tts_draft_state = None
-            self._speech_tts_original_state = None
-            self._settings_drafts.pop(category, None)
-        self._update_draft_status_widgets(category)
+        CATEGORY_PANELS[SettingsCategoryId.SPEECH_TTS].publish(self, event.owner, event.snapshot)
 
     def _update_inspector_overflow_hint(self) -> None:
         """Show the fold indicator only while the inspector body overflows.
@@ -28617,6 +28404,16 @@ class SettingsScreen(BaseAppScreen):
     def _tracked_console_input(self, **kwargs: Any) -> Input:
         """Remember edits synchronously, before their Changed message is delivered."""
         control = Input(**kwargs)
+        self._track_console_control(control)
+        return control
+
+    def _tracked_console_select(self, *args: Any, **kwargs: Any) -> Select:
+        """Track context-memory choices before their queued Changed delivery."""
+        control = Select(*args, **kwargs)
+        self._track_console_control(control)
+        return control
+
+    def _track_console_control(self, control: Input | Select) -> None:
         self.watch(
             control,
             "value",
@@ -28625,23 +28422,25 @@ class SettingsScreen(BaseAppScreen):
             ).append(value),
             init=False,
         )
-        return control
 
-    def _sync_console_input(self, control: Input, value: str) -> None:
+    def _sync_console_input(self, control: Input | Select, value: str) -> None:
         # A refresh may precede the latest genuine edit's queued message.
         if self._pending_console_input_edits.get(control):
             return
-        with control.prevent(Input.Changed):
+        with control.prevent(Input.Changed, Select.Changed):
             control.value = value
         self._pending_console_input_edits.pop(control, None)
 
-    def _console_input_edit_is_current(self, event: Input.Changed, value: str) -> bool:
-        pending = self._pending_console_input_edits.get(event.input)
+    def _console_input_edit_is_current(
+        self, event: Input.Changed | Select.Changed, value: str
+    ) -> bool:
+        control = event.input if isinstance(event, Input.Changed) else event.select
+        pending = self._pending_console_input_edits.get(control)
         if pending and event.value == pending[0]:
             pending.pop(0)
             if not pending:
-                self._pending_console_input_edits.pop(event.input)
-        return event.value == event.input.value and event.value != value
+                self._pending_console_input_edits.pop(control)
+        return event.value == control.value and event.value != value
 
     @on(Input.Changed, f".{AGENT_BUDGET_INPUT_CLASS}")
     def handle_console_agent_budget_changed(self, event: Input.Changed) -> None:
@@ -28732,8 +28531,6 @@ class SettingsScreen(BaseAppScreen):
     @on(Select.Changed, "#settings-console-context-carry-forward-mode")
     def handle_console_context_select_changed(self, event: Select.Changed) -> None:
         event.stop()
-        if self._syncing_console_context_memory:
-            return
         key_by_id = {
             "settings-console-context-budget-mode": "conversation_budget_mode",
             "settings-console-context-compaction-mode": "compaction_mode",
@@ -28744,7 +28541,9 @@ class SettingsScreen(BaseAppScreen):
             "settings-console-context-carry-forward-mode": "compaction_carry_forward_mode",
         }
         key = key_by_id.get(event.select.id or "")
-        if key is None:
+        if key is None or not self._console_input_edit_is_current(
+            event, str(self._console_behavior_value(key))
+        ):
             return
         self._stage_console_default_value(key, str(event.value))
         self._mark_console_behavior_settings_staged()
@@ -28752,8 +28551,6 @@ class SettingsScreen(BaseAppScreen):
     @on(Input.Changed, "#settings-console-context-budget-tokens")
     @on(Input.Changed, "#settings-console-context-summary-max-tokens")
     def handle_console_context_token_value_changed(self, event: Input.Changed) -> None:
-        if self._syncing_console_context_memory:
-            return
         key_by_id = {
             "settings-console-context-budget-tokens": "conversation_budget_tokens",
             "settings-console-context-summary-max-tokens": (
@@ -28761,7 +28558,9 @@ class SettingsScreen(BaseAppScreen):
             ),
         }
         key = key_by_id.get(event.input.id or "")
-        if key is None:
+        if key is None or not self._console_input_edit_is_current(
+            event, self._console_input_value(self._console_behavior_value(key))
+        ):
             return
         value: object = int(event.value) if event.value.isdecimal() else event.value
         self._stage_console_default_value(key, value)
@@ -28770,13 +28569,15 @@ class SettingsScreen(BaseAppScreen):
     @on(Input.Changed, "#settings-console-context-trigger-percent")
     @on(Input.Changed, "#settings-console-context-target-percent")
     def handle_console_context_percent_changed(self, event: Input.Changed) -> None:
-        if self._syncing_console_context_memory:
-            return
         key = (
             "compaction_trigger_ratio"
             if event.input.id == "settings-console-context-trigger-percent"
             else "compaction_target_ratio"
         )
+        if not self._console_input_edit_is_current(
+            event, format_ratio_percent(self._console_behavior_value(key))
+        ):
+            return
         self._stage_console_default_value(key, ratio_from_percent(event.value))
         self._mark_console_behavior_settings_staged()
 
@@ -34530,49 +34331,49 @@ class SettingsScreen(BaseAppScreen):
                 )
             except QueryError:
                 pass
-        self._syncing_console_context_memory = True
-        try:
-            context_selects = {
-                "#settings-console-context-budget-mode": "conversation_budget_mode",
-                "#settings-console-context-compaction-mode": "compaction_mode",
-                "#settings-console-context-compaction-representation": (
-                    "compaction_representation"
-                ),
-                "#settings-console-context-failure-behavior": (
-                    "compaction_failure_behavior"
-                ),
-                "#settings-console-context-carry-forward-mode": (
-                    "compaction_carry_forward_mode"
-                ),
-            }
-            for selector, key in context_selects.items():
-                try:
-                    self.query_one(selector, Select).value = str(
-                        self._console_behavior_value(key)
+        context_selects = {
+            "#settings-console-context-budget-mode": "conversation_budget_mode",
+            "#settings-console-context-compaction-mode": "compaction_mode",
+            "#settings-console-context-compaction-representation": (
+                "compaction_representation"
+            ),
+            "#settings-console-context-failure-behavior": "compaction_failure_behavior",
+            "#settings-console-context-carry-forward-mode": "compaction_carry_forward_mode",
+        }
+        for selector, key in context_selects.items():
+            try:
+                self._sync_console_input(
+                    self.query_one(selector, Select),
+                    str(self._console_behavior_value(key)),
+                )
+            except QueryError:
+                pass
+        context_inputs = {
+            "#settings-console-context-budget-tokens": "conversation_budget_tokens",
+            "#settings-console-context-trigger-percent": "compaction_trigger_ratio",
+            "#settings-console-context-target-percent": "compaction_target_ratio",
+            "#settings-console-context-summary-max-tokens": "compaction_summary_max_tokens",
+        }
+        for selector, key in context_inputs.items():
+            try:
+                control = self.query_one(selector, Input)
+                value = self._console_behavior_value(key)
+                if key in {"compaction_trigger_ratio", "compaction_target_ratio"}:
+                    current = ratio_from_percent(control.value)
+                    display = format_ratio_percent(value)
+                else:
+                    current = (
+                        int(control.value)
+                        if control.value.isdecimal()
+                        else control.value
                     )
-                except QueryError:
-                    pass
-            context_inputs = {
-                "#settings-console-context-budget-tokens": self._console_input_value(
-                    self._console_behavior_value("conversation_budget_tokens")
-                ),
-                "#settings-console-context-trigger-percent": format_ratio_percent(
-                    self._console_behavior_value("compaction_trigger_ratio")
-                ),
-                "#settings-console-context-target-percent": format_ratio_percent(
-                    self._console_behavior_value("compaction_target_ratio")
-                ),
-                "#settings-console-context-summary-max-tokens": self._console_input_value(
-                    self._console_behavior_value("compaction_summary_max_tokens")
-                ),
-            }
-            for selector, value in context_inputs.items():
-                try:
-                    self.query_one(selector, Input).value = value
-                except QueryError:
-                    pass
-        finally:
-            self._syncing_console_context_memory = False
+                    display = self._console_input_value(value)
+                # Equivalent raw text ("80.", "001024", or an invalid draft)
+                # belongs to the editor, even without a semantic dirty key.
+                if current != value:
+                    self._sync_console_input(control, display)
+            except QueryError:
+                pass
         input_values = {
             "#settings-console-default-user-display-name": (
                 self._console_behavior_value("user_display_name")
