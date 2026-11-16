@@ -19,9 +19,24 @@ getters execute within that configuration scope. An individual getter failure
 prevents memo publication; outer admission or retirement failure propagates before
 returning a tuple. See ADR126's 2026-11-15 amendment.
 
+An implicit or exact native-path nested join of the installed, write-capable config operation performs
+one full fresh source/parent validation at raw-scope entry. Config classifies
+existing custody without I/O, then captures rollback state only after that entry
+succeeds. Body and context-exit failures still restore globals and mark the owner
+failed. Other target forms, snapshots, readonly and other-source routes retain their
+original ordering. All payload/effect/final checks and physical retirement remain;
+this is same-call consolidation, not permission reuse. See ADR126's nested
+configuration admission amendment.
+
 On a cold sensitive-input miss, the single-file, skill-trust, database and
 container getters share that same finite owner. The first live key/hit route is
 unchanged; final key validation and memo publication follow scope retirement.
+
+Installed hook-permission operations admit their main file, lock, randomized
+temporary and parent through one existing related-path acquisition. Both fresh
+hook reads and grant reconciliation remain, with the same member checks, lock
+ordering, pause/refusal and physical retirement. Only the registered
+`hooks.permissions` route uses this grouped path (ADR126, Task3z).
 
 Installed local/context/permission operations admit their selected members as one
 related-path group, including the permission backup. During construction,
@@ -36,11 +51,12 @@ observer distinct from the selected member group. This synchronous declaration
 is not a reusable witness or payload cache. The permission-load observation still
 belongs to each read, including separate pre-save and post-save preview passes.
 
-Each stock `activation_permission` call reads control records and the registry
-once for its startup and owner-policy checks. The next owner reads fresh facts;
-generation requirements and approvals remain live. Replaced startup callbacks
-retain the public callback followed by fresh activation reads. Execution scopes,
-their source checks, and retained native lease lifetimes are unchanged.
+Each `activation_permission` call reads control records and the registry once for
+its startup and owner-policy checks. An explicit deny-only `startup_restriction`
+runs first; Allow still requires the fresh built-in checks. The next owner reads
+fresh facts, including duplicate owners. Standalone startup inspection is unchanged;
+replacing that module function is not an activation customization contract. Source
+checks, generation requirements, approvals and native lease lifetimes remain live.
 
 `RecoveryAdmissionGuard` admits its distinct missing sources as one explicit
 execution group. `_acquire_execution_storage` verifies each member's full

@@ -1002,6 +1002,7 @@ ADMISSION_2_TARGETS = (
     "Tests/Chat/test_console_preview_permission_forwarding.py",
     "Tests/Chat/test_response_rules_finite_assembly.py",
     "Tests/Backup_Recovery/test_mcp_nested_join.py",
+    "Tests/Backup_Recovery/test_config_nested_join.py",
     "Tests/UI/test_console_transcript_sync_gate.py",
     "Tests/UI/test_console_transcript_context_projection.py::test_context_publication_reopens_unchanged_transcript_gate",
     "Tests/UI/test_console_transcript_context_projection.py::test_custom_live_reader_keeps_original_post_gate_cadence_and_thread",

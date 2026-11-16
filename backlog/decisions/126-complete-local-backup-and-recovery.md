@@ -2175,3 +2175,59 @@ invalid owner, unqualified observation, revocation, source drift, and fresh pend
 or paired-history loss between owners. Counts must show5/4 becoming3/2 in a real
 two-owner gate and2/2 becoming1/1 in paired witnesses. No count establishes the
 six-second Send requirement; quiet cold/warm Enter/button verification remains.
+
+### Nested configuration admission — 2026-11-16
+
+Apply the existing same-call installed-source join rule to nested configuration
+operations. Classifying a possible same-source config join uses existing current
+raw operation custody under the storage coordinator; that classification grants
+no access. The original raw-scope entry must still perform one full fresh source
+and parent validation before yielding any body. For the exact installed config
+participant and route, its successful check already establishes the current
+effective selector. Retain current participant, native lease, provenance and
+requested write-mode validation before joining the existing operation.
+
+An explicit target may use this same join only when it has the exact concrete
+Path type and value of the already-selected native path. Recheck that equality
+under the coordinator. Its ordinary lexical conversion adds no source or native
+proof; the fresh raw check still observes the current effective selector. Strings,
+custom PathLike values, relative or different targets, other sources/routes and
+unsupported joins keep their original validation route. Preserve config snapshots, cache rollback,
+failed-operation state, all later file/effect/final checks and physical retirement.
+There is no cross-call cache, caller-supplied proof, new authority object, lifetime
+extension or callable/code introspection. Current selectors still run at every
+fresh admission boundary; no permission decision is inferred from cached values.
+
+For the ordinary same-source config join, successful fresh scope entry precedes
+rollback-state capture. An entry refusal performs no config failure bookkeeping,
+matching the original first validation boundary. A body or context-exit failure
+still restores captured globals and marks the existing operation failed. This
+removes the duplicate validation interval; it does not preserve two observations
+of a concurrent change. Snapshot and other-route entry ordering stays unchanged,
+and later actual file/effect/final validation still observes intervening changes.
+
+The reordered wrapper is limited to the current installed config module's existing
+write-capable config operation and an implicit or exact matching native target.
+Readonly/non-bool, unmatched-target, snapshot and other-owner routes keep their original ordering,
+including refusal bookkeeping. Selector/parent/native validation stays outside
+the storage coordinator. Inside it, check only current registration, selection
+identity, provenance and live custody. Existing qualified outer operations may
+finish during pause; maintenance still waits for their physical retirement.
+
+Task3x of the Windows Send plan requires original-code native RED/GREEN counts,
+actual payload/refusal/rollback/retirement controls, and sequential quiet whole-Send
+qualification. Implementation remains pending those checks.
+
+### Installed hook permission members share one admission — 2026-11-16
+
+Task3z uses the existing related_paths admission for the installed
+hooks.permissions raw operation, as for installed configuration/MCP members.
+The actual selected main, lock, randomized temporary and parent paths remain
+declared and checked in order before any side effect. Only the registered
+hook_permissions route joins this branch; uninstalled or foreign routes retain
+their prior path. The acquisition attempt remains checked before and afterward.
+Both hook authority reads, reconciliation, configuration-to-hook lock order,
+selector/member validation, pause/refusal and physical final retirement remain.
+This removes repeated entry into the same admission mechanism without creating
+a new proof cache or extending permissions. It does not eliminate hook review
+when no hooks are enabled: reconciliation must still retire or rotate grants.

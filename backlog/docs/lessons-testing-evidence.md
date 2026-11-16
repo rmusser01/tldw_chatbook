@@ -25726,3 +25726,28 @@ three shutdown cases pass in11.94s with the original2s shutdown-readiness and50m
 observation bounds. This qualifies the controlled shutdown interleaving, not
 natural callback-delivery latency. Receipts: pr3534-af2-feedback-shutdown-1 and
 pr3534-shutdown-delivery-green-1 under claude-watch-final-gate-review.
+
+## A publication observer must forward the current callback signature (PR3534, 2026-11-16)
+
+The Windows save-acceptance control cleared the real draft but recorded no
+publication. Its test-only lambda accepted record alone; production already
+passed draft_committed as a keyword. The real presentation boundary caught and
+logged the resulting TypeError, so the failed observer looked like a missing
+publication. Untouched dev5e3 reproduced the failure. A keyword-compatible observer
+now calls the original bound method before recording (turn_id, draft_committed).
+All four real-save outcomes pass, including stop, store replacement and retyping,
+with unchanged deadlines. Preserve callback arguments, results and exceptions in
+forwarding observers; inspect the boundary's caught error before changing product
+publication logic. Receipts: pr3534-saved-publication-dev5e3-baseline-1 and
+pr3534-prefetch-red-publication-green-1 under claude-watch-final-gate-review.
+
+## Distinguish optional prefetch from required nested refreshes
+
+PR3534 (2026-11-16): a mounted busy-send regression still reported a pending
+configuration read after optional polling prefetch was suppressed. Observing the
+original scheduling branch showed that rendering had started a cold context read,
+which explicitly warmed configuration. Both legitimately shared the same pending
+flag. Complete the original context read and establish its current owner before
+testing optional prefetch; retain expiry and explicit-warm controls. The corrected
+old-scheduler run pr3534-prefetch-isolated-red-1 failed at the intended oracle,
+without overriding readers or manufacturing fresh timestamps.

@@ -2810,6 +2810,13 @@ workspace refusal. The callsite also serves plain-provider and automatic paths,
 so any implementation needs an explicit contract amendment and those controls;
 the unchanged full agent gate cannot be assumed on every route.
 
+Still deferred after fresh post-Task3x v5: the ledger worker's actual group
+acquisition takes35.5/17.2/11.6ms and create_chain itself48.2/51.8/57.2ms. The full
+admission prefix is not separately instrumented, so the older prefix durations
+are not current estimates. Narrowing still changes durable-chain publication
+before unrelated workspace/history refusal, including direct-provider paths;
+these observations do not justify that contract change for the present target.
+
 **FOLLOWUP41 — unnecessary MCP cache probes (ruled out on measured route,2026-11-16).**
 A composition with no reusable entry may take a fingerprint when its cheap
 anchor is unavailable. Historical live durable sends could not reuse their
@@ -2953,3 +2960,58 @@ update rather than another FULL configuration pass. Observe the original failed
 comparison before changing this boundary. Missing/currentness evidence and actual
 config, lifecycle, fleet, owner or explicit FULL changes must retain their checks;
 the complete publication gate must still govern any skipped transcript work.
+
+Not selected after v8: its original promoted failures have missing context or
+completed publication, or a changed lifecycle revision. No observed failure has
+present publications and equal non-transcript fields. Do not weaken these gates
+based on the earlier incomplete hypothesis; retain the evidence for later review.
+
+**Personal Context interview package imports (deferred, 2026-11-16).**
+The package eagerly re-exports interview coordinator/diff/draft/provider APIs when
+bootstrap is imported. Core Send does not need those modules, but the measured
+coordinator closure is only about24ms inclusive. Adding lazy public exports and
+their compatibility surface is not selected for the current six-second problem.
+Core service/context construction remains necessary to reach the existing
+unavailable-keyring authority refusal; bypassing it is not justified.
+
+**Task3x — consolidate nested config admission (selected for qualification).**
+The real locked hook read enters nested config operations that repeat source and
+parent validation before yielding the same owned operation. Classify existing
+custody without I/O, perform one full fresh raw-scope validation, then retain all
+payload/effect/final checks. The lock helpers pass an exact native Path target;
+include only that matching concrete path alongside implicit selection. Preserve
+string/custom/relative/foreign target conversions and all other sources/routes.
+No reusable proof or permission cache is selected. Require original native count
+RED/GREEN, refusal/rollback/retirement and quiet whole-Send evidence before claiming
+an improvement; implementation follows the plan and ADR126 amendment.
+
+**Task3y — optional polling prefetch during active custody (selected experiment).**
+Fresh post-Task3x v5 observes seven display-config refreshes per Send;2/3/2 are
+non-FULL, current, tokenizer-independent refresh-ahead launches before expiry.
+Use existing same-session custody as advisory busy state only for implicit-life
+prefetch. FULL warm-up, actual expiry, cold/changed inputs, tokenizer, pending
+handoffs and read-retry behavior remain unchanged. No new preparation gate or
+extended proof lifetime. The broader idea of suppressing FULL's near-expiry
+warm-up is not selected: its existing regression proves why it is necessary.
+
+Task3y was removed after13 mounted controls passed but quiet Enter
+7.298/5.661/4.885s and button8.040/7.631/6.865s did not show a whole-Send
+benefit. The same pending flag also represents legitimate context warm-up; its
+regression must first establish the real context snapshot. Keep the preserved
+patch for later review; the original scheduler remains selected.
+
+**Task3z — group installed hook members (implemented, speed unqualified).**
+The existing original-owner regressions now confirm4to1 acquisitions with all
+main/lock/temporary/parent checks and physical retirement retained. Grant changes,
+refusal, recovery and integrated feedback/shutdown checks pass. Quiet Enter
+9.015/8.215/9.381s and button7.855/6.947/6.336s still fail the gate; no elapsed
+saving is established. Investigate original worker lock/payload/retirement spans
+before attributing these slower totals to any one change.
+
+**Shared outer config scope around MCP assembly (not selected).**
+The existing preparation worker already runs synchronous permission/catalog reads
+under the producer lifetime. Their source bindings read bound configuration facts
+directly and do not nest config_participants.operation. Adding one would add
+admission while different-source raw scopes still suspend discovery and admit
+independently. Replacing source-specific checks with that config lease would alter
+authority. Current measurements do not justify this wrapper.

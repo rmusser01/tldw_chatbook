@@ -1759,3 +1759,208 @@ changes from transcript-only changes at that original predicate. Equal age-only
 readiness refreshes do not publish a new presentation revision. No product refresh
 suppression, new authority shortcut, timing-budget change or merge qualification
 is selected from these observations.
+
+The v8 original-value capture rules out the proposed transcript-only split for
+these samples. Promoted failures have unavailable context, missing completed
+publication, or a changed lifecycle revision; observed cadence/fleet/widget
+comparisons remain equal. All cutoffs, restoration and scalar-pairing cleanup are
+valid, with no errors, overflow or unmatched observations. Instrumented timings
+14.386/13.095/12.672s (131.17s run) do not qualify latency. Retain those display
+checks and move back to measured foreground admission repetition.
+
+### Task3x — one fresh check for a nested installed configuration operation
+
+ADR required: yes.
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md, nested
+configuration admission amendment.
+Reason: consolidate existing same-call validation across the config/raw boundary;
+no new authority, permission cache, public API or scheduler.
+
+1. Preserve the native foreground evidence: locked hook snapshots spend repeated
+   time inside nested config operations. Config operation performs a full raw
+   check to classify ownership; raw scope then checks, selects and checks that
+   same installed configuration again before yielding.
+2. Add original-code native count regressions for raw-scope and config-operation
+   joins. Require real payload, same existing lease/operation, changed selection
+   refusal, read-only refusal, failed-body rollback and physical retirement before
+   the final count oracle. Record the original RED without replacing validators.
+3. Classify only an exact same-source config join using current resident custody
+   under the coordinator, then let raw scope perform its full fresh validation.
+   Join that installed config route using the proven selection and current
+   participant/lease/provenance checks. Keep unmatched explicit targets, other route,
+   other owner and unsupported paths on their original route. Preserve every
+   payload/effect/final check and config failure bookkeeping. Exact concrete
+   native Path targets equal to the resident selection may use the same join;
+   recheck type and equality under the coordinator. Other explicit target forms
+   retain their existing conversions, refusal and bookkeeping. Do not add callable
+   introspection, reusable evidence objects or caller-supplied proof.
+   For the selected ordinary config join, capture rollback state only after raw
+   scope's successful fresh entry. An entry refusal must leave globals and
+   failure bookkeeping untouched; body or context-exit failures still restore
+   and mark the existing owner. Keep snapshot/other-route ordering unchanged.
+   Limit wrapper reordering to the actual installed module's existing write-capable
+   config operation with an implicit or exact matching native target. Readonly/non-bool, other-target,
+   snapshot and other-owner paths retain their original check/bookkeeping order.
+   Keep selector/native reads outside the coordinator and preserve qualified
+   admitted-operation pause/drain behavior.
+4. Independently review the source boundary; run the new RED/GREEN, existing
+   config/SQLite/raw/MCP lifetime and refusal controls, relevant architecture and
+   CI selection checks. Then run quiet cold/warm Enter and button measurements
+   sequentially. Counts alone never satisfy the six-second merge gate.
+
+Task3x original native RED (pr3534-config-nested-red-1,9.92s) reaches real config
+payload equality, same operation/leases with no new join acquisition, native
+maintenance exclusion, closed descriptors/hold threads and successful maintenance
+after retirement. Only the final parent-check oracle fails: raw join2 and config
+wrapper3, each expected1. The implementation now selects only the reviewed
+write-capable installed config/implicit-target route. Adverse controls, integrated
+checks and quiet timing remain pending.
+
+The initial integrated run completes with 244 passes and 13 existing Windows
+fixture failures (pr3534-config-nested-green-1,563.17s). All13 new controls and
+native lock-order/raw-retirement/SQLite checks pass; source and HEAD remain fixed.
+The lifetime fixtures use POSIX root fault injection, select on pipes and HOME-only
+selection. Their source is unchanged on current dev. All five representative
+cases reproduce their exact signatures on untouched dev5e3c8b2bd4
+(pr3534-config-lifetimes-dev5e3-baseline-1,16.83s), with fixed source and HEAD.
+No test budget or oracle is relaxed to clear them.
+
+Source review identifies the remaining measured lock helpers at config.py4506
+and4632: they pass an exact config_path explicitly, so the first candidate leaves
+their duplicate checks intact. Extend only that exact native-target case under
+the amended ADR126 contract. First require its existing native count test to
+fail2/3 versus1 after payload/exclusion/retirement; then cover actual selector
+drift, readonly refusal, rollback and callback-bearing/relative target fallbacks.
+Independent source review finds no blocker in that scoped extension. Quiet timing
+will measure the completed candidate, not the incomplete implicit-only change.
+
+The explicit-target RED completes in4.43s with fixed source/HEAD
+(pr3534-config-explicit-red-1). Both cases pass real payload, same-custody,
+maintenance-exclusion and physical-retirement checks before the last oracle
+observes raw2/config3 rather than1. The scoped extension is implemented; the
+expanded26-case file also preserves original string/custom/relative fallbacks.
+Scoped Ruff F checks and the new file's format check pass. Integrated native
+qualification and quiet whole-Send measurements follow.
+
+Task3x passes all 73 expanded native controls in117.41s
+(pr3534-config-explicit-green-1), with fixed source/HEAD and independent source
+review finding no blocker. Quiet Enter measures6.532/5.842/5.008s (63.31s run);
+button measures7.261/6.498/12.925s (79.56s). Both complete three saved replies,
+three traces and zero pending checkpoints. These do not meet the six-second gate.
+
+Fresh v5 attribution (pr3534-config-costs-v5-1) retains all original callbacks,
+valid adapter cutoffs and complete restoration, with no errors or cap overflow.
+It observes seven readiness refreshes per turn. Of these,4/5/6 are current,
+tokenizer-independent and before actual one-second expiry; FULL warm-up accounts
+for2/2/4. The directly enclosing readiness reads total0.697/1.704/1.035s inclusive,
+including required reads; this is not predicted saving. Concurrent aggregate CPU
+samples average30.8% (max53.8%), disk queue stays zero and available memory exceeds
+18GB. That diagnostic shows no hard host-resource ceiling and does not explain
+the previous quiet run's spike. Instrumented timings are not release evidence.
+
+### Task3y — defer optional polling prefetch while the active chat has work
+
+ADR required: yes.
+ADR path: backlog/decisions/231-console-polling-and-full-state-reconciliation.md,
+advisory refresh-ahead scheduling amendment.
+Reason: bound competing display work using existing runtime ownership without
+changing display freshness, FULL reconciliation or action authority.
+
+1. Add mounted original-owner RED coverage for an ordinary polling projection
+   past its half-life while the same active session has actual custody. Prove
+   actual expiry still refreshes and the display remains on its original proof.
+2. In ConsoleReadinessConfigProjection.run, change only implicit-life optional
+   timer prefetch. The existing has_custodied_turns(active_session_id) is advisory
+   busy state; require a non-None active session and current key/runtime, no
+   pending handoff, no read-retry state and no tokenizer demand. No new owner
+   registration, callable attestation, cache, public API or timing budget.
+3. Preserve explicit life arguments (including FULL's half-life warm-up), all
+   cold/input/runtime changes, pending work, actual expiry, before/after proof
+   refusal, post-await rewarming and persistent-refusal retry behavior. Waiting
+   and streaming custody may also defer optional prefetch; max_age is unchanged.
+4. Verify the original near-expiry and long-FULL controls, busy expiry/recovery,
+   changed inputs, tokenizer demand, another session and refusal/handoff paths.
+   Keep the UI census and existing targeted CI selection current. Then repeat
+   quiet Enter/button and user feedback/shutdown checks sequentially.
+
+Task3x feedback/shutdown verification passes21 cases in149.68s; only the saved
+acceptance observer's normal outcome fails. Untouched current dev5e3 reproduces
+the exact failure in8.44s: its lambda rejects the existing draft_committed keyword,
+and presentation error handling logs that TypeError after the real draft CAS.
+The corrected observer forwards the original keyword and callback before recording
+success. All four actual-save outcomes then pass in the combined44.35s run
+pr3534-prefetch-red-publication-green-1, with all existing deadlines intact.
+
+That same run reaches Task3y's intended RED only after real held Enter custody,
+original checked display, successful rail/control rendering and zero UI-thread
+native config operations are established. At age0.6 the original scheduler starts
+optional prefetch. The candidate changes only implicit-life scheduling as planned;
+mounted expiry/recovery and adverse controls remain pending. All receipts retain
+fixed source and HEAD. Whole-Send speed is still unqualified.
+
+Task3y verification correction (2026-11-16): pr3534-prefetch-green-1 passes12
+controls and fails the busy polling case. The original-code line observer in
+pr3534-prefetch-branch-1 proves the implicit poll was suppressed correctly, but
+rendering started a cold context snapshot whose explicit warm() legitimately
+requested a read at age0.6. The test now finishes that original context read
+first, verifies its current owner and existing1.0s lifetime, and captures the
+config proof afterward. No keys, timestamps, callbacks or lifetimes are replaced.
+The corrected old-scheduler control pr3534-prefetch-isolated-red-1 fails only at
+the optional-prefetch oracle in34.91s, after real custody, display and native-I/O
+controls pass. Candidate expiry/FULL/retry/owner/cadence qualification is running.
+The initial pending-only failure was insufficient to distinguish these readers.
+
+Task3y disposition: pr3534-prefetch-isolated-green-1 passes all13 controls in
+145.88s with fixed source and HEAD. Quiet Enter7.298/5.661/4.885s and button
+8.040/7.631/6.865s each complete3saved turns/replies/traces with0checkpoints,
+but do not establish whole-Send benefit and fail the gate. Removed the product
+change and its new test; preserved task3y-deferred.patch in external task artifacts.
+ADR231 records the rejected alternative. Original polling semantics are restored.
+
+### Task3z — one admission for the installed hook store member set
+
+ADR required: yes.
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: extend the existing finite related-path acquisition to one already
+declared raw source; preserve source ownership and every fresh authority read.
+
+1. Run the existing original-source installed/bound hook member regressions RED.
+   They already require one acquisition after payload equality, ordered membership
+   and physical descriptor/lease retirement; current hooks still acquire four.
+2. Include only route hook_permissions with the installed hooks.permissions
+   participant in the existing grouped acquisition branch. Main, lock, temporary
+   and parent remain in their original order. Preserve attempt checks around
+   admission, all member/source/pause/payload/final checks and config/hook lock order.
+3. Run related-member, hook mutation/refusal, original parent-pin and raw native
+   retirement controls. Review before integrating. No shortcut for disabled hooks.
+4. Run original-source cost attribution and then quiet Enter/button sequentially;
+   v5 measured406/90/101ms acquisition envelopes are not predicted whole-Send savings.
+
+Task3z verification (2026-11-16): pr3534-hook-members-red-1 reproduces both
+unchanged hook tests at the final4-versus1 acquisition oracle in12.71s, after
+actual payload, ordered members and physical retirement pass. The candidate
+passes both plus grant/reconciliation and Console dispatch controls in
+pr3534-hook-members-green-1:99passed,11failed,265.34s. Five failures expose an
+older PR observer assumption: early canonical MCP acquisition precedes _State.
+The corrected observer records that original acquisition/return separately and
+requires its actual lease to be state.mcp_observation_lease, preserving all native
+counts and payload/retirement checks. All six other failures reproduce unchanged
+on clean current dev5e3 in22.09s (pr3534-hook-failures-dev5e3-1): Unix mode-bit
+expectations, unavailable symlink privileges, and the original v2 process timeout.
+No deadlines, permission fixtures or product refusal behavior were weakened.
+
+pr3534-hook-final-integration-1 passes all38 cases in216.93s: both100ms
+acknowledgement/input checks, both Waiting/Streaming routes, Stop and failed-save
+draft retention, actual saved acceptance outcomes, all physical shutdown cases,
+reconciliation, corrected MCP observer and actual related-path/Windows posture
+controls. Source/HEAD remain fixed for every run. Pinned Ruff F and ratchet gates
+pass; no new lint debt. The original polling scheduler is selected.
+
+Quiet Task3z Enter9.015/8.215/9.381s and button7.855/6.947/6.336s each finish
+3saved users/replies/traces with0checkpoints and fixed sources. These still fail
+the six-second gate; count reduction is not an elapsed-time improvement claim.
+The next diagnostic splits original generator admission/body/retirement and lock
+waits in the first hook read and post-save preview. The v5 preview worker scope
+accounts for98–99% of its await; adding an outer config operation around MCP
+reads is not selected, because those sources do not enter nested config operations
+and would still require their distinct fresh source admission.

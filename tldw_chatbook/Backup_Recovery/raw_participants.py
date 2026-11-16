@@ -794,23 +794,43 @@ def scope(
     if previous is not None:
         previous_state = check(previous)
         if (
-            selected_read is None
+            (selected_read is None or route == "config")
             and type(writing) is bool
             and previous_state.source is source
-            and previous_state.route == route == mcp_sources.ROUTE
+            and previous_state.route == route
+            and (
+                route == mcp_sources.ROUTE
+                or route == "config" and previous_state.writing is True
+            )
             and previous_state.participant is not None
         ):
             # The full check already proved this installed source's selection
             # and parents. Joining retains every later file/effect/final check.
-            source_path = inspect.getattr_static(source, "path", None)
+            source_path = (
+                inspect.getattr_static(source, "path", None)
+                if route == mcp_sources.ROUTE else None
+            )
             with storage._lock:
                 participant = participant_identity(previous_state.participant)
+                installed_source = (
+                    participant.owner == "config"
+                    and source is sys.modules.get("tldw_chatbook.config")
+                    if route == "config" else (
+                        participant.owner in mcp_sources.GENERATION_SELECTED_OWNERS
+                        and type(source_path) is type(previous_state.selected)
+                        and source_path == previous_state.selected
+                    )
+                )
                 joined = (
-                    participant.owner in mcp_sources.GENERATION_SELECTED_OWNERS
+                    installed_source
+                    and (
+                        selected_read is None
+                        or route == "config"
+                        and type(selected_read) is type(previous_state.selected)
+                        and selected_read == previous_state.selected
+                    )
                     and participant.source() is source
                     and participant.selected == previous_state.selected
-                    and type(source_path) is type(previous_state.selected)
-                    and source_path == previous_state.selected
                     and live_state(previous, previous_state.selected, writing)
                     is previous_state
                     and previous_state.source is source
@@ -1138,6 +1158,10 @@ def scope(
             route == mcp_sources.ROUTE
             and gate is not None
             and gate.owner in mcp_sources.GENERATION_SELECTED_OWNERS
+        ) or (
+            route == "hook_permissions"
+            and gate is not None
+            and gate.owner == "hooks.permissions"
         ):
             # These declared members use the selected profile's same native group.
             # Check every member together rather than reopening its control tree

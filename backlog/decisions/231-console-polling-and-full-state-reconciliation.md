@@ -155,3 +155,14 @@ Resident FULL source/publication observation helpers live with the Console displ
 projections. Composer run controls retain preparation and custody eligibility.
 This implementation move adds no cache, lifecycle, authority or timing exception;
 completed-publication and source-currentness conditions remain unchanged.
+
+### Optional busy-chat prefetch deferral, not selected — 2026-11-16
+
+Task3y experimented with deferring implicit half-life config prefetch during
+same-session runtime custody, retaining every expiry, cold/input/tokenizer,
+handoff, retry and explicit FULL warm-up check. Thirteen mounted controls passed.
+Quiet Windows Enter measured7.298/5.661/4.885s; Send button8.040/7.631/6.865s.
+The experiment did not establish a whole-Send speed benefit and was removed.
+Keep the original scheduling contract; the patch and original-owner regression
+remain in task artifacts for possible later review. These timings do not isolate
+a causal regression, and no longer display lifetime was considered acceptable.
