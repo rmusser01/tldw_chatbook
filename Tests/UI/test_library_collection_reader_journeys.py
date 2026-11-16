@@ -56,6 +56,7 @@ async def _open(host, pilot):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile  # the Library harness's profile (TASK-39141)
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 async def test_annotation_drafts_survive_disclosures_modes_and_capture_return(

@@ -1103,6 +1103,10 @@ MINIMUM_FILES = 2155
 # TASK-41126 (2026-11-15): append the Collections actions in-place repaint
 # node at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 2156
+MINIMUM_FILES = 2146
+# TASK-41304 (2026-11-16): append the two 80x24 annotation-draft journey nodes
+# at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 2158
 
 
 def read_census(path: Path) -> list[str]:
