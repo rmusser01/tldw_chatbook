@@ -354,5 +354,7 @@ a529dbd3ed0b13502b8d100e3053e0bea5baa119
 # LibraryScreen media bodies (select mode, the row press, the browse request
 # and sync, the type filter, take-note) moved byte-for-byte into
 # LibraryMediaController with no token edit. Test edits are receiver-only,
-# AST-proven against the parent.
-168ebb7af33439f060e065922aa6868560cf8829
+# AST-proven against the parent. Rebased onto dev cc6006fcf5, the browse
+# sync also carries dev's TASK-40293 branch with its `self._media_controller.`
+# hop collapsed (R2 token 10).
+a408b72c9c8801e7be4d9e8f700605177c9da9af
