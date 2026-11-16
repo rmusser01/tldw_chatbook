@@ -133,3 +133,25 @@ budget changes. Short passes mark cadence owed and return False, keeping polling
 and attachment reconciliation live. Explicit FULL, changed sources, provider
 entry, cancellation, background activity and terminal handoff remain original.
 This publication is display evidence only, never authority for actions or I/O.
+
+### Runtime-owned display reader — 2026-11-16
+
+Apply ADR356's runtime-registration rule to PR3534's refresh-free display read.
+The composed Context/spend controller owns one reader of the existing
+ConsoleContextReadSnapshot. Its normal read records the actual snapshot, config
+projection and attachment visit. Reuse requires the same registered resource and
+controller, current screen/controller/store/session, unchanged attachment and a
+current published value, checked again after reading. Copies of registrations do
+not create owners. Transparent wrappers do not change resource ownership.
+
+Keep custom constructors without a registered resource on their original live
+callback route. Remove the newly added function/code/default attestation rather
+than relocating it. No new cache, scheduler, native owner, permission or cadence
+is introduced; explicit FULL and unavailable/stale display fallback remain.
+Task3r in the Windows Send plan supplies the mounted ownership/currentness and
+existing feedback/FULL qualification. The broader polling proposal stays Proposed.
+
+Resident FULL source/publication observation helpers live with the Console display
+projections. Composer run controls retain preparation and custody eligibility.
+This implementation move adds no cache, lifecycle, authority or timing exception;
+completed-publication and source-currentness conditions remain unchanged.

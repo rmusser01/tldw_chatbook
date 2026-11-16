@@ -377,10 +377,9 @@ def _sensitive_db_paths() -> tuple[Path, ...]:
         additive coverage; containing admission or retirement errors propagate.
     """
     from .. import config as _config
-    from ..Backup_Recovery.config_participants import operation
 
     resolved: list[Path] = []
-    with operation(_config):
+    with _config.configuration_read_scope():
         for accessor_name in _DB_PATH_ACCESSOR_NAMES:
             accessor = getattr(_config, accessor_name, None)
             if accessor is None:
@@ -652,12 +651,11 @@ def _raw_inputs() -> tuple:
     if memo is not None and _same_key(memo[0], key):
         return memo[1]
     from .. import config as _config
-    from ..Backup_Recovery.config_participants import operation
 
     failures = getattr(_failures, "count", 0)
     # These synchronous getters share admission, not their live path checks.
     # Retire the read before checking the final key or publishing the memo.
-    with operation(_config):
+    with _config.configuration_read_scope():
         inputs = (
             user_data_dir,
             _sensitive_single_file_paths(),

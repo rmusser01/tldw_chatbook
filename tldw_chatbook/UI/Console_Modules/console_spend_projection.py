@@ -755,11 +755,9 @@ class ConsoleReadinessConfigProjection:
                 )
         if changed:
             try:
-                self.screen.run_worker(
-                    self.screen._sync_native_console_chat_ui,
-                    exclusive=False,
-                    group="console-readiness-publication",
-                )
+                from .config_sync import publish_console_presentation
+
+                publish_console_presentation(self.screen, "console-readiness-publication")
             except BaseException as error:
                 if not isinstance(error, Exception):
                     raise
@@ -1671,21 +1669,65 @@ class ConsoleContextReadSnapshot:
             )
 
 
-def console_context_inputs(
-    controller: Any, session_id: str, *, screen: Any, estimate_ttl_seconds: Callable,
-) -> tuple:
-    """Keep the wired display read late-bound to the screen's current snapshot."""
-    return ConsoleContextReadSnapshot.for_screen(
-        screen, max_age=estimate_ttl_seconds()
-    ).inputs(controller, session_id)
+class ConsoleContextDisplayReader:
+    """A composition-owned reader for one screen's existing display snapshot."""
 
+    def __init__(self, screen: Any, estimate_ttl_seconds: Callable[[], float]) -> None:
+        self.screen = screen
+        self.estimate_ttl_seconds = estimate_ttl_seconds
+        self._binding = None
+        self._snapshot = None
+        self._projection = None
+        self._visit = None
 
-_CONTEXT_INPUTS_DELEGATE = (console_context_inputs, console_context_inputs.__code__)
-_CONTEXT_SNAPSHOT_READERS = tuple(
-    (name, method, method.__code__)
-    for name in ("inputs", "current_inputs", "_cache_key", "_key")
-    for method in (getattr(ConsoleContextReadSnapshot, name),)
-)
+    def bind(self, owner: Any) -> None:
+        """Register once with the actual Context/spend controller."""
+        if self._binding is not None or owner._screen is not self.screen:
+            raise ValueError("console_context_display_already_bound")
+        self._binding = (owner, self)
+
+    def __call__(self, controller: Any, session_id: str) -> tuple:
+        """Keep ordinary display reads live and remember their actual resource."""
+        self._snapshot = None
+        snapshot = ConsoleContextReadSnapshot.for_screen(
+            self.screen, max_age=self.estimate_ttl_seconds()
+        )
+        visit = self.screen._current_console_attach_visit()
+        value = snapshot.inputs(controller, session_id)
+        self._snapshot, self._projection, self._visit = (
+            snapshot, snapshot.config_projection, visit
+        )
+        return value
+
+    def _current(self, owner: Any, controller: Any, session_id: str) -> bool:
+        screen, snapshot, binding = self.screen, self._snapshot, self._binding
+        return (
+            owner is not None and binding is not None
+            and binding[0] is owner and binding[1] is self
+            and getattr(screen, "_context_spend", None) is owner
+            and owner._context_display_resource is self
+            and owner._screen is screen
+            and getattr(screen, "_console_chat_controller", None) is controller
+            and getattr(screen, "_console_chat_store", None) is controller.store
+            and controller.store.active_session_id == session_id
+            and not getattr(screen, "_closing", False)
+            and not getattr(screen, "_closed", False)
+            and screen.is_mounted and screen.is_attached
+            and snapshot is not None
+            and getattr(screen, "_console_context_read_snapshot", None) is snapshot
+            and snapshot.screen is screen
+            and snapshot.config_projection is self._projection
+            and not snapshot._closed(controller)
+            and self._visit is not None
+            and self._visit.can_complete(screen._current_console_attach_visit())
+        )
+
+    def current_inputs(self, owner: Any, controller: Any, session_id: str) -> tuple | None:
+        """Read a current publication without scheduling or acquiring native work."""
+        if not self._current(owner, controller, session_id):
+            return None
+        value = self._snapshot.current_inputs(controller, session_id)
+        return value if self._current(owner, controller, session_id) else None
 
 
 def console_transcript_context_inputs(
@@ -1696,6 +1738,14 @@ def console_transcript_context_inputs(
     refresh: bool = True,
 ) -> tuple | None:
     """Share disposable memory display inputs without holding transcript paint."""
+    if not refresh:
+        owner = getattr(screen, "_context_spend", None)
+        resource = getattr(owner, "_context_display_resource", None)
+        return (
+            resource.current_inputs(owner, controller, session_id)
+            if resource is not None else None
+        )
+
     from ...Chat.console_chat_controller import (
         _CONTEXT_DISPLAY_CALLBACKS,
     )
@@ -1737,35 +1787,6 @@ def console_transcript_context_inputs(
             ):
                 break
         else:
-            if not refresh:
-                from ..Screens import chat_screen
-
-                snapshot = getattr(screen, "_console_context_read_snapshot", None)
-                reader = screen._context_spend._context_inputs
-                delegate, delegate_code = _CONTEXT_INPUTS_DELEGATE
-                ttl, ttl_code = chat_screen._CONSOLE_ESTIMATE_TTL_READER
-                if (
-                    type(snapshot) is ConsoleContextReadSnapshot
-                    and snapshot.screen is screen
-                    and stock_native_methods(snapshot, _CONTEXT_SNAPSHOT_READERS)
-                    and _handoff_projection_is_stock(snapshot.config_projection)
-                    and type(reader) is partial
-                    and reader.func is delegate
-                    and delegate is console_context_inputs
-                    and delegate.__code__ is delegate_code
-                    and delegate.__defaults__ is None
-                    and delegate.__kwdefaults__ is None
-                    and not reader.args
-                    and reader.keywords.keys() == {"screen", "estimate_ttl_seconds"}
-                    and reader.keywords["screen"] is screen
-                    and reader.keywords["estimate_ttl_seconds"] is ttl
-                    and ttl is chat_screen._console_settings_estimate_ttl_seconds
-                    and ttl.__code__ is ttl_code
-                    and ttl.__defaults__ is None
-                    and ttl.__kwdefaults__ is None
-                ):
-                    return snapshot.current_inputs(controller, session_id)
-                return None
             return screen._context_spend._context_inputs(controller, session_id)
     return None  # The transcript retains its original post-gate custom read.
 
@@ -2183,3 +2204,157 @@ class ConsoleDraftSpendRefresh:
         self.timer = None
         self.sync_settings_summary()
         self.sync_cost_chip()
+
+
+def poll_source(self) -> dict | None:
+    """Observe established owners; this is never native/action authority."""
+    from tldw_chatbook import config
+
+    from ...Chat.console_chat_controller import ConsoleChatController
+    from ...Chat.console_chat_store import ConsoleChatStore
+    from ...Chat.console_runtime import ConsoleRuntime
+    from ..Screens.chat_screen import ChatScreen, _console_screen_is_torn_down
+
+    if type(self) is not ChatScreen or _console_screen_is_torn_down(self):
+        return None
+    runtime = self._console_runtime()
+    if type(runtime) is not ConsoleRuntime:
+        return None
+    app = self.app_instance
+    store, controller = runtime.chat_store, runtime.chat_controller
+    if (
+        type(store) is not ConsoleChatStore
+        or type(controller) is not ConsoleChatController
+        or controller.store is not store
+        or controller.app is not app
+        or runtime._app is not app
+        or runtime._disposed
+        or controller._disposed
+        or controller._shutdown_requested.is_set()
+    ):
+        return None
+    session = store._sessions.get(store.active_session_id)
+    registry = vars(app).get("_workspace_registry_service")
+    if registry is None:
+        registry = vars(app).get("workspace_registry_service")
+    generation = getattr(registry, "mutation_generation", None)
+    app_config = getattr(app, "app_config", None)
+    if (
+        session is None
+        or session.settings is None
+        or type(app_config) is not dict  # Custom mappings stay FULL.
+        or type(generation) is not int  # Booleans/custom generations stay FULL.
+    ):
+        return None
+    return {
+        "visit": self._current_console_attach_visit(),
+        "config": config,
+        "config_identity": config.current_config_identity(),
+        "app": app,
+        "app_config": app_config,
+        "chat_database": vars(app).get("chachanotes_db"),
+        "runtime": runtime,
+        "store": store,
+        "controller": controller,
+        "registry": registry,
+        "registry_generation": generation,
+        "session": session,
+        "settings": session.settings,
+        "inputs": store.session_input_snapshot(session.id),
+        "staged_evidence": runtime.snapshot_console_staged_evidence(session.id),
+        "bridge": controller._agent_bridge,
+        "runtime_bridge": runtime._agent_bridge,
+        "membership": tuple(store.sessions()),
+    }
+
+
+
+def poll_source_is_current(self, captured: dict | None) -> bool:
+    current = poll_source(self)
+    if captured is None or current is None:
+        return False
+    return (
+        captured["visit"].can_complete(current["visit"])
+        and captured["config_identity"] == current["config_identity"]
+        and captured["registry_generation"] == current["registry_generation"]
+        and all(
+            captured[name] is current[name]
+            for name in (
+                "config",
+                "app",
+                "app_config",
+                "chat_database",
+                "runtime",
+                "store",
+                "controller",
+                "registry",
+                "session",
+                "settings",
+                "bridge",
+                "runtime_bridge",
+            )
+        )
+        and len(captured["membership"]) == len(current["membership"])
+        and all(
+            before is after
+            for before, after in zip(captured["membership"], current["membership"])
+        )
+    )
+
+
+
+def preparing_poll_inputs_current(self, captured: dict) -> bool:
+    """Keep the completed FULL's resident inputs, including accepted clearing."""
+    if not captured["store"].session_inputs_are_current(captured["inputs"]):
+        return False
+    before = captured["staged_evidence"]
+    current = captured["runtime"].snapshot_console_staged_evidence(
+        captured["session"].id
+    )
+    return current[0] is before[0] and current[1:] == before[1:]
+
+
+
+def poll_display_publication(
+    self, source: dict | None, memory_inputs=None
+) -> tuple | None:
+    """Read the current resident display; only a completed FULL may retain it."""
+    from textual.css.query import QueryError
+
+    from ...Chat.console_fleet_attention import FLEET_UNSEEN_REVISION_ATTR
+    from ...Widgets.Console.console_transcript import ConsoleTranscript
+    from ...Widgets.Console.console_session_surface import ConsoleSessionSurface
+    from .transcript import console_transcript_sync_gate
+
+    if source is None:
+        return None
+    try:
+        transcript = self.query_one("#console-native-transcript", ConsoleTranscript)
+        surface = self.query_one("#console-session-surface", ConsoleSessionSurface)
+    except QueryError:
+        return None
+    if (
+        type(transcript) is not ConsoleTranscript
+        or type(surface) is not ConsoleSessionSurface
+        or transcript._closing or transcript._pruning
+        or surface._closing or surface._pruning
+        or not transcript.is_mounted
+        or not transcript.is_attached
+        or not surface.is_mounted
+        or not surface.is_attached
+    ):
+        return None
+    if memory_inputs is None:
+        memory_inputs = console_transcript_context_inputs(
+            self, source["controller"], source["session"].id, refresh=False
+        )
+    cadence = getattr(self, "_console_config_cadence", None)
+    if memory_inputs is None or cadence is None:
+        return None
+    return (
+        surface,
+        console_transcript_sync_gate(self, transcript, memory_inputs[2]),
+        source["controller"]._lifecycle_revision,
+        cadence.published,
+        getattr(source["app"], FLEET_UNSEEN_REVISION_ATTR, 0),
+    )

@@ -2013,3 +2013,122 @@ Later readability, file-open/effect and outer checked-read validations remain
 fresh, including source drift after a nested join. Existing native pause and
 physical-retirement contracts remain. Original-function counts and native
 negative controls must qualify the change before final whole-Send measurements.
+
+### Explicit execution-source groups — 2026-11-16
+
+A finite recovery-admission guard may acquire its complete declared missing
+source set together before running the original ordered owner approvals. This
+uses one counted native hold and the existing related-path pre/post admission
+checks, rather than independently reacquiring the same profile for each source.
+No consumer effect occurs until all source and owner checks accept.
+
+Keep acquire_storage's existing contract: its related paths do not themselves
+grant borrowable execution authority. The explicit _acquire_execution_storage
+entry must observe every distinct member's PID/bootstrap/selector/resolved-source
+selection before admission, require one consistent selected profile, and verify
+every observation again after admission while its acquisition still participates
+in local pause. Only then may its exact live StorageLease expose immutable member
+selections. execution_context observes the requested selection afresh and refuses
+undeclared, changed, retired or foreign-process use. Admission failure retires
+the actual lease; uncertain physical close retains the existing ownership.
+
+The shared guard owns one close for its new group. Existing parent leases are
+borrowed unchanged, including transferred states and their ancestor checks. A
+single missing source keeps its original acquisition route. Per-source admission
+callbacks, source-scope checks, every ordered owner approval and final review
+remain fresh; no control records or permission decisions are shared across
+owners. Accepted worker lifetime and cancellation retirement are unchanged.
+
+Keep the original _Acquisition pending throughout grouped preflight and the
+ordered approval loop. At each formerly new-source boundary, and for all missing
+members before publishing ExecutionState, its original check must still accept.
+Retire that pending acquisition before yielding the payload, while retaining its
+actual storage lease through the effect. This preserves a pause arriving between
+approvals; accepted nested or transferred scopes with no missing paths retain
+their existing ability to complete under pause.
+
+This intentionally changes preflight ordering: an earlier owner's refusal may
+follow admission of other declared sources. It does not authorize those sources
+or permit their payload effects. Keep the family refusal exception and retain
+tests of pending intent or lost paired history between approvals. This explicit
+group is preferred to treating primary-only companion leases as authority or
+adding many consumer-specific partial guard bypasses. Native source/refusal,
+pause, lifetime and cleanup controls must pass before release; a lower acquisition
+count alone does not establish a whole-Send latency improvement.
+
+### Direct fresh Windows descriptor retrieval — 2026-11-16
+
+Use the documented user-mode NtQuerySecurityObject primitive to retrieve the
+opened object's OWNER|DACL in a call-local self-relative buffer. This replaces
+GetSecurityInfo's retrieval layer, preserving the current conservative owner and
+ordered-ACL projection; it does not adopt an older token-owner policy. Both APIs
+require READ_CONTROL, already requested by the native opener.
+
+Bound buffer growth/retries by NTFS's 64KiB descriptor limit and refuse unstable,
+invalid or non-self-relative results. Retain the existing 4096-byte bound for
+metadata descriptor evidence and cached byte decoding; larger ordinary reads
+decode without caching. Every observation queries the actual handle afresh.
+Keep native handle identity, nofollow/posture checks, source/permission gates and
+uncertain-close ownership unchanged. No notification, time-based authority or
+filesystem-verdict cache is introduced by this change.
+
+Projection parity must be demonstrated on the same live handle against the
+previous retrieval and current decoder, including changed ACLs. Exact descriptor
+bytes need not match API-added inheritance bookkeeping; compare the projection
+and separately verify that metadata returns the exact newly queried bytes.
+Bounded-buffer/error controls and original native cleanup tests precede release.
+Historical measurements on a non-ancestor branch are motivation, not evidence
+that current whole-Send timing meets its requirement.
+### 2026-11-16 clarification: config owns its finite-read API
+
+Sensitive-input assembly in Utils uses `config.configuration_read_scope()`;
+it does not import Backup_Recovery's participant implementation. The config
+module delegates this synchronous context to its existing config participant
+owner. Admission, nested reads, failure propagation and physical retirement are
+unchanged, including custom getter execution within the same finite scope.
+The context is not a reusable snapshot, an authorization cache or an owner that
+may span awaits or provider IO. This keeps the existing finite-read decision
+while respecting the package's kernel/domain dependency boundary, without a
+new layer exception. Hosted PR3534 architecture checks exposed the direct
+Utils-to-Backup_Recovery imports that this clarification corrects.
+
+### Fresh Windows acquisition evidence — 2026-11-16
+
+Selected for TASK34601.1 / PR3534; implementation and native qualification remain
+pending. Extend existing hold-local acquisition evidence to Windows using fresh
+complete observations on every reuse. Reuse successful derivation/parsing only:
+observe current named dependencies, exact security descriptors, file contents,
+directory membership and writable-volume state. Windows timestamps can be
+suppressed/restored and cannot independently prove unchanged contents.
+
+Use the existing checked two-pass metadata birth/retirement owner with bounded
+same-handle file reads and directory enumeration. Carry the volume flags already
+queried on that native birth. Preserve public metadata defaults and POSIX behavior.
+Unknown/unsupported/over-budget evidence falls back to the original derivation
+only after positive retirement; ordinary large ACLs retain their current behavior.
+Keep each input's existing policy rather than applying private-record rules to
+selectors or installed qualification files.
+
+Each finite observation retains an ordinary StorageLease on its actual serving
+hold, including before-count observations. An uncertain metadata close retains
+that token, its exact failed birth records and native exclusion through outer
+cleanup; never retry an uncertain birth or enter ordinary fallback. Use the
+existing live-lease registry. The metadata-specific refusal must not change the
+existing SQLite close-failure recovery contract.
+
+Retain two full positive derivations, the existing settlement margin, equal
+dependencies/epoch, actual PID/hold/names, pending/counted custody and original
+pause/cancellation checks. Count before final fresh observation and recheck
+currentness afterward. Changed evidence retires the new token before full
+derivation. Missing declared roots/absence-proved aliases, maintenance and
+unqualified storage remain excluded. Keep `_ordinary_hold` Windows-excluded:
+raw/config/activation derived proofs and all live owner/tool permission checks
+continue on their current routes. No watch, TTL or new authority cache is added.
+
+Native qualification must cover hidden same-size edits, new directory members,
+actual exclusion/retirement, changed permissions/paths/epoch, evidence limits,
+uncertain close and cancellation. Counts cannot qualify whole-Send timing.
+The Windows Send plan's Task3t governs integration and sequential measurement.
+Sources: [FILE_BASIC_INFORMATION](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/ns-wdm-_file_basic_information),
+[File Times](https://learn.microsoft.com/en-us/windows/win32/sysinfo/file-times),
+[GetVolumeInformationByHandleW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getvolumeinformationbyhandlew).

@@ -16,6 +16,7 @@ from Tests.UI.test_console_received_intent_feedback import (
     _send,
 )
 from tldw_chatbook.UI.Console_Modules import composer_run_controls as controls
+from tldw_chatbook.UI.Console_Modules import console_spend_projection as spend
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
 
@@ -66,7 +67,7 @@ async def test_preparing_defining_sources_decline_changed_callbacks(
             assert controls.preparing_poll_record(screen) is record
             qualified.append((name, "instance_callback"))
         for name in ("poll_source", "poll_source_is_current"):
-            function = getattr(controls, name)
+            function = getattr(spend, name)
             with monkeypatch.context() as changed:
                 changed.setattr(function, "__code__", function.__code__.replace())
                 assert controls.preparing_poll_record(screen) is None, name

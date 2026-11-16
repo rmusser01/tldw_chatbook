@@ -852,9 +852,8 @@ def _sensitive_db_paths() -> tuple[Path, ...]:
         additive coverage; containing admission or retirement errors propagate.
     """
     raise ImportError("'..' (importing config) is not available inside the remote worker bundle")
-    raise ImportError("'..Backup_Recovery.config_participants' (importing operation) is not available inside the remote worker bundle")
     resolved: list[Path] = []
-    with operation(_config):
+    with _config.configuration_read_scope():
         for accessor_name in _DB_PATH_ACCESSOR_NAMES:
             accessor = getattr(_config, accessor_name, None)
             if accessor is None:
@@ -1086,9 +1085,8 @@ def _raw_inputs() -> tuple:
     if memo is not None and _same_key(memo[0], key):
         return memo[1]
     raise ImportError("'..' (importing config) is not available inside the remote worker bundle")
-    raise ImportError("'..Backup_Recovery.config_participants' (importing operation) is not available inside the remote worker bundle")
     failures = getattr(_failures, 'count', 0)
-    with operation(_config):
+    with _config.configuration_read_scope():
         inputs = (user_data_dir, _sensitive_single_file_paths(), _sensitive_skill_trust_dir(), _sensitive_db_paths(), _direct_child_rule_container_dirs())
     if user_data_dir is not None and config_path is not None and (getattr(_failures, 'count', 0) == failures) and _same_key(key, _raw_inputs_key()[2]):
         with _RAW_INPUTS_LOCK:
@@ -5856,4 +5854,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("80b3c044a9f186a173b1f4ec78aae02d7536398bc02623d63b2d27fe10ffc07d")
+BUNDLE_SHA256 = _enter_worker_exchange("fbd2aac765f424f592672965acbffc26fc121e3353c90141bbd60fea1088c47b")

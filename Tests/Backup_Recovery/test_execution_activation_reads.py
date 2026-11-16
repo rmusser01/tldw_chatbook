@@ -1,4 +1,4 @@
-"""One execution entry shares facts without reusing another owner's decision."""
+"""Each execution owner retains fresh public startup and activation decisions."""
 
 from textwrap import indent
 
@@ -18,9 +18,14 @@ import threading
 import time
 from tldw_chatbook.Backup_Recovery import activation
 from tldw_chatbook.Backup_Recovery.admission import AdmissionTimeout
+from tldw_chatbook.Backup_Recovery.control_records import UNBOUND_NAMESPACE
 
 path = db.db_path
 lease = storage.acquire_storage(path)
+native_root, native_namespaces = lease.execution_scope()
+assert native_root == root
+expected_namespace = UNBOUND_NAMESPACE if state == 'ordinary' else 'profile'
+assert expected_namespace in native_namespaces, native_namespaces
 scope = activation.execution_scope
 scope_code = inspect.unwrap(scope).__code__
 context_code = storage.StorageLease.execution_context.__code__
@@ -124,9 +129,9 @@ try:
     assert activation.execution_scope is scope
     assert activation.ActivationStore.allowed is allowed_reader
     assert all(getattr(bootstrap, function.__name__) is function for function in readers)
-    assert lease.execution_context(path)[0] == root, 'borrower retired its caller lease'
+    assert lease.execution_context(path) == (native_root, native_namespaces), 'borrower changed its caller lease'
     try:
-        with authority.maintenance(('profile',), .02):
+        with authority.maintenance(native_namespaces, .02):
             raise AssertionError('execution lost native exclusion')
     except AdmissionTimeout:
         pass
@@ -134,13 +139,14 @@ finally:
     lease.close()
 
 assert lease not in storage._live_leases
-with authority.maintenance(('profile',), 2):
+with authority.maintenance(native_namespaces, 2):
     pass
 assert not blocked_attempts()
 print(json.dumps({'counts': counts, 'gate_seconds': elapsed, 'approvals': approvals}))
 if route == 'count':
     assert permitted, 'original execution gate refused an approved fixture'
-    assert counts['gate'] == {'controls': 3, 'registry': 2}, counts
+    # Task3g read reuse is deferred: keep the public callback and fresh facts.
+    assert counts['gate'] == {'controls': 5, 'registry': 4}, counts
 elif route in ('custom_binding', 'custom_code', 'invalid_owner'):
     assert not permitted and approvals == 0
     assert counts['gate'] == {'controls': 1, 'registry': 0}, counts
@@ -158,7 +164,7 @@ _SCRIPT = (
 
 
 @pytest.mark.parametrize("state", ["ordinary", "approved"])
-def test_execution_reads_one_control_set_per_owner(tmp_path, state):
+def test_execution_keeps_fresh_public_startup_and_activation_reads(tmp_path, state):
     _run(tmp_path, "count", state, script=_SCRIPT)
 
 

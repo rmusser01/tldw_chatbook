@@ -806,16 +806,6 @@ CONSOLE_COST_TTL_TICK_SECONDS = 10.0
 # an estimate chip -- same spirit as the cost tick's 10s bound above.
 CONSOLE_SETTINGS_ESTIMATE_TTL_SECONDS = 1.0
 
-
-def _console_settings_estimate_ttl_seconds() -> float:
-    """Read the display interval at call time, including configured overrides."""
-    return CONSOLE_SETTINGS_ESTIMATE_TTL_SECONDS
-
-
-_CONSOLE_ESTIMATE_TTL_READER = (
-    _console_settings_estimate_ttl_seconds,
-    _console_settings_estimate_ttl_seconds.__code__,
-)
 # task-13 (Console Inspector environment redesign): cadence for the
 # Environment panel's LOCAL tier (git status + the mtime-cached backlog
 # scan). Network work -- the `gh` PR/checks fetch -- is a separate tier with
@@ -7175,7 +7165,7 @@ class ChatScreen(BaseAppScreen):
             build_context_estimate=lambda *args, **kwargs: build_console_context_estimate(*args, **kwargs),
             estimate_tokens_locally=lambda *args, **kwargs: _estimate_tokens_locally(*args, **kwargs),
             cost_ttl_seconds=lambda: CONSOLE_COST_TTL_TICK_SECONDS,
-            estimate_ttl_seconds=_console_settings_estimate_ttl_seconds,
+            estimate_ttl_seconds=lambda: CONSOLE_SETTINGS_ESTIMATE_TTL_SECONDS,
         )
         # ADR-097: closed Inspect must not import its collectors at first paint.
         self._console_environment_owner = None
@@ -17615,7 +17605,7 @@ class ChatScreen(BaseAppScreen):
         promoted_poll = poll_record is not None and poll_record.request is not None
         # The original fifteenth transcript call remains the media backstop.
         short_poll = promoted_poll and (self._console_transcript_sync_ticks + 1) % 15 != 0
-        full_source = run_controls.poll_source(self) if poll_record is None else None
+        full_source = spend.poll_source(self) if poll_record is None else None
         display_before = None
         tabs_synced = None
         if poll_record is None and type(self) is ChatScreen:
@@ -17651,7 +17641,7 @@ class ChatScreen(BaseAppScreen):
             # AC10: publish current tabs before cold presentation reads can
             # defer the rest of FULL. The tab owner revalidates every await.
             if poll_record is None:
-                display_before = run_controls.poll_display_publication(self, full_source)
+                display_before = spend.poll_display_publication(self, full_source)
                 tabs_synced = await self._sync_console_native_session_tabs()
                 self._sync_console_temporary_chip()  # TASK-37840: capture changes.
             elif not short_poll:
@@ -17664,25 +17654,17 @@ class ChatScreen(BaseAppScreen):
             if not poll_is_current():
                 return False
             if not promoted_poll:
-                # PR#757 review (comment 4): warm the effective-scope cache for
-                # an already-active persisted session before anything below
-                # reads it -- see `_warm_console_effective_scope_cache_if_stale`
-                # docstring for why the picker/resume/flush warmers alone leave
-                # a restore_state-reactivated session uncovered.
+                # PR#757: restore_state can reactivate a persisted session without
+                # picker/resume/flush warmers. Warm its effective scope before
+                # downstream reads; the helper documents that restore path.
                 await self._retrieval._warm_console_effective_scope_cache_if_stale()
                 if not poll_is_current():
                     return False
-                # Fix-wave (Critical, Task 4 review): this is the trigger for the
-                # "what's in play" chat-dictionary summary now -- it replaces the
-                # removed app-level `watch_current_chat_conversation_id`/
-                # `watch_current_chat_active_character_data` watchers, which
-                # hooked reactives the native Console never writes. This runs on
-                # every native session switch/resume (`_activate_native_console_
-                # session`, `_resume_console_workspace_conversation`) because
-                # both call `_sync_native_console_chat_ui()`; placed before
-                # `_sync_console_control_bar()` below so that call's inspector
-                # build already sees the freshly recomputed cache instead of one
-                # stale frame behind.
+                # Fix-wave Task 4: native session switch/resume reaches this sync;
+                # the retired app-level conversation/character watchers did not
+                # observe native Console state. Refresh the "what's in play"
+                # dictionary cache before `_sync_console_control_bar()` so its
+                # inspector sees current data rather than a stale frame.
                 await (
                     self._retrieval._refresh_active_dictionaries_summary_if_scope_changed()
                 )
@@ -17691,12 +17673,9 @@ class ChatScreen(BaseAppScreen):
                 await self._retrieval._refresh_active_world_books_summary_if_scope_changed()
                 if not poll_is_current():
                     return False
-                # P3c Task 4: mirrors the dictionary/world-book scope-guarded
-                # refresh pattern immediately above -- safe to call unconditionally
-                # on every sync tick because the refresh is itself scope-guarded
-                # (no-op when the active character hasn't changed) and never
-                # raises (see `_refresh_active_character_avatar_if_scope_changed`
-                # docstring, T3).
+                # P3c Task 4: like dictionary/world-book refresh, avatar refresh
+                # is scope-guarded (unchanged character is a no-op) and never
+                # raises; see the helper's T3 contract.
                 await self._character._refresh_active_character_avatar_if_scope_changed()
                 if not poll_is_current():
                     return False
@@ -17710,24 +17689,13 @@ class ChatScreen(BaseAppScreen):
                 await character_presentation_work(self._character_context, self)
                 if not poll_is_current():
                     return False
-            # task-280: hand the control bar a pre-await snapshot (its own
-            # pre-existing timing). The rail-VISIBILITY call below must NOT
-            # reuse this snapshot across the remaining awaited helpers:
-            # interleaved work can change the active session, and
-            # pre-task-280 the visibility check always computed
-            # fresh post-await state (PR #660 review caught the reuse as a
-            # staleness regression — the one-tuple-per-tick dedupe is
-            # withdrawn for the visibility half).
-            #
-            # TASK-22201: the workspace-context builds of one tick (the rail states
-            # here, the workspace-context push, the control bar's and agent
-            # section's inspector legs — six per tick, measured) share ONE
-            # fingerprint-validated build through this scope. The PR #660 ruling
-            # is kept by MECHANISM rather than by always rebuilding: a session
-            # created/activated across the awaits changes the store fingerprint
-            # and the later reads rebuild, while a settled tick pays for one
-            # build. Task-scoped: only THIS coroutine's task reads the cache —
-            # workers and handlers interleaving during the awaits build live.
+            # Task-280 / PR #660: the control bar uses a pre-await snapshot;
+            # rail visibility must read post-await state because sessions can
+            # change across awaits. Never share a stale visibility snapshot.
+            # TASK-22201: this task's six workspace-context builds (rail states,
+            # context push, control-bar and agent inspectors) share one build
+            # only while its store fingerprint matches. Session creation or
+            # activation invalidates it; interleaved workers/handlers build live.
             if poll_record is None:
                 from ..Console_Modules.config_sync import prepare_console_presentation_sync
 
@@ -17830,15 +17798,15 @@ class ChatScreen(BaseAppScreen):
                 poll_record is None
                 and not self._console_sync_requested
                 and full_source is not None
-                and run_controls.poll_source_is_current(self, full_source)
-                and run_controls.preparing_poll_inputs_current(self, full_source)
+                and spend.poll_source_is_current(self, full_source)
+                and spend.preparing_poll_inputs_current(self, full_source)
             ):
                 # Keep the existing unpromoted source witness. Only an actually
                 # completed, unchanged display can qualify the promoted shortcut.
                 if (
                     tabs_synced is True and transcript_synced is True
                     and display_before is not None
-                    and display_before == run_controls.poll_display_publication(self, full_source)
+                    and display_before == spend.poll_display_publication(self, full_source)
                     and display_before[1] == self._console_transcript_sync_token
                 ):
                     full_source["display_publication"] = display_before

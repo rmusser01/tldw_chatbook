@@ -630,6 +630,7 @@ class StorageLease:
     def __init__(self, key: tuple[int, str] | None):
         self._key = key
         self._execution_selection = None
+        self._execution_members = ()
         self.resource_policy = None
         self.resource_path = None
         self.resource_thread = None
@@ -664,7 +665,7 @@ class StorageLease:
             return Path(key[1]), names
 
     def execution_context(self, path: Path | None):
-        """Verify the exact acquisition selection before borrowing its authority.
+        """Verify the primary or explicitly grouped member before borrowing.
 
         None namespaces describe a real unqualified ordinary acquisition, never
         native admission. Only independent ordinary-history checks may use it.
@@ -674,7 +675,10 @@ class StorageLease:
             if (
                 self not in _live_leases
                 or self._execution_selection is None
-                or observed != self._execution_selection
+                or (
+                    observed != self._execution_selection
+                    and observed not in self._execution_members
+                )
             ):
                 raise bootstrap.RecoveryRequired("execution_selection_changed")
             if self._key is None:
@@ -1511,6 +1515,56 @@ def acquire_storage(
         raise bootstrap.RecoveryRequired("storage_admission_unavailable") from None
     finally:
         attempt.close()
+
+
+def _acquire_execution_storage(paths, attempt: _Acquisition) -> StorageLease:
+    """Admit explicit execution members under the caller's pending preflight.
+
+    The caller retains and retires ``attempt`` through its ordered owner checks.
+    Ordinary related paths remain primary-only; only this entry issues members.
+    """
+    paths = tuple(paths)
+    if not paths or any(
+        type(path) not in (str, type(Path())) or path == "" for path in paths
+    ):
+        raise ValueError("execution_group_paths_invalid")
+    selected = tuple(dict.fromkeys(lexical_path(path) for path in paths))
+
+    def check_attempt():
+        if (
+            type(attempt) is not _Acquisition
+            or attempt not in _pending_acquisitions
+            or attempt.pid != os.getpid()
+            or attempt.thread is not threading.current_thread()
+            or attempt.task is not _task_identity()
+        ):
+            raise bootstrap.RecoveryRequired("acquisition_provenance_invalid")
+        for path in selected:
+            attempt.check(path)
+
+    with _lock:
+        check_attempt()
+    selections = tuple(_execution_selection_for(path) for path in selected)
+    if any(selection[:4] != selections[0][:4] for selection in selections[1:]):
+        raise bootstrap.RecoveryRequired("execution_selection_changed")
+    token = _acquire_storage(selected[0], attempt, related_paths=selected[1:])
+    try:
+        with _lock:
+            current = tuple(_execution_selection_for(path) for path in selected)
+            check_attempt()
+            if (
+                current != selections
+                or token not in _live_leases
+                or token._execution_selection != selections[0]
+            ):
+                raise bootstrap.RecoveryRequired("execution_selection_changed")
+            if token._key is not None:
+                token.execution_scope()
+            token._execution_members = selections
+        return token
+    except BaseException:
+        token.close()
+        raise
 
 
 def _acquire_storage(

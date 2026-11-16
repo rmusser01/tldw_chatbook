@@ -1,6 +1,7 @@
 """Original current-owner observation helpers; general polling is not accepted."""
 
 import contextlib
+import copy
 import inspect
 import sys
 from types import CodeType
@@ -13,7 +14,7 @@ from Tests.UI.test_console_received_intent_feedback import (
     _received_console_case,
     _send,
 )
-from tldw_chatbook.UI.Console_Modules import composer_run_controls
+from tldw_chatbook.UI.Console_Modules import composer_run_controls, console_spend_projection
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
@@ -501,8 +502,8 @@ async def test_promoted_manual_polls_keep_saved_transcript_without_repeating_rea
                 assert user.id in transcript.mounted_message_content_ids()
                 assert case.console._console_transcript_sync_timer is not None
                 assert not record.task.done() and not case.provider_calls
-                # An injected display reader is outside the stock no-refresh
-                # route, even when it would eventually call the original.
+                # The current display is owned by the composed resource.
+                # Transparent wrappers do not revoke that ownership.
                 from tldw_chatbook.UI.Console_Modules import composer_run_controls
 
                 # Retain the same twenty-second window. Removing only the
@@ -545,24 +546,33 @@ async def test_promoted_manual_polls_keep_saved_transcript_without_repeating_rea
                 assert user.id in transcript.mounted_message_content_ids()
                 assert not record.task.done() and not case.provider_calls
 
-                original = case.console._context_spend._context_inputs
-                with monkeypatch.context() as changed:
-                    changed.setattr(
-                        case.console._context_spend, "_context_inputs",
-                        lambda *args: original(*args),
-                    )
-                    assert composer_run_controls.preparing_poll_record(case.console) is None
-                assert composer_run_controls.preparing_poll_record(case.console) is record
+                owner = case.console._context_spend
                 snapshot = case.console._console_context_read_snapshot
-                with monkeypatch.context() as changed:
-                    changed.setattr(snapshot, "inputs", lambda *args: snapshot.value)
-                    assert composer_run_controls.preparing_poll_record(case.console) is None
-                with monkeypatch.context() as changed:
-                    changed.setattr(snapshot.config_projection, "run", lambda *args: True)
-                    assert composer_run_controls.preparing_poll_record(case.console) is None
-                with monkeypatch.context() as changed:
-                    changed.setitem(original.keywords, "estimate_ttl_seconds", lambda: 1.0)
-                    assert composer_run_controls.preparing_poll_record(case.console) is None
+                # Every intervention is synchronous; no FULL can repair a
+                # missing publication between the negative and restored checks.
+                for target, name in (
+                    (owner, "_context_inputs"),
+                    (snapshot, "inputs"),
+                    (snapshot.config_projection, "run"),
+                ):
+                    original = getattr(target, name)
+                    with monkeypatch.context() as changed:
+                        changed.setattr(
+                            target, name,
+                            lambda *args, callback=original, **kwargs: callback(*args, **kwargs),
+                        )
+                        assert composer_run_controls.preparing_poll_record(case.console) is record
+                    assert composer_run_controls.preparing_poll_record(case.console) is record
+                for target, name, replacement in (
+                    (owner, "_context_display_resource", copy.copy(owner._context_display_resource)),
+                    (case.console, "_console_context_read_snapshot", copy.copy(snapshot)),
+                    (snapshot, "config_projection", copy.copy(snapshot.config_projection)),
+                    (snapshot, "value", None),
+                ):
+                    with monkeypatch.context() as changed:
+                        changed.setattr(target, name, replacement)
+                        assert composer_run_controls.preparing_poll_record(case.console) is None
+                    assert composer_run_controls.preparing_poll_record(case.console) is record
                 with monkeypatch.context() as changed:
                     changed.setattr(case.console, "_current_console_run_status_value", lambda: "completed")
                     assert composer_run_controls.preparing_poll_record(case.console) is None
@@ -619,9 +629,11 @@ async def test_promoted_manual_polls_keep_saved_transcript_without_repeating_rea
                                 for name in (
                                     "preparing_poll_record",
                                     "_promoted_preparing_poll_current",
-                                    "poll_source_is_current",
                                 )
-                            ],
+                            ] + [(
+                                "poll_source_is_current", console_spend_projection,
+                                "poll_source_is_current",
+                            )],
                             observe_qualification,
                         ):
                             qualified = composer_run_controls.preparing_poll_record(case.console) is record

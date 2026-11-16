@@ -1143,3 +1143,324 @@ The corrected observer links8/9/8 selected workers and three eager retained task
 per Send with no missing/ambiguous handoffs. Cold collection integrity passes;
 warm unmatched/reused spans still limit whole-phase attribution. Instrumented
 action-to-adapter20.552/15.014/19.896s is not a quiet release measurement.
+
+Checkpoint follow-up: hosted Tool Recovery reaches its next step after the 17
+original fixes and exposes 125 configuration-selection failures in Git/review
+fixtures. Bind a real per-test selected config via the existing support helper;
+keep independent HOME/XDG and use that helper again in the two deliberate
+source-reselection controls. One shared fixture boundary per module replaces
+per-test decorators. Native verification pr3534-git-config-fixtures-green-1 has
+37 passes and four Windows failures reproduced unchanged on dev in
+pr3534-dev-git-platform-controls-1: POSIX path expectation, absent killpg,
+POSIX-script execution and a 30s truncated-diff subprocess timeout. Review-source
+native setup separately lacks symlink privilege on both branches; hosted Linux
+must verify its complete suite. The three representative Git controls fail on
+the unpatched branch and pass after correction. F lint and diff check pass.
+
+The fixture-only correction is committed as 74e66ed713. Hosted Python 3.12 and
+3.14 both pass the complete Git/review step; their next step is under review.
+
+### Task3p — one explicit acquisition for a worker's declared sources
+
+ADR required: yes.
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: consolidate the measured five independent acquisitions at worker entry
+without turning primary-only related paths into implicit execution authority.
+
+The exact ledger/provider worker prefixes spend more than 99% of their observed
+body-entry delay inside native admission. Existing related_paths already checks
+the complete selected set before/after counting one native hold, but grants an
+execution selection only for its primary. Introduce an explicit grouped entry
+that records and verifies every declared member's selection. Keep ordinary
+acquire_storage and its primary-only companion contract unchanged.
+
+1. Add a focused native regression: five real declared sources use one counted
+   acquisition, every member obtains its actual execution context, unrelated
+   paths refuse, and physical exclusion/retirement remain observable. Run RED
+   against the current shared guard before applying the implementation.
+2. The storage lane prepares _acquire_execution_storage(paths, attempt): one original
+   _Acquisition owns member-selection observations, existing related-path
+   admission, final selection/liveness/pause checks and all failure cleanup.
+   Store immutable member selections on the existing exact StorageLease;
+   its execution_context still re-observes the requested member and live hold.
+3. Root integrates the shared RecoveryAdmissionGuard: pre-acquire only distinct
+   missing paths as one group, register one close, and keep the existing ordered
+   per-source admit_source/execution_scope/finalize calls. A single missing path
+   retains acquire_storage. Keep the group's _Acquisition pending through the
+   original owner loop; check at the former new-path boundaries and again for
+   every missing member, then retire it before publishing ExecutionState or
+   yielding payload. This preserves refusal of a pause between approvals.
+   Nested or transferred states retain their parent leases; a child owns only
+   its new group. No payload runs before all checks.
+4. Qualify undeclared/retargeted paths, selector/recovery drift, member scope,
+   pause during acquisition, refusal between owner approvals, nested/transfer
+   lifetime and failure/uncertain-close cleanup. Keep per-owner control reads
+   fresh; no cached authorization, source-scope bypass or extended worker life.
+5. Run affected Agent/MCP/RAG admission controls and final quiet Enter/button
+   measurements sequentially. Counts do not establish the six-second gate.
+
+This deliberately moves admission of all missing sources before the first owner
+approval. It may do additional read-only preflight before an earlier owner would
+refuse, but does not permit an effect or bypass an approval. Preserve the family
+exception contract. Root owns integration and every native/app/test run; storage
+and verification lanes supply independent off-tree patches with distinct files.
+
+Native RED (pr3534-execution-group-count-red-1, 14.78s) proves all five real
+member contexts, payload, physical exclusion, pending-owner retirement and
+maintenance reopening before failing the final count: five acquisitions/tokens
+instead of one. Native GREEN on the integrated storage/runtime implementation
+passes all 13 count/runtime/per-owner controls in 69.01s, with fixed sources and
+HEAD. The group retains one pending preflight through approvals and verifies
+its exact process/thread/task owner before issuing member authority. Existing
+between-owner pending and paired-history-loss refusals remain green. Full
+group-specific negatives subsequently pass in
+pr3534-execution-group-negatives-1: 48 passed, one POSIX-only skip in 207.85s,
+with unchanged sources and HEAD. This includes all 23 new group controls,
+ordinary related-path refusal, remote bundle validation and both bundle-size
+ratchets. Affected family controls and final quiet button verification remain
+pending.
+
+Task3p first quiet Enter run (pr3534-execution-group-enter-1, 136.42s) completes
+all three saved turns at 16.050/14.417/15.480s, with fixed sources and full private
+defaults. These headless action-to-controlled-adapter timings still fail the
+six-second gate; the acquisition-count improvement is not sufficient.
+
+### Task3q — qualify direct fresh Windows security-descriptor reads
+
+ADR required: yes.
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: replace a native descriptor retrieval primitive while preserving the
+current conservative owner/ACL projection and per-call freshness contract.
+
+History review finds Claude's 4921fadd28 native-query implementation and
+158cb6992a notification reuse on the earlier integration line, but neither is
+an ancestor of the actual PR3050 merge 588389cfe2. The October31 reconciliation
+explicitly ported selected behavior while keeping current-dev native admission.
+Historical claims that its native optimizations merged overstate the surviving
+tree. No specific recorded rejection of the descriptor retrieval was found.
+Its old speed measurements cannot establish current performance.
+
+1. Reuse only the fresh NtQuerySecurityObject retrieval idea. Preserve the
+   CURRENT _decode_security/_acl_mode semantics, byte-only decoding cache,
+   descriptor-size limits, native handle birth/retirement and all source gates.
+   Do not replay old token-owner, snapshot-tree or change-notification changes.
+2. Establish a native RED count against the current security method after
+   same-handle GetSecurityInfo/current-decoder projection and actual cleanup
+   prerequisites. Add live file/directory and ACL-mutation parity controls.
+3. Query OWNER|DACL into a bounded call-local buffer; bounded resize retries
+   handle changing descriptor length. Require valid self-relative bytes before
+   decoding. Keep ordinary large-descriptor decoding uncached and metadata
+   refusal above the existing 4096-byte bound. All errors remain fail closed.
+4. Adapt existing acquisition/free test doubles and native call observers to
+   the actual primitive while preserving descriptor freshness, exact handle
+   identity, native close/uncertain-retirement, error and projection assertions.
+5. Root integrates the independently prepared windows_files.py and test packets;
+   native runs remain sequential. Run existing security/metadata/path controls,
+   then quiet full-default Enter and button sends. Retain the six-second gate.
+
+Microsoft's documented user-mode name, self-relative return, READ_CONTROL access
+and 64KiB NTFS descriptor bound support the API contract:
+https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-zwquerysecurityobject.
+Actual projection equivalence and performance still require current native tests.
+
+Native primitive qualification: pr3534-security-query-red-1 (10.48s) passes
+same-handle projection, descriptor-allocation retirement and positive native
+handle-close checks, then fails only the intended final count: zero direct NT
+queries and three GetSecurityInfo calls. The identical test passes with the
+replacement in pr3534-security-query-green-1 (3.15s), observing three fresh NT
+queries and zero GetSecurityInfo calls. Full ACL/size/error controls and complete
+quiet sends remain pending; this count evidence alone does not qualify merge.
+
+Separate hosted-CI correction 82c1a57863 shortens only the sensitive-database
+accessor's explanatory docstring and regenerates the remote bundle. Both existing
+bundle-size ratchets, bundle tests and F lint pass; its size budget is unchanged.
+
+Complete quiet Task3q measurements still fail: Enter
+15.577/11.852/13.677s (pr3534-nt-query-enter-1, 130.67s), button
+15.228/16.161/13.994s (pr3534-nt-query-button-1, 133.47s). Every turn saved,
+replied and settled; sources/HEAD remained fixed. These runs do not establish a
+causal whole-Send gain. Current quiet Enter stages place controller entry at
+3.168/2.962/4.047s and save completion at 5.064/4.415/5.542s; trace reservation
+starts at 15.003/11.416/13.128s. Repeated native ancestry work remains under
+investigation; no cross-owner permission cache is selected.
+
+Native security/metadata qualification passes all 75 cases in 7.14s
+(pr3534-security-query-controls-2). The first run had 71 passes and four new
+file-fixture setup failures. A repeated original failing case with locals proves
+SetSecurityInfo strips the creation ACL's OI|CI flags on files while preserving
+owner, revision, masks and trustees. The fixture now establishes its explicit
+noninheriting file ACL before the existing exact-restoration helper, asserting
+projection equality across that setup. Shared restoration checks and product
+code are unchanged. Native large-ACL resize and family integration remain pending.
+
+Family comparison: pr3534-execution-family-controls-1 has four passes and eight
+failures in 122.28s. The eight unchanged selectors also fail on clean dev71e in
+pr3534-dev-execution-family-controls-1 (78.72s). MCP/RAG common setup emits
+unescaped Windows paths in TOML, so those cases fail before family execution.
+The Agent baseline stops at the same malformed fixture class; the candidate
+already has that spelling corrected and exposes an unsynchronized request for
+cancellation before native entry. Its comparison needs byte-identical corrected
+fixtures, not a claim that the two failures prove the same behavior. MCP's native
+worker cancellation case already waits for actual entry and still needs separate
+analysis of the pre-entry timing failure. No product failure is waived.
+
+The first native leaf census (pr3534-native-leaf-costs-1, 203.95s) completes all
+three turns with original bindings/callbacks restored and all 14 targets found.
+Its overall collection is invalid: detailed caller-chain and unfinished-span
+caps overflow, and Python3.12 lacks local unwind events for expected missing-path
+exceptions. Do not use its inclusive times as latency attribution. Uncapped
+original-body start counts show 586/693/614 registry reads and 701/814/730
+control-record reads across worker threads during the instrumented send windows.
+A narrower two-reader start-count census will identify their consumers without
+low-level duration/exception bookkeeping. No new product optimization is selected
+from the incomplete trace.
+
+### CI boundary correction — configuration owns the finite read scope
+
+ADR required: yes (cross-module API ownership).
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: the finite assembly is correct in behavior, but Utils must not import
+the domain-layer Backup_Recovery participant directly. Hosted architecture
+verification identifies both new imports in sensitive_paths.
+
+Expose one synchronous `config.configuration_read_scope()` facade over config's
+existing participant owner. Replace only the two direct imports/with boundaries
+in sensitive_paths; keep custom getters, native checks, exception propagation
+and cache publication ordering unchanged. Do not change layer allowlists.
+Verify the layer contract, the original finite-read native regression and its
+failure/custom-source controls. The facade must not span awaits or provider IO.
+
+### Task3r — register the existing display reader at composition
+
+ADR required: yes (cross-module resource ownership).
+ADR path: backlog/decisions/231-console-polling-and-full-state-reconciliation.md;
+existing ADR356 forbids implementation-identity authority.
+Reason: hosted CI exposes new code/default introspection, and the mounted
+original-source regression proves a transparent callback wrapper incorrectly
+disables current display reuse.
+
+1. Keep ConsoleContextReadSnapshot as the sole cache. Compose one display reader
+   with the actual Context/spend controller; bind it once to that controller and
+   screen. A normal read records its actual snapshot, config projection and visit.
+2. A refresh-free read requires that same registered controller/resource pair,
+   current attachment, controller/store/session and current published snapshot.
+   Recheck after reading; copying records cannot recreate registration. Preserve
+   custom constructors without a resource and their ordinary callback route.
+3. Remove this branch's code/default identity gates. Replace their mutation-count
+   tests with resource/currentness, transparent-wrapper and copied-owner controls;
+   retain existing FULL, configuration-read, feedback and lifecycle requirements.
+4. Defer Task3g startup read reuse: retain the public startup_permission callback
+   followed by fresh activation observations. Do not move its identity checks
+   into another helper or raise architecture pins. Keep the shared evaluation
+   helper required by storage admission. Record this deferral in the review list.
+5. Run the mounted regression and existing affected controls sequentially; then
+   qualify package identity/layer and existing projection-size ratchets. Count
+   and ownership evidence alone cannot establish the six-second merge gate.
+
+Original-source RED pr3534-context-display-resource-red-1 fails only the final
+same-value assertion after transparent wrapping (58.10s): original publication,
+zero config/live-policy calls and no scheduled work all pass. Sources and HEAD
+remain fixed throughout that run.
+
+Integrated ownership/facade qualification passes53 cases with one POSIX-only
+skip in197.50s (pr3534-context-owner-and-scope-green-1), fixed sources/HEAD.
+This includes both mounted display-resource cases, original finite config-read
+and failure controls, identity/layer/ChatScreen-size ratchets and regenerated
+worker bundle integrity/size. Existing FULL/config/feedback controls remain next.
+
+The narrower original-body read census is valid
+(pr3534-control-read-counts-1,176.83s). One complete warm action-to-adapter window
+contains746 control-record and629 registry reads across main and worker threads.
+224 acquisitions each read both inputs before and after counting, accounting for
+448 of each total. Consumer chains include53 SQLite opens and14 readiness-config
+assemblies. These are whole-window start counts, not per-call timestamps, paired
+invocations or evidence that each read is on the foreground/post-save path.
+All recorded phases remain within caps and restore original monitoring bindings.
+Select further work from caller/lifetime evidence rather than assigning these
+aggregate counts a causal latency share.
+
+### Task3s — readiness uses the existing publication coordinator
+
+ADR required: no new ADR.
+ADR path: existing backlog/decisions/231-console-polling-and-full-state-reconciliation.md.
+Reason: correct one publication caller that bypasses the existing cadence owner.
+
+The successful readiness refresh directly schedules FULL, including while an
+original FULL awaits that same read. Context and appearance snapshots already
+publish through config_sync.publish_console_presentation. Establish a causal
+regression using the original readiness refresh and cadence/settlement hooks;
+then route this single completion through that existing helper. Keep all native
+reads, currentness, expiry, settings convergence, cancellation and physical
+retirement unchanged. Verify later changed publication, stopped-poll settlement,
+independent decision state and the original idle custom callback. Retain mounted
+FULL/config/feedback controls; this scheduling test cannot establish native speed.
+
+The execution-count fixture also probes its actual retained namespace. An
+ordinary unbound lease does not claim the unrelated registered profile namespace;
+the old hard-coded maintenance probe was not evidence of exclusion. Preserve
+all original count/refusal and lifetime assertions and deadlines, requiring
+actual expected namespace membership plus full retained execution-context equality.
+
+Task3s RED is valid in pr3534-acquisition-publication-red-1 (26.79s combined):
+the original finite read retires and the awaiting projection renders before the
+final assertion finds one redundant FULL. The idle custom-callback control passes.
+Native Windows acquisition separately passes real payload, hold exclusion and
+retirement before observing2 records/2 registry/2 scope derivations and no evidence
+reuse. That count establishes opportunity, not the safety of metadata-only reuse.
+
+CI composer-size correction (existing ADR231; no new ADR): move the four resident
+FULL source/publication observation helpers into console_spend_projection, retaining
+custody/preparation eligibility in composer_run_controls. Keep dependencies lazy,
+all original predicates and defining-module references, and the existing size
+ceilings. Qualify preparing/FULL, compiled-source, response-rule and observer
+controls. This mechanical ownership correction makes no speed claim.
+
+### Task3t — fresh Windows acquisition derivation reuse
+
+ADR required: yes.
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md,
+Fresh Windows acquisition evidence amendment.
+Reason: qualify existing hold-local proof with complete fresh Windows observations.
+
+1. Retain the meaningful native count RED and production one-second settling rule.
+   Qualify native same-size edits with suppressed timestamps and newly added
+   directory entries with restored times against original full refusal.
+2. Add one platform observation seam to existing _Evidence. Windows uses the
+   current checked batch for metadata/exact SD plus bounded fresh file digests and
+   sorted directory membership. POSIX keeps its original observations. Reuse
+   existing native volume queries and directory enumeration, no duplicate owners.
+3. Couple every finite Windows observation to an actual serving-hold StorageLease.
+   Positive retirement releases it; uncertain native close retains that token and
+   exact failed births, refuses fallback, and preserves native exclusion. Keep
+   metadata refusal separate from existing SQLite close-failure recovery.
+4. Enable only the acquisition branch after two original positive confirmations;
+   keep _ordinary_hold Windows-excluded. Preserve original dependency, source,
+   epoch, namespace, pending/count, pause/cancellation and final currentness gates.
+   Unsupported/oversized evidence uses original derivation after proven retirement.
+5. Independently review frozen product/tests, then run targeted native unchanged
+   counts, content/membership/ACL/path/epoch changes, limits/volume, cancellation,
+   uncertain-close and existing metadata/runtime/group controls. Existing POSIX
+   evidence checks remain required on supported CI platforms.
+6. Run quiet actual cold/warm Enter and button measurements sequentially, then
+   final integrated feedback/shutdown checks. Every sample must be below six
+   seconds before the PR can be armed or merged; no count replaces this gate.
+
+Readiness and mechanical-owner qualification passes41 targeted controls in64.70s
+(pr3534-readiness-controls-and-notes-reason-1). Its separate Notes diagnostic
+fails with the original explicit writable_filesystem_unsupported reason: the
+Notes adapter is intentionally read-only on Windows. The Linux config-source
+fixture correction still needs hosted verification; no product guard is changed.
+
+Integrated mounted verification pr3534-promoted-owner-integration-1 passes all6
+cases in173.87s: original Enter/button promoted preparation, inherited defining
+source fallback, both display-resource controls and response-rule close/resume.
+The hosted Enter timeout is not reproduced on these integrated sources; its local
+case completes in54.10s with the original deadlines. This is functional evidence,
+not a quiet Send timing result or proof of the prior hosted timeout's cause.
+
+Matched corrected family fixtures pass7/8 on both current product and dev71e;
+the remaining MCP worker-cancel case fails before entry on current and times out
+on dev. Preserve that unresolved case. Correcting the execution namespace probe
+then passes all7 startup/next-owner/refusal controls in
+pr3534-notes-execution-fixtures-green-1. Its8 Notes failures are separately
+identified as unsupported Windows writes, not waived as passing controls.

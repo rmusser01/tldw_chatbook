@@ -4,6 +4,14 @@ This document describes the ADR-126 complete local backup and restore subsystem:
 
 Qualification keeps native identity and operation verdicts fresh on every call. Only parsed installed evidence is cached, by its path and descriptor-verified file generation (device, file identity, size, nanosecond modification and change times). Windows uses native ChangeTime. Changed, missing, malformed or concurrently replaced evidence is refused; a prior refusal is never retained as an authorization cache.
 
+Windows owner/DACL observations query the current handle with
+`NtQuerySecurityObject`. A call-local buffer starts at 512 bytes and may grow
+within four attempts to at most 64 KiB. The existing owner/ACL projection is
+unchanged. Only decoding of identical descriptor bytes is cached (128 entries,
+4096 bytes each); every observation still queries native security. Larger
+descriptors are decoded without retention for ordinary reads and refused for
+admission metadata. This does not cache permission decisions or extend handles.
+
 Sensitive database-path assembly uses one synchronous
 `config_participants.operation(config)` for its related public getters. Nested
 reads retain their native checks and reuse the operation's admission. Custom
@@ -33,6 +41,16 @@ once for its startup and owner-policy checks. The next owner reads fresh facts;
 generation requirements and approvals remain live. Replaced startup callbacks
 retain the public callback followed by fresh activation reads. Execution scopes,
 their source checks, and retained native lease lifetimes are unchanged.
+
+`RecoveryAdmissionGuard` admits its distinct missing sources as one explicit
+execution group. `_acquire_execution_storage` verifies each member's full
+selection before and after one ordinary related-path acquisition; ordinary
+`acquire_storage` companions remain primary-only. Each original ordered source
+and owner check still reads fresh facts. One pending `_Acquisition` preserves
+pause refusal through preflight and retires before payload execution; the actual
+lease lasts through the effect. Nested and transferred scopes borrow their
+parent's leases and own only newly admitted groups. See ADR-126's explicit
+execution-source group amendment.
 
 ## Authoritative files
 

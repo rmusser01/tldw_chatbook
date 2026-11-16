@@ -133,7 +133,7 @@ class _ConsoleConfigHandoff:
             pending.pop(self.owner)
 
     def current(self) -> bool:
-        from .composer_run_controls import poll_source_is_current
+        from .console_spend_projection import poll_source_is_current
 
         return not getattr(
             self.screen, "_console_sync_maintenance_paused", False
@@ -219,7 +219,7 @@ class _ConsoleConfigHandoff:
 
 
 def _owe_console_config_sync(screen: Any, owner: str) -> _ConsoleConfigHandoff | None:
-    from .composer_run_controls import poll_source
+    from .console_spend_projection import poll_source
 
     pending = getattr(screen, "_console_config_handoffs", None)
     if pending is None:

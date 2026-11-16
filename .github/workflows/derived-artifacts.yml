@@ -452,6 +452,7 @@ jobs:
             Tests/Backup_Recovery/test_permission_member_admission.py \
             Tests/Utils/test_sensitive_config_read_scope.py \
             Tests/Backup_Recovery/test_execution_activation_reads.py \
+            Tests/Backup_Recovery/test_execution_source_groups.py \
             --timeout=180 \
             --tb=short
 

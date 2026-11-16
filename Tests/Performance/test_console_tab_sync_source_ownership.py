@@ -82,12 +82,14 @@ namespace = {
     "config_sync": config_sync,
     # Module globals the cold FULL path reads. The compiled class is not the
     # installed ChatScreen, so its poll source is None, which is what
-    # run_controls returns for any other type. The real poll_source imports
+    # spend returns for any other type. The real poll_source imports
     # chat_screen, which the teardown check below forbids.
     "ChatScreen": type("ChatScreen", (), {}),
-    "run_controls": SimpleNamespace(
+    "spend": SimpleNamespace(
         poll_source=lambda _owner: None,
         poll_display_publication=no_display_publication,
+    ),
+    "run_controls": SimpleNamespace(
         PreparingPollChanged=type("PreparingPollChanged", (RuntimeError,), {}),
     ),
 }

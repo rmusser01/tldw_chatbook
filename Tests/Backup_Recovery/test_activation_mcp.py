@@ -18,7 +18,7 @@ from tldw_chatbook.Backup_Recovery.control_records import admission_authority, r
 route, state = sys.argv[1:]
 selector = Path(os.environ['TLDW_CONFIG_PATH'])
 base = selector.parent.parent
-selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir="' + str(base/'data') + '"\n')
+selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir="' + (base/'data').as_posix() + '"\n')
 selector.chmod(0o600)
 from tldw_chatbook import config
 data = config.get_user_data_dir()

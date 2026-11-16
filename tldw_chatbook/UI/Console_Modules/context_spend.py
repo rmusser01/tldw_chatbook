@@ -214,6 +214,7 @@ class ConsoleContextSpendController:
         cost_ttl_seconds: Callable[..., Any],
         estimate_ttl_seconds: Callable[..., Any],
         refresh_checked_cost_chip: Callable[..., Any],
+        context_display_resource: spend.ConsoleContextDisplayReader | None = None,
     ) -> None:
         """Own display state; every non-state dependency is a named live callable.
 
@@ -246,6 +247,9 @@ class ConsoleContextSpendController:
         self._push_console_inspector = push_inspector
         self._context_window_for_display = context_window_for_display
         self._context_inputs = context_inputs
+        self._context_display_resource = context_display_resource
+        if context_display_resource is not None:
+            context_display_resource.bind(self)
         self._display_pricing_catalog = display_pricing_catalog
         self._build_cost_snapshot = build_cost_snapshot
         self._build_context_estimate = build_context_estimate

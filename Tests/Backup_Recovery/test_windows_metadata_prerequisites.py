@@ -289,12 +289,13 @@ def test_scalar_fresh_metadata_preserves_current_projection_and_exact_descriptor
     selected.write_bytes(b"metadata")
     ordinary = win.stat(selected, follow_symlinks=False)
     native = windows_files._native()
-    original = native.advapi.GetSecurityInfo
+    original = native.nt.NtQuerySecurityObject
     descriptors, observations, births, observer_errors = [], [], [], []
     descriptor_by_birth = {}
     current = {}
     original_open, original_close = native.open_handle, native.kernel.CloseHandle
     security_code = windows_files._Native.security.__code__
+    query_code = windows_files._Native.security_descriptor.__code__
     stat_code = windows_files.WindowsOS._stat_handle.__code__
 
     def opened(*args, **kwargs):
@@ -341,11 +342,12 @@ def test_scalar_fresh_metadata_preserves_current_projection_and_exact_descriptor
     def observe_descriptor(*args):
         result = original(*args)
         if result == 0:
-            frame = parent = None
+            frame = parent = grandparent = None
             try:
-                pointer = C.cast(args[-1], C.POINTER(C.c_void_p)).contents.value
+                pointer = args[2]
+                needed = C.cast(args[4], C.POINTER(windows_files._U32)).contents.value
                 size = native.advapi.GetSecurityDescriptorLength(pointer)
-                if not 20 <= size <= 4096:
+                if not 20 <= size <= needed <= args[3] or size > 4096:
                     observer_errors.append("descriptor_size")
                     return result
                 data = C.string_at(pointer, size)
@@ -359,11 +361,14 @@ def test_scalar_fresh_metadata_preserves_current_projection_and_exact_descriptor
                 )
                 frame = sys._getframe(1)
                 parent = frame.f_back
+                grandparent = parent.f_back
                 ancestry = (
-                    frame.f_code is security_code
-                    and parent.f_code is stat_code
+                    frame.f_code is query_code
+                    and parent.f_code is security_code
+                    and grandparent.f_code is stat_code
                     and frame.f_locals.get("handle") == handle
                     and parent.f_locals.get("handle") == handle
+                    and grandparent.f_locals.get("handle") == handle
                 )
                 descriptor_by_birth[birth["birth"]] = data
                 observations.append(
@@ -379,12 +384,12 @@ def test_scalar_fresh_metadata_preserves_current_projection_and_exact_descriptor
             except BaseException as error:  # noqa: BLE001 - diagnostics cannot interrupt the original descriptor release.
                 observer_errors.append(type(error).__name__)
             finally:
-                del frame, parent
+                del frame, parent, grandparent
         return result
 
     monkeypatch.setattr(native, "open_handle", opened)
     monkeypatch.setattr(native.kernel, "CloseHandle", closed)
-    monkeypatch.setattr(native.advapi, "GetSecurityInfo", observe_descriptor)
+    monkeypatch.setattr(native.nt, "NtQuerySecurityObject", observe_descriptor)
     info, descriptor = win.stat_for_admission(selected, follow_symlinks=False)
     diagnostic = {
         "expected_identity": (ordinary.st_dev, ordinary.st_ino),
@@ -402,7 +407,7 @@ def test_scalar_fresh_metadata_preserves_current_projection_and_exact_descriptor
         diagnostic
     )
     # Ancestor security reads follow the leaf: select its exact native birth,
-    # never the last GSI call or a path spelling/numeric HANDLE alone.
+    # never the last query or a path spelling/numeric HANDLE alone.
     selected_observations = [
         row
         for row in observations

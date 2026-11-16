@@ -4364,6 +4364,13 @@ def _warm_config_cache_hit() -> Optional[Dict[str, Any]]:
     return None
 
 
+@contextmanager
+def configuration_read_scope() -> Iterator[None]:
+    """Own one synchronous assembly of live config reads and its retirement."""
+    with _config_participants.operation(sys.modules[__name__]):
+        yield
+
+
 def config_read_would_wait() -> bool:
     """Whether a config read on this thread would wait for another thread.
 

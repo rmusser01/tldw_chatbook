@@ -55,6 +55,8 @@ _FILE_RENAME_REPLACE_IF_EXISTS = 0x00000001
 _FILE_RENAME_POSIX_SEMANTICS = 0x00000002
 _FILE_RENAME_INFORMATION_EX = 65
 _EPOCH_100NS = 116444736000000000
+# STATUS_BUFFER_TOO_SMALL / STATUS_BUFFER_OVERFLOW as signed NTSTATUS values.
+_STATUS_BUFFER_SHORT = frozenset({-1073741789, -2147483643})
 
 
 class _UnicodeString(C.Structure):
@@ -372,6 +374,12 @@ class _Native:
                 [_HANDLE, C.POINTER(_IOStatus), _P, _U32, _U32],
                 _I32,
             ),
+            (
+                self.nt,
+                "NtQuerySecurityObject",
+                [_HANDLE, _U32, _P, _U32, C.POINTER(_U32)],
+                _I32,
+            ),
             (self.nt, "RtlNtStatusToDosError", [_I32], _U32),
         ]
         for dll, name, arguments, result in signatures:
@@ -460,36 +468,46 @@ class _Native:
         if device[1] & 0x10:
             raise OSError(errno.ENOTSUP, "remote_filesystem_refused")
 
+    def security_descriptor(self, handle):
+        """Read fresh OWNER|DACL bytes into a bounded call-local buffer."""
+        size = 512
+        for _ in range(4):
+            buffer, needed = C.create_string_buffer(size), _U32()
+            status = self.nt.NtQuerySecurityObject(
+                handle, 5, buffer, size, C.byref(needed)
+            )
+            if status in _STATUS_BUFFER_SHORT and size < needed.value <= 0x10000:
+                size = needed.value
+                continue
+            self.ntcheck(status)
+            control = struct.unpack_from("<H", buffer, 2)[0]
+            if not control & 0x8000 or not 20 <= needed.value <= size:
+                raise OSError(errno.EIO, "windows_security_descriptor_invalid")
+            length = self.advapi.GetSecurityDescriptorLength(buffer)
+            if not 20 <= length <= needed.value:
+                raise OSError(errno.EIO, "windows_security_descriptor_invalid")
+            return C.string_at(buffer, length)
+        raise OSError(errno.EIO, "windows_security_descriptor_unstable")
+
     def security(self, handle, is_directory, *, with_descriptor=False):
         """Read fresh security; reuse only decoding of byte-identical descriptors."""
-        owner, dacl, descriptor = _P(), _P(), _P()
-        result = self.advapi.GetSecurityInfo(
-            handle, 1, 5, C.byref(owner), None, C.byref(dacl), None, C.byref(descriptor)
-        )
-        if result:
-            raise C.WinError(result)
-        try:
-            # GetSecurityInfo owns a complete valid descriptor. Self-relative
-            # descriptors are contiguous; never retain its native pointers.
-            # 128 entries of at most 4096 bytes bound retained descriptor data.
-            control = struct.unpack_from("<H", C.string_at(descriptor, 4), 2)[0]
-            if control & 0x8000:  # SE_SELF_RELATIVE
-                size = self.advapi.GetSecurityDescriptorLength(descriptor)
-                if 20 <= size <= 4096:
-                    data = C.string_at(descriptor, size)
-                    projected = self._decoded_security(
-                        data, is_directory, self.user_sid
-                    )
-                    return (*projected, data) if with_descriptor else projected
-            if with_descriptor:
-                raise OSError(errno.EACCES, "windows_admission_descriptor_unavailable")
-            return self._decode_security(owner, dacl, is_directory, self.user_sid)
-        finally:
-            self.kernel.LocalFree(descriptor)
+        data = self.security_descriptor(handle)
+        # Retain at most 128 descriptors of at most 4096 bytes, as before.
+        if len(data) <= 4096:
+            projected = self._decoded_security(data, is_directory, self.user_sid)
+        elif with_descriptor:
+            raise OSError(errno.EACCES, "windows_admission_descriptor_unavailable")
+        else:
+            projected = self._decode_descriptor(data, is_directory, self.user_sid)
+        return (*projected, data) if with_descriptor else projected
 
     @functools.lru_cache(maxsize=128)  # noqa: B019 - _native already retains this process-lifetime singleton.
     def _decoded_security(self, data, is_directory, user_sid):
         """Decode immutable bytes, never a cached handle or filesystem decision."""
+        return self._decode_descriptor(data, is_directory, user_sid)
+
+    def _decode_descriptor(self, data, is_directory, user_sid):
+        """Project fresh descriptor bytes without retaining native pointers."""
         descriptor = C.create_string_buffer(data)
         owner, dacl = _P(), _P()
         defaulted, present = _I32(), _I32()
