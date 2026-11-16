@@ -363,26 +363,18 @@ def _resolved(path_str: str) -> Path | None:
 
 
 def _sensitive_db_paths() -> tuple[Path, ...]:
-    """Resolve this app's own SQLite database paths, lazily.
+    """Lazily resolve the app's SQLite paths through live config accessors.
 
-    These databases live under ``config.get_user_data_dir()`` -- by default
-    a sibling of ``~/.config/tldw_cli`` (e.g. ``~/.local/share/tldw_cli/...``),
-    not beneath it, so the static ``_SENSITIVE_DIRS`` tuple above cannot
-    express their location. Each path is resolved via the app's own
-    accessor (which also honors ``[database]`` path overrides and the
-    active user folder) rather than hardcoded, since neither the user
-    folder nor an override is known statically.
+    User-data folders and database overrides can lie outside static
+    ``_SENSITIVE_DIRS``. Resolve them through the app's own accessors.
 
-    One synchronous configuration read owns the assembly. Nested getters
-    reuse its admission while retaining their native directory checks.
-    Custom getters run in the same scope and must not wait on another
-    thread that needs the configuration locks.
+    One synchronous configuration scope owns assembly. Nested getters share
+    admission and retain native directory checks. Custom getters must not
+    wait on another thread that needs the configuration locks.
 
     Returns:
-        Resolved paths to every database whose accessor could be called.
-        An accessor that raises is skipped rather than failing the whole
-        check -- it is additional coverage, not the primary guarantee.
-        Admission or retirement failure of the containing read propagates.
+        Paths from available accessors. Per-accessor errors are skipped as
+        additive coverage; containing admission or retirement errors propagate.
     """
     from .. import config as _config
     from ..Backup_Recovery.config_participants import operation

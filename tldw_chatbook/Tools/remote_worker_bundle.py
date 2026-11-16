@@ -838,26 +838,18 @@ def _resolved(path_str: str) -> Path | None:
         return None
 
 def _sensitive_db_paths() -> tuple[Path, ...]:
-    """Resolve this app's own SQLite database paths, lazily.
+    """Lazily resolve the app's SQLite paths through live config accessors.
 
-    These databases live under ``config.get_user_data_dir()`` -- by default
-    a sibling of ``~/.config/tldw_cli`` (e.g. ``~/.local/share/tldw_cli/...``),
-    not beneath it, so the static ``_SENSITIVE_DIRS`` tuple above cannot
-    express their location. Each path is resolved via the app's own
-    accessor (which also honors ``[database]`` path overrides and the
-    active user folder) rather than hardcoded, since neither the user
-    folder nor an override is known statically.
+    User-data folders and database overrides can lie outside static
+    ``_SENSITIVE_DIRS``. Resolve them through the app's own accessors.
 
-    One synchronous configuration read owns the assembly. Nested getters
-    reuse its admission while retaining their native directory checks.
-    Custom getters run in the same scope and must not wait on another
-    thread that needs the configuration locks.
+    One synchronous configuration scope owns assembly. Nested getters share
+    admission and retain native directory checks. Custom getters must not
+    wait on another thread that needs the configuration locks.
 
     Returns:
-        Resolved paths to every database whose accessor could be called.
-        An accessor that raises is skipped rather than failing the whole
-        check -- it is additional coverage, not the primary guarantee.
-        Admission or retirement failure of the containing read propagates.
+        Paths from available accessors. Per-accessor errors are skipped as
+        additive coverage; containing admission or retirement errors propagate.
     """
     raise ImportError("'..' (importing config) is not available inside the remote worker bundle")
     raise ImportError("'..Backup_Recovery.config_participants' (importing operation) is not available inside the remote worker bundle")
@@ -5864,4 +5856,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("4494ec4090d3ccc41bb260c9cea984dfb819c5c36f334308006974d8ecf35ba0")
+BUNDLE_SHA256 = _enter_worker_exchange("80b3c044a9f186a173b1f4ec78aae02d7536398bc02623d63b2d27fe10ffc07d")
