@@ -273,7 +273,9 @@ def _automatic_work_pause_notice(reason: str, *, results_saved: bool = True) -> 
     }
     explanation = limits.get(reason) or review.get(reason, "review needed")
     next_step = "Send a message to continue"
-    if reason == "history_unavailable":
+    if reason == "compaction_ask":  # TASK-33621.80: compacting lets it go on.
+        explanation, next_step = "context limit", "Run /compact to continue"
+    elif reason == "history_unavailable":
         next_step = "Retry View all runs"
     elif reason not in limits:
         next_step = "Review View all runs"
