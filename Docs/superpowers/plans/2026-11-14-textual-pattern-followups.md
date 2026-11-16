@@ -97,3 +97,10 @@ integration preserves established boundaries. The unchanged CI model remains
 governed by ADR-103. [Integration evidence](../qa/2026-11-14-textual-pattern-followups/rebase-713fa22f-2026-11-16.md)
 records the completed local checks; remote results from the previous head remain
 historical evidence.
+
+A subsequent dev update to `9ada7b840dd5b0f777dd216ca0651cccdc9f8421`
+conflicted only at adjacent Console trace and Speech size pins. Preserve both
+exact values, compare every PR/upstream path against its source revision, and
+run those four pin checks plus the ordinary inventory checker before another
+leased push. No new ADR or product change is needed; the same evidence record
+contains the results.
