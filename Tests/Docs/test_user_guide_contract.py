@@ -182,7 +182,11 @@ def test_every_user_guide_image_link_resolves() -> None:
 # same sentence (stamps wrap across lines, so pages are matched with newlines
 # flattened). "Re-verified live <date>" and a line opening "*Verified" are
 # stamps too. Prose such as "is verified against a live call" is not.
-_STAMP_REF = r"\b20\d\d-\d\d-\d\d\b|@\s*[0-9a-f]{7,}|\b(?=[0-9a-f]*\d)[0-9a-f]{7,40}\b"
+_STAMP_REF = (
+    r"\b20\d\d-\d\d-\d\d\b|@\s*[0-9a-f]{7,}"
+    # A bare sha has a digit AND a hex letter, so "1000000 notes" is prose.
+    r"|\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b"
+)
 STAMP_RE = re.compile(
     r"\b(?:re-?)?(?:verified|stamped|checked)(?:\s+live)?\s+(?:against|on)\b"
     rf"(?=(?:(?![.;]\s).){{0,200}}?(?:{_STAMP_REF}))"
@@ -250,6 +254,8 @@ def test_stamp_exemptions_match_windows_page_names() -> None:
         ("The key is verified against a live call.", False),
         ("Each file is verified against that hash. Its id 0123456789 stays.", False),
         ("It is checked against the allowlist; a reminder due 2026-01-05 fires.", False),
+        ("Search is verified on 1000000 notes in the benchmark.", False),
+        ("Each upload is checked against the 10485760-byte cap.", False),
     ],
 )
 def test_stamp_pattern_tells_stamps_from_prose(text: str, stamped: bool) -> None:

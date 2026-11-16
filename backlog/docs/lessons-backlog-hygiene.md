@@ -1552,3 +1552,9 @@ append-plan operation could duplicate steps.
 ## Bound catalog output by fields, not lines (PR3290 CI repair, 2026-10-29)
 
 A root investigation used Get-Content -TotalCount4 on its single-line52MB task-catalog JSON. The line limit emitted the entire corpus and the tool truncated it, producing noisy unusable output. Load the JSON in Python and print only selected IDs/titles/counts or bounded excerpts; keep the corpus private. A line count is not a size bound for machine-generated single-line data.
+
+## Search for a document by its file name, not by one spelling of its title (TASK-41147, 2026-11-15)
+
+**What happened.** While removing User Guide stamps, I dropped a pointer to "the headless-wake close-out report" as dangling. The proof was `grep -rn "close-out report\|closeout report" Docs --include="*.md"`, which printed nothing. The report exists: `Docs/superpowers/plans/2026-08-14-headless-wake-closeout-report.md`, titled "# Close-out report — headless wake". The grep was case-sensitive, so it missed "Close-out report", and the file name spells it `closeout-report`, with a hyphen the pattern did not allow. Review r15doc-rev2 found the file with one `ls`, and the pointer had to be restored as a link.
+
+**What to do.** Before calling a referenced document missing, search the file names first, case-insensitively and with the words loosened: `git ls-files Docs | grep -i 'close.\?out'`. Then search content with `grep -rni`. One empty, case-sensitive phrase search is not evidence of absence.

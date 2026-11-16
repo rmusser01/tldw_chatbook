@@ -4,7 +4,7 @@ title: "User Guide body corrections found while removing the stamps"
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-15 19:35
-updated_date: 2026-11-15 19:41
+updated_date: 2026-11-16 21:18
 labels:
 - follow-up
 - docs
@@ -37,7 +37,7 @@ Filed in round 15 of the 2026-10-23 burn-down, from TASK-41101's read of every s
 - [x] #4 skills.md names the toggle "User can invoke"
 - [x] #5 media-and-conversations.md's Conversations section gives one account of the reader's status line (by title) and message headings (sender and age), with no contradicting "rough edge" paragraph
 - [x] #6 notes.md has no duplicated line in the Import once picker paragraph, one step 3 under "Set up lasting folder sync", and one consistent account of Info's footer
-- [x] #7 agent-runs-and-tools.md does not point at a headless-wake close-out report that does not exist
+- [x] #7 agent-runs-and-tools.md's pointer to the headless-wake close-out report is a working link to Docs/superpowers/plans/2026-08-14-headless-wake-closeout-report.md
 - [x] #8 file-notes.md's "Linking a folder without a mouse" step 4 names the "Select folder" button
 - [x] #9 meetings.md's sentences about "this page's verification host" or "live session" read as plain limitations
 <!-- AC:END -->
@@ -69,7 +69,7 @@ Each correction is checked against the code, and each touches only the passage n
    - Dropped the repeated "clicked if you clicked one, otherwise the folder being browsed." line.
    - Dropped the superseded first step 3 (the "File name" field of the files-or-one-folder dialog). The second step 3 already records that task-32611 replaced it with the folder-only picker.
    - "Info's footer is fixed instead — 'enter run action'" became "Info names its focused control the same way (see below)". In `library_screen`, the context tier replaces the generic enter chip with `_library_focus_enter_label()` (task-32607), which the paragraph after it already described.
-7. **agent-runs-and-tools.md.** Dropped "see the headless-wake close-out report": no such report exists under Docs, and task-15860's notes only mention it.
+7. **agent-runs-and-tools.md.** The bare "see the headless-wake close-out report" is now a working relative link to `Docs/superpowers/plans/2026-08-14-headless-wake-closeout-report.md`. That report's invariant table (":30", "Deliveries stay serialized app-wide (one `_delivering` per runtime)") backs the sentence, and task-15860's notes name it. The first pass removed the pointer on a false premise. My search was a case-sensitive `grep -rn "close-out report\|closeout report" Docs`, which missed the report's title, "Close-out report — headless wake", and its file name, `…-closeout-report.md`. Review r15doc-rev2 found the file, and the pointer was repaired rather than dropped (lesson added to `lessons-backlog-hygiene.md`).
 8. **file-notes.md** step 4. "**Select folder** links it" (`base_dialog.FOLDER_CONFIRM_LABEL = "Select folder"`).
 9. **meetings.md.** I judged the three sentences stamp-like: they described "this page's verification host" and "this page's live session", not the product. They now read as plain limitations:
    - live speaker labels are covered by pilot tests only and have not yet been tried in a real recording;
@@ -78,5 +78,5 @@ Each correction is checked against the code, and each touches only the passage n
 
 Docs-only, so there is no red/green pair. Checks: grep found no test or script pinning any replaced sentence (the "attempt 2" hits in `Tests/UI/test_library_shell.py` and `Tests/Chat/test_console_turn_preparation.py` are product copy, not these pages). `Tests/Docs` and preflight were run before the commit; the counts are in the round report.
 
-Files: `Docs/User_Guide/library.md`, `library/search-and-rag.md`, `library/import-and-export.md`, `library/skills.md`, `library/media-and-conversations.md`, `library/notes.md`, `library/file-notes.md`, `console/agent-runs-and-tools.md`, `meetings.md`.
+Files: `Docs/User_Guide/library.md`, `library/search-and-rag.md`, `library/import-and-export.md`, `library/skills.md`, `library/media-and-conversations.md`, `library/notes.md`, `library/file-notes.md`, `console/agent-runs-and-tools.md`, `meetings.md`; `backlog/docs/lessons-backlog-hygiene.md` (fix round 2).
 <!-- SECTION:NOTES:END -->

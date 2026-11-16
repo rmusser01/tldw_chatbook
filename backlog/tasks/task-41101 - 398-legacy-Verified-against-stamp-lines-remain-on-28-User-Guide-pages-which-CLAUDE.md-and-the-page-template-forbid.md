@@ -3,7 +3,7 @@ id: TASK-41101
 title: "398 legacy 'Verified against' stamp lines remain on 28 User Guide pages, which CLAUDE.md and the page template forbid"
 status: Done
 assignee: ['@claude']
-updated_date: 2026-11-15 19:31
+updated_date: 2026-11-16 21:18
 created_date: 2026-11-15 02:20
 labels:
 - follow-up
@@ -100,4 +100,6 @@ Files: 30 `Docs/User_Guide` pages, `Tests/Docs/test_user_guide_contract.py`, the
 - Copy fixes:
   - context-and-rag.md names **Review in Change Review…** and **Review & commit…** as the working-tree openers, in the Environment intro and under the rows table (`chat_screen._open_change_review_current_mode`'s ruling).
   - file-notes.md places the Session Git receipt "above the Edit or Manage pane", matching `#file-notes-action-status` in the compose.
+
+**Fix round 2 (review r15doc-rev2).** The bare-sha alternative of `_STAMP_REF` now also requires a hex letter (`(?=[0-9a-f]*[a-f])`). Before, plain decimal numbers such as "verified on 1000000 notes" or "checked against the 10485760-byte cap" matched as shas. Red: two new prose cases in `test_stamp_pattern_tells_stamps_from_prose` failed (2 failed, 8 passed). Green: `Tests/Docs` 44 passed. Base-tree paragraph coverage is unchanged at 374 of 390.
 <!-- SECTION:NOTES:END -->
