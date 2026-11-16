@@ -1,8 +1,11 @@
 ---
 id: TASK-41138
 title: "Console and Buddy test leftovers: a two-MCP-rounds payload flake, a cold-home Buddy child deadline, test_buddy_conversation_modal.py on no lane, and test_fleet_wake_retry.py without a profile marker"
-status: To Do
+status: In Progress
 created_date: 2026-11-15 02:20
+updated_date: 2026-11-16 23:10
+assignee:
+- '@claude'
 labels:
 - follow-up
 - console
@@ -32,8 +35,24 @@ Filed in round 14 of the 2026-10-23 burn-down (closeout, 2026-11-15). Checked ag
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The payload flake is reproduced under load and fixed, or the notes record it could not be reproduced in 30 runs at load 40 or more
+- [x] #1 The payload flake is reproduced under load and fixed, or the notes record it could not be reproduced in 30 runs at load 40 or more
 - [ ] #2 The cold-home Buddy test's deadline comes from measured times with 2x headroom, or waits on its condition
-- [ ] #3 test_fleet_wake_retry.py gets the profile marker its config reads need and its three nodes pass
-- [ ] #4 test_buddy_conversation_modal.py's green nodes run on a PR lane
+- [x] #3 test_fleet_wake_retry.py gets the profile marker its config reads need and its three nodes pass
+- [x] #4 test_buddy_conversation_modal.py's green nodes run on a PR lane
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Reproduce the payload flake under load (30 runs at load 40 or more), find its cause, fix it in the test, and rerun 30.
+2. Measure the cold-home Buddy test's waits under load and derive its deadline (or wait on its condition).
+3. Give test_fleet_wake_retry.py the profile marker its config reads need, then make its three nodes pass.
+4. Run test_buddy_conversation_modal.py serially with the UI lane's flags and append its green tests to the UI census tail with their times.
+
+## Implementation Notes
+
+- **AC#1, reproduced and fixed.** `Tests/UI/test_console_mcp_approval.py::test_two_mcp_rounds_for_the_same_session_the_earlier_ones_teardown_does_not_evict_the_newer_ones_payload`, 30 runs in one serial session (a temporary plugin repeating the item; removed) at load 78-88 on 18 CPUs: `1 failed, 29 passed`, `TypeError: 'NoneType' object is not subscriptable`. Cause: the test slept a fixed 0.1 s after starting each worker thread and then read the session's head payload; under load the worker had not armed its round yet. The failed run also left both workers blocked: an armed round's clock counts only while its card is shown, so they never time out, and the pytest process sat in `Py_FinalizeEx` -> `wait_for_thread_shutdown` for 25 h until killed (the same trap as TASK-40314's lesson). Fix (test only): `_wait_for_parked_rounds(controller, session_id, count)` polls the parked payloads with a 10 s deadline in place of each sleep, the worker joins allow 10 s, and a `finally` calls `controller.begin_shutdown()` and joins both workers. Red/green under a temporary 0.3 s delay at the start of each worker (reverted): the old test failed with the same `TypeError` and then hung at interpreter exit until killed; the new test passed. After the fix, 30 runs in one session at load ~58: `30 passed in 15.40s`, and the process exited.
+- **AC#2, not met: NEEDS_CONTEXT.** The deadline is not what fails. Measured inside the private child with a 30-120 s ceiling (three runs, load 80-101): the cold bootstrap wait took 2.47 s and the send-enabled wait 0.07 s, and the third wait (`gateway.started`) never completed in 120 s. The send is refused: a temporary `RecoveryRequired.__init__` spy (reverted) caught `RecoveryRequired('console_capture_source_not_ready')` from `_ready_attribute` (`tldw_chatbook/Chat/console_configuration_preparation.py:145`) for `LocalSkillsService.trust_service`, whose backing `_trust_service` is still None on a cold Home, reached from `resolve_turn_configuration_snapshot` <- `_submit_draft_body`. The diagnostics log records `console_send_stage ... exception_type=RecoveryRequired phase=controller_submit status=failed`. No deadline fixes that; the owner has to say whether a cold-Home Buddy send should materialize the trust service (product fix) or the test should expect the refusal. The 5 s `until` is unchanged; the node stays off the lane.
+- **AC#3, met.** `Tests/Chat/test_fleet_wake_retry.py`'s three tests are `@private_profile_test` (a wake turn is a real Console submit, which reads config). Without the marker they fail even with the other changes (`assert False` at the first settle: no resolve within 10 s). The marker alone was not enough: under load the settles timed out (measured 1.2-1.5 s to the first resolve, 3.6 s to the first payload, 4.1 s from "provider ready" to delivery, against 5 s and 3 s deadlines), and the fairness test raced: its `routed` set one shared `gateway.ready` per submit, the two wake attempts interleave, and the first conversation was once delivered first. The settles now use 10 s (over 2x the worst measured), and readiness is per submit through a ContextVar set in `routed`. Red: 3 failed plainly (`:36`, `:78`, `:111`), 3 failed with the marker only. Green: 3 passed in each of three runs at load ~105.
+- **AC#4, met.** `Tests/UI/test_buddy_conversation_modal.py` (module `bootstrap_profile`) serially with the UI lane's flags at load 68-77: `1 failed, 47 passed in 389.57s`; the failure is the cold-home node above. Its 21 green test functions are appended at the census tail by function (all their parameters), `MINIMUM_FILES` 2149 -> 2170 (checker OK; the 21 entries collect 47 nodes). Per-entry serial times (setup+call+teardown, s): rendered_typed_head 20.2, completed_release 3.1, typed_mixed_head 4.9, clock_claim 15.0, send_targets_bound_session 3.0, drafts_and_approval 3.4, closed_owner 2.7, existing_decision_cards 7.8, retains_headless_decisions 9.5, draft_follows_canonical 2.9, saved_load_revalidates 5.2, failed_cold_bootstrap 2.2, concurrent_saved_loader 2.8, dictation_finishes 2.0, closing_buddy_discards 2.0, refuses_unseen_input 10.9, late_voice_completion 4.2, real_console_send_preserves_drafts 155.9, recorder_buffer_callback 1.3, saved_bulk_reads 55.6, deferred_transcript_scroll 2.4; about 317 s in all.
+- **Other runs.** `Tests/UI/test_console_mcp_approval.py` whole at `-n 4` (load ~90): 123 passed, 1 failed, `test_finishing_card_is_not_counted_and_keyboard_focuses_the_card` (`_console_attach_reconciled` False), which this task did not touch and which passed alone twice (47.0 s, 42.3 s). Intermittent under load; see Proposed follow-ups in the round report.
+- Files: `Tests/UI/test_console_mcp_approval.py`, `Tests/Chat/test_fleet_wake_retry.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`.

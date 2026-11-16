@@ -1121,6 +1121,10 @@ MINIMUM_FILES = 2207
 # TASK-41136 (2026-11-16): append the custom endpoint Settings file's four
 # green nodes at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 2211
+MINIMUM_FILES = 2149
+# TASK-41138 (2026-11-16): append the Buddy conversation modal file's 21 green
+# test functions at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 2232
 
 
 def read_census(path: Path) -> list[str]:

@@ -3222,6 +3222,25 @@ def test_resolve_pending_approval_by_round_id_survives_a_mid_flight_session_swit
     assert result_b["decisions"] == {"mcp__b__tool": "deny"}
 
 
+def _wait_for_parked_rounds(controller, session_id: str, count: int) -> None:
+    """Wait until the session has ``count`` parked rounds (TASK-41138).
+
+    A fixed 0.1 s sleep lost this race in 1 of 30 runs at load ~80 on 18
+    CPUs: the head payload was read before the worker had armed its round.
+    """
+    deadline = time.monotonic() + 10.0
+    while (
+        len(
+            controller._session_round_payloads(
+                controller._parked_approval_payloads, session_id
+            )
+        )
+        < count
+    ):
+        assert time.monotonic() < deadline, f"round {count} never parked"
+        time.sleep(0.01)
+
+
 def _other_round_id(controller, session_id: str, not_this_one: str) -> str:
     """The session's OTHER retained round id (PR0: one key per round)."""
     return [
@@ -3267,58 +3286,67 @@ def test_two_mcp_rounds_for_the_same_session_the_earlier_ones_teardown_does_not_
 
     worker_1 = threading.Thread(target=_run_round_1)
     worker_1.start()
-    time.sleep(0.1)
-    round_id_1 = controller._head_round_payload(
-        controller._parked_approval_payloads, session_a
-    )["round_id"]
-    assert controller.run_marker_for(session_a) is ConsoleRunMarker.NEEDS_APPROVAL
+    worker_2 = None
+    try:
+        _wait_for_parked_rounds(controller, session_a, 1)
+        round_id_1 = controller._head_round_payload(
+            controller._parked_approval_payloads, session_a
+        )["round_id"]
+        assert controller.run_marker_for(session_a) is ConsoleRunMarker.NEEDS_APPROVAL
 
-    def _run_round_2() -> None:
-        result_2["decisions"] = controller.request_mcp_approvals(
-            [_pending(llm_name="mcp__two__tool")], session_id=session_a
+        def _run_round_2() -> None:
+            result_2["decisions"] = controller.request_mcp_approvals(
+                [_pending(llm_name="mcp__two__tool")], session_id=session_a
+            )
+
+        worker_2 = threading.Thread(target=_run_round_2)
+        worker_2.start()
+        _wait_for_parked_rounds(controller, session_a, 2)
+        # PR0: round 2 keeps its OWN key rather than overwriting round 1's --
+        # round 1 is still the session's head and still owns the card.
+        round_id_2 = _other_round_id(controller, session_a, round_id_1)
+        assert round_id_2 != round_id_1
+        assert (
+            controller._head_round_payload(controller._parked_approval_payloads, session_a)[
+                "round_id"
+            ]
+            == round_id_1
+        ), "arming round 2 must not evict round 1's card"
+
+        # Round 1 (the EARLIER, now-superseded round) resolves first -- its
+        # teardown must not discard round 2's still-armed, newer payload, nor
+        # clear the badge.
+        controller.resolve_pending_approval({"mcp__one__tool": "deny"}, round_id=round_id_1)
+        worker_1.join(timeout=10.0)
+        assert result_1["decisions"] == {"mcp__one__tool": "deny"}
+        assert controller.run_marker_for(session_a) is ConsoleRunMarker.NEEDS_APPROVAL
+        assert session_a in controller._pending_approvals
+        assert (
+            controller._head_round_payload(controller._parked_approval_payloads, session_a)[
+                "round_id"
+            ]
+            == round_id_2
+        ), "round 1 resolving must promote round 2, not discard it"
+
+        # Round 2 (the LAST remaining round) resolves -- now everything clears.
+        controller.resolve_pending_approval(
+            {"mcp__two__tool": "approve_once"}, round_id=round_id_2
         )
-
-    worker_2 = threading.Thread(target=_run_round_2)
-    worker_2.start()
-    time.sleep(0.1)
-    # PR0: round 2 keeps its OWN key rather than overwriting round 1's --
-    # round 1 is still the session's head and still owns the card.
-    round_id_2 = _other_round_id(controller, session_a, round_id_1)
-    assert round_id_2 != round_id_1
-    assert (
-        controller._head_round_payload(controller._parked_approval_payloads, session_a)[
-            "round_id"
-        ]
-        == round_id_1
-    ), "arming round 2 must not evict round 1's card"
-
-    # Round 1 (the EARLIER, now-superseded round) resolves first -- its
-    # teardown must not discard round 2's still-armed, newer payload, nor
-    # clear the badge.
-    controller.resolve_pending_approval({"mcp__one__tool": "deny"}, round_id=round_id_1)
-    worker_1.join(timeout=2.0)
-    assert result_1["decisions"] == {"mcp__one__tool": "deny"}
-    assert controller.run_marker_for(session_a) is ConsoleRunMarker.NEEDS_APPROVAL
-    assert session_a in controller._pending_approvals
-    assert (
-        controller._head_round_payload(controller._parked_approval_payloads, session_a)[
-            "round_id"
-        ]
-        == round_id_2
-    ), "round 1 resolving must promote round 2, not discard it"
-
-    # Round 2 (the LAST remaining round) resolves -- now everything clears.
-    controller.resolve_pending_approval(
-        {"mcp__two__tool": "approve_once"}, round_id=round_id_2
-    )
-    worker_2.join(timeout=2.0)
-    assert result_2["decisions"] == {"mcp__two__tool": "approve_once"}
-    assert controller.run_marker_for(session_a) is ConsoleRunMarker.NONE
-    assert session_a not in controller._pending_approvals
-    assert (
-        controller._head_round_payload(controller._parked_approval_payloads, session_a)
-        is None
-    )
+        worker_2.join(timeout=10.0)
+        assert result_2["decisions"] == {"mcp__two__tool": "approve_once"}
+        assert controller.run_marker_for(session_a) is ConsoleRunMarker.NONE
+        assert session_a not in controller._pending_approvals
+        assert (
+            controller._head_round_payload(controller._parked_approval_payloads, session_a)
+            is None
+        )
+    finally:
+        # A round left armed never times out once no card shows it, and its
+        # thread then held the interpreter at exit (TASK-40314's lesson).
+        controller.begin_shutdown()
+        for worker in (worker_1, worker_2):
+            if worker is not None:
+                worker.join(timeout=10.0)
 
 
 def test_two_mcp_rounds_for_the_same_session_resolving_the_newer_one_first_leaves_the_slot_populated():
