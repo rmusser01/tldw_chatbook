@@ -8,10 +8,9 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from html.parser import HTMLParser
 from threading import RLock
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from .compilation import PreparedCanvasDocument
 from .compiler import compile_canvas_document
 from .gateway import (
     BridgeConfirmationRequest,
@@ -36,6 +35,9 @@ from .models import (
     CanvasScope,
 )
 from .profiles import ProfileSnapshot, resolve_profile
+
+if TYPE_CHECKING:
+    from .compilation import PreparedCanvasDocument
 
 
 class _TitleParser(HTMLParser):
