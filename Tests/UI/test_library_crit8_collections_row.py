@@ -201,12 +201,15 @@ async def test_rail_count_never_falls_back_to_the_unfiltered_total_after_a_visit
             )
         ).press()
         # TASK-41127: the press sets the scope before it awaits the scoped
-        # page, so wait for that page too; the claim below is the rail once
-        # the canvas owns a narrower total, not the load window in between.
+        # page, so wait for the Favorites page itself (the previous page's
+        # total still reads 3 until it lands); the claim below is the rail
+        # once the canvas owns a narrower total, not the load in between.
         await _wait_for_condition(
             pilot,
             lambda: (
                 screen._collections_state.active_scope == "favorites"
+                and controller.state.applied_scope is not None
+                and controller.state.applied_scope.favorite is True
                 and controller.state.exact_total is not None
             ),
             message="The Favorites scope was never applied.",

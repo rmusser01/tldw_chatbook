@@ -1422,7 +1422,8 @@ async def test_literal_history_restore_keeps_kind_definition_and_guards(
                     message="Block-to-mix-in restore confirmation did not open",
                 )
                 assert f"{retained_type.title()} to Mix-in" in host.screen.message
-                host.screen.query_one("#confirm-button", Button).press()
+                dialog = host.screen
+                (await _wait_for_selector(dialog, pilot, "#confirm-button")).press()
                 await _wait_for_condition(
                     pilot,
                     lambda: (
