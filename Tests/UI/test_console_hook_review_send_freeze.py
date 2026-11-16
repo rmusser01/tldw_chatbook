@@ -175,6 +175,17 @@ async def _pump_runs(pump, seconds: float = 2.0) -> bool:
 def _record_dispatch(console) -> list[str]:
     calls: list[str] = []
 
+    # These tests exercise the hook controller's captured continuation. Once
+    # arrival setup is ready, stock received-intent admission bypasses dispatch
+    # below. Select the registered custom-review seam while retaining the exact
+    # original runtime review, consent writes and final permission verification.
+    request_review = console._hooks._review
+
+    async def review(snapshot, waiting, cancel):
+        return await request_review(snapshot, waiting, cancel)
+
+    console._hooks._review = review
+
     async def dispatch(draft, **_kwargs):
         calls.append(draft)
         return ConsolePromptDispatchResult(
@@ -218,6 +229,7 @@ async def _open_review_from(route: str, host, pilot):
         ), f"{route}: the hook review never opened"
         await asyncio.sleep(0.1)
         modal = host.screen
+        assert console._hooks._busy, f"{route}: captured hook Send is not active"
         return console, composer, modal, modal._result_callbacks[-1].requester
     except BaseException:
         # The caller's `finally` has not started yet, so release a review

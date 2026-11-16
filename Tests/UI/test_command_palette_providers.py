@@ -952,6 +952,16 @@ class TestMediaProvider:
         assert isinstance(message, NavigateToScreen)
         assert message.screen_name == TAB_MEDIA
 
+    @pytest.mark.asyncio
+    async def test_import_new_media_hit_opens_library_import(self, media_provider):
+        hits = [hit async for hit in media_provider.search("Import New Media")]
+        command = next(hit for hit in hits if "Import New Media" in hit.text)
+        command.command()
+
+        message = media_provider.app.post_message.call_args.args[0]
+        assert message.screen_name == TAB_LIBRARY
+        assert message.screen_context == {LIBRARY_NAV_CONTEXT_INGEST: True}
+
     def test_search_transcripts_navigates(self, media_provider):
         """Search Transcripts dispatches through the "search" alias (RAG UX
         v2 PR-1, Task 1) into Library's Search/RAG canvas, matching Search

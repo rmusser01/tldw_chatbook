@@ -119,10 +119,10 @@ instead of being silently ignored; this includes a dynamic schema in
 `UPDATE {schema}.messages`, which is not assumed safe merely because the final
 table component is literal.
 
-The test contains an exact, self-checking allowlist for 52 dynamic
+The test contains an exact, self-checking allowlist for 54 dynamic
 executor call sites. Each review pins the normalized call template and source,
 its proven non-chat domain, and an exact target set that the test mechanically
-re-derives from the current production AST. The 52 sites form 40 target-evidence
+re-derives from the current production AST. The 54 sites form 42 target-evidence
 families. Their deliberately narrow evidence forms are literal arguments at
 private helper call sites, literal list/tuple/map table producers, local or
 imported string constants (including a literal f-string derived from an imported
@@ -140,7 +140,11 @@ literal canonical actions in the same function remain in the census, and a
 second dynamic call, changed template/source, canonical retarget, stale review,
 or changed target evidence fails. The reviewed domains cover keyword/library,
 media, evaluation, notification, research, TTS, writing, workspace project
-index, goal-run payload, and plugin authority tables.
+index, goal-run payload, plugin authority, and Personal Context tables. The
+Personal Context damaged-record cleanup pins exactly `object_heads`,
+`encrypted_outbox`, and `quarantine` in its literal table loop (TASK-40140).
+Restored Sync identity cleanup pins `remote_pull_cursors`,
+`sync_v2_remote_heads`, and `personal_context_link_state` (TASK-40139).
 
 This evidence check is a deterministic structural contract, not general
 interprocedural dataflow. It follows only the explicitly declared literal helper

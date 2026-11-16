@@ -111,8 +111,15 @@ PROFILE_OPEN_NEEDS_TERMINAL = (
     "done from a browser session."
 )
 
-#: Plain sentences for the recovery host instead of a raw reason code.
-_UNLOCK_RECOVERY_COPY = {
+CONFIG_SHARED_PARENT_REASON = "configuration_shared_writable_parent"
+
+#: Plain sentences for the startup host instead of a raw reason code.
+_STARTUP_RECOVERY_COPY = {
+    CONFIG_SHARED_PARENT_REASON: (
+        "Chatbook could not open its configuration because a parent folder "
+        "allows shared write access. Set TLDW_CONFIG_PATH to a config.toml in "
+        "a private folder under your user profile, then exit and start Chatbook again."
+    ),
     "configuration_unlock_failed": (
         "Checking the master password failed unexpectedly, so the encrypted "
         "API keys were not unlocked. Nothing was changed. Quit, then relaunch "
@@ -244,6 +251,8 @@ def _secret(prompt: str) -> str:
 
 def startup_preflight() -> tuple[str | None, str | None]:
     """Read the selected input without defaults or normal runtime composition."""
+    from tldw_chatbook.Utils.private_paths import PrivatePathError
+
     from . import bootstrap
     from .storage_admission import _read_recovery_file
 
@@ -257,6 +266,10 @@ def startup_preflight() -> tuple[str | None, str | None]:
         data = _read_recovery_file("config", selector, max_bytes=16 * 1024**2)
     except FileNotFoundError:
         return None, None
+    except PrivatePathError as exc:
+        if exc.result.reason == "shared_writable_parent":
+            return CONFIG_SHARED_PARENT_REASON, None
+        return "configuration_unavailable", None
     except (OSError, ValueError, RuntimeError):
         return "configuration_unavailable", None
     document = {}
@@ -549,18 +562,17 @@ def recovery_app(reason: str, *, restart_request=None):
         def compose(self):
             yield Static(
                 "Recovery mode — review replacement" if reason == "replacement_requested"
-                else _UNLOCK_RECOVERY_COPY.get(reason, "Recovery required: " + reason),
+                else _STARTUP_RECOVERY_COPY.get(reason, "Recovery required: " + reason),
                 id="minimal-recovery-reason",
                 markup=False,
             )
-            yield Button("Open Backup & Restore", id="minimal-recovery-open")
+            if reason != CONFIG_SHARED_PARENT_REASON:
+                yield Button("Open Backup & Restore", id="minimal-recovery-open")
             yield Button("Exit", id="minimal-recovery-exit")
 
         def on_mount(self):
-            # TASK-34100.4: an unlock problem is not a restore problem. Say
-            # what happened and let the user choose; Backup & Restore stays
-            # one button away.
-            if reason not in _UNLOCK_RECOVERY_COPY:
+            # Explain known startup problems before offering any recovery action.
+            if reason not in _STARTUP_RECOVERY_COPY:
                 self.action_backup_restore()
 
         @on(Button.Pressed, "#minimal-recovery-open")

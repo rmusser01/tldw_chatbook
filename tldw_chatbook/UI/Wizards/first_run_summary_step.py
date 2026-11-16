@@ -9,6 +9,7 @@ Patch this module, not the wizard, to replace what the step calls.
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 from typing import (
     Any,
     Dict,
@@ -56,9 +57,8 @@ EXIT_ROUTE_LIBRARY_NOTES = "library_notes"
 class SummaryStep(SetupStep):
     """Read-back ✓/✗ matrix plus mode-dependent exits.
 
-    Always re-reads the persisted config (never step memory) so the summary
-    reflects what actually landed on disk, not what the in-memory steps
-    think they committed.
+    Re-reads the persisted config to determine what was saved. Current
+    wizard state can explain why provider setup still needs attention.
     """
 
     def __init__(
@@ -312,6 +312,24 @@ class SummaryStep(SetupStep):
         except Exception:
             logger.debug("Summary probe-failure lookup skipped", exc_info=True)
         rows = apply_probe_failure_to_summary_rows(rows, probe_failure)
+        staged = getattr(self.wizard, "staged_provider_draft", None)
+        if (
+            not probe_failure
+            and isinstance(staged, wizard_state.FirstRunProviderDraft)
+            and row_states.get("Provider") != ROW_CONFIGURED
+        ):
+            from tldw_chatbook.Chat.provider_catalog import provider_display_name
+
+            provider = provider_display_name(staged.provider)
+            rows = tuple(
+                replace(
+                    row,
+                    detail=f"{provider} setup is not saved yet. Select a default model.",
+                )
+                if row.label == "Provider"
+                else row
+                for row in rows
+            )
 
         primary, _, _ = build_first_run_summary_actions(
             provider_configured=row_states.get("Provider") == ROW_CONFIGURED,

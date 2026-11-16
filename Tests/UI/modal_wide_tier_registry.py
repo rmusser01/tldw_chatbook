@@ -73,6 +73,7 @@ MODAL_WIDE_TIER_SKIPPED: dict[str, str] = {
     "PluginStatusModal": "shared plugin-review-shell is already 90% of the viewport",
     "PluginVariableDialog": "shared plugin-review-shell is already 90% of the viewport",
     "PluginAuthorityResetModal": "shared plugin-review-shell is already 90% of the viewport",
+    "PluginRestoreAdoptionModal": "shared plugin-review-shell is already 90% of the viewport",
     "VoiceBlendDialog": "inventory #74: fixed 15-column slider grid, extra width is dead space",
     "ConfirmationDialog": "inventory #76: tiny-by-design confirm",
     "UnsavedChangesDialog": "tiny-by-design confirm (ConfirmationDialog family)",

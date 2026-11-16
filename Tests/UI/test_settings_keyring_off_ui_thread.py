@@ -158,6 +158,9 @@ async def test_manual_sync_run_resolves_principal_scope_off_the_ui_thread():
     calls: list[dict[str, object]] = []
 
     class Control:
+        def preview(self, **kwargs):
+            return SimpleNamespace(can_run=True)
+
         async def run_once(self, **kwargs):
             calls.append(kwargs)
             raise RuntimeError("stop after capturing the scope")

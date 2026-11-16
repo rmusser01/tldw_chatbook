@@ -13,7 +13,7 @@ from typing import ClassVar
 
 import pytest
 from textual.app import ComposeResult
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Footer, Input, Static
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp, app_css_text
@@ -34,12 +34,14 @@ from tldw_chatbook.UI.Screens.chat_screen import (
     CONSOLE_WORKBENCH_SHORTCUTS,
     CONSOLE_WORKBENCH_SHORTCUTS_SETUP_BLOCKED,
 )
+from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Console.console_setup_modal import (
     CONSOLE_SETUP_MODAL_ACTION_ID,
     CONSOLE_SETUP_MODAL_DETECTED_ACTION_ID,
     CONSOLE_SETUP_MODAL_LOOK_AGAIN_ID,
     CONSOLE_SETUP_MODAL_NOTES_ACTION_ID,
+    CONSOLE_SETUP_MODAL_NOTES_WORKBENCH_ACTION,
     ConsoleSetupModal,
 )
 
@@ -83,6 +85,54 @@ class _StyledCardApp(ConsolidatedCSSApp):
 def _cue(button: Button) -> str:
     """The heavy side rail that task-32555's ``:focus`` rule draws."""
     return button.styles.outline_left[0]
+
+
+@pytest.mark.asyncio
+async def test_compact_card_paints_each_focused_action_and_keyboard_opens_notes() -> (
+    None
+):
+    class CompactCardApp(_StyledCardApp):
+        CSS = "#test-navigation { dock: top; height: 3; }"
+
+        def compose(self) -> ComposeResult:
+            yield Static("Navigation", id="test-navigation")
+            yield Footer()
+            yield from super().compose()
+
+        def on_workbench_action_requested(
+            self, event: WorkbenchActionRequested
+        ) -> None:
+            self.selected_action = event.action_id
+
+    app = CompactCardApp(detected=False)
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.query_one("#beneath").display = False
+        for key, selector in (
+            (None, _PRIMARY),
+            ("tab", _NOTES),
+            ("tab", _LOOK_AGAIN),
+            ("shift+tab", _NOTES),
+            ("shift+tab", _PRIMARY),
+            ("tab", _NOTES),
+        ):
+            if key is not None:
+                await pilot.press(key)
+            button = app.query_one(selector, Button)
+            await _until(
+                pilot,
+                lambda button=button: app.focused is button,
+                f"focus on {selector}",
+            )
+            await pilot.wait_for_scheduled_animations()
+            await pilot.pause()
+            assert any(
+                str(button.label) in strip.text
+                for strip in app.screen._compositor.render_strips()
+            ), f"{button.label!r} is focused but clipped"
+
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.selected_action == CONSOLE_SETUP_MODAL_NOTES_WORKBENCH_ACTION
 
 
 @pytest.mark.asyncio

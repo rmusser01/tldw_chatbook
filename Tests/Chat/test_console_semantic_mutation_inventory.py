@@ -588,6 +588,8 @@ _DYNAMIC_TARGET_EVIDENCE: dict[
             "tldw_chatbook/DB/goal_runs.py::GoalRunsStore.remove_payloads",
             "tldw_chatbook/Plugins/coordinator.py::PluginCoordinator._apply_review",
             "tldw_chatbook/Plugins/registry.py::PluginRegistry.restore_authority",
+            "tldw_chatbook/Personal_Context/repository_keys.py::RepositoryKeyCustody._remove_damaged",
+            "tldw_chatbook/Sync_Interop/sync_state_repository.py::SyncStateRepository.clear_restored_identity",
         )
     },
     **{
@@ -667,6 +669,14 @@ _DYNAMIC_TARGET_EVIDENCE_FINGERPRINTS = {
     "tldw_chatbook/Personal_Context/repository.py::"
     "PersonalContextRepository.destroy_profile_content": (
         "3cb3487843269fd2f388279fbe799f492ed2f58200709b3bd588e64754e79100"
+    ),
+    "tldw_chatbook/Personal_Context/repository_keys.py::"
+    "RepositoryKeyCustody._remove_damaged": (
+        "ee9c5a48e5e20e2a962b3a712ea668046753fbba31bee75655373777fe85c9b3"
+    ),
+    "tldw_chatbook/Sync_Interop/sync_state_repository.py::"
+    "SyncStateRepository.clear_restored_identity": (
+        "1875b1c219a5d88a70588dd5c31dc978a23456093c5fdc961c7345ed4f47b60c"
     ),
     "tldw_chatbook/Sync_Interop/conflict_review.py::"
     "SyncV2ConflictReviewService._merge_notes_organization_identity": (
@@ -1016,6 +1026,32 @@ _PROVEN_NON_SEMANTIC_DYNAMIC_SQL = dict(
                     "local_unlinked_scopes",
                     "object_heads",
                     "quarantine",
+                }
+            ),
+        ),
+        _reviewed_dynamic_sql_site(
+            "tldw_chatbook/Personal_Context/repository_keys.py::"
+            "RepositoryKeyCustody._remove_damaged",
+            "DELETE FROM {expression} WHERE object_type = ? AND object_id = ? "
+            "AND version_id = ?",
+            "f'DELETE FROM {table} WHERE object_type = ? AND object_id = ? "
+            "AND version_id = ?'",
+            domain="Personal Context damaged record references",
+            exact_targets=frozenset(
+                {"object_heads", "encrypted_outbox", "quarantine"}
+            ),
+        ),
+        _reviewed_dynamic_sql_site(
+            "tldw_chatbook/Sync_Interop/sync_state_repository.py::"
+            "SyncStateRepository.clear_restored_identity",
+            "DELETE FROM {expression}",
+            "f'DELETE FROM {table}'",
+            domain="restored Sync identity and cursor state",
+            exact_targets=frozenset(
+                {
+                    "remote_pull_cursors",
+                    "sync_v2_remote_heads",
+                    "personal_context_link_state",
                 }
             ),
         ),

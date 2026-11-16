@@ -1523,7 +1523,7 @@ WizardProgress .step-title.active {
 /* TASK-21148 (UAT Z-2): sub-minimum terminal nudge in the wizard chrome. */
 .setup-size-hint {
     dock: bottom;
-    height: $ds-size-1;
+    height: auto;
     color: $warning;
     text-align: center;
 }

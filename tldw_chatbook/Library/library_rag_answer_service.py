@@ -52,6 +52,7 @@ from tldw_chatbook.Chat.Chat_Functions import (
 )
 from tldw_chatbook.Chat.citation_evidence_models import EvidenceBundle
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
+from tldw_chatbook.Provider_Contract import ChatConfigurationError
 from tldw_chatbook.UI.Views.RAGSearch.search_handoff import (
     build_library_rag_evidence_bundle,
 )
@@ -654,7 +655,7 @@ def _execution_endpoint(provider: str) -> str:
 
 
 async def _invoke_chat(
-    chat: Callable[..., Any],
+    chat: Callable[..., Any] | None,
     *,
     endpoint: str,
     model: str | None,
@@ -679,6 +680,20 @@ async def _invoke_chat(
         "max_tokens": _effective_max_tokens(endpoint, model),
         "temp": ANSWER_TEMPERATURE,
     }
+    if chat is None and endpoint == "deepseek":
+        from .. import config as app_config
+        from ..Chat.provider_readiness import get_provider_readiness
+
+        # DeepSeek's handler otherwise reads only the stored key. Resolve
+        # the same credential as Console at dispatch, outside UI state.
+        readiness = await asyncio.to_thread(
+            lambda: get_provider_readiness(endpoint, app_config.load_settings())
+        )
+        if not readiness.ready:
+            raise ChatConfigurationError(provider=endpoint, message=readiness.user_message)
+        kwargs["api_key"] = readiness.api_key
+
+    chat = _resolve_answer_chat(chat)
     # TASK-34000.21: the request names its model in the app log, in the
     # same words the quiet line used before Run -- the dispatcher logs only
     # the endpoint ("Routing to endpoint: openai") and no handler logs the
@@ -784,7 +799,7 @@ async def generate_library_rag_answer(
         )
 
         raw = await _invoke_chat(
-            _resolve_answer_chat(chat),
+            chat,
             endpoint=_execution_endpoint(provider),
             model=model,
             system=LIBRARY_RAG_ANSWER_SYSTEM_PROMPT,

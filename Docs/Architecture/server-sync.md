@@ -31,6 +31,29 @@ Config: `[tldw_api] base_url` / `auth_token` in config.toml (shipped localhost p
 
 **The active sync does not read `sync_log`**: Sync v2 producers write envelopes into the outbox at mutation time; the local-first service pushes/pulls envelopes and applies them. v1 send/get-changes remain exposed only as transport wrappers.
 
+### Enrollment from Settings
+
+The **Switch Source / Server** dialog can activate a server independently of
+Manual Sync. Personal enrollment in the Default workspace requires a separate
+opt-in that tells the user the server can read synced data. Chatbook checks
+the server's advertised `server_trusted_v1` policy and readiness before
+registering a device. It keeps any existing dataset's trust policy and records
+successful enrollment under the server, authenticated principal, and active
+workspace scope used by Settings.
+
+The client reserves a device ID before registration and reuses it if enrollment
+fails. The reservation carries no dataset or encryption approval. A legacy
+Notes organization retry identity can guide verification of an existing
+profile. Settings records its encryption policy only after the server confirms
+the same device and dataset.
+
+Enrollment registers only device and dataset metadata. **Preview manual sync**
+reads the local profile and pending outbox counts without contacting the
+server. **Run manual sync** remains unavailable for these enrollment-only
+profiles pending a compatible Notes and Chat transport and local apply path.
+When the server supports the complete Notes organization contract, Settings
+offers **Prepare Notes organization** for the separate bootstrap and adoption flow.
+
 ### Approved Canvas extension, not yet activated
 
 ADR-239 approves conversation-owned `canvas.document` and immutable

@@ -7,6 +7,7 @@ import pytest
 from textual.widget import Widget
 from textual.widgets import Button, Input, OptionList, Select, Static
 
+from Tests.Plugins import platform_support
 from Tests.Plugins.conftest import native_console as _native_console
 from Tests.Plugins.conftest import native_package as _native_package
 from Tests.Plugins.test_source_service import marketplace as _marketplace
@@ -636,6 +637,7 @@ async def _until(predicate, what, seconds=120):
     assert await pump_probe.until(predicate, seconds), f"{what} did not happen"
 
 
+@platform_support.managed_runtime
 @private_profile_test
 @pytest.mark.asyncio
 @pytest.mark.timeout(300)
@@ -780,6 +782,7 @@ async def test_restored_plugins_recover_from_the_plugins_screen(
         await plugins.aclose()
 
 
+@platform_support.managed_runtime
 @private_profile_test
 @pytest.mark.asyncio
 @pytest.mark.timeout(300)
