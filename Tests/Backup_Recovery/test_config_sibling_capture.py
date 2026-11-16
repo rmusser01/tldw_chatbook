@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from Tests.Backup_Recovery.restart_observation import _wait_while_busy
+
 _SEED = r"""
 import os,sys
 from pathlib import Path
@@ -112,62 +114,6 @@ assert bootstrap._records(root)[1]==bindings_before
 assert not blocked_attempts()
 print('CAPTURE_SIBLING_CONTINUITY_COMPLETE',owner,flush=True)
 """
-
-
-def _wait_while_busy(process, *, idle, timeout):
-    """Wait until ``process`` exits; kill it and its descendants once its process
-    tree has used no CPU for ``idle`` seconds (a hang), or at ``timeout``
-    (TASK-40306).
-
-    A fixed budget fails a loaded run that is only slow; a blocked child stops
-    using CPU, however loaded the host is. A hang that keeps polling (a lock
-    wait that retries every few milliseconds) keeps using CPU, so only
-    ``timeout`` stops it (TASK-41104).
-    """
-    import contextlib
-    import time
-
-    import psutil
-
-    def cpu(member):
-        # A zombie or a just-exited descendant cannot be read; count the rest.
-        try:
-            return sum(member.cpu_times()[:2])
-        except psutil.Error:
-            return 0.0
-
-    watched = psutil.Process(process.pid)
-    started = still = time.monotonic()
-    used = None
-    try:
-        while True:
-            try:
-                return process.wait(timeout=1)
-            except subprocess.TimeoutExpired:
-                pass
-            try:
-                now_used = sum(
-                    cpu(member)
-                    for member in (watched, *watched.children(recursive=True))
-                )
-            except psutil.Error:
-                now_used = used  # The child itself exited mid-read.
-            now = time.monotonic()
-            if now_used != used:
-                used, still = now_used, now
-            if now - still > idle or now - started > timeout:
-                raise subprocess.TimeoutExpired(process.args, round(now - started))
-    finally:
-        if process.poll() is None:
-            try:
-                descendants = watched.children(recursive=True)
-            except psutil.Error:
-                descendants = []
-            for member in descendants:
-                with contextlib.suppress(psutil.Error):
-                    member.kill()
-            process.kill()
-            process.wait()
 
 
 def _child(home, script, *arguments, timeout=70, selector=None, idle=None):

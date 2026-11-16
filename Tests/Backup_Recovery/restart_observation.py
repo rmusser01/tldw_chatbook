@@ -1,7 +1,9 @@
-"""Bounded observation of the fresh Windows recovery test process."""
+"""Bounded observation of fixture child processes (restart receipts, CPU-idle hangs)."""
 
+import contextlib
 import json
 import math
+import subprocess
 import time
 from pathlib import Path
 
@@ -39,3 +41,55 @@ def wait_for_restart(receipt: Path, deadline: float) -> int | None:
         except psutil.NoSuchProcess:
             pass
         raise TimeoutError("restart_process_timeout") from error
+
+
+def _wait_while_busy(process, *, idle, timeout):
+    """Wait until ``process`` exits; kill it and its descendants once its process
+    tree has used no CPU for ``idle`` seconds (a hang), or at ``timeout``
+    (TASK-40306).
+
+    A fixed budget fails a loaded run that is only slow; a blocked child stops
+    using CPU, however loaded the host is. A hang that keeps polling (a lock
+    wait that retries every few milliseconds) keeps using CPU, so only
+    ``timeout`` stops it (TASK-41104).
+    """
+
+    def cpu(member):
+        # A zombie or a just-exited descendant cannot be read; count the rest.
+        try:
+            return sum(member.cpu_times()[:2])
+        except psutil.Error:
+            return 0.0
+
+    watched = psutil.Process(process.pid)
+    started = still = time.monotonic()
+    used = None
+    try:
+        while True:
+            try:
+                return process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                pass
+            try:
+                now_used = sum(
+                    cpu(member)
+                    for member in (watched, *watched.children(recursive=True))
+                )
+            except psutil.Error:
+                now_used = used  # The child itself exited mid-read.
+            now = time.monotonic()
+            if now_used != used:
+                used, still = now_used, now
+            if now - still > idle or now - started > timeout:
+                raise subprocess.TimeoutExpired(process.args, round(now - started))
+    finally:
+        if process.poll() is None:
+            try:
+                descendants = watched.children(recursive=True)
+            except psutil.Error:
+                descendants = []
+            for member in descendants:
+                with contextlib.suppress(psutil.Error):
+                    member.kill()
+            process.kill()
+            process.wait()
