@@ -5,11 +5,11 @@ OpenAI-compatible server that cannot stream (a Custom endpoint, vLLM, ...)
 answered the first streamed request of every chat with HTTP 400, and the
 reply failed with advice about the model. llama.cpp already retried such a
 request once without streaming; owner decision 2026-10-29: every self-hosted
-and Custom OpenAI-compatible server gets the same one-time retry. Cloud
-providers do not -- a silent second paid call is not wanted there -- and
-their refused stream names the Streaming setting instead (TASK-37180). A
-named custom endpoint that runs through the hosted engine is answered the
-same way for now: its retry could not be traced (TASK-37762).
+and Custom OpenAI-compatible server gets the same one-time retry, a named
+custom endpoint run by the hosted engine included (TASK-37762, once its
+traced request aligned). Cloud providers do not -- a silent second paid call
+is not wanted there -- and their refused stream names the Streaming setting
+instead (TASK-37180).
 
 These tests are joined end to end: the real ``ConsoleProviderGateway``
 resolves each provider from config and dispatches through the real
@@ -78,6 +78,8 @@ class _OpenAICompatibleServer(ThreadingHTTPServer):
         json_tools: bool = False,
         tool_first: bool = False,
         tool_on_retry: bool = False,
+        finish_records: bool = False,
+        broken_stream: str | None = None,
     ) -> None:
         super().__init__(("127.0.0.1", 0), _Handler)
         self.stream_status = stream_status
@@ -88,6 +90,8 @@ class _OpenAICompatibleServer(ThreadingHTTPServer):
         self.json_tools = json_tools
         self.tool_first = tool_first
         self.tool_on_retry = tool_on_retry
+        self.finish_records = finish_records
+        self.broken_stream = broken_stream
         self.payloads: list[dict[str, Any]] = []
         self.stream_flags: list[bool] = []
 
@@ -114,12 +118,7 @@ class _Handler(BaseHTTPRequestHandler):
         streamed = bool(payload.get("stream"))
         server.stream_flags.append(streamed)
         if streamed and server.tool_on_retry and len(server.stream_flags) == 3:
-            chunk = {"choices": [{"delta": {"content": _REPLY}}], "usage": _USAGE}
-            self._send(
-                200,
-                "text/event-stream",
-                f"data: {json.dumps(chunk)}\n\ndata: [DONE]\n\n".encode(),
-            )
+            self._send_stream(_REPLY, _USAGE)
             return
         if streamed and server.tool_first and len(server.stream_flags) == 1:
             tool_text = (
@@ -127,28 +126,31 @@ class _Handler(BaseHTTPRequestHandler):
                 + json.dumps({"name": "calculator", "arguments": {"expression": "6*7"}})
                 + "\n```"
             )
-            chunk = {"choices": [{"delta": {"content": tool_text}}], "usage": _USAGE}
+            self._send_stream(tool_text, _USAGE)
+            return
+        if streamed and server.broken_stream == "malformed_json":
             self._send(
-                200,
-                "text/event-stream",
-                f"data: {json.dumps(chunk)}\n\ndata: [DONE]\n\n".encode(),
+                200, "text/event-stream", b'data: {"choices": [\n\ndata: [DONE]\n\n'
             )
             return
+        if streamed and server.broken_stream == "read_failure":
+            # The body stops short of its declared length and the connection
+            # closes: the client's read of the stream fails mid-record.
+            partial = b'data: {"choi'
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Content-Length", str(len(partial) + 512))
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(partial)
+            self.wfile.flush()
+            self.close_connection = True
+            return
         if streamed and server.empty_stream:
-            body = b""
-            if server.empty_stream_usage is not None:
-                # No text, but the usage of the prompt it read (llama.cpp and
-                # vLLM report it when asked for ``include_usage``).
-                usage_chunk = {
-                    "id": "chatcmpl-empty",
-                    "object": "chat.completion.chunk",
-                    "model": _MODEL,
-                    "choices": [],
-                    "usage": server.empty_stream_usage,
-                }
-                body += f"data: {json.dumps(usage_chunk)}\n\n".encode()
-            body += b"data: [DONE]\n\n"
-            self._send(200, "text/event-stream", body)
+            # No text; with ``empty_stream_usage``, the usage of the prompt it
+            # read (llama.cpp and vLLM report it when asked for
+            # ``include_usage``).
+            self._send_stream(None, server.empty_stream_usage)
             return
         if (streamed and not server.ignore_stream) or server.refuse_all:
             body = json.dumps(
@@ -203,6 +205,36 @@ class _Handler(BaseHTTPRequestHandler):
             indent=2,
         ).encode()
         self._send(200, "application/json; charset=utf-8", body)
+
+    def _send_stream(self, content: str | None, usage: dict[str, Any] | None) -> None:
+        """Stream ``content`` and ``usage`` (either may be absent), then [DONE].
+
+        ``finish_records`` sends what an OpenAI-compatible server streams: a
+        finish record, then the usage record. The strict hosted engine a
+        named custom endpoint runs through reads a stream without a finish
+        record as unreadable (TASK-37762); the short form the legacy handlers
+        accept is kept byte for byte.
+        """
+        server = self.server
+        assert isinstance(server, _OpenAICompatibleServer)
+        meta = {"id": "chatcmpl-empty", "object": "chat.completion.chunk", "model": _MODEL}
+        events: list[dict[str, Any]] = []
+        if server.finish_records:
+            if content is not None:
+                events.append(
+                    {**meta, "choices": [{"index": 0, "delta": {"content": content}}]}
+                )
+            events.append(
+                {**meta, "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}
+            )
+            if usage is not None:
+                events.append({**meta, "choices": [], "usage": usage})
+        elif content is not None:
+            events.append({"choices": [{"delta": {"content": content}}], "usage": usage})
+        elif usage is not None:
+            events.append({**meta, "choices": [], "usage": usage})
+        body = b"".join(f"data: {json.dumps(event)}\n\n".encode() for event in events)
+        self._send(200, "text/event-stream", body + b"data: [DONE]\n\n")
 
     def _send(self, status: int, content_type: str, body: bytes) -> None:
         self.send_response(status)
@@ -310,7 +342,9 @@ def _copy(outcome: Any) -> str:
 
 
 @pytest.mark.loopback_network
-@pytest.mark.parametrize("provider", ["custom", "vllm"], ids=lambda p: p)
+@pytest.mark.parametrize(
+    "provider", ["custom", "vllm", "custom-ep:box"], ids=lambda p: p
+)
 def test_self_hosted_refused_stream_is_retried_once_without_streaming(
     tmp_path, provider
 ):
@@ -331,9 +365,15 @@ def test_self_hosted_refused_stream_is_retried_once_without_streaming(
 
 
 @pytest.mark.loopback_network
-@pytest.mark.parametrize("provider", ["custom", "vllm"], ids=lambda p: p)
+@pytest.mark.parametrize(
+    "provider", ["custom", "vllm", "custom-ep:box"], ids=lambda p: p
+)
 def test_self_hosted_empty_stream_is_retried_once_without_streaming(tmp_path, provider):
-    """A server that accepts ``stream`` but sends no text cannot stream."""
+    """A server that accepts ``stream`` but sends no text cannot stream.
+
+    ``custom-ep:box`` runs through the hosted engine, which reads a stream
+    that ends with no record as unreadable rather than as an empty reply.
+    """
     with _server(empty_stream=True) as server:
         gateway, resolution = _resolve(provider, server.base_url)
         outcome, _store, signals = _run_console_reply(tmp_path, gateway, resolution)
@@ -343,6 +383,87 @@ def test_self_hosted_empty_stream_is_retried_once_without_streaming(tmp_path, pr
     assert server.stream_flags == [True, False]
     assert outcome.total_tokens == _USAGE["total_tokens"]
     assert len(signals.usage_payloads()) == 1
+
+
+@pytest.mark.loopback_network
+@pytest.mark.parametrize("shape", ["finish_record", "whole_json"])
+def test_named_custom_endpoint_stream_with_nothing_readable_is_retried_once(
+    tmp_path, shape
+):
+    """TASK-37762: the hosted engine's other two ways to stream no text.
+
+    ``finish_record``: the server finishes cleanly with no text, which the
+    engine reports as an empty terminal turn (finish reason, no content and
+    no tool call). ``whole_json``: the server ignores ``stream`` and answers
+    whole, which the engine cannot read as a stream. Either is asked once
+    more without streaming, and the reply's usage is recorded once.
+    """
+    server_kwargs = (
+        {"empty_stream": True, "finish_records": True}
+        if shape == "finish_record"
+        else {"ignore_stream": True}
+    )
+    with _server(**server_kwargs) as server:
+        gateway, resolution = _resolve("custom-ep:box", server.base_url)
+        assert resolution.execution_key == "custom-hosted"
+        outcome, _store, signals = _run_console_reply(tmp_path, gateway, resolution)
+
+    assert outcome.status == "done", _copy(outcome)
+    assert outcome.final_text == _REPLY
+    assert server.stream_flags == [True, False]
+    assert outcome.total_tokens == _USAGE["total_tokens"]
+    assert signals.usage_payloads() == [_USAGE]
+
+
+@pytest.mark.loopback_network
+@pytest.mark.parametrize("shape", ["malformed_json", "read_failure"])
+def test_named_custom_endpoint_stream_failing_for_another_reason_is_not_asked_again(
+    tmp_path, shape
+):
+    """TASK-37762 review: only an empty or unreadable stream is asked again.
+
+    The hosted engine raises the same protocol error type for every stream it
+    cannot use. A stream that ENDS with nothing in it (no terminal record, or
+    a ``[DONE]`` with no finish reason) is what a server that cannot stream
+    sends; a malformed record or a failed read is a broken reply, which a
+    Custom slot is not asked again for either. Asking again without
+    streaming would be a silent second generation for a failure streaming did
+    not cause.
+    """
+    with _server(broken_stream=shape) as server:
+        gateway, resolution = _resolve("custom-ep:box", server.base_url)
+        assert resolution.execution_key == "custom-hosted"
+        outcome, _store, signals = _run_console_reply(tmp_path, gateway, resolution)
+
+    assert outcome.status != "done"
+    assert server.stream_flags, "the endpoint was never asked"
+    assert False not in server.stream_flags, server.stream_flags
+    assert signals.usage_payloads() == []
+
+
+@pytest.mark.loopback_network
+@pytest.mark.parametrize("shape", ["empty", "whole_json"])
+def test_cloud_hosted_preset_stream_with_nothing_readable_is_not_asked_again(
+    tmp_path, shape
+):
+    """TASK-37762 review: the empty-stream retry stays with retried servers.
+
+    ``zenmux`` streams through the same hosted engine as a named custom
+    endpoint and raises the same error for a stream with nothing readable,
+    but it is a cloud preset: a second request there is a silent second paid
+    call, so it is never asked again without streaming.
+    """
+    server_kwargs = (
+        {"empty_stream": True} if shape == "empty" else {"ignore_stream": True}
+    )
+    with _server(**server_kwargs) as server:
+        gateway, resolution = _resolve("zenmux", server.base_url)
+        outcome, _store, signals = _run_console_reply(tmp_path, gateway, resolution)
+
+    assert outcome.status != "done"
+    assert server.stream_flags, "the provider was never asked"
+    assert False not in server.stream_flags, server.stream_flags
+    assert signals.usage_payloads() == []
 
 
 @pytest.mark.loopback_network
@@ -432,19 +553,14 @@ def test_self_hosted_retry_that_also_fails_shows_the_retry_failure(tmp_path):
 
 
 @pytest.mark.loopback_network
-@pytest.mark.parametrize(
-    "provider", ["anthropic", "zenmux", "custom-ep:box"], ids=lambda p: p
-)
+@pytest.mark.parametrize("provider", ["anthropic", "zenmux"], ids=lambda p: p)
 def test_cloud_refused_stream_is_not_retried_and_names_streaming(tmp_path, provider):
     """A cloud 400 is usually a real request error: no silent second call.
 
     The failure names the Streaming setting and its actual settings locations
-    (TASK-37180). ``zenmux`` stands for the strict hosted-engine presets.
-    ``custom-ep:box`` is a named OpenAI-compatible custom endpoint: it runs
-    through the same hosted engine, whose traced request does not align, so
-    with trace capture on a retry could not be traced and the run would
-    block (TASK-37762); until that is fixed it is answered like a cloud
-    provider.
+    (TASK-37180). ``zenmux`` stands for the strict hosted-engine presets: the
+    hosted engine a named custom endpoint shares does not make a cloud
+    preset retried (TASK-37762).
     """
     with _server() as server:
         gateway, resolution = _resolve(provider, server.base_url)

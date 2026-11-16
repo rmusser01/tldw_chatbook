@@ -7,9 +7,11 @@ turn, one assistant reply in the transcript and in the database, and the
 usage the server reported for the retry recorded once.
 
 The real ChatScreen, store, controller, agent bridge, provider gateway,
-``chat_api_call`` and ``chat_with_custom_openai`` run here, under the shipped
-streaming default. Nothing is replaced: the provider is a loopback
-OpenAI-compatible server that answers ``"stream": true`` with HTTP 400.
+``chat_api_call`` and its adapter run here, under the shipped streaming
+default: ``chat_with_custom_openai`` for the Custom slot, the strict hosted
+engine for a named custom endpoint (``custom-ep:box``, TASK-37762). Nothing
+is replaced: the provider is a loopback OpenAI-compatible server that
+answers ``"stream": true`` with HTTP 400.
 """
 
 from __future__ import annotations
@@ -45,9 +47,23 @@ def _rows(store, role):
     ]
 
 
+def _provider_config(provider: str, base_url: str) -> dict:
+    """The config a user saves to send to ``provider`` at ``base_url``."""
+    if provider == "custom-ep:box":
+        return {
+            "custom_endpoints.box": {
+                "display_name": "Box",
+                "family": "openai_compatible",
+                "base_url": base_url,
+            }
+        }
+    return {"api_settings.custom": {"api_url": base_url, "model": _MODEL}}
+
+
 @pytest.mark.asyncio
 @pytest.mark.loopback_network
-async def test_a_custom_server_that_refuses_streaming_answers_one_turn_once():
+@pytest.mark.parametrize("provider", ["custom", "custom-ep:box"])
+async def test_a_custom_server_that_refuses_streaming_answers_one_turn_once(provider):
     with _server() as server:
         app = _build_test_app(user_data_dir=config_module.get_user_data_dir())
         attach_chachanotes_db(app, db_path=config_module.get_chachanotes_db_path())
@@ -57,8 +73,8 @@ async def test_a_custom_server_that_refuses_streaming_answers_one_turn_once():
                 "console": {"exchange_capture": False},
                 "first_run": {"setup_completed": True},
                 "splash_screen": {"enabled": False},
-                "chat_defaults": {"provider": "custom", "model": _MODEL},
-                "api_settings.custom": {"api_url": server.base_url, "model": _MODEL},
+                "chat_defaults": {"provider": provider, "model": _MODEL},
+                **_provider_config(provider, server.base_url),
             }
         )
         app.app_config = config_module.load_settings(force_reload=True)
@@ -105,19 +121,29 @@ async def test_a_custom_server_that_refuses_streaming_answers_one_turn_once():
                 _USAGE["prompt_tokens"],
                 _USAGE["completion_tokens"],
             )
+            # Scoped to this turn's conversation: a bootstrap_profile test
+            # shares the process's one ChaChaNotes database, so the earlier
+            # case's identical reply is still on disk.
             persisted: list = []
             for _ in range(80):
-                persisted = (
-                    app.chachanotes_db.get_connection()
-                    .execute(
-                        "SELECT usage_json FROM messages "
-                        "WHERE content = ? AND deleted = 0",
-                        (_REPLY,),
+                conversation_id = next(
+                    session
+                    for session in store.sessions()
+                    if session.id == store.active_session_id
+                ).persisted_conversation_id
+                if conversation_id is not None:
+                    persisted = (
+                        app.chachanotes_db.get_connection()
+                        .execute(
+                            "SELECT usage_json FROM messages "
+                            "WHERE conversation_id = ? AND content = ? "
+                            "AND deleted = 0",
+                            (conversation_id, _REPLY),
+                        )
+                        .fetchall()
                     )
-                    .fetchall()
-                )
-                if persisted and persisted[0][0]:
-                    break
+                    if persisted and persisted[0][0]:
+                        break
                 await pilot.pause(0.05)
             assert len(persisted) == 1, persisted
             stored = ProviderUsage.from_json(persisted[0][0])
