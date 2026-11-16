@@ -344,19 +344,25 @@ def retains_only_installed_keys(scopes, records, issues) -> bool:
 def _retention_installs_keys(candidate, plan) -> bool:
     """Classify a staged candidate's retention review; unknown reads as manual.
 
-    Reads the staged material as ``_descriptor`` reads ``candidate.json``
-    (pinned and private). ``credentials._material`` would go through storage
-    admission, where a candidate's work folder is not enrolled.
+    Reads only ``candidate.json`` and the staged credential material, pinned and
+    private. Nothing is hashed to choose review copy (``publication._descriptor``
+    would re-hash every staged file), and ``credentials._material`` would go
+    through storage admission, where a candidate's work folder is not enrolled.
     """
     from .bootstrap import _read
-    from .native_files import pinned_directory
-    from .publication import _descriptor
+    from .limits import RECOVERY_RECORD_BYTES
 
     try:
-        scopes = _descriptor(candidate, plan)["credential_scopes"]
         with pinned_directory(candidate) as fd:
+            descriptor = _read(fd, "candidate.json", max_bytes=RECOVERY_RECORD_BYTES)
             material = _read(fd, "credential-recovery.json", max_bytes=16 * 1024**2)
-        return retains_only_installed_keys(scopes, material["records"], plan.issues)
+        if descriptor["archive_digest"] != plan.archive_digest or descriptor[
+            "issues"
+        ] != list(plan.issues):
+            return False
+        return retains_only_installed_keys(
+            descriptor["credential_scopes"], material["records"], plan.issues
+        )
     except Exception:  # noqa: BLE001 - a failed check never replaces the review
         return False
 
@@ -961,10 +967,15 @@ class RecoveryService:
                         "credential_isolated_retention_required",
                     ) and _retention_installs_keys(candidate, plan):
                         # TASK-41124: the review says the restore installs it.
-                        self._update(
-                            operation,
-                            result={"personal_context_keys_installed": True},
-                        )
+                        # Merged, so a result already recorded is kept (RLock).
+                        with self._lock:
+                            self._update(
+                                operation,
+                                result={
+                                    **self._states[operation]["result"],
+                                    "personal_context_keys_installed": True,
+                                },
+                            )
                     raise
                 result = {
                     "journal_operation_id": journal_operation,

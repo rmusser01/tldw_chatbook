@@ -1536,6 +1536,57 @@ def test_retention_review_names_only_keys_the_restore_installs(
     assert retains_only_installed_keys(scopes, records, issues) is expected
 
 
+def test_retention_classification_reads_without_hashing_staged_files(
+    tmp_path, monkeypatch
+):
+    """TASK-41124 review r15br-rev1: choosing the review's copy reads only the
+    candidate's ``candidate.json`` and credential material. It never re-hashes
+    staged payloads (``publication._descriptor`` hashes every one, twice), and a
+    candidate made for another plan reads as manual."""
+    import json
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Backup_Recovery import archive_reader, journal, publication
+    from tldw_chatbook.Backup_Recovery.recovery_service import (
+        _retention_installs_keys,
+    )
+
+    calls = []
+    for module, name in (
+        (publication, "observe_artifact"),
+        (journal, "observe_artifact"),
+        (archive_reader, "_hash"),
+    ):
+        monkeypatch.setattr(module, name, lambda *a, _n=name, **k: calls.append(_n))
+    candidate = tmp_path / "candidate"
+    candidate.mkdir(mode=0o700)
+    issues = ["personal_context_restore_readable:pc"]
+    for name, document in (
+        (
+            "candidate.json",
+            {
+                "version": 1,
+                "archive_digest": "digest",
+                "issues": issues,
+                "credential_scopes": {"r0": json.dumps({"action": "retain"})},
+                "artifacts": [{"candidate": str(candidate / "payload")}],
+            },
+        ),
+        (
+            "credential-recovery.json",
+            {"version": 1, "records": [{"id": "r0", "kind": "personal_context"}]},
+        ),
+    ):
+        (candidate / name).write_text(json.dumps(document))
+        (candidate / name).chmod(0o600)
+    (candidate / "payload").write_bytes(b"x" * 1024)
+    plan = SimpleNamespace(archive_digest="digest", issues=tuple(issues))
+    assert _retention_installs_keys(candidate, plan) is True
+    assert calls == []
+    other = SimpleNamespace(archive_digest="other", issues=tuple(issues))
+    assert _retention_installs_keys(candidate, other) is False
+
+
 # TASK-40134: the Personal Context repository is a captured backup owner. These
 # fixtures use the in-memory key protector; no test here reaches an OS keyring.
 
