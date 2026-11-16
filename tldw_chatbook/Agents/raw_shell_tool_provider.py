@@ -5,6 +5,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Literal, Protocol
 from uuid import uuid4
@@ -27,6 +28,7 @@ from tldw_chatbook.Tools.raw_cli_executor import (
     RawCliStreamEvent,
     bind_model_raw_cli,
     failure_hint,
+    resolve_checked_workspace_shell_argv,
     validate_raw_cli_request,
 )
 from tldw_chatbook.Utils.input_validation import RawShellExecInput
@@ -151,6 +153,13 @@ def raw_shell_schema(tool_id: str) -> ToolSchema:
     )
 
 
+def _hardline_refusal(error: RawCliHardlineViolation) -> ToolResult:
+    return ToolResult.blocked(
+        f"{error} — this is the built-in safety floor, "
+        "not a user denial; it cannot be approved or overridden"
+    )
+
+
 class RawShellToolProvider:
     """Expose one conditional model schema and one always-projectable policy row."""
 
@@ -160,6 +169,7 @@ class RawShellToolProvider:
         runtime: _RawCliRuntime,
         console_session_id: str,
         initial_directory: Callable[[], Path],
+        protected_roots: Callable[[], tuple[Path, ...]] = tuple,
         resolve_state: Callable[[HubTool], EffectiveToolState] | None = None,
         local_tools_enabled: Callable[[], bool] = lambda: True,
         kill_switch: Callable[[], bool] = lambda: False,
@@ -171,6 +181,7 @@ class RawShellToolProvider:
             runtime: Existing app-owned raw CLI runtime.
             console_session_id: Nonblank Console session identity.
             initial_directory: Resolver for the default execution directory.
+            protected_roots: Live local folder bindings of this chat's workspace.
             resolve_state: Resolver for the effective Ask/Off policy.
             local_tools_enabled: Live local-tools gate probe.
             kill_switch: Live global tool kill-switch probe.
@@ -187,6 +198,7 @@ class RawShellToolProvider:
         self._runtime = runtime
         self.console_session_id = console_session_id
         self._initial_directory = initial_directory
+        self._protected_roots = protected_roots
         self._resolve_state = resolve_state or (
             lambda _hub: EffectiveToolState(state="ask", origin="global_default")
         )
@@ -299,7 +311,27 @@ class RawShellToolProvider:
             timeout_seconds=validated.timeout_seconds,
             console_session_id=self.console_session_id,
         )
-        return validate_raw_cli_request(request)
+        request = validate_raw_cli_request(request)
+        try:
+            roots = self._protected_roots()
+            if not isinstance(roots, tuple) or any(
+                not isinstance(root, Path)
+                or not root.is_absolute()
+                or "\0" in str(root)
+                for root in roots
+            ):
+                raise ValueError("invalid workspace folder bindings")
+        except Exception:
+            raise RawCliHardlineViolation("workspace-protection-unavailable") from None
+        if not roots:
+            return request
+        request = replace(request, protected_roots=roots)
+        try:
+            resolve_checked_workspace_shell_argv(request)
+        except FileNotFoundError:
+            # Leave the usual permission flow and unavailable-shell outcome in place.
+            pass
+        return request
 
     def pending_gate_for(self, call: ToolCall) -> MCPPendingCall | None:
         """Build one complete, independently addressable raw approval row.
@@ -533,13 +565,9 @@ class RawShellToolProvider:
                 invocation_id=current_tool_call_id() or f"raw-shell-{uuid4()}",
             )
         except RawCliHardlineViolation as exc:
-            # TASK-25905 AC#4: the floor's refusal is ITS OWN thing -- it
-            # names the rule, states it is not a user denial, and no
-            # approval option (session grants included) can clear it.
-            return ToolResult.blocked(
-                f"{exc} — this is the built-in safety floor, "
-                "not a user denial; it cannot be approved or overridden"
-            )
+            if exc.rule.startswith("workspace-"):
+                self._pop_stamp_detail(run_id, RAW_SHELL_TOOL_NAME)
+            return _hardline_refusal(exc)
         except (TypeError, ValueError, OSError) as exc:
             return ToolResult(ok=False, error=f"invalid shell_exec request: {exc}")
         detail = self._pop_stamp_detail(run_id, RAW_SHELL_TOOL_NAME)
@@ -621,6 +649,8 @@ class RawShellToolProvider:
             if observation is not None:
                 authorization._required_evidence[0].finish_shell(observation, result)
             self._emit_progress(run_id, call_id, result)
+        except RawCliHardlineViolation as exc:
+            return _hardline_refusal(exc)
         except Exception as exc:
             detail = (str(exc) or type(exc).__name__)[:300]
             return ToolResult(
@@ -649,6 +679,11 @@ class RawShellToolProvider:
     def _tool_result(result: RawCliResult, *, command: str = "") -> ToolResult:
         """Map one executor settlement to the ordinary bounded tool contract."""
         from tldw_chatbook.Tools.shell_search_outcomes import is_empty_search
+
+        if result.prelaunch_refusal_rule is not None:
+            return _hardline_refusal(
+                RawCliHardlineViolation(result.prelaunch_refusal_rule)
+            )
 
         exit_code = "none" if result.exit_code is None else str(result.exit_code)
         detail = (
