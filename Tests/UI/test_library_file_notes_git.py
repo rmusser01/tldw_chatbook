@@ -7918,6 +7918,47 @@ async def test_a_git_render_resuming_during_removal_ends_quietly(
 
 
 @pytest.mark.asyncio
+async def test_a_git_row_fit_during_partial_removal_ends_quietly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-41218: a remaining primary child does not make a pruning row safe.
+
+    Hold only the primary child's real exit while the secondary exits normally.
+    The fitter's mounted/children guard then admits this genuine partial
+    teardown and raises NoMatches for the secondary before the lifecycle fix.
+    """
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    async with _PanelHarness(panel).run_test(size=(120, 40)) as pilot:
+        panel.render_status(_status(_row("unstaged", stage_action="stage")))
+        await _drain_git_row_render(pilot, panel)
+        row = panel.query_one(".file-notes-git-row", git_panel_module._SessionGitListItem)
+        primary = row.query_one(".file-notes-git-row-primary", Static)
+        secondary = row.query_one(".file-notes-git-row-secondary", Static)
+        secondary_task = secondary._task
+        assert secondary_task is not None
+        release_primary = asyncio.Event()
+        real_exit = primary._message_loop_exit
+
+        async def held_primary_exit() -> None:
+            await release_primary.wait()
+            await real_exit()
+
+        monkeypatch.setattr(primary, "_message_loop_exit", held_primary_exit)
+        removal = row.remove()
+        try:
+            await secondary_task
+            assert row.is_mounted and row.is_attached and row._pruning
+            assert tuple(row.children) == (primary,)
+            row._fit_copy()
+        finally:
+            release_primary.set()
+            await removal
+        await pilot.pause()
+        assert not row.is_attached
+
+
+@pytest.mark.asyncio
 async def test_a_commit_focus_landing_during_removal_ends_quietly() -> None:
     """TASK-36527: the commit review's deferred focus, panel removed first.
 

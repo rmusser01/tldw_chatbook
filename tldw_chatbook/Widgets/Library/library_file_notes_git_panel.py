@@ -579,7 +579,7 @@ class _SessionGitListItem(ListItem):
         self.call_after_refresh(self._fit_copy)
 
     def _fit_copy(self) -> None:
-        if not self.is_mounted or not self.children:
+        if not self.is_attached or self._pruning or not self.children:
             return
         primary = self.query_one(".file-notes-git-row-primary", Static)
         secondary = self.query_one(".file-notes-git-row-secondary", Static)

@@ -1,11 +1,11 @@
 ---
 id: TASK-41214
 title: Restore hook-review Send regression coverage on current runtime
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-11-15 22:32'
-updated_date: '2026-11-16 00:05'
+updated_date: '2026-11-16 02:27'
 labels:
   - ci
   - console
@@ -25,8 +25,8 @@ CI run 43750308318 fails eight hook-review Send regressions on current dev. Decl
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Declining hook review through each Send route settles, keeps the draft, shows cancellation copy and leaves both message pumps responsive.
-- [ ] #2 Allowing review resumes each captured Send exactly once on all routes.
+- [x] #1 Declining hook review through each Send route settles, keeps the draft, shows cancellation copy and leaves both message pumps responsive.
+- [x] #2 Allowing review resumes each captured Send exactly once on all routes.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -44,9 +44,9 @@ Reason: keep historical pump-freeze tests on the existing supported compatibilit
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Updated the historical pump-freeze harness to select the existing supported compatibility route through a forwarding tracked launcher; the received-intent path otherwise bypasses its dispatch recorder. The real resident hook-review request remains exercised. Also made the answer helper await the enabled target owning focus before driver-style Enter, because Textual schedules Widget.focus through app.call_later. All callers await that helper; Escape and all outcome assertions remain intact. No production runtime or timeout changes.
+Updated the historical pump-freeze harness to select the supported compatibility route through a forwarding tracked launcher; received-intent custody otherwise bypasses its dispatch recorder. The real resident hook-review request remains exercised. The async answer helper now waits for the enabled button to own focus before driver-style Enter, because Widget.focus schedules app.call_later. All five callers await it. Escape, draft retention, cancellation copy, responsive-pump and exactly-once assertions remain intact. No production runtime or timeout changes.
 
-Validation so far: a fresh approved workbench Send and a declined Enter Send both pass after the focus fix (2 passed), including responsive pumps, draft/cancellation and exactly-once dispatch checks. A prior broad Windows batch before the focus fix recorded a worker-retirement error and later failures; a fresh pre-fix approved case still failed, while the corrected pair passes. Scoped Ruff and source review are clean. The complete route matrix and remount consumers remain for final PR CI confirmation; task stays In Progress until those results are available.
+Validation: hosted PR run 43778537684 attempt 2 at 1e34ea961d87e161d029da656f37a396d30666cd passed the complete Console P0 admission-sensitive gate, including all approved and declined Send routes, and all remaining hook-containing UI lanes. That run's only failing test was an unrelated Session Git row-pruning callback. Local fresh approved workbench/declined Enter cases passed, and an isolated diagnostic Send-button case passed. Larger Windows runs recorded intermittent dispatch waits and one uncertain-worker teardown; these are retained in the receipts rather than presented as a clean full Windows run. Scoped Ruff and independent current-source review pass.
 
 Files: Tests/UI/test_console_hook_review_send_freeze.py only. ADR required: no; preserves existing compatibility and resident review boundaries.
 <!-- SECTION:NOTES:END -->

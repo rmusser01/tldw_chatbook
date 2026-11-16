@@ -1,11 +1,11 @@
 ---
 id: TASK-41217
 title: Run managed-plugin recovery UI journeys on qualified macOS CI
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-11-15 23:04'
-updated_date: '2026-11-16 00:05'
+updated_date: '2026-11-16 00:35'
 labels:
   - ci
   - plugins
@@ -27,7 +27,7 @@ Two plugin recovery UI journeys invoke the real managed runtime but were assigne
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The two native plugin recovery UI journeys execute on qualified macOS in pull-request CI and unsupported platforms declare the existing managed-runtime capability.
+- [x] #1 The two native plugin recovery UI journeys execute on qualified macOS in pull-request CI and unsupported platforms declare the existing managed-runtime capability.
 - [x] #2 A missing, skipped or failing macOS recovery job cannot pass the existing required aggregate; both exact node IDs remain covered.
 - [x] #3 Linux UI census ownership and floor remain intact and CI routing contracts reject target, runner or aggregation regressions.
 <!-- AC:END -->
@@ -50,7 +50,7 @@ Reason: add required platform-specific evidence for two managed-plugin UI recove
 <!-- SECTION:NOTES:BEGIN -->
 Implemented the qualified macOS recovery job and managed-runtime declarations. The existing required aggregate fails unless that job succeeds, and its JUnit check requires both exact recovery journeys to execute and pass without skips. Linux census entries and floor remain unchanged. ADR-103 was amended before implementation and is linked from this task plan.
 
-Validation so far: RED confirmed the new routing contract fails without the lane. All four targeted CI contract modules pass (328 checks), including wrong-platform, missing-target, missing-aggregate and nonpassing-JUnit negative controls. UI census, scoped Ruff and independent review pass. Actual macOS PR execution remains pending; task stays In Progress until that evidence is available.
+Validation: current-head PR run 43778537684 at 1e34ea961d87e161d029da656f37a396d30666cd executed Managed plugin recovery UI on macOS and passed, including the two-executed-case/no-skips JUnit check (2026-11-16 00:19:18Z to 00:21:01Z). Evidence: https://github.com/rmusser01/tldw_chatbook/actions/runs/43778537684/job/133013024205 . RED confirmed the routing contract fails without the lane. All four targeted CI contract modules pass (328 checks), including wrong-platform, missing-target, missing-aggregate and nonpassing-JUnit controls. UI census, scoped Ruff and independent review pass.
 
-Files: derived-artifacts.yml, two CI contract files, Tests/UI/test_plugins_browse.py and ADR-103.
+Files: derived-artifacts.yml, two CI contract files, Tests/UI/test_plugins_browse.py and ADR-103. Existing ADR-162 qualification is unchanged; ADR-103 records the new required platform evidence.
 <!-- SECTION:NOTES:END -->
