@@ -1,6 +1,7 @@
 """Pure local-server discovery tests (task-188) using httpx.MockTransport."""
 
 import errno
+import itertools
 import tomllib
 from pathlib import Path
 from types import SimpleNamespace
@@ -4026,10 +4027,9 @@ def _dispatch(name, **kwargs):
     )
 
 
-@pytest.mark.parametrize("shape", sorted(_DISPATCH_REFUSED_BASES))
 @pytest.mark.parametrize(("dispatch", "table", "key", "route"), _DISPATCH_OWN_ENDPOINTS)
 def test_chat_api_call_never_reaches_an_endpoint_the_contract_refuses(
-    dispatch, table, key, route, shape, monkeypatch
+    dispatch, table, key, route, monkeypatch
 ):
     """TASK-41131: only Console checked endpoints, so the same configured or
     pinned endpoint reached the network from every other ``chat_api_call``
@@ -4037,8 +4037,8 @@ def test_chat_api_call_never_reaches_an_endpoint_the_contract_refuses(
     or pinned, before any request, with the contract's reason."""
     from tldw_chatbook.Provider_Contract import ChatConfigurationError
 
-    endpoint = _with_path(route, _DISPATCH_REFUSED_BASES[shape])
-    for pinned in (False, True):
+    for shape, pinned in itertools.product(sorted(_DISPATCH_REFUSED_BASES), (False, True)):
+        endpoint = _with_path(route, _DISPATCH_REFUSED_BASES[shape])
         config: dict = {}
         node = config
         for part in table:
@@ -4049,74 +4049,78 @@ def test_chat_api_call_never_reaches_an_endpoint_the_contract_refuses(
         with pytest.raises(ChatConfigurationError) as caught:
             _dispatch(dispatch, api_base_url=endpoint if pinned else None)
 
-        assert posts == []
+        assert posts == [], (shape, pinned)
         reason = _contract_reason(dispatch, endpoint)
-        assert reason and str(caught.value).endswith(reason), (pinned, str(caught.value))
+        assert reason and str(caught.value).endswith(reason), (shape, pinned, str(caught.value))
         assert caught.value.status_code is None
-        assert not [part for part in _ECHO_PARTS if part in str(caught.value)]
+        assert not [part for part in _ECHO_PARTS if part in str(caught.value)], shape
 
 
-@pytest.mark.parametrize("host", ["127.1", "-bad.corp", "bücher.example", "localhost..", "0x7f.1"])
 @pytest.mark.parametrize("dispatch", ["mlx_lm", "local_mlx_lm"])
-def test_chat_api_call_never_reaches_an_mlx_host_the_contract_refuses(dispatch, host, monkeypatch):
+def test_chat_api_call_never_reaches_an_mlx_host_the_contract_refuses(dispatch, monkeypatch):
     """TASK-41131: MLX-LM builds its URL from ``host`` and ``port``, which no
     non-Console caller checked."""
     from tldw_chatbook.Provider_Contract import ChatConfigurationError
 
-    posts = _local_world(monkeypatch, {"api_settings": {dispatch: {"host": host, "port": 8000}}})
+    for host in ("127.1", "-bad.corp", "bücher.example", "localhost..", "0x7f.1"):
+        posts = _local_world(monkeypatch, {"api_settings": {dispatch: {"host": host, "port": 8000}}})
 
-    with pytest.raises(ChatConfigurationError):
-        _dispatch(dispatch)
+        with pytest.raises(ChatConfigurationError):
+            _dispatch(dispatch)
 
-    assert posts == []
+        assert posts == [], host
 
 
-@pytest.mark.parametrize("shape", sorted(_DISPATCH_REFUSED_BASES))
-def test_dreams_never_sends_to_an_endpoint_the_contract_refuses(shape, monkeypatch):
+def test_dreams_never_sends_to_an_endpoint_the_contract_refuses(monkeypatch):
     """TASK-41131: Dreams calls ``chat_api_call`` unpinned, so the adapter
     sent to whatever its table held."""
     from tldw_chatbook.Dreams import story_service
     from tldw_chatbook.Provider_Contract import ChatConfigurationError
 
-    endpoint = _with_path("vllm", _DISPATCH_REFUSED_BASES[shape])
-    config = {"api_settings": {"vllm": {"api_url": endpoint}}}
-    posts = _local_world(monkeypatch, config)
     monkeypatch.setattr(
         "tldw_chatbook.Dreams.settings.get_cli_setting",
         lambda section, key, default=None: default,
     )
-    monkeypatch.setattr(
-        story_service,
-        "load_cli_config_and_ensure_existence",
-        lambda **kw: {**config, "chat_defaults": {"provider": "vllm", "model": "m"}},
-    )
-    chat = story_service.resolve_dreams_chat()
+    for shape, base in sorted(_DISPATCH_REFUSED_BASES.items()):
+        endpoint = _with_path("vllm", base)
+        config = {"api_settings": {"vllm": {"api_url": endpoint}}}
+        posts = _local_world(monkeypatch, config)
+        monkeypatch.setattr(
+            story_service,
+            "load_cli_config_and_ensure_existence",
+            lambda config=config, **kw: {
+                **config, "chat_defaults": {"provider": "vllm", "model": "m"}
+            },
+        )
+        chat = story_service.resolve_dreams_chat()
 
-    with pytest.raises(ChatConfigurationError) as caught:
-        chat(messages_payload=[{"role": "user", "content": "hi"}], streaming=False)
+        with pytest.raises(ChatConfigurationError) as caught:
+            chat(messages_payload=[{"role": "user", "content": "hi"}], streaming=False)
 
-    assert posts == []
-    assert str(caught.value).endswith(_contract_reason("vllm", endpoint))
+        assert posts == [], shape
+        assert str(caught.value).endswith(_contract_reason("vllm", endpoint)), shape
 
 
-@pytest.mark.parametrize("shape", sorted(_DISPATCH_REFUSED_BASES))
-def test_summarization_never_sends_to_an_endpoint_the_contract_refuses(shape, monkeypatch):
+def test_summarization_never_sends_to_an_endpoint_the_contract_refuses(monkeypatch):
     """TASK-41131: the summarizers call ``chat_api_call`` unpinned; the refusal
     comes back in-band, with the contract's reason."""
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib as summarization
 
-    endpoint = _with_path("vllm", _DISPATCH_REFUSED_BASES[shape])
-    posts = _local_world(monkeypatch, {"api_settings": {"vllm": {"api_url": endpoint, "model": "m"}}})
     monkeypatch.setattr(summarization, "_readiness_credential", lambda _endpoint: (None, None))
     monkeypatch.setattr(
         summarization, "get_cli_setting", lambda section, key, default=None: default
     )
+    for shape, base in sorted(_DISPATCH_REFUSED_BASES.items()):
+        endpoint = _with_path("vllm", base)
+        posts = _local_world(
+            monkeypatch, {"api_settings": {"vllm": {"api_url": endpoint, "model": "m"}}}
+        )
 
-    out = summarization._summarize_via_chat_api("vllm", None, "text", "p", None, None, False)
+        out = summarization._summarize_via_chat_api("vllm", None, "text", "p", None, None, False)
 
-    assert posts == []
-    assert out.startswith("vLLM Summarization: Unexpected error occurred:")
-    assert out.endswith(_contract_reason("vllm", endpoint))
+        assert posts == [], shape
+        assert out.startswith("vLLM Summarization: Unexpected error occurred:"), shape
+        assert out.endswith(_contract_reason("vllm", endpoint)), shape
 
 
 #: TASK-41131 keeps-working checks: what each local and custom dispatch posts
@@ -4168,16 +4172,16 @@ _SHIPPED_DISPATCH_POSTS = (
 )
 
 
-@pytest.mark.parametrize(("dispatch", "user", "posted"), _SHIPPED_DISPATCH_POSTS)
-def test_an_ordinary_local_config_still_posts_where_it_did(dispatch, user, posted, monkeypatch):
+def test_an_ordinary_local_config_still_posts_where_it_did(monkeypatch):
     """TASK-41131: the check refuses only what the contract refuses; every
     shipped endpoint, and the adapters' own tables, post where they did."""
-    posts = _local_world(monkeypatch, _merged(user))
+    for dispatch, user, posted in _SHIPPED_DISPATCH_POSTS:
+        posts = _local_world(monkeypatch, _merged(user))
 
-    reply = _dispatch(dispatch)
+        reply = _dispatch(dispatch)
 
-    assert posts == [posted]
-    assert reply["choices"][0]["message"]["content"] == "ok"
+        assert posts == [posted], dispatch
+        assert reply["choices"][0]["message"]["content"] == "ok", dispatch
 
 
 def test_every_engine_preset_still_resolves_its_shipped_base():
