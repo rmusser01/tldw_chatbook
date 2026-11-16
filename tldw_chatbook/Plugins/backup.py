@@ -39,6 +39,8 @@ REGISTRY = "registry.sqlite3"
 LOCK = "runtime.lock"
 WRITERS_ACTIVE = "plugin_writers_active"
 FETCH_REMOVAL = "plugin_fetch_removal_required"
+CHANGES = "authority-changes.json"
+MAX_CHANGES = 1000
 
 # Exact installed v5 catalog, measured from PluginRegistry._reference_schema()
 # (migrations 001-005). A new migration must add its catalog here; the pinning
@@ -98,8 +100,92 @@ def _reset_aside(relative: str) -> bool:
 
 
 def _staging_excluded(relative: str) -> bool:
-    """Whether the owner excludes a root-relative path whole, never walked."""
-    return _fetch_excluded(relative) or _reset_aside(relative)
+    """Whether the owner excludes a root-relative path whole, never walked.
+
+    ``authority-changes.json`` too (TASK-41105): it must outlive a restore,
+    and a replace restore keeps an excluded target file in place.
+    """
+    return _fetch_excluded(relative) or _reset_aside(relative) or relative == CHANGES
+
+
+def record_change(root: Path, change: dict) -> None:
+    """Remember one committed authority change outside every backup (TASK-41105).
+
+    After a restore, ``<plugins>/authority-changes.json`` still names the
+    changes made since the backup, so adopting the restored authority can list
+    what it undoes. Entries of another authority namespace, or at or after this
+    generation (a timeline a restore undid), are dropped. Advisory only: the
+    restored-authority review reads it, nothing grants authority from it.
+    """
+    import os
+
+    from tldw_chatbook.Utils.private_paths import (
+        PrivateFileWritePrecondition,
+        open_private_binary,
+    )
+
+    from .authority_store import _decode, _write
+
+    path = root / CHANGES
+    condition, rows = PrivateFileWritePrecondition.missing(), []
+    if os.path.lexists(path):
+        with open_private_binary(path) as opened:
+            if not opened.result.verified_private:
+                raise ValueError("unqualified plugin change list")
+            condition = PrivateFileWritePrecondition.from_opened(opened)
+            try:
+                rows = list(_decode(opened.stream.read(1024 * 1024))["changes"])
+            except (ValueError, KeyError, TypeError):
+                rows = []  # Unreadable: start again; the review falls back.
+    rows = [
+        row
+        for row in rows
+        if isinstance(row, dict)
+        and row.get("namespace_id") == change["namespace_id"]
+        and type(row.get("generation")) is int
+        and row["generation"] < change["generation"]
+    ]
+    _write(path, {"changes": [*rows, change][-MAX_CHANGES:]}, precondition=condition)
+
+
+def changes_since(root: Path, namespace_id: str, marker, current):
+    """The recorded changes after ``marker`` up to ``current``, oldest first.
+
+    ``None`` unless every generation in between has one entry of this
+    namespace and the newest is the protected marker's own operation: the
+    review then falls back to its count.
+    """
+    from .authority_store import _read
+
+    try:
+        rows = _read(root / CHANGES)["changes"]
+        by_generation = {
+            row["generation"]: (
+                row["generation"],
+                row["kind"],
+                row["installation_id"],
+                row["alias"],
+                row["detail"],
+                row["operation_id"],
+            )
+            for row in rows
+            if row["namespace_id"] == namespace_id
+        }
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    found = [
+        by_generation.get(generation)
+        for generation in range(marker.generation + 1, current.generation + 1)
+    ]
+    if not found or None in found or found[-1][5] != current.operation_id:
+        return None
+    if any(
+        not all(isinstance(value, str) for value in row[1:3])
+        or not all(value is None or isinstance(value, str) for value in row[3:5])
+        for row in found
+    ):
+        return None
+    return tuple(row[:5] for row in found)
 
 
 def kept_whole(items) -> set[Path]:

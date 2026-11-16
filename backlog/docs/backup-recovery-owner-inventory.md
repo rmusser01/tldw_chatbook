@@ -2915,6 +2915,7 @@ the plugin authority under `skills/trust/plugins/`.
 | `registry.sqlite3-wal`, `-shm` | `sqlite.transient`, intentionally excluded | folded into the registry copy |
 | `registry.sqlite3-journal` | unsupported | refused: a stray rollback journal could undo a restored copy |
 | `runtime.lock` | intentionally excluded | refused: the live runtime owner's lock, no data |
+| `authority-changes.json` (TASK-41105) | intentionally excluded | refused (`plugin_staging_member_excluded`). The coordinator appends each committed authority change (namespace, generation, operation id, kind, plugin id and alias, intent or action) after the marker advances, last 1000 kept. Never archived, so a replace restore preserves the target's copy (an excluded target item) and adopting a restored authority can name the changes it undoes; the review uses it only when it covers every undone generation and its newest entry is the keyring marker's operation. Advisory only: no authority is granted from it. No secrets: configuration values are never recorded. |
 | `packages/`, `packages-revisions/`, `data/<root_id>/` | included | raw bytes |
 | `staging/<name>/snapshot/`, `acquisition-custody/*.json` | included | raw bytes. Plugin recovery (`acquisition.verify_reference`) re-verifies git-installed packages from exactly the custody record and the snapshot. |
 | every other member of `staging/<name>/` | intentionally excluded, one row each, never listed | refused (`plugin_staging_member_excluded`). An allow-list (D1's "Capture snapshot/ and the custody records", review ruling I1): known members are the host git/SSH configuration copies a fetch used (`host-git-config`, `host-ssh-*`, which can hold credential helpers and SSH config), the git object store `repository.git/` (for a local source, the user's whole objects and refs: tens of thousands of files, up to 500 MB) and the working copy `content/`; unknown ones (a lockfile residue such as `host-git-config.lock`, a future member) are excluded the same way. The tree walk's `prune` hook keeps each as one row, so none counts toward the tree's entry limit, and replace restore preserves it whole. |
@@ -2991,6 +2992,7 @@ which admission re-verifies on each run. The app has no rebind for either yet
 | tldw_chatbook/Plugins/backup.py | _runtime_lock | open | 1 | qualified | plugins; runtime.lock probe: preview never creates it, capture creates and holds it |
 | tldw_chatbook/Plugins/backup.py | remove_fetch_members | open | 3 | qualified | plugins; newer-download removal opens staging and the folder with O_NOFOLLOW under the runtime lock (TASK-40309) |
 | tldw_chatbook/Plugins/backup.py | remove_fetch_members | os.unlink | 1 | qualified | plugins; removes only the listed members, never snapshot/ (TASK-40309) |
+| tldw_chatbook/Plugins/backup.py | record_change | open_private_binary | 1 | qualified | plugins; authority-changes.json, the advisory change list excluded from capture and preserved by replace restore (TASK-41105) |
 
 ## Census vocabulary extension (TASK-39111, TASK-39112, TASK-39115)
 

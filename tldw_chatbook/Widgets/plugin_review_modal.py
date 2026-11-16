@@ -413,6 +413,19 @@ def adoption_review_text(review) -> str:
             "plugin authority, so Chatbook cannot count the plugin changes made "
             "after this backup; every one of them is undone."
         )
+    elif review.undone and review.changes:
+        undone = "\n".join(
+            [
+                f"This undoes {review.undone} plugin change"
+                f"{'s' if review.undone != 1 else ''} made after this backup:",
+                *(
+                    f"  Generation {generation}: {kind}"
+                    f"{' ' + detail if detail else ''} · "
+                    f"{alias + ' · ' if alias else ''}{installation}"
+                    for generation, kind, installation, alias, detail in review.changes
+                ),
+            ]
+        )
     elif review.undone:
         undone = (
             f"This undoes {review.undone} plugin change"
@@ -420,7 +433,7 @@ def adoption_review_text(review) -> str:
             f"(authority generations {review.marker.generation + 1} to "
             f"{review.marker.generation + review.undone}): installs, updates, "
             "configuration, enable or disable changes and removals made since then. "
-            "A restore keeps no record of what each one was."
+            "Chatbook has no complete list of them here, so it cannot name them."
         )
     else:
         undone = "No plugin change made after this backup is undone."

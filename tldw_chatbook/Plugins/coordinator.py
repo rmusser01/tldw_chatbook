@@ -1486,6 +1486,10 @@ class PluginCoordinator:
             # Proof may open its own registry read transaction.
             if proof(refs) is not True:
                 raise PermissionError("root_quiescence_unproven")
+        named = self.registry._connection.execute(
+            "SELECT alias FROM installations WHERE installation_id=?",
+            (review.installation_id,),
+        ).fetchone()
         with self.registry.transaction() as cursor:
             self._apply_review(cursor, review, retained)
             snapshot = self.registry.authority_projection(operation_result=result)
@@ -1512,6 +1516,24 @@ class PluginCoordinator:
         self._milestone("marker_advanced")
         with self.registry.transaction() as cursor:
             self.registry.write_operation(cursor, result, phase="complete")
+        try:
+            from .backup import record_change
+
+            record_change(
+                self.owner.root,
+                {
+                    "namespace_id": self.authority.namespace_id(),
+                    "generation": new.generation,
+                    "operation_id": operation_id,
+                    "kind": review.kind,
+                    "installation_id": review.installation_id,
+                    "alias": getattr(review, "alias", None) or (named and named[0]),
+                    "detail": getattr(review, "intent", None)
+                    or getattr(review, "action", None),
+                },
+            )
+        except (OSError, ValueError):
+            pass  # Advisory (TASK-41105): the restore review falls back to a count.
         self._published = snapshot
         if review.kind == "activate" and target is None:
             self.fences.reconcile_enable(review.installation_id, review.workspace_id)

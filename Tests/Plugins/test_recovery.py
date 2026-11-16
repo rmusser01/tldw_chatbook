@@ -1381,7 +1381,15 @@ def test_restored_registry_matches_its_root_through_a_symlinked_data_dir(tmp_pat
 
 
 @platform_support.package_capture
-@pytest.mark.parametrize("member", ["host-git-config", "later-member/state"])
+@pytest.mark.parametrize(
+    "member",
+    [
+        "staging/op/host-git-config",
+        "staging/op/later-member/state",
+        # TASK-41105: the change list a restore must not replace.
+        "authority-changes.json",
+    ],
+)
 def test_capture_refuses_an_included_item_at_an_excluded_staging_path(
     tmp_path, monkeypatch, member
 ):
@@ -1395,7 +1403,10 @@ def test_capture_refuses_an_included_item_at_an_excluded_staging_path(
     config, root = _plugin_root(tmp_path)
     snapshot = _plugin_rows(config, root)[1][root / "staging/op/snapshot/plugin.json"]
     assert snapshot.status == "included"
-    relative = "staging/op/" + member
+    relative = member
+    if not (root / relative).exists():
+        (root / relative).write_bytes(b'{"changes": []}')
+        (root / relative).chmod(0o600)
     item = replace(
         snapshot,
         path=root / relative,
@@ -1681,7 +1692,7 @@ def service():
  return PluginService(get_user_data_dir(),workspace_lookup=lambda _:None,marker_store_factory=marker())
 def excluded(path):
  parts=path.relative_to(root).parts
- return parts[0]=='runtime.lock' or parts[0].startswith('registry.sqlite3') or (len(parts)>2 and parts[0]=='staging' and parts[2]!='snapshot')
+ return parts[0] in {'runtime.lock','authority-changes.json'} or parts[0].startswith('registry.sqlite3') or (len(parts)>2 and parts[0]=='staging' and parts[2]!='snapshot')
 def state():
  files={p.relative_to(root).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(root.rglob('*')) if p.is_file() and not excluded(p)}
  with sqlite3.connect(f"file:{root/'registry.sqlite3'}?mode=ro",uri=True) as connection:registry=list(connection.iterdump())
@@ -1773,6 +1784,8 @@ try:
   status={item.path.relative_to(root).as_posix():item.status for item in plugins}
   staged=Path(json.loads((home/'plugin-seed.json').read_text())['staged']).relative_to(root).as_posix()
   assert status['registry.sqlite3']=='included' and status['runtime.lock']=='intentionally_excluded'
+  # TASK-41105: the change list stays out of the archive, so a restore keeps it.
+  assert status['authority-changes.json']=='intentionally_excluded'
   assert status[staged+'/snapshot/plugin.json']=='included'
   assert {status[staged+'/'+name] for name in ('host-git-config','host-ssh-input','host-ssh-config','repository.git','content')}=={'intentionally_excluded'}
   assert not [key for key in status if key.startswith((staged+'/repository.git/',staged+'/content/'))],status
@@ -1892,6 +1905,8 @@ async def main():
    # the plugin; confirming recovers it in place, data attached.
    review=await plugins.review_restored_authority('test passphrase')
    assert review.undone==1 and [row[0] for row in review.installations]==[seed['installation']],review
+   # TASK-41105: the real replace restore kept the change list, so it is named.
+   assert [row[:3]+row[4:] for row in review.changes]==[(review.marker.generation+1,'activate',seed['installation'],'disabled')],review
    receipts=await plugins.adopt_restored_authority(review)
    assert not [receipt for receipt in receipts if receipt.phase=='recovery_required'],receipts
    assert await plugins.authority_status()=='ready'
@@ -2028,7 +2043,7 @@ class _FakeSecureKeyring:
 
 
 async def _restored_after_change(
-    tmp_path, monkeypatch, native_package, *, recreate=True
+    tmp_path, monkeypatch, native_package, *, recreate=True, changes=("disabled",)
 ):
     """A git-installed plugin with saved data, backed up by copying its folders,
     changed afterwards, then restored by copying the backup over recreated
@@ -2092,15 +2107,22 @@ async def _restored_after_change(
     finally:
         await plugins.aclose()
     saved = tmp_path / "backup"
-    shutil.copytree(profile / "plugins", saved / "plugins", symlinks=True)
+    # Backups never hold the change list (TASK-41105); a restore keeps the target's.
+    shutil.copytree(
+        profile / "plugins",
+        saved / "plugins",
+        symlinks=True,
+        ignore=shutil.ignore_patterns(backup.CHANGES),
+    )
     shutil.copytree(trust, saved / "trust", symlinks=True)
     plugins = service()
     try:
         await plugins.unlock("test passphrase")
-        disable = await plugins.review_activation(
-            installation, workspace_id=None, intent="disabled"
-        )
-        await plugins.commit(disable, disable.operation_id)
+        for intent in changes:
+            change = await plugins.review_activation(
+                installation, workspace_id=None, intent=intent
+            )
+            await plugins.commit(change, change.operation_id)
     finally:
         await plugins.aclose()
     shutil.rmtree(trust)
@@ -2329,6 +2351,52 @@ async def test_lost_passphrase_reset_sets_restored_plugins_aside_and_keeps_data(
         await plugins.aclose()
 
 
+@platform_support.managed_runtime
+@pytest.mark.asyncio
+@pytest.mark.timeout(300)
+async def test_restored_authority_review_names_the_changes_it_undoes(
+    tmp_path, monkeypatch, native_package
+):
+    """TASK-41105: each plugin change is recorded when it commits, in a list
+    kept outside every backup, so a restore keeps it. Restored over two changes
+    made after the backup, the review lists both by generation, kind and
+    plugin. Without the list it falls back to the count, and adoption works."""
+    from tldw_chatbook.Plugins.backup import CHANGES
+    from tldw_chatbook.Widgets.plugin_review_modal import adoption_review_text
+
+    service, _, installation, root, _ = await _restored_after_change(
+        tmp_path,
+        monkeypatch,
+        native_package,
+        recreate=False,
+        changes=("disabled", "enabled"),
+    )
+    plugins = service()
+    try:
+        review = await plugins.review_restored_authority("test passphrase")
+        assert review.undone == 2
+        backed_up = review.marker.generation
+        ((_, alias, _),) = review.installations
+        assert alias
+        assert review.changes == (
+            (backed_up + 1, "activate", installation, alias, "disabled"),
+            (backed_up + 2, "activate", installation, alias, "enabled"),
+        )
+        text = adoption_review_text(review)
+        assert "This undoes 2 plugin changes made after this backup:" in text
+        for generation, intent in ((backed_up + 1, "disabled"), (backed_up + 2, "enabled")):
+            line = f"Generation {generation}: activate {intent} · {alias} · {installation}"
+            assert line in text
+        (root.path.parent.parent / CHANGES).unlink()
+        review = await plugins.review_restored_authority("test passphrase")
+        assert review.undone == 2 and review.changes is None
+        assert "so it cannot name them" in adoption_review_text(review)
+        receipts = await plugins.adopt_restored_authority(review)
+        assert not any(r.phase == "recovery_required" for r in receipts)
+    finally:
+        await plugins.aclose()
+
+
 @platform_support.package_capture
 def test_reset_aside_is_excluded_whole_and_never_listed_as_newer_downloads(tmp_path):
     """TASK-40308 review r14plg-rev1 (the reviewer's probe, part 1): a reset's
@@ -2340,6 +2408,9 @@ def test_reset_aside_is_excluded_whole_and_never_listed_as_newer_downloads(tmp_p
 
     config, root = _plugin_root(tmp_path)
     archived = {item.logical_id: item for item in _plugin_rows(config, root)[0].items}
+    # TASK-41105: the change list is left out the same way.
+    (root / backup.CHANGES).write_bytes(b'{"changes": []}')
+    (root / backup.CHANGES).chmod(0o600)
     aside = root / "reset-0123456789abcdef"
     for relative in (
         "registry.sqlite3",
@@ -2353,6 +2424,7 @@ def test_reset_aside_is_excluded_whole_and_never_listed_as_newer_downloads(tmp_p
         (aside / relative).chmod(0o600)
     target, rows = _plugin_rows(config, root)
     assert rows[aside].status == "intentionally_excluded"
+    assert rows[root / backup.CHANGES].status == "intentionally_excluded"
     assert not [path for path in rows if aside in path.parents]
     backup.refuse_added_fetch_folders(target.items, archived)
     assert backup.kept_whole(target.items) == {aside}

@@ -694,6 +694,15 @@ class PluginService:
                 undone = current.generation - marker.generation
             else:
                 undone = None
+            from .backup import changes_since
+
+            changes = (
+                changes_since(
+                    coordinator.owner.root, authority.namespace_id(), marker, current
+                )
+                if undone
+                else None
+            )
             review = RestoredAuthorityReview(
                 secrets.token_hex(16),
                 marker,
@@ -705,6 +714,7 @@ class PluginService:
                 ),
                 len(snapshot["data_roots"]),
                 time.monotonic() + 900,
+                changes,
             )
             self._adoption_review = review
             return review
