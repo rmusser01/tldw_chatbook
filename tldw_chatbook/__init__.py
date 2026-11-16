@@ -385,6 +385,9 @@ def install_owner_local_box_models() -> bool:
     return True
 
 
+_adapter_installs_attempted = False
+
+
 def _install_textual_compatibility_shims() -> None:
     """Keep older Textual widget access patterns working across dependency bumps."""
     try:
@@ -400,6 +403,11 @@ def _install_textual_compatibility_shims() -> None:
     _install_zero_width_fold_guard()
     # Optional allocation adapters: any failure (e.g. missing Textual
     # dist-info metadata in a packaged build) leaves native Textual in place.
+    # Both UI and Widgets imports land here; try (and warn) once per process.
+    global _adapter_installs_attempted
+    if _adapter_installs_attempted:
+        return
+    _adapter_installs_attempted = True
     for install in (
         install_lazy_strip_caches,
         install_owner_free_style_colors,

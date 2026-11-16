@@ -83,7 +83,9 @@ def guard_transcript_action(method):
             return True
         # Mid-switch no visit is published: skip only this handler and let the
         # key reach screen bindings (the transcript's own are off in
-        # ``check_action``). Input queued before a newer visit stays dropped.
+        # ``check_action``). Known edge, accepted: a key still bubbling when
+        # the next visit publishes can reach a transcript binding, which then
+        # acts on the newly projected session.
         if not isinstance(message, Key) or _current_visit(_managed_transcript(widget)):
             message.stop().prevent_default()
         return False

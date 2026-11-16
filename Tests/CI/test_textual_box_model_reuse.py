@@ -273,6 +273,7 @@ def test_a_failing_adapter_installer_never_stops_the_ui_importing(monkeypatch, c
         attempted.append("strip")
         raise importlib.metadata.PackageNotFoundError("textual")
 
+    monkeypatch.setattr(tldw_chatbook, "_adapter_installs_attempted", False)
     monkeypatch.setattr(tldw_chatbook, "install_lazy_strip_caches", missing_metadata)
     monkeypatch.setattr(
         tldw_chatbook,
@@ -288,3 +289,5 @@ def test_a_failing_adapter_installer_never_stops_the_ui_importing(monkeypatch, c
         _install_textual_compatibility_shims()
     assert attempted == ["strip", "colors", "box"]
     assert "missing_metadata not installed: PackageNotFoundError" in caplog.text
+    _install_textual_compatibility_shims()  # the second package import
+    assert attempted == ["strip", "colors", "box"]
