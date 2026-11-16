@@ -139,4 +139,13 @@ Existing ADR225, no new ADR/policy. Native original-render0-calls control/bodyPA
 
 ### Separate remaining latency attribution — 2026-10-21
 Clean f53af7edbe822b5d93f9766f2e43abaf7baada5d scale intact; Keyword300 PASS109.877708ms P95/47.550375ms loop. OriginalUI70 NON-GREEN seven activation intervals114.386/51.387/52.377/62.856/78.620/57.655/58.972ms, all outcome/busy/source/corpus/actualpostRunnerChat0/noDB fences intact, not aggregateFD0. No production changes in this checkpoint. Rowcohort/classsync hypotheses not supported as large measured cause. Bounded callback/mainstack trace separates main-gen2 pauses25.919/21.776/48.912ms from no-gen2 admission/SQL/poll/paint work; inclusive/observer-limited, not unique attribution. Separate nativewait observer53startup waits81.733ms total/max7.044, none in activation while five windows fail; no bypass justified. Minimal native Styles.node cycle proven without collection; finalized2759pairs/fourfails and separate obsolete1447pairs/sixfails controls remain diagnostic. Obsolete component policy NOT in pending finalized-widget request. No lifecycle ADR/fix adopted. Two smaller independent controls: render132versionrequests->one native metadataread/fourfails; discarded transcript globalpolicy34avoided/native selector intact/threefails. Bounded versionguard, memory-only projection and separate finalized-owner designs await approval, not implemented. QA latency-attribution-2026-10-21.md plus49verifiedhashes only; full dumpsLOCAL. Initial sealer list-vs-count preflight stopped before writes; corrected30x10 audit passed. Inlineauthor evidence review, not independent. All timing/GC/taskAC/status/nativeWindows/quit/human/olderFDgaps unchanged; no other sessions, source fix, full sweep, integration or taskcloseout.
+
+### PR #3536 review fixes — 2026-11-16
+Three-area review of the rebased PR, then fixes:
+- Incomplete retirement (`SqliteRetirementIncomplete`) is logged with owner categories only. It no longer fails quit, loses a pending recovery restart, or (for AgentRuns at Console dispose) skips later app-owned teardown.
+- The Files-availability worker group, lost in the rebase, is back in the quit drain (AC #8 tests green again).
+- The Chat retirement close skips the TRUNCATE checkpoint: it measured 15.4 s on the loop behind another writer.
+- Owners are read inside the per-owner guard through public participant names.
+- The dead Chat borrower capture is removed; `run_owned_db_call(_read_only=True)` is used for the switcher History read.
+- Owner decision: TASK-38955 close-all wins over the rebase-added `owner_only` path, so quit closes sibling `CharactersRAGDB` handles again. ADR-225 carries a dated amendment.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
