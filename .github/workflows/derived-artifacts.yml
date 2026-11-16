@@ -1917,7 +1917,7 @@ jobs:
     # The deselected nodes were red at dev 26b2e677dd outside TASK-40306's five
     # files (drift, local-profile refusals and fixed child budgets); TASK-40307
     # lists each one's first error. Remove a line when its node is fixed.
-    # TASK-41116 re-admitted three; its notes give the five left their causes.
+    # TASK-41116 re-admitted five; its notes give the three left their causes.
     # timeout-minutes: three local runs of this step took 30.6-42.9 min (-n 4,
     # load 22-57 on a shared 18-core host); the persona rollback test alone
     # takes 9.6 min of it. Re-read the first CI runs before tightening a cap.
@@ -1977,8 +1977,6 @@ jobs:
             --deselect="Tests/Backup_Recovery/test_complete_roundtrip.py::test_two_captured_profiles_restore_and_open_with_native_content" \
             --deselect="Tests/Backup_Recovery/test_later_rollback_credential_ui.py::test_f9_later_rollback_requires_explicit_credential_review" \
             --deselect="Tests/Backup_Recovery/test_inventory.py::test_normal_config_and_pure_resolvers_agree" \
-            --deselect="Tests/Backup_Recovery/test_inventory.py::test_fresh_process_discovery_imports_no_bootstrap_or_services_and_changes_nothing" \
-            --deselect="Tests/Backup_Recovery/test_core_owners.py::test_factory_discovery_and_schema_policy_are_runtime_independent" \
             -n 4 \
             --timeout=300 \
             --tb=short

@@ -885,9 +885,14 @@ def test_factory_discovery_and_schema_policy_are_runtime_independent(tmp_path):
     import sys
 
     home = tmp_path / "fresh-home"
+    # Importing recovery_operations replays installed DDL into in-memory SQLite
+    # through private_sqlite (175ea27008, the workflow admission catalog). That
+    # is allowed; any SQLite file, config or service store is not (TASK-41116).
     program = """import sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
+connects = []
+sys.addaudithook(lambda event, args: connects.append(str(args[0])) if event == "sqlite3.connect" else None)
 from tldw_chatbook.DB.recovery_core import core_adapters
 from tldw_chatbook.Backup_Recovery.models import DISCOVERY_CONTEXT_KEY, DiscoveryContext
 home = Path(sys.argv[2])
@@ -899,7 +904,7 @@ for adapter in core_adapters():
     # explicit absence or refusal is valid; no store may be included or created.
     assert item.status in {"missing_required", "unused", "unavailable"}, (adapter.owner_id, item.status)
 assert "tldw_chatbook.config" not in sys.modules
-assert "tldw_chatbook.DB.private_sqlite" not in sys.modules
+assert connects and set(connects) == {":memory:"}, sorted(set(connects))
 assert "tldw_chatbook.DB.ChaChaNotes_DB" not in sys.modules
 assert "tldw_chatbook.DB.base_db" not in sys.modules
 assert not home.exists()

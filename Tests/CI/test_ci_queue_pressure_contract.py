@@ -726,8 +726,6 @@ BACKUP_OWNER_SUITES_DESELECTED = (
     "Tests/Backup_Recovery/test_complete_roundtrip.py::test_two_captured_profiles_restore_and_open_with_native_content",
     "Tests/Backup_Recovery/test_later_rollback_credential_ui.py::test_f9_later_rollback_requires_explicit_credential_review",
     "Tests/Backup_Recovery/test_inventory.py::test_normal_config_and_pure_resolvers_agree",
-    "Tests/Backup_Recovery/test_inventory.py::test_fresh_process_discovery_imports_no_bootstrap_or_services_and_changes_nothing",
-    "Tests/Backup_Recovery/test_core_owners.py::test_factory_discovery_and_schema_policy_are_runtime_independent",
 )
 DREAMS_ADMISSION_TARGETS = (
     "Tests/Dreams/test_boot_dispatch_admission.py",

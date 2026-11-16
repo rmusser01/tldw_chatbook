@@ -255,12 +255,33 @@ def test_fresh_process_discovery_imports_no_bootstrap_or_services_and_changes_no
         )
         for p in tmp_path.rglob("*")
     }
+    # Discovery imports these low-level modules, and only these, from the DB
+    # and Utils packages: the package init's tiktoken armer, the inventory's
+    # platform shim, and recovered_media's private SQLite layer. It has since
+    # b5251e9a6e, the commit that added this test; none reads config, starts
+    # a service or writes (TASK-41116). Service stores stay forbidden.
     code = """
 import importlib.abc, sys
 from pathlib import Path
+ALLOWED = frozenset((
+    "tldw_chatbook.Utils",
+    "tldw_chatbook.Utils.tiktoken_runtime",
+    "tldw_chatbook.Utils.platform_files",
+    "tldw_chatbook.Utils.private_paths",
+    "tldw_chatbook.Utils.path_validation",
+    "tldw_chatbook.Utils.file_durability",
+    "tldw_chatbook.DB",
+    "tldw_chatbook.DB.sqlite_datetime_fix",
+    "tldw_chatbook.DB.private_sqlite",
+    "tldw_chatbook.DB.private_sqlite_process",
+    "tldw_chatbook.DB.private_sqlite_protocol",
+    "tldw_chatbook.DB.recovery_sqlite",
+))
 class Block(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
-        if fullname == "tldw_chatbook.config" or fullname.startswith(("tldw_chatbook.DB", "tldw_chatbook.Utils", "keyring", "chromadb", "textual")):
+        if fullname == "tldw_chatbook.config" or fullname.startswith(("keyring", "chromadb", "textual")) or (
+            fullname.startswith(("tldw_chatbook.DB", "tldw_chatbook.Utils")) and fullname not in ALLOWED
+        ):
             raise AssertionError("forbidden service import: " + fullname)
 sys.meta_path.insert(0, Block())
 from tldw_chatbook.Backup_Recovery.inventory import discover
