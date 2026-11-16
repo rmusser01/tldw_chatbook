@@ -1367,6 +1367,10 @@ jobs:
     # go before the TASK-39114 files, and the bootstrap-profile ones
     # (module marker, Tests/DB) after them, last (TASK-32873). Their 191
     # tests took 2.5 min serially in this job's install set at load ~50.
+    #
+    # TASK-41136: the Console provider gateway file (bootstrap_profile, so
+    # last), on no PR lane before: 494 tests, 4.1 min serially at load ~56.
+    # Its three deselected nodes are red on dev, owned by TASK-41053.
     name: PR Fast Lane (architecture-review tests)
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
@@ -1432,6 +1436,10 @@ jobs:
             Tests/DB/test_chachanotes_v53_safe_capture_trim.py::test_v53_without_the_trimming_port_fails_closed_and_stays_v52 \
             Tests/DB/test_chachanotes_v53_safe_capture_trim.py::test_fresh_database_opens_without_the_trimming_port \
             Tests/DB/test_chachanotes_bare_open_self_migration.py::test_a_bare_open_of_a_v52_safe_capture_fails_closed_and_stays_v52 \
+            Tests/Chat/test_console_provider_gateway.py \
+            "--deselect=Tests/Chat/test_console_provider_gateway.py::test_all_qwencloud_kwargs_paths_forward_pinned_mode_and_base" \
+            "--deselect=Tests/Chat/test_console_provider_gateway.py::test_console_send_leaves_base_url_unpinned_in_default_case[deepseek]" \
+            "--deselect=Tests/Chat/test_console_provider_gateway.py::TestGatewayExchangeCapture::test_openai_stop_closes_transport_through_gateway_boundary" \
             --timeout=180 \
             --tb=short
 

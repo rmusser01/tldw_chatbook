@@ -1118,6 +1118,9 @@ MINIMUM_FILES = 2181
 # TASK-41127 review r15lt-rev1 / TASK-41303 (2026-11-17): append 12
 # screen-navigation nodes at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 2207
+# TASK-41136 (2026-11-16): append the custom endpoint Settings file's four
+# green nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 2211
 
 
 def read_census(path: Path) -> list[str]:

@@ -569,6 +569,8 @@ ARCH_REVIEW_TARGETS = (
     "Tests/DB/test_chachanotes_v53_safe_capture_trim.py::test_v53_without_the_trimming_port_fails_closed_and_stays_v52",
     "Tests/DB/test_chachanotes_v53_safe_capture_trim.py::test_fresh_database_opens_without_the_trimming_port",
     "Tests/DB/test_chachanotes_bare_open_self_migration.py::test_a_bare_open_of_a_v52_safe_capture_fails_closed_and_stays_v52",
+    # TASK-41136 (bootstrap_profile): three red nodes deselected, TASK-41053.
+    "Tests/Chat/test_console_provider_gateway.py",
 )
 #: Owner decision (2026-11-06): suites runnable again after being red in no PR
 #: lane, in their own job, serial under --storage-lease-guard. Sandboxed suites

@@ -3205,3 +3205,10 @@ Tests/UI/test_screen_navigation.py::test_search_all_palette_command_lands_on_lib
 Tests/UI/test_screen_navigation.py::test_search_route_round_trips_to_the_library_rag_row
 Tests/UI/test_screen_navigation.py::test_skills_route_lands_on_library_with_skills_row_selected
 Tests/UI/test_screen_navigation.py::test_study_screen_escape_returns_to_library_study_staging_canvas
+# TASK-41136 (2026-11-16): the Settings custom endpoint file's four green
+# nodes, on no lane before (about 6 s serially, load ~49). Its nine mounted
+# and config-writing nodes stay off: RecoveryRequired at setup.
+Tests/UI/test_settings_custom_endpoints.py::test_custom_endpoint_rows_render_safe_display
+Tests/UI/test_settings_custom_endpoints.py::test_delete_guard_lists_referencing_sessions
+Tests/UI/test_settings_custom_endpoints.py::test_edit_mutation_rejects_malformed_env_var_reference
+Tests/UI/test_settings_custom_endpoints.py::test_edit_mutation_keeps_valid_env_var_without_delete
