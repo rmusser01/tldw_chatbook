@@ -32,6 +32,10 @@ LANES = (
     "github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && "
     "(inputs.pr != '' || github.ref != 'refs/heads/dev'))"
 )
+PLUGIN_RECOVERY_UI_TARGETS = (
+    "Tests/UI/test_plugins_browse.py::test_restored_plugins_recover_from_the_plugins_screen",
+    "Tests/UI/test_plugins_browse.py::test_reset_after_restore_sets_plugins_aside_and_kept_data_reattaches",
+)
 FAST_LANE_TARGETS = (
     "Tests/CI",
     "Tests/test_smoke.py",
@@ -1104,6 +1108,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
         "pr-fast-lane-admission-2",
         "pr-fast-lane-admission-3",
         "ui-fast-lane",
+        "plugins-recovery-ui",
         "console-p0-gate",
         "dreams-boundary",
         "dreams-tracking",
@@ -1139,6 +1144,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
         ("pr-fast-lane-admission", "Require successful PR fast lane (admission-sensitive)"),
         ("pr-fast-lane-admission-2", "Require successful PR fast lane (admission-sensitive 2)"),
         ("pr-fast-lane-admission-3", "Require successful PR fast lane (admission-sensitive 3)"),
+        ("plugins-recovery-ui", "Require successful managed plugin recovery UI"),
         ("dreams-boundary", "Require successful Dreams and Guardian boundary contracts"),
         ("dreams-tracking", "Require successful Dreams tracking tests"),
         ("architecture-guards", "Require successful Architecture guard contracts"),
@@ -1156,6 +1162,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
         "pr-fast-lane-admission",
         "pr-fast-lane-admission-2",
         "pr-fast-lane-admission-3",
+        "plugins-recovery-ui",
         "dreams-boundary",
         "dreams-tracking",
         "architecture-guards",
@@ -1242,6 +1249,122 @@ def _assert_fast_lane_invocation(workflow: dict) -> None:
 
 def _assert_admission_invocation(workflow: dict) -> None:
     _assert_exact_step(workflow, "admission-sensitive")
+
+
+def _assert_plugin_recovery_ui(workflow: dict) -> None:
+    job = workflow["jobs"].get("plugins-recovery-ui")
+    assert job is not None, "native plugin recovery UI has no qualified PR lane"
+    assert job["runs-on"] == "macos-latest"
+    assert job["if"] == LANES
+    assert job["needs"] == ["preflight"]
+    assert job["timeout-minutes"] == 15
+    assert not job.get("continue-on-error", False)
+    assert all(not step.get("continue-on-error", False) for step in job["steps"])
+    setup = next(
+        step for step in job["steps"] if step.get("uses") == "actions/setup-python@v5"
+    )
+    assert setup["with"]["python-version"] == "3.12"
+    assert _named_step(job, "Install fast-lane dependencies")["run"] == _named_step(
+        workflow["jobs"]["ui-fast-lane"], "Install fast-lane dependencies"
+    )["run"]
+    execution = _named_step(job, "Run managed plugin recovery UI journeys")
+    assert "if" not in execution
+    run = execution["run"]
+    assert tuple(shlex.split(run.replace("\\\n", " "), comments=True)) == (
+        "pytest",
+        *PLUGIN_RECOVERY_UI_TARGETS,
+        "--timeout=300",
+        "--tb=short",
+        "--junitxml=plugin-recovery-ui.xml",
+    )
+    report = _named_step(job, "Require both managed plugin recovery journeys to execute")
+    assert report["shell"] == "python"
+    assert "if" not in report
+    assert "plugin-recovery-ui.xml" in report["run"]
+    required = workflow["jobs"]["derived-artifacts"]
+    assert "plugins-recovery-ui" in required["needs"]
+    verdict = _named_step(required, "Require successful managed plugin recovery UI")
+    assert verdict["if"] == (
+        f"${{{{ !cancelled() && ({LANES}) && needs.plugins-recovery-ui.result != 'success' }}}}"
+    )
+    assert "exit 1" in verdict["run"]
+    tree = ast.parse(
+        (PROJECT_ROOT / "Tests/UI/test_plugins_browse.py").read_text(encoding="utf-8")
+    )
+    for target in PLUGIN_RECOVERY_UI_TARGETS:
+        name = target.split("::", 1)[1]
+        function = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.AsyncFunctionDef) and node.name == name
+        )
+        assert "platform_support.managed_runtime" in {
+            ast.unparse(decorator) for decorator in function.decorator_list
+        }
+
+
+def test_managed_plugin_recovery_ui_runs_on_qualified_required_macos_lane() -> None:
+    _assert_plugin_recovery_ui(_workflow("derived-artifacts.yml"))
+
+
+@pytest.mark.parametrize(
+    ("results", "accepted"),
+    [
+        (("", ""), True),
+        ((), False),
+        (("",), False),
+        (("", "", ""), False),
+        (("", "<skipped/>"), False),
+        (("", "<failure/>"), False),
+        (("", "<error/>"), False),
+    ],
+)
+def test_managed_plugin_recovery_ui_report_requires_two_executed_passes(
+    tmp_path, monkeypatch, results, accepted
+) -> None:
+    job = _workflow("derived-artifacts.yml")["jobs"]["plugins-recovery-ui"]
+    source = _named_step(job, "Require both managed plugin recovery journeys to execute")[
+        "run"
+    ]
+    cases = "".join(
+        f'<testcase name="case-{index}">{result}</testcase>'
+        for index, result in enumerate(results)
+    )
+    (tmp_path / "plugin-recovery-ui.xml").write_text(
+        f"<testsuite>{cases}</testsuite>", encoding="utf-8"
+    )
+    monkeypatch.chdir(tmp_path)
+    if accepted:
+        exec(compile(source, "plugin-recovery-ui-report", "exec"), {})
+    else:
+        with pytest.raises(AssertionError):
+            exec(compile(source, "plugin-recovery-ui-report", "exec"), {})
+
+
+@pytest.mark.parametrize(
+    "mutation", ["linux", "missing-target", "dropped-prerequisite", "partial-verdict"]
+)
+def test_managed_plugin_recovery_ui_rejects_lost_platform_or_required_evidence(
+    mutation: str,
+) -> None:
+    workflow = _workflow("derived-artifacts.yml")
+    _assert_plugin_recovery_ui(workflow)
+    job = workflow["jobs"]["plugins-recovery-ui"]
+    if mutation == "linux":
+        job["runs-on"] = PR_TEST_RUNNER
+    elif mutation == "missing-target":
+        step = _named_step(job, "Run managed plugin recovery UI journeys")
+        step["run"] = step["run"].replace(PLUGIN_RECOVERY_UI_TARGETS[1], "", 1)
+    elif mutation == "dropped-prerequisite":
+        workflow["jobs"]["derived-artifacts"]["needs"].remove("plugins-recovery-ui")
+    else:
+        verdict = _named_step(
+            workflow["jobs"]["derived-artifacts"],
+            "Require successful managed plugin recovery UI",
+        )
+        verdict["if"] = verdict["if"].replace("!= 'success'", "== 'failure'")
+    with pytest.raises(AssertionError):
+        _assert_plugin_recovery_ui(workflow)
 
 
 def test_heavy_tests_run_only_on_main_push_or_manual_dispatch() -> None:
@@ -1907,6 +2030,10 @@ def test_required_aggregation_contract_rejects_a_dropped_admission_lane(lane: st
         ("pr-fast-lane-admission-3", None),
         ("pr-fast-lane-admission-3", "Run admission-sensitive suites 3"),
         ("derived-artifacts", "Require successful PR fast lane (admission-sensitive 3)"),
+        ("plugins-recovery-ui", None),
+        ("plugins-recovery-ui", "Run managed plugin recovery UI journeys"),
+        ("plugins-recovery-ui", "Require both managed plugin recovery journeys to execute"),
+        ("derived-artifacts", "Require successful managed plugin recovery UI"),
         ("pr-fast-lane-arch", None),
         ("pr-fast-lane-arch", "Run the architecture-review tests"),
         ("derived-artifacts", "Require successful PR fast lane (architecture-review tests)"),

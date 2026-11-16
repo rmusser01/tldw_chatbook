@@ -151,11 +151,12 @@ cron entry on `dev`.
   dated capacity amendments below), the Console P0 gate is a third lane (TASK-33621.27), and the PR
   Fast Lane's admission-sensitive half (two jobs since TASK-35575, three since Roleplay frame B2b), the Dreams
   tracking tests, the Dreams and Guardian boundary contracts, the
-  Architecture guard contracts, the architecture-review tests and the
-  recovered suites are jobs of their own (TASK-34916, TASK-34929,
-  TASK-34986, TASK-38989, PR #3399, owner decision 2026-11-06), so an
+  Architecture guard contracts, the architecture-review tests, the
+  recovered suites and native plugin recovery UI are jobs of their own
+  (TASK-34916, TASK-34929, TASK-34986, TASK-38989, PR #3399, owner decision
+  2026-11-06, TASK-41217), so an
   ordinary unlabeled,
-  non-GGUF PR now requests 31 test runners in parallel, 32 with perf-guard
+  non-GGUF PR now requests 32 test runners in parallel, 33 with perf-guard
   (see the dated notes below).
 - That figure is not a global maximum. The two path-scoped GGUF
   evidence matrices can add six jobs, and a synchronize event on a PR carrying
@@ -403,13 +404,13 @@ Even ideal balance at 27 shards has a lower-bound forecast of 1027.70 seconds un
 
 ## Amendment (2026-10-28, TASK-37266..37268): enroll native publication and export controls
 
-Current UI lane: 38 shards. The current total is 50 eligible test jobs per PR
+Current UI lane: 38 shards. The current total is 51 eligible test jobs per PR
 (2026-11-02: includes the third admission-sensitive lane; 2026-11-06: and the
 Architecture guard contracts job, TASK-38989, and the architecture-review
 tests' own job, `pr-fast-lane-arch`, split out of the PR Fast Lane at its
 35-min cap, PR #3399; 2026-11-07: and `recovered-suites` and four more UI
 shards, below; 2026-11-13: and two more Console P0 profile jobs, TASK-40724;
-2026-11-15: and two more UI shards, below).
+2026-11-15: and two more UI shards and native plugin recovery UI, below).
 As of this amendment, the `max-parallel: 17` ceiling (18 since 2026-11-07,
 19 since 2026-11-15, below), minimal dependencies, serial execution, 20-minute job cap,
 180-second test timeout and fail-closed required aggregation remain unchanged.
@@ -552,4 +553,29 @@ ceiling makes 31 concurrent test runners, 32 counting perf-guard.
 `Tests/CI/test_ui_lane_shard_count_statements.py` derives all three from the
 workflow. At 38 the census has no re-deal margin left: the next tail entries
 need another shard-count decision.
+
+## Amendment (2026-11-15, TASK-41217): qualified plugin recovery UI evidence
+
+PR #3524's Derived Artifacts run 43750308318, attempt 2, failed both
+TASK-40308 recovery UI journeys on Linux with `plugin runtime platform is
+unqualified`. They call the real managed plugin service directly; unlike the
+existing native-runtime fixtures and service tests, they did not declare its
+64-bit Darwin capability. ADR-162 keeps native single-owner storage qualified
+only by platform evidence, so Linux must not impersonate the APFS runtime.
+
+The two cases retain their Linux UI census entries and its floor, and declare
+the existing managed-runtime capability. A separate `plugins-recovery-ui` job
+executes exactly those two cases serially on `macos-latest`, with Python 3.12,
+the existing minimal UI dependencies and their 300-second test deadlines. The
+job has a 15-minute cap, needs successful preflight and uses the existing PR
+and full-gate-dispatch admission expression. Its JUnit report must contain two
+executed passing cases; skipped evidence cannot qualify recovery.
+
+The unchanged required context depends on this job and rejects every result
+other than success through the existing fail-closed aggregate pattern. This
+adds one macOS application job per gate: 51 eligible test jobs, at most 32
+concurrent test runners (33 with perf-guard). The Linux shard matrix and the
+bounded self-hosted pool of ADR-359 stay unchanged. The broad, path-selected
+plugin-qualification workflow remains separate; running its entire three-OS
+suite is not necessary to qualify these two UI journeys.
 

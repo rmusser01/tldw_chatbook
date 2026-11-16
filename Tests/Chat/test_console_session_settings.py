@@ -2314,7 +2314,7 @@ def test_malformed_ipv6_url_returns_validation_and_readiness_errors() -> None:
     errors = validate_console_session_settings(settings, app_config={})
 
     assert readiness.label == "Invalid URL"
-    assert "Endpoint must be a valid http(s) URL." in errors
+    assert "Endpoint URL is malformed." in errors
 
 
 def test_whitespace_host_url_returns_validation_and_readiness_errors() -> None:
@@ -2326,7 +2326,7 @@ def test_whitespace_host_url_returns_validation_and_readiness_errors() -> None:
     errors = validate_console_session_settings(settings, app_config={})
 
     assert readiness.label == "Invalid URL"
-    assert "Endpoint must be a valid http(s) URL." in errors
+    assert "Endpoint URL contains invalid characters." in errors
 
 
 def test_invalid_port_urls_return_validation_and_readiness_errors() -> None:
@@ -2339,7 +2339,7 @@ def test_invalid_port_urls_return_validation_and_readiness_errors() -> None:
         errors = validate_console_session_settings(settings, app_config={})
 
         assert readiness.label == "Invalid URL"
-        assert "Endpoint must be a valid http(s) URL." in errors
+        assert "Endpoint URL is malformed." in errors
 
 
 def test_configured_url_provider_validates_invalid_base_url() -> None:
@@ -2359,7 +2359,10 @@ def test_configured_url_provider_validates_invalid_base_url() -> None:
 
     assert readiness.label == "Unknown"
     assert readiness.blocker == "provider_unsupported"
-    assert "Endpoint must be a valid http(s) URL." in errors
+    assert (
+        "Start the address with http:// or https:// (for example http://127.0.0.1:8080)."
+        in errors
+    )
 
 
 def test_vllm_session_validation_preserves_a_verified_different_endpoint() -> None:

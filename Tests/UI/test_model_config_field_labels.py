@@ -214,7 +214,7 @@ def test_console_validation_names_fields_by_their_table_labels():
         },
     )
     assert f"{MODEL_FIELD_LABELS['max_tokens']} must be 1 or greater." in errors
-    assert f"{MODEL_FIELD_LABELS['endpoint']} must be a valid http(s) URL." in errors
+    assert "Endpoint URL contains invalid characters." in errors
     # Final review (Task 1 minor): the two thinking errors named the fields
     # "Thinking effort" and "Thinking budget tokens".
     assert (
