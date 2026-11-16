@@ -300,6 +300,7 @@ print('retired and reopened')
 """
 
 
+@pytest.mark.timeout(900)
 def test_include_mode_archive_with_skill_trust_files_is_not_partial(tmp_path):
     """TASK-41123: an include-mode backup holding the skills trust store
     discloses that the trust keys' keyring cache is left out
@@ -308,4 +309,38 @@ def test_include_mode_archive_with_skill_trust_files_is_not_partial(tmp_path):
     archive `partial`, which `plan_restore` refuses for a replace restore
     (`partial_replacement`). It is still acknowledged at capture and listed in
     the archive's report."""
-    _run(tmp_path, "skills", "trust-archive", script=_TRUST_ARCHIVE, timeout=150)
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    from Tests.Backup_Recovery.test_config_sibling_capture import _wait_while_busy
+
+    # `_run`'s scratch layout, but no fixed budget: the child backs up, inspects
+    # and plans (114.7 s serially at load 75-88), so it fails only once it
+    # stops using CPU, with a wall backstop (TASK-40306's pattern).
+    root = tmp_path.resolve()
+    for name in ("home", "config", "data"):
+        (root / name).mkdir(mode=0o700)
+    environment = dict(
+        os.environ,
+        HOME=str(root / "home"),
+        USERPROFILE=str(root / "home"),
+        XDG_CONFIG_HOME=str(root / "config"),
+        XDG_DATA_HOME=str(root / "data"),
+        TLDW_CONFIG_PATH=str(root / "config" / "config.toml"),
+        TLDW_TEST_MODE="1",
+        TLDW_DISABLE_CONFIG_WATCH="1",
+    )
+    log = root / "trust-archive.log"
+    with log.open("w", encoding="utf-8") as output:
+        process = subprocess.Popen(
+            [sys.executable, "-X", "utf8", "-c", _TRUST_ARCHIVE],
+            cwd=Path(__file__).resolve().parents[2],
+            env=environment,
+            stdout=output,
+            stderr=subprocess.STDOUT,
+        )
+        returncode = _wait_while_busy(process, idle=60, timeout=840)
+    text = log.read_text(encoding="utf-8", errors="replace")
+    assert returncode == 0 and "retired and reopened" in text, text[-8000:]
