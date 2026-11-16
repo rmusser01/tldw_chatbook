@@ -1939,14 +1939,12 @@ Keep exact actual lease/selector checks, path=None and empty-owner behavior, and
 the distinction between names=None (ordinary-only observation) and an admitted
 namespace tuple. Ordinary-only reads must still refuse restored/shared evidence.
 
-Public activation_permission and startup_permission signatures and custom
-behavior remain supported. A replaced startup binding or code uses the original
-startup callback followed by fresh activation controls/registry reads. Pin the
-startup implementation in its defining module, so an override installed before
-activation import is not mistaken for stock code. Public startup_permission stays
-unchanged, including its permissive inspection behavior for activation-only
-corruption. Activation permission already required full control validation before
-allowing execution. No execution-loop bypass or private source API is introduced.
+The initial proposal retained replaced startup bindings/code through implementation
+identity checks. Task3r withdrew that optimization because such checks conflict
+with ADR356. The explicit same-call controls amendment below supersedes that
+replacement-compatibility mechanism. Public standalone startup_permission retains
+its permissive inspection behavior for activation-only corruption; activation
+permission continues to require full control validation before allowing execution.
 
 Keep acquisition, borrowed-lease ownership, native reader cleanup and final
 lease retirement unchanged. Native positive counts and between-owner pending/
@@ -2139,3 +2137,41 @@ The Windows Send plan's Task3t governs integration and sequential measurement.
 Sources: [FILE_BASIC_INFORMATION](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/ns-wdm-_file_basic_information),
 [File Times](https://learn.microsoft.com/en-us/windows/win32/sysinfo/file-times),
 [GetVolumeInformationByHandleW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getvolumeinformationbyhandlew).
+
+### Explicit same-call activation controls — 2026-11-16
+
+The qualified Windows acquisition change removes almost all repeated acquisition
+derivations. The next valid warm Send census contains86 activation checks and47
+paired-witness reads, each immediately rereading startup's controls and registry.
+Consolidate those two observations within each call, never across owners or calls.
+
+Add bootstrap.read_activation_controls(selector, root, *, startup_restriction=None).
+An optional two-positional `(selector, root) -> (allowed, reason)` restriction runs
+first and may only deny. A custom Allow is followed by one fresh full control-record
+read, one registry read and the existing _startup_permission_from_controls decision.
+Return `(profiles, associations, registry)` only on built-in Allow, or None on
+denial. Reader failures propagate to each caller's existing refusal boundary.
+The tuple contains local validated data, not a storage lease or permission grant.
+No retained cache, new registration system or callable inspection is introduced.
+
+activation_permission validates its owner first, consumes these local facts, then
+runs its unchanged paired-history, required-owner and live allowed-state checks.
+execution_scope forwards an optional explicit restriction separately for every
+owner, including duplicate owners. _paired_witnesses consumes its own fresh read
+and retains its existing projection refusal and ordinary read failures. If a
+restriction is exposed through _witnesses, that call bypasses both derived-result
+reuse and publication. Keep source-scope checks and actual lease selection separate.
+
+Standalone startup_permission remains unchanged, including permissive inspection
+of activation-only corruption. Production has no startup_permission replacement
+registration; assignments found in this audit are tests and diagnostic wrappers.
+Replacing that module function or its code is no longer an activation customization
+contract. The explicit deny-only restriction is the supported narrow seam. Tests
+must prove real custom denial and custom-Allow-then-state-change refusal through
+that seam, rather than assert implementation-identity detection.
+
+Native qualification retains ordinary/recovered payload, exclusion and retirement,
+invalid owner, unqualified observation, revocation, source drift, and fresh pending
+or paired-history loss between owners. Counts must show5/4 becoming3/2 in a real
+two-owner gate and2/2 becoming1/1 in paired witnesses. No count establishes the
+six-second Send requirement; quiet cold/warm Enter/button verification remains.

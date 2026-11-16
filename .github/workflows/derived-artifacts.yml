@@ -453,6 +453,12 @@ jobs:
             Tests/Utils/test_sensitive_config_read_scope.py \
             Tests/Backup_Recovery/test_execution_activation_reads.py \
             Tests/Backup_Recovery/test_execution_source_groups.py \
+            Tests/Backup_Recovery/test_windows_acquisition_evidence.py \
+            Tests/Backup_Recovery/test_windows_evidence_content_prerequisites.py \
+            Tests/Backup_Recovery/test_windows_evidence_fallbacks.py \
+            Tests/Backup_Recovery/test_windows_evidence_lifetime.py \
+            Tests/Backup_Recovery/test_activation_control_observation.py \
+            Tests/Backup_Recovery/test_activation_control_restrictions.py \
             --timeout=180 \
             --tb=short
 

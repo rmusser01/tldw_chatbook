@@ -4372,12 +4372,9 @@ def configuration_read_scope() -> Iterator[None]:
 
 
 def config_read_would_wait() -> bool:
-    """Whether a config read on this thread would wait for another thread.
+    """Probe config locks in order without waiting (TASK-35645).
 
-    TASK-35645: warm settings and CLI config caches never wait; a cold one
-    waits while another thread holds the config locks (a rebuild or a write),
-    so they are probed without blocking, in their usual order. A storage
-    pause makes a cold read raise rather than wait, as it always has.
+    Warm caches never wait; a storage pause makes cold reads raise.
     """
     if (
         _warm_config_cache_hit() is not None

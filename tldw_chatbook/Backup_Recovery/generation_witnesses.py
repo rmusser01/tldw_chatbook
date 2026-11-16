@@ -8,12 +8,19 @@ from . import bootstrap
 from .activation import ActivationStore, _private, _source_scope_admitted
 
 
-def _witnesses(path, lease):
+def _witnesses(path, lease, *, startup_restriction=None):
     """Check paired local generations against this actual admitted storage group."""
     from . import storage_admission as storage
 
     root, names = lease.execution_context(path)
     selected = bootstrap.effective_config_path()
+    if startup_restriction is not None:
+        # Custom restrictions are never skipped or published as derived results.
+        if path is not None and not _source_scope_admitted(root, names or (), path):
+            raise ValueError("projection_source_scope_unavailable")
+        return _paired_witnesses(
+            path, root, names, selected, startup_restriction=startup_restriction
+        )
     hold = storage._ordinary_hold(lease=lease)
     key = ("witness", str(selected), str(path))
     before = storage._derived_before(hold, key)
@@ -39,12 +46,14 @@ def _witnesses(path, lease):
     return result
 
 
-def _paired_witnesses(path, root, names, selected):
+def _paired_witnesses(path, root, names, selected, *, startup_restriction=None):
     """Read paired local control metadata; this grants no storage admission."""
-    if not bootstrap.startup_permission(selected, root)[0]:
+    controls = bootstrap.read_activation_controls(
+        selected, root, startup_restriction=startup_restriction
+    )
+    if controls is None:
         raise ValueError("projection_generation_unavailable")
-    _, profiles, associations = bootstrap._control_records(root)
-    registry = bootstrap._registry(root)
+    profiles, associations, registry = controls
     held = set(names or ())
     profile = next((p for p in profiles if p["selector"] == str(selected)), None)
     if profile:
@@ -150,7 +159,7 @@ _WITNESS_METADATA_READERS = tuple(
             "pinned_directory", "_read", "_strings", "_paths", "_key",
             "_activation_witness", "_validate_ancestry_record",
             "_open_verified_parent", "_native_close",
-            "startup_permission", "lexical_path", "_overlap", "identity_view",
+            "lexical_path", "_overlap", "identity_view",
             "inode_token", "inode_token_for", "_same_activation_generation",
         )),
     )

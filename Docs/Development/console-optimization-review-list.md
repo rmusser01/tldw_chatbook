@@ -2865,6 +2865,13 @@ ordinary execution again observes5/4. A future consolidation must use an
 explicit existing runtime/resource boundary and preserve fresh owner decisions.
 No whole-Send speed claim was established by that count improvement.
 
+Task3u now revisits this with an explicit deny-only restriction and one fresh
+controls assembly per activation caller, amending ADR126 under ADR356. The
+function/code-identity candidate remains rejected. Original-source count REDs
+observe5/4 for execution and2/2 for paired witnesses only after payload and
+physical-retirement checks pass. The replacement is integrated locally for
+native qualification; whole-Send benefit remains unmeasured.
+
 **Windows metadata-only acquisition evidence (rejected,2026-11-16).**
 Fresh native metadata and exact security descriptors do not prove unchanged file
 contents on Windows: an authorized writer can suppress LastWriteTime/ChangeTime,
@@ -2882,3 +2889,16 @@ with actual exclusion and physical retirement. Task3t's bounded fresh-content
 candidate remains unintegrated pending independent review and quiet measurements
 of the simpler readiness/rebased checkpoint. New callable/code attestation in
 that candidate was rejected; existing real resource ownership remains required.
+
+Task3t now passes83 initial and11 native lifetime/fallback controls locally.
+Quiet Enter11.227/9.896/8.264s still misses the gate. Current warm census records
+388 control-record and278 registry starts; exact remaining consumers require
+analysis before choosing another consolidation. This is not a release claim.
+
+**Union acquisition observations for bound sources (deferred,2026-11-16).**
+The fresh Windows path currently observes one selector plus each selected bound
+source separately. One finite union could avoid repeated ancestor walks while
+preserving each projection and actual native owner. Source tracing shows the
+ordinary benchmark setup is unbound, whose successful reuse already has one
+selector batch. Do not select this bound-profile optimization to explain or fix
+the measured ordinary Send delay; qualify its own workload before reconsidering.

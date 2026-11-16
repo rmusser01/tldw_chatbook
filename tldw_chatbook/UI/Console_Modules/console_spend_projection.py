@@ -1692,11 +1692,17 @@ class ConsoleContextDisplayReader:
         snapshot = ConsoleContextReadSnapshot.for_screen(
             self.screen, max_age=self.estimate_ttl_seconds()
         )
-        visit = self.screen._current_console_attach_visit()
+        visit = None
+        if (
+            self.screen.is_mounted and self.screen.is_attached
+            and getattr(self.screen, "_console_context_read_snapshot", None) is snapshot
+        ):
+            visit = self.screen._current_console_attach_visit()
         value = snapshot.inputs(controller, session_id)
-        self._snapshot, self._projection, self._visit = (
-            snapshot, snapshot.config_projection, visit
-        )
+        if visit is not None:
+            self._snapshot, self._projection, self._visit = (
+                snapshot, snapshot.config_projection, visit
+            )
         return value
 
     def _current(self, owner: Any, controller: Any, session_id: str) -> bool:

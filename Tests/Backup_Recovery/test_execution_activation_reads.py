@@ -1,4 +1,4 @@
-"""Each execution owner retains fresh public startup and activation decisions."""
+"""Each execution owner retains fresh controls and explicit startup restrictions."""
 
 from textwrap import indent
 
@@ -41,6 +41,8 @@ startup_code = startup_reader.__code__
 custom_calls = []
 
 def refuse_startup(config_selector, bootstrap_root, /):
+    if route == 'custom_raise':
+        raise RuntimeError('custom_startup_refusal')
     return False, 'custom_startup_refusal'
 
 custom_code = refuse_startup.__code__
@@ -108,18 +110,16 @@ try:
     sys.monitoring.set_local_events(tool, custom_code, sys.monitoring.events.PY_START)
     sys.monitoring.set_local_events(tool, allowed_code, sys.monitoring.events.PY_RETURN)
     try:
-        if route == 'custom_binding':
-            bootstrap.startup_permission = refuse_startup
-        elif route == 'custom_code':
-            startup_reader.__code__ = custom_code
+        restrictions = ({'startup_restriction': refuse_startup}
+                        if route in ('custom_deny', 'custom_raise', 'invalid_owner') else {})
         owners = ('',) if route == 'invalid_owner' else ('config', 'db.agent_runs')
         began = time.perf_counter()
-        with scope(owners, path, retained=lease) as allowed:
+        with scope(owners, path, retained=lease, **restrictions) as allowed:
             permitted = allowed
         elapsed = time.perf_counter() - began
     finally:
-        bootstrap.startup_permission = startup_reader
-        startup_reader.__code__ = startup_code
+        assert bootstrap.startup_permission is startup_reader
+        assert startup_reader.__code__ is startup_code
         for code in (*codes, allowed_code, custom_code):
             sys.monitoring.set_local_events(tool, code, 0)
         sys.monitoring.register_callback(tool, sys.monitoring.events.PY_START, None)
@@ -145,9 +145,9 @@ assert not blocked_attempts()
 print(json.dumps({'counts': counts, 'gate_seconds': elapsed, 'approvals': approvals}))
 if route == 'count':
     assert permitted, 'original execution gate refused an approved fixture'
-    # Task3g read reuse is deferred: keep the public callback and fresh facts.
-    assert counts['gate'] == {'controls': 5, 'registry': 4}, counts
-elif route in ('custom_binding', 'custom_code', 'invalid_owner'):
+    # Each owner gets its own fresh controls, shared only within that call.
+    assert counts['gate'] == {'controls': 3, 'registry': 2}, counts
+elif route in ('custom_deny', 'custom_raise', 'invalid_owner'):
     assert not permitted and approvals == 0
     assert counts['gate'] == {'controls': 1, 'registry': 0}, counts
     assert custom_calls == ([] if route == 'invalid_owner' else [(True, True)])
@@ -164,7 +164,7 @@ _SCRIPT = (
 
 
 @pytest.mark.parametrize("state", ["ordinary", "approved"])
-def test_execution_keeps_fresh_public_startup_and_activation_reads(tmp_path, state):
+def test_execution_keeps_fresh_per_owner_activation_reads(tmp_path, state):
     _run(tmp_path, "count", state, script=_SCRIPT)
 
 
@@ -173,9 +173,9 @@ def test_execution_rereads_controls_for_the_next_owner(tmp_path, change):
     _run(tmp_path, change, "approved", script=_SCRIPT)
 
 
-@pytest.mark.parametrize("replacement", ["binding", "code"])
-def test_execution_preserves_custom_startup_refusal(tmp_path, replacement):
-    _run(tmp_path, "custom_" + replacement, "ordinary", script=_SCRIPT)
+@pytest.mark.parametrize("restriction", ["deny", "raise"])
+def test_execution_preserves_explicit_startup_restriction(tmp_path, restriction):
+    _run(tmp_path, "custom_" + restriction, "ordinary", script=_SCRIPT)
 
 
 def test_execution_refuses_invalid_owner_before_activation_reads(tmp_path):

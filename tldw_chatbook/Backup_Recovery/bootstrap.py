@@ -577,6 +577,38 @@ def _startup_permission_from_controls(
     return True, "startup_allowed"
 
 
+def read_activation_controls(
+    config_selector: Path,
+    bootstrap_root: Path,
+    *,
+    startup_restriction: Callable[[Path, Path], tuple[bool, str]] | None = None,
+) -> tuple[list[dict], list[dict], dict | None] | None:
+    """Read fresh startup and activation inputs for one synchronous caller.
+
+    Args:
+        config_selector: Selected configuration path.
+        bootstrap_root: Local recovery control directory.
+        startup_restriction: Optional deny-only check, called before fresh reads.
+            An Allow never replaces the built-in startup decision.
+
+    Returns:
+        Local profiles, associations and registry on Allow, or None on denial.
+        These facts grant no storage admission. Reader failures propagate.
+    """
+    selector = lexical_path(config_selector)
+    if startup_restriction is not None and not startup_restriction(
+        selector, bootstrap_root
+    )[0]:
+        return None
+    pending, profiles, associations = _control_records(bootstrap_root)
+    registry = _registry(bootstrap_root)
+    if not _startup_permission_from_controls(
+        selector, bootstrap_root, pending, profiles, registry
+    )[0]:
+        return None
+    return profiles, associations, registry
+
+
 def require_startup_permission() -> None:
     """Bounded launcher refusal. Custom config cannot relocate this check."""
     allowed, reason = startup_permission(

@@ -31,6 +31,7 @@ pytestmark = pytest.mark.skipif(os.name == "nt", reason="ordinary reuse is POSIX
 _MONITORS = []
 _SEAMS = (
     (bootstrap, "startup_permission"),
+    (bootstrap, "read_activation_controls"),
     (bootstrap, "_control_records"),
     (bootstrap, "_registry"),
     (storage, "_scope"),
@@ -52,7 +53,7 @@ def _release_derivation_monitors():
         monitoring.free_tool_id(tool)
 
 
-def _derivations():
+def _derivations(extra=()):
     """Count entries into every expensive seam, observed in place.
 
     Since 3e618d7119 the witness and pause reuse paths decline reuse when any
@@ -62,7 +63,7 @@ def _derivations():
     counts = Counter()
     active = [False]
     seams = {}
-    for owner, name in _SEAMS:
+    for owner, name in (*_SEAMS, *extra):
         # The parent walk is private_paths' one closure, shared with bootstrap;
         # only raw's calls through it were ever counted.
         caller = vars(raw) if owner is raw else None
@@ -900,7 +901,7 @@ def test_witness_content_still_requires_the_original_settle_margin(
         active[0] = True
         assert call() == []
         active[0] = False
-        assert counts["startup_permission"] and counts["_control_records"]
+        assert counts["read_activation_controls"] and counts["_control_records"]
 
 
 def test_every_counted_seam_is_seen_when_reuse_is_off(mcp_sources, monkeypatch):
@@ -955,3 +956,53 @@ def test_actual_permission_parse_pause_matches_original_admitted_write(
     finally:
         for pause in pauses:
             pause.resume()
+
+
+def test_explicit_witness_restriction_bypasses_derived_reads_and_publication(
+    local_scope, monkeypatch
+):
+    root, selected, data, _ = local_scope
+    bind_profile(root, selected, ("profile",), root / "admission")
+    monkeypatch.setattr(storage, "_EVIDENCE_SETTLE_NS", 0)
+    path = data / "restricted-source.json"
+    derived = ("_derived_before", "_derived_reuse", "_note_derived")
+    with storage.acquire_storage(path) as lease:
+        hold = storage._ordinary_hold(lease=lease)
+        assert hold is not None
+
+        def call():
+            return generation_witnesses._witnesses(path, lease)
+
+        _warm(call)
+        key = ("witness", str(selected), str(path))
+        assert hold.derived_evidence[key][0].confirmed
+        counts, active = _derivations(tuple((storage, name) for name in derived))
+        active[0] = True
+        assert call() == []
+        active[0] = False
+        assert counts["_derived_reuse"] == 1
+        assert not counts["read_activation_controls"]
+        counts.clear()
+        allowed = True
+        calls = []
+
+        def restriction(actual_selector, actual_root, /):
+            calls.append((actual_selector, actual_root))
+            return allowed, "explicit_restriction"
+
+        active[0] = True
+        assert generation_witnesses._witnesses(
+            path, lease, startup_restriction=restriction
+        ) == []
+        allowed = False
+        with pytest.raises(ValueError, match="^projection_generation_unavailable$"):
+            generation_witnesses._witnesses(
+                path, lease, startup_restriction=restriction
+            )
+        active[0] = False
+        assert calls == [(selected, root), (selected, root)]
+        assert counts["read_activation_controls"] == 2
+        assert all(counts[name] == 0 for name in derived), dict(counts)
+        assert lease.execution_context(path) == (root, ("profile",))
+    assert lease not in storage._live_leases
+    assert hold.stop.is_set() and not hold.thread.is_alive() and hold.error is None

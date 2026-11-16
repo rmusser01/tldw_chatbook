@@ -27,7 +27,6 @@ from tldw_chatbook.Tools.local_tool_impls import (
     _is_relative_sensitive_path,
     resolve_workspace_path,
 )
-from tldw_chatbook.Tools.patch_tool_impls import parse_patch_targets
 from tldw_chatbook.Tools.remote_root_types import (
     AdmittedRoot,
     LocalRoot,
@@ -585,6 +584,8 @@ class WorkspaceToolExecutor:
                 exclusions, _ = _parent_read_exclusions(chain.canonical_root, context)
                 normalized["sensitive_exclusions"] = _serialize_exclusions(exclusions)
             if operation == "fs_patch" and type(arguments) is dict:
+                from tldw_chatbook.Tools.patch_tool_impls import parse_patch_targets
+
                 raw_diff = arguments.get("diff")
                 if type(raw_diff) is not str:
                     raise ValueError("invalid patch")
@@ -751,6 +752,8 @@ class WorkspaceToolExecutor:
                 )
                 normalized["sensitive_exclusions"] = exclusions
             if operation == "fs_patch" and type(arguments) is dict:
+                from tldw_chatbook.Tools.patch_tool_impls import parse_patch_targets
+
                 raw_diff = arguments.get("diff")
                 if type(raw_diff) is not str:
                     raise ValueError("invalid patch")

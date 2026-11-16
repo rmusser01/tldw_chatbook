@@ -1498,3 +1498,133 @@ shell behavior because the isolated config was not selected. Selecting that
 fixture's actual config before real WorkspaceDB/registry construction preserves
 all assertions and makes both cases pass in8.53s on rebased Windows
 (pr3534-rebased-raw-shell-fixture-1). Hosted confirmation remains required.
+
+Task3t initial qualification passes83 cases in101.51s
+(pr3534-fresh-evidence-initial-1), with source/HEAD fixed: the unchanged original
+count regression now observes no control/registry/scope re-derivation for a settled
+bound acquisition, while observing fresh native batches, actual exclusion and
+retirement. Both timestamp premises, existing metadata/security controls and
+mounted/unmounted Context ownership controls pass. Independent review required
+complete read length equal to same-handle size and a final acquisition check after
+optional confirmation I/O; both are present in the qualified candidate.
+
+The11 additional native lifetime/fallback controls pass in92.19s
+(pr3534-fresh-evidence-lifetime-1). They cover changed contents/membership after
+confirmation, cancellation after available/unavailable confirmation, incomplete
+reads, retained live exclusion on uncertain close at all three observation phases,
+readonly volume, optional descriptor refusal and bounded aggregate content.
+The EOF oracle permits harmless stale epochs but requires the original full
+derivation on all three attempted acquisitions; cache eviction is not the contract.
+
+Quiet candidate Enter remains above the gate at11.227/9.896/8.264s
+(pr3534-fresh-evidence-enter-1,94.88s). All turns save, reply and settle. Do not
+rerun the button merely to repeat a known failing gate; measure both routes after
+the next material improvement. Current two-reader census is valid
+(pr3534-fresh-evidence-read-counts-1,91.99s), with no lost events or unrestored
+bindings. Warm send2 contains388 control-record starts and278 registry starts;
+all registry work is on worker threads. These remain whole-window counts, not
+foreground durations or a causal whole-Send latency attribution.
+
+CI compatibility correction (existing ADR231/356; no new ADR): the new display
+reader captured an attach visit before mount, breaking the unchanged original
+Context wiring test with NoActiveAppError (pr3534-unmounted-context-red-1,51.29s).
+Capture optional reuse registration only for the actual installed snapshot on a
+mounted, attached screen; always retain the ordinary factory/input callback route.
+That unchanged test and both mounted resource controls pass in the83-case batch.
+
+CI first-Send import correction — ADR required:no; ADR path:N/A. The dev rebase
+combines two previously independent warm-up additions and exceeds the unchanged
+94-module limit at95, reproduced natively in pr3534-patch-import-budget-red-1
+(19.61s). Move the optional patch parser and its limits from the workspace executor
+and protocol module imports into their existing patch-only branches. Keep every
+parser, validation condition, constant and normal Send warm-up entry unchanged.
+Verify the original budget, ordinary/harness/library/review no-UI-import controls,
+and local/SSH patch parsing and size/target checks. This mechanical lazy-import
+correction preserves existing boundaries and cannot itself qualify six-second Send.
+
+### Task3u — one fresh controls assembly per activation caller
+
+ADR required:yes.
+ADR path:backlog/decisions/126-complete-local-backup-and-recovery.md,
+Explicit same-call activation controls amendment; existing ADR356 applies.
+Reason: consolidate repeated validation behind an explicit shared API and replace
+the withdrawn implementation-identity customization mechanism with deny-only input.
+
+1. Preserve the qualified current census. Its warm window has86 activation calls
+   and47 paired-witness calls with duplicate startup/control reads; acquisition
+   contributes only12/12 of388/278. Do not optimize unrelated bound-path batching.
+2. Establish real ordinary/recovered count REDs with actual permission, payload,
+   native exclusion and physical retirement before the final count assertion.
+3. Add read_activation_controls with one fresh full controls/registry observation
+   and the existing startup decision. Return local facts or None; no cache/owner
+   framework. Run an optional explicit deny-only restriction before fresh reads.
+4. Consume those facts in each activation owner and paired-witness call. Forward
+   restriction through execution_scope and, if exposed, bypass witness derived
+   reuse/publication for that call. Keep invalid-owner validation, source scope,
+   native leases and all live required/allowed checks unchanged. Keep standalone
+   startup_permission unchanged, including its permissive inspection contract.
+5. Replace code-mutation customization tests with explicit denial, raising and
+   Allow-then-mutate controls. Retain between-owner pending/pair loss, recovered
+   approvals, shared roots, source drift, cancellation and retirement assertions.
+6. Use distinct product/test file ownership and independent source review. Root
+   integrates and runs all native tests/timings sequentially. Verify the shared
+   consumers, relevant architecture guards and current CI, then quiet cold/warm
+   Enter/button sends. Merge remains forbidden until every sample is below6s.
+
+Task3u original-source RED is qualified in pr3534-activation-controls-red-1
+(4 failures,30.19s): both ordinary and approved execution observe5 controls/4
+registry reads; both paired-witness cases observe2/2. Each fails only its final
+count assertion after actual payload, native exclusion and physical retirement.
+The unchanged count cases now accompany the independently reviewed shared-reader
+candidate. This is not yet a whole-Send speed result.
+
+The optional-parser fixture follow-up passes14 native cases in103.21s
+(pr3534-patch-review-fixtures-green-1): real review-send child databases close after
+asyncio's executor retires, and executor fixtures select their actual isolated
+configuration before use. Matched clean dev3917 reproduces the two child cleanup
+failures but passes the three executor cases, so only the latter interaction is
+introduced by this branch. No cleanup exception or assertion is suppressed.
+
+Current-head CI also exposes a three-line config size overrun after the dev
+rebase. Condense the existing lock-probe docstring from seven lines to four;
+config.py is8837 lines and its executable AST is unchanged. Retain the8837 ceiling.
+The workflow selection correction adds the six new regression files and restores
+the missing execution_source_groups entry in the exact selection contract;
+timeouts and all other workflow semantics stay unchanged.
+
+Task3u native qualification passes21 cases in125.82s
+(pr3534-activation-controls-green-1), including the unchanged four count cases,
+explicit veto/error and Allow-then-change checks, next-owner freshness, original
+callback signatures, physical retirement and permissive startup inspection.
+Quiet Enter remains above the gate at12.698/9.372/7.847s
+(pr3534-shared-controls-enter-1,108.38s), with fixed source and HEAD. The later
+instrumented run measures7.844/5.494/4.829s; it is diagnostic, not quiet acceptance
+or causal proof of improvement. All three original adapter windows are bounded,
+with no observer errors/overflows and restored bindings. Inclusive spans overlap.
+
+Integrated verification pr3534-shared-controls-integration-1 passes411 cases in
+278.02s: whole execution-source-group ownership/cancellation/retirement controls,
+exact workflow selection and node resolution, unchanged module-size and identity
+ratchets, and the second pre-mount Context failure reported by hosted UI20.
+All changed/new Python files pass Ruff F checks; git diff --check is clean.
+Native Task3t lifetime controls and Task3u activation controls remain qualified
+as recorded above. POSIX derived-witness behavior still requires hosted CI.
+
+### Task3v — avoid loading backup catalogs to read a restore marker
+
+ADR required:no.
+ADR path:N/A; existing ADR126's read-only marker and native storage rules apply.
+Reason: mechanical dependency correction preserving public APIs, SQL, refusal
+semantics and actual storage ownership; no new cache or service boundary.
+
+1. Preserve the current diagnostic: first Send imports Personal_Context.recovery
+   for the no-secure-keyring marker lookup; its inclusive import is0.541s, with
+   DB.recovery_operations0.536s. The marker reader does not use backup catalogs.
+2. Add a fresh-interpreter regression exercising actual unavailable-keyring
+   status and non-creation of an absent database before its import assertion.
+3. Move the existing marker reader into repository_keys beside its caller;
+   retain the recovery module's public import and identical readonly SQL/error
+   behavior. Do not alter backup adapters, encryption or key selection.
+4. Verify the original regression, restored-key reason/readonly cases, relevant
+   backup behavior and static boundaries, then repeat quiet Windows Send.
+   Keep all native runs sequential and the six-second merge gate unchanged.

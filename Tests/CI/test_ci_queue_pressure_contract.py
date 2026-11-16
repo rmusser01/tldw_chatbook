@@ -355,6 +355,14 @@ FAST_LANE_TARGETS = (
     "Tests/Backup_Recovery/test_permission_member_admission.py",
     "Tests/Utils/test_sensitive_config_read_scope.py",
     "Tests/Backup_Recovery/test_execution_activation_reads.py",
+    "Tests/Backup_Recovery/test_execution_source_groups.py",
+    # PR3534 Task3t/3u: native Windows evidence and fresh activation controls.
+    "Tests/Backup_Recovery/test_windows_acquisition_evidence.py",
+    "Tests/Backup_Recovery/test_windows_evidence_content_prerequisites.py",
+    "Tests/Backup_Recovery/test_windows_evidence_fallbacks.py",
+    "Tests/Backup_Recovery/test_windows_evidence_lifetime.py",
+    "Tests/Backup_Recovery/test_activation_control_observation.py",
+    "Tests/Backup_Recovery/test_activation_control_restrictions.py",
 )
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.

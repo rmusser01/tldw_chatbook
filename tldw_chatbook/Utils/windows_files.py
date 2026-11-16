@@ -20,6 +20,7 @@ import contextlib
 import ctypes as C
 import errno
 import functools
+import hashlib
 import ntpath
 import os as _os
 import platform
@@ -33,6 +34,10 @@ _I32 = C.c_int32
 _U16 = C.c_uint16
 _P = C.c_void_p
 _HANDLE = _P
+_EVIDENCE_BYTES_MAX = 1024 * 1024
+_EVIDENCE_NODES_MAX = 4096
+_EVIDENCE_NAMES_MAX = 4096
+_READ_ONLY_VOLUME = 0x80000
 _SYSTEM_SIDS = frozenset(
     {
         "S-1-5-18",
@@ -243,6 +248,7 @@ class _Native:
                 _I32,
             ),
             (self.kernel, "CloseHandle", [_HANDLE], _I32),
+            (self.kernel, "ReadFile", [_HANDLE, _P, _U32, C.POINTER(_U32), _P], _I32),
             (
                 self.kernel,
                 "DuplicateHandle",
@@ -467,6 +473,59 @@ class _Native:
         # FILE_FS_DEVICE_INFORMATION: Characteristics has FILE_REMOTE_DEVICE.
         if device[1] & 0x10:
             raise OSError(errno.ENOTSUP, "remote_filesystem_refused")
+        return flags.value
+
+    def content_digest(self, handle, limit):
+        """Read bounded current bytes from this synchronous metadata birth."""
+        digest, total = hashlib.sha256(), 0
+        buffer = C.create_string_buffer(min(65536, limit + 1))
+        while True:
+            wanted = min(len(buffer), limit - total + 1)
+            read = _U32()
+            if not self.kernel.ReadFile(handle, buffer, wanted, C.byref(read), None):
+                if C.get_last_error() == 38:  # ERROR_HANDLE_EOF
+                    return digest.digest(), total
+                raise C.WinError(C.get_last_error())
+            if read.value > wanted:
+                raise OSError(errno.EIO, "invalid_windows_read_length")
+            if not read.value:
+                return digest.digest(), total
+            total += read.value
+            if total > limit:
+                raise OSError(errno.EFBIG, "windows_admission_evidence_unavailable")
+            digest.update(buffer.raw[: read.value])
+
+    def directory_names(self, handle, *, limit=None):
+        """Enumerate one borrowed directory handle without transferring custody."""
+        output = []
+        buffer = C.create_string_buffer(65536)
+        first = True
+        # FILE_FULL_DIR_INFO has FileNameLength at offset 60, filename at 68.
+        while True:
+            okay = self.kernel.GetFileInformationByHandleEx(
+                handle, 15 if first else 14, buffer, len(buffer)
+            )
+            first = False
+            if not okay:
+                if C.get_last_error() == 18:
+                    return output
+                raise C.WinError(C.get_last_error())
+            offset = 0
+            while True:
+                next_offset = struct.unpack_from("<I", buffer, offset)[0]
+                length = struct.unpack_from("<I", buffer, offset + 60)[0]
+                if length % 2 or offset + 68 + length > len(buffer):
+                    raise OSError(errno.EIO, "invalid_windows_directory_information")
+                name = buffer[offset + 68 : offset + 68 + length].decode("utf-16-le")
+                if name not in {".", ".."}:
+                    output.append(name)
+                    if limit is not None and len(output) > limit:
+                        raise OSError(errno.EFBIG, "windows_admission_evidence_unavailable")
+                if not next_offset:
+                    break
+                if next_offset < 68 or offset + next_offset >= len(buffer):
+                    raise OSError(errno.EIO, "invalid_windows_directory_offset")
+                offset += next_offset
 
     def security_descriptor(self, handle):
         """Read fresh OWNER|DACL bytes into a bounded call-local buffer."""
@@ -615,7 +674,9 @@ class _Native:
                     info.volume,
                     (info.index_high << 32) | info.index_low,
                 )
-            self.ntfs(handle)
+            volume_flags = self.ntfs(handle)
+            if _metadata_record is not None:
+                _metadata_record.volume_flags = volume_flags
             return handle.value
         except BaseException:
             if _metadata_record is None:
@@ -702,6 +763,7 @@ class _AdmissionMetadataHandle:
         self.path = path
         self.handle = None
         self.identity = None
+        self.volume_flags = None
         self.close_error = None
 
 
@@ -709,6 +771,15 @@ class _AdmissionMetadataCloseError(OSError):
     def __init__(self, failed_handles):
         self.failed_handles = tuple(failed_handles)
         super().__init__(errno.EIO, "windows_admission_metadata_not_retired")
+
+
+def _admission_metadata_stamp(observed):
+    info, descriptor = observed
+    return (
+        info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_nlink,
+        info.st_size, info.st_mtime_ns, info.st_ctime_ns,
+        info.st_file_attributes, descriptor,
+    )
 
 
 class WindowsOS:
@@ -818,18 +889,29 @@ class WindowsOS:
             raise FileNotFoundError(errno.ENOENT, "windows_metadata_missing", path)
         return observed
 
-    def stat_many_for_admission(self, paths):
+    def stat_many_for_admission(self, paths, *, _content_paths=None, _writable_path=None):
         """Read fresh named associations and retire each owned birth once.
 
         Full component chains are validated before opening anything. Parents
         remain pinned while names are rechecked bottom-up; uncertain closes
         retain their exact birth records and refuse the observation.
+
+        The private evidence request appends a fresh content digest or directory
+        membership to each present result. Ordinary metadata callers keep the
+        existing two-field result and do not read file contents.
         """
         selected = tuple(Path(path) for path in paths)
+        content_paths = frozenset(_content_paths or ())
+        if not content_paths.issubset(selected):
+            raise ValueError("evidence_content_path_not_selected")
         nodes = sorted(
             {node for path in selected for node in (*path.parents, path)},
             key=lambda node: (len(node.parts), str(node)),
         )
+        if _content_paths is not None and len(nodes) > _EVIDENCE_NODES_MAX:
+            raise OSError(errno.EFBIG, "windows_admission_evidence_unavailable")
+        if _writable_path is not None and _writable_path not in nodes:
+            raise ValueError("evidence_volume_path_not_selected")
         for node in nodes:
             if (
                 not node.is_absolute()
@@ -845,8 +927,9 @@ class WindowsOS:
             return {}
         native = _native()
         parents = {node.parent for node in nodes if node.parent != node}
-        handles, identities, observations = {}, {}, {}
+        handles, identities, observations, contents = {}, {}, {}, {}
         opened, failed = [], []
+        remaining_bytes = _EVIDENCE_BYTES_MAX
 
         def named_handle(node):
             record = _AdmissionMetadataHandle(native, node)
@@ -863,6 +946,7 @@ class WindowsOS:
                     parent=handles[node.parent].handle,
                     metadata=True,
                     directory=node in parents,
+                    extra_access=1 if node in content_paths else 0,
                     _metadata_record=record,
                 )
             return record
@@ -914,6 +998,29 @@ class WindowsOS:
                         observed = self._stat_handle(
                             current.handle, with_descriptor=True
                         )
+                        if node == _writable_path and (
+                            type(current.volume_flags) is not int
+                            or current.volume_flags & _READ_ONLY_VOLUME
+                        ):
+                            raise OSError(errno.EROFS, "windows_evidence_volume_unavailable")
+                        if node in content_paths:
+                            if _stat.S_ISDIR(observed[0].st_mode):
+                                contents[node] = (
+                                    "directory",
+                                    tuple(sorted(native.directory_names(current.handle, limit=_EVIDENCE_NAMES_MAX))),
+                                )
+                            elif _stat.S_ISREG(observed[0].st_mode):
+                                digest, length = native.content_digest(current.handle, remaining_bytes)
+                                if length != observed[0].st_size:
+                                    raise OSError(errno.ESTALE, "windows_admission_snapshot_changed")
+                                remaining_bytes -= length
+                                contents[node] = ("file", digest)
+                            else:
+                                raise OSError(errno.EINVAL, "windows_admission_evidence_unavailable")
+                            after = self._stat_handle(current.handle, with_descriptor=True)
+                            if _admission_metadata_stamp(after) != _admission_metadata_stamp(observed):
+                                raise OSError(errno.ESTALE, "windows_admission_snapshot_changed")
+                            observed = after
                     finally:
                         close_handle(current)
                     if failed:
@@ -926,6 +1033,14 @@ class WindowsOS:
                 if identity != identities.get(node):
                     raise OSError(errno.ESTALE, "windows_admission_snapshot_changed")
                 observations[node] = observed
+            if _writable_path is not None and observations[_writable_path] is None:
+                raise OSError(errno.ENOENT, "windows_evidence_volume_unavailable")
+            if _content_paths is not None:
+                return {
+                    path: None if observations[path] is None
+                    else (*observations[path], contents.get(path))
+                    for path in selected
+                }
             return {path: observations[path] for path in selected}
         finally:
             for record in reversed(tuple(opened)):
@@ -1131,33 +1246,8 @@ class WindowsOS:
                 return self.listdir(fd)
             finally:
                 _os.close(fd)
-        native, output = _native(), []
-        buffer = C.create_string_buffer(65536)
-        first = True
-        # FILE_FULL_DIR_INFO has FileNameLength at offset 60, filename at 68.
-        while True:
-            okay = native.kernel.GetFileInformationByHandleEx(
-                native.handle(path), 15 if first else 14, buffer, len(buffer)
-            )
-            first = False
-            if not okay:
-                if C.get_last_error() == 18:
-                    return output
-                raise C.WinError(C.get_last_error())
-            offset = 0
-            while True:
-                next_offset = struct.unpack_from("<I", buffer, offset)[0]
-                length = struct.unpack_from("<I", buffer, offset + 60)[0]
-                if length % 2 or offset + 68 + length > len(buffer):
-                    raise OSError(errno.EIO, "invalid_windows_directory_information")
-                name = buffer[offset + 68 : offset + 68 + length].decode("utf-16-le")
-                if name not in {".", ".."}:
-                    output.append(name)
-                if not next_offset:
-                    break
-                if next_offset < 68 or offset + next_offset >= len(buffer):
-                    raise OSError(errno.EIO, "invalid_windows_directory_offset")
-                offset += next_offset
+        native = _native()
+        return native.directory_names(native.handle(path))
 
     def scandir(self, path="."):
         # Recovery callers need names only. Intentionally no misleading path or
