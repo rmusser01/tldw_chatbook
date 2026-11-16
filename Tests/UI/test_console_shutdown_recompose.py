@@ -73,12 +73,14 @@ async def test_bounded_reconcile_retires_while_shutdown_drains_owner(
             closing_reconciles.append(True)
         return original()
 
+    callback_started = asyncio.Event()
     callback_release, callback_delivered = asyncio.Event(), asyncio.Event()
     queued_callbacks = []
     original_schedule = section.call_after_refresh
     original_callback = section._run_scheduled_reconcile
 
     async def deliver_queued_callback():
+        callback_started.set()
         await callback_release.wait()
         assert not callback_delivered.is_set(), "queued callback delivered twice"
         try:
@@ -126,7 +128,6 @@ async def test_bounded_reconcile_retires_while_shutdown_drains_owner(
             while section._reconcile_scheduled:
                 await pilot.pause()
         monkeypatch.setattr(section, "_reconcile", observe_reconcile)
-        observer = asyncio.create_task(check_held_shutdown())
         # Queue while attached; deliver the original callback after shutdown.
         assert section.is_attached
         assert not section._reconcile_scheduled
@@ -135,6 +136,16 @@ async def test_bounded_reconcile_retires_while_shutdown_drains_owner(
             section.set_allocation(5)
         assert len(queued_callbacks) == 1
         assert section._reconcile_scheduled
+        try:
+            # Refresh stops during shutdown. Start Textual's delivery first,
+            # retaining the original callback behind the explicit release.
+            async with asyncio.timeout(2):
+                await callback_started.wait()
+        except BaseException:
+            callback_release.set()
+            release.set()
+            raise
+        observer = asyncio.create_task(check_held_shutdown())
     await observer
     assert app._exception is None
 

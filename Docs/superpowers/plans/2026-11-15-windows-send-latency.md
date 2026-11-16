@@ -1711,3 +1711,51 @@ read-only policy, public exports, inventories or CI selection. It ran no tests
 and makes no speed claim. The current Linux 3.12 tool job exhausted its existing
 15-minute job budget after checkout consumed 11m21s; dependency installation took
 21s and earlier tool groups passed. Do not widen test or job timeouts for that run.
+
+### Shutdown fixture delivery precondition
+
+The af2 integrated run passes 13 checks, including both immediate-feedback and
+Waiting/Streaming routes, but both bounded-reconcile cases time out specifically
+at callback_delivered.wait after the real shutdown owner has entered. Merely
+queuing call_after_refresh does not establish that Textual started delivery before
+shutdown freezes refresh. Establish that setup precondition on the original
+message pump before closing the app, then release the original callback during
+the held drain. Preserve the original two-second shutdown readiness budget and
+50ms observation, all mount/currentness checks, and cleanup on failed setup.
+ADR required: no. Test-only scheduling correction; no product boundary changes.
+
+All three original shutdown cases pass in 11.94s after that setup correction
+(pr3534-shutdown-delivery-green-1), with fixed source/HEAD. The original callback
+is delivered exactly once on Textual's message pump during the held drain;
+the 2s/50ms limits remain unchanged. The integrated af2 run's other 13 checks
+passed, including both Sending/input and Waiting/Streaming variants plus final
+CI target disjointness and node resolution.
+
+### Preparing fallback attribution (2026-11-16, investigation)
+
+The original-callback v5 capture completes all three turns in69.90s with fixed
+af2 source/HEAD, valid adapter cutoffs, no observer errors or cap overflow, and
+complete restoration. Its instrumented Send times6.933/7.213/5.983s are not quiet
+acceptance. Preparation entry to its first yield takes0.406/0.114/0.117s; the
+post-save hook admission takes0.825/0.640/0.386s. These do not include or explain
+all later native execution admission. Readiness starts6/7/5 refreshes before
+dispatch; all except the first cold launches in turns1/2 have current inputs,
+no tokenizer demand, and an expired refresh-ahead age. The caller chains include
+FULL reconciliation, so suppressing refresh inside an already-qualified Preparing
+task alone is not a demonstrated fix.
+
+The v6 return-location capture exhausts its64 detail rows on repeated successes;
+its later rejection details are incomplete. The v7 diagnostic aggregates repeated
+function/line/category outcomes within that same64 distinct-row cap. All three
+adapter windows remain valid, with no errors or cap overflow and unchanged source.
+It records promoted-publication predicate failures2/4/5 times and hundreds of
+successful Preparing rechecks. Timing23.783/14.078/17.157s is instrumented evidence,
+not acceptance or a causal performance comparison. The native run passes in167.78s.
+The runtime custody wrappers and final adapter do not replace the checked display
+methods; there is no evidence of persistent harness-induced disqualification.
+
+Next distinguish missing completed publication and FULL-relevant lifecycle/config
+changes from transcript-only changes at that original predicate. Equal age-only
+readiness refreshes do not publish a new presentation revision. No product refresh
+suppression, new authority shortcut, timing-budget change or merge qualification
+is selected from these observations.

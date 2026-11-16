@@ -2924,3 +2924,32 @@ dependency closure after actual status behavior passed. Move the unchanged enum
 and two result dataclasses to a dependency-leaf module, retaining the original
 transport exports. Native and hosted checks plus fresh whole-Send measurements
 remain required; the import duration is not an end-to-end saving claim.
+
+**Age-only readiness refresh during preparation (under investigation, 2026-11-16).**
+The original-code diagnostic observes 6/5/7 completed display-readiness reads
+before the provider adapter. The projection can refresh for changed inputs, age,
+or tokenizer demand, so these counts alone do not identify avoidable work. The
+existing qualified Preparing path already skips FULL warm-up and rewarming.
+Record the actual launch cause and producer before selecting an age-only
+deferral; preserve cold/input/tokenizer work, explicit FULL and expired-proof
+refusal. No global suspension, authority reuse, or longer freshness budget is
+selected. Source anchors: ConsoleReadinessConfigProjection.run and the existing
+Preparing branches in ChatScreen._sync_native_console_chat_ui.
+
+The v5 capture records6/7/5 scheduled refreshes, mostly age-only with current
+inputs and no tokenizer demand. Many originate from FULL reconciliation; the
+later bounded v7 capture identifies2/4/5 failures of the promoted completed-display
+predicate alongside successful Preparing rechecks. Do not select suppression
+inside a path those calls cannot enter. Distinguish transcript-only invalidation
+from absent publication or lifecycle/config/fleet changes first. Equal age-only
+readiness refreshes do not increment the publication revision. The v7 times
+23.783/14.078/17.157s are instrumented and remain outside acceptance evidence.
+
+**Separate transcript refresh from FULL invalidation (under investigation).**
+The current promoted predicate requires both unchanged completed FULL metadata
+and an unchanged transcript publication before selecting even the existing long
+Preparing update. A transcript-only change may need that long tabs/transcript
+update rather than another FULL configuration pass. Observe the original failed
+comparison before changing this boundary. Missing/currentness evidence and actual
+config, lifecycle, fleet, owner or explicit FULL changes must retain their checks;
+the complete publication gate must still govern any skipped transcript work.

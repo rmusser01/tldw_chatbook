@@ -25712,3 +25712,17 @@ label copy and unmasked live-row lookup errors. TASK-41218 landed while this
 independent fix awaited integration; retain its merged guard and validate it
 with both regression sets rather than replacing it with a competing guard.
 
+
+
+## Enter a queued callback before freezing its delivery mechanism (PR3534, 2026-11-16)
+
+The af2 Windows feedback/shutdown run passed both Send feedback routes but both
+bounded-section shutdown controls timed out at callback_delivered.wait, after
+the real lifecycle drain had entered. Queuing call_after_refresh did not prove
+Textual had started delivery before shutdown stopped refresh. The test now waits
+for the original message-pump delivery to enter during setup, retains its actual
+callback behind a release, and invokes it exactly once during the held drain. All
+three shutdown cases pass in11.94s with the original2s shutdown-readiness and50ms
+observation bounds. This qualifies the controlled shutdown interleaving, not
+natural callback-delivery latency. Receipts: pr3534-af2-feedback-shutdown-1 and
+pr3534-shutdown-delivery-green-1 under claude-watch-final-gate-review.
