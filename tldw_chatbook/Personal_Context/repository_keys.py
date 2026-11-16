@@ -19,6 +19,7 @@ import secrets
 import sqlite3
 from collections.abc import Iterator
 from contextlib import closing, contextmanager, suppress
+from pathlib import Path
 
 from .key_protector import (
     ProfileKeyMaterial,
@@ -61,6 +62,33 @@ def _locked(message: str, reason: str) -> ProfileLockedError:
     return error
 
 
+def stored_restore_marker(db_path: Path) -> str | None:
+    """A live profile's restore marker, read-only; None for anything else.
+
+    The repository reads it when no secure keyring exists, so a restore's
+    reason shows instead of the keyring's refusal (TASK-40136). It never
+    creates the database.
+    """
+    from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+
+    if not Path(db_path).exists():
+        return None
+    try:
+        with closing(
+            connect_private_sqlite(
+                "recovery.personal_context.repository", db_path, read_only=True
+            )
+        ) as connection:
+            row = connection.execute(
+                "SELECT key_account FROM profile_meta "
+                "WHERE singleton = 1 AND destroyed = 0"
+            ).fetchone()
+    except (OSError, ValueError, sqlite3.Error):
+        return None
+    stored = None if row is None else row[0]
+    return stored if isinstance(stored, str) and stored.startswith(RESTORE_MARKER) else None
+
+
 class RepositoryKeyCustody:
     """Key-account lookup, provisioning and removal for the repository."""
 
@@ -88,8 +116,6 @@ class RepositoryKeyCustody:
         try:
             return keyring_protector()
         except ProfileLockedError as refusal:
-            from .recovery import stored_restore_marker
-
             stored = stored_restore_marker(self.db_path)
             if stored is not None:
                 self._named_key_account(stored)  # raises the marker's reason

@@ -43,6 +43,8 @@ from tldw_chatbook.Backup_Recovery.models import (
 )
 from tldw_chatbook.DB.recovery_operations import _SQLiteDeclaration
 
+from .repository_keys import stored_restore_marker as stored_restore_marker
+
 OWNER = "personal_context.repository"
 LEAF = "tldw_chatbook_personal_context.db"
 FIRST_LINK_IN_PROGRESS = "personal_context_first_link_in_progress"
@@ -560,33 +562,6 @@ def install_restored_keys(archive, doc, plan, candidate: Path) -> None:
             raise ValueError("personal_context_key_account_in_use")
         if protector.load(account) != material:
             raise ValueError("personal_context_key_install_failed")
-
-
-def stored_restore_marker(db_path: Path) -> str | None:
-    """A live profile's restore marker, read-only; None for anything else.
-
-    The repository reads it when no secure keyring exists, so a restore's
-    reason shows instead of the keyring's refusal (TASK-40136). It never
-    creates the database.
-    """
-    from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
-
-    if not Path(db_path).exists():
-        return None
-    try:
-        with closing(
-            connect_private_sqlite(
-                "recovery.personal_context.repository", db_path, read_only=True
-            )
-        ) as connection:
-            row = connection.execute(
-                "SELECT key_account FROM profile_meta "
-                "WHERE singleton = 1 AND destroyed = 0"
-            ).fetchone()
-    except (OSError, ValueError, sqlite3.Error):
-        return None
-    stored = None if row is None else row[0]
-    return stored if isinstance(stored, str) and stored.startswith(MARKER) else None
 
 
 def forget_restored_keys(plan, candidate: Path) -> None:

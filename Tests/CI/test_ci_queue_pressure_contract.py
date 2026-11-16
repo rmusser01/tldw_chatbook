@@ -363,6 +363,7 @@ FAST_LANE_TARGETS = (
     "Tests/Backup_Recovery/test_windows_evidence_lifetime.py",
     "Tests/Backup_Recovery/test_activation_control_observation.py",
     "Tests/Backup_Recovery/test_activation_control_restrictions.py",
+    "Tests/Personal_Context/test_restore_marker_imports.py",
 )
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.

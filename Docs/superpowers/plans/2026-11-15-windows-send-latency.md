@@ -1628,3 +1628,16 @@ semantics and actual storage ownership; no new cache or service boundary.
 4. Verify the original regression, restored-key reason/readonly cases, relevant
    backup behavior and static boundaries, then repeat quiet Windows Send.
    Keep all native runs sequential and the six-second merge gate unchanged.
+
+Task3v original-source regression fails only the final import assertion after
+actual locked status and absent-database non-creation pass (4.61s). The moved
+reader has identical AST except the existing equivalent marker constant name.
+The original regression, restored marker reasons across restarts, readonly keyring
+fallback cases and updated CI selection pass150 cases in27.41s. Quiet Enter then
+measures6.276/5.742/4.696s (pr3534-marker-quiet-enter-1,61.43s), with source and HEAD
+fixed. Cold Send still misses six seconds; no release gate is satisfied.
+
+GitHub reports the published a676555a66 checkpoint conflicts with current dev
+5e3c8b2bd4 and has scheduled no new pull_request runs. Preserve a local checkpoint,
+rebase onto current dev, resolve the actual conflicts and reverify affected
+boundaries before pushing. Auto-merge remains off throughout integration.

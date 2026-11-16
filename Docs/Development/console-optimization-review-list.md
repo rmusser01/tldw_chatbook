@@ -2902,3 +2902,21 @@ preserving each projection and actual native owner. Source tracing shows the
 ordinary benchmark setup is unbound, whose successful reuse already has one
 selector batch. Do not select this bound-profile optimization to explain or fix
 the measured ordinary Send delay; qualify its own workload before reconsidering.
+
+**Task3v — read restore markers without loading backup catalogs (selected,2026-11-16).**
+The actual missing-keyring path imports Personal_Context.recovery solely for its
+read-only marker helper, loading DB.recovery_operations with it (0.541s inclusive
+in the current cold diagnostic). Move the same helper beside repository key
+custody, retaining the recovery module's public export and identical SQL/refusal
+behavior. Original-source import RED and150 targeted checks qualify the change.
+Quiet Enter6.276/5.742/4.696s still misses the cold-send gate; host variation and
+the instrumented preceding run prevent claiming a causal whole-Send saving.
+
+**Cold SSH status dependencies (deferred,2026-11-16).**
+The local-only first-request planner imports remote_binding_status, which imports
+transport result types and thereby the worker bundle (0.231s inclusive status
+import;0.139s bundle import in the current diagnostic). A data-only result/type
+module could separate status rendering from transport implementation. Existing
+transport registration and public imports must remain compatible; no blind
+lazy wrapper or identity-check replacement is selected. Measure the dependency
+separately if cold latency still requires it after current-dev integration.
