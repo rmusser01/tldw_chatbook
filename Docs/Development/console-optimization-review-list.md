@@ -2874,3 +2874,11 @@ not content equivalence. Any Windows extension of existing hold-local evidence
 must freshly check bounded file contents and relevant directory membership on
 every reuse, or keep the original derivation. No metadata-only flag is enabled.
 Primary contracts: Microsoft's FILE_BASIC_INFORMATION and File Times documentation.
+
+Both native premises are now qualified in pr3534-windows-content-premises-1
+(2passed,23.55s): original full acquisition refuses the hidden registry edit and
+new pending membership despite equal old metadata/SD, then accepts restored inputs
+with actual exclusion and physical retirement. Task3t's bounded fresh-content
+candidate remains unintegrated pending independent review and quiet measurements
+of the simpler readiness/rebased checkpoint. New callable/code attestation in
+that candidate was rejected; existing real resource ownership remains required.

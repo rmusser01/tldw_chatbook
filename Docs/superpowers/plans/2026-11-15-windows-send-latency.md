@@ -1464,3 +1464,37 @@ on dev. Preserve that unresolved case. Correcting the execution namespace probe
 then passes all7 startup/next-owner/refusal controls in
 pr3534-notes-execution-fixtures-green-1. Its8 Notes failures are separately
 identified as unsupported Windows writes, not waived as passing controls.
+
+The native timestamp/content premises pass both original cases in23.55s
+(pr3534-windows-content-premises-1): a same-size registry edit with suppressed
+timestamps and a new pending entry with restored directory times leave the old
+metadata/SD projection equal, yet the original full acquisition correctly refuses.
+Restoration, real payload and physical retirement also pass. This rules out
+metadata-only reuse; it does not qualify the proposed fresh-content path.
+
+Mounted feedback/shutdown verification passes11 cases in259.66s, including both
+input routes'100ms feedback and complete Waiting/Streaming journeys, both shutdown
+variants, terminal settlement and transcript publication controls. Two inherited
+FULL replay observers incorrectly require Worker._work to be a coroutine, although
+both actual producers pass a bound async method. Correct only that observer to
+require the original bound method and exact screen; all37 assertion ASTs and5s/15s
+deadlines remain unchanged. Both cases then pass in72.39s after a conflict-free
+rebase onto dev3917e2d0cb (pr3534-rebased-replay-observer-1). Product code is unchanged
+by that test correction. New quiet timings and final integration remain required.
+
+Task3t review rejects new callable/code identity gates. Call the configured
+platform capability directly, declining unsupported optional evidence to the full
+route only after positive retirement. Keep actual hold/filesystem/currentness
+checks; do not raise identity ratchets or attest private implementation helpers.
+
+Quiet rebased measurements remain above the gate: Enter16.539/11.812/12.932s
+(pr3534-rebased-ready-enter-1,126.27s) and button13.708/11.782/10.263s
+(pr3534-rebased-ready-button-1,105.33s). All six turns save, reply and settle;
+full-default profiles and source/HEAD remain fixed per run. This does not establish
+a causal improvement over prior unmatched runs. Continue Task3t qualification.
+
+Incoming dev's two raw-shell ownership cases failed in hosted fixture setup before
+shell behavior because the isolated config was not selected. Selecting that
+fixture's actual config before real WorkspaceDB/registry construction preserves
+all assertions and makes both cases pass in8.53s on rebased Windows
+(pr3534-rebased-raw-shell-fixture-1). Hosted confirmation remains required.

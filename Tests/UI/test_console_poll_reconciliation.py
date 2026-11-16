@@ -1058,9 +1058,14 @@ async def test_full_request_during_poll_await_replays_with_current_owner(
                     return
                 assert type(value) is Worker
                 work, task = value._work, value._task
-                # The same FULL task also starts unrelated display workers.
-                # Select the issued FULL body before asserting its route.
-                if not inspect.iscoroutine(work) or work.cr_code is not full_code:
+                # Textual retains the issued bound async callback until
+                # the worker invokes it. Select the original body and owner;
+                # the same FULL task also starts unrelated display workers.
+                if (
+                    not inspect.ismethod(work)
+                    or work.__self__ is not console
+                    or work.__func__ is not ChatScreen._sync_native_console_chat_ui
+                ):
                     return
                 assert frame.f_locals["self"] is case.host.workers
                 assert value.node is console

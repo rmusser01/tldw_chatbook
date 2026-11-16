@@ -2125,6 +2125,13 @@ unqualified storage remain excluded. Keep `_ordinary_hold` Windows-excluded:
 raw/config/activation derived proofs and all live owner/tool permission checks
 continue on their current routes. No watch, TTL or new authority cache is added.
 
+Use the configured platform observation capability directly. Missing or unsupported
+optional evidence returns to full derivation after positive retirement. Function,
+code, defaults or caller identity cannot establish evidence authority; private
+scalar helper replacement is not a supported Windows provider registration API.
+Actual filesystem observations, serving-hold ownership and current state remain
+the authority, consistent with ADR356. Transparent wrappers do not change it.
+
 Native qualification must cover hidden same-size edits, new directory members,
 actual exclusion/retirement, changed permissions/paths/epoch, evidence limits,
 uncertain close and cancellation. Counts cannot qualify whole-Send timing.

@@ -1,5 +1,17 @@
 # Lessons: what counts as evidence a change works
 
+## Textual workers can retain bound async methods (PR3534, 2026-11-16)
+
+The two inherited FULL replay tests failed although their diagnostics recorded
+several successful successor publications. Their monitor admitted only coroutine
+objects from Worker._work; the actual ChatScreen and coalesced-sync producers pass
+bound async methods, which installed Textual retains until invocation. Requiring
+the original method and exact bound screen instead preserved all37 assertion ASTs
+and the5s/15s deadlines; both original cases passed after rebasing onto dev3917.
+Qualify the actual Worker work representation before diagnosing missing dispatch.
+Keep task, producer, current-owner publication and physical lifetime checks; merely
+observing a method or a requested update does not prove its work completed.
+
 ## Qualify worker observers with the production executor and task factory (PR3534,2026-11-16)
 
 The post-save observer's synthetic plain ThreadPoolExecutor check passed, but its
