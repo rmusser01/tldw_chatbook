@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-11-15 21:51'
-updated_date: '2026-11-16 00:05'
+updated_date: '2026-11-16 04:42'
 labels:
   - ci
   - personal-context
@@ -44,9 +44,9 @@ Reason: preserve existing cleanup transactions while replacing fixed-target dyna
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Replaced two fixed three-table DELETE loops with literal SQL in Personal_Context/repository_keys.py and Sync_Interop/sync_state_repository.py. Table order, predicates, bound values, surrounding transactions, outbox shredding and final object deletion are unchanged. The SQL census and its exceptions are unchanged.
+Latest dev 713fa22f92 (#3495) now supplies exact reviewed census evidence for both fixed-target cleanup loops. The rebase adopts those classifications and drops the duplicate production SQL rewrites from this PR; no new census exception or guard relaxation is added here. This documents the plan deviation caused by the upstream repair.
 
-Validation: both complete SQL inventory/cache checks pass; ten damaged-record and interrupted-reencryption cases pass. A real in-memory SQLite smoke check seeded all three restored-identity stores, verified stale review counts refuse without changing data, and verified reviewed clearing empties all three stores. Two broader restart tests fail before reaching the changed operation on this Windows host because their fixture writes an unescaped Windows path into TOML; that limitation is retained in the evidence rather than treated as a product failure. Scoped Ruff and independent review pass.
+Validation on the rebased branch: both complete live-SQL/cached-immutable census checks pass (2 cases). Earlier real SQLite damaged-record/interrupted-reencryption checks passed (10 cases), and the direct restored-identity smoke verified stale-count refusal and atomic clearing. Two broader Windows restart cases fail in their fixture's unescaped TOML path before reaching cleanup; no production DB change remains in this PR. CI-pinned Ruff and independent rebase review pass.
 
-ADR required: no; existing ADR-337 census policy applies. No storage, ownership or security boundary changes.
+ADR required: no; existing ADR-337 census policy applies. Final scope is this audit record; cleanup implementation and reviewed classifications come from dev.
 <!-- SECTION:NOTES:END -->

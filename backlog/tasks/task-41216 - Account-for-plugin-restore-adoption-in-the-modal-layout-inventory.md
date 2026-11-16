@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-11-15 22:36'
-updated_date: '2026-11-16 00:05'
+updated_date: '2026-11-16 04:44'
 labels:
   - ci
   - plugins
@@ -43,9 +43,9 @@ Reason: register an existing shared-shell modal under its established viewport e
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Added PluginRestoreAdoptionModal to the explicit wide-tier inventory exception alongside the other four plugin modals sharing plugin-review-shell. The existing shell uses 90 percent viewport width without a cap; the generic 85 percent tier would shrink it. No widget, stylesheet or token changes.
+Latest dev 713fa22f92 (#3495) now registers PluginRestoreAdoptionModal under the existing shared plugin-review-shell exception. The rebase adopts that entry, so no duplicate modal-registry edit remains in this PR. The shell already uses 90 percent viewport width with no cap, and the generic 85 percent tier would shrink it.
 
-Validation: the full modal-wide-tier module passes, including class coverage, stale exception checks and geometry/live-resize contracts. Scoped Ruff and independent review pass. Only Tests/UI/modal_wide_tier_registry.py changes.
+The full modal-wide-tier module passed with this exact registration, including class coverage, stale exceptions and geometry/live resize. No widget, stylesheet or token change is made for this task. Independent rebase review is clean.
 
-ADR required: no; this records an existing layout treatment.
+ADR required: no; this records and adopts an existing layout treatment.
 <!-- SECTION:NOTES:END -->

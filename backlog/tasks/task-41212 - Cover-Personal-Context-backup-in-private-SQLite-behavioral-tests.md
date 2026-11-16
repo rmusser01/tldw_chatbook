@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-11-15 10:22'
-updated_date: '2026-11-15 19:03'
+updated_date: '2026-11-16 04:42'
 labels:
   - tests
   - ci
@@ -55,9 +55,7 @@ Reason: Test-only coverage for an existing TASK-40134 backup policy, using the e
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Added recovery.personal_context.repository once to COPY_BACKUP_OWNER_IDS. The existing parameterized fixture now creates a real source SQLite database, copies through the registered recovery owner, opens the result read-only and verifies the stored row. The exact registry-completeness assertion is unchanged. Current dev already contains the plugin inventory repair (04b2f1d554) and the Notes delete/Trash publication wait (c3b36b34d5).
+The initial backup-owner completeness failure was reproduced and the Personal Context owner was exercised by the existing real SQLite copy/read-only matrix (26 checks passed). Latest dev 713fa22f92 (#3495) now includes that same owner entry, so the rebase adopts its coverage and this PR retains only the investigation record, with no duplicate DB test change. Existing plugin inventory and Notes Trash-publication repairs are also inherited from dev.
 
-On rebased dev cc6006fcf5, the completeness check first failed with the missing Personal Context owner while the static inventory and original Notes test passed. After the one-line correction, the completeness/new-owner pair passed, then the full copy-owner matrix and completeness check passed all 26 cases. Static capture inventory passed again. The final uninstrumented Notes case passed in 51.17 s. Scoped Ruff, task ID/readability guards and whitespace checks pass. Independent review found no issues in the correction. No new ADR is required because this is test coverage for existing TASK-40134 policy.
-
-Two local repeat runs of the Notes test timed out earlier while opening Loose note4, before deletion; a diagnostic repeat and the final uninstrumented repeat passed. The original None.region signature did not recur. This separate startup timing sensitivity remains recorded for hosted CI qualification, with no timeout increase or speculative helper change. Logs/JUnit are in the private task scratch root C:/Users/GDesktop-1/.codex/pr3524-ci-repair-20261115. Required hosted CI and queue merge remain PR-level integration gates.
+ADR required: no; existing private-SQLite backup policy and behavioral matrix are unchanged. The matrix, static inventory and targeted Notes receipts are retained with the PR investigation evidence.
 <!-- SECTION:NOTES:END -->

@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-11-15 22:32'
-updated_date: '2026-11-16 02:27'
+updated_date: '2026-11-16 04:43'
 labels:
   - ci
   - console
@@ -44,9 +44,9 @@ Reason: keep historical pump-freeze tests on the existing supported compatibilit
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Updated the historical pump-freeze harness to select the supported compatibility route through a forwarding tracked launcher; received-intent custody otherwise bypasses its dispatch recorder. The real resident hook-review request remains exercised. The async answer helper now waits for the enabled button to own focus before driver-style Enter, because Widget.focus schedules app.call_later. All five callers await it. Escape, draft retention, cancellation copy, responsive-pump and exactly-once assertions remain intact. No production runtime or timeout changes.
+Kept latest dev's captured custom-review adapter seam and its busy-controller assertion, removing this branch's duplicate launcher override during rebase. This PR makes the answer helper async and waits for the enabled target to own focus before driver-style Enter, because Widget.focus schedules app.call_later. All five callers await it; Escape, draft retention, cancellation copy, responsive-pump and exactly-once assertions remain intact. No production runtime or timeout changes.
 
-Validation: hosted PR run 43778537684 attempt 2 at 1e34ea961d87e161d029da656f37a396d30666cd passed the complete Console P0 admission-sensitive gate, including all approved and declined Send routes, and all remaining hook-containing UI lanes. That run's only failing test was an unrelated Session Git row-pruning callback. Local fresh approved workbench/declined Enter cases passed, and an isolated diagnostic Send-button case passed. Larger Windows runs recorded intermittent dispatch waits and one uncertain-worker teardown; these are retained in the receipts rather than presented as a clean full Windows run. Scoped Ruff and independent current-source review pass.
+Validation on rebased dev 713fa22f92: all approved and declined routes plus both resident remount/Stop consumers pass locally (11 cases). The earlier hosted PR attempt also passed the full Console P0 gate. CI-pinned Ruff and independent rebase review pass. Earlier Windows timing/retirement failures remain in the receipts; the final rebased targeted run is clean.
 
-Files: Tests/UI/test_console_hook_review_send_freeze.py only. ADR required: no; preserves existing compatibility and resident review boundaries.
+Only Tests/UI/test_console_hook_review_send_freeze.py changes. ADR required: no; existing compatibility and resident-review boundaries are preserved. Adopting dev's seam replaces the duplicate fixture-selection step in the original plan.
 <!-- SECTION:NOTES:END -->

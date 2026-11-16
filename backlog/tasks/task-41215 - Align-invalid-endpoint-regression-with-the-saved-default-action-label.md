@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-11-15 22:35'
-updated_date: '2026-11-16 00:05'
+updated_date: '2026-11-16 04:43'
 labels:
   - ci
   - console
@@ -44,9 +44,9 @@ Reason: propagate the existing contract refusal through Console settings validat
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-The shared Console session validator now appends the existing endpoint_refusal safe reason directly instead of discarding it behind a boolean and generic URL error. Removed the unused wrapper, updated five older generic-copy pins, and corrected the invalid-draft action label expectation. Exact query/suffix refusal reasons, secret redaction and corrected endpoint submission assertions remain intact.
+The shared Console session validator now returns the endpoint contract's safe refusal directly instead of replacing it with generic URL copy. Removed the unused boolean wrapper and updated older copy pins. The rebase preserves dev's new keyboard, readiness, disabled-action and redaction assertions, while the save error retains the precise query/suffix refusal reason.
 
-Validation: eight targeted validator, field-label and full endpoint refusal/correction UI cases pass. Scoped Ruff and independent review pass. Files: Chat/console_session_settings.py, Tests/Chat/test_console_session_settings.py, Tests/UI/test_model_config_field_labels.py and test_console_settings_saved_defaults.py.
+Validation after conflict resolution: seven targeted validator/field-label and full endpoint refusal/correction cases pass. CI-pinned Ruff and independent rebase review pass. Files: Chat/console_session_settings.py, Tests/Chat/test_console_session_settings.py, Tests/UI/test_model_config_field_labels.py and test_console_settings_saved_defaults.py.
 
 ADR required: no; implements TASK-40300 first-safe-contract-error policy without changing accepted endpoints or interfaces.
 <!-- SECTION:NOTES:END -->
