@@ -636,7 +636,7 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-15, CI resync onto cc6006fcf5: incoming custom-endpoint recovery
     # is another -2; exact combined measurement 34,819, with no new allowance.
     # 2026-11-16, resync onto 713fa22f: incoming manual-sync extraction
-    # reduces the combined source by25 more lines; exact pin34,794.
+    # reduces the combined source by 25 more lines; exact pin 34,794.
     "tldw_chatbook/UI/Screens/settings_screen.py": 34794,  # 2026-11-05: +27, a save that writes a koboldcpp endpoint off /api/v1/generate is refused (TASK-36516, owner waiver); 2026-11-06: +74, the stale model, endpoint and provider echo checks (TASK-38975, +7) and one pane at a time at 70 columns and below, with "/" showing the rail (TASK-38953, +67) (owner waiver); 2026-11-10: +36 (exact measurement), a focus the user moves during a same-category pane rebuild or before a landing's deferred focus is kept (TASK-39169) (owner waiver); 2026-11-10: +17 (exact measurement), review r13p-rev1: Textual's focus reset is told from a user's move, and a removed control lands on its rail row (TASK-39169) (owner waiver); 2026-11-10: +5 (exact measurement), review r13p-rev2: a region removes inside its batch and a pane-opener origin counts (TASK-39169) (owner waiver); 2026-11-12, restack onto dev e0186fa10a: dev's 35,852 (+1) plus round 13's +59, measured (owner waiver)
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for

@@ -81,3 +81,19 @@ the same 27 PR cases using the upstream measurement window plus recorded PR
 charges. Review the diagnostic artifact again on final integrated source, then
 push with a lease and continue current-head CI/review monitoring. No merge or
 full local test sweep is requested.
+
+## Further dev integration (2026-11-16)
+
+While the published head's downstream CI waited behind older jobs, dev advanced
+to `713fa22f92a4927e05a724b1aa5761cd7e78b5b0` and introduced two metadata
+conflicts. Preserve the published head on a backup branch, rebase with shared
+rerere and autostash disabled, reconcile the exact Settings size and diagnostic
+inventory, and audit automatic Settings/test/CSS integration. Verify the affected
+manual-sync and ownership cases, architecture guards, CSS reproducibility and
+ordinary inventory check before a leased push. Resume current-head CI/reviews.
+
+ADR required: no new ADR. Existing ADR-303/304/161 and ADR-150 apply; this
+integration preserves established boundaries. The unchanged CI model remains
+governed by ADR-103. [Integration evidence](../qa/2026-11-14-textual-pattern-followups/rebase-713fa22f-2026-11-16.md)
+records the completed local checks; remote results from the previous head remain
+historical evidence.
