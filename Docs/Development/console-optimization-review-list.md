@@ -2733,3 +2733,16 @@ metadata API adds two-pass association proof and uncertain-close ownership; it
 is not a cheap replacement for one parent pin. Historical64-check data attributed
 17.9ms of226ms to security queries, not a current Send saving. No narrower native
 metadata API or change to failure semantics is selected.
+
+**FOLLOWUP37 — group hook permission members (deferred,2026-11-16).**
+The four configuration calls in the original accepted-hook worker already share
+one configuration operation; another outer config scope would add no saving.
+The independent hook-permission raw operation acquires its declared main/lock/
+temporary/parent members separately. Four exactly observed acquisitions total
+0.179540s inside a0.203048s entry; their path identities were not recorded.
+Existing related_paths admission could group the complete declared path set for
+the installed hooks.permissions writer while preserving every native member
+check, file-lock order, source drift and physical retirement. A meaningful
+native4-to1 count regression and member/cleanup/refusal controls would be needed.
+Keep this candidate deferred while the larger post-save owners are attributed;
+the observed interval does not establish an equivalent whole-Send saving.

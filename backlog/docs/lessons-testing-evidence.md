@@ -1,5 +1,18 @@
 # Lessons: what counts as evidence a change works
 
+## Qualify worker observers with the production executor and task factory (PR3534,2026-11-16)
+
+The post-save observer's synthetic plain ThreadPoolExecutor check passed, but its
+first app run linked zero workers. FreshContextExecutor inserts an additional
+Context.run call around asyncio.to_thread's partial, and the app's eager task
+factory starts a retained coroutine before its create_task call returns. The
+corrected observer qualified the actual executor body and both task factories,
+then linked8/9/8 workers and three eager tasks per Send in the live headless run.
+Use exact callable/future/WorkItem/task identities and inspect missing-link
+counts before assigning a worker's time to an awaiting foreground operation.
+Preserve incomplete traces as bounded evidence; matching timestamps alone do
+not establish the call relationship.
+
 ## Entering a redraw is not completing publication (PR3534, 2026-11-15)
 
 The transcript gate tests deliberately omitted the mounted transcript or raised

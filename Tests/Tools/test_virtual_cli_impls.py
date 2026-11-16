@@ -119,6 +119,7 @@ def test_leased_virtual_cli_routes_every_command_once_through_executor(
     assert executor.calls == [(operation, arguments, "read")]
 
 
+@pytest.mark.bootstrap_profile
 def test_leased_cat_limit_zero_calls_executor_once_and_returns_empty_page(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -256,6 +257,7 @@ def test_virtual_cli_rejects_non_array_and_oversized_argv(tmp_path, argv):
         registry.execute("cat", argv)
 
 
+@pytest.mark.bootstrap_profile
 def test_shell_metacharacters_are_literal_path_text(tmp_path):
     registry, workspace = _registry(tmp_path)
     literal_name = "note; echo NOT_A_SHELL.txt"

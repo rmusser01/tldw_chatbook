@@ -1087,3 +1087,59 @@ observation covers both acquisition aliases, direct constructor calls, the exact
 worker and main-thread maintenance queries. Nonempty/no-after-pause assertions,
 payloads, source refusals and native cleanup all remain. Sources/HEAD stay fixed.
 This qualifies correctness and repeated-proof reduction, not dispatch latency.
+
+### Current-dev checkpoint verification (2026-11-16)
+
+ADR required: no. ADR path: existing ADR126/ADR230.
+Reason: correct fixture prerequisites for existing configuration and shutdown
+contracts, without changing product authority or timing thresholds.
+
+The branch is rebased onto dev71e49709 at8ebf1b93 and published, with auto-merge
+off. Census2149 passes. Integrated feedback/shutdown gives15 passes and one
+queued-reconcile flag failure after50ms. Exact dev cases pass; sparse original
+callback observation on this branch also passes both parameters with unchanged
+sources and restored monitoring. Neither pass explains the earlier failure.
+Make the callback-safety test explicitly deliver its actual queued callback
+through Textual after shutdown-owner entry, using the existing two-second
+readiness budget and unchanged50ms observation/assertions. This qualifies the
+shutdown interleaving, not natural compositor latency.
+
+Current CI finds17 Tool Recovery failures at a configuration-source mismatch.
+The same listing and flush controls pass on dev; branch controls refuse the
+retargeted collection-time source. Retain the existing private bootstrap profile
+only for real guarded consumers, preserving tmp_path workspaces, original
+assertions and fail-closed product behavior. The leased-cat control independently
+fails on Windows dev while reading a CRLF file; do not attribute that failure to
+this branch. Verify the corrected files and affected shutdown controls together
+after their independent checks, then publish the qualified corrections.
+
+Post-save diagnostic1 completes all three turns in136.45s with fixed sources.
+Action-to-adapter18.922/14.852/17.467s is instrumented, not a release timing.
+Foreground bodies are observed, but the first observer does not link the
+production FreshContextExecutor wrapping of to_thread or eager retained tasks.
+Do not infer worker causality from proximity; qualify those exact existing
+edges before using worker intervals to select another consolidation.
+
+Checkpoint fixture verification: the three tool files plus shutdown produce
+86 passes/2 failures in57.70s. All17 hosted configuration failures now reach
+their intended assertions. The remaining leased-cat failure is also on dev
+(native file metadata/length validation); no product change is selected here.
+The other failure is the newly explicit initial no-pending-layout precondition:
+the native tree can schedule another reconcile after the shared three pauses.
+Wait for that real callback to retire, bounded separately at2s, before capturing
+the callback under test; never clear its flag manually.
+
+Perf Guard's compiled source adapter lacks the new negative display-publication
+seam and claims every query_one selector exists. Supply only the absent-proof
+result and reject absent widgets, without inventing a runtime or positive proof.
+Its complete source-ownership file plus all shutdown cases pass27/27 in20.12s
+(pr3534-perf-shutdown-fixture-green-1). All existing assertions remain. The50ms
+shutdown observation now starts after confirmed delivery, so it tests callback
+safety rather than natural scheduling latency. Scoped F lint and diff check pass;
+independent review finds no blocking issue. Whole-Send speed remains unqualified.
+
+Post-save diagnostic2 completes all three turns in157.32s with fixed sources.
+The corrected observer links8/9/8 selected workers and three eager retained tasks
+per Send with no missing/ambiguous handoffs. Cold collection integrity passes;
+warm unmatched/reused spans still limit whole-phase attribution. Instrumented
+action-to-adapter20.552/15.014/19.896s is not a quiet release measurement.

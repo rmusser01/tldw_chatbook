@@ -16,6 +16,7 @@ from tldw_chatbook.Utils import platform_files
 
 
 @pytest.mark.parametrize("precondition", ({}, {"expected_absent": True}))
+@pytest.mark.bootstrap_profile
 def test_worker_creates_reads_and_cas_replaces_file(
     tmp_path: Path, precondition
 ) -> None:
@@ -50,6 +51,7 @@ def test_worker_creates_reads_and_cas_replaces_file(
     assert not list(tmp_path.glob(".chatbook-write-*.tmp"))
 
 
+@pytest.mark.bootstrap_profile
 def test_write_preview_and_cas_read_target_past_one_chunk(tmp_path: Path) -> None:
     original = b"x" * (1024 * 1024) + b"tail beyond first chunk\n"
     target = tmp_path / "large.txt"
@@ -65,6 +67,7 @@ def test_write_preview_and_cas_read_target_past_one_chunk(tmp_path: Path) -> Non
 
 
 @pytest.mark.skipif(os.name != "nt", reason="native Windows private file policy")
+@pytest.mark.bootstrap_profile
 def test_windows_writes_keep_native_private_file_policy(tmp_path: Path) -> None:
     target = tmp_path / "file.txt"
     target.write_text("before")
@@ -74,6 +77,7 @@ def test_windows_writes_keep_native_private_file_policy(tmp_path: Path) -> None:
     assert platform_files.os.stat(tmp_path / "new.txt").st_mode & 0o777 == 0o600
 
 
+@pytest.mark.bootstrap_profile
 def test_failed_temp_flush_keeps_target_and_cleans_temp(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -91,6 +95,7 @@ def test_failed_temp_flush_keeps_target_and_cleans_temp(
     assert not list(tmp_path.glob(".chatbook-write-*.tmp"))
 
 
+@pytest.mark.bootstrap_profile
 def test_absent_target_race_does_not_clobber_intervening_file(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -109,6 +114,7 @@ def test_absent_target_race_does_not_clobber_intervening_file(
     assert not list(tmp_path.glob(".chatbook-write-*.tmp"))
 
 
+@pytest.mark.bootstrap_profile
 def test_cas_rejects_inode_replaced_before_commit(tmp_path: Path, monkeypatch) -> None:
     from tldw_chatbook.Tools import local_tool_impls
 
@@ -147,6 +153,7 @@ def test_cas_rejects_inode_replaced_before_commit(tmp_path: Path, monkeypatch) -
 
 
 @pytest.mark.skipif(os.name != "nt", reason="native Windows locked-target replacement")
+@pytest.mark.bootstrap_profile
 def test_windows_cas_retains_target_lock_through_atomic_replace(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -180,6 +187,7 @@ def test_windows_cas_retains_target_lock_through_atomic_replace(
 
 
 @pytest.mark.skipif(os.name != "nt", reason="native Windows junction refusal")
+@pytest.mark.bootstrap_profile
 def test_windows_parent_junction_swap_is_refused_before_mutation(
     tmp_path: Path, monkeypatch
 ) -> None:

@@ -83,6 +83,7 @@ def test_model_schema_discloses_every_supported_usage(tmp_path):
     assert "size" in disclosed.lower()
 
 
+@pytest.mark.bootstrap_profile
 def test_real_worker_long_listing_includes_metadata_and_excludes_protected_entries(
     tmp_path,
 ):
@@ -114,6 +115,7 @@ def test_real_worker_long_listing_includes_metadata_and_excludes_protected_entri
 
 
 @pytest.mark.parametrize("value", [True, False])
+@pytest.mark.bootstrap_profile
 def test_listing_wire_accepts_optional_boolean_in_parent_and_stdlib_decoder(
     tmp_path, value
 ):
@@ -128,6 +130,7 @@ def test_listing_wire_accepts_optional_boolean_in_parent_and_stdlib_decoder(
 
 
 @pytest.mark.parametrize("value", [0, 1, "true", None, [], {}])
+@pytest.mark.bootstrap_profile
 def test_listing_wire_rejects_non_boolean_long_format(tmp_path, value):
     request = WorkspaceToolExecutor(tmp_path)._build_request(
         "fs_list", {"path": "."}, intent="read"
