@@ -685,7 +685,11 @@ the view's own status line to fit on one row instead of wrapping inside 52.
 On a terminal too narrow to show both at once — 60 columns, say — the view takes
 the stage outright: before this, pressing **New** there changed the footer
 to "enter create | esc notes" while the list stayed on screen and **Blank
-note** never appeared at all. Escape returns to the list at the same size.
+note** never appeared at all. Escape (or **‹ Notes**) returns to the list
+at the same size, with nothing open in the work area ("Select a note to edit
+it here.") and focus on the first note row — where opening Notes puts it —
+not in the filter, so the next letter is a list key rather than filter text.
+With no notes yet there is no row, and focus goes to the filter.
 
 Opening this view parks keyboard focus on **Blank note**, so Enter creates
 a note straight away without tabbing to find it; ↑/↓ move between Blank
@@ -710,7 +714,10 @@ Each option names the difference that matters most and is easiest to miss:
 Below them, a third line points at the answer that is on neither button —
 **Folder files**, the mode of this same screen that edits the folder where it
 is and imports nothing; the strip above the canvas is where you switch to it.
-The bar below the chooser holds only **‹ Notes**. Until lasting sync is ready
+The bar below the chooser holds only **‹ Notes**. Escape or **‹ Notes**,
+from the chooser or from **Import once**, returns to the Notes list the way
+leaving the New note view does: nothing open in the work area, and focus on
+the first note row rather than in the filter. Until lasting sync is ready
 on the profile, the second button reads "○ Keep a folder synced" with the line
 "Keeping a folder synced isn't ready on this profile yet. Nearest valid
 action: Import once." under it.

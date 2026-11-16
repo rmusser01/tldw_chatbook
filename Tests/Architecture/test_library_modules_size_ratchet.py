@@ -659,7 +659,9 @@ _BUDGETS: dict[str, int] = {
     # owner reruns on its layout (``_retry_library_notes_scroll_on_layout``):
     # 7425 -> 7440 (measured).
     # 2026-11-13 restack: both changes stacked, measured.
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7442,
+    # 2026-11-15, TASK-41128 (owner decision): leaving Create and Add from
+    # files lands on the Notes page's entry focus: 7442 -> 7454 (measured).
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7454,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_

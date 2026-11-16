@@ -3259,9 +3259,8 @@ class LibraryNotesController:
                 self._library_note_import_controller.cancel()
                 return
             self._library_notes_view = "list"
-            _sync_library_canvas(
-                self, "notes", then=self._focus_library_notes_filter_input
-            )
+            # TASK-41128: Import once is part of Add from files.
+            _sync_library_canvas(self, "notes", then=self._arm_library_list_entry_focus)
             return
         if self._library_notes_sort_choices_visible:
             self._library_notes_sort_choices_visible = False
@@ -5760,6 +5759,11 @@ class LibraryNotesController:
             onboarding_all_empty=self._library_onboarding_all_empty,
         )
         header.update(self._library_header_line(shell.header_line))
+        if leaving_create:
+            # TASK-41128 (owner, 2026-11-15): leaving Create lands on the
+            # Notes page's blank-center entry focus, not in the filter.
+            _sync_library_canvas(self, "notes", then=self._arm_library_list_entry_focus)
+            return True
         identity = LibraryNotesFocusIdentity(
             stage="notes",
             region="create" if entering_create else "navigator",
@@ -6350,15 +6354,23 @@ class LibraryNotesController:
         await self._library_notes_sync_controller.abandon_setup()
         self._supersede_library_notes_navigation()
         self._library_notes_lasting_origin = None
+        # TASK-41128 (owner, 2026-11-15): leaving Add from files lands on the
+        # Notes page's blank-center entry focus. Manage sync folders was not
+        # part of that decision and keeps the filter.
+        land = (
+            self._focus_library_notes_filter_input
+            if self._library_notes_view == "lasting_roots"
+            else self._arm_library_list_entry_focus
+        )
         self._library_notes_view = "list"
-        _sync_library_canvas(self, "notes", then=self._focus_library_notes_filter_input)
+        _sync_library_canvas(self, "notes", then=land)
         return True
     @on(Button.Pressed, "#library-notes-import-back")
     def handle_library_notes_import_back(self, event: Button.Pressed) -> None:
         """Return to Notes while any running import continues off-canvas."""
         event.stop()
         self._library_notes_view = "list"
-        _sync_library_canvas(self, "notes", then=self._focus_library_notes_filter_input)
+        _sync_library_canvas(self, "notes", then=self._arm_library_list_entry_focus)
     @on(LibraryNoteImportCanvas.AddSourceRequested)
     def handle_library_note_import_add_source(
         self, event: LibraryNoteImportCanvas.AddSourceRequested

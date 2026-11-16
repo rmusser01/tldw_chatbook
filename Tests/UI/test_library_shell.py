@@ -34042,6 +34042,28 @@ async def test_library_note_footer_tracks_editor_states_and_ancillary_contents()
         assert screen._notes_state.shortcut_status == ""
 
 
+async def _wait_for_notes_entry_focus_landing(screen, pilot) -> None:
+    """Wait for Notes' entry focus: the first note row (TASK-41128/41129)."""
+
+    def landed() -> bool:
+        focused = screen.focused
+        rows = list(screen.query(".library-notes-row"))
+        return (
+            screen._notes_state.view == "list"
+            and bool(rows)
+            and focused is rows[0]
+        )
+
+    await _wait_for_condition(
+        pilot,
+        landed,
+        message=lambda: (
+            "Notes focus did not land on the first note row: "
+            f"view={screen._notes_state.view!r}, focused={screen.focused!r}."
+        ),
+    )
+
+
 @pytest.mark.asyncio
 async def test_library_note_footer_covers_navigator_create_sync_and_exit() -> None:
     """Navigator substates and sibling Notes stages publish exact local help."""
@@ -34097,17 +34119,19 @@ async def test_library_note_footer_covers_navigator_create_sync_and_exit() -> No
         await wait_footer("enter create | esc notes")
         await pilot.press("escape")
         await _wait_for_selector(screen, pilot, "#library-notes-add-from-files")
-        # TASK-40294: leaving Create and Add-from-files restores the
-        # navigator's "filter" role, and since TASK-34000.40 (N-31) a focused
-        # text field drops the printable keys it would swallow.
-        await wait_footer("esc rail | typing in field")
+        # TASK-41128 (owner, 2026-11-15: "Library notes page/blank center"):
+        # leaving Create or Add from files lands where Notes entry does, on
+        # the first note row -- not in the filter (TASK-40294's pin).
+        await _wait_for_notes_entry_focus_landing(screen, pilot)
+        await wait_footer("n new | / find | g folder | esc rail")
 
         screen.query_one("#library-notes-add-from-files").press()
         await _wait_for_selector(screen, pilot, "#notes-add-import-once")
         await wait_footer("enter act | esc notes")
         await pilot.press("escape")
         await _wait_for_selector(screen, pilot, "#library-notes-filter")
-        await wait_footer("esc rail | typing in field")
+        await _wait_for_notes_entry_focus_landing(screen, pilot)
+        await wait_footer("n new | / find | g folder | esc rail")
 
         await pilot.press("escape")
         await _wait_for_condition(
@@ -34140,6 +34164,83 @@ async def test_library_note_footer_covers_navigator_create_sync_and_exit() -> No
                 "#internal-db-size-indicator",
             )
         )
+
+
+@pytest.mark.asyncio
+async def test_escape_from_create_and_add_from_files_lands_on_the_blank_notes_page() -> None:
+    """TASK-41128: owner, 2026-11-15, "Library notes page/blank center".
+
+    Wide, with the production stylesheet: Escape from Create, from the Add
+    from files chooser and from Import once each return to the Notes page
+    with its center blank ("Select a note to edit it here.") and focus on
+    the first note row, where Notes entry puts it -- never the filter.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_library_notes_compact(screen, pilot, False)
+        screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_NOTES}").press()
+        await _wait_for_selector(screen, pilot, ".library-notes-row")
+
+        async def assert_blank_center_landing(flow: str) -> None:
+            await _wait_for_notes_entry_focus_landing(screen, pilot)
+            await pilot.pause(0.3)
+            assert screen.focused is screen.query(".library-notes-row").first(), flow
+            assert screen.query_one("#library-note-work-empty").display is True, flow
+            assert not screen.query("#library-notes-create-blank"), flow
+
+        screen.query_one("#library-notes-new", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+        await pilot.press("escape")
+        await assert_blank_center_landing("Create")
+
+        screen.query_one("#library-notes-add-from-files", Button).press()
+        await _wait_for_selector(screen, pilot, "#notes-add-import-once")
+        await pilot.press("escape")
+        await assert_blank_center_landing("Add from files")
+
+        screen.query_one("#library-notes-add-from-files", Button).press()
+        await _wait_for_selector(screen, pilot, "#notes-add-import-once")
+        screen.query_one("#notes-add-import-once", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: pilot.app.screen is not screen,
+            message="Import once did not open its picker.",
+        )
+        await pilot.press("escape")
+        await _wait_for_condition(
+            pilot,
+            lambda: pilot.app.screen is screen and screen._notes_state.view == "import",
+            message=lambda: (
+                "Cancelling the picker did not return to Import once: "
+                f"top={pilot.app.screen!r}, view={screen._notes_state.view!r}."
+            ),
+        )
+        await pilot.press("escape")
+        await assert_blank_center_landing("Import once")
+
+        # Import once's ‹ Notes is the same exit as its Escape.
+        screen.query_one("#library-notes-add-from-files", Button).press()
+        await _wait_for_selector(screen, pilot, "#notes-add-import-once")
+        screen.query_one("#notes-add-import-once", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: pilot.app.screen is not screen,
+            message="Import once did not open its picker.",
+        )
+        await pilot.press("escape")
+        await _wait_for_condition(
+            pilot,
+            lambda: pilot.app.screen is screen,
+            message="Cancelling the picker did not return to Library.",
+        )
+        back = await _wait_for_selector(screen, pilot, "#library-notes-import-back")
+        await pilot.click(back)
+        await assert_blank_center_landing("Import once ‹ Notes")
 
 
 def test_library_note_ctrl_s_is_unavailable_while_save_remains_explicit() -> None:
