@@ -1135,6 +1135,16 @@ async def test_restored_profiles_speech_review_approves_voices_alone(
                     "Review it again."
                 )
                 assert pending == ["config", "tts.profile_store", "tts.voices"]
+                # Review r15br-rev1: the refreshed list offers the review again.
+                async with asyncio.timeout(10):
+                    while not (
+                        screen.query("#backup-speech-review")
+                        and screen.query("#backup-approve-speech")
+                        and not screen.query_one(
+                            "#backup-approve-speech", Button
+                        ).disabled
+                    ):
+                        await pilot.pause(0.02)
                 return
             # The refreshed list: speech review gone, settings review still there.
             async with asyncio.timeout(10):
