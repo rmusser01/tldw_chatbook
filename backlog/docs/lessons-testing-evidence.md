@@ -12,6 +12,12 @@
 
 **What to do.** Code that runs while a review exception is in flight must not raise: catch everything and fall back to the old behaviour. Run the real end-to-end path at least once, not only a test that stubs the service's state.
 
+## A drain the test performs by hand is not the product's drain (TASK-41117, 2026-11-16)
+
+**Incident.** `test_runtime_startup_handoff`'s script ran `runtime.retire_local_caches()` and then one blocking `pause.drain(time.monotonic()+1)`. Under load it failed: a Console attention read was mid-open on a worker thread at the pause, and the main thread's ChaChaNotes cache stayed live, so the drain never held. Stack dumps showed the live lease, and the first report called it a product race and proposed changing `retire_current_thread_caches`. It was not one. The only production caller, `runtime_maintenance.monitor_app`, polls the drain and calls `retire_current_thread_caches` again on each turn, within a 30 s budget. `retire_local_caches` deliberately keeps a thread's cache while another thread has an operation on the same store, and `test_runtime_cache_revisit` pins that, so the proposed change would have broken a pinned design. A forced case (the read held mid-open across the pause) failed with the one-shot drain and passed with the monitor's loop.
+
+**What to do.** When a test drives a product sequence by hand and fails, find the production caller of the same calls (`grep` the method names under `tldw_chatbook/`) and compare their loops, deadlines and retries before you call it a product defect. Pin the fix with a case that forces the interleaving, not with load.
+
 ## An archived-tree run proves nothing for a test whose body runs in a child process (TASK-41125, 2026-11-15)
 
 **Incident.** To date when `test_inert_extraction`'s child started failing, a `git archive` tree of an older merge was run through the scratch wrapper with `--rootdir` set to that tree. pytest put the tree first on `sys.path`, so the parent imported the old code (its config log named the archived path), and the node failed at both merges tried with the same `AttributeError` from `admission.py` line 1038. The traceback paths showed the worktree, not the tree: the test's child is `subprocess.run([sys.executable, "-c", script])`, which inherits the wrapper's `PYTHONPATH=<worktree>`, so every child ran today's code. For in-process tests the same runs were valid (the known-profiles UI test really was red at its creation merge).
