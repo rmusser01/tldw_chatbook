@@ -3104,3 +3104,5 @@ Tests/UI/test_console_received_intent_feedback.py::test_actual_send_paints_sendi
 # TASK-41218 (2026-11-15): deferred Session Git row fitting stops during
 # real partial pruning, with the primary retained after the secondary exits.
 Tests/UI/test_library_file_notes_git.py::test_a_git_row_fit_during_partial_removal_ends_quietly
+# TASK-41248: native partial-unmount callback regression and live-row controls.
+Tests/UI/test_library_git_row_shutdown.py

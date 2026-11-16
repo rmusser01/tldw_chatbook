@@ -1084,6 +1084,8 @@ MINIMUM_FILES = 2145
 # TASK-41218 (2026-11-15): append the partial-prune Session Git row fitter
 # regression. The floor is the measured entry count.
 MINIMUM_FILES = 2146
+# TASK-41248 adds the two-case Session Git row shutdown regression module.
+MINIMUM_FILES = 2147
 
 
 def read_census(path: Path) -> list[str]:

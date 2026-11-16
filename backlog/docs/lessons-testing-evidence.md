@@ -25657,3 +25657,14 @@ after its secondary exited, with one child still present.
 detachment. To pin a teardown race, hold one child's real exit and await its
 sibling's exit; a fully removed or childless widget misses partial teardown.
 
+**Independent reproduction (TASK-41248).** PR #3495's UI18 hit the same
+secondary-label `NoMatches`; an unchanged retry passed 108 cases and did not
+establish a fix. [Original failure](https://github.com/rmusser01/tldw_chatbook/actions/runs/43781885976/job/133022539499)
+The additional regression holds the real primary label's Unmount handler and
+a forwarding queued fit. It proves the row is still mounted and attached but
+its pump has stopped, then resumes the original callback. That test reproduced
+the exact failure on the original code; separate live controls check updated
+label copy and unmasked live-row lookup errors. TASK-41218 landed while this
+independent fix awaited integration; retain its merged guard and validate it
+with both regression sets rather than replacing it with a competing guard.
+
