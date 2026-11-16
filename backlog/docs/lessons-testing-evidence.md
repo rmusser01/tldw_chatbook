@@ -1,5 +1,16 @@
 # Lessons: what counts as evidence a change works
 
+## Entering a redraw is not completing publication (PR3534, 2026-11-15)
+
+The transcript gate tests deliberately omitted the mounted transcript or raised
+downstream, swallowed that exception, then relied on a token written before the
+pipeline. They counted entry but could not establish successful publication.
+Moving token assignment after actual success exposed that fixture assumption.
+Mounted fixtures now complete the original pipeline; separate error and exact
+held-refresh cancellation controls fail on the old code and pass after the fix
+(pr3534-promoted-publication-integrated-1). Test completed output before relying
+on a publication token, and test abandoned attempts separately.
+
 ## A `sleep(0)` observer starves worker threads on Linux, and the switch interval does not bound it (TASK-40334, 2026-11-13)
 
 **Incident.** The idle-heap test's old `BusySampler` looped on `await asyncio.sleep(0)`. It failed 13 CI shard-2 jobs and none of about 20 macOS runs or 17 runs in a local Linux 3.12.16 container. In 11 of the 13 the send logged nothing until the test's 15 s wait gave up and stopped the sampler; in the other two a durable commit that takes 0.2 s took 12-14 s. This is the starvation in "A `pilot.pause()` poll can starve a worker thread's config write of the GIL" (TASK-36530), with one difference: there a shorter switch interval helped, here it cannot. The `sleep(0)` loop releases the GIL on every turn, and each release signals the GIL condition (`drop_gil`). That wakes the waiting worker before its timed wait runs out, so it never asks for a hand-off (`take_gil`), and the loop thread, still on-CPU, takes the GIL back first. Linux makes that a spin: a bare `sleep(0)` loop made 112,810 turns on 0.200 s of CPU in 0.2 s, against 457 turns on 0.007 s on macOS, where a zero-timeout `kqueue` still parks the thread. PR3496 (538aad893f) replaced the sampler; after it the mounted test took 7.9-11.8 s in 23 CI shard-2 jobs, against 10.6-34 s before.

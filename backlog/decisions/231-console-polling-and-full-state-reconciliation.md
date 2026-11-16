@@ -106,3 +106,30 @@ the original final FULL, post-await stop predicate and survivor handoff. A narro
 pass cannot complete attachment or terminal settlement. Qualify real Enter/button
 and producer transitions with held original callbacks before release; diagnostics
 or count reductions alone do not satisfy the six-second or feedback contracts.
+
+### Completed promoted display publication — 2026-11-15
+
+Within the accepted sole-stock promoted manual route, a completed original tabs
+and transcript publication may suppress their unchanged routine pipelines. Reuse
+one complete transcript gate, extracted from the existing implementation, rather
+than creating a second partial invalidation key. Retain the exact mounted widget,
+acknowledgement row, deletion arm, run activity, effective memory and current
+visible citation counts. The latter is already an explicit token invalidator.
+Only successful publication on the current widget installs the token; failed,
+cancelled, detached or abandoned attempts retain the previous completed token.
+
+The completed FULL witness also retains existing controller lifecycle,
+presentation publication and fleet-unseen revisions. Capture before publication
+and qualify again after all retained work. Missing, changed or custom/unproved
+publication takes the original route. Preserve speech/H3, draft reconciliation,
+resident feedback, settings/project/workspace attention, archive recovery and
+manual-read scheduling. Always run the original recovery-region synchronization:
+continuation warnings have no complete display revision.
+
+Retain the existing fifteen-call transcript backstop. A short pass advances its
+existing counter once; the forced pass takes the current qualified promoted long
+branch and increments through the original transcript function. No timer or
+budget changes. Short passes mark cadence owed and return False, keeping polling
+and attachment reconciliation live. Explicit FULL, changed sources, provider
+entry, cancellation, background activity and terminal handoff remain original.
+This publication is display evidence only, never authority for actions or I/O.

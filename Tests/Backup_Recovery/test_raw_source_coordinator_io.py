@@ -210,24 +210,21 @@ async def test_maintenance_metadata_gates_do_not_reacquire_during_accepted_pause
     import time
 
     from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
-    from tldw_chatbook.MCP import recovery_activation
+    from Tests.Backup_Recovery.test_mcp_source_lifetimes import (
+        _original_source_acquisitions,
+    )
 
     permission.set_kill_switch(True)
     permission.set_kill_switch(False)
     assert permission.path.exists()
     participant = raw._raw_participant(permission)
     entered, release = threading.Event(), threading.Event()
-    operations, acquisitions = [], []
-    acquire = recovery_activation.acquire_storage
+    operations = []
+    thread_ids = {threading.get_ident()}
     pause = None
 
-    def observed(*args, **kwargs):
-        acquisitions.append(pause is not None)
-        return acquire(*args, **kwargs)
-
-    monkeypatch.setattr(recovery_activation, "acquire_storage", observed)
-
     def update():
+        thread_ids.add(threading.get_ident())
         with raw.scope(permission, "mcp_store", writing=True) as operation:
             operations.append(operation)
             assert raw._states[operation].participant is participant
@@ -235,28 +232,31 @@ async def test_maintenance_metadata_gates_do_not_reacquire_during_accepted_pause
             assert release.wait(10)
             permission.set_kill_switch(True)
 
-    pending = asyncio.create_task(asyncio.to_thread(update))
-    try:
-        assert await asyncio.to_thread(entered.wait, 10)
-        pause = storage._begin_local_pause()
-        participant.close_admission()
-        assert participant.owner_id == "mcp.permissions"
-        assert not participant.drain(time.monotonic() + 0.02)
-        with pytest.raises(RecoveryRequired, match="process_pause_still_active"):
+    with _original_source_acquisitions(
+        permission, lambda: pause is not None, thread_ids=thread_ids
+    ) as acquisitions:
+        pending = asyncio.create_task(asyncio.to_thread(update))
+        try:
+            assert await asyncio.to_thread(entered.wait, 10)
+            pause = storage._begin_local_pause()
+            participant.close_admission()
+            assert participant.owner_id == "mcp.permissions"
+            assert not participant.drain(time.monotonic() + 0.02)
+            with pytest.raises(RecoveryRequired, match="process_pause_still_active"):
+                participant.resume()
+            release.set()
+            await pending
+            assert json.loads(permission.path.read_text())["kill_switch"] is True
+            assert participant.drain(time.monotonic() + 1)
+            assert acquisitions and not any(acquisitions)
+            assert all(operation not in raw._states for operation in operations)
+            assert pause.drain(time.monotonic() + 1)
+        finally:
+            release.set()
+            await asyncio.gather(pending, return_exceptions=True)
+            if pause is not None:
+                pause.resume()
             participant.resume()
-        release.set()
-        await pending
-        assert json.loads(permission.path.read_text())["kill_switch"] is True
-        assert participant.drain(time.monotonic() + 1)
-        assert acquisitions and not any(acquisitions)
-        assert all(operation not in raw._states for operation in operations)
-        assert pause.drain(time.monotonic() + 1)
-    finally:
-        release.set()
-        await asyncio.gather(pending, return_exceptions=True)
-        if pause is not None:
-            pause.resume()
-        participant.resume()
 
 
 @pytest.mark.usefixtures("local_root")

@@ -84,6 +84,14 @@ owner and observes publication inside the original mutation fence. Its final
 native source check still follows publication. This avoids repeated forwarding
 scopes without reusing the result between pre-save, post-save or execution checks.
 
+Nested raw scopes for an installed generation-selected MCP source reuse their
+first complete entry validation instead of repeating the same binding and parent
+proof twice more. The same source, route, native path and participant selection
+must still match; the existing coordinator checks live leases and write scope.
+Original method bodies, later file/effect/final validations and physical cleanup
+remain. Explicit selections and custom/uninstalled sources keep their existing
+route (ADR126; TASK-34601.1).
+
 Finite preparation callbacks temporarily use at most1ms interpreter thread handoffs to reduce scheduling convoys across fresh native reads (TASK-34406.11, ADR230). The existing bookkeeping lock counts overlapping physical callbacks; last exit restores the prior value if still owned. Lower prior or later different external settings remain. This affects interpreter scheduling only: original source, permission, native ownership and cancellation checks are unchanged.
 
 Console presentation avoids an unused leading inspector/rail build before the
@@ -125,8 +133,15 @@ During a sole stock manual turn's promoted preparation, routine polls may reuse
 the existing completed-FULL source and same-owner context display until that
 custody task's own provider request (ADR-231, TASK-34601.1). The controller's
 task/preparation map and store preparation retain ownership; saved clearing and
-new input require a fresh FULL witness. Tabs, original transcript publication,
-acknowledgement, recovery and resident Sending/Waiting feedback remain live.
+new input require a fresh FULL witness. After successful original tabs and
+transcript publication, unchanged polls may omit those two pipelines. Both
+routes share the transcript's complete gate, including the exact widget,
+acknowledgement row, delete arm, run activity, effective memory and visible
+citation counts. Failed/cancelled/retiring publication cannot install the gate.
+The existing fifteenth-call backstop still runs the promoted long pass. Recovery
+and resident Sending/Waiting feedback remain live on every short pass; only
+original publication can acknowledge rendered rows. Changed lifecycle, finite
+presentation or fleet-unseen revisions require fresh publication.
 Routine retrieval, character, readiness/config and rail refreshes stay owed on
 the existing cadence. Unknown/custom sources, input/settings changes, pending
 decisions, explicit FULL, provider entry, cancellation and terminal transitions
@@ -641,6 +656,12 @@ ADR-052 (memory and compaction policy), ADR-314 (indefinite approval waits), ADR
 
 
 ### Learned response rules (ADR232)
+
+Each synchronous `ResponseRuleStore.effective_rules` assembly holds one existing
+finite core operation after registering its context. Original binding/revision
+getters keep separate transactions, scope precedence and error behavior. The
+operation retires before returning; a later generation-boundary call reads
+freshly. This groups native admission without caching rules across awaits.
 
 The app-owned `ConsoleRuntime.ensure_response_rules` lazily binds the shared rule repository, helper pool, queue and controller on first native generation or manager access. `set_chat_controller` installs the lazy factory even for non-screen assembly. `response_rules/generation.py` holds successful completion until required lifecycle settlement and assessment; app shutdown drains retained preparation, transport and finite SQLite callbacks before retiring their owners. `response_rules/chat_state.py` stores native source fences and body-free tool evidence through `ConsoleChatStore` facades. `console_tool_result_observation.py` composes the existing Watchlists receipt observer with definitive rule facts.
 

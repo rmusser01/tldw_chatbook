@@ -8,6 +8,7 @@ from contextlib import ExitStack, contextmanager, nullcontext
 from dataclasses import asdict, dataclass, field, replace
 from threading import RLock
 
+from tldw_chatbook.Backup_Recovery import participants
 from tldw_chatbook.DB.transaction_observer import (
     current_managed_transaction,
     register_transaction_completion,
@@ -212,28 +213,29 @@ class ResponseRuleStore:
         """Resolve exact revisions with Chat exclusions and scope precedence."""
         with self._lock:
             self.register_context(chat, workspace, global_scope)
-            bindings = tuple(
-                b
-                for scope in (chat, workspace, global_scope)
-                if scope is not None
-                for b in self.list_bindings(scope)
-            )
-            revisions = []
-            for binding in bindings:
-                if binding.revision is not None:
-                    try:
-                        revisions.append(
-                            self.get_revision(binding.rule_id, binding.revision)
-                        )
-                    except KeyError:
-                        pass
-            return resolve_effective_rules(
-                bindings,
-                tuple(revisions),
-                chat=chat,
-                workspace=workspace,
-                global_scope=global_scope,
-            )
+            with participants.core_operation(self.repository.db):
+                bindings = tuple(
+                    b
+                    for scope in (chat, workspace, global_scope)
+                    if scope is not None
+                    for b in self.list_bindings(scope)
+                )
+                revisions = []
+                for binding in bindings:
+                    if binding.revision is not None:
+                        try:
+                            revisions.append(
+                                self.get_revision(binding.rule_id, binding.revision)
+                            )
+                        except KeyError:
+                            pass
+                return resolve_effective_rules(
+                    bindings,
+                    tuple(revisions),
+                    chat=chat,
+                    workspace=workspace,
+                    global_scope=global_scope,
+                )
 
     @contextmanager
     def _write_cursor(self, fence: ExitStack, admission_lock=None, *, durable=True):

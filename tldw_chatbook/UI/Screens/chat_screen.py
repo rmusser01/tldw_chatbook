@@ -178,6 +178,7 @@ from ..Console_Modules.retrieval import (
 )
 from ..Console_Modules.transcript import (
     _ConsoleTranscriptReadingState,
+    console_transcript_sync_gate,
     note_console_conversation_painted,
     prepare_change_review_projection,
     request_console_heap_refreeze,
@@ -16974,7 +16975,8 @@ class ChatScreen(BaseAppScreen):
                 skips as a no-op until the user's next send.
 
         Returns:
-            False if the transcript read was deferred or the screen closed.
+            True for a completed current publication or its unchanged gate;
+            False if deferred or the captured publication changed or closed.
         """
         if not await prepare_change_review_projection(self, _console_screen_is_torn_down):
             return False
@@ -17032,104 +17034,44 @@ class ChatScreen(BaseAppScreen):
                 logger.warning("Console effective-memory presentation selection failed")
         if region := self._console_transcript_region_or_none():
             region.sync_recovery()
-        if store is not None:
-            session_id = store.active_session_id
+        gate_memory = effective_memory
+        gate = console_transcript_sync_gate(self, transcript, gate_memory)
+        publication_visit = (
+            self._current_console_attach_visit() if type(self) is ChatScreen else None
+        )
+
+        def publication_is_current() -> bool:
+            if (
+                (type(self) is ChatScreen and _console_screen_is_torn_down(self))
+                or transcript is None
+                or getattr(transcript, "_closing", False) is True
+                or getattr(transcript, "_pruning", False) is True
+                or not getattr(transcript, "is_mounted", True)
+                or not getattr(transcript, "is_attached", True)
+            ):
+                return False
             try:
-                token = (
-                    None
-                    if session_id is None
-                    else store.display_projection_revision(session_id)
-                )
-            except Exception:  # noqa: BLE001 - unknown session: never gate
-                token = object()
-            try:
-                projection_key = self._change_review_projection.revision_key()
-            except Exception:  # noqa: BLE001 - torn-down runtime: never gate
-                projection_key = object()
-            # Run-activity component (task-34958 review follow-up): the
-            # turn-activity line, the jump-indicator chip and the abandon
-            # affordance all read the controller's per-session run state and
-            # approval-round registry, neither of which bumps the store's
-            # display token -- during a store-quiet run period (long tool
-            # call, approval wait) the gate would otherwise hold those frozen
-            # for up to the 15-tick forced-pass bound. The pending-round KIND
-            # set joins them: a question escalating to (or being joined by)
-            # an approval round flips the waiting copy ("Waiting for your
-            # answer" -> "Waiting for your approval") while the registry-
-            # presence bool below already reads True, so presence alone
-            # cannot see the flip. All reads are O(1)-ish (frozen dataclass,
-            # bool, registry-keyed kind set, no content hashing); the except
-            # keeps partial controller doubles fail-open like the reads
-            # above.
-            try:
-                controller = getattr(self, "_console_chat_controller", None)
-                if controller is None or session_id is None:
-                    run_activity = None
-                else:
-                    run_activity = (
-                        controller.run_state_for(session_id),
-                        bool(controller.has_pending_approval_round(session_id)),
-                        controller.pending_round_kinds(session_id),
-                    )
-            except Exception:  # noqa: BLE001 - unknown controller: never gate
-                run_activity = object()
-            # Armed row-scoped delete confirmation (task-33628.2). Arming,
-            # re-arming, cancelling or clearing the pending delete flips the
-            # selected row's action bar (the confirm/cancel pair) WITHOUT
-            # touching the store, so the display token above cannot see it:
-            # a store-quiet arm used to be skipped as a token-equal no-op and
-            # the row froze pre-confirmation, because every later tick gated
-            # on the same token. The component mirrors the message
-            # controller's ``pending_delete_scope`` truth table -- the scope
-            # only renders while the pending id still matches it -- so a
-            # cleared pending id reopens the gate even when the scope object
-            # lags. getattr defaults (both attributes are initialized in the
-            # controller, so ``None`` here only reads as "nothing armed" for
-            # partial test doubles): frozen-dataclass equality over a few
-            # attribute reads, O(1), same class as the components above.
-            try:
-                delete_host = self._message
-                delete_pending = getattr(
-                    delete_host, "_pending_console_delete_message_id", None
-                )
-                delete_scope = getattr(delete_host, "_console_delete_scope", None)
-                delete_arm = (
-                    None
-                    if (
-                        delete_scope is None
-                        or delete_pending is None
-                        or delete_scope.message_id != delete_pending
-                    )
-                    else delete_scope
-                )
-            except Exception:  # noqa: BLE001 - no message controller: never gate
-                delete_arm = object()
-            gate = (
-                session_id,
-                token,
-                projection_key,
-                # The pending row, not the ack object: a release repaints (33620.1).
-                (ack := getattr(self, "_console_send_ack", None))
-                and ack.pending_row_id(session_id),
-                run_activity,
-                delete_arm,
-                # Existing finite context publication must reopen a quiet
-                # transcript after cold preparation, without holding chunks.
-                effective_memory,
+                if self.query_one("#console-native-transcript", ConsoleTranscript) is not transcript:
+                    return False
+            except QueryError:
+                return False
+            return (
+                (publication_visit is None or publication_visit.can_complete(
+                    self._current_console_attach_visit()
+                ))
+                and gate == console_transcript_sync_gate(self, transcript, gate_memory)
             )
-            # getattr fail-open: bare test shells build this screen via
-            # __new__ and do not run __init__ (review finding).
+
+        if store is not None:
             ticks = getattr(self, "_console_transcript_sync_ticks", 0) + 1
             self._console_transcript_sync_ticks = ticks
             forced = ticks % 15 == 0
             if (
-                not force
-                and not forced
-                and gate
-                == getattr(self, "_console_transcript_sync_token", None)
+                not force and not forced and gate is not None
+                and gate == getattr(self, "_console_transcript_sync_token", None)
+                and publication_is_current()
             ):
-                return
-            self._console_transcript_sync_token = gate
+                return True
 
         active_messages = self._message._native_console_messages()
         messages = self._change_review_projection.project(active_messages)
@@ -17319,6 +17261,8 @@ class ChatScreen(BaseAppScreen):
             )
             if refresh_key != self._last_native_transcript_refresh_key:
                 await transcript.refresh_messages()
+                if not publication_is_current():
+                    return False
                 active_session = getattr(store, "_sessions", {}).get(
                     store.active_session_id
                 )
@@ -17349,7 +17293,11 @@ class ChatScreen(BaseAppScreen):
             self._last_native_transcript_session_id = (
                 self._ensure_console_chat_store().active_session_id
             )
-            return
+            if not publication_is_current():
+                return False
+            if gate is not None:
+                self._console_transcript_sync_token = gate
+            return True
 
     def _clear_native_console_message_selection(self) -> None:
         """Dismiss contextual message actions when an action changes the transcript flow."""
@@ -17665,7 +17613,11 @@ class ChatScreen(BaseAppScreen):
         visit = self._current_console_attach_visit()
         poll_record = run_controls.preparing_poll_record(self) if _preparing_poll else None
         promoted_poll = poll_record is not None and poll_record.request is not None
+        # The original fifteenth transcript call remains the media backstop.
+        short_poll = promoted_poll and (self._console_transcript_sync_ticks + 1) % 15 != 0
         full_source = run_controls.poll_source(self) if poll_record is None else None
+        display_before = None
+        tabs_synced = None
         if poll_record is None and type(self) is ChatScreen:
             self._console_completed_full_source = None
         self._console_sync_in_progress = True
@@ -17699,11 +17651,16 @@ class ChatScreen(BaseAppScreen):
             # AC10: publish current tabs before cold presentation reads can
             # defer the rest of FULL. The tab owner revalidates every await.
             if poll_record is None:
-                await self._sync_console_native_session_tabs()
+                display_before = run_controls.poll_display_publication(self, full_source)
+                tabs_synced = await self._sync_console_native_session_tabs()
                 self._sync_console_temporary_chip()  # TASK-37840: capture changes.
-            elif await self._sync_console_native_session_tabs(_preparing_record=poll_record) is False:
-                self._console_sync_requested = True
-                return False
+            elif not short_poll:
+                tabs_synced = await self._sync_console_native_session_tabs(
+                    _preparing_record=poll_record
+                )
+                if tabs_synced is False:
+                    self._console_sync_requested = True
+                    return False
             if not poll_is_current():
                 return False
             if not promoted_poll:
@@ -17818,10 +17775,19 @@ class ChatScreen(BaseAppScreen):
                 else:
                     self._sync_console_workspace_context()
                 project_instruction_ui.sync_project_instruction_status_for_screen(self)
-                await asyncio.sleep(0)  # TASK-33628.5.1: rails, transcript: 2 turns
-                if not poll_is_current():
-                    return False
-                transcript_synced = await self._sync_native_console_transcript()
+                if short_poll:
+                    if not poll_is_current():
+                        return False
+                    # Recovery warnings have no complete display revision.
+                    if region := self._console_transcript_region_or_none():
+                        region.sync_recovery()
+                    self._console_transcript_sync_ticks += 1
+                    transcript_synced = True
+                else:
+                    await asyncio.sleep(0)  # TASK-33628.5.1: rails, transcript: 2 turns
+                    if not poll_is_current():
+                        return False
+                    transcript_synced = await self._sync_native_console_transcript()
                 if not poll_is_current():
                     return False
                 if terminal_owner is not None:
@@ -17867,6 +17833,15 @@ class ChatScreen(BaseAppScreen):
                 and run_controls.poll_source_is_current(self, full_source)
                 and run_controls.preparing_poll_inputs_current(self, full_source)
             ):
+                # Keep the existing unpromoted source witness. Only an actually
+                # completed, unchanged display can qualify the promoted shortcut.
+                if (
+                    tabs_synced is True and transcript_synced is True
+                    and display_before is not None
+                    and display_before == run_controls.poll_display_publication(self, full_source)
+                    and display_before[1] == self._console_transcript_sync_token
+                ):
+                    full_source["display_publication"] = display_before
                 self._console_completed_full_source = full_source
             if poll_record is None and self._console_terminal_return_reading is not None:
                 from ..Console_Modules.terminal import restore_returned_reading_after_publication
@@ -18023,7 +17998,7 @@ class ChatScreen(BaseAppScreen):
                     except QueryError:
                         return
                     if current_surface is surface:
-                        return True if _preparing_record is not None else None
+                        return True
                     if _preparing_record is not None:
                         return False
         finally:

@@ -51,6 +51,7 @@ from ...Widgets.Console.console_composer_menu_modal import (
     build_composer_menu_entries,
 )
 from ...Widgets.Console.console_transcript import ConsoleTranscript
+from .transcript import console_transcript_sync_gate
 
 if TYPE_CHECKING:
     from textual.events import Key
@@ -1171,6 +1172,7 @@ def bind_preparing_screen_sources(screen_type) -> None:
         "_ensure_console_chat_controller",
         "_current_console_run_status_value",
         "_sync_console_native_session_tabs",
+        "_sync_native_console_transcript",
         "_sync_native_console_chat_ui",
     )
     records = tuple(
@@ -1322,6 +1324,48 @@ def preparing_poll_inputs_current(self, captured: dict) -> bool:
     return current[0] is before[0] and current[1:] == before[1:]
 
 
+def poll_display_publication(
+    self, source: dict | None, memory_inputs=None
+) -> tuple | None:
+    """Read the current resident display; only a completed FULL may retain it."""
+    from ...Chat.console_fleet_attention import FLEET_UNSEEN_REVISION_ATTR
+    from ...Widgets.Console.console_session_surface import ConsoleSessionSurface
+    from .console_spend_projection import console_transcript_context_inputs
+
+    if source is None:
+        return None
+    try:
+        transcript = self.query_one("#console-native-transcript", ConsoleTranscript)
+        surface = self.query_one("#console-session-surface", ConsoleSessionSurface)
+    except QueryError:
+        return None
+    if (
+        type(transcript) is not ConsoleTranscript
+        or type(surface) is not ConsoleSessionSurface
+        or transcript._closing or transcript._pruning
+        or surface._closing or surface._pruning
+        or not transcript.is_mounted
+        or not transcript.is_attached
+        or not surface.is_mounted
+        or not surface.is_attached
+    ):
+        return None
+    if memory_inputs is None:
+        memory_inputs = console_transcript_context_inputs(
+            self, source["controller"], source["session"].id, refresh=False
+        )
+    cadence = getattr(self, "_console_config_cadence", None)
+    if memory_inputs is None or cadence is None:
+        return None
+    return (
+        surface,
+        console_transcript_sync_gate(self, transcript, memory_inputs[2]),
+        source["controller"]._lifecycle_revision,
+        cadence.published,
+        getattr(source["app"], FLEET_UNSEEN_REVISION_ATTR, 0),
+    )
+
+
 def _promoted_preparing_poll_current(self, source: dict, record) -> bool:
     """Read existing custody/preparation owners; never authorize a Send with UI."""
     from ...Chat.console_chat_models import ConsoleRunStatus
@@ -1364,9 +1408,16 @@ def _promoted_preparing_poll_current(self, source: dict, record) -> bool:
             }
         ):
             return False
-    return console_transcript_context_inputs(
+    memory_inputs = console_transcript_context_inputs(
         self, controller, record.session_id, refresh=False
-    ) is not None
+    )
+    completed = source.get("display_publication")
+    return (
+        memory_inputs is not None
+        and completed is not None
+        and completed == poll_display_publication(self, source, memory_inputs)
+        and completed[1] == self._console_transcript_sync_token
+    )
 
 
 def preparing_poll_record(self):
@@ -1385,6 +1436,7 @@ def preparing_poll_record(self):
     source = getattr(self, "_console_completed_full_source", None)
     if (
         not _preparing_helpers_current()
+        or screen_module.console_transcript_sync_gate is not console_transcript_sync_gate
         or not policy_producers_current()
         or self._console_sync_requested
         or not self._console_attach_sync_complete
@@ -1603,6 +1655,8 @@ _PREPARING_HELPERS = tuple(
         poll_source,
         poll_source_is_current,
         preparing_poll_inputs_current,
+        poll_display_publication,
+        console_transcript_sync_gate,
         _promoted_preparing_poll_current,
         preparing_poll_record,
         sync_poll_display_ui,

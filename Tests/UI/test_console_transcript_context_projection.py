@@ -4,7 +4,7 @@ import asyncio
 import sys
 import threading
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -25,18 +25,37 @@ from tldw_chatbook.Widgets.Console.console_transcript import (
 pytestmark = pytest.mark.bootstrap_profile
 
 
-class BannerPainted(Exception):
-    pass
-
-
 def _transcript_screen(screen, store, controller):
     paints, fetches = [], []
 
     def paint(value):
         paints.append(value)
-        raise BannerPainted
 
+    # Reuse complete downstream collaborators: recording the banner is not
+    # an exception and cannot stand in for successful publication.
+    from Tests.UI.test_console_turn_activity_line import _sync_stub
+
+    downstream, _unused_transcript = _sync_stub("")
+    for name in (
+        "_console_speech_states", "_console_image_preparing", "_image", "_video",
+        "_ensure_console_image_view", "_recent_console_image_messages",
+    ):
+        setattr(screen, name, getattr(downstream, name))
+    screen._native_console_transcript_fingerprint = lambda messages: tuple(
+        (message.id, message.content) for message in messages
+    )
+    screen._current_console_run_status_value = lambda: (
+        controller.run_state_for(store.active_session_id).status.value
+    )
+    screen._rendered_console_terminal_receipts = lambda *_args, **_kwargs: ()
+    screen._console_runtime = lambda: None
+    screen._sync_console_transcript_guidance = lambda: None
+    screen._last_native_transcript_refresh_key = None
+    screen._console_transcript_sync_token = None
+    screen._console_transcript_sync_ticks = 0
     transcript = Mock()
+    transcript.refresh_messages = AsyncMock()
+    transcript.apply_turn_activity.return_value = ""
     transcript.set_memory_banner_presentation.side_effect = paint
     screen.query_one = lambda *_args: transcript
     screen._console_transcript_region_or_none = lambda: None
@@ -75,6 +94,7 @@ def _transcript_screen(screen, store, controller):
     screen._agent = SimpleNamespace(
         console_turn_activity=lambda: None,
         console_turn_activity_abandon_action=lambda: None,
+        sync_unproven_cleanup=lambda *_args: None,
     )
     screen._context_spend = SimpleNamespace(
         _context_inputs=lambda owner,
@@ -86,10 +106,9 @@ def _transcript_screen(screen, store, controller):
 
 
 async def _render(screen, *, force=False):
-    try:
-        await ChatScreen._sync_native_console_transcript(screen, force=force)
-    except BannerPainted:
-        pass
+    await ChatScreen._sync_native_console_transcript(screen, force=force)
+    assert screen._last_native_transcript_refresh_key is not None
+    assert screen._last_native_transcript_session_id == screen._console_chat_store.active_session_id
 
 
 @pytest.mark.asyncio

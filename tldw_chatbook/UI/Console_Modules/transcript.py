@@ -103,6 +103,77 @@ from ...Widgets.Console import ConsoleTranscript
 from .frame import frame_console_region
 
 
+def console_transcript_sync_gate(
+    screen: Any, transcript: Any, effective_memory: Any
+) -> tuple | None:
+    """Describe the existing transcript publication without fetching messages.
+
+    Both the original transcript pipeline and a qualified routine display use
+    this gate. Unknown inputs never match a previous completed publication.
+    """
+    store = screen._console_chat_store
+    if store is None or transcript is None:
+        return None
+    session_id = store.active_session_id
+    try:
+        revision = (
+            None
+            if session_id is None
+            else store.display_projection_revision(session_id)
+        )
+    except Exception:  # noqa: BLE001 - unknown session: never gate
+        revision = object()
+    try:
+        projection_key = screen._change_review_projection.revision_key()
+    except Exception:  # noqa: BLE001 - torn-down runtime: never gate
+        projection_key = object()
+    controller = getattr(screen, "_console_chat_controller", None)
+    try:
+        run_activity = (
+            None
+            if controller is None or session_id is None
+            else (
+                controller.run_state_for(session_id),
+                bool(controller.has_pending_approval_round(session_id)),
+                controller.pending_round_kinds(session_id),
+            )
+        )
+    except Exception:  # noqa: BLE001 - unknown controller: never gate
+        run_activity = object()
+    try:
+        delete_host = screen._message
+        pending = getattr(delete_host, "_pending_console_delete_message_id", None)
+        scope = getattr(delete_host, "_console_delete_scope", None)
+        delete_arm = (
+            scope
+            if scope is not None and pending is not None and scope.message_id == pending
+            else None
+        )
+    except Exception:  # noqa: BLE001 - no message controller: never gate
+        delete_arm = object()
+    return (
+        transcript,
+        store,
+        controller,
+        session_id,
+        revision,
+        projection_key,
+        # These changes do not necessarily advance the store's display revision.
+        (ack := getattr(screen, "_console_send_ack", None))
+        and ack.pending_row_id(session_id),
+        run_activity,
+        delete_arm,
+        effective_memory,
+        tuple(
+            sorted(
+                (message_id, count)
+                for message_id, count in screen._console_citation_counts.items()
+                if type(count) is int and count != 0
+            )
+        ),
+    )
+
+
 class ConsoleChangeReviewProjection:
     """Cache durable Change Review markers for transcript-only projection."""
 

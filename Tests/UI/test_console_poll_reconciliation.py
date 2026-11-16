@@ -362,6 +362,7 @@ async def test_promoted_manual_polls_keep_saved_transcript_without_repeating_rea
         history_entered = False
         full_completions = 0
         active, rows = {}, []
+        proof_probe_task = None
         held_surface = {}
         full_code = ChatScreen._sync_native_console_chat_ui.__code__
 
@@ -390,12 +391,18 @@ async def test_promoted_manual_polls_keep_saved_transcript_without_repeating_rea
             ):
                 full_completions += 1
             timer = case.console._console_transcript_sync_timer
-            if timer is None or asyncio.current_task() is not timer._task:
+            proof_probe = (
+                proof_probe_task is not None and asyncio.current_task() is proof_probe_task
+            )
+            if timer is None or (asyncio.current_task() is not timer._task and not proof_probe):
                 return
             key = id(full)
             if label == "full" and kind == sys.monitoring.events.PY_START:
                 if history_entered:
-                    active[key] = {"tabs": 0, "transcript": 0, "config": 0, "character": 0}
+                    active[key] = {
+                        "tabs": 0, "transcript": 0, "config": 0, "character": 0,
+                        "proof_probe": proof_probe and full.f_locals.get("_preparing_poll") is True,
+                    }
                 return
             row = active.get(key)
             if row is None:
@@ -411,12 +418,13 @@ async def test_promoted_manual_polls_keep_saved_transcript_without_repeating_rea
                 and any(waiter is value for waiter in surface_lock._waiters)
             ):
                 held_surface.update(row=row, future=value)
-            if label in {"config", "character"} and kind == sys.monitoring.events.PY_START:
+            if label in {"config", "character", "tabs", "transcript"} and kind == sys.monitoring.events.PY_START:
                 row[label] += 1
-            elif label in {"tabs", "transcript"} and kind == sys.monitoring.events.PY_RETURN:
-                row[label] += value is not False
+            elif label == "transcript" and kind == sys.monitoring.events.PY_RETURN:
+                row["transcript_forced"] = bool(frame.f_locals.get("forced", False))
             elif label == "full" and kind == sys.monitoring.events.PY_RETURN:
                 row["qualified"] = full.f_locals.get("poll_record") is record
+                row["short"] = full.f_locals.get("short_poll") is True
                 row["result"] = value
                 rows.append(row)
                 del active[key]
@@ -441,31 +449,101 @@ async def test_promoted_manual_polls_keep_saved_transcript_without_repeating_rea
                 assert record.request is not None and record.inputs.durable_accepted
                 assert case.composer.draft_text() == ""
                 assert case.provider_calls == []
-                assert await _until(
-                    lambda: sum(
-                        bool(row["qualified"] and row["tabs"] and row["transcript"])
-                        for row in rows
-                    ) >= 2,
-                    20,
-                ), rows
-                qualified = [row for row in rows if row["qualified"] and row["tabs"] and row["transcript"]]
-                record_property("original_promoted_poll_rows", rows)
-                assert len(qualified) >= 2, f"Promoted saved preparation never admitted routine display: {rows!r}"
-                assert all(row["result"] is False for row in qualified)
-                assert all(row["config"] == row["character"] == 0 for row in qualified), rows
-                shown, text = _run_segment(case.console)
-                assert shown and "Sending" in text
+                # A call count is meaningful only AFTER the real saved echo
+                # has reached the original mounted transcript. Keep the same
+                # twenty-second observation budget for publication and cadence.
+                deadline = asyncio.get_running_loop().time() + 20
+
+                def remaining():
+                    return max(0.0, deadline - asyncio.get_running_loop().time())
+
                 transcript = case.console.query_one("#console-native-transcript")
                 user = next(
                     message for message in case.store.messages_for_session(case.session.id)
                     if message.role.value == "user" and message.content == case.draft
                 )
+                assert await _until(
+                    lambda: user.id in transcript.mounted_message_content_ids(),
+                    remaining(),
+                ), rows
+                steady_start = len(rows)
+                assert await _until(
+                    lambda: sum(row["qualified"] for row in rows[steady_start:]) >= 2,
+                    remaining(),
+                ), rows
+                qualified = [row for row in rows[steady_start:] if row["qualified"]]
+                record_property("original_promoted_steady_poll_rows", qualified)
+                assert any(row["short"] for row in qualified), (
+                    "Published unchanged Preparing still repeats the long display pass", qualified
+                )
+                assert all(
+                    row["tabs"] == row["transcript"] == 0
+                    for row in qualified if row["short"]
+                ), qualified
+                assert sum(row["tabs"] for row in qualified) < len(qualified), qualified
+                assert sum(row["transcript"] for row in qualified) < len(qualified), qualified
+                assert all(row["result"] is False for row in qualified)
+                assert all(row["config"] == row["character"] == 0 for row in qualified), rows
+                # Media has no complete revision signal. Observe the original
+                # fifteenth-call forced pipeline, not a test-triggered sync.
+                assert await _until(
+                    lambda: any(
+                        row["qualified"] and not row["short"]
+                        and row["tabs"] and row["transcript"]
+                        and row.get("transcript_forced", False)
+                        for row in rows[steady_start:]
+                    ),
+                    remaining(),
+                ), rows
+                record_property("original_promoted_poll_rows", rows)
+                shown, text = _run_segment(case.console)
+                assert shown and "Sending" in text
                 assert user.id in transcript.mounted_message_content_ids()
                 assert case.console._console_transcript_sync_timer is not None
                 assert not record.task.done() and not case.provider_calls
                 # An injected display reader is outside the stock no-refresh
                 # route, even when it would eventually call the original.
                 from tldw_chatbook.UI.Console_Modules import composer_run_controls
+
+                # Retain the same twenty-second window. Removing only the
+                # completed display proof must send the next original routine
+                # callback through FULL, then let actual publication requalify.
+                assert await _until(
+                    lambda: (
+                        not case.console._console_sync_in_progress
+                        and composer_run_controls.preparing_poll_record(case.console) is record
+                    ),
+                    remaining(),
+                )
+                source = case.console._console_completed_full_source
+                assert source["display_publication"] is not None
+                del source["display_publication"]
+                assert composer_run_controls.preparing_poll_record(case.console) is None
+                proof_start = len(rows)
+                before_full = full_completions
+                proof_probe_task = asyncio.current_task()
+                try:
+                    async with asyncio.timeout(remaining()):
+                        await config_sync.run_periodic_console_sync(
+                            composer_run_controls.sync_poll_display_ui, case.console
+                        )
+                finally:
+                    proof_probe_task = None
+                proof_rows = [row for row in rows[proof_start:] if row["proof_probe"]]
+                record_property("missing_display_publication_routine_pass", proof_rows)
+                assert len(proof_rows) == 1 and not proof_rows[0]["qualified"], proof_rows
+                assert proof_rows[0]["tabs"] and proof_rows[0]["config"], proof_rows
+                assert await _until(
+                    lambda: (
+                        full_completions > before_full
+                        and case.console._console_completed_full_source is not source
+                        and composer_run_controls.preparing_poll_record(case.console) is record
+                    ),
+                    remaining(),
+                ), "The missing display proof did not receive FULL and requalify"
+                assert case.console._console_completed_full_source["display_publication"] is not None
+                assert user.id in transcript.mounted_message_content_ids()
+                assert not record.task.done() and not case.provider_calls
 
                 original = case.console._context_spend._context_inputs
                 with monkeypatch.context() as changed:

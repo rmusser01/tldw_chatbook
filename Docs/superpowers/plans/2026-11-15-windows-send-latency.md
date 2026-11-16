@@ -861,3 +861,229 @@ skip in8.15s (pr3534-sensitive-bundle-green-1); source/head remain fixed.
 Quiet Enter (pr3534-cold-input-enter-1,130.86s) completes all three saved and
 settled turns at17.421/14.209/13.512s, source_changed empty. The six-second gate
 still fails; the cold grouping has not established a whole-path saving.
+
+### Task3m — retain completed promoted display publication
+
+ADR required: yes (amend the existing bounded route).
+ADR path: backlog/decisions/231-console-polling-and-full-state-reconciliation.md.
+Reason: omit unchanged tab/transcript pipelines only after their original
+successful publication while retaining current action, recovery and poll owners.
+
+1. Correct transcript-gate fixtures to complete the mounted original pipeline;
+   an intentionally swallowed downstream exception is not publication. Add
+   failed/cancelled publication controls retaining the last completed gate.
+2. Reproduce the unchanged promoted Enter journey repeating tabs/transcript after
+   the real saved USER echo is mounted, under its existing observation bound.
+3. Extract one shared complete transcript gate into Console_Modules/transcript.py;
+   move token publication to actual success. Include current widget identity and
+   visible citation counts, whose existing producer explicitly invalidates it.
+4. Extend the completed FULL witness inside the existing composer/screen owners.
+   Preserve original callback qualification, retained helper effects and every
+   post-await currentness check. Recovery synchronization remains per-pass.
+   Advance the existing fifteen-call backstop once and use the existing promoted
+   long branch for its forced pass; short passes remain deferred.
+5. Verify both actual input routes, missing/changed publication refusal, custom
+   readers, settings/draft invalidation, FULL dominance, final/background handoff,
+   feedback and retirement. Then run quiet whole-Send samples sequentially.
+
+The integration owner applies and verifies all product changes. The UI lane
+prepares an off-tree patch in chat_screen.py, composer_run_controls.py and
+Console_Modules/transcript.py. The separate response-rule lane owns only
+ResponseRuleStore.effective_rules. Neither lane runs native/app tests. Count
+reductions do not establish the six-second gate; final saved-source measurements
+must still qualify both Enter and Send. No generic invalidation system or new
+cache/lifecycle owner is selected.
+
+### Task3n — group each effective response-rule read
+
+ADR required:no new ADR; apply ADR126 finite core-operation ownership within
+ADR232's existing synchronous rule resolver.
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md;
+backlog/decisions/232-console-learned-response-rules.md.
+Reason: qualified warm Send3 in pr3534-foreground-intervals-1 executes two distinct
+ResponseRuleStore.effective_rules calls. Each enters three core operations and
+three storage acquisitions for scope bindings; active rules require additional
+revision reads. The calls span0.185578 and0.113843s. Their results remain separate
+because a real await/effect intervenes; no cross-call cache is permitted.
+
+Inside each existing self._lock, retain register_context first, then wrap only
+the original binding/revision assembly and resolution in one existing
+participants.core_operation(self.repository.db). Preserve individual SQLite
+transactions, all public reads, precedence, KeyError handling, native currentness,
+borrowed connections and return only after successful operation retirement.
+No connection pool, combined transaction or rule verdict cache is introduced.
+Root integrates; baseline lane prepares off-tree tests/product for review.
+
+- [x] Native RED proves redundant actual acquisitions with empty and inherited
+  active rules, output/precedence and owner-restoration checks.
+- [x] Group the original synchronous body and qualify separate-call freshness,
+  temporary/memory rules, borrowed handles, failure and existing write contention.
+- [ ] Include the verified change in final whole-Send measurements; do not infer
+  a six-second result from these small inclusive durations or counts.
+
+Task3n RED (pr3534-rule-assembly-red-and-cold-receipt-1) reaches every
+output/freshness/retirement prerequisite, then fails counts [3,4] and [6,5]
+against [1,1]. Both custom-reader error controls pass. The four rule cases run
+before the separate cold-receipt controls; source hashes stay unchanged.
+Applied the reviewed finite core-operation scope and enrolled the new file in
+the existing second admission CI lane; native GREEN remains pending.
+
+Task3n GREEN (pr3534-response-rule-assembly-green-1,94.68s):52 pass across
+the four new native assembly cases, original rule-store and write-contention
+files and exact second-admission CI target contract. The count is one admission
+for each fresh empty/inherited assembly; custom failures, separate-call mutation,
+temporary rules, borrowed handles, physical retirement and existing cancellation
+and write-contention controls pass. Sources/HEAD stay unchanged. Whole-Send
+measurement waits for the separate UI implementation; no total saving claimed.
+
+Task3m RED (pr3534-promoted-publication-red-1,66.86s) reproduces the repeated
+promoted display pass after the real saved USER echo. Both failed/cancelled
+publication controls see the token replaced prematurely. Six corrected mounted
+gate/recovery positives pass. Two context fixtures still omit a downstream
+status collaborator and fail before qualification; correct those fixtures
+before using them as evidence. All product and test hashes remain unchanged.
+
+Task3m fixture qualification (pr3534-publication-fixture-controls-1,58.09s):
+all10 context cases now pass after supplying their original controller status.
+The strengthened cancellation control identifies its exact task/future and the
+original refresh coroutine for the held widget, then fails only the premature
+token assertion as intended. No source drift. Citation invalidation retains a
+separate original-producer control before product integration.
+
+The original citation producer control passes in27.46s
+(pr3534-citation-publication-control-1): while the exact original refresh waits,
+discovery invalidates the old gate and requests FULL; the next original pipeline
+mounts Cited sources(2). Retain that behavior after moving publication. Added
+the gate file and two context controls to the existing second admission CI lane;
+the two real promoted input journeys remain in the existing UI census.
+
+Task3m integrated GREEN (pr3534-promoted-publication-integrated-1,126.17s):
+26 pass across the four Task3n native cases, nine completed-gate/citation cases,
+ten context cases, both actual promoted Enter/button journeys and the CI target
+contract. The original saved echo, Sending, short-pass omission, natural
+fifteenth-call backstop, custom/settings/draft refusal, across-await FULL and
+provider/custody retirement all pass. Independent source review found no blocker
+in the final7392C65A product packet. Source hashes and HEAD are unchanged.
+Quiet Enter/button measurements follow sequentially; six-second acceptance is
+still open. The separate missing-publication refusal supplement is pending.
+
+Task3m/3n quiet qualification still fails the merge requirement. Sequential
+pr3534-completed-publication-enter-1 reports15.428174/13.162604/12.198086s
+(122.42s total run); button-1 reports14.938608/11.796831/10.885252s
+(118.04s total). All six turns save/reply/settle and sources remain unchanged.
+These are actual app actions to a controlled provider adapter, not physical
+terminal or live-provider response measurements. Unpaired host variation means
+no precise saving is attributed to the two changes. Keep auto-merge disabled.
+
+The earlier foreground capture also spans action-to-save: qualified cold/warm
+5.128610/5.820550s, dominated by action-to-controller3.544980/4.269331s.
+Worker native activity overlaps that interval but lacks producer/awaiter links;
+do not assign it to Send merely by time or thread. The next external diagnostic
+adds original configuration/read producers and their issued-read/callback IDs,
+plus routine UI and eligibility/capture counts. Existing source guards, local
+event caps, retirement and adapter cutoff remain; no product callback, timer or
+deadline changes. Inspect current route use and exact producer work before
+selecting another consolidation. See presave-attribution.md and FOLLOWUP35.
+
+Missing-publication supplement (pr3534-missing-display-publication-1,157.83s)
+passes both Enter/button journeys with their original20s shared observation
+window. Removing only completed display proof makes the original routine path
+run FULL/tabs/config; actual successful publication requalifies the still-held
+turn with its saved row mounted and zero provider calls. The selected task is
+preserved with asyncio.timeout; wait_for(coroutine) would create another Task
+and invalidate that observer identity. Product source is unchanged from the
+quiet timing pair. This closes Task3m plan step5 without enlarging a deadline.
+
+Cold-receipt checkpoint (pr3534-cold-receipt-checkpoint-1): native now passes
+in47.25s with its original70s child limit. Mounted trust replacement reaches
+MODEL but fails the preceding receipt-type prerequisite in61.94s. Current dev
+713fa also fails that case, earlier at its first-entry wait (63.01s); it does not
+reproduce the exact later assertion. Source comparison establishes the relevant
+publication branches are unchanged. Builtin-only catalogs do not publish a cold
+trust receipt, and Windows has no ordinary-tree bridge publication. The fixture
+seeded a managed skill only for native_managed. Extend that existing unapproved
+managed-skill prerequisite to mounted_queued and mounted_trust_replaced so those
+receipt-dependent cases actually exercise the original cross-platform publisher.
+Keep all receipt identity, queued replacement/refusal and70s assertions unchanged.
+ADR required:no, fixture prerequisite only under the existing publication contract.
+
+Current integrated feedback/retirement qualification
+(pr3534-completed-display-feedback-shutdown-1,199.13s): all15 cases pass,
+including actual Enter/button acknowledgement, Waiting for reply/Streaming,
+stopped-draft retention, repeated cancellation and physical native cleanup.
+The original headless run-feedback frames are88.803/71.022ms; pending-user
+frames are147.763/137.353ms. These are supplied compositor frames, not physical
+terminal measurements. Source hashes and HEAD stay fixed. This establishes
+feedback and retirement on the Task3m/3n source; six-second dispatch remains open.
+
+### Task3o — validate a nested installed MCP source once
+
+ADR required: yes, amend the existing finite raw-source contract.
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: the exactly linked initial read_sources worker spends2.704/4.023s on
+warm observations, including three nested catalog entries. Those entries each
+perform check -> selection -> check on the same installed source: three fresh
+binding witnesses and two parent checks before one unchanged method body.
+This is repeated validation, not three JSON reads or three new acquisitions.
+Instrumented spans include scheduling; they do not establish removable latency.
+
+1. Retain the first original full check in raw.scope. Qualify only an installed
+   generation-selected MCP participant, the exact same source/route and native
+   path, no explicit selected_read, and a boolean writing flag.
+2. Recheck resident participant/source/selected identity and live_state under
+   the existing coordinator. The just-checked participant selection must equal
+   the raw state's selection; enforce the requested write scope and all leases.
+   Then join the existing operation without the two duplicate binding reads.
+3. Keep original method bodies, custom/uninstalled/history/explicit-selection
+   fallbacks, effect-time file checks, final checked-read validation and physical
+   retirement. Do not cache a witness or extend any native owner.
+4. Establish original-function RED counts after real payload/custody/retirement
+   prerequisites, then qualify source/path/recovery drift, write and participant
+   refusal, accepted pause behavior and existing native cleanup controls.
+5. Run quiet Enter and Send samples sequentially on the integrated result.
+   This small shared-boundary change supersedes reconsidering the rejected
+   approximately213-line initial-catalog bypass (OPT28/73); that bypass stays
+   rejected. Keep the six-second merge requirement unchanged.
+
+Root owns integration and all native runs. The admission lane supplies only the
+raw_participants.py patch; the baseline lane supplies off-tree tests and source
+attribution. Initial source review supports one fresh witness/parent check per
+join, with unchanged scope, acquisition and payload-read counts.
+
+Task3o RED2 (pr3534-mcp-nested-join-red-2,14.45s) reaches all real payload,
+same-operation/no-new-admission, parent-FD, exact-lease and native-hold retirement
+prerequisites for local/context/permission sources, then fails only the final
+3-witness/2-parent count against1/1. Sources and HEAD remain unchanged. RED1 was
+an invalid retirement prerequisite: the configuration fixture still owned its
+startup lease. RED2 uses the existing test suite's actual startup-owner close
+after seeding, before the measured operation; physical cleanup assertions remain.
+The reviewed26-line shared-boundary patch is integrated and the combined ten-case
+file is enrolled in the existing second admission CI lane. Native GREEN pending.
+
+Task3o first integration run (pr3534-mcp-nested-join-green-1,105.10s):36 pass,
+including all ten new cases, and two older pause controls fail only their
+nonempty acquisition observer. Source hashes are unchanged. The observers wrap
+recovery_activation.acquire_storage, which construction-local admission no
+longer calls; earlier payload, pause, drain and retirement assertions pass.
+The same original two controls pass on dev713fa in34.14s
+(pr3534-dev-mcp-pause-controls-1). Observe the original acquisition function body
+on the exact issuing source/thread instead, retaining the nonempty and no-late-
+acquisition assertions. This repairs test evidence for the changed route; it
+does not loosen the pause contract. Whole-Send measurements use unchanged
+production code while that separate observer correction is prepared.
+
+Task3o quiet measurements still fail: pr3534-nested-entry-enter-1 records
+20.856190/16.715343/16.122192s (161.74s run), followed sequentially by
+button-1 at16.130445/14.254132/12.016223s (125.97s run). All six real app sends
+save/reply/settle with unchanged sources and full private defaults. These are
+headless action-to-controlled-adapter timings, not physical terminal/live-provider
+response measurements. No improvement is claimed: the preceding unpaired samples
+were lower. The reduced proof count alone does not meet the owner’s six-second
+requirement. Keep the PR unarmed and investigate the linked post-save owners.
+
+Task3o final targeted integration (pr3534-mcp-nested-join-integrated-2,107.41s)
+passes all38 cases after the observer correction. Original function-body
+observation covers both acquisition aliases, direct constructor calls, the exact
+worker and main-thread maintenance queries. Nonempty/no-after-pause assertions,
+payloads, source refusals and native cleanup all remain. Sources/HEAD stay fixed.
+This qualifies correctness and repeated-proof reduction, not dispatch latency.

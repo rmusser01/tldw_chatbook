@@ -2631,3 +2631,105 @@ and admission/retirement failures.52 checks pass plus one existing Windows
 symlink-privilege skip. Final whole-Send improvement remains unqualified; do not
 infer it from the count. The generated remote bundle retains its fail-closed
 laptop-only lazy-import path and detached supported worker inputs.
+
+**FOLLOWUP32 — per-call effective-rule read grouping (selected for Task3n
+qualification,2026-11-15).** The new sparse original-body capture qualifies
+first/third Send windows with complete bindings and retired monitoring. Warm
+Send3 resolves rules twice on the actual submit task; each resolver starts three
+core operations/acquisitions/closes and spans0.185578/0.113843s. Share the existing
+core owner only inside each synchronous self._lock assembly, preserving separate
+transactions and fresh calls across real awaits/effects. Active definitions may
+add revision queries. This is a small measured batching opportunity, not proof of
+whole-Send savings. The second diagnostic window has an unmatched return and
+reused frame and is excluded from qualified attribution.
+
+FOLLOWUP32 disposition: Task3n now passes52 native assembly/store/contention/CI
+checks with one admission per fresh assembly, including actual retirement and
+fresh later bindings. Whole-Send qualification remains pending.
+
+**FOLLOWUP33 — finite agent lifecycle persistence (deferred,2026-11-15).**
+`AgentService._append_run_lifecycle` reads the run, lazily reads it again to seed
+the sequence allocator, then inserts its lifecycle event. Older original-stack
+evidence identifies five admissions across created/started. The current sparse
+warm trace has nine core scopes under run_turn but does not assign current cost
+to each DB caller. A second candidate is the adjacent attached/injected context
+trace writes. Both preserve best-effort per-record diagnostics today; a bare outer
+admission scope would let entry failures escape or skip those diagnostics. No
+product change is selected before the current display refactor is measured.
+The1.195s uncovered run_primary interval is not proven idle or avoidable handoff.
+Evidence: pr3534-foreground-intervals-1/run-primary-source-review.md. Keep the
+Windows NativeAgentSources lifetime redesign deferred: it does not establish
+this smaller batching behavior and would introduce broader ownership changes.
+
+**FOLLOWUP34 — cancellation after completed provider work (existing defect,
+deferred from the latency refactor,2026-11-15).** The mounted queued receipt
+journey completes its answer, then its ten-second await cancels during the
+off-thread remote-session close. The unsolicited-cancellation handler attempts
+to fail an already complete assistant, masking cancellation with ValueError.
+Controller/store/runtime/remote closer source matches dev713fa; an identical
+runtime failure on dev has not been demonstrated. A proposed bounded repair
+uses the existing finite-read lifetime to drain the closer, preserves an exactly
+settled original turn and retires continuation state before re-raising the
+cancellation. Status alone must not authorize that branch. Unexecuted focused
+tests/design are retained at task3-cancellation-tail under the verification
+artifacts. No production change, deadline increase or successful-send claim is
+selected. Re-run the original queued journey after the send-latency fixes.
+
+**FOLLOWUP35 — separate display eligibility from action source classification
+(unselected,2026-11-15).** `preparing_poll_record` discards the preparation capture
+except for its non-None result. Successful stock capture classifies resident
+workspace/consent/skills/MCP/database sources without native file admission;
+bound MCP classification is attempted through unbound then standard routes.
+`preparing_display_read` repeats qualification from shared display accessors.
+Historical whole-qualifier CPU was4.95/5.05/5.13s over2176/2257/2194 calls before
+later changes; current capture-only cost is unmeasured. Completed presentation
+revisions do not cover code/default/callback replacement or in-place config
+mutation. Investigate a smaller explicit dependency contract only if the current
+publication refactor leaves material repeated work; retain fresh checks after
+awaits and existing custom/source-change FULL fallback. Do not replace action
+authority with a display cache or infer savings from the historical counts.
+
+FOLLOWUP35 current disposition: defer. The new original-call capture records
+661/548/704 qualifications with1.234/1.203/1.500 inclusive CPU seconds; classifier
+CPU is nested within those totals. Real promoted short passes are used43/32/32
+times. Most repeated qualifications follow actual draft, settings/project,
+recovery or await boundaries. Passing an already-selected store into the original
+draft helper could remove one check per qualified pass, but needs its own custom
+callback/mutation controls and does not address most repetitions. No display
+cache or helper-signature expansion is selected. Receipt:
+pr3534-presave-ui-attribution-1/attribution-summary.md.
+
+**FOLLOWUP36 — shared nested MCP entry validation (selected for Task3o
+qualification,2026-11-15).** The initial configuration source producer links
+exactly to its foreground finite-read owner and spends2.704/4.023s on warm
+observations. Its three inner catalog scopes add no storage acquisitions or
+duplicate JSON reads; each repeats binding witnesses three times and parent
+validation twice before the original body. Retain the first complete check and
+current resident custody/write/path checks for the same installed source, while
+leaving all effect/final checks and fallback routes. This small raw-scope boundary
+change replaces reconsidering the rejected213-line catalog bypass (OPT28/73),
+which remains rejected. No measured whole-Send saving is established yet.
+
+FOLLOWUP36 qualification: all ten native join cases pass, including recovered
+selection, explicit/custom fallback, changed sources, read-only refusal and
+physical retirement. Two existing pause observers need to track the original
+acquisition body after the earlier construction consolidation; their behavior
+assertions pass and original dev controls pass. Quiet Enter20.856/16.715/16.122s
+and button16.130/14.254/12.016s remain above the merge gate and do not establish
+a speed gain over earlier unpaired runs. Retention is provisional pending final
+integration/performance evidence; this is a work reduction, not a latency result.
+
+FOLLOWUP33 refinement: allocator creation repeats the successful lifecycle step
+read already available to _append_run_lifecycle. Seeding the existing allocator
+under its creation lock could remove one read/admission, retaining original
+fallback on read/shape failure and ignoring a seed when another thread installed
+the allocator. It remains deferred: nine directly observed foreground run_turn
+core entries total0.572/0.766/0.495s, without leaf-caller attribution. That small
+candidate does not explain the larger current post-save gaps.
+
+OPT25 re-review: the Windows identity primitive lacks the complete stat/fstat
+security-query failure and config-companion posture contract. The existing batch
+metadata API adds two-pass association proof and uncertain-close ownership; it
+is not a cheap replacement for one parent pin. Historical64-check data attributed
+17.9ms of226ms to security queries, not a current Send saving. No narrower native
+metadata API or change to failure semantics is selected.

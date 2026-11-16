@@ -1990,3 +1990,26 @@ follow the same configuration-lock contract as the existing database assembly.
 No native facts or authorization results are retained beyond the original memo
 policy. The focused original-function control reduces16 admissions to at most6;
 that is count evidence, not an accepted whole-Send latency result.
+
+### One validation at a nested MCP source boundary — 2026-11-15
+
+Within raw.scope, a nested call for the exact same installed generation-selected
+MCP source may use its first complete check as the entry validation. That check
+already proves current source/configuration/recovery selection, parent pins and
+issued custody. The former selection plus second check repeat that work before
+any method body or file effect.
+
+Restrict this join to the same MCP route, a native path, boolean writing flag and
+no explicit selected_read. Under the existing coordinator, revalidate the exact
+participant/source mapping and selected path, require that participant selection
+equals the checked raw state selection, and use live_state to enforce current
+process/thread/task, path/write scope and every lease. The operation is neither
+replaced nor extended. Other source, uninstalled/subclass, history and explicit
+selection routes retain their existing behavior.
+
+This consolidates one entry boundary; it is not an atomic filesystem snapshot or
+a retained authorization verdict. Every original guarded method still runs.
+Later readability, file-open/effect and outer checked-read validations remain
+fresh, including source drift after a nested join. Existing native pause and
+physical-retirement contracts remain. Original-function counts and native
+negative controls must qualify the change before final whole-Send measurements.

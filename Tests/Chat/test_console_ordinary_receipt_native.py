@@ -26,7 +26,7 @@ async def exercise():
     from Tests.Chat.test_console_skill_substitution import _RecordingGateway
     from Tests.Performance._stock_private_app_creators import OriginalPrivateAppCreators
 
-    if sys.argv[2] == 'native_managed':
+    if sys.argv[2] in {'native_managed', 'mounted_queued', 'mounted_trust_replaced'}:
         from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
 
         seed = LocalSkillsService(
