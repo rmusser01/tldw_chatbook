@@ -16,7 +16,7 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 
 import pytest
-from pytest_timeout import get_env_settings
+from pytest_timeout import _get_item_settings, get_env_settings
 
 _CHILD_NODE = "TLDW_TEST_PRIVATE_PROFILE_NODE"
 _CHILD_STACKS = "TLDW_TEST_PRIVATE_PROFILE_STACKS"
@@ -429,3 +429,28 @@ def private_profile_test(function):
 
     wrapped._private_profile_test = True
     return wrapped
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_exception_interact(node, call, report):
+    """Keep the timeout armed for the phases after a failure (TASK-41135).
+
+    pytest-timeout 2.4 cancels its timer in this hook, which pytest calls on
+    every setup or call failure, not only under ``--pdb``, so a fixture
+    teardown that hung after a failed test had no timeout at all. Re-arm it;
+    the SIGALRM timer also repeats, because its first expiry only fails the
+    finalizer it interrupts (pytest-asyncio's loop close then waited forever
+    on a task that outlives cancellation). Tests/conftest.py registers it;
+    Tests/CI/test_pytest_timeout_rearm.py pins it.
+    """
+    if not isinstance(node, pytest.Item) or report.when == "teardown":
+        return
+    if node.config.getvalue("usepdb"):
+        return
+    settings = _get_item_settings(node)
+    if not settings.timeout or settings.func_only:
+        return
+    node.config.pluginmanager.hook.pytest_timeout_set_timer(item=node, settings=settings)
+    if settings.method == "signal" and threading.current_thread() is threading.main_thread():
+        # Fire again every `timeout` seconds until the protocol's cancel.
+        signal.setitimer(signal.ITIMER_REAL, settings.timeout, settings.timeout)

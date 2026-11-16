@@ -313,6 +313,9 @@ def pytest_runtest_teardown(
     restore_config_source_consumers()
 
 
+# TASK-41135: keep teardown timed out after a failed test.
+from Tests.private_profile import pytest_exception_interact  # noqa: E402,F401
+
 # ========== Path and File System Fixtures ==========
 
 
