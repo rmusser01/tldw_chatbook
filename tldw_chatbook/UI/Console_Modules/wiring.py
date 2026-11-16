@@ -317,6 +317,10 @@ def request_console_character_context_refresh(
         for worker in running:  # it may have read before the edit elsewhere
             with suppress(WorkerError):  # its outcome is not ours to report
                 await worker.wait()
+        task = asyncio.current_task()
+        if task is not None and task.cancelling():
+            # Worker.wait() turns OUR cancellation into WorkerCancelled too.
+            raise asyncio.CancelledError
         if resumed:
             await character_view_resume_work(controller, screen)
         else:

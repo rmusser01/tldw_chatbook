@@ -402,6 +402,53 @@ async def test_resume_read_queues_behind_a_running_passive_read(monkeypatch) -> 
     assert order == ["passive", "resume"]
 
 
+@pytest.mark.asyncio
+async def test_cancelled_resume_read_does_not_run_after_its_wait(monkeypatch) -> None:
+    """Quit's drain cancels a queued resume read; Worker.wait() must not hide it."""
+    from textual.worker import WorkerCancelled
+
+    from tldw_chatbook.UI.Console_Modules import character_context, wiring
+
+    reads: list[str] = []
+    started: list[asyncio.Task] = []
+    waiting = asyncio.Event()
+    screen = SimpleNamespace(
+        is_attached=True,
+        app=SimpleNamespace(_exit=False),
+        _character_context=SimpleNamespace(
+            state=SimpleNamespace(phase=ConsoleCharacterOperationPhase.REFRESHING)
+        ),
+        run_worker=lambda work, **_kwargs: started.append(asyncio.ensure_future(work())),
+    )
+
+    async def wait_like_textual():
+        waiting.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            raise WorkerCancelled("cancelled") from None  # Worker.wait()'s shape
+
+    screen.workers = [
+        SimpleNamespace(
+            node=screen,
+            group="console-character-context-refresh",
+            is_finished=False,
+            wait=wait_like_textual,
+        )
+    ]
+
+    async def resume_read(_controller, _screen):
+        reads.append("resume")
+
+    monkeypatch.setattr(character_context, "character_view_resume_work", resume_read)
+    wiring.request_console_character_context_refresh(screen, resumed=True)
+    await waiting.wait()
+    started[0].cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await started[0]
+    assert reads == []
+
+
 def test_accordion_keeps_at_most_one_stable_typed_key_expanded() -> None:
     controller = _controller()
     controller._publish(ConsoleCharacterContextState(groups=_groups()))
