@@ -105,7 +105,13 @@ ADR required: no. The change is display copy plus, at most, one model-facing lin
   - 2 were this change, and both are fixed:
     - The app-lookup census: the service is now reached through `read_mcp_service`.
     - The `console_display_state.py` module size ratchet: raised 2875 -> 2884 with a dated note, under the owner rule that a fix raises the row by its own lines.
-  - After those fixes, the census, both size ratchets, `test_layer_direction` and `test_application_services_bundle` pass (279 nodes). The whole directory was not rerun.
+  - After those fixes, the census, both size ratchets, `test_layer_direction` and `test_application_services_bundle` pass (279 nodes).
+- Full serial rerun on d9650a54b2 (load 60-160, 1 h 26 min): 1413 passed, 8 failed.
+  - The 3 base-red nodes above fail again.
+  - The other 5 are pytest-timeouts (>300 s) in `test_persistent_diagnostic_inventory.py`: the inventory-script subprocess and four TASK-15103 ledger nodes.
+  - That file alone, run on head and base at the same time: head had 4 failures, base had 2 (`test_reviewed_diagnostic_changes_are_metadata_only` and the canonical-schema timeout).
+  - The 2 nodes that failed only on head pass when run alone (257 s and about 280 s, near the 300 s limit).
+  - Preflight runs the same inventory script, and it passed on this head.
 
 **Files.**
 - Product: `tldw_chatbook/MCP/console_snapshot.py`, `tldw_chatbook/Chat/console_display_state.py`, `tldw_chatbook/UI/Screens/chat_screen.py` (+7 lines, no method; within the screen size ratchet).
