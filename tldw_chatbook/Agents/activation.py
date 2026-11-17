@@ -121,15 +121,21 @@ def captured_sources(service: object) -> tuple:
     return _guard.captured_sources(service)
 
 
-def sources_changed(captured: tuple, service: object = None) -> bool:
+class OriginalSourceChanged(RuntimeError):
+    """An original agent storage source no longer matches its capture."""
+
+
+def sources_changed(captured: tuple) -> bool:
     """Whether this task's admitted sources differ from ``captured``.
 
     Compared as a set: nesting order depends on which execution was entered
     first (a worker guard admits the bridge's sources before the turn's own),
-    not on which sources are admitted. Any added, removed or moved source
-    still counts as a change.
+    not on which sources are admitted, so order is ignored. A different owner
+    or path, an added source or a removed source is a change. Duplicates
+    collapse: admitting the same (owner, path) twice names one source, so a
+    repeated admission cannot change what is reachable.
     """
-    return set(_guard.captured_sources(service)) != set(captured)
+    return set(_guard.captured_sources(None)) != set(captured)
 
 
 def execution(service=None, *, sources=()):

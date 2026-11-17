@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from concurrent.futures import Future
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from inspect import getattr_static
 from threading import Lock
@@ -12,6 +12,9 @@ from threading import Lock
 from tldw_chatbook.app_services import read_mcp_service
 from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
 
+from loguru import logger
+
+from .activation import OriginalSourceChanged
 from .execution_capacity import CapacityRefused, WorkOrigin
 
 
@@ -721,6 +724,7 @@ class OrdinaryTurn:
         with self.lock:
             self.members[owner].drained = proven is True
         self._retire_scratch()
+        self.runtime._wake_first_send()
 
     def _retire_scratch(self):
         lease = None
@@ -898,6 +902,7 @@ class OrdinaryTurn:
             member.durable = proven
             member.host_returned = True
         self._retire_scratch()
+        self.runtime._wake_first_send()  # a now-unproven-only turn ends the save wait
 
     def finish(self):
         with self.lock:
@@ -932,20 +937,29 @@ class OrdinaryTurn:
         Returns:
             None, or the refusal when an original source changed.
         """
+        stack = ExitStack()
         try:
-            with (
+            stack.enter_context(
                 self.source.activate()
                 if self.source is not None
                 else self.retain_source_scope()
-            ):
-                release()
-                self.close_unused_events(owner)
-                self.host_returned(owner)
-                owner.finish_root()
-        except RuntimeError as refused:
+            )
+        except OriginalSourceChanged as refused:
+            # Only the activation refusal is absorbed; anything else propagates.
+            logger.warning(
+                "ordinary host return refused: {}", type(refused).__name__
+            )
+            # The scope's cleanup never ran, so the owner can never drain
+            # proven: its claim stays held (TASK-40716) whatever its row did.
+            owner.mark_cleanup_unproven()
             self.host_returned(owner)
             owner.finish_root()
             return refused
+        with stack:
+            release()
+            self.close_unused_events(owner)
+            self.host_returned(owner)
+            owner.finish_root()
         return None
 
     def _finish_primary_if_returned(self):

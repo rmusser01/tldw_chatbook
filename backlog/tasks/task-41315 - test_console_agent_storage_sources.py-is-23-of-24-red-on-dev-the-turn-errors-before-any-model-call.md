@@ -73,3 +73,13 @@ Files: `tldw_chatbook/Agents/activation.py`, `tldw_chatbook/Agents/hooks_v2/nati
 - `test_console_skill_substitution.py`: 39/39 on both. `test_console_ordinary_tree_widening.py`: 17/17 on both. `test_unproven_tool_cleanup_run.py`: 11/11 on both.
 - `test_console_ordinary_receipt_native.py`, `test_console_ssh_custody.py` and `test_native_v2_mcp_events.py`: every node that failed only on head passes alone on head. The leftovers time out or hang on base too: receipt `[queued]` fails alone on both, and passive-context `[disk]` hangs alone on both.
 - `Tests/Architecture` (serial): 6 failed / 1415 passed. Three of the failures also fail on base (`test_reviewed_diagnostic_changes_are_metadata_only` and two in `test_timer_path_static_update_inventory.py`). The other three, `test_task_15103_review_ledger_*`, hit the 300 s timeout while three Architecture runs shared the machine. Re-run alone with a longer timeout, all three pass on both head and base (about 148 s each).
+
+## Review round (2026-11-17)
+
+A static review of 2fdd1e8b09 found three Importants and a Minor; each is confirmed by a test and fixed.
+- **First-send give-up had no wake.** `OrdinaryTurn.host_returned` and `_drained` now call `runtime._wake_first_send()` (retirement was the only wake). Test parks the waiter on a live owner first, then flips the turn unproven-only; dispose-side wait returns. Reverting the wakes makes it fail.
+- **Refused owner could drain proven.** `return_host` now calls `owner.mark_cleanup_unproven()` before `host_returned`/`finish_root` on refusal, so a refused owner with `row_started=False` stays unproven and keeps the claim. Cleanup that needs the source scope is not run outside it (`release()` touches the custody and event scopes), so it stays unproven rather than half-done.
+- **`except RuntimeError` was too broad.** New `OriginalSourceChanged(RuntimeError)` (in `Agents/activation.py`) is raised by the source-changed/unavailable checks in `native_source_storage.py`. `return_host` enters the scope via `ExitStack` and absorbs only that type at activation, logs its type name, and never re-runs `host_returned`/`finish_root`; unrelated errors (scratch lease retired, a failing `release()`) propagate once.
+- **Minor.** `sources_changed` docstring reworded (order ignored; a different owner or path, added or removed source is a change; duplicates collapse because one (owner, path) names one source). The unused `service` parameter is removed (both call sites passed none).
+- The 7 other ordered comparisons are untouched, as instructed.
+- Mutation checks, each fix reverted alone: wakes, `mark_cleanup_unproven`, and the narrowed except each make exactly their own test fail.

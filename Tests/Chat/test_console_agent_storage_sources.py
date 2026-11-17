@@ -2,6 +2,7 @@
 
 import asyncio
 import threading
+from types import SimpleNamespace
 
 import pytest
 
@@ -461,10 +462,12 @@ def _refused_source_turn(owner):
 
     from tldw_chatbook.Agents.ordinary_tree import OrdinaryTurn, _Member
 
+    from tldw_chatbook.Agents.activation import OriginalSourceChanged
+
     class Source:
         @contextmanager
         def activate(self):
-            raise RuntimeError("original agent storage source changed")
+            raise OriginalSourceChanged("original agent storage source changed")
             yield
 
     tree = object.__new__(OrdinaryTurn)
@@ -478,17 +481,24 @@ def _refused_source_turn(owner):
     member.terminal = ("done", "", None)
     tree.members = {owner: member}
     tree.retired = Future()
+    tree.runtime = SimpleNamespace(_wake_first_send=lambda: None)
     return tree, member
 
 
 class _Owner:
     finished = False
+    cleanup_unproven = False
 
     def finish_root(self):
         self.finished = True
 
+    def mark_cleanup_unproven(self):
+        self.cleanup_unproven = True
+
     def drain_state(self):
-        return "proven" if self.finished else "live"
+        if not self.finished:
+            return "live"
+        return "unproven" if self.cleanup_unproven else "proven"
 
 
 async def test_changed_source_at_finish_leaves_the_primary_returned_unproven():
@@ -525,3 +535,86 @@ async def test_changed_source_at_child_return_leaves_the_child_unproven():
     assert member.host_returned and not member.durable
     assert child.finished
     assert tree.unproven_only() and not tree.retired.done()
+
+
+async def test_refused_owner_whose_row_never_started_stays_unproven():
+    """Skipped cleanup must not drain proven, even with no row to read (TASK-41315)."""
+    owner = _Owner()
+    tree, member = _refused_source_turn(owner)
+    member.row_started = False
+    tree.sealed = True
+
+    refused = tree.return_host(owner, lambda: pytest.fail("release ran unscoped"))
+
+    assert refused is not None and owner.cleanup_unproven
+    assert tree.unproven_only() and not tree.retired.done()
+
+
+async def test_unrelated_runtime_error_in_host_return_propagates_once():
+    """Only the source-activation refusal is absorbed (TASK-41315)."""
+    from contextlib import contextmanager
+
+    owner = _Owner()
+    tree, member = _refused_source_turn(owner)
+    returns = []
+    tree.host_returned = returns.append
+
+    @contextmanager
+    def lease_gone():
+        raise RuntimeError("original ordinary scratch lease retired")
+        yield
+
+    tree.source = SimpleNamespace(activate=lease_gone)
+    with pytest.raises(RuntimeError, match="scratch lease retired"):
+        tree.return_host(owner, lambda: None)
+
+    @contextmanager
+    def live():
+        yield
+
+    tree.source = SimpleNamespace(activate=live)
+
+    def broken():
+        raise RuntimeError("release failed")
+
+    with pytest.raises(RuntimeError, match="release failed"):
+        tree.return_host(owner, broken)
+    assert returns == [] and not owner.finished
+
+
+async def test_first_send_wait_wakes_when_a_parked_turn_becomes_unproven_only():
+    """The give-up needs a wake: a turn can turn unproven after the waiter parks."""
+    from tldw_chatbook.Chat.console_received_dispatch import (
+        _persist_first_send_when_quiescent,
+    )
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+
+    owner = _Owner()
+    tree, member = _refused_source_turn(owner)
+    tree.sealed = True
+    member.row_started = False
+    member.host_returned = False
+    states = {"owner": "live"}
+    owner.drain_state = lambda: states["owner"]
+    runtime = SimpleNamespace(
+        _first_send_wakeup=asyncio.Event(),
+        _first_send_loop=asyncio.get_running_loop(),
+        _execution_capacity_lock=threading.Lock(),
+        _first_send_sources=0,
+        _turn_custody={},
+        _ordinary_turns={tree},
+    )
+    runtime._wake_first_send = lambda: ConsoleRuntime._wake_first_send(runtime)
+    tree.runtime = runtime
+    waiter = asyncio.ensure_future(
+        _persist_first_send_when_quiescent(
+            runtime, None, None, None, SimpleNamespace(), None
+        )
+    )
+    await asyncio.sleep(0.05)
+    assert not waiter.done()  # parked on a live owner
+
+    states["owner"] = "unproven"
+    tree.host_returned(owner)
+
+    await asyncio.wait_for(waiter, 5)
