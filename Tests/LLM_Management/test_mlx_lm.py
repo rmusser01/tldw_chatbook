@@ -98,7 +98,8 @@ def test_chat_with_mlx_lm_success_with_config(mock_openai_call, mock_mlx_setting
         reasoning_effort=None,
         thinking_budget_tokens=None,
         thinking_wire_key="local_mlx_lm",
-        provider_name=None,
+        provider_name="MLX-LM",  # TASK-41131 review M-2
+        provider_key="mlx_lm",
         timeout=def_mlx_settings["api_timeout"],
         api_retries=def_mlx_settings["api_retries"],
         api_retry_delay=def_mlx_settings["api_retry_delay"],
@@ -157,7 +158,8 @@ def test_chat_with_mlx_lm_args_override_config(mock_openai_call, mock_mlx_settin
         reasoning_effort=None,
         thinking_budget_tokens=None,
         thinking_wire_key="local_mlx_lm",
-        provider_name=None,
+        provider_name="MLX-LM",  # TASK-41131 review M-2
+        provider_key="mlx_lm",
         timeout=def_mlx_settings["api_timeout"],
         api_retries=def_mlx_settings["api_retries"],
         api_retry_delay=def_mlx_settings["api_retry_delay"],
@@ -202,7 +204,8 @@ def test_chat_with_mlx_lm_api_url_override(mock_openai_call, mock_mlx_settings):
         reasoning_effort=None,
         thinking_budget_tokens=None,
         thinking_wire_key="local_mlx_lm",
-        provider_name=None,
+        provider_name="MLX-LM",  # TASK-41131 review M-2
+        provider_key="mlx_lm",
         timeout=def_mlx_settings["api_timeout"],
         api_retries=def_mlx_settings["api_retries"],
         api_retry_delay=def_mlx_settings["api_retry_delay"],
@@ -293,7 +296,8 @@ def test_chat_with_mlx_lm_kwargs_passthrough(mock_openai_call, mock_mlx_settings
         reasoning_effort=None,
         thinking_budget_tokens=None,
         thinking_wire_key="local_mlx_lm",
-        provider_name=None,
+        provider_name="MLX-LM",  # TASK-41131 review M-2
+        provider_key="mlx_lm",
         timeout=def_mlx_settings["api_timeout"],
         api_retries=def_mlx_settings["api_retries"],
         api_retry_delay=def_mlx_settings["api_retry_delay"],
