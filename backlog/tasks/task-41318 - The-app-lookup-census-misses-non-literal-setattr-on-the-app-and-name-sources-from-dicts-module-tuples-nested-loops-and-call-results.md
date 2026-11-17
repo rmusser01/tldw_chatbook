@@ -1,7 +1,7 @@
 ---
 id: TASK-41318
 title: "The app-lookup census misses non-literal setattr on the app, and name sources from dicts, module tuples, nested loops and call results"
-status: To Do
+status: In Progress
 created_date: 2026-11-16 19:55
 labels:
 - follow-up
@@ -38,3 +38,13 @@ Filed from the 2026-11-13..16 burn-down. These are the known ceilings of TASK-40
 - [ ] #2 A literal reached through a dict lookup, a module-level tuple, a nested loop or a function's literal return value is counted, each with a negative control; any source left unfollowed is listed in the test's docstring with its reason
 - [ ] #3 The pins and the non-literal record are re-measured, and the census passes on dev
 <!-- AC:END -->
+
+## Implementation Plan
+
+ADR required: no. This extends an existing architecture test (TASK-36942.4, TASK-40141) without changing product code or its rules; only what the census can see grows.
+
+1. Reproduce: negative controls that pass on the unmodified census -- a planted non-literal `setattr`/`delattr` on the app is not recorded, and a literal moved into a dict (`.get`/`[k]`), a module-level tuple, a nested loop or a function's literal return value drops out of the count and the private-name rule.
+2. Record non-literal `setattr`/`delattr` on the census receivers in `app_nonliteral_lookups.tsv` (recorded, not counted: a literal `setattr` is an attribute assignment, not a string lookup).
+3. Replace the loop-only follower with one that follows a name through local and module-level assignments, enclosing loops (nested loops and comprehensions), dict lookups and same-module function returns. A name that is itself an UPPER_CASE constant stays the record's business, as today.
+4. List the sources left unfollowed, with reasons, in the test docstring.
+5. Re-measure the pins and the record; record the numbers with a dated note.
