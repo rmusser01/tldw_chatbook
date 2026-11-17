@@ -341,6 +341,24 @@ def test_console_inspector_state_omits_mcp_row_when_zero_tools_and_zero_not_conn
     assert "MCP" not in {row.label for row in state.rows}
 
 
+@pytest.mark.parametrize(
+    ("tool_count", "not_connected"), [(None, 0), (0, 0), (5, 0), (5, 2)]
+)
+def test_console_inspector_state_mcp_off_reason_wins_over_counts(
+    tool_count, not_connected
+):
+    """TASK-41308: an unbound MCP store sends no MCP tools, whatever an
+    earlier compose published, so the row says off and why."""
+    state = ConsoleInspectorState.from_values(
+        mcp_tool_count=tool_count,
+        mcp_not_connected_count=not_connected,
+        mcp_unavailable_reason="not yet available on Windows",
+    )
+    rows_by_label = {row.label: row for row in state.rows}
+    assert rows_by_label["MCP"].value == "off · not yet available on Windows"
+    assert rows_by_label["MCP"].status == "blocked"
+
+
 def test_console_inspector_state_uses_explicit_chatbook_save_capability():
     state = ConsoleInspectorState.from_values(
         artifact_status="Chatbook save available",

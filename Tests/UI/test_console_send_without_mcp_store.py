@@ -8,12 +8,15 @@ gateway's reply in the transcript and in the store; check that a replaced MCP
 reader is still refused; and rerun the draft-snapshot sends that take the
 other capture routes (a queued send and a received spoken send) without a
 bound store.
+
+TASK-41308: the Inspector's MCP row says MCP is off, and why, whenever the
+store is unbound, so a Send without MCP tools is never silent.
 """
 
 from __future__ import annotations
 
 import pytest
-from textual.widgets import Button
+from textual.widgets import Button, Static
 
 from Tests.UI import test_console_send_acknowledgement as acknowledgement
 from Tests.UI import test_console_send_draft_snapshot as draft_snapshot
@@ -23,6 +26,7 @@ from Tests.UI.test_console_native_chat_flow import (
     _select_llamacpp_console,
     _wait_for_reply,
 )
+from Tests.UI.test_console_internals_decomposition import _open_console_inspector
 from Tests.UI.test_console_send_admission_off_pump import _record_notices
 from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -31,6 +35,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 from tldw_chatbook.Backup_Recovery import mcp_source_participants, raw_participants
 from tldw_chatbook.Chat import console_configuration_preparation as preparation
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.MCP import console_snapshot
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
 pytestmark = pytest.mark.bootstrap_profile
@@ -185,3 +190,73 @@ async def test_draft_snapshot_sends_without_a_bound_mcp_store(
             monkeypatch.setattr(module, "_build_console_send_test_app", build_elsewhere)
     await getattr(draft_snapshot, scenario)(monkeypatch)
 
+
+def _mcp_row_text(console) -> str | None:
+    rows = list(console.query("#console-inspector-mcp").results(Static))
+    return str(rows[0].renderable) if rows else None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("profile", ["bound", "windows", "non-default-data-dir"])
+async def test_inspector_mcp_row_says_off_and_why_when_the_store_is_unbound(
+    monkeypatch, tmp_path, profile
+):
+    """TASK-41308: before and after a Send, an unbound store shows the row.
+
+    The simulated Windows bind runs on a POSIX host, so the display-time
+    platform check still sees pinned I/O and names the data folder; the
+    Windows copy is pinned by the unit test below.
+    """
+    kwargs = {}
+    if profile == "windows":
+        _bind_as_on_windows(monkeypatch)
+    elif profile == "non-default-data-dir":
+        kwargs["user_data_dir"] = tmp_path
+    gateway = _ToolRecordingGateway()
+    app = _build_console_send_test_app(**kwargs)
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "test-model"
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+    off = (
+        None
+        if profile == "bound"
+        else "MCP: off · store isn't in this profile's data folder"
+    )
+
+    async with host.run_test(size=(196, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await _select_llamacpp_console(console)
+        await _open_console_inspector(console, pilot)
+        if off is not None:
+            await _wait_for_selector(console, pilot, "#console-inspector-mcp")
+        before = _mcp_row_text(console)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("hello without mcp")
+        console.query_one("#console-send-message", Button).press()
+        await _wait_for_reply(console, pilot)
+        await pilot.pause()
+        after = _mcp_row_text(console)
+
+    assert before == off
+    assert after == off
+    assert gateway.offered_tools == [None]
+
+
+def test_unavailable_reason_names_windows_without_pinned_io(monkeypatch):
+    """The Windows copy, chosen by the same check that skips the bind."""
+    monkeypatch.setattr(console_snapshot, "unbound_console_sources", lambda _s: True)
+    monkeypatch.setattr(raw_participants, "_pinned_io_available", lambda: False)
+    assert (
+        console_snapshot.console_mcp_unavailable_reason(object())
+        == "not yet available on Windows"
+    )
+    monkeypatch.setattr(raw_participants, "_pinned_io_available", lambda: True)
+    assert (
+        console_snapshot.console_mcp_unavailable_reason(object())
+        == "store isn't in this profile's data folder"
+    )
+    monkeypatch.setattr(console_snapshot, "unbound_console_sources", lambda _s: False)
+    assert console_snapshot.console_mcp_unavailable_reason(object()) == ""
+    assert console_snapshot.console_mcp_unavailable_reason(None) == ""

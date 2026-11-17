@@ -295,6 +295,19 @@ def unbound_console_sources(service: Any) -> bool:
     )
 
 
+def console_mcp_unavailable_reason(service: Any) -> str:
+    """Why Console turns run without MCP tools, or "" when they do not.
+
+    TASK-41308: the Inspector's MCP row shows this, so an unbound store is
+    never silent. The same checks as the bind's skip; nothing reads the store.
+    """
+    if service is None or not unbound_console_sources(service):
+        return ""
+    if not raw._pinned_io_available():
+        return "not yet available on Windows"
+    return "store isn't in this profile's data folder"
+
+
 def standard_console_catalog_sources(service: Any, *, _include_log: bool = True) -> bool:
     """Preserve explicit custom catalog callbacks' late receiver contract."""
     return (

@@ -2450,6 +2450,14 @@ shows their state: "N tools ready", or "N servers enabled, not connected" when
 servers are configured but unreachable. MCP tool calls go through the same
 "Approval required" card as everything else.
 
+On Windows, Console does not offer MCP tools yet: a Send carries no MCP tools,
+neither your servers' nor chatbook's own, and the **MCP** row reads
+"off · not yet available on Windows" from the moment Console opens. The row
+reads "off · store isn't in this profile's data folder" when the MCP settings
+file sits outside the profile's data folder. The model is not told why; it
+only sees that no MCP tools were offered. Your servers stay configured in
+Settings ▸ Tools & MCP.
+
 Some servers describe a tool's arguments with a rule at the top of the schema,
 such as "give either `id` or `name`" (`anyOf`, `oneOf`, `allOf`, `enum`,
 `const` or `not`). OpenAI and Anthropic reject any request containing such a
