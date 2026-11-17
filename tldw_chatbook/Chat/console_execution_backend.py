@@ -45,6 +45,7 @@ class ConsoleExecutionBackend:
         """Construct once after the caller has retained this cleanup owner."""
         self._require_owner_loop()
         from tldw_chatbook import app_service_wiring, config
+
         # Original skill-source validation uses this defining metadata module;
         # importing it creates neither a widget nor the lazy trust service.
         from tldw_chatbook.Widgets import compact_model_bar  # noqa: F401
@@ -184,7 +185,10 @@ class ConsoleExecutionBackend:
             )
             or self.closed
             or config.get_cli_config_path() != self.profile.config_path
-            or config.get_user_data_dir() != self.profile.data_directory
+            or getattr_static(self.profile, "selection_is_current", None)
+            is not _PROFILE_SELECTION[0]
+            or not _definition_current(_PROFILE_SELECTION)
+            or not self.profile.selection_is_current()
             or config.current_config_identity() != self.profile.configuration_identity
             or self.domain.sources.configuration is not self.profile.configuration
             or self.domain.sources.chat_database is not self.profile.storage.chachanotes
@@ -294,6 +298,9 @@ class ConsoleExecutionBackend:
 
 
 from .console_domain_services import _definition
+from .console_execution_profile import ConsoleBackendProfile
+
+_PROFILE_SELECTION = _definition(ConsoleBackendProfile.selection_is_current)
 
 _DEFINITIONS = tuple(
     (name, _definition(value))

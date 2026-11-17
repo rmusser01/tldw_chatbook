@@ -107,3 +107,106 @@ async def test_backend_constructs_one_original_graph_and_permission_owner(reques
     assert backend.closed
     assert backend._shutdown_receipt is shutdown
     assert backend._sequence == 4
+
+
+@private_profile_test
+@pytest.mark.asyncio
+async def test_backend_source_checks_retain_selection_without_native_reacquisition(
+    request, monkeypatch, tmp_path
+):
+    import sys
+    from Tests.Chat.test_console_control_trace import _observe
+    from Tests.Chat.test_console_execution_profile import _settled_profile
+    from tldw_chatbook import config
+    from tldw_chatbook.Chat.console_execution_backend import ConsoleExecutionBackend
+    from tldw_chatbook.Chat.console_execution_profile import (
+        ConsoleBackendProfile,
+        open_console_backend_profile,
+    )
+
+    path, directory, *_ = _settled_profile()
+    profile = open_console_backend_profile(
+        expected_config_path=path, expected_data_directory=directory
+    )
+    backend = ConsoleExecutionBackend(
+        profile, profile_epoch="profile", service_epoch="backend"
+    )
+    entries = []
+    original = config.get_user_data_dir
+
+    def entered(frame):
+        if frame.f_locals.get("function") is original.__wrapped__:
+            entries.append(True)
+
+    try:
+        backend.start()
+        with _observe(original.__code__, sys.monitoring.events.PY_START, entered):
+            for _ in range(3):
+                backend.require_sources()
+                backend.presentation.require_association(
+                    backend.presentation.association
+                )
+            for section, key in (
+                ("paths", "data_dir"),
+                ("Paths", "data_dir"),
+                ("general", "users_name"),
+            ):
+                with monkeypatch.context() as change:
+                    change.setitem(config._CONFIG_CACHE, section, {key: "changed"})
+                    with pytest.raises(
+                        RuntimeError, match="source association changed"
+                    ):
+                        backend.require_sources()
+            with monkeypatch.context() as change:
+                change.setitem(
+                    config.DEFAULT_CONFIG_FROM_TOML,
+                    "general",
+                    {"users_name": "changed"},
+                )
+                with pytest.raises(RuntimeError, match="source association changed"):
+                    backend.require_sources()
+            for name, value in (
+                ("_CONFIG_CACHE", dict(config._CONFIG_CACHE)),
+                ("_CONFIG_GENERATION", config._CONFIG_GENERATION + 1),
+                ("_CONFIG_CACHE_SOURCE", "changed"),
+                ("get_user_data_dir", lambda: directory),
+            ):
+                with monkeypatch.context() as change:
+                    change.setattr(config, name, value)
+                    with pytest.raises(
+                        RuntimeError, match="source association changed"
+                    ):
+                        backend.require_sources()
+            with monkeypatch.context() as change:
+                change.setattr(
+                    ConsoleBackendProfile, "selection_is_current", lambda self: True
+                )
+                with pytest.raises(RuntimeError, match="source association changed"):
+                    backend.require_sources()
+            for name in (
+                "TLDW_CONFIG_PATH",
+                "HOME",
+                "USERPROFILE",
+                "HOMEDRIVE",
+                "HOMEPATH",
+                "XDG_CONFIG_HOME",
+                "XDG_DATA_HOME",
+            ):
+                with monkeypatch.context() as change:
+                    change.setenv(name, str(tmp_path / name))
+                    with pytest.raises(
+                        RuntimeError, match="source association changed"
+                    ):
+                        backend.require_sources()
+            with monkeypatch.context() as change:
+                change.chdir(tmp_path)
+                with pytest.raises(RuntimeError, match="source association changed"):
+                    backend.require_sources()
+            backend.require_sources()
+        assert entries == []
+        request.node.user_properties.append(
+            ("association_native_getter_entries", len(entries))
+        )
+    finally:
+        await backend.aclose()
+    assert backend.closed and backend.runtime._disposed

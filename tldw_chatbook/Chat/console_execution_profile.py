@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import sqlite3
 import threading
 from dataclasses import dataclass, field
@@ -59,6 +60,7 @@ from ..Skills_Interop import (
 from ..Sync_Interop import ServerSyncService, SyncScopeService
 from ..Sync_Interop.sync_state_repository import SyncStateRepository
 from ..Utils.private_paths import lexical_path, verify_trusted_directory
+from ..Utils.definition_records import capture_definitions, definitions_current
 from ..Workspaces import (
     ChangeReviewConsentService,
     DeferredWorkspaceToolProfileGuard,
@@ -73,6 +75,88 @@ from .server_chat_conversation_service import ServerChatConversationService
 
 if TYPE_CHECKING:
     from ..tldw_api import TLDWAPIClient
+
+
+def _selector_value(value):
+    """Detach only the original selector leaves, including invalid shapes."""
+    if type(value) is dict:
+        return (
+            dict,
+            tuple((key, _selector_value(item)) for key, item in value.items()),
+        )
+    if type(value) is list:
+        return (list, tuple(_selector_value(item) for item in value))
+    if value is None or type(value) in (str, bool, int, float):
+        return (type(value), value)
+    raise RuntimeError("Console backend selector value changed")
+
+
+def _selection_facts():
+    """Observe resident selection inputs, never filesystem posture or admission."""
+    cache = config._CONFIG_CACHE
+    if type(cache) is not dict:
+        raise RuntimeError("Console backend configuration cache changed")
+
+    def setting(values, section, key, default=None):
+        group = values.get(section)
+        present = isinstance(group, dict) and key in group
+        return [present, group[key] if present else default]
+
+    return (
+        config._CONFIG_GENERATION,
+        config._CONFIG_CACHE_SOURCE,
+        config.current_config_identity(),
+        config.get_cli_config_path(),
+        config.DEFAULT_CONFIG_PATH,
+        os.getcwd(),
+        tuple(
+            os.environ.get(name)
+            for name in (
+                "TLDW_CONFIG_PATH",
+                "HOME",
+                "USERPROFILE",
+                "HOMEDRIVE",
+                "HOMEPATH",
+                "XDG_CONFIG_HOME",
+                "XDG_DATA_HOME",
+            )
+        ),
+        tuple(
+            _selector_value(value)
+            for value in (
+                setting(cache, "paths", "data_dir"),
+                setting(cache, "Paths", "data_dir"),
+                setting(cache, "general", "users_name"),
+                setting(
+                    config.DEFAULT_CONFIG_FROM_TOML,
+                    "general",
+                    "users_name",
+                    "default_user",
+                ),
+            )
+        ),
+    )
+
+
+_SELECTION_DEFINITIONS = capture_definitions(
+    tuple(
+        (config, name, getattr(config, name))
+        for name in (
+            "get_cli_config_path",
+            "current_config_identity",
+            "get_user_data_dir",
+            "_get_effective_config_path",
+            "get_cli_setting",
+            "get_user_folder_name",
+            "_user_data_dir_inputs",
+            "_default_base_data_dir",
+        )
+    )
+    + tuple(
+        (globals(), name, globals()[name])
+        for name in ("_selection_facts", "_selector_value")
+    )
+)
 
 
 @dataclass(slots=True)
@@ -192,6 +276,8 @@ class ConsoleBackendProfile:
     configuration_identity: tuple[int, str] = field(repr=False)
     config_path: Path = field(repr=False)
     data_directory: Path = field(repr=False)
+    _selection_cache: dict[str, Any] = field(repr=False)
+    _selection_facts: tuple = field(repr=False)
     storage: ProfileStorage = field(repr=False)
     policy_context: RuntimePolicyContext = field(repr=False)
     policy_enforcer: ServicePolicyEnforcer = field(repr=False)
@@ -224,6 +310,14 @@ class ConsoleBackendProfile:
     def published_policy_state(self) -> RuntimeSourceState:
         """Return the state published by the original policy owner's callback."""
         return self._policy_publication.state
+
+    def selection_is_current(self) -> bool:
+        """Check source selection only; original native owners check posture."""
+        return (
+            definitions_current(_SELECTION_DEFINITIONS)
+            and config._CONFIG_CACHE is self._selection_cache
+            and _selection_facts() == self._selection_facts
+        )
 
     @property
     def unresolved_cached_clients(self) -> tuple[TLDWAPIClient, ...]:
@@ -461,10 +555,15 @@ def open_console_backend_profile(
         )
         if control_plane.permission_store is None:
             raise RuntimeError("Console backend permission store is unavailable")
+        selection_cache = config._CONFIG_CACHE
+        selection_facts = _selection_facts()
         if (
             config.get_cli_config_path() != config_path
             or config.get_user_data_dir() != data_directory
             or config.current_config_identity() != configuration_identity
+            or not definitions_current(_SELECTION_DEFINITIONS)
+            or config._CONFIG_CACHE is not selection_cache
+            or _selection_facts() != selection_facts
         ):
             raise RuntimeError("Console backend profile changed during construction")
         return ConsoleBackendProfile(
@@ -472,6 +571,8 @@ def open_console_backend_profile(
             configuration_identity=configuration_identity,
             config_path=config_path,
             data_directory=data_directory,
+            _selection_cache=selection_cache,
+            _selection_facts=selection_facts,
             storage=storage,
             policy_context=policy_context,
             policy_enforcer=policy_enforcer,
