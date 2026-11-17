@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-15 02:20
-updated_date: '2026-11-15 18:20'
+updated_date: '2026-11-16 22:45'
 labels:
 - follow-up
 - console
@@ -52,3 +52,5 @@ Test: `Tests/Chat/test_automatic_wake_recovery.py::test_a_close_during_a_manual_
 Covering runs (`-n 4`, load 30-37): the wake-recovery, self-hosted retry accounting and durable-commit files 69 passed; the close (`test_console_close_*`, `test_saved_progress_close.py`) and prompt mix-in (`test_console_prompt_mixin_*`) files 242 passed. The controller stays under its module-size row (28745 of 28746).
 
 No User Guide page quotes the copy. Files: `tldw_chatbook/Chat/console_chat_controller.py`, `Tests/Chat/test_automatic_wake_recovery.py`.
+
+**Review r15co-rev1 (2026-11-16): the guard's clauses are separated.** New case `[begun_close]`: the close is begun but not finalized, so the session still exists, and the held save then raises. Only the committed-close generation clause can tell that this refusal is a close; the test pins "Session closed." in the result and STOPPED in the run state. With `owner_id in self._session_close_generations` removed from the guard (temporary edit, reverted), `[begun_close]` failed (`'Mix-in attem...was not sent.' == 'Session closed.'`) while `[close]` and `[save_failed]` passed. With the clause in place all three pass (`-n 3`). Covering run (wake recovery, self-hosted retry accounting, durable commit; `-n 4`, load 77-80): 70 passed.

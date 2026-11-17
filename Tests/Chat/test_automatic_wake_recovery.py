@@ -346,12 +346,15 @@ async def test_a_wake_whose_owner_moves_during_its_reply_save_is_refused(rig, mo
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("move", ["close", "save_failed"])
+@pytest.mark.parametrize("move", ["close", "begun_close", "save_failed"])
 async def test_a_close_during_a_manual_mixin_save_reports_session_closed(rig, move):
     """TASK-41137: a regenerate's mix-in attempt save is held while the chat
     closes. The refusal the close produces (``mixin_attempt_owner_changed``)
     read as "Mix-in attempt could not be saved"; a close ends the turn as every
-    close path does (TASK-22690). A save that fails on its own keeps that copy."""
+    close path does (TASK-22690). A save that fails on its own keeps that copy.
+    ``begun_close`` (review r15co-rev1) commits the close without finalizing it,
+    so the session still exists, and the save fails: only the committed-close
+    generation can tell that refusal is a close."""
     _, _, _, store, session, _, _, controller = rig
     persistence = store.persistence
     entered, release = threading.Event(), threading.Event()
@@ -363,7 +366,7 @@ async def test_a_close_during_a_manual_mixin_save_reports_session_closed(rig, mo
         def held_attempt(conversation_id, **kwargs):
             entered.set()
             release.wait(10)
-            if move == "save_failed":
+            if move in {"save_failed", "begun_close"}:
                 raise RuntimeError("attempt save failed")
             return real_attempt(conversation_id, **kwargs)
 
@@ -373,19 +376,20 @@ async def test_a_close_during_a_manual_mixin_save_reports_session_closed(rig, mo
         )
         try:
             assert await _settle(entered.is_set), "the attempt was never saved"
-            if move == "close":
+            if move != "save_failed":
                 ticket = controller.begin_session_close(
                     session.id,
                     expected_revision=controller.lifecycle_impact(
                         session_id=session.id
                     ).revision,
                 )
+            if move == "close":
                 controller.finalize_session_close(ticket)
         finally:
             release.set()
         result = await asyncio.wait_for(turn, 10)
         state = controller.run_state_for(session.id)
-        if move == "close":
+        if move != "save_failed":
             assert result.visible_copy == "Session closed.", result
             assert (state.status, state.visible_copy) == (
                 ConsoleRunStatus.STOPPED,
