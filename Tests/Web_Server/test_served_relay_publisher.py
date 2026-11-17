@@ -257,37 +257,40 @@ async def test_wait_idle_lets_an_idle_loop_sleep_until_the_send_finishes() -> No
     client.gate = asyncio.Event()
     publisher = ServedRelayPublisher(client)
     publisher.attach()
-    publisher.run_status("session-7", "streaming")
-    await client.in_flight.wait()  # queue empty, drainer busy
-
-    loop = asyncio.get_running_loop()
-    previous_override = vars(loop).get("_run_once")
-    original_run_once = loop._run_once
-    turns = 0
-
-    def counting_run_once() -> None:
-        nonlocal turns
-        turns += 1
-        original_run_once()
-
-    loop._run_once = counting_run_once
-    started = loop.time()
     try:
-        await publisher.wait_idle(timeout=0.2)
-    finally:
-        if previous_override is None:
-            del loop._run_once
-        else:
-            loop._run_once = previous_override
-    # A sleeping loop turns a handful of times in 0.2 s; a spin, hundreds.
-    assert turns <= 20, f"wait_idle turned an idle loop {turns} times in 0.2 s"
-    assert loop.time() - started >= 0.19 and client.frames == []
+        publisher.run_status("session-7", "streaming")
+        await client.in_flight.wait()  # queue empty, drainer busy
 
-    client.gate.set()
-    # Returns as soon as the last event is sent, not at its deadline.
-    await asyncio.wait_for(publisher.wait_idle(timeout=60), 5)
-    assert [kind for kind, _ in client.frames] == ["relay.run.status"]
-    await publisher.aclose()
+        loop = asyncio.get_running_loop()
+        previous_override = vars(loop).get("_run_once")
+        original_run_once = loop._run_once
+        turns = 0
+
+        def counting_run_once() -> None:
+            nonlocal turns
+            turns += 1
+            original_run_once()
+
+        loop._run_once = counting_run_once
+        started = loop.time()
+        try:
+            await publisher.wait_idle(timeout=0.2)
+        finally:
+            if previous_override is None:
+                del loop._run_once
+            else:
+                loop._run_once = previous_override
+        # A sleeping loop turns a handful of times in 0.2 s; a spin, hundreds.
+        assert turns <= 20, f"wait_idle turned an idle loop {turns} times in 0.2 s"
+        assert loop.time() - started >= 0.19
+        assert client.frames == []
+
+        client.gate.set()
+        # Returns as soon as the last event is sent, not at its deadline.
+        await asyncio.wait_for(publisher.wait_idle(timeout=60), 5)
+        assert [kind for kind, _ in client.frames] == ["relay.run.status"]
+    finally:
+        await publisher.aclose()
 
 
 @pytest.mark.asyncio
