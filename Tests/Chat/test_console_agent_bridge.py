@@ -171,7 +171,7 @@ from tldw_chatbook.Tools.workspace_tool_executor import (
     WorkspaceToolExecutor,
 )
 from tldw_chatbook.Tools.workspace_tool_protocol import WorkspaceToolResponse
-from tldw_chatbook.Tools.workspace_tool_worker import run_workspace_worker
+from Tests.workspace_worker_test_support import run_in_process_workspace_worker
 from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
 from tldw_chatbook.Persona_Buddy.controller import PersonaBuddyController
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
@@ -191,7 +191,7 @@ class _InProcessWorkspaceExecutor:
     def execute(self, operation: str, arguments: dict, *, intent: str) -> str:
         request = self._executor._build_request(operation, arguments, intent=intent)
         stdout = BytesIO()
-        run_workspace_worker(BytesIO(request.to_bytes()), stdout, BytesIO())
+        run_in_process_workspace_worker(BytesIO(request.to_bytes()), stdout, BytesIO())
         response = WorkspaceToolResponse.from_bytes(
             stdout.getvalue().splitlines()[-1],
             expected_operation_id=request.operation_id,
@@ -11461,7 +11461,7 @@ def test_terminal_usage_snapshot_failure_is_observational_and_finishes(
 
     monkeypatch.setattr(
         console_agent_bridge.ConsoleProviderCallSignals,
-        "usage_snapshot",
+        "logical_usage_snapshots",
         fail_snapshot,
     )
     store = ConsoleChatStore()
@@ -11525,13 +11525,13 @@ def test_live_usage_chunk_observation_failure_does_not_truncate_provider_text(
     if fault == "snapshot":
         monkeypatch.setattr(
             console_agent_bridge.ConsoleProviderCallSignals,
-            "usage_snapshot",
+            "logical_usage_snapshots",
             lambda _self: (_ for _ in ()).throw(RuntimeError("private snapshot")),
         )
     else:
         monkeypatch.setattr(
             _StreamingModelAdapter,
-            "_provider_output_count",
+            "_provider_calls_output_count",
             staticmethod(
                 lambda _usage: (_ for _ in ()).throw(RuntimeError("private extraction"))
             ),
@@ -11590,8 +11590,8 @@ def test_terminal_usage_signal_fallback_preserves_explicit_output(monkeypatch):
 
     monkeypatch.setattr(
         console_agent_bridge.ConsoleProviderCallSignals,
-        "usage_snapshot",
-        lambda _self: {"input_tokens": 3, "output_tokens": 2, "total_tokens": 5},
+        "logical_usage_snapshots",
+        lambda _self: ({"input_tokens": 3, "output_tokens": 2, "total_tokens": 5},),
     )
     store = ConsoleChatStore()
     session = store.ensure_session()
@@ -12339,7 +12339,8 @@ def test_live_tool_lifecycle_rows_exist_before_review_and_settle_in_place(tmp_pa
                 if m.activity_presentation.kind == "tool"
             ]
             assert rows[0].id == observed["first"]
-            assert rows[0].activity_presentation.status == "running"
+            # Dispatch alone does not confirm backend start (approval UX contract).
+            assert rows[0].activity_presentation.status == "starting"
             assert "first.txt" in rows[0].activity_presentation.arguments
             return super().invoke(tool_id, args)
 
