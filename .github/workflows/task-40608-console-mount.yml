@@ -1,0 +1,40 @@
+name: TASK-40608 Windows Console mount
+
+on:
+  push:
+    branches: [codex/task-40608-windows-admission]
+    paths:
+      - '.github/workflows/task-40608-console-mount.yml'
+      - 'tldw_chatbook/**'
+      - 'Tests/Chat/test_console_*'
+
+permissions:
+  contents: read
+
+jobs:
+  mount:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - name: Allow long paths in the checkout
+        run: git config --global core.longpaths true
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.10'
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install the application and targeted test dependencies
+        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout hypothesis pywin32 pydub
+      - name: Mount and detach the real Console
+        shell: pwsh
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+          PYTHONUTF8: '1'
+        run: |
+          $testRoot = python -c "from pathlib import Path; from Tests.Backup_Recovery.run_platform_product import _create_private_root; print(_create_private_root(Path()))"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:TEMP = $env:TMP = $testRoot
+          python -m Tests.windows_private_fixture_runner -p pytest_asyncio.plugin -p pytest_timeout -q Tests/Chat/test_console_execution_attachment.py Tests/Chat/test_console_execution_composition_values.py Tests/Chat/test_console_backend_view_lifecycle.py Tests/Chat/test_console_execution_mounted.py

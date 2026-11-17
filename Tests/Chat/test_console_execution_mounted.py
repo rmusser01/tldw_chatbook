@@ -71,7 +71,7 @@ async def test_selected_process_home_to_chat_composes_original_surface(request):
                     try:
                         async with asyncio.timeout(10):
                             await app.handle_screen_navigation(NavigateToScreen(TAB_CHAT))
-                            await _wait_for_selector(app, pilot, "#console-composer", timeout=10)
+                            await _wait_for_selector(app, pilot, "#console-native-composer", timeout=10)
                             while not getattr(app.screen, "_console_process_surface_reconciled", False):
                                 await pilot.pause()
                     except BaseException:
@@ -108,7 +108,7 @@ async def test_selected_process_home_to_chat_composes_original_surface(request):
                         raise
                     screen = app.screen
                     assert type(screen) is ChatScreen
-                    composer = screen.query_one("#console-composer", ConsoleComposerBar)
+                    composer = screen.query_one("#console-native-composer", ConsoleComposerBar)
                     assert composer.is_mounted
                     client.require_view(screen, client._visit)
                     projection = client.projection_view
