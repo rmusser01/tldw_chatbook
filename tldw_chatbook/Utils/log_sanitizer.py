@@ -624,7 +624,7 @@ _CONVENTIONAL_NAME = re.compile(rf"{_LOWER_SNAKE}|{_UPPER_SNAKE}|{_LOWER_KEBAB}|
 _DOTTED_NAME = re.compile(
     rf"(?:{_LOWER_SNAKE}|{_UPPER_SNAKE}|{_CAMEL})(?:\.(?:{_LOWER_SNAKE}|{_UPPER_SNAKE}|{_CAMEL}))+"
 )
-_TEMPLATE_NAME = re.compile(rf"{_LOWER_SNAKE}|{_UPPER_SNAKE}|{_DOTTED_NAME.pattern}")
+_TEMPLATE_NAME = re.compile(rf"{_LOWER_SNAKE}|{_DOTTED_NAME.pattern}")
 _REFERENCE = re.compile(
     rf"""(?x)
     \$(?:{_UPPER_SNAKE}) | %(?:{_UPPER_SNAKE})% | \$\{{(?:{_UPPER_SNAKE}|{_LOWER_SNAKE})\}}
