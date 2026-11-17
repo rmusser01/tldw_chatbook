@@ -15,16 +15,17 @@ app-like when its last name segment is ``app``, ``app_instance``, ``tldw_app``,
 
 A literal can also reach the app through a name: a helper's parameter
 (``_optional(app, "chachanotes_db")``), a loop over a literal tuple
-(``for name in ("media_db", ...): getattr(app, name)``), and since TASK-41318
-a plain ``name = ...`` in the scope that binds the name (the function, an
+(``for name in ("media_db", ...): getattr(app, name)``), and since TASK-41318 a
+plain ``name = ...`` in the scope that binds the name (the function, an
 enclosing function or lambda, or the module), an enclosing loop's item (nested
 loops and comprehensions included), a dict lookup (``D[key]``,
 ``D.get(key, default)``) or a same-module function's return value, composed in
 any order. Every ``=`` to the name in that scope counts, whatever its order or
-branch. Those literals count as lookups in the pins and the private-name rule,
-so moving a literal lookup into one is not a reduction (TASK-40141). A literal
-counts once per lookup that can read it, so a dict read at eight sites counts
-its values eight times.
+branch, unless an enclosing loop binds the same name (the loop wins). Those
+literals count as lookups in the pins and the private-name rule, so moving a
+literal lookup into one is not a reduction (TASK-40141). A literal counts once
+per lookup that can read it, so a dict read at eight sites counts its values
+eight times.
 
 Not followed, because TASK-41318 did not name them (follow one if a literal
 moves there): conditional and boolean expressions (``"a" if x else "b"``,
@@ -33,12 +34,14 @@ function's returned parameter (the caller's argument), iterating a dict or its
 ``.items()``, tuple subscripts, ``*``/``**`` unpacking inside a literal, a
 comprehension used as a loop's iterable, a loop variable read after its loop,
 names imported from another module, class attributes, functions defined in
-another module, and bindings other than a plain ``=`` (tuple unpacking,
-``with``/``except``/``import`` targets, walrus, augmented). A name bound only
-those ways still shadows a module-level one. A lookup whose own argument is an
-UPPER_CASE constant is not followed either: its row in the record names the
-attribute it reaches. A constant reached any other way (``x = CONST``, a dict
-holding one) is followed.
+another module, a ``global``/``nonlocal`` rebinding from another function, a
+function's ``=`` to a name an enclosing loop also binds, and bindings other
+than a plain ``=`` (tuple unpacking, ``with``/``except``/``import`` targets,
+``match`` captures, walrus, augmented). A name bound only those ways still
+shadows a module-level one. A lookup whose own argument is an UPPER_CASE
+constant is not followed either: its row in the record names the attribute it
+reaches. A constant reached any other way (``x = CONST``, a dict holding one)
+is followed.
 
 Every lookup whose name is not a literal, and every ``setattr``/``delattr`` on
 the app whose name is not a literal (TASK-41318), is also recorded in
@@ -139,8 +142,10 @@ def _bound_names(scope: ast.AST) -> set[str]:
     for n in nodes:
         if type(n) is ast.Name and type(n.ctx) is ast.Store and id(n) not in loop_variables:
             names.add(n.id)
-        elif isinstance(n, (*_FUNCTIONS, ast.ClassDef, ast.ExceptHandler)) and n.name:
+        elif isinstance(n, (*_FUNCTIONS, ast.ClassDef, ast.ExceptHandler, ast.MatchAs, ast.MatchStar)):
             names.add(n.name)
+        elif type(n) is ast.MatchMapping:
+            names.add(n.rest)
         elif type(n) is ast.alias:
             names.add(n.asname or n.name.partition(".")[0])
     return names
@@ -443,7 +448,8 @@ def test_app_string_lookups_match_their_pin(pkg: str) -> None:
         f"(pinned {pin}, +{count - pin}). A literal counts once per lookup site "
         "that can read it, so one value added to a dict, tuple or return that N "
         "lookups read by name adds N. Reach the service explicitly (for a new "
-        "value, move the lookups that read it behind one explicit accessor); do "
+        "value, move the lookups that read it behind a typed attribute or "
+        "explicit accessor, not a by-name helper); do "
         f"NOT raise the pin ({CENSUS.name}). Callees are matched by name (helper "
         "call sites package-wide, function returns within the module): if the "
         "increase is an unrelated call sharing such a name, rename that call "
@@ -639,6 +645,10 @@ _SHADOWED = 'attr = "_planted_private"\n\n'
         _SHADOWED + "def f(app, pair):\n    attr, other = pair\n    getattr(app, attr, None)\n",
         _SHADOWED + "def f(app):\n    try:\n        pass\n    except Exception as attr:\n"
         "        getattr(app, attr, None)\n",
+        _SHADOWED + "def f(app, v):\n    match v:\n        case str() as attr:\n"
+        "            getattr(app, attr, None)\n",
+        _SHADOWED + "def f(app, v):\n    match v:\n        case {**attr}:\n"
+        "            getattr(app, attr, None)\n",
         _SHADOWED + "def f(app, svc):\n    attr = svc.name\n\n"
         "    def inner():\n        getattr(app, attr, None)\n",
         "def ident(name):\n    return name\n\ndef f(app, n):\n    getattr(app, ident(n), None)\n\n"
@@ -652,6 +662,8 @@ _SHADOWED = 'attr = "_planted_private"\n\n'
         "with-target",
         "tuple-unpacking",
         "except-target",
+        "match-capture",
+        "match-mapping-rest",
         "enclosing-function",
         "returned-parameter",
     ],
@@ -664,6 +676,13 @@ def test_a_literal_the_name_cannot_hold_is_not_counted(tmp_path: Path, source: s
     not make its function a lookup helper.
     """
     assert "_planted_private" not in _plant(tmp_path, {"UI/scoped.py": source})[1]
+
+
+@pytest.mark.unit
+def test_a_comprehension_variable_does_not_shadow_the_module(tmp_path: Path) -> None:
+    """A comprehension's loop variable is its own, so the module's binding still counts."""
+    source = _SHADOWED + "def f(app, xs):\n    [attr for attr in xs]\n    getattr(app, attr, None)\n"
+    assert "_planted_private" in _plant(tmp_path, {"UI/scoped.py": source})[1]
 
 
 @pytest.mark.unit

@@ -92,6 +92,13 @@ Evidence (2026-11-16, base fbf1c9ea74 = dev 5e3c8b2bd4 plus filing commits, load
   - Pins and record re-measured: unchanged.
   - Real-tree plants: re-run with the same results, and the unplanted copy passes 52 nodes.
   - `./scripts/preflight.sh` passed with `PYTHON=` set to the repo's 3.12.11 venv. This worktree has no `.venv`, so preflight otherwise picks `python3.14` (3.14.7), and the Canvas Mermaid check then fails on its 3.12.11 build pin. That failure is environmental.
+- **Delta review (2026-11-17, of e85f3095b2; the real-tree literal multisets were identical, 1800 = 1800):**
+  - `match` captures (`MatchAs`/`MatchStar` names, `MatchMapping.rest`) now count as bindings. Two new controls: `[match-capture|match-mapping-rest]`.
+  - `test_a_comprehension_variable_does_not_shadow_the_module` pins the comprehension-variable exclusion.
+  - The docstring now lists an enclosing loop beating its function's `=`, and `global`/`nonlocal` rebinding, as not followed.
+  - The pin message now says "behind a typed attribute or explicit accessor, not a by-name helper".
+  - The census file passes 55 nodes, serially. Mutants dropping the exclusion and the match captures each failed their new controls.
+  - Pins and record: unchanged. Preflight passed (`PYTHON` set to the 3.12.11 venv).
 - **Files:**
   - `Tests/Architecture/test_app_string_lookup_census.py`
   - `Tests/Architecture/app_lookup_census.tsv`
