@@ -357,4 +357,4 @@ a529dbd3ed0b13502b8d100e3053e0bea5baa119
 # AST-proven against the parent. Rebased onto dev cc6006fcf5, the browse
 # sync also carries dev's TASK-40293 branch with its `self._media_controller.`
 # hop collapsed (R2 token 10).
-0b8322f1f019446fcbff955f155150eae87b1c04
+2b6dbd96af92ffac4eba1a25854754405360034d
