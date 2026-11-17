@@ -8573,7 +8573,10 @@ class LibraryScreen(BaseAppScreen):
         programmatic, and a compact transition's settled restore took it back.
         """
         self._mark_library_notes_user_interaction()
-        if self._library_pending_list_entry_focus and self._library_notes_database_entry():
+        if (
+            self._library_pending_list_entry_focus
+            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+        ):
             # Review r15lf-rev3: the click is the user's choice. Disarm before
             # Textual focuses its target, so a waiting Notes entry's rules for
             # the app's own landings never see it.
@@ -11044,7 +11047,7 @@ class LibraryScreen(BaseAppScreen):
         self._media_state.successful_focus_ownership = None
         focused = self.focused
         if (
-            self._library_notes_database_entry()
+            self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
             and focused is not None
             and focused.has_class(LIBRARY_ADAPTIVE_READER_GRIP_CLASS)
         ):
@@ -11172,7 +11175,7 @@ class LibraryScreen(BaseAppScreen):
                 focused is None
                 or focused.has_class(LIBRARY_ADAPTIVE_READER_GRIP_CLASS)
             )
-            and self._library_notes_database_entry()
+            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
         ):
             chain = self.focus_chain
             for selector in (
@@ -11391,7 +11394,7 @@ class LibraryScreen(BaseAppScreen):
             and self._library_pending_list_entry_media_return is not None
         ):
             return
-        if self._library_notes_database_entry() and widget is not None:
+        if row_class == "library-notes-row" and widget is not None:
             # TASK-41129 reviews: two landings are the app's own, not the user
             # leaving the list (a key or a click disarms first, in ``on_key``
             # and ``get_focusable_widget_at``). A Notes canvas sync's default
@@ -11490,13 +11493,6 @@ class LibraryScreen(BaseAppScreen):
                 return control
         return None
 
-    def _library_notes_database_entry(self) -> bool:
-        """The Notes entry targets the Database list, not Folder files."""
-        return (
-            self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
-            and self._notes_state.source == LIBRARY_NOTES_SOURCE_DATABASE
-        )
-
     def _library_notes_entry_list_settled(self) -> bool:
         """Whether the Notes list has loaded with no note row (TASK-41129)."""
         projection = self._build_library_notes_tree_projection()
@@ -11552,7 +11548,6 @@ class LibraryScreen(BaseAppScreen):
                 return
             if (
                 row_class == "library-notes-row"
-                and self._library_notes_database_entry()
                 and not self._library_notes_entry_list_settled()
             ):
                 # TASK-41129: rows still loading -- wait for them, not the

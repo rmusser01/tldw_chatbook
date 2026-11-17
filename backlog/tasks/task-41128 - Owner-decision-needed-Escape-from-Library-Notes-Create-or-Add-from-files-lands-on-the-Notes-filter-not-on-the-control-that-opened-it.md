@@ -4,7 +4,7 @@ title: "Owner decision needed: Escape from Library Notes Create or Add from file
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-17 08:33'
+updated_date: '2026-11-17 09:08'
 created_date: 2026-11-15 02:20
 labels:
 - follow-up
@@ -88,4 +88,4 @@ Read as: Escape from Create or from Add from files returns to the Library Notes 
 
 **Fix round 3 (review r15lf-rev2, 2026-11-17).** An exit taken while the list reloads no longer parks focus on a pane grip. While the rows load, the entry waits with no grip holding focus and lands on the first row when they arrive. If the window closes first it lands on New, the exits' empty-list target. Pinned by `test_an_exit_while_the_notes_list_reloads_never_parks_on_a_grip`; mechanism and evidence are in TASK-41129's fix round 3.
 
-**Fix round 4 (review r15lf-rev3, 2026-11-17).** A user's click on a pane grip during a waiting exit landing now keeps the grip. Only the canvas sync's own restore keeps a waiting entry armed. The landing rules apply only to the Database list, not Folder files. Details and evidence are in TASK-41129's fix round 4.
+**Fix round 4 (review r15lf-rev3, 2026-11-17).** A user's click on a pane grip during a waiting exit landing now keeps the grip. Only the canvas sync's own restore keeps a waiting entry armed. Details and evidence are in TASK-41129's fix rounds 4 and 5 (round 5 deleted a Database-only gate that changed nothing a user sees).

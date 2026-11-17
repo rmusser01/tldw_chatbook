@@ -34420,10 +34420,11 @@ async def test_an_exit_while_the_notes_list_reloads_never_parks_on_a_grip(
     """
     from tldw_chatbook.Widgets.Library import LIBRARY_ADAPTIVE_READER_GRIP_CLASS
 
+    # A generous window for the setup's own Notes entry; the past-window
+    # case shortens it only for the exit (review r15lf-rev4: a slow first
+    # load could expire the setup entry).
     monkeypatch.setattr(
-        library_screen_module,
-        "LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS",
-        10.0 if timing == "inside-window" else 1.0,
+        library_screen_module, "LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS", 10.0
     )
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
@@ -34457,6 +34458,10 @@ async def test_an_exit_while_the_notes_list_reloads_never_parks_on_a_grip(
         await pilot.pause(0.3)
         hold["on"] = True
         screen._request_library_notes_tree_initial_load()
+        if timing == "past-window":
+            monkeypatch.setattr(
+                library_screen_module, "LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS", 1.0
+            )
         await pilot.press("escape")
 
         def on_grip() -> bool:

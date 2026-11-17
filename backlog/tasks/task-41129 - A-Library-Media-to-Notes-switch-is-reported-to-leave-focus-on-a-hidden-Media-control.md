@@ -4,7 +4,7 @@ title: "A Library Media-to-Notes switch is reported to leave focus on a hidden M
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-17 08:33'
+updated_date: '2026-11-17 09:08'
 created_date: 2026-11-15 02:20
 labels:
 - follow-up
@@ -115,7 +115,7 @@ Reproduced on base cc6006fcf5, and fixed.
 **Fix round 4 (review r15lf-rev3, 2026-11-17).**
 - **A user's click on a pane grip during a waiting entry ended with nothing focused.** Textual focuses the clicked grip before the `MouseDown` reaches the screen, so round 3's grip rule cleared the user's own landing, and `on_mouse_down` then disarmed. Fix: `get_focusable_widget_at`, which Textual calls only for a press and just before focusing, now disarms a pending Database Notes entry. The grip's focus event then finds nothing armed, and the click wins.
 - **The exemption is narrowed.** `on_descendant_focus` no longer exempts every landing carrying the programmatic marker. It exempts only the Notes canvas sync's own default restore, whose landing `_restore_library_notes_after_targeted_sync` now records in `_library_entry_restore_landing` (cleared on use and on disarm), plus a grip. A deliberate marked `set_focus` during the wait disarms the entry.
-- **Folder files.** Every round-2 and round-3 rule (waiting for rows, grip clearing at arm and at expiry, the descendant rule, the click disarm) now applies only to the Database list: `_library_notes_database_entry()` requires the BROWSE_NOTES row and the Database source. A probe of Folder files mode found the Database filter and rows still mounted but hidden (not in the focus chain). The same probe found focus left on that hidden filter after switching to Folder files, on base cc6006fcf5 as on head; it is pre-existing and listed as a follow-up.
+- **Folder files.** This round first limited the Notes entry rules to the Database list with a `_library_notes_database_entry()` gate. Review r15lf-rev4 found the gate unpinned and neutral: with it removed, every case passed, and the gateless emulation failed 0 of 36. I found no Folder files case where it changes what the user sees, so it was deleted (fix round 5). A probe of Folder files mode found the Database filter and rows still mounted but hidden (not in the focus chain), and focus left on that hidden filter after switching to Folder files, on base cc6006fcf5 as on head. That is pre-existing and listed as a follow-up.
 - **Pins** (`Tests/UI/test_library_shell.py`):
   - `test_a_click_on_a_grip_while_the_notes_entry_waits_keeps_the_grip[media-switch|create-escape]`: a real `pilot.click` on the Library grip while rows are held. The grip must keep focus, the entry must be disarmed, and the arriving rows must not take focus to a row. Red on round 3 (`2855776855`), 2 of 2 runs ("The clicked grip lost focus to None").
   - `test_a_deliberate_programmatic_focus_during_the_notes_wait_is_kept`: a marked `set_focus` on the rail search box while the entry waits must disarm it, and the rows must not take focus to a row. Red on round 3, 2 of 2 ("left the entry armed"). The box sits outside the repainting canvas; a canvas control such as Sort or New was pruned by the loading repaint within 20 ms, so its focus event arrived stale.
@@ -130,6 +130,11 @@ Reproduced on base cc6006fcf5, and fixed.
 | round-2 emulation | 6 | 3 |
 | base | 6 | 1 |
 
-  `test_resume_arms_exactly_one_timer_and_it_fires_once` failed 3 of 3 on all three trees in the first comparison, and 2 of 3 on the round-2 emulation in the second. The other failures scatter one or two per tree. Round 3 did not cause them. They are load flakes, and after this round's Database gate head is green 36 of 36.
+  `test_resume_arms_exactly_one_timer_and_it_fires_once` failed 3 of 3 on all three trees in the first comparison, and 2 of 3 on the round-2 emulation in the second. The other failures scatter one or two per tree. Round 3 did not cause them; they are load flakes. Head's 0 of 36 in the second comparison is load as well, not the gate (see Fix round 5).
 - **Runs.** The 11 changed nodes (22 cases, the census node included) passed 3 of 3 at `-n 4` (load 68-82). Ratchets and wiring: 103 passed.
 - **Size.** `library_screen.py` 38268 -> 38287 lines, 1379 -> 1380 methods. `library_notes_controller.py` 7459 -> 7462.
+
+**Fix round 5 (review r15lf-rev4, 2026-11-17).**
+- **The press-only assumption is guarded.** `Tests/Architecture/test_screen_size_ratchet.py::test_textual_calls_get_focusable_widget_at_only_to_forward_a_press` scans the installed `textual` package with `ast`. It requires every reference to `get_focusable_widget_at` (attribute, name or string) to sit inside `Screen._forward_event`'s `isinstance(event, events.MouseDown)` branch, and at least one to be there. Red against a temporarily edited copy of the package that adds a call outside it (`screen.py:688`); the real venv was never touched. The file runs on the PR fast lane.
+- **`[create-past-window]` setup flake.** `test_an_exit_while_the_notes_list_reloads_never_parks_on_a_grip` now runs its setup under a 10 s window, and the past-window cases shorten it to 1 s only just before Escape, so a slow first load cannot expire the setup's own entry.
+- **The Database gate is deleted**, with its five uses; the conditions are back to the BROWSE_NOTES row. `library_screen.py` 38287 -> 38282 lines, 1380 -> 1379 methods.
