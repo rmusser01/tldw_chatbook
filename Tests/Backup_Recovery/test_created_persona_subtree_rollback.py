@@ -593,9 +593,9 @@ def test_native_persona_retirement_keeps_ancestor_exclusion(
 # orchestrator never imports config and holds no lease across maintenance
 # (TASK-40132 lesson). The route argument picks the scenario:
 #   changed         back up, add a second pack, restore, roll the restore back
-#   created-source  back up a profile holding one pack (for created-target)
-#   created-target  restore that backup into a profile that never had either
-#                   tree nor a persona store, then roll the restore back
+#   created-source  back up a profile holding one pack (for both targets below)
+#   created-target  restore that backup into a profile that had neither tree
+#                   nor a persona store, then roll the restore back
 #   nested-target   restore that backup into a profile holding another pack,
 #                   so the restore creates a pack folder inside each existing
 #                   root, then roll the restore back (TASK-41113)
