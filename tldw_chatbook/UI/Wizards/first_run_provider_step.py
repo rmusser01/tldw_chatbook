@@ -991,14 +991,10 @@ class ProviderStep(provider_check.ProviderCheckStep):
     def _initial_endpoint_for(self, provider_key: str) -> str:
         from tldw_chatbook.Chat.console_provider_endpoints import (
             builtin_provider_endpoint,
-        )
-        from tldw_chatbook.Chat.provider_setup_persistence import (
             configured_provider_endpoint,
         )
 
-        configured = configured_provider_endpoint(
-            provider_key, self._provider_settings(provider_key)
-        )
+        configured = configured_provider_endpoint(provider_key, self._provider_settings(provider_key))
         found = self.found_server_to_fill(provider_key)  # provider-02; review F3
         if found is not None:
             return str(found.base_url)

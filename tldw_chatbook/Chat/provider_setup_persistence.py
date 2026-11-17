@@ -279,24 +279,24 @@ def host_port_refusal(provider: object, endpoint: str) -> str:
     return mlx_endpoint_refusal(endpoint)
 
 
-def configured_provider_endpoint(
-    provider: object, provider_settings: Mapping[str, object]
-) -> str | None:
-    """The endpoint a provider's table holds, as setup screens show it.
+def typed_endpoint_refusal(provider: object, endpoint: str) -> str:
+    """What Save refuses beyond the contract, for an endpoint as typed.
+
+    KoboldCpp's native-route rule (TASK-38964), then MLX-LM's host-and-port
+    rule (TASK-41145).
 
     Args:
-        provider: The provider key or alias.
-        provider_settings: The provider's ``api_settings`` table.
+        provider: The provider key.
+        endpoint: The endpoint as typed.
 
     Returns:
-        MLX-LM's host and port as ``http://<host>:<port>/v1`` (TASK-41145),
-        else the table's first configured endpoint alias, or None.
+        The refusal copy, or "".
     """
-    from .console_provider_endpoints import first_configured_endpoint
+    from ..Provider_Contract.provider_endpoint_contract import koboldcpp_route_refusal
 
-    if provider in MLX_HOST_PORT_PROVIDER_KEYS:
-        return mlx_saved_endpoint(provider_settings)
-    return first_configured_endpoint(provider_settings)
+    return koboldcpp_route_refusal(provider, endpoint) or host_port_refusal(
+        provider, endpoint
+    )
 
 
 def mlx_saved_endpoint(provider_settings: Mapping[str, object]) -> str:

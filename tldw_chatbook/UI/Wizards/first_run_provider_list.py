@@ -715,7 +715,7 @@ class ProviderListStep(ProviderKeyEntryStep):
         server = self.found_server_for(provider_key)
         if server is None:
             return None
-        from tldw_chatbook.Chat.provider_setup_persistence import (
+        from tldw_chatbook.Chat.console_provider_endpoints import (
             configured_provider_endpoint,
         )
         from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (

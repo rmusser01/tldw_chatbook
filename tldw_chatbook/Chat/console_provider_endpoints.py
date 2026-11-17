@@ -285,6 +285,24 @@ def mlx_endpoint(table: Mapping[str, object]) -> str:
     return f"http://{table.get('host', '127.0.0.1')}:{table.get('port', 8080)}/v1"
 
 
+def configured_provider_endpoint(
+    provider: object, provider_settings: Mapping[str, object]
+) -> str | None:
+    """The endpoint a provider's table holds, as setup screens show it.
+
+    Args:
+        provider: The provider key.
+        provider_settings: The provider's ``api_settings`` table.
+
+    Returns:
+        MLX-LM's host and port as ``http://<host>:<port>/v1`` (TASK-41145),
+        else the table's first configured endpoint alias, or None.
+    """
+    if provider in ADAPTER_ONLY_ENDPOINT_KEYS:
+        return mlx_endpoint(provider_settings)
+    return first_configured_endpoint(provider_settings)
+
+
 def adapter_own_endpoint(
     dispatch: str, app_config: Mapping[str, object]
 ) -> str | None:
