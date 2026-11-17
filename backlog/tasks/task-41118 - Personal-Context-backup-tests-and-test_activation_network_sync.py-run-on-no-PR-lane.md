@@ -4,7 +4,7 @@ title: "Personal Context backup tests and test_activation_network_sync.py run on
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-15 20:07'
+updated_date: '2026-11-17 00:58'
 created_date: 2026-11-15 02:20
 labels:
 - follow-up
@@ -67,3 +67,5 @@ Choice: the owner job, not recovered-suites. The four Personal Context/App files
 
 Concern: `test_restore_data_groups.py`'s `test_replace_restore_makes_personal_context_readable_and_rolls_back` cases took 83-300+ s each at load ~110; four hit the 300 s limit here. They pass in under 300 s when the host is less loaded, but the first CI runs of the job should be read for them.
 `test_detached_layout.py` already runs whole in the same job.
+
+**Review r15bt-rev1 (4905d25fc4).** `test_replace_restore_makes_personal_context_readable_and_rolls_back` now carries `@pytest.mark.timeout(810)`. With the per-test limit lifted (-n 4, load 67-110), `[link-include]`, `[remove-include]`, `[no_keyring-include]` and `[link-exclude]` ran 343-403 s and all passed; 810 is 2x the 403 s. ADR-103 records the arithmetic: about 51-63 min measured for the step, inside its 70 min cap.

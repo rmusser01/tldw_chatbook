@@ -4,7 +4,7 @@ title: "Eight Backup_Recovery owner-suite nodes are deselected in the push-to-de
 status: In Progress
 assignee:
 - '@claude'
-updated_date: '2026-11-16 21:50'
+updated_date: '2026-11-17 00:58'
 created_date: 2026-11-15 02:20
 labels:
 - follow-up
@@ -74,3 +74,9 @@ Commits 6673ea6661, 146f5156af, 7d9c3988b1, a7816ce8b5, 829b7d3047. Five nodes r
 - Red, then green, with one command (`pytest <both nodes> -n 2`): 2 failed -> 2 passed. Negative controls: dropping `DB.recovery_sqlite` from the allowlist fails the inventory node (`forbidden service import`); a file `sqlite3.connect` in the child fails the core node (the path appears in the assertion). Both files whole at -n 4: 98 passed.
 - Both `--deselect` lines and pin entries removed; ADR-103's dated paragraph says 3.
 
+**Review r15bt-rev1 (a944bd1755, 4905d25fc4).**
+- The two re-admitted roundtrip capture nodes hit the job's 300 s per-test limit at load 88-109, so the child cap and watchdog never applied. A complete run with the limit lifted (-n 4, load 67-110) took 393 s and 403 s, and both passed. Each now carries `@pytest.mark.timeout(810)`, 2x the 403 s, and ADR-103 records it.
+- Both purity children share one prelude from `test_inventory.py` (`pure_child_guard`, `PURE_CHILD_CHECK`); `test_core_owners` adds its six `DB.recovery_*` modules.
+  - Each child refuses config, keyring, chromadb, textual and every other DB/Utils module, both on import and by a `sys.modules` check.
+  - Each records `sqlite3.connect` and process audit events, allows only `":memory:"` (a controlled connect proves the hook fires) and no process.
+  - Negative controls failed as they should: removing `recovery_goal_schema` -> `forbidden service import`; a subprocess in the inventory child -> `['subprocess.Popen']`.

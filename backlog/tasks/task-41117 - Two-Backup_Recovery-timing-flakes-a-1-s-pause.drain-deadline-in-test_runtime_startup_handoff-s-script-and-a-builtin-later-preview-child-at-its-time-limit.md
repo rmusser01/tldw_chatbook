@@ -4,7 +4,7 @@ title: "Two Backup_Recovery timing flakes: a 1 s pause.drain deadline in test_ru
 status: In Progress
 assignee:
 - '@claude'
-updated_date: '2026-11-16 22:58'
+updated_date: '2026-11-17 00:58'
 created_date: 2026-11-15 02:20
 labels:
 - follow-up
@@ -59,3 +59,5 @@ Commits 3a4ac827ec and 18d515fc69. AC#1 and AC#2 met; AC#3 met for the handoff f
   - `test_builtin_later_snapshot.py` at -n 4, load 75-129, one run (29 min): 6 failed and 3 errors, all pytest-timeout (>300 s) in in-process tests whose fixture setup alone took 155-240 s. The fresh-process test passed. The four further runs were stopped: at this load they cannot pass without per-test limits for those in-process tests, which the ruling did not cover.
   - Follow-up: measure the file at load ~40, then give its fixture-heavy tests (or the module) a measured `timeout` mark, or make `complete_builtin_case` cheaper.
 - Files: `Tests/Backup_Recovery/test_runtime_startup_handoff.py`, `test_home_citation_retirement.py`, `restart_observation.py`, `test_config_sibling_capture.py`, `test_builtin_later_snapshot.py`. Lessons entry: "A drain the test performs by hand is not the product's drain".
+
+**Review r15bt-rev1 (a944bd1755).** `monitor_app` now has a comment pointing at the handoff tests' copy of its drain loop. `native_package`, `test_complete_roundtrip` and `test_builtin_later_snapshot` import `_wait_while_busy` from `restart_observation` directly, and `plugin-qualification.yml` triggers on `restart_observation.py`.
