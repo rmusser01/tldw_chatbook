@@ -1,0 +1,211 @@
+"""Stdlib-only synthetic monitoring checks; never import product modules."""
+import asyncio
+import cProfile
+import contextlib
+import io
+from pathlib import Path
+import sys
+import threading
+from types import ModuleType
+
+
+BASE = Path(__file__).parent
+DRAFT = BASE / "task62-preplan-profile.py.draft"
+observed = []
+profile_states = []
+worker_ready = threading.Event()
+worker_release = threading.Event()
+
+
+def probe():
+    return 1
+
+
+def check_profile(expected, where):
+    def calls():
+        return sum(
+            row.callcount
+            for state in profile_states
+            if state["thread"] == threading.get_ident()
+            and state["profile"] is not None
+            for row in state["profile"].getstats()
+            if row.code is probe.__code__
+        )
+    before = calls()
+    probe()
+    actual = calls() > before
+    assert actual is expected, (where, actual)
+    observed.append(where)
+
+
+class Pause:
+    def __await__(self):
+        yield None
+
+
+def worker_pause():
+    worker_ready.set()
+    assert worker_release.wait(5), "synthetic worker release timed out"
+
+
+def worker_run(context, invoke):
+    errors = []
+    worker_ready.clear()
+    worker_release.clear()
+
+    def run():
+        try:
+            context.run(invoke)
+            check_profile(False, "worker-exit")
+        except BaseException as exc:
+            errors.append(exc)
+            check_profile(False, "worker-unwind")
+
+    thread = threading.Thread(target=run)
+    thread.start()
+    assert worker_ready.wait(5), "synthetic worker start timed out"
+    received.other_thread_cost()
+    worker_release.set()
+    thread.join()
+    if errors:
+        raise errors[0]
+
+
+def synthetic_module(name, source, **values):
+    full_name = "tldw_chatbook." + name
+    assert full_name not in sys.modules
+    module = ModuleType(full_name)
+    module.__dict__.update(values)
+    filename = "/synthetic/tldw_chatbook/" + name.replace(".", "/") + ".py"
+    exec(compile(source, filename, "exec"), module.__dict__)
+    sys.modules[full_name] = module
+    return module
+
+
+life = synthetic_module("Backup_Recovery.runtime_producer_lifetime", '''
+from contextvars import copy_context
+def run_preparation_read(callback):
+    def invoke():
+        check_profile(_case_mode != "overlap", "worker-active")
+        callback()
+    worker_run(copy_context(), invoke)
+''', check_profile=check_profile, worker_run=worker_run)
+controller = synthetic_module("Chat.console_chat_controller", '''
+def post_accept_cost():
+    check_profile(False, "post-accept")
+    return sum(range(100))
+class ConsoleChatController:
+    async def _accept_durable_turn(self):
+        check_profile(False, "accept-body")
+        post_accept_cost()
+''', check_profile=check_profile)
+received = synthetic_module("Chat.console_received_dispatch", '''
+def other_thread_cost():
+    return sum(range(100))
+def preaccept_cost():
+    worker_pause()
+    if _case_mode == "worker_exception":
+        raise ValueError("synthetic worker only")
+    return sum(range(100))
+async def _run_custodied_turn(mode):
+    check_profile(False, "nested-owner")
+    life.run_preparation_read(preaccept_cost)
+    await Pause()
+    check_profile(False, "owner-resume")
+    if mode == "exception":
+        raise ValueError("synthetic only")
+    await controller.ConsoleChatController()._accept_durable_turn()
+    check_profile(False, "owner-after-accept")
+async def _run_received_intent_bound(mode):
+    check_profile(False, "owner-active")
+    return await _run_custodied_turn(mode)
+''', check_profile=check_profile, life=life, controller=controller, Pause=Pause,
+    worker_pause=worker_pause)
+
+
+def run_case(mode):
+    global profile_states
+    received._case_mode = mode
+    life._case_mode = mode
+    output = io.StringIO()
+    namespace = {"__file__": str(DRAFT), "__name__": "task62_synthetic_diagnostic"}
+    exec(compile(DRAFT.read_bytes(), str(DRAFT), "exec"), namespace)
+    before = tuple(sys.monitoring.get_tool(n) for n in range(6))
+    with contextlib.redirect_stderr(output):
+        close = namespace["install"]()
+        captured = dict(zip(close.__code__.co_freevars, close.__closure__))
+        profile_states = captured["profiles"].cell_contents
+        slots = [n for n in range(6) if sys.monitoring.get_tool(n) == "task62-original-preparation"]
+        assert len(slots) == 1, output.getvalue()
+        slot = slots[0]
+        assert sys.monitoring.get_events(slot) == sys.monitoring.events.PY_UNWIND
+        blocker = cProfile.Profile() if mode == "overlap" else None
+        if blocker is not None:
+            blocker.enable()
+        coroutine = received._run_received_intent_bound(mode)
+        finished = False
+        try:
+            assert coroutine.send(None) is None
+        except ValueError:
+            assert mode == "worker_exception"
+            finished = True
+        except BaseException:
+            close()
+            print(output.getvalue())
+            raise
+        check_profile(False, "owner-suspended")
+        try:
+            if finished:
+                raise StopIteration
+            elif mode == "cancel":
+                coroutine.throw(asyncio.CancelledError())
+            else:
+                coroutine.send(None)
+        except StopIteration:
+            assert mode in {"normal", "worker_exception", "overlap"}
+        except ValueError:
+            assert mode == "exception"
+        except asyncio.CancelledError:
+            assert mode == "cancel"
+        else:
+            raise AssertionError("synthetic coroutine did not finish")
+        check_profile(False, "owner-exit")
+        close()
+        close()
+        if blocker is not None:
+            assert sys.monitoring.get_tool(sys.monitoring.PROFILER_ID) == "cProfile"
+            blocker.disable()
+        for state in profile_states:
+            if state["profile"] is not None:
+                assert not any(row.code is received.other_thread_cost.__code__
+                               for row in state["profile"].getstats())
+        assert sys.monitoring.get_events(slot) == 0
+        assert sys.monitoring.get_local_events(slot, received._run_received_intent_bound.__code__) == 0
+    assert tuple(sys.monitoring.get_tool(n) for n in range(6)) == before
+    markers = output.getvalue()
+    assert "name=installed." in markers, markers
+    assert "name=closed" in markers, markers
+    if mode == "overlap":
+        assert "profile.error.existing_or_overlapping_profiler" in markers, markers
+        assert ".preaccept_cost.calls=" not in markers, markers
+        print("PASS overlap: refused profiling coverage; preserved existing profiler; tool cleanup")
+        return
+    assert "error." not in markers, markers
+    assert ".worker" in markers and ".owner" in markers, markers
+    assert ".preaccept_cost.calls=" in markers, markers
+    assert ".post_accept_cost.calls=" not in markers, markers
+    if mode == "normal":
+        assert "profile.gate1.accept" in markers, markers
+    else:
+        assert "unwind._run_received_intent_bound" in markers, markers
+    print("PASS " + mode + ": install, active/suspended scopes, cutoff/unwind, worker cleanup, tool cleanup")
+
+
+try:
+    for mode in ("normal", "exception", "cancel", "worker_exception", "overlap"):
+        run_case(mode)
+finally:
+    for module in (life, controller, received):
+        del sys.modules[module.__name__]
+assert sys.getprofile() is None
+print("PASS Python " + sys.version.split()[0] + "; no product imports or native authority")
