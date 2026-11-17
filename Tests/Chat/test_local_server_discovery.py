@@ -4155,8 +4155,9 @@ _SHIPPED_DISPATCH_POSTS = (
         "http://gpu-box.lan:2242/v1/chat/completions",
     ),
     (
+        # TASK-41145 owner decision 2026-11-16: the slot Settings writes.
         "custom-openai-api-2",
-        {"custom_openai_api_2": {"api_ip": "http://kobold_cpp:5678/v1/chat/completions"}},
+        {"api_settings": {"custom_2": {"api_url": "http://kobold_cpp:5678/v1/chat/completions"}}},
         "http://kobold_cpp:5678/v1/chat/completions",
     ),
     (
@@ -4340,3 +4341,71 @@ def test_the_word_bench_still_targets_an_accepted_endpoint():
     app_config = {"api_settings": {"llama_cpp": {"api_url": "http://localhost:8080/completion"}}}
 
     assert sample_bench.configured_llama_cpp_url(app_config) == "http://localhost:8080"
+
+
+#: Owner decision 2026-11-16 (TASK-41145): Custom OpenAI API 2 reads its
+#: endpoint where Settings writes it.
+_CUSTOM_2_SLOT = {
+    "api_settings": {
+        "custom_2": {"api_url": "http://127.0.0.1:5678/v1", "api_key": "not-a-real-key-0000"}
+    }
+}
+_CUSTOM_2_POST = "http://127.0.0.1:5678/v1/chat/completions"
+
+
+def test_a_dreams_send_on_custom_2_reaches_the_endpoint_settings_saved(monkeypatch):
+    """Review r15ep-rev1 I-1: custom_2 resolved ready and mapped to its
+    handler, then every Dreams send failed with "api_ip required", because
+    the handler read only the top-level ``[custom_openai_api_2] api_ip``."""
+    from tldw_chatbook.Dreams import story_service
+
+    config = _merged({**_CUSTOM_2_SLOT, "chat_defaults": {"provider": "custom_2", "model": "m"}})
+    posts = _local_world(monkeypatch, config)
+    monkeypatch.setattr(
+        "tldw_chatbook.Dreams.settings.get_cli_setting",
+        lambda section, key, default=None: default,
+    )
+    monkeypatch.setattr(story_service, "load_cli_config_and_ensure_existence", lambda **kw: config)
+
+    reply = story_service.resolve_dreams_chat()(
+        messages_payload=[{"role": "user", "content": "hi"}], streaming=False
+    )
+
+    assert posts == [_CUSTOM_2_POST]
+    assert reply["choices"][0]["message"]["content"] == "ok"
+
+
+def test_an_ingest_analysis_on_custom_2_reaches_the_endpoint_settings_saved(monkeypatch):
+    """Review r15ep-rev1 I-1: the ingest analysis call (unpinned) failed the
+    same way, reported only as an analysis warning."""
+    from tldw_chatbook.Library.ingest_analysis import resolve_ingest_analysis_provider
+    from tldw_chatbook.Local_Ingestion import local_file_ingestion
+
+    config = _merged({**_CUSTOM_2_SLOT, "analysis_defaults": {"provider": "custom_2", "model": "m"}})
+    posts = _local_world(monkeypatch, config)
+    resolution = resolve_ingest_analysis_provider(config, environ={})
+
+    text, failure = local_file_ingestion._run_chat_analysis(
+        api_name=resolution.dispatch_name,
+        api_key=resolution.api_key,
+        content="text",
+        custom_prompt="p",
+        system_prompt="s",
+        analysis_call={"model": "m"},
+    )
+
+    assert posts == [_CUSTOM_2_POST]
+    assert (text, failure) == ("ok", None)
+
+
+def test_custom_2_still_reads_its_legacy_api_ip_when_the_slot_has_none(monkeypatch):
+    """Owner decision 2026-11-16: the old top-level ``api_ip`` stays the
+    fallback, so a config that set only it keeps sending there."""
+    legacy = "http://127.0.0.1:5000/v1/chat/completions"
+    config = _merged({"custom_openai_api_2": {"api_ip": legacy}})
+    config["api_settings"]["custom_2"].pop("api_url", None)
+    posts = _local_world(monkeypatch, config)
+
+    _dispatch("custom-openai-api-2")
+
+    assert posts == [legacy]

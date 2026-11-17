@@ -2409,8 +2409,14 @@ def chat_with_custom_openai_2(
     loaded_config_data = load_settings()
     cfg_section = "custom_openai_api_2"
     cfg = loaded_config_data.get(cfg_section, {})
+    # TASK-41145 (owner decision 2026-11-16): the slot's endpoint is where
+    # Settings, first-run setup and Make default write it; the old top-level
+    # ``api_ip`` is only the fallback.
+    api_settings = loaded_config_data.get("api_settings")
+    slot = api_settings.get("custom_2") if isinstance(api_settings, dict) else None
+    slot_url = slot.get("api_url") if isinstance(slot, dict) else None
 
-    api_base_url = api_base_url or cfg.get("api_ip")
+    api_base_url = api_base_url or slot_url or cfg.get("api_ip")
     if not api_base_url:
         raise ChatConfigurationError(
             provider=cfg_section, message=f"{cfg_section} API URL (api_ip) required."

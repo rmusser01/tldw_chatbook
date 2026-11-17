@@ -257,7 +257,10 @@ _ADAPTER_OWN_ENDPOINTS: dict[str, tuple[tuple[str, ...], ...]] = {
         ("api_settings", "local-llm", "api_ip"),
     ),
     "custom-openai-api": (("api_settings", "custom", "api_url"),),
-    "custom-openai-api-2": (("custom_openai_api_2", "api_ip"),),
+    "custom-openai-api-2": (
+        ("api_settings", "custom_2", "api_url"),
+        ("custom_openai_api_2", "api_ip"),
+    ),
     "oobabooga": (("api_settings", "ooba_api", "api_ip"),),
     "aphrodite": (("api_settings", "aphrodite_api", "api_url"),),
     "tabbyapi": (("api_settings", "tabby_api", "api_url"),),
