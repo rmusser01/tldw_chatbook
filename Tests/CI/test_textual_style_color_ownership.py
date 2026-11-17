@@ -52,6 +52,9 @@ def test_old_line_caches_and_subclass_overrides_are_not_replaced():
     method = StylesCache.get_inner_outer
     _install_textual_compatibility_shims()
     _install_textual_compatibility_shims()
+    from tldw_chatbook import install_owner_free_style_colors
+
+    assert install_owner_free_style_colors() is True  # the installer itself stays idempotent
     assert StylesCache.get_inner_outer is method
     owner.get_inner_outer(Color(1, 2, 3), Color(4, 5, 6))
     assert owner._cache[0] is line
@@ -73,7 +76,7 @@ def test_native_owner_reuses_only_its_current_pair_and_still_touches_global_lru(
     assert StylesCache.get_inner_outer.cache_info().hits == hits + 1
     separate = other.get_inner_outer(*inputs)
     assert separate == first
-    assert all(left is not right for left, right in zip(first, separate))
+    assert all(left is not right for left, right in zip(first, separate, strict=True))
     changed = owner.get_inner_outer(Color(1, 2, 3), Color(4, 5, 6))
     assert changed != first
     assert owner.get_inner_outer(*inputs) is not first
@@ -117,7 +120,7 @@ def test_subclasses_receive_private_values_without_new_owner_attributes():
     first = owner.get_inner_outer(*inputs)
     second = owner.get_inner_outer(*inputs)
     assert first == second and first is not second
-    assert all(left is not right for left, right in zip(first, second))
+    assert all(left is not right for left, right in zip(first, second, strict=True))
 
 
 def test_color_cache_keeps_1024_entry_lru_promotion_and_eviction():

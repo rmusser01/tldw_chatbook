@@ -125,6 +125,9 @@ def test_existing_cache_and_installation_are_not_reset():
     cache, method = widget._box_model_cache, Widget._get_box_model
     _install_textual_compatibility_shims()
     _install_textual_compatibility_shims()
+    from tldw_chatbook import install_owner_local_box_models
+
+    assert install_owner_local_box_models() is True  # the installer itself stays idempotent
     assert Widget._get_box_model is method and widget._box_model_cache is cache
     assert _box(widget, 0) is first
     assert (cache.hits, cache.misses) == (1, 1)

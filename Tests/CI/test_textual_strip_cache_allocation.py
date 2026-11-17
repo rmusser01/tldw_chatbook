@@ -86,6 +86,9 @@ def test_normal_ui_entry_is_idempotent_and_preserves_explicit_native_cache_value
     cache[(4,)] = [strip]
     _install_textual_compatibility_shims()
     _install_textual_compatibility_shims()
+    from tldw_chatbook import install_lazy_strip_caches
+
+    assert install_lazy_strip_caches() is True  # the installer itself stays idempotent
     assert Strip.__init__ is constructor
     assert strip._divide_cache is cache
     assert strip.divide([4]) == [strip]
