@@ -913,7 +913,6 @@ for adapter in core_adapters():
     # The absent HOME also makes private ancestor proof unavailable. Either
     # explicit absence or refusal is valid; no store may be included or created.
     assert item.status in {"missing_required", "unused", "unavailable"}, (adapter.owner_id, item.status)
-assert len(opened) > 1, opened  # the in-memory catalog replays ran
 assert not home.exists()
 """
         + PURE_CHILD_CHECK

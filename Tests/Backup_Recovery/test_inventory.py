@@ -51,11 +51,14 @@ def pure_child_guard(*allowed: str) -> str:
     return f"""
 import importlib.abc, sys
 ALLOWED = frozenset({names!r})
+blocked = []
 class Block(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
         if fullname == "tldw_chatbook.config" or fullname.startswith(("keyring", "chromadb", "textual")) or (
             fullname.startswith(("tldw_chatbook.DB", "tldw_chatbook.Utils")) and fullname not in ALLOWED
         ):
+            # Recorded first: a caller that swallows the error still fails the check.
+            blocked.append(fullname)
             raise AssertionError("forbidden service import: " + fullname)
 sys.meta_path.insert(0, Block())
 opened, spawned = [], []
@@ -68,10 +71,11 @@ sys.addaudithook(audit)
 """
 
 
-#: Postlude: no forbidden module loaded (even one whose import a caller
-#: swallowed), only in-memory SQLite, no process. The controlled connect proves
-#: the hook records opens.
+#: Postlude: no forbidden import attempted (even one a caller swallowed) or
+#: loaded, only in-memory SQLite, no process. The controlled connect proves the
+#: hook records opens.
 PURE_CHILD_CHECK = """
+assert not blocked, blocked
 loaded = [name for name in sys.modules if name == "tldw_chatbook.config" or name.startswith(("keyring", "chromadb", "textual")) or (
     name.startswith(("tldw_chatbook.DB", "tldw_chatbook.Utils")) and name not in ALLOWED
 )]

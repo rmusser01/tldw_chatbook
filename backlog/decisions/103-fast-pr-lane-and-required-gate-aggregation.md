@@ -535,7 +535,7 @@ tail. None of this adds a job or a runner: the counts above are unchanged.
 Some tests in the job run past the job's 300 s per-test limit at -n 4 on a
 loaded host, so they carry measured `timeout` marks, each about 2x a complete
 loaded run. `test_replace_restore_...` and the two roundtrip capture nodes
-get 810 s (393-417 s at load 67-110). The roundtrip nodes are deselected
+get 840 s (332-417 s at load 67-110). The roundtrip nodes are deselected
 again until their bind child's 0.1 s enrollment wait stops refusing under
 load (TASK-41116). The
 fresh-process later rollback gets 1050 s (212 s setup and a 301 s child at
