@@ -4320,7 +4320,7 @@ def _load_cli_config_bootstrap_unlocked(
         _LAST_CONFIG_LOAD_FAILURE = None
     # Log the keys of the configuration being returned to verify its structure
     logger.debug(
-        f"load_cli_config_and_ensure_existence returning config with top-level keys: {list(loaded_config.keys())}"
+        f"load_cli_config_and_ensure_existence returning config with top-level keys: {[k for k in loaded_config if not str(k).startswith('legacy_')]}"
     )
     if "api_settings" in loaded_config:
         logger.debug(

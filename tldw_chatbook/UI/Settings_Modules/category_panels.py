@@ -1058,6 +1058,13 @@ class ProvidersModelsPanel(SettingsCategoryPanel):
                 section_values,
                 normalized_delete_keys,
             )
+            from tldw_chatbook.Chat.console_provider_endpoints import (
+                reapply_legacy_custom_2_bridge,
+            )
+
+            # TASK-41145 (review r15ep-rev3 I-1): the live view reads as a
+            # fresh load of the saved file would.
+            reapply_legacy_custom_2_bridge(screen._app_config_update_target())
             join.applied(screen, provider)
             if (
                 next_model_capabilities is not None

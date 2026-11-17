@@ -448,6 +448,15 @@ async def test_a_model_only_custom_2_save_keeps_the_legacy_endpoint_unsaved(
         screen.query_one("#settings-model-value", Input).value = "new-model"
         result = await _save_provider_card(screen, pilot)
         assert result.startswith("Provider settings saved"), result
+        # Review r15ep-rev3 I-1: the in-memory view kept the placeholder the
+        # save wrote, so Settings showed (and Test and Discover staged)
+        # localhost:5678 while sends went to the legacy address.
+        assert screen._provider_endpoint_value("custom_2") == legacy
+        for chosen in ("vllm", "custom_2"):
+            provider.value = chosen
+            screen.handle_provider_value_changed(Select.Changed(provider, chosen))
+            await pilot.pause()
+        assert screen.query_one("#settings-provider-endpoint-value", Input).value == legacy
 
     path = config_module._get_effective_config_path()
     saved = tomllib.loads(path.read_text(encoding="utf-8"))["api_settings"]["custom_2"]

@@ -4,7 +4,7 @@ title: "MLX-LM's Settings endpoint field writes api_url, which the MLX adapter n
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-17 09:05'
+updated_date: '2026-11-17 10:36'
 created_date: 2026-11-15 06:30
 labels:
 - follow-up
@@ -78,3 +78,8 @@ Files: `tldw_chatbook/Chat/provider_setup_persistence.py`, `tldw_chatbook/Chat/c
 - Discovery: `LocalLLMProviderCatalogService._resolve_endpoint` (model discovery and the auto-refresh fingerprint) read MLX-LM's `api_url`; with no staged draft it now reads `mlx_endpoint`. `test_mlx_discovery_lists_the_host_and_port_its_send_uses`: 3 red (None, the 5678 placeholder, None), green after; a staged draft still wins.
 - M-1: the missing-endpoint copy now reads "Custom OpenAI API 2 API URL is required: set [api_settings.custom_2] api_url." (`test_custom_2_without_an_endpoint_names_the_setting_to_fill`, red before).
 - M-2: the adapter comment and these notes now name the real fallback source (above).
+
+**Review r15ep-rev3 round (2026-11-17).**
+- I-1, the live view: after an unedited Custom 2 save, Settings patched the written placeholder into `app.app_config`, so it showed (and Test and Discover staged) localhost:5678 while sends used the legacy address until a restart. `category_panels` now re-runs the load-time rule on the live view after the patch (`reapply_legacy_custom_2_bridge`, which calls `keep_legacy_custom_2_endpoint`). `test_a_model_only_custom_2_save_keeps_the_legacy_endpoint_unsaved` now also checks `_provider_endpoint_value("custom_2")` after the save and the Endpoint field after switching to vLLM and back: red before (the placeholder), green after.
+- M-1: `load_cli_config_and_ensure_existence`'s DEBUG top-level key list leaves out `legacy_*` provenance keys. A scratch-profile probe with an explicit legacy key: listed before the change, not after.
+- First-run note: `First_Run_Setup.md` says committing setup for Custom OpenAI API 2 saves the shown address into its Endpoint, after which the older `[API]` key is no longer read.

@@ -313,6 +313,27 @@ def keep_legacy_custom_2_endpoint(
 LEGACY_CUSTOM_2_BRIDGE = "legacy_custom_2_endpoint_bridge"
 
 
+def reapply_legacy_custom_2_bridge(view: dict) -> None:
+    """Re-run ``keep_legacy_custom_2_endpoint`` on an in-memory settings view.
+
+    Settings patches the saved values into the live view; an unedited Custom 2
+    save writes the slot's earlier value, so without this the view showed
+    (and Test and Discover staged) the placeholder while sends used the
+    legacy endpoint (review r15ep-rev3 I-1). One rule, the load-time one.
+
+    Args:
+        view: The live settings view (``load_settings`` shape); changed in place.
+    """
+    raw = view.get("COMPREHENSIVE_CONFIG_RAW")
+    bridge = view.get(LEGACY_CUSTOM_2_BRIDGE) or (
+        raw.get(LEGACY_CUSTOM_2_BRIDGE) if isinstance(raw, Mapping) else None
+    )
+    if isinstance(bridge, Mapping):
+        from tldw_chatbook.config import DEFAULT_CONFIG_FROM_TOML
+
+        keep_legacy_custom_2_endpoint(view, bridge.get("legacy"), DEFAULT_CONFIG_FROM_TOML)
+
+
 def endpoint_to_save_unedited(
     provider_key: str, shown: str, app_config: Mapping[str, object]
 ) -> str:
