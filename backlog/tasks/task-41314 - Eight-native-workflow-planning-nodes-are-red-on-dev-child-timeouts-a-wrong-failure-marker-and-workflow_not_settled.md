@@ -1,7 +1,7 @@
 ---
 id: TASK-41314
 title: "Eight native workflow-planning nodes are red on dev: child timeouts, a wrong failure marker and workflow_not_settled"
-status: To Do
+status: In Progress
 created_date: 2026-11-16 19:55
 labels:
 - follow-up
@@ -37,3 +37,13 @@ Filed from the 2026-11-13..16 burn-down. TASK-40718 (PR #3543) found the same 8 
 - [ ] #2 All 8 nodes pass on dev at `-n 4`, or are retargeted with the reason recorded
 - [ ] #3 The file runs on a PR lane, or the task notes record why it should not
 <!-- AC:END -->
+
+## Implementation Plan
+
+ADR required: no. The cause of all three groups is ADR-356 (TASK-39147), which is Accepted; the retargets below assert its contract and add no new decision. Group (a) needs an owner decision and is left unchanged (see notes).
+
+1. Reproduce each group on the base tree with full child logs (the `_run` window shows only the last 1000 characters). Run the same probe on the pre-rebuild original lineage (`e08627ac38`, local `dev`) to show the nodes passed before the rebuild.
+2. (b) `required-write`, `required-return`, `late-source-return`: the failure lands after positive physical return, so ADR-356 decision 6 retires the owner and hands the tail to a recovery receipt. Move these three into their own test that asserts that contract: the same owner/claim/error in the receipt, workflow `recovery_required`, charges and committed plan kept, never a settled drain. Keep `worker-failure` and `response-close-failure` (failed native scopes) on the retained-custody test.
+3. (c) shutdown: keep the wait assertions and add that disposal is still pending when the held worker is released. After release, assert the actual ADR-356 outcome (interrupted usage is uncertain, planning refuses settlement and hands its returned owner to recovery).
+4. (a) replaced receivers: stop and report options; the property depended on implementation-identity pins that ADR-356 decision 4 removed.
+5. Run the file on base and head at `-n 4`; preflight; Tests/Architecture.
