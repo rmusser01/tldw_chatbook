@@ -59,6 +59,8 @@ from tldw_chatbook.Widgets.Console.console_transcript import (
     ConsoleTranscript,
 )
 
+pytestmark = pytest.mark.bootstrap_profile
+
 
 class _ActivityHarness(ConsolidatedCSSApp):
     """A bare mounted transcript -- the same surface the Console mounts."""
