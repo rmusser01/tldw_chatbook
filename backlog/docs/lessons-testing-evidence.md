@@ -1,5 +1,9 @@
 # Lessons: what counts as evidence a change works
 
+## Restore descriptor lookup after replacing an instance method (TASK-40608, 2026-11-17)
+
+**Incident.** The real-backend tool-count test passed its publication and refusal checks, then failed the next ordinary publication. `monkeypatch.setattr(counts, "snapshot", ...)` had saved a bound method and restored it as an instance attribute. The source guard correctly rejected that shadow: `inspect.getattr_static` no longer found the original class function. The fix used a temporary instance override with `finally: del counts.snapshot`, restoring descriptor lookup. The subsequent original publication, session-close pruning, and backend retirement passed. Do not weaken an identity guard to accommodate a test fixture's changed receiver; restore the original attribute location as well as its apparent call behavior.
+
 ## A crash can preserve source hashes while corrupting the test receipts (TASK-40608, 2026-11-17)
 
 **Incident.** A Windows interruption lost the running accepted-process test session. All 2,836 live source hashes and their frozen copies still matched, but the after-run JSON was entirely NUL-filled and both XML reports contained NUL bytes immediately after their headers. The log retained only a short prefix showing two passes and two failures. An independent actual-user process census found no surviving workers. Neither intact sources nor that later census recovered the missing test outcomes or established normal retirement. A fresh run exposed a protocol conversion failure; later runs exposed a cancellation-order defect.

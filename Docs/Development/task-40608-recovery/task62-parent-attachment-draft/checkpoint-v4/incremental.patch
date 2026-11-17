@@ -1,0 +1,2969 @@
+--- a/tldw_chatbook/app.py
++++ b/tldw_chatbook/app.py
+@@ -1070,7 +1070,11 @@
+     # User ID for notes, will be initialized in __init__
+     current_user_id: str = "default_user"  # Will be overridden by self.notes_user_id
+ 
+-    def __init__(self):
++    def __init__(self, *, console_execution: str = "local"):
++        if type(console_execution) is not str or console_execution not in {"local", "process"}:
++            raise ValueError("Unknown Console execution selection")
++        if console_execution == "process" and type(self) is not TldwCli:
++            raise TypeError("Custom App construction requires the local Console route")
+         # Track startup timing
+         self._startup_start_time = time.perf_counter()
+         self._startup_phases = {}
+@@ -1212,7 +1216,23 @@
+         # (`leave_console_runtime`); the runtime itself is destroyed once,
+         # here, at exit (`_shutdown_console_runtime`).
+         self.console_needs_attention = False
+-        self.console_runtime: ConsoleRuntime | None = ConsoleRuntime(self)
++        # Explicit qualification route; ordinary construction remains local.
++        self.console_execution_client = None
++        self._console_execution_start_task = None
++        self._console_execution_profile = None
++        if console_execution == "process":
++            from .Chat.console_execution_process import (
++                ConsoleExecutionClient, ConsoleProcessProfile,
++            )
++            from .config import get_cli_config_path, get_user_data_dir
++
++            self._console_execution_profile = ConsoleProcessProfile(
++                str(get_cli_config_path()), str(get_user_data_dir())
++            )
++            self.console_execution_client = ConsoleExecutionClient(self)
++            self.console_runtime = None
++        else:
++            self.console_runtime: ConsoleRuntime | None = ConsoleRuntime(self)
+         self._console_runtime_shutdown_task: asyncio.Task[None] | None = None
+         self.generated_video_store = _build_generated_video_store()
+         # TASK-13157: snapshot any TOML parse failure `load_settings()` just
+@@ -3310,7 +3330,13 @@
+         """Configure logging and schedule post-mount setup."""
+         self._start_persona_buddy_overlay()
+         runtime = self.console_runtime
+-        if runtime is not None:
++        client = self.console_execution_client
++        if client is not None:
++            self._console_execution_start_task = asyncio.create_task(
++                client.start(self._console_execution_profile),
++                name="console_execution_start",
++            )
++        elif runtime is not None:
+             runtime.start_async_lifecycles()
+         self._start_served_canvas_control()
+         self.watchlists_operation_coordinator = WatchlistsOperationCoordinator(
+--- a/tldw_chatbook/app_lifecycle.py
++++ b/tldw_chatbook/app_lifecycle.py
+@@ -588,7 +588,8 @@
+         task = self._console_runtime_shutdown_task
+         if task is None:
+             runtime = getattr(self, "console_runtime", None)
+-            view = getattr(runtime, "view", None)
++            client = getattr(self, "console_execution_client", None)
++            view = client._view if client is not None else getattr(runtime, "view", None)
+             image = getattr(view, "_image", None)
+             if view is not None:
+                 view._console_chat_tearing_down = True
+@@ -609,7 +610,15 @@
+                 finally:
+                     if image is not None:
+                         await image._recovered_images_close()
+-                await dispose_console_runtime(self)
++                if client is None:
++                    await dispose_console_runtime(self)
++                else:
++                    from .Chat.console_execution_process import ConsoleExecutionClient
++
++                    if type(client) is not ConsoleExecutionClient or client._app is not self:
++                        raise RuntimeError("Console shutdown owner changed")
++                    if not await client.shutdown(deadline=None):
++                        raise RuntimeError("Console process shutdown did not retire")
+ 
+             task = asyncio.create_task(
+                 settle_view_and_dispose(),
+--- a/tldw_chatbook/app_service_wiring.py
++++ b/tldw_chatbook/app_service_wiring.py
+@@ -2194,9 +2194,10 @@
+             self.workspace_registry_service.attach_change_review_consent_service(
+                 self.change_review_consent_service
+             )
+-            self.console_runtime.bind_change_review_consent_service(
+-                self.change_review_consent_service
+-            )
++            if self.console_runtime is not None:
++                self.console_runtime.bind_change_review_consent_service(
++                    self.change_review_consent_service
++                )
+         except Exception:
+             logger.opt(exception=True).warning(
+                 "Local workspace registry service unavailable during app wiring",
+@@ -3057,48 +3058,57 @@
+             server_service=self.server_mcp_governance_service,
+             policy_enforcer=self.service_policy_enforcer,
+         )
+-        self.local_mcp_store = LocalMCPStore(
+-            get_user_data_dir() / "local_mcp_store.json",
+-        )
+-        self.local_mcp_control_service = LocalMCPControlService(
+-            store=self.local_mcp_store,
+-            policy_enforcer=self.service_policy_enforcer,
+-            # The bundle is published after wiring; before then: unavailable.
+-            storage_provider=lambda: getattr(getattr(self, "services", None), "storage", None),
+-        )
+-        self.unified_mcp_context_store = UnifiedMCPContextStore(
+-            get_user_data_dir() / "unified_mcp_context.json",
+-        )
+-
+-        def _build_unified_mcp_client_for_target(target: Any) -> "MCPUnifiedClient":
+-            # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+-            from tldw_chatbook.tldw_api import MCPUnifiedClient
+-
+-            if getattr(target, "auth_reference", None) == "legacy:tldw_api":
+-                root_client = build_runtime_api_client(
+-                    app_config=self.app_config,
+-                    endpoint_url=target.base_url,
+-                    auth_method=target.auth_mode,
+-                )
+-            else:
+-                root_client = build_runtime_api_client(
+-                    endpoint_url=target.base_url,
+-                    auth_token=target.auth_reference,
+-                    auth_method=target.auth_mode,
+-                )
+-            return MCPUnifiedClient(root_client)
+-
+-        self.server_unified_mcp_service = ServerUnifiedMCPService(
+-            client_factory=_build_unified_mcp_client_for_target,
+-            policy_enforcer=self.service_policy_enforcer,
+-            target_store=self.unified_mcp_target_store,
+-        )
+-        self.unified_mcp_service = UnifiedMCPControlPlaneService(
+-            target_store=self.unified_mcp_target_store,
+-            context_store=self.unified_mcp_context_store,
+-            local_service=self.local_mcp_control_service,
+-            server_service=self.server_unified_mcp_service,
+-        )
++        if self.console_execution_client is not None:
++            # The selected singleton exists only in the backend. Affected
++            # Settings consumers use explicit asynchronous permission commands.
++            self.local_mcp_store = None
++            self.local_mcp_control_service = None
++            self.unified_mcp_context_store = None
++            self.server_unified_mcp_service = None
++            self.unified_mcp_service = None
++        else:
++            self.local_mcp_store = LocalMCPStore(
++                get_user_data_dir() / "local_mcp_store.json",
++            )
++            self.local_mcp_control_service = LocalMCPControlService(
++                store=self.local_mcp_store,
++                policy_enforcer=self.service_policy_enforcer,
++                # The bundle is published after wiring; before then: unavailable.
++                storage_provider=lambda: getattr(getattr(self, "services", None), "storage", None),
++            )
++            self.unified_mcp_context_store = UnifiedMCPContextStore(
++                get_user_data_dir() / "unified_mcp_context.json",
++            )
++
++            def _build_unified_mcp_client_for_target(target: Any) -> "MCPUnifiedClient":
++                # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
++                from tldw_chatbook.tldw_api import MCPUnifiedClient
++
++                if getattr(target, "auth_reference", None) == "legacy:tldw_api":
++                    root_client = build_runtime_api_client(
++                        app_config=self.app_config,
++                        endpoint_url=target.base_url,
++                        auth_method=target.auth_mode,
++                    )
++                else:
++                    root_client = build_runtime_api_client(
++                        endpoint_url=target.base_url,
++                        auth_token=target.auth_reference,
++                        auth_method=target.auth_mode,
++                    )
++                return MCPUnifiedClient(root_client)
++
++            self.server_unified_mcp_service = ServerUnifiedMCPService(
++                client_factory=_build_unified_mcp_client_for_target,
++                policy_enforcer=self.service_policy_enforcer,
++                target_store=self.unified_mcp_target_store,
++            )
++            self.unified_mcp_service = UnifiedMCPControlPlaneService(
++                target_store=self.unified_mcp_target_store,
++                context_store=self.unified_mcp_context_store,
++                local_service=self.local_mcp_control_service,
++                server_service=self.server_unified_mcp_service,
++            )
+         try:
+             self.server_text2sql_service = ServerText2SQLService.from_config(
+                 self.app_config,
+--- a/tldw_chatbook/UI/Screens/chat_screen.py
++++ b/tldw_chatbook/UI/Screens/chat_screen.py
+@@ -689,6 +689,7 @@
+ SelectionRequest = ConsoleSelectionNoteRequested | ConsoleTraceCopyRequested
+ 
+ if TYPE_CHECKING:
++    from tldw_chatbook.Chat.console_execution_projection_view import ConsoleProjectionView
+     from tldw_chatbook.app import TldwCli
+     from tldw_chatbook.Chat.console_environment_state import EnvironmentSnapshot
+     from tldw_chatbook.UI.Console_Modules.environment import (
+@@ -7730,6 +7731,12 @@
+         A reused Console does not compose again, so first and replacement
+         claims both need the staging refresh (TASK-2502).
+         """
++        from ..Console_Modules.execution_state import empty_pending_launch, selected_client
++
++        selected = selected_client(self)
++        if selected is not None:
++            return empty_pending_launch(self, selected)
++
+         store = self.app_instance.pending_handoffs
+         claim = store.claim(HandoffChannel.CONSOLE_LIVE_WORK)
+         if claim is None:
+@@ -9106,6 +9113,10 @@
+         (task-15452): the control state and the Workbench state built off it
+         each re-derive this leg.
+         """
++        if getattr(getattr(self, "app_instance", None), "console_execution_client", None) is not None:
++            from ..Console_Modules.execution_state import selected_client, provider_model_display
++
++            return provider_model_display(self, selected_client(self))
+         with self._console_derivation_scope():
+             memo = self._console_derivation_memo
+             if memo is not None and "provider_model_display" in memo:
+@@ -9141,6 +9152,10 @@
+         blocker each re-derive it, and `build_console_settings_readiness`
+         is the single most expensive leg of a draft-edit sync.
+         """
++        if getattr(getattr(self, "app_instance", None), "console_execution_client", None) is not None:
++            from ..Console_Modules.execution_state import selected_client, settings_readiness
++
++            return settings_readiness(self, selected_client(self))
+         with self._console_derivation_scope():
+             memo = self._console_derivation_memo
+             if memo is not None and "settings_readiness" in memo:
+@@ -9217,6 +9232,11 @@
+     @property
+     def _pending_console_launch_context(self) -> ConsoleLiveWorkLaunch | None:
+         """The app-owned staged launch projected into this screen."""
++        from ..Console_Modules.execution_state import empty_pending_launch, selected_client
++
++        selected = selected_client(self)
++        if selected is not None:
++            return empty_pending_launch(self, selected)
+         return self._console_runtime().snapshot_console_staged_evidence()[0]
+ 
+     @_pending_console_launch_context.setter
+@@ -9228,6 +9248,11 @@
+     @property
+     def _console_evidence_sent_notice(self) -> int | None:
+         """The app-owned evidence receipt projected into this screen."""
++        from ..Console_Modules.execution_state import selected_client
++
++        selected = selected_client(self)
++        if selected is not None:
++            return selected.session_composition.evidence_sent_notice
+         return self._console_runtime().snapshot_console_staged_evidence()[2]
+ 
+     @_console_evidence_sent_notice.setter
+@@ -9235,8 +9260,12 @@
+         self._console_runtime().set_console_staged_evidence_notice(value)
+ 
+     @property
+-    def _console_chat_store(self) -> ConsoleChatStore | None:
+-        """The runtime's Console store, or `None` if none is built yet."""
++    def _console_chat_store(self) -> "ConsoleChatStore | ConsoleProjectionView | None":
++        """The original local store or the selected client's read-only view."""
++        if getattr(getattr(self, "app_instance", None), "console_execution_client", None) is not None:
++            from ..Console_Modules.execution_state import selected_client
++
++            return selected_client(self).projection_view
+         return self._console_runtime().chat_store
+ 
+     @_console_chat_store.setter
+@@ -9285,6 +9314,12 @@
+         that safe global context until hydration resolves the conversation's
+         own persisted scope.
+         """
++        from ..Console_Modules.execution_state import selected_client
++
++        selected = selected_client(self)
++        if selected is not None:
++            return selected.projection_view
++
+         if run_controls.preparing_display_read(self):
+             return self._console_chat_store
+         store = self._console_chat_store
+@@ -10812,10 +10847,16 @@
+     ) -> ConsoleControlState:
+         """Build Console-owned control/readiness labels."""
+         provider, model, settings = self._active_console_provider_model_display()
++        client = None
++        if getattr(getattr(self, "app_instance", None), "console_execution_client", None) is not None:
++            from ..Console_Modules.execution_state import selected_client
++
++            client = selected_client(self)
+         active_session = self._session._active_native_console_session()
+-        return ConsoleControlState.from_values(
++        identity = client.session_composition if client is not None else active_session
++        state = ConsoleControlState.from_values(
+             provider=provider,
+-            app_config=self._provider_readiness_app_config(),
++            app_config=None if client is not None else self._provider_readiness_app_config(),
+             model=model,
+             # The AI side of the conversation: whatever character this session is
+             # actually roleplaying, so the chip stops being a constant. The
+@@ -10823,15 +10864,16 @@
+             # rail name covers resumed conversations.
+             character=(
+                 getattr(settings, "character_label", None)
+-                or self._character._current_console_rail_character_name()
++                or (identity.character_name if client is not None else self._character._current_console_rail_character_name())
+             ),
+-            assistant_kind=getattr(active_session, "assistant_kind", None),
+-            assistant_name=getattr(active_session, "assistant_name", None),
+-            assistant_id=getattr(active_session, "assistant_id", None),
++            assistant_kind=getattr(identity, "assistant_kind", None),
++            assistant_name=getattr(identity, "assistant_name", None),
++            assistant_id=getattr(identity, "assistant_id", None),
+             library_policy=(
+-                active_session.library_policy_holder.snapshot
+-                if active_session is not None
+-                else None
++                identity.library_policy if client is not None else (
++                    active_session.library_policy_holder.snapshot
++                    if active_session is not None else None
++                )
+             ),
+             # RAG UX v2 PR-4: was hardcoded to 1 while the staged bundle
+             # routinely carries several references -- a four-result Library
+@@ -10846,8 +10888,19 @@
+             emergency_stop_held=bool(self._console_emergency_stop_copy),
+         )
+ 
++        # Custom endpoint names are derived from checked backend config;
++        # the parent receives the original label, never configuration secrets.
++        return replace(state, provider_label=client.control_provider_label) if client is not None else state
++
+     def _console_selected_tool_count(self, session: Any) -> int | None:
+         """Read the current session's selected-tool projection from its app owner."""
++        if getattr(getattr(self, "app_instance", None), "console_execution_client", None) is not None:
++            from ..Console_Modules.execution_state import selected_client
++
++            composition = selected_client(self).session_composition
++            if getattr(session, "id", None) != composition.session_id:
++                raise RuntimeError("Console selected tool-count session changed")
++            return composition.selected_tool_count
+         app = self.app_instance
+         try:
+             counts = app.console_selected_tool_counts
+@@ -13148,6 +13201,23 @@
+         )
+ 
+     def _console_pending_approval_count(self) -> int:
++        if getattr(getattr(self, "app_instance", None), "console_execution_client", None) is not None:
++            from ..Console_Modules.execution_state import selected_client
++
++            client = selected_client(self)
++            registered = client.session_composition.pending_approval_count
++            if registered:
++                return registered
++            task_approval = self._task_resume_state.pending_approval
++            if not task_approval or (
++                isinstance(task_approval, dict) and task_approval.get("phase") == "finishing"
++            ):
++                return 0
++            if isinstance(task_approval, dict):
++                owner = task_approval.get("session_id")
++                if owner and owner != client.projection_view.active_session_id:
++                    return 0
++            return 1
+         controller = self._console_chat_controller
+         count = getattr(controller, "pending_round_count", None)
+         store = self._console_chat_store
+@@ -13192,6 +13262,11 @@
+         return 1
+ 
+     def _console_tool_count(self) -> int:
++        if getattr(getattr(self, "app_instance", None), "console_execution_client", None) is not None:
++            from ..Console_Modules.execution_state import selected_client
++
++            value = selected_client(self).session_composition.builtin_tool_count
++            return coerce_non_negative_int(value)
+         return coerce_non_negative_int(
+             getattr(self.app_instance, "console_tool_count", 0)
+         )
+@@ -13205,10 +13280,20 @@
+         from_values`` omits the "MCP" row entirely in that case, mirroring
+         ``_console_tool_count``'s own getattr-hook pattern above.
+         """
++        if getattr(getattr(self, "app_instance", None), "console_execution_client", None) is not None:
++            from ..Console_Modules.execution_state import selected_client
++
++            value = selected_client(self).session_composition.mcp_tool_count
++            return None if value is None else coerce_non_negative_int(value)
+         value = getattr(self.app_instance, "console_mcp_tool_count", None)
+         return None if value is None else coerce_non_negative_int(value)
+ 
+     def _console_mcp_not_connected_count(self) -> int:
++        if getattr(getattr(self, "app_instance", None), "console_execution_client", None) is not None:
++            from ..Console_Modules.execution_state import selected_client
++
++            value = selected_client(self).session_composition.mcp_not_connected_count
++            return coerce_non_negative_int(value)
+         return coerce_non_negative_int(
+             getattr(self.app_instance, "console_mcp_not_connected_count", 0)
+         )
+@@ -13283,17 +13368,34 @@
+         # TASK-24602 / TASK-33621.2: a FAILED run and a turn stuck in a trace
+         # recovery pause both carry visible copy; unread here, the pinned
+         # authority line answered "Ready".
+-        run_controller = self._console_chat_controller
+-        run_state = getattr(run_controller, "run_state", None)
++        client = None
++        if getattr(getattr(self, "app_instance", None), "console_execution_client", None) is not None:
++            from ..Console_Modules.execution_state import selected_client
++
++            client = selected_client(self)
++        if client is not None:
++            composition = client.session_composition
++            run_state = client._projection.run_state
++            pending_copy = composition.pending_interrupt_copy
++            blocked_reason = composition.blocked_turn_reason
++            change_review_available = composition.change_tracking_enabled
++        else:
++            run_controller = self._console_chat_controller
++            run_state = getattr(run_controller, "run_state", None)
++            store = self._console_chat_store
++            session_id = store.active_session_id if store is not None else ""
++            has_pending = getattr(run_controller, "has_pending_approval_round", None)
++            pending_copy = (
++                console_pending_round_copy_for(run_controller, session_id or "")
++                if callable(has_pending) and has_pending(session_id or "")
++                else ""
++            )
++            blocked_reason = blocked_turn_reason(run_controller)
++            change_review_available = (
++                getattr(self._console_agent_bridge, "change_tracking_enabled", False)
++                if self._console_agent_bridge is not None else False
++            )
+         run_failed = getattr(run_state, "status", None) is ConsoleRunStatus.FAILED
+-        store = self._console_chat_store
+-        session_id = store.active_session_id if store is not None else ""
+-        has_pending = getattr(run_controller, "has_pending_approval_round", None)
+-        pending_copy = (
+-            console_pending_round_copy_for(run_controller, session_id or "")
+-            if callable(has_pending) and has_pending(session_id or "")
+-            else ""
+-        )
+         inspector_state = ConsoleInspectorState.from_values(
+             pending_interrupt_copy=pending_copy,
+             live_work_title=pending_launch.title if pending_launch else None,
+@@ -13302,7 +13404,7 @@
+             run_failure_reason=(
+                 str(getattr(run_state, "visible_copy", "") or "") if run_failed else ""
+             ),
+-            run_blocked_reason=blocked_turn_reason(run_controller),
++            run_blocked_reason=blocked_reason,
+             compaction_pause_expected=self._context_spend.compaction_pause_expected(),
+             compaction_forecast_unavailable=self._context_spend.compaction_forecast_unavailable(),
+             provider_label=settings_readiness.provider_display_name or "Provider",
+@@ -13327,11 +13429,7 @@
+             mcp_not_connected_count=self._console_mcp_not_connected_count(),
+             can_save_chatbook=can_save_chatbook,
+             scope_item_count=self._retrieval._console_retrieval_scope_run_recipe_count(),
+-            change_review_available=(
+-                getattr(self._console_agent_bridge, "change_tracking_enabled", False)
+-                if self._console_agent_bridge is not None
+-                else False
+-            ),
++            change_review_available=change_review_available,
+             ephemeral=self._console_active_session_is_ephemeral(),
+             staged_source_count=console_staged_source_count(pending_launch),
+         )
+@@ -13925,6 +14023,13 @@
+             session_id is not None
+             and self._image._h3_image_edit_registry().active(session_id) is not None
+         )
++        if getattr(getattr(self, "app_instance", None), "console_execution_client", None) is not None:
++            from ..Console_Modules.execution_state import selected_client
++
++            return image_edit_active or (
++                selected_client(self)._projection.run_state.status
++                in CONSOLE_ACTIVE_RUN_STATUSES
++            )
+         controller = self._console_chat_controller
+         return image_edit_active or (
+             controller is not None
+@@ -13936,8 +14041,13 @@
+         blocker_copy = self._console_provider_blocker_copy(settings_readiness=readiness)
+         composer = self._console_composer_or_none()
+         has_draft = bool(composer and composer.has_sendable_payload())  # 33620.15.22
+-        controller = self._console_chat_controller
+-        run_state = getattr(controller, "run_state", None)
++        client = None
++        if getattr(getattr(self, "app_instance", None), "console_execution_client", None) is not None:
++            from ..Console_Modules.execution_state import selected_client
++
++            client = selected_client(self)
++        controller = self._console_chat_controller if client is None else None
++        run_state = client._projection.run_state if client is not None else getattr(controller, "run_state", None)
+         store = self._console_chat_store
+         active_session_id = store.active_session_id if store is not None else None
+         image_edit_active = (
+@@ -13945,18 +14055,15 @@
+             and self._image._h3_image_edit_registry().active(active_session_id)
+             is not None
+         )
+-        can_stop = image_edit_active or bool(
+-            getattr(
+-                controller,
+-                "is_stop_allowed",
+-                getattr(run_state, "is_stop_allowed", False),
+-            )
++        can_stop = image_edit_active or (
++            client.session_composition.is_stop_allowed if client is not None
++            else bool(getattr(controller, "is_stop_allowed", getattr(run_state, "is_stop_allowed", False)))
+         )
+         run_allows_send = (
+             bool(getattr(run_state, "is_send_allowed", True))
+             or (
+-                controller is not None
+-                and controller._chat_start.is_prepared(
++                client.session_composition.chat_start_prepared if client is not None
++                else controller is not None and controller._chat_start.is_prepared(
+                     controller.store.active_session_id or ""
+                 )
+             )
+@@ -13982,7 +14089,7 @@
+             readiness_word=""
+             if self.size.width < CONSOLE_SINGLE_PANE_COLUMNS
+             else build_console_readiness_presentation(readiness[1]).primary_label,
+-            blocked_turn=blocked_turn_reason(controller),
++            blocked_turn=(client.session_composition.blocked_turn_reason if client is not None else blocked_turn_reason(controller)),
+             compaction_pause_expected=self._context_spend.compaction_pause_expected(),
+             compaction_forecast_unavailable=self._context_spend.compaction_forecast_unavailable(),
+         )
+@@ -14912,6 +15019,18 @@
+ 
+     async def _compose(self) -> None:
+         """Settle only an original cold prefix before synchronous composition."""
++        if getattr(self.app_instance, "console_execution_client", None) is not None:
++            from ..Console_Modules.execution_state import prepare_first_compose
++
++            self._console_process_compose_error = None
++            try:
++                await prepare_first_compose(self)
++            except Exception as error:
++                # Preserve BaseAppScreen's original generator error panel.
++                # Cancellation remains cancellation and is never rendered here.
++                self._console_process_compose_error = error
++            await super()._compose()
++            return
+         from ...Chat.console_parent_settings import (
+             finish_initial_console_compose,
+             prepare_initial_console_compose,
+@@ -14930,6 +15049,20 @@
+ 
+     def compose_content(self) -> ComposeResult:
+         """Compose the chat content inside the original error-panel boundary."""
++        if getattr(self.app_instance, "console_execution_client", None) is not None:
++            error = getattr(self, "_console_process_compose_error", None)
++            if error is not None:
++                self._console_process_compose_error = None
++                raise error
++            from ..Console_Modules.execution_state import selected_client
++
++            selected = selected_client(self)
++            selected.require_view(self, self._console_process_visit)
++            with self._console_derivation_scope():
++                pending_launch = self._consume_pending_console_launch()
++                control_state = self._build_console_control_state(pending_launch)
++                yield from self._compose_console_content(pending_launch, control_state)
++            return
+         from ...Chat.console_parent_settings import (
+             consume_initial_console_compose,
+             finish_initial_console_compose,
+--- a/tldw_chatbook/Chat/console_backend_presentation.py
++++ b/tldw_chatbook/Chat/console_backend_presentation.py
+@@ -29,11 +29,19 @@
+         self._display_character_demands = {}
+         self.parent_attachment = None
+         self._projection_views = {}
++        from .console_backend_readiness import ConsoleBackendReadiness
++
++        self.readiness = ConsoleBackendReadiness(backend)
+         from .console_backend_tool_counts import ConsoleBackendToolCounts
+ 
+         self.tool_counts = ConsoleBackendToolCounts(self)
+ 
+-    def capture_projection_view(self, controls, identity, projection) -> None:
++    async def prepare_readiness(self, identity) -> None:
++        """Join the fixed readiness read while its original command owns intake."""
++        self.require_association(self.association)
++        await self.readiness.warm(identity)
++
++    def capture_projection_view(self, controls, identity, projection, *, started_at: float) -> None:
+         """Retain inert row facts at the original synchronous projection boundary."""
+         from .console_control_dispatch import (
+             ConsoleLocalControls,
+@@ -41,6 +49,10 @@
+         )
+         from .console_execution_projection_values import encode_session_projection
+         from .console_execution_projection_result import encode_pressed_inputs
++        from .console_execution_readiness_values import encode_settings_readiness
++        from .console_execution_context_summary_values import encode_context_summary
++        from .console_execution_projection_values import _settings
++        import time
+ 
+         self.require_association(self.association)
+         source = require_control_source(self._runtime)
+@@ -57,6 +69,8 @@
+             raise RuntimeError("Backend projection capture changed")
+         store = controls._store
+         sessions = store.sessions()
++        effective, readiness, provider, model, provider_chip = self.readiness.current_value(identity)
++        captured_at = time.monotonic()
+         body = {
+             "sessions": [encode_session_projection(session) for session in sessions],
+             "active_session_id": store.active_session_id,
+@@ -64,6 +78,25 @@
+             "pressed_inputs": encode_pressed_inputs(
+                 store.session_input_snapshot(identity.session_id),
+                 store._sessions[identity.session_id],
++            ),
++            "readiness": {
++                "effective_settings": _settings(effective, False),
++                "state": encode_settings_readiness(readiness),
++                "context_summary": encode_context_summary(
++                    self.readiness.context_summary.estimate,
++                    self.readiness.context_summary.summary,
++                    compaction_pause_expected=self.readiness.context_summary.compaction_pause_expected,
++                    compaction_forecast_unavailable=self.readiness.context_summary.compaction_forecast_unavailable,
++                ),
++                "provider_label": provider,
++                "control_provider_label": provider_chip,
++                "model": model,
++                "remaining_seconds": max(0.0, 1.0 - (captured_at - self.readiness.at)),
++                "projection_elapsed_seconds": captured_at - started_at,
++            },
++            "composition": (
++                self._capture_composition(store._sessions[store.active_session_id])
++                if store.active_session_id is not None else None
+             ),
+         }
+         for session in sessions:
+@@ -76,6 +109,79 @@
+                 }
+             )
+         self._projection_views[identity.request_id] = (identity, projection, body)
++
++    def _capture_composition(self, session) -> dict:
++        """Read the original resident controller facts without exporting an owner."""
++        from types import MethodType
++        from .console_chat_controller import ConsoleChatController
++        from .console_chat_start import ConsoleChatStartCoordinator
++        from .console_agent_bridge import ConsoleAgentBridge
++        from .console_execution_composition_values import encode_session_composition
++        from .console_domain_services import _definition_current
++
++        self.require_association(self.association)
++        self.backend._require_owner_loop()
++        controller = self._controller
++        if (
++            type(controller) is not ConsoleChatController
++            or controller is not self.backend.controller
++            or controller.store is not self.backend.store
++            or controller.store._sessions.get(session.id) is not session
++            or controller.store.active_session_id != session.id
++            or type(controller._chat_start) is not ConsoleChatStartCoordinator
++            or controller._chat_start._controller is not controller
++            or type(controller._agent_bridge) is not ConsoleAgentBridge
++            or controller._agent_bridge is not self.backend.runtime.agent_bridge
++        ):
++            raise RuntimeError("Console composition owner changed")
++        for receiver, names in (
++            (controller, _COMPOSITION_CONTROLLER_METHODS),
++            (controller._chat_start, _COMPOSITION_START_METHODS),
++            (self._runtime, _COMPOSITION_RUNTIME_METHODS),
++        ):
++            for name, record in names:
++                bound = getattr(receiver, name, None)
++                if (
++                    type(bound) is not MethodType or bound.__self__ is not receiver
++                    or bound.__func__ is not record[0]
++                    or not _definition_current(record)
++                ):
++                    raise RuntimeError("Console composition reader changed")
++        for owner, name, descriptor, record in _COMPOSITION_PROPERTIES:
++            if getattr_static(owner, name, None) is not descriptor or not _definition_current(record):
++                raise RuntimeError("Console composition property changed")
++        for owner, name, record in _COMPOSITION_COPY:
++            if getattr_static(owner, name, None) is not record[0] or not _definition_current(record):
++                raise RuntimeError("Console composition copy changed")
++        from .console_backend_tool_counts import _RESOLVER, backend_tool_counts
++
++        if backend_tool_counts is not _RESOLVER[0] or not _definition_current(_RESOLVER):
++            raise RuntimeError("Backend tool-count resolver changed")
++        counts_owner = backend_tool_counts(controller)
++        if counts_owner is not self.tool_counts:
++            raise RuntimeError("Backend tool-count owner changed")
++        counts = counts_owner.snapshot(controller, session.id)
++        launch, staged_revision, sent_notice = self._runtime.snapshot_console_staged_evidence(session.id)
++        pending = controller.has_pending_approval_round(session.id)
++        return encode_session_composition(
++            session,
++            pending_approval_count=controller.pending_round_count(session.id),
++            pending_interrupt_copy=(
++                _COMPOSITION_COPY[0][2][0](controller, session.id) if pending else ""
++            ),
++            blocked_turn_reason=_COMPOSITION_COPY[1][2][0](controller),
++            is_stop_allowed=controller.is_stop_allowed,
++            chat_start_prepared=controller._chat_start.is_prepared(session.id),
++            change_tracking_enabled=controller._agent_bridge.change_tracking_enabled,
++            tools_published=counts.published,
++            builtin_tool_count=counts.builtin_count,
++            mcp_tool_count=counts.mcp_count,
++            mcp_not_connected_count=counts.not_connected_count,
++            selected_tool_count=counts.selected_count,
++            staged_evidence_present=launch is not None,
++            staged_evidence_revision=staged_revision,
++            evidence_sent_notice=sent_notice,
++        )
+ 
+     def projection_view(self, identity, projection) -> dict:
+         """Return only this completed command's already-captured row values."""
+@@ -248,3 +354,41 @@
+     for name, value in vars(ConsoleBackendPresentation).items()
+     if type(value) is FunctionType
+ )
++
++# Fixed presentation readers are pinned separately from the endpoint methods.
++from . import console_chat_models as _composition_models
++from .console_chat_controller import ConsoleChatController as _CompositionController
++from .console_chat_start import ConsoleChatStartCoordinator as _CompositionStart
++from .console_agent_bridge import ConsoleAgentBridge as _CompositionBridge
++from tldw_chatbook.UI.Console_Modules import provider_continuation_recovery as _composition_recovery
++
++_COMPOSITION_CONTROLLER_METHODS = tuple(
++    (name, _definition(getattr(_CompositionController, name)))
++    for name in (
++        "has_pending_approval_round", "pending_round_count", "pending_round_kinds",
++        "trace_call_recovery_preparation", "context_compaction_hold", "preparation_outcome",
++    )
++)
++_COMPOSITION_START_METHODS = (("is_prepared", _definition(_CompositionStart.is_prepared)),)
++_COMPOSITION_PROPERTIES = tuple(
++    (owner, name, descriptor, _definition(descriptor.fget))
++    for owner, name in (
++        (_CompositionController, "is_stop_allowed"),
++        (_CompositionBridge, "change_tracking_enabled"),
++    )
++    for descriptor in (getattr_static(owner, name),)
++)
++_COMPOSITION_COPY = tuple(
++    (owner, name, _definition(getattr(owner, name)))
++    for owner, name in (
++        (_composition_models, "console_pending_round_copy_for"),
++        (_composition_recovery, "blocked_turn_reason"),
++    )
++)
++
++from .console_runtime import ConsoleRuntime as _CompositionRuntime
++
++_COMPOSITION_RUNTIME_METHODS = tuple(
++    (name, _definition(getattr(_CompositionRuntime, name)))
++    for name in ("snapshot_console_staged_evidence", "_staged_evidence_state")
++)
+--- /dev/null
++++ b/tldw_chatbook/Chat/console_backend_readiness.py
+@@ -0,0 +1,435 @@
++"""The selected backend's fixed, checked readiness presentation read."""
++
++from __future__ import annotations
++
++import asyncio
++import copy
++import time
++from dataclasses import replace
++from inspect import getattr_static
++from types import FunctionType, MethodType
++from typing import TYPE_CHECKING
++
++from tldw_chatbook import config
++from tldw_chatbook.Backup_Recovery import config_participants
++
++from . import console_chat_controller as controller_source
++from . import console_session_settings as settings_source
++from . import console_provider_endpoints as endpoint_source
++from .console_display_state import ConsoleControlState
++from .console_control_dispatch import require_control_source
++from .console_domain_services import _definition, _definition_current
++from .console_preparation_reads import preparation_read_for, run_preparation_read
++from .provider_test_evidence import ProviderConnectionEvidence
++
++
++if TYPE_CHECKING:
++    from .console_control_dispatch import ControlIdentity
++    from .console_execution_backend import ConsoleExecutionBackend
++    from .console_session_settings import (
++        ConsoleSessionSettings,
++        ConsoleSettingsReadiness,
++    )
++
++
++class ConsoleBackendReadiness:
++    """Retain one completion-aged read, with actual backend source ownership.
++
++    The one-second age is the existing ConsoleReadinessConfigProjection default.
++    Neither the retained value nor its age grants a config/native operation.
++    """
++
++    def __init__(self, backend: ConsoleExecutionBackend) -> None:
++        self.backend = backend
++        self.connection_evidence = ProviderConnectionEvidence()
++        self._evidence_owner = self.connection_evidence
++        self.reads = set()
++        self.pending = False
++        self.key = None
++        self.value = None
++        self.at = 0.0
++        self.context_summary = None
++        self.context_key = None
++
++    def _current(self, session, settings, revision, source) -> None:
++        backend = self.backend
++        backend.require_sources()
++        backend.presentation.require_association(backend.presentation.association)
++        if _require_context_readers is not _CONTEXT_GUARD[0] or not _definition_current(_CONTEXT_GUARD):
++            raise RuntimeError("Console context guard changed")
++        _require_context_readers(backend)
++        if (
++            type(self) is not ConsoleBackendReadiness
++            or backend.presentation.readiness is not self
++            or not all(
++                getattr_static(self, name, None) is record[0]
++                and _definition_current(record)
++                for name, record in _DEFINITIONS
++            )
++            or not all(
++                getattr_static(owner, name, None) is record[0]
++                and _definition_current(record)
++                for owner, name, record in _READ_SOURCES
++            )
++            or type(self.connection_evidence) is not ProviderConnectionEvidence
++            or self.connection_evidence is not self._evidence_owner
++            or getattr_static(ConsoleControlState, "from_values") is not _CONTROL_LABEL_DESCRIPTOR
++            or not _definition_current(_CONTROL_LABEL_BODY)
++            or backend.controls.source_revision != revision
++            or source.sources is not backend.domain.sources
++            or backend.store._sessions.get(session.id) is not session
++            or session.settings is not settings
++            or session.incarnation_id != source.identity.incarnation_id
++            or session.id != source.identity.session_id
++        ):
++            raise RuntimeError("Console readiness source changed")
++
++    def _key(self, session, settings, revision) -> tuple:
++        return (
++            config.current_config_identity(),
++            id(session),
++            id(settings),
++            session.settings_revision,
++            revision,
++            self.connection_evidence.version,
++            self.backend.store.session_ephemeral_endpoint_policy(session.id),
++        )
++
++    def current_value(
++        self,
++        identity: ControlIdentity,
++    ) -> tuple[ConsoleSessionSettings, ConsoleSettingsReadiness, str, str | None, str]:
++        """Consume the completed read at this command's synchronous capture."""
++        backend = self.backend
++        backend._require_owner_loop()
++        source = require_control_source(backend.runtime)
++        session = backend.store._sessions.get(identity.session_id)
++        if source.identity is not identity or session is None:
++            raise RuntimeError("Console readiness command changed")
++        settings = session.settings
++        self._current(session, settings, identity.source_revision, source)
++        if (
++            self.pending
++            or self.value is None
++            or self.key != self._key(session, settings, identity.source_revision)
++            or time.monotonic() - self.at >= 1.0
++            or self.context_key != self._context_key(session)
++        ):
++            raise RuntimeError("Console readiness presentation expired")
++        return self.value
++
++    def _context_key(self, session) -> tuple:
++        backend = self.backend
++        store, controller = backend.store, backend.controller
++        snapshot = backend.runtime._execution_service._display_owner.context
++        return (
++            store.active_session_id, id(store.workspace_context),
++            id(store.dispatch_recovery_for_session(session.id)),
++            id(store.preparation_for_session(session.id)),
++            store.session_thinking_history_policy(session.id),
++            store.payload_revision(session.id),
++            store.display_projection_revision(session.id), session.draft_revision,
++            session.attachment_revision, session.one_shot_prefill_revision,
++            controller.run_state_for(session.id).status,
++            bool(controller._submit_tasks_for_session(session.id)),
++            snapshot._cache_key(controller, session.id), id(snapshot.value),
++            backend.runtime.snapshot_console_staged_evidence(session.id)[1],
++        )
++
++    def _capture_context(self, session) -> dict:
++        """Detach original resident inputs before the finite preparation await."""
++        from .console_display_state import ConsoleStagedContextState
++        from tldw_chatbook.UI.Console_Modules import console_spend_projection as spend
++
++        backend = self.backend
++        store, controller = backend.store, backend.controller
++        launch, _revision, _notice = backend.runtime.snapshot_console_staged_evidence(session.id)
++        if launch is not None:
++            raise RuntimeError("Console staged evidence requires its process presentation")
++        messages = tuple(store.read_only_messages_for_session(session.id))
++        history = spend.build_console_spend_history_projection(
++            messages, store.dispatch_recovery_for_session(session.id),
++            store.preparation_for_session(session.id),
++            controller.run_state_for(session.id).status,
++            bool(controller._submit_tasks_for_session(session.id)),
++        )
++        snapshot = backend.runtime._execution_service._display_owner.context
++        from .console_context_policy import ConsoleContextPolicyOverrides
++
++        try:
++            overrides, global_overrides, memory = snapshot.inputs(controller, session.id)
++        except (KeyError, ValueError):
++            overrides, global_overrides, memory = ConsoleContextPolicyOverrides(), None, None
++        try:
++            accounting = controller.context_breakdown_accounting(session.id)
++        except Exception:
++            accounting = None  # Original optional accounting presentation policy.
++        staged = ConsoleStagedContextState.empty()
++        return dict(
++            settings=session.settings, messages=messages,
++            request_ids=frozenset(history.request_ids) if history.request_ids is not None else None,
++            active_session=store.active_session_id == session.id,
++            seeded_greeting=controller._seeded_greeting_text(session.id, list(messages)),
++            draft_text=session.draft,
++            staged_source_count=len(store.workspace_context.staged_sources),
++            staged_context_summary=staged.summary, staged_text="",
++            overrides=overrides, global_overrides=global_overrides, memory=memory,
++            accounting=accounting,
++            thinking_history_policy=store.session_thinking_history_policy(session.id),
++            thinking_history_effective_policy=None,
++            agent_runtime_enabled=controller._agent_runtime_enabled,
++            agent_bridge_present=controller._agent_bridge is not None,
++            has_submit_prefill=bool(controller._resolve_submit_prefill(session.id)[0]),
++            has_pending_attachments=bool(store.pending_attachments(session.id)),
++        )
++
++    async def warm(
++        self,
++        identity: ControlIdentity,
++    ) -> tuple[ConsoleSessionSettings, ConsoleSettingsReadiness, str, str | None, str]:
++        """Return actual settings/readiness after the exact read has retired."""
++        backend = self.backend
++        backend._require_owner_loop()
++        source = require_control_source(backend.runtime)
++        if source.identity is not identity or self.pending:
++            raise RuntimeError("Console readiness command changed")
++        with backend.store._preparation_lock:
++            session = backend.store._sessions.get(identity.session_id)
++            if session is None or session.settings is None:
++                raise RuntimeError("Console readiness session is unavailable")
++            settings = session.settings
++            key = self._key(session, settings, identity.source_revision)
++        self._current(session, settings, identity.source_revision, source)
++        if (
++            self.key == key
++            and self.value is not None
++            and time.monotonic() - self.at < 1.0
++            and self.context_key == self._context_key(session)
++        ):
++            return self.value
++        with backend.store._preparation_lock:
++            current_context_key = self._context_key(session)
++            context_inputs = self._capture_context(session)
++            _context_owners = (
++                backend.store.workspace_context,
++                backend.store.dispatch_recovery_for_session(session.id),
++                backend.store.preparation_for_session(session.id),
++                backend.runtime._execution_service._display_owner.context.value,
++            )
++            if current_context_key != self._context_key(session):
++                raise RuntimeError("Console context capture changed")
++        effect = backend.controls._begin_effect("display_readiness", self, source)
++        observations = []
++        self.pending = True
++
++        def current() -> None:
++            self._current(session, settings, identity.source_revision, source)
++            if self._context_key(session) != current_context_key:
++                raise RuntimeError("Console context inputs changed")
++
++        def read():
++            from .console_execution_retirement import _ReadResources
++
++            handoff = preparation_read_for(self)
++            if (
++                handoff is None
++                or handoff.creator is not self
++                or handoff.task is not task
++            ):
++                raise RuntimeError("Console readiness handoff changed")
++            observation = _ReadResources(None, handoff)
++            observations.append(observation)
++            from tldw_chatbook.UI.Console_Modules import tokenizer_display
++            from tldw_chatbook.model_capabilities import get_model_capabilities
++            from .console_prepared_request import positive_token_cap
++
++            with observation.observe():
++                # The real metadata/tokenizer operations precede the final
++                # checked snapshot; its generation must still be the captured one.
++                current()
++                preparation = (
++                    tokenizer_display.capture_tokenizer_preparation(settings.model, settings.provider)
++                    if settings.model else None
++                )
++                tokenizer_ready = preparation is None or preparation()
++                window = (
++                    backend.runtime.provider_gateway.cached_context_window(settings)
++                    if tokenizer_ready and settings.model else None
++                )
++                caps = None
++                if not settings.provider.startswith("custom-ep:"):
++                    try:
++                        capabilities = get_model_capabilities().get_model_capabilities(
++                            settings.provider, settings.model or ""
++                        )
++                        caps = (
++                            positive_token_cap(capabilities, "max_input_tokens", "input_token_limit", "provider_input_cap"),
++                            positive_token_cap(capabilities, "max_output_tokens", "output_token_limit", "provider_output_cap"),
++                        )
++                    except Exception:
++                        pass  # Original optional local-capability display policy.
++                with config_participants.operation(config) as active:
++                    before = config_participants.checked_config_identity(config, active)
++                    loaded = copy.deepcopy(config.load_settings())
++                    after = config_participants.checked_config_identity(config, active)
++                    if before != key[0] or after != before:
++                        raise RuntimeError("Console readiness config changed")
++                current()
++                if preparation is not None and not tokenizer_display.preparation_current(preparation):
++                    raise RuntimeError("Console tokenizer preparation changed")
++                return loaded, tokenizer_ready, window, caps
++
++        task = asyncio.current_task()
++        try:
++            loaded, tokenizer_ready, window, caps = await run_preparation_read(
++                read,
++                creator=self,
++                session_id=session.id,
++                reads=self.reads,
++                observers=(backend.runtime._preparation_reads,),
++                require_current=current,
++                submission_slot=backend.runtime._display_submission_slot,
++            )
++            at = time.monotonic()
++            current()
++            if self._key(session, settings, identity.source_revision) != key:
++                raise RuntimeError("Console readiness publication changed")
++            if not all(item.confirmed() for item in observations):
++                raise RuntimeError("Console readiness native retirement is unproven")
++            # The worker owns only the original checked configuration read.
++            # Derive resident presentation on the owner loop after that read
++            # retires; no mutable session is consumed by a background callback.
++            with backend.store._preparation_lock:
++                current()
++                if self._key(session, settings, identity.source_revision) != key:
++                    raise RuntimeError("Console readiness derivation changed")
++                selection = controller_source.resolve_console_selection_core(
++                    settings,
++                    app_config=loaded,
++                )
++                model = selection.explicit_model or selection.configured_model
++                effective = replace(settings, model=model, base_url=selection.base_url)
++                endpoint = key[6]
++                owns_endpoint = (
++                    endpoint is not None
++                    and endpoint.provider == settings.provider
++                    and endpoint.model == settings.model
++                )
++                if owns_endpoint and selection.base_url:
++                    loaded = endpoint_source.with_provider_endpoint(
++                        loaded,
++                        config.normalize_provider_config_key(settings.provider),
++                        selection.base_url,
++                    )
++                readiness = settings_source.build_console_settings_readiness(
++                    effective,
++                    app_config=loaded,
++                    connection_evidence=self.connection_evidence,
++                )
++                current()
++                if self._key(session, settings, identity.source_revision) != key:
++                    raise RuntimeError("Console readiness derivation changed")
++                provider_chip = ConsoleControlState.from_values(
++                    provider=selection.provider, app_config=loaded,
++                ).provider_label
++                from .console_backend_context_summary import (
++                    ConsoleBackendContextInputs, build_backend_context_summary,
++                )
++
++                summary = build_backend_context_summary(ConsoleBackendContextInputs(
++                    **context_inputs, summary_settings=effective, readiness=readiness,
++                    context_window=window, tokenizer_ready=tokenizer_ready,
++                    provider_token_caps=caps,
++                ))
++                current()
++                value = effective, readiness, selection.provider, model, provider_chip
++                self.context_key, self.context_summary = current_context_key, summary
++                self.key, self.value, self.at = key, value, at
++            return value
++        finally:
++            self.pending = False
++            # Keep captured owners alive through all reads, then release them.
++            _context_owners = None
++            # No callback entry is a separate, affirmative no-resource outcome.
++            # An entered callback must prove all actually observed acquisitions.
++            backend.controls._finish_effect(
++                effect, retired=all(item.confirmed() for item in observations)
++            )
++
++
++_DEFINITIONS = tuple(
++    (name, _definition(value))
++    for name, value in vars(ConsoleBackendReadiness).items()
++    if type(value) is FunctionType
++)
++_READ_SOURCES = tuple(
++    (owner, name, _definition(getattr(owner, name)))
++    for owner, names in (
++        (config, ("load_settings", "current_config_identity")),
++        (config_participants, ("operation", "checked_config_identity")),
++        (controller_source, ("resolve_console_selection_core",)),
++        (settings_source, ("build_console_settings_readiness",)),
++        (endpoint_source, ("with_provider_endpoint",)),
++        (ProviderConnectionEvidence, ("evidence_for", "publish")),
++    )
++    for name in names
++)
++
++_CONTROL_LABEL_DESCRIPTOR = getattr_static(ConsoleControlState, "from_values")
++_CONTROL_LABEL_BODY = _definition(_CONTROL_LABEL_DESCRIPTOR.__func__)
++
++
++from .console_chat_controller import ConsoleChatController
++from .console_chat_store import ConsoleChatStore
++from .console_provider_gateway import ConsoleProviderGateway
++from .console_domain_services import ConsoleDomainServices
++from tldw_chatbook.UI.Console_Modules import console_spend_projection as _context_spend
++from tldw_chatbook.UI.Console_Modules import tokenizer_display as _tokenizer_display
++from . import console_backend_context_summary as _context_summary
++
++_CONTEXT_METHODS = tuple(
++    (owner, name, _definition(getattr(owner, name)))
++    for owner, names in (
++        (ConsoleChatController, ("run_state_for", "_submit_tasks_for_session", "_seeded_greeting_text", "_context_content_for", "context_breakdown_accounting", "_resolve_submit_prefill", "_pinned_prefill_for_session")),
++        (ConsoleChatStore, ("payload_revision", "display_projection_revision", "read_only_messages_for_session", "dispatch_recovery_for_session", "preparation_for_session", "session_thinking_history_policy", "pending_attachments")),
++        (ConsoleProviderGateway, ("cached_context_window",)),
++        (ConsoleDomainServices, ("provider_config",)),
++        (_context_spend.ConsoleContextReadSnapshot, ("inputs", "_cache_key", "_key", "_closed")),
++    ) for name in names
++)
++_CONTEXT_FUNCTIONS = tuple(
++    (owner, name, _definition(getattr(owner, name)))
++    for owner, names in (
++        (_tokenizer_display, ("capture_tokenizer_preparation", "preparation_current")),
++        (_context_spend, ("build_console_spend_history_projection",)),
++        (_context_summary, ("build_backend_context_summary", "_settings_estimate", "_context_state")),
++    ) for name in names
++)
++
++
++def _require_context_readers(backend) -> None:
++    gateway = backend.runtime.provider_gateway
++    snapshot = backend.runtime._execution_service._display_owner.context
++    receivers = {
++        ConsoleChatController: backend.controller, ConsoleChatStore: backend.store,
++        ConsoleProviderGateway: gateway, ConsoleDomainServices: backend.domain,
++        _context_spend.ConsoleContextReadSnapshot: snapshot,
++    }
++    for owner, name, record in _CONTEXT_METHODS:
++        receiver = receivers[owner]
++        method = getattr(receiver, name, None)
++        if (
++            type(receiver) is not owner or type(method) is not MethodType
++            or method.__self__ is not receiver or method.__func__ is not record[0]
++            or getattr_static(owner, name, None) is not record[0]
++            or not _definition_current(record)
++        ):
++            raise RuntimeError("Console context reader changed")
++    provider = gateway._config_provider
++    if type(provider) is not MethodType or provider.__self__ is not backend.domain or provider.__func__ is not ConsoleDomainServices.provider_config:
++        raise RuntimeError("Console context config owner changed")
++    for owner, name, record in _CONTEXT_FUNCTIONS:
++        if getattr_static(owner, name, None) is not record[0] or not _definition_current(record):
++            raise RuntimeError("Console context calculation source changed")
++
++_CONTEXT_GUARD = _definition(_require_context_readers)
+--- a/tldw_chatbook/Chat/console_control_dispatch.py
++++ b/tldw_chatbook/Chat/console_control_dispatch.py
+@@ -449,6 +449,7 @@
+         self._gateway._console_local_controls = self
+ 
+     async def _read_projection(self, identity):
++        import time
+         from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+         from tldw_chatbook.UI.Console_Modules import composer_run_controls
+ 
+@@ -457,6 +458,7 @@
+         view = self._runtime.view
+         association = self._domain.presentation.association
+         self._domain.presentation.require_association(association)
++        projection_started = time.monotonic()
+         if view is None:
+             owner = self._runtime._execution_service.prepare_display_owner()
+             owner.bind_original_graph()
+@@ -469,6 +471,10 @@
+             context.config_projection = None
+             context._display_view_stamp = None
+             await owner.read()
++            from .console_backend_presentation import ConsoleBackendPresentation
++
++            if type(self._domain.presentation) is ConsoleBackendPresentation:
++                await self._domain.presentation.prepare_readiness(identity)
+         else:
+             if (
+                 type(view) is not ChatScreen
+@@ -506,7 +512,9 @@
+             from .console_backend_presentation import ConsoleBackendPresentation
+ 
+             if type(self._domain.presentation) is ConsoleBackendPresentation:
+-                self._domain.presentation.capture_projection_view(self, identity, projection)
++                self._domain.presentation.capture_projection_view(
++                    self, identity, projection, started_at=projection_started
++                )
+             return projection
+ 
+     def _require_source_publication(self, fence):
+--- /dev/null
++++ b/tldw_chatbook/Chat/console_execution_composition_values.py
+@@ -0,0 +1,178 @@
++"""Closed session facts consumed by the existing Console first-frame builders."""
++
++from __future__ import annotations
++
++from dataclasses import dataclass
++from typing import TYPE_CHECKING
++
++from .console_execution_projection_values import (
++    _boolean,
++    _count,
++    _enum,
++    _enum_record,
++    _optional,
++    _record,
++    _text,
++)
++from .console_library_policy import (
++    ConsoleAssistantLibraryAccess,
++    ConsoleAutoRetrieve,
++    ConsoleLibraryPolicyHolder,
++    ConsoleLibraryPolicySnapshot,
++)
++
++
++if TYPE_CHECKING:
++    from .console_chat_store import ConsoleChatSession
++    from .console_execution_projection_values import ConsoleSessionView
++
++
++def _auto(value, decode):
++    return _enum_record(value, ConsoleAutoRetrieve, decode)
++
++
++def _access(value, decode):
++    return _enum_record(value, ConsoleAssistantLibraryAccess, decode)
++
++
++_POLICY = {
++    "auto_retrieve": _auto,
++    "assistant_access": _access,
++    "policy_revision": _optional(_count),
++    "source": _enum("new_session", "durable", "missing", "temporary", "unavailable"),
++    "error_code": _optional(_text),
++}
++
++
++def _policy(value, decode):
++    return _record(value, ConsoleLibraryPolicySnapshot, _POLICY, decode)
++
++
++@dataclass(frozen=True, slots=True)
++class ConsoleSessionComposition:
++    """Display inputs only; these values never grant Library or session authority."""
++
++    session_id: str
++    incarnation_id: str
++    settings_revision: int
++    assistant_kind: str | None
++    assistant_id: str | None
++    assistant_name: str | None
++    character_name: str | None
++    library_policy: ConsoleLibraryPolicySnapshot
++    agent_handoff_state: str | None
++    agent_handoff_revision: int | None
++    pending_approval_count: int
++    pending_interrupt_copy: str
++    blocked_turn_reason: str
++    is_stop_allowed: bool
++    chat_start_prepared: bool
++    change_tracking_enabled: bool
++    tools_published: bool
++    builtin_tool_count: int | None
++    mcp_tool_count: int | None
++    mcp_not_connected_count: int | None
++    selected_tool_count: int | None
++    staged_evidence_present: bool
++    staged_evidence_revision: int
++    evidence_sent_notice: int | None
++
++
++_COMPOSITION = {
++    "session_id": _text,
++    "incarnation_id": _text,
++    "settings_revision": _count,
++    "assistant_kind": _optional(_text),
++    "assistant_id": _optional(_text),
++    "assistant_name": _optional(_text),
++    "character_name": _optional(_text),
++    "library_policy": _policy,
++    "agent_handoff_state": _optional(_text),
++    "agent_handoff_revision": _optional(_count),
++    "pending_approval_count": _count,
++    "pending_interrupt_copy": _text,
++    "blocked_turn_reason": _text,
++    "is_stop_allowed": _boolean,
++    "chat_start_prepared": _boolean,
++    "change_tracking_enabled": _boolean,
++    "tools_published": _boolean,
++    "builtin_tool_count": _optional(_count),
++    "mcp_tool_count": _optional(_count),
++    "mcp_not_connected_count": _optional(_count),
++    "selected_tool_count": _optional(_count),
++    "staged_evidence_present": _boolean,
++    "staged_evidence_revision": _count,
++    "evidence_sent_notice": _optional(_count),
++}
++
++
++def encode_session_composition(
++    session: ConsoleChatSession,
++    *,
++    pending_approval_count: int,
++    pending_interrupt_copy: str,
++    blocked_turn_reason: str,
++    is_stop_allowed: bool,
++    chat_start_prepared: bool,
++    change_tracking_enabled: bool,
++    tools_published: bool, builtin_tool_count: int | None,
++    mcp_tool_count: int | None, mcp_not_connected_count: int | None,
++    selected_tool_count: int | None,
++    staged_evidence_present: bool, staged_evidence_revision: int,
++    evidence_sent_notice: int | None,
++) -> dict:
++    """Capture only named fields of the original session and its policy snapshot."""
++    from .console_chat_store import ConsoleChatSession
++    from .console_execution_protocol import ConsoleProtocolError
++
++    if (
++        type(session) is not ConsoleChatSession
++        or type(session.library_policy_holder) is not ConsoleLibraryPolicyHolder
++    ):
++        raise ConsoleProtocolError("invalid_original_composition_session")
++    value = ConsoleSessionComposition(
++        session.id,
++        session.incarnation_id,
++        session.settings_revision,
++        session.assistant_kind,
++        session.assistant_id,
++        session.assistant_name,
++        session.character_name,
++        session.library_policy_holder.snapshot,
++        session.agent_handoff_state,
++        session.agent_handoff_revision,
++        pending_approval_count,
++        pending_interrupt_copy,
++        blocked_turn_reason,
++        is_stop_allowed,
++        chat_start_prepared,
++        change_tracking_enabled,
++        tools_published, builtin_tool_count, mcp_tool_count,
++        mcp_not_connected_count, selected_tool_count,
++        staged_evidence_present, staged_evidence_revision, evidence_sent_notice,
++    )
++    return _record(value, ConsoleSessionComposition, _COMPOSITION, False)
++
++
++def decode_session_composition(
++    value: dict,
++    row: ConsoleSessionView,
++) -> ConsoleSessionComposition:
++    """Bind decoded facts to the exact original row in this publication."""
++    from .console_execution_projection_values import ConsoleSessionView
++    from .console_execution_protocol import ConsoleProtocolError
++
++    result = _record(value, ConsoleSessionComposition, _COMPOSITION, True)
++    if type(row) is not ConsoleSessionView or (
++        result.session_id,
++        result.incarnation_id,
++        result.settings_revision,
++    ) != (row.id, row.incarnation_id, row.settings_revision):
++        raise ConsoleProtocolError("projection_composition_session_changed")
++    if not result.tools_published and any(
++        value is not None for value in (
++            result.builtin_tool_count, result.mcp_tool_count, result.mcp_not_connected_count
++        )
++    ):
++        raise ConsoleProtocolError("projection_unpublished_tool_counts")
++    return result
+--- a/tldw_chatbook/Chat/console_execution_process.py
++++ b/tldw_chatbook/Chat/console_execution_process.py
+@@ -54,6 +54,7 @@
+     potentially_committed: bool = False
+     events: list[ConsoleWireMessage] = field(default_factory=list, repr=False)
+     projection_message: ConsoleWireMessage | None = field(default=None, repr=False)
++    changed: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
+ 
+ 
+ class _ConsoleFrameInput:
+@@ -143,12 +144,12 @@
+         except BaseException as error:
+             self._report_failure(error)
+ 
+-    def close_after_exit(self, deadline: float) -> bool:
++    def close_after_exit(self, deadline: float | None) -> bool:
+         """Join pipes only after the actual peer process has exited."""
+         self._closing.set()
+         self.outbox.put_nowait(None)
+         for thread in self._started:
+-            thread.join(max(0.0, deadline - time.monotonic()))
++            thread.join(None if deadline is None else max(0.0, deadline - time.monotonic()))
+         return all(not thread.is_alive() for thread in self._started)
+ 
+ 
+@@ -201,18 +202,223 @@
+         self._projection = None
+         self.projection_view = None
+         self.pressed_inputs = None
++        self.settings_readiness = None
++        self.context_summary = None
++        self.provider_model_display = None
++        self.control_provider_label = None
++        self._readiness_deadline = 0.0
++        self.session_composition = None
+         self._projection_sequence = 0
+-
+-    async def read_projection(self, session_id: str, incarnation_id: str):
++        self._initial_session_task: asyncio.Task | None = None
++        self._initial_conversation_id: str | None = None
++        self._resume_view_request = None
++        self._view_preparation = None
++        self._opening_sessions: set[asyncio.Task] = set()
++
++    def attach_view(self, view: Any) -> int:
++        """Bind the actual screen visit without constructing a parent graph."""
++        from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
++
++        if (
++            type(view) is not ChatScreen
++            or view.app_instance is not self._app
++            or view.app is not self._app
++            or self._app.screen is not view
++            or getattr(view, "_console_chat_tearing_down", False)
++            or getattr(view, "_closing", False)
++            or (self._view is not view and view._task is not asyncio.current_task())
++            or getattr(self._app, "console_execution_client", None) is not self
++            or getattr(self._app, "console_runtime", None) is not None
++            or self._disposed
++            or self._shutdown_task is not None
++        ):
++            raise ConsoleChannelLost("Console attachment owner changed")
++        if self._view is not view:
++            self._visit += 1
++            self._view = view
++        return self._visit
++
++    def detach_view(self, view: Any, visit: int) -> bool:
++        """End only this screen visit; the process and turns remain app-owned."""
++        if self._view is not view or self._visit != visit:
++            return False
++        self._view = None
++        self._visit += 1
++        return True
++
++    def require_view(self, view: Any, visit: int) -> None:
++        """Recheck this actual App and visit after an asynchronous boundary."""
++        from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
++
++        if (
++            type(view) is not ChatScreen
++            or self._view is not view
++            or self._visit != visit
++            or view.app_instance is not self._app
++            or view.app is not self._app
++            or self._app.screen is not view
++            or getattr(self._app, "console_execution_client", None) is not self
++            or getattr(self._app, "console_runtime", None) is not None
++            or getattr(view, "_console_chat_tearing_down", False)
++            or self._disposed
++            or self._shutdown_task is not None
++            or self._channel_error is not None
++        ):
++            raise ConsoleChannelLost("Console attachment visit changed")
++
++    async def prepare_view(
++        self, view: Any, *, conversation_id: str | None = None
++    ) -> tuple[int, Any]:
++        """Join the original target before this actual visit derives content."""
++        if self._view is not view and view._task is None:
++            # Stock eager startup publishes the actual message-pump Task on
++            # return from create_task. No session/native entry precedes this.
++            await asyncio.sleep(0)
++        visit = self.attach_view(view)
++        request = object()
++        self._view_preparation = request
++        try:
++            profile = getattr(self._app, "_console_execution_profile", None)
++            await self.start(profile)
++            self._require_view_preparation(view, visit, request)
++            if self.projection_view is None:
++                if self._initial_session_task is None:
++                    self._initial_conversation_id = conversation_id
++                    self._initial_session_task = self._retain_open_session(conversation_id)
++                # An absent target means resume the existing first-session
++                # command, including a saved target whose observer was cancelled.
++                # It is not an instruction to create another blank session.
++                if conversation_id is None or self._initial_conversation_id == conversation_id:
++                    session_id, incarnation = await asyncio.shield(self._initial_session_task)
++                else:
++                    await asyncio.shield(self._initial_session_task)
++                    self._require_view_preparation(view, visit, request)
++                    session_id, incarnation = await asyncio.shield(
++                        self._retain_open_session(conversation_id)
++                    )
++            elif conversation_id is not None:
++                current = self._resume_view_request
++                if (
++                    current is None or current[0] is not view
++                    or current[1] != visit or current[2] != conversation_id
++                ):
++                    current = (view, visit, conversation_id, self._retain_open_session(conversation_id))
++                    self._resume_view_request = current
++                session_id, incarnation = await asyncio.shield(current[3])
++                if self._resume_view_request is not current:
++                    raise ConsoleChannelLost("Console saved target was superseded")
++            else:
++                row = self.projection_view.session(self.projection_view.active_session_id)
++                session_id, incarnation = row.id, row.incarnation_id
++            self._require_view_preparation(view, visit, request)
++            projection = await self.read_projection(
++                session_id, incarnation, _preparation=request
++            )
++            self._require_view_preparation(view, visit, request)
++            return visit, projection
++        finally:
++            if self._view_preparation is request:
++                self._view_preparation = None
++
++    def _require_view_preparation(self, view: Any, visit: int, request: object) -> None:
++        self.require_view(view, visit)
++        if self._view_preparation is not request:
++            raise ConsoleChannelLost("Console target preparation was superseded")
++
++    def _retain_open_session(self, conversation_id: str | None) -> asyncio.Task:
++        task = asyncio.create_task(
++            self._open_initial_session(conversation_id),
++            name="console_execution_open_session",
++        )
++        self._opening_sessions.add(task)
++        task.add_done_callback(self._open_session_finished)
++        return task
++
++    def _open_session_finished(self, task: asyncio.Task) -> None:
++        self._opening_sessions.discard(task)
++        # A superseded/cancelled screen may no longer await this command.
++        # Retrieve its exception without changing the original receipt outcome.
++        if not task.cancelled():
++            task.exception()
++
++    async def _open_initial_session(
++        self, conversation_id: str | None
++    ) -> tuple[str, str]:
++        receipt = self.submit("OpenSession", {
++            "title": "New chat", "workspace_id": None,
++            "conversation_id": conversation_id,
++        })
++        try:
++            value = await asyncio.shield(receipt.applied)
++        finally:
++            if await asyncio.shield(receipt.retired) is not True:
++                error = ConsoleChannelLost("Console initial session did not retire")
++                self._fail(error)
++                raise error
++        return value["session_id"], value["incarnation_id"]
++
++    def acknowledge_plan(self, receipt: ConsoleProcessReceipt, plan: ConsoleWireMessage) -> ConsoleProcessReceipt:
++        """Acknowledge only the exact retained plan after parent presentation."""
++        if (
++            type(receipt) is not ConsoleProcessReceipt
++            or type(plan) is not ConsoleWireMessage
++            or self._requests.get(receipt.identity.request_id) is not receipt
++            or receipt.operation != "ReceiveTurn"
++            or plan.kind != "commit_planned"
++            or self._plans.get((receipt.identity.request_id, plan.payload["ordinal"])) is not plan
++            or plan.identity.session_id != receipt.identity.session_id
++            or plan.identity.incarnation_id != receipt.identity.incarnation_id
++        ):
++            raise ConsoleProtocolError("unknown_commit_request")
++        values = encode_message(plan)["payload"]
++        return self.submit(
++            "CommitPlanAck",
++            {name: values[name] for name in (
++                "received_request_id", "turn_id", "ordinal", "fingerprint"
++            )},
++            session_id=receipt.identity.session_id,
++            incarnation_id=receipt.identity.incarnation_id,
++        )
++
++    async def next_turn_event(self, receipt: ConsoleProcessReceipt, index: int) -> ConsoleWireMessage | None:
++        """Observe the next original event without replay or receipt cancellation."""
++        if (type(receipt) is not ConsoleProcessReceipt
++            or receipt.operation != "ReceiveTurn"
++            or type(index) is not int or index < 0
++        ):
++            raise ConsoleProtocolError("turn_receipt_required")
++        while True:
++            receipt.changed.clear()
++            if index < len(receipt.events):
++                return receipt.events[index]
++            if receipt.retired.done():
++                receipt.retired.result()
++                return None
++            if self._channel_error is not None:
++                raise ConsoleChannelLost("Console outcome is unknown")
++            if self._requests.get(receipt.identity.request_id) is not receipt:
++                raise ConsoleProtocolError("turn_receipt_changed")
++            await receipt.changed.wait()
++
++    async def read_projection(
++        self, session_id: str, incarnation_id: str, *, _preparation=None
++    ):
+         """Adopt one exact retired projection without constructing a local store."""
++        requested_at = time.monotonic()
+         from .console_execution_projection_result import (
+             decode_projection_payload,
+             decode_projection_view,
++            decode_projection_readiness,
+             projection_key,
+         )
++        from .console_execution_composition_values import decode_session_composition
+ 
+         previous = self._projection
+         view, visit = self._view, self._visit
++        if self._view_preparation is not _preparation:
++            raise ConsoleChannelLost("Console target preparation is pending")
++        if view is not None:
++            self.require_view(view, visit)
+         binding = (self._source_revision, session_id, incarnation_id)
+         known = (
+             previous.display_revision
+@@ -233,6 +439,7 @@
+             or self._source_revision != binding[0]
+             or self._view is not view
+             or self._visit != visit
++            or self._view_preparation is not _preparation
+             or receipt.identity.sequence <= self._projection_sequence
+         ):
+             raise ConsoleChannelLost("Console projection source changed")
+@@ -244,8 +451,31 @@
+         payload = encode_message(message)["payload"]
+         value = decode_projection_payload(payload, previous=previous)
+         projection_view = decode_projection_view(payload, value)
++        effective, readiness, provider, model, remaining, elapsed, provider_chip, context_summary = decode_projection_readiness(
++            payload, projection_view
++        )
++        composition = (
++            decode_session_composition(
++                payload["session_view"]["composition"],
++                projection_view.session(projection_view.active_session_id),
++            ) if projection_view.active_session_id is not None else None
++        )
++        # Durations, not clock epochs, cross the channel. Including the actual
++        # command duration preserves a cold read's lifetime while charging all
++        # transport/queue/serialization delay conservatively to its remaining age.
++        deadline = requested_at + elapsed + remaining
++        if time.monotonic() >= deadline:
++            raise ConsoleChannelLost("Console readiness expired before adoption")
++        if view is not None:
++            self.require_view(view, visit)
+         self._projection = value
+         self.projection_view = projection_view
++        self.settings_readiness = effective, readiness
++        self.context_summary = context_summary
++        self.control_provider_label = provider_chip
++        self.provider_model_display = provider, model, projection_view.session(session_id).settings
++        self._readiness_deadline = deadline
++        self.session_composition = composition
+         self.pressed_inputs = payload["session_view"]["pressed_inputs"]
+         self._projection_sequence = receipt.identity.sequence
+         return value
+@@ -516,6 +746,7 @@
+                 ):
+                     raise ConsoleProtocolError("unexpected_retired")
+                 receipt.retired.set_result(message.payload["retired"])
++                receipt.changed.set()
+                 if (
+                     receipt.operation == "Shutdown"
+                     and message.payload["retired"] is True
+@@ -564,8 +795,9 @@
+         self, receipt: ConsoleProcessReceipt, message: ConsoleWireMessage
+     ) -> None:
+         """Keep retained events until the exact attachment consumes them."""
+-        # The actual projection adapter is installed with the selected UI route;
+-        # retention here never creates a parent runtime, store or command proof.
++        # Events wake the exact original receipt's UI observer; they grant no
++        # command/source/native authority and never trigger automatic ACK.
++        receipt.changed.set()
+ 
+     def _fail(self, error: BaseException) -> None:
+         if self._channel_error is not None:
+@@ -575,6 +807,7 @@
+         if self._ready is not None and not self._ready.done():
+             self._ready.set_exception(ConsoleChannelLost("Console startup failed"))
+         for receipt in self._requests.values():
++            receipt.changed.set()
+             for future in (receipt.received, receipt.applied, receipt.retired):
+                 if not future.done():
+                     future.set_exception(
+@@ -598,11 +831,12 @@
+         """Report lifecycle cleanup, independently of command retirement."""
+         return self._physically_closed
+ 
+-    async def shutdown(self, *, deadline: float) -> bool:
++    async def shutdown(self, *, deadline: float | None) -> bool:
+         """Retain original drain and process cleanup across observer cancellation.
+ 
+         Args:
+-            deadline: The initiating lifecycle owner's existing monotonic bound.
++            deadline: The initiating lifecycle owner's existing monotonic bound, or None
++                for the original App quit path, which has no deadline.
+ 
+         Returns:
+             Whether backend drain, process exit, pipes, monitor and containment
+@@ -612,13 +846,21 @@
+             self._shutdown_task = asyncio.create_task(self._shutdown(deadline))
+         return await asyncio.shield(self._shutdown_task)
+ 
+-    async def _shutdown(self, deadline: float) -> bool:
++    async def _shutdown(self, deadline: float | None) -> bool:
+         drained = False
+         cancellation = None
+         try:
+-            async with asyncio.timeout(max(0.0, deadline - time.monotonic())):
++            async with asyncio.timeout(None if deadline is None else max(0.0, deadline - time.monotonic())):
+                 if self._start_task is not None:
+                     await asyncio.shield(self._start_task)
++                # These tasks only observe already-issued OpenSession receipts.
++                # Prevent a late view preparation from issuing after intake closes.
++                opening = tuple(self._opening_sessions)
++                if opening:
++                    await asyncio.gather(
++                        *(asyncio.shield(task) for task in opening),
++                        return_exceptions=True,
++                    )
+                 for operation in ("CloseIntake", "Drain", "Shutdown"):
+                     receipt = self.submit(operation, {})
+                     await asyncio.shield(receipt.received)
+@@ -629,7 +871,7 @@
+                 if self._process is not None:
+                     returncode = await asyncio.to_thread(
+                         self._process.wait,
+-                        max(0.0, deadline - time.monotonic()),
++                        None if deadline is None else max(0.0, deadline - time.monotonic()),
+                     )
+                     if returncode != 0:
+                         raise ConsoleChannelLost(
+@@ -653,6 +895,12 @@
+                     await asyncio.shield(self._start_task)
+                 except BaseException as error:
+                     self._fail(error)
++            opening = tuple(self._opening_sessions)
++            if opening:
++                await asyncio.gather(
++                    *(asyncio.shield(task) for task in opening),
++                    return_exceptions=True,
++                )
+             closed = False
+             if self._tree is not None:
+                 try:
+@@ -688,7 +936,7 @@
+                     try:
+                         await asyncio.to_thread(
+                             self._monitor.join,
+-                            max(0.0, deadline - time.monotonic()),
++                            None if deadline is None else max(0.0, deadline - time.monotonic()),
+                         )
+                         joined = joined and not self._monitor.is_alive()
+                     except BaseException as error:
+--- a/tldw_chatbook/Chat/console_execution_projection_result.py
++++ b/tldw_chatbook/Chat/console_execution_projection_result.py
+@@ -101,10 +101,10 @@
+     from .console_execution_protocol import _PROJECTED_INPUTS, _detach
+ 
+     value = payload["session_view"]
++    fields = {"sessions", "active_session_id", "fingerprints", "pressed_inputs"}
+     if (
+         type(value) is not dict
+-        or set(value)
+-        != {"sessions", "active_session_id", "fingerprints", "pressed_inputs"}
++        or set(value) not in (fields, fields | {"readiness", "composition"})
+         or type(value["sessions"]) is not list
+         or type(value["fingerprints"]) is not list
+     ):
+@@ -166,7 +166,67 @@
+         )
+     ):
+         raise ConsoleProtocolError("projection_input_row_changed")
++    if "readiness" in value:
++        _readiness(value["readiness"], current_row)
++        from .console_execution_composition_values import decode_session_composition
++
++        if active is None:
++            if value["composition"] is not None:
++                raise ConsoleProtocolError("projection_composition_without_active_session")
++        else:
++            decode_session_composition(
++                value["composition"], next(row for row in rows if row.id == active)
++            )
+     return rows, active, tuple(fingerprints)
++
++
++def _readiness(value, row) -> tuple:
++    import math
++    from dataclasses import replace
++    from .console_execution_projection_values import _settings
++    from .console_execution_readiness_values import decode_settings_readiness
++    from .console_execution_context_summary_values import decode_context_summary
++
++    if (
++        type(value) is not dict
++        or set(value) != {
++            "effective_settings", "state", "provider_label", "control_provider_label", "model",
++            "remaining_seconds", "projection_elapsed_seconds", "context_summary",
++        }
++        or type(value["provider_label"]) is not str
++        or type(value["control_provider_label"]) is not str
++        or value["model"] is not None and type(value["model"]) is not str
++        or row.settings is None
++    ):
++        raise ConsoleProtocolError("invalid_projection_readiness")
++    for name in ("remaining_seconds", "projection_elapsed_seconds"):
++        number = value[name]
++        if type(number) not in (int, float) or not math.isfinite(number) or number < 0:
++            raise ConsoleProtocolError("invalid_projection_readiness_clock")
++    if value["remaining_seconds"] > 1.0:
++        raise ConsoleProtocolError("invalid_projection_readiness_clock")
++    effective = _settings(value["effective_settings"], True)
++    readiness = decode_settings_readiness(value["state"])
++    if (
++        effective.model != value["model"]
++        or replace(row.settings, model=effective.model, base_url=effective.base_url)
++        != effective
++    ):
++        raise ConsoleProtocolError("projection_readiness_settings_changed")
++    return (
++        effective, readiness, value["provider_label"], value["model"],
++        value["remaining_seconds"], value["projection_elapsed_seconds"],
++        value["control_provider_label"], decode_context_summary(value["context_summary"]),
++    )
++
++
++def decode_projection_readiness(payload: dict, view: ConsoleProjectionView) -> tuple:
++    """Decode only readiness captured with this exact session publication."""
++    row = view.session(payload["session_id"])
++    body = payload.get("session_view")
++    if type(body) is not dict or "readiness" not in body:
++        raise ConsoleProtocolError("projection_readiness_missing")
++    return _readiness(body["readiness"], row)
+ 
+ 
+ def encode_pressed_inputs(
+--- /dev/null
++++ b/tldw_chatbook/Chat/console_execution_session_surface.py
+@@ -0,0 +1,140 @@
++"""Finite session-surface values bound to one adopted read-only publication."""
++
++from __future__ import annotations
++
++from dataclasses import dataclass
++
++from .console_chat_models import ConsoleRunMarker
++from .console_execution_projection_view import ConsoleProjectionView
++
++
++def _entry_ids(entries: object, session_ids: set[str]) -> None:
++    if type(entries) is not tuple:
++        raise TypeError("Console session-surface entries must be tuples")
++    seen = set()
++    for entry in entries:
++        if type(entry) is not tuple or len(entry) != 2:
++            raise TypeError("Console session-surface entry is invalid")
++        session_id = entry[0]
++        if (
++            type(session_id) is not str
++            or session_id not in session_ids
++            or session_id in seen
++        ):
++            raise ValueError("Console session-surface identity is invalid")
++        seen.add(session_id)
++    if seen != session_ids:
++        raise ValueError("Console session-surface entries do not cover its rows")
++
++
++@dataclass(frozen=True, slots=True)
++class ConsoleSessionSurfaceProjection:
++    """Original observations only; None remains distinct from NONE or zero."""
++
++    view: ConsoleProjectionView
++    streaming_session_id: str | None
++    run_markers: tuple[tuple[str, ConsoleRunMarker], ...] | None
++    queue_counts: tuple[tuple[str, int], ...] | None
++
++    def __post_init__(self) -> None:
++        if type(self.view) is not ConsoleProjectionView:
++            raise TypeError("Original Console projection view is required")
++        session_ids = {row.id for row in self.view.session_rows}
++        if self.streaming_session_id is not None and (
++            type(self.streaming_session_id) is not str
++            or self.streaming_session_id not in session_ids
++        ):
++            raise ValueError("Console streaming session is unavailable")
++        if self.run_markers is not None:
++            _entry_ids(self.run_markers, session_ids)
++            if any(type(marker) is not ConsoleRunMarker for _, marker in self.run_markers):
++                raise TypeError("Original Console run markers are required")
++        if self.queue_counts is not None:
++            _entry_ids(self.queue_counts, session_ids)
++            if any(type(count) is not int or count < 0 for _, count in self.queue_counts):
++                raise ValueError("Console queue counts must be nonnegative integers")
++
++
++def encode_session_surface_projection(value: ConsoleSessionSurfaceProjection) -> dict:
++    """Return the three plain JSON fields, without serializing the view.
++
++    Args:
++        value: Validated original observations bound to their adopted view.
++
++    Returns:
++        Detached JSON objects and arrays preserving absent observations.
++
++    Raises:
++        TypeError: The value is not an original surface projection.
++    """
++    if type(value) is not ConsoleSessionSurfaceProjection:
++        raise TypeError("Original Console session-surface projection is required")
++    return {
++        "streaming_session_id": value.streaming_session_id,
++        "run_markers": (
++            None if value.run_markers is None else [
++                {"session_id": session_id, "marker": marker.value}
++                for session_id, marker in value.run_markers
++            ]
++        ),
++        "queue_counts": (
++            None if value.queue_counts is None else [
++                {"session_id": session_id, "count": count}
++                for session_id, count in value.queue_counts
++            ]
++        ),
++    }
++
++
++def decode_session_surface_projection(
++    view: ConsoleProjectionView, value: dict
++) -> ConsoleSessionSurfaceProjection:
++    """Decode fixed plain JSON values against the exact adopted view.
++
++    Args:
++        view: Original read-only view to retain, without copying or rebuilding it.
++        value: Plain JSON record, already detached from any frozen wire payload.
++
++    Returns:
++        A validated frozen surface projection with original enum leaves.
++
++    Raises:
++        TypeError: A record, collection or marker has a nonexact type.
++        ValueError: Fields, identities, coverage, marker or count are invalid.
++    """
++    if type(value) is not dict or any(type(key) is not str for key in value):
++        raise TypeError("Plain Console session-surface data is required")
++    if set(value) != {"streaming_session_id", "run_markers", "queue_counts"}:
++        raise ValueError("Console session-surface fields are invalid")
++    markers = None
++    if value["run_markers"] is not None:
++        if type(value["run_markers"]) is not list:
++            raise TypeError("Console run markers must be a plain array")
++        markers = []
++        for entry in value["run_markers"]:
++            if (
++                type(entry) is not dict
++                or any(type(key) is not str for key in entry)
++                or set(entry) != {"session_id", "marker"}
++                or type(entry["marker"]) is not str
++            ):
++                raise TypeError("Console run-marker record is invalid")
++            markers.append((entry["session_id"], ConsoleRunMarker(entry["marker"])))
++        markers = tuple(markers)
++    counts = None
++    if value["queue_counts"] is not None:
++        if type(value["queue_counts"]) is not list:
++            raise TypeError("Console queue counts must be a plain array")
++        counts = []
++        for entry in value["queue_counts"]:
++            if (
++                type(entry) is not dict
++                or any(type(key) is not str for key in entry)
++                or set(entry) != {"session_id", "count"}
++            ):
++                raise TypeError("Console queue-count record is invalid")
++            counts.append((entry["session_id"], entry["count"]))
++        counts = tuple(counts)
++    return ConsoleSessionSurfaceProjection(
++        view, value["streaming_session_id"], markers, counts
++    )
+--- a/tldw_chatbook/Chat/console_runtime.py
++++ b/tldw_chatbook/Chat/console_runtime.py
+@@ -6831,6 +6831,8 @@
+     Returns:
+         ConsoleRuntime: The runtime `view` should use.
+     """
++    if getattr(app, "console_execution_client", None) is not None:
++        raise RuntimeError("Selected Console process cannot construct a local runtime")
+     runtime = getattr(app, CONSOLE_RUNTIME_ATTR, None)
+     if not isinstance(runtime, ConsoleRuntime) and view is not None:
+         # An app object that cannot hold the attribute (`None`, or a
+--- a/tldw_chatbook/UI/Console_Modules/context_spend.py
++++ b/tldw_chatbook/UI/Console_Modules/context_spend.py
+@@ -346,6 +346,12 @@
+         self,
+     ) -> ConsoleSettingsContextEstimate:
+         """Return context usage for the active native Console settings snapshot."""
++        from .execution_state import selected_context_summary
++
++        projected = selected_context_summary(self._screen)
++        if projected is not None:
++            return projected.estimate
++
+         store = self._ensure_console_chat_store()
+         session_id = store.active_session_id
+         if session_id is None:
+@@ -794,16 +800,37 @@
+ 
+     def compaction_pause_expected(self) -> bool:
+         """Whether the active chat's next send will pause for compaction."""
++        from .execution_state import selected_context_summary
++
++        projected = selected_context_summary(self._screen)
++        if projected is not None:
++            return projected.compaction_pause_expected
++
+         state = self._last_console_context_control_state
+         return state is not None and state.compaction_pause_forecast is not None
+ 
+     def compaction_forecast_unavailable(self) -> bool:
+         """Whether current tool/input facts cannot qualify a forecast."""
++        from .execution_state import selected_context_summary
++
++        projected = selected_context_summary(self._screen)
++        if projected is not None:
++            return projected.compaction_forecast_unavailable
++
+         state = self._last_console_context_control_state
+         return state is not None and bool(state.forecast_unavailable_reason)
+ 
+     def _build_console_settings_summary_state(self) -> ConsoleSettingsSummaryState:
+         """Build compact summary state for the active Console session settings."""
++        from .execution_state import selected_context_summary
++
++        projected = selected_context_summary(self._screen)
++        if projected is not None:
++            settings, readiness = self._active_console_settings_readiness()
++            return build_console_settings_summary_state(
++                settings, projected.estimate, readiness
++            )
++
+         settings, readiness = self._active_console_settings_readiness()
+         estimate = self._active_console_settings_context_estimate()
+         try:
+--- /dev/null
++++ b/tldw_chatbook/UI/Console_Modules/execution_projection.py
+@@ -0,0 +1,184 @@
++"""Present one retired process snapshot through the original mounted transcript."""
++
++from __future__ import annotations
++
++import inspect
++from types import MethodType
++
++from textual._context import NoActiveAppError
++from textual.css.query import QueryError
++from textual.dom import NoScreen
++
++from ...Chat import console_control_dispatch as _controls
++from ...Chat import console_domain_services as _definitions
++from ...Chat import console_execution_process as _process
++from ...Chat.console_control_dispatch import ConsoleProjection
++from ...Chat.console_execution_process import ConsoleExecutionClient
++from ...Widgets.Console import console_transcript as _transcript_module
++from ...Widgets.Console.console_transcript import ConsoleTranscript
++from ..Screens import chat_screen as _screen_module
++from ..Screens.chat_screen import ChatScreen
++from . import message as _message_module
++from .message import ConsoleMessageController
++
++_definition = _definitions._definition
++_definition_current = _definitions._definition_current
++_TORN_DOWN = _definition(_screen_module._console_screen_is_torn_down)
++_TYPES = (
++    (_screen_module, "ChatScreen", ChatScreen),
++    (_process, "ConsoleExecutionClient", ConsoleExecutionClient),
++    (_controls, "ConsoleProjection", ConsoleProjection),
++    (_transcript_module, "ConsoleTranscript", ConsoleTranscript),
++    (_message_module, "ConsoleMessageController", ConsoleMessageController),
++)
++_SCREEN_METHODS = tuple(
++    (name, _definition(getattr(ChatScreen, name)))
++    for name in ("query_one", "_show_model_thinking")
++)
++_TRANSCRIPT_METHODS = tuple(
++    (name, _definition(getattr(ConsoleTranscript, name)))
++    for name in (
++        "set_model_thinking_visible",
++        "set_messages",
++        "sync_jump_indicator",
++    )
++)
++_PROPERTIES = tuple(
++    (
++        owner,
++        name,
++        descriptor,
++        tuple(
++            _definition(function)
++            for function in (descriptor.fget, descriptor.fset)
++            if function is not None
++        ),
++    )
++    for owner, names in (
++        (
++            ChatScreen,
++            ("app", "is_current", "is_mounted", "_pending_console_swipe_selection"),
++        ),
++        (ConsoleTranscript, ("screen", "is_mounted")),
++    )
++    for name in names
++    for descriptor in (inspect.getattr_static(owner, name),)
++)
++
++
++def _require_methods(receiver: object, records: tuple) -> None:
++    for name, record in records:
++        method = getattr(receiver, name, None)
++        if (
++            type(method) is not MethodType
++            or method.__self__ is not receiver
++            or method.__func__ is not record[0]
++            or inspect.getattr_static(type(receiver), name) is not record[0]
++            or not _definition_current(record)
++        ):
++            raise RuntimeError("Console projection presentation definition changed")
++
++
++def _require_sources() -> None:
++    if (
++        _definitions._definition_current is not _definition_current
++        or any(
++            getattr(module, name) is not original for module, name, original in _TYPES
++        )
++        or _screen_module._console_screen_is_torn_down is not _TORN_DOWN[0]
++        or not _definition_current(_TORN_DOWN)
++        or any(
++            inspect.getattr_static(owner, name) is not descriptor
++            or any(not _definition_current(record) for record in records)
++            for owner, name, descriptor, records in _PROPERTIES
++        )
++    ):
++        raise RuntimeError("Console projection presentation source changed")
++
++
++def apply_console_process_projection(
++    screen: ChatScreen,
++    client: ConsoleExecutionClient,
++    projection: ConsoleProjection,
++    *,
++    visit: int,
++) -> bool:
++    """Apply transcript values for the client's exact current visible visit.
++
++    Args:
++        screen: Original mounted Console screen selected by the parent.
++        client: Exact process owner already bound to that screen and visit.
++        projection: Snapshot published by the client after positive retirement.
++        visit: Parent attachment visit captured for this presentation request.
++
++    Returns:
++        Whether the synchronous original presentation calls ran. This does not
++        acknowledge native retirement, row mounting, paint, or other UI surfaces.
++
++    Raises:
++        TypeError: A receiver is outside the fixed original presentation cohort.
++        RuntimeError: An original presentation definition or receiver changed.
++    """
++    if (
++        type(screen) is not ChatScreen
++        or type(client) is not ConsoleExecutionClient
++        or type(projection) is not ConsoleProjection
++        or type(visit) is not int
++    ):
++        raise TypeError("Original Console projection presentation types are required")
++    _require_sources()
++    if (
++        client._view is not screen
++        or client._visit != visit
++        or client._projection is not projection
++        or projection.source_revision != client._source_revision
++        or client._disposed
++        or client._shutdown_task is not None
++        or client._channel_error is not None
++        or _TORN_DOWN[0](screen)
++    ):
++        return False
++    try:
++        if (
++            screen.app is not client._app
++            or screen.app_instance is not client._app
++            or not screen.is_current
++            or not screen.is_mounted
++        ):
++            return False
++    except NoActiveAppError:
++        return False
++    _require_methods(screen, _SCREEN_METHODS)
++    try:
++        transcript = screen.query_one("#console-native-transcript", ConsoleTranscript)
++    except QueryError:
++        return False
++    if type(transcript) is not ConsoleTranscript:
++        raise TypeError("Original Console transcript is required")
++    try:
++        if (
++            not transcript.is_mounted
++            or transcript._closing
++            or transcript._closed
++            or transcript.screen is not screen
++        ):
++            return False
++    except NoScreen:
++        return False
++    _require_methods(transcript, _TRANSCRIPT_METHODS)
++    message = screen._message
++    if (
++        type(message) is not ConsoleMessageController
++        or message._screen is not screen
++        or message.app_instance is not client._app
++    ):
++        raise RuntimeError("Console swipe-selection presentation receiver changed")
++
++    # Preserve the original UI-only handoff immediately before message ingest.
++    if screen._pending_console_swipe_selection is not None:
++        transcript.pending_selection_id = screen._pending_console_swipe_selection
++        screen._pending_console_swipe_selection = None
++    transcript.set_model_thinking_visible(screen._show_model_thinking())
++    transcript.set_messages(projection.messages, session_id=projection.session_id)
++    transcript.sync_jump_indicator(projection.run_state.status.value)
++    return True
+--- /dev/null
++++ b/tldw_chatbook/UI/Console_Modules/execution_sessions.py
+@@ -0,0 +1,256 @@
++"""Present retired session values through the original mounted tab surface.
++
++Import lazily after ChatScreen is defined; this module pins its original methods.
++"""
++
++from __future__ import annotations
++
++import asyncio
++import inspect
++from functools import partial
++from types import MethodType
++
++from textual._context import NoActiveAppError
++from textual.css.query import QueryError
++from textual.dom import NoScreen
++
++from ...Chat import console_domain_services as _definitions
++from ...Chat import console_execution_process as _process
++from ...Chat import console_execution_projection_view as _views
++from ...Chat import console_execution_session_surface as _values
++from ...Chat.console_execution_process import ConsoleExecutionClient
++from ...Chat.console_execution_projection_view import ConsoleProjectionView
++from ...Chat.console_execution_session_surface import ConsoleSessionSurfaceProjection
++from ...Widgets.Console import console_session_surface as _surface_module
++from ...Widgets.Console.console_session_surface import ConsoleSessionSurface
++from ..Screens import chat_screen as _screen_module
++from ..Screens.chat_screen import ChatScreen
++from . import send_acknowledgement as _ack_module
++from .send_acknowledgement import ConsoleSendAcknowledgement
++
++_definition = _definitions._definition
++_definition_current = _definitions._definition_current
++_TORN_DOWN = _definition(_screen_module._console_screen_is_torn_down)
++_LOCK_TYPE = asyncio.Lock
++_TYPES = (
++    (asyncio, "Lock", _LOCK_TYPE),
++    (_screen_module, "ChatScreen", ChatScreen),
++    (_process, "ConsoleExecutionClient", ConsoleExecutionClient),
++    (_views, "ConsoleProjectionView", ConsoleProjectionView),
++    (_values, "ConsoleSessionSurfaceProjection", ConsoleSessionSurfaceProjection),
++    (_surface_module, "ConsoleSessionSurface", ConsoleSessionSurface),
++    (_ack_module, "ConsoleSendAcknowledgement", ConsoleSendAcknowledgement),
++)
++_SCREEN_METHODS = (("query_one", _definition(ChatScreen.query_one)),)
++_VIEW_METHODS = (("sessions", _definition(ConsoleProjectionView.sessions)),)
++_SURFACE_METHODS = (("sync_sessions", _definition(ConsoleSessionSurface.sync_sessions)),)
++_ACK_METHODS = (
++    ("overlay_run_markers", _definition(ConsoleSendAcknowledgement.overlay_run_markers)),
++)
++_ACK_CALLBACKS = (
++    ("_on_release", "_request_resync", _definition(_ack_module._request_resync)),
++    ("_message_ids", "_session_message_ids", _definition(_ack_module._session_message_ids)),
++)
++_PROPERTIES = tuple(
++    (
++        owner,
++        name,
++        descriptor,
++        tuple(
++            _definition(function)
++            for function in (descriptor.fget, descriptor.fset)
++            if function is not None
++        ),
++    )
++    for owner, names in (
++        (ChatScreen, ("app", "is_current", "is_mounted")),
++        (ConsoleSessionSurface, ("app", "screen", "is_mounted", "is_attached")),
++    )
++    for name in names
++    for descriptor in (inspect.getattr_static(owner, name),)
++)
++
++
++def _require_methods(receiver: object, records: tuple) -> None:
++    for name, record in records:
++        method = getattr(receiver, name, None)
++        if (
++            type(method) is not MethodType
++            or method.__self__ is not receiver
++            or method.__func__ is not record[0]
++            or inspect.getattr_static(type(receiver), name) is not record[0]
++            or not _definition_current(record)
++        ):
++            raise RuntimeError("Console session presentation definition changed")
++
++
++def _require_sources() -> None:
++    if (
++        _definitions._definition_current is not _definition_current
++        or any(getattr(module, name) is not original for module, name, original in _TYPES)
++        or _screen_module._console_screen_is_torn_down is not _TORN_DOWN[0]
++        or not _definition_current(_TORN_DOWN)
++        or any(
++            inspect.getattr_static(owner, name) is not descriptor
++            or any(not _definition_current(record) for record in records)
++            for owner, name, descriptor, records in _PROPERTIES
++        )
++    ):
++        raise RuntimeError("Console session presentation source changed")
++
++
++def _require_ack(screen: ChatScreen, ack: ConsoleSendAcknowledgement) -> None:
++    if type(ack) is not ConsoleSendAcknowledgement:
++        raise TypeError("Original Console send acknowledgement is required")
++    _require_methods(ack, _ACK_METHODS)
++    for attribute, name, record in _ACK_CALLBACKS:
++        callback = getattr(ack, attribute, None)
++        if (
++            getattr(_ack_module, name) is not record[0]
++            or not _definition_current(record)
++            or type(callback) is not partial
++            or callback.func is not record[0]
++            or len(callback.args) != 1
++            or callback.args[0] is not screen
++            or callback.keywords
++        ):
++            raise RuntimeError("Console send acknowledgement screen changed")
++
++
++def _current(screen, client, publication, visit) -> bool:
++    _require_sources()
++    if (
++        client._view is not screen
++        or client._visit != visit
++        or getattr(client, "session_surface", None) is not publication
++        or publication.view is not client.projection_view
++        or publication.view.source_revision != client._source_revision
++        or client._disposed
++        or client._physically_closed
++        or client._shutdown_task is not None
++        or client._channel_error is not None
++        or not client._intake_open
++        or _TORN_DOWN[0](screen)
++    ):
++        return False
++    try:
++        if (
++            screen.app is not client._app
++            or screen.app_instance is not client._app
++            or screen.app._exit
++            or not screen.is_current
++            or not screen.is_mounted
++        ):
++            return False
++    except NoActiveAppError:
++        return False
++    _require_methods(screen, _SCREEN_METHODS)
++    _require_methods(publication.view, _VIEW_METHODS)
++    return True
++
++
++def _surface(screen: ChatScreen) -> ConsoleSessionSurface | None:
++    try:
++        surface = screen.query_one("#console-session-surface", ConsoleSessionSurface)
++    except QueryError:
++        return None
++    if type(surface) is not ConsoleSessionSurface:
++        raise TypeError("Original Console session surface is required")
++    try:
++        if (
++            not surface.is_mounted
++            or not surface.is_attached
++            or surface._closing
++            or surface._closed
++            or surface._pruning
++            or surface.screen is not screen
++            or surface.app is not screen.app
++        ):
++            return None
++    except (NoScreen, NoActiveAppError):
++        return None
++    _require_methods(surface, _SURFACE_METHODS)
++    return surface
++
++
++async def apply_console_process_sessions(
++    screen: ChatScreen,
++    client: ConsoleExecutionClient,
++    publication: ConsoleSessionSurfaceProjection,
++    *,
++    visit: int,
++) -> bool:
++    """Apply one current publication under the original screen's tabs lock.
++
++    Args:
++        screen: Actual mounted Console screen selected by the parent.
++        client: Original client bound to that screen and visit.
++        publication: Exact current session surface record adopted after retirement.
++        visit: Original attachment visit captured for this presentation request.
++
++    Returns:
++        Whether the original surface call completed for the still-current record.
++        This is not native retirement, paint or complete screen reconciliation.
++
++    Raises:
++        TypeError: A receiver is outside the fixed original presentation cohort.
++        RuntimeError: An original presentation definition or receiver changed.
++        asyncio.CancelledError: Cancellation, after the original counter cleanup.
++    """
++    if (
++        type(screen) is not ChatScreen
++        or type(client) is not ConsoleExecutionClient
++        or type(publication) is not ConsoleSessionSurfaceProjection
++        or type(visit) is not int
++    ):
++        raise TypeError("Original Console session presentation types are required")
++    if not _current(screen, client, publication, visit):
++        return False
++    lock = screen._console_session_tabs_sync_lock
++    if type(lock) is not _LOCK_TYPE:
++        raise TypeError("Original Console session tabs lock is required")
++    screen._console_session_tabs_sync_calls += 1
++    try:
++        async with lock:
++            if (
++                screen._console_session_tabs_sync_lock is not lock
++                or not _current(screen, client, publication, visit)
++            ):
++                return False
++            surface = _surface(screen)
++            if surface is None:
++                return False
++            ack = getattr(screen, "_console_send_ack", None)
++            markers = (
++                None if publication.run_markers is None
++                else dict(publication.run_markers)
++            )
++            if ack is not None:
++                _require_ack(screen, ack)
++                markers = ack.overlay_run_markers(markers)
++            try:
++                await surface.sync_sessions(
++                    sessions=publication.view.sessions(),
++                    active_session_id=publication.view.active_session_id,
++                    streaming_session_id=publication.streaming_session_id,
++                    run_markers=markers,
++                    queue_counts=(
++                        None if publication.queue_counts is None
++                        else dict(publication.queue_counts)
++                    ),
++                )
++            except Exception:
++                if not _current(screen, client, publication, visit):
++                    return False
++                raise
++            if (
++                not _current(screen, client, publication, visit)
++                or screen._console_session_tabs_sync_lock is not lock
++                or getattr(screen, "_console_send_ack", None) is not ack
++            ):
++                return False
++            if ack is not None:
++                _require_ack(screen, ack)
++            return _surface(screen) is surface
++    finally:
++        screen._console_session_tabs_sync_calls -= 1
+--- /dev/null
++++ b/tldw_chatbook/UI/Console_Modules/execution_state.py
+@@ -0,0 +1,172 @@
++"""Read the selected client's already-retired values on its actual screen visit.
++
++Import lazily after ChatScreen is defined. No function constructs a runtime,
++reads native storage, changes a session, or grants command authority.
++"""
++
++from __future__ import annotations
++
++import time
++from dataclasses import replace
++
++from ...Chat.console_control_dispatch import ConsoleProjection
++from ...Chat.console_execution_process import ConsoleExecutionClient
++from ...Chat.console_execution_projection_view import ConsoleProjectionView
++from ...Chat.console_execution_composition_values import ConsoleSessionComposition
++from ...Chat.console_session_settings import (
++    ConsoleSessionSettings,
++    ConsoleSettingsReadiness,
++)
++from ..Screens.chat_screen import ChatScreen
++from .execution_projection import _definition, _require_methods, _require_sources
++
++_CLIENT_METHODS = (("require_view", _definition(ConsoleExecutionClient.require_view)),)
++_WARNING_METHOD = (
++    (
++        "_console_model_capability_warning",
++        _definition(ChatScreen._console_model_capability_warning),
++    ),
++)
++
++
++def selected_client(screen: ChatScreen) -> ConsoleExecutionClient | None:
++    """Return the exact selected owner, refusing changed or unpublished values."""
++    app = getattr(screen, "app_instance", None)
++    client = getattr(app, "console_execution_client", None)
++    if client is None:
++        return None
++    _require_sources()
++    if type(screen) is not ChatScreen or type(client) is not ConsoleExecutionClient:
++        raise TypeError("Original Console screen and client are required")
++    _require_methods(client, _CLIENT_METHODS)
++    client.require_view(screen, client._visit)
++    view, frame = client.projection_view, client._projection
++    composition = client.session_composition
++    if (
++        type(composition) is not ConsoleSessionComposition
++        or type(view) is not ConsoleProjectionView
++        or type(frame) is not ConsoleProjection
++        or view.source_revision != client._source_revision
++        or frame.source_revision != view.source_revision
++        or frame.session_id != view.active_session_id
++        or not any(item is frame for item in view.projections)
++        or view.session(frame.session_id).incarnation_id != frame.incarnation_id
++        or (
++            composition.session_id,
++            composition.incarnation_id,
++            composition.settings_revision,
++        )
++        != (
++            frame.session_id,
++            frame.incarnation_id,
++            view.session(frame.session_id).settings_revision,
++        )
++    ):
++        raise RuntimeError("Console selected projection is unavailable")
++    return client
++
++
++def provider_model_display(
++    screen: ChatScreen,
++    client: ConsoleExecutionClient,
++) -> tuple[str, str | None, ConsoleSessionSettings]:
++    """Consume this exact projection's effective provider/model display facts."""
++    if selected_client(screen) is not client:
++        raise RuntimeError("Console provider presentation owner changed")
++    if time.monotonic() >= client._readiness_deadline:
++        raise RuntimeError("Console readiness presentation expired")
++    return client.provider_model_display
++
++
++def settings_readiness(
++    screen: ChatScreen,
++    client: ConsoleExecutionClient,
++) -> tuple[ConsoleSessionSettings, ConsoleSettingsReadiness]:
++    """Apply only the original screen-local model warning to backend readiness."""
++    if selected_client(screen) is not client:
++        raise RuntimeError("Console readiness presentation owner changed")
++    if time.monotonic() >= client._readiness_deadline:
++        raise RuntimeError("Console readiness presentation expired")
++    effective, readiness = client.settings_readiness
++    _require_methods(screen, _WARNING_METHOD)
++    warning = screen._console_model_capability_warning(
++        effective.provider, effective.model
++    )
++    if warning and readiness.native_send_supported:
++        readiness = replace(
++            readiness,
++            label="Capabilities unknown",
++            detail=f"{readiness.detail}\n{warning}",
++            native_send_supported=True,
++        )
++    return effective, readiness
++
++
++from ..Navigation.pending_handoff_store import HandoffChannel, PendingHandoffStore
++
++_HANDOFF_METHODS = (("has_pending", _definition(PendingHandoffStore.has_pending)),)
++
++
++def empty_pending_launch(screen: ChatScreen, client: ConsoleExecutionClient) -> None:
++    """Read proven empty staging without claiming an unimplemented transfer."""
++    if selected_client(screen) is not client:
++        raise RuntimeError("Console staged presentation owner changed")
++    store = screen.app_instance.pending_handoffs
++    if type(store) is not PendingHandoffStore:
++        raise TypeError("Original Console handoff store is required")
++    _require_methods(store, _HANDOFF_METHODS)
++    if store.has_pending(HandoffChannel.CONSOLE_LIVE_WORK):
++        raise RuntimeError("Console staged handoff requires its process transfer")
++    if client.session_composition.staged_evidence_present:
++        raise RuntimeError("Console staged evidence requires its presentation")
++    return None
++
++
++_PREPARE_METHODS = tuple(
++    (name, _definition(getattr(ConsoleExecutionClient, name)))
++    for name in (
++        "prepare_view", "attach_view", "detach_view", "require_view",
++        "_require_view_preparation", "_retain_open_session", "_open_initial_session",
++        "read_projection",
++    )
++)
++
++
++async def prepare_first_compose(screen: ChatScreen) -> None:
++    """Join one selected view before any original synchronous builder executes."""
++    _require_sources()
++    client = screen.app_instance.console_execution_client
++    if type(screen) is not ChatScreen or type(client) is not ConsoleExecutionClient:
++        raise TypeError("Original Console process attachment is required")
++    _require_methods(client, _PREPARE_METHODS)
++    if screen._pending_character_conversation_target is not None:
++        raise RuntimeError("Console character target requires its process opener")
++    try:
++        visit, _projection = await client.prepare_view(
++            screen, conversation_id=screen._pending_resume_local_conversation_id
++        )
++        _require_sources()
++        _require_methods(client, _PREPARE_METHODS)
++        client.require_view(screen, visit)
++        if selected_client(screen) is not client:
++            raise RuntimeError("Console initial projection owner changed")
++        screen._console_process_visit = visit
++    except BaseException:
++        if client._view is screen:
++            client.detach_view(screen, client._visit)
++        raise
++
++
++from ...Chat.console_execution_context_summary_values import ConsoleContextSummaryProjection
++
++
++def selected_context_summary(screen: ChatScreen) -> ConsoleContextSummaryProjection | None:
++    """Return only this published session's original context display result."""
++    client = selected_client(screen)
++    if client is None:
++        return None
++    if time.monotonic() >= client._readiness_deadline:
++        raise RuntimeError("Console context presentation expired")
++    if type(client.context_summary) is not ConsoleContextSummaryProjection:
++        raise RuntimeError("Console context presentation is unavailable")
++    return client.context_summary
+--- a/tldw_chatbook/UI/Console_Modules/session.py
++++ b/tldw_chatbook/UI/Console_Modules/session.py
+@@ -4664,6 +4664,17 @@
+         entry, exactly as before -- later entries in the same pass would have
+         found the state already converged and returned the same object.
+         """
++        from .execution_state import selected_client
++
++        selected = selected_client(self._screen)
++        if selected is not None:
++            row = selected.projection_view.session(
++                selected.projection_view.active_session_id
++            )
++            if row.settings is None:
++                raise RuntimeError("Console published settings are unavailable")
++            return row.settings
++
+         from ...Chat.console_control_settings import require_settings_settled
+ 
+         store = getattr(self._screen, "_console_chat_store", None)
+@@ -5742,11 +5753,21 @@
+         session = self._active_native_console_session()
+         if store is None or session is None:
+             return
+-        try:
+-            draft = store.session_draft(session.id)
+-            revision = store.session_input_snapshot(session.id).draft_revision
+-        except KeyError:
+-            return
++        from .execution_state import selected_client
++
++        selected = selected_client(self._screen)
++        if selected is not None:
++            draft, revision = session.draft, session.draft_revision
++            handoff_state = selected.session_composition.agent_handoff_state
++            handoff_revision = selected.session_composition.agent_handoff_revision
++        else:
++            try:
++                draft = store.session_draft(session.id)
++                revision = store.session_input_snapshot(session.id).draft_revision
++            except KeyError:
++                return
++            handoff_state = session.agent_handoff_state
++            handoff_revision = session.agent_handoff_revision
+         composer.load_draft(draft)
+         composer.restore_undo_history(self._console_undo_histories.get(session.id))
+         self._console_visible_draft_session_id = session.id
+@@ -5755,10 +5776,10 @@
+             (
+                 session.id,
+                 session.incarnation_id,
+-                session.agent_handoff_revision,
++                handoff_revision,
+                 composer.capture_draft_snapshot(),
+             )
+-            if session.agent_handoff_state == "pending"
++            if handoff_state == "pending"
+             else None
+         )
+         # Mount-time config work may defer the first full sync. Its UI/hook
+--- /dev/null
++++ b/Tests/Chat/test_console_execution_composition_values.py
+@@ -0,0 +1,75 @@
++"""The composition value boundary keeps actual session provenance and no owner."""
++
++from dataclasses import replace
++
++import pytest
++
++from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
++from tldw_chatbook.Chat.console_execution_composition_values import (
++    decode_session_composition,
++    encode_session_composition,
++)
++from tldw_chatbook.Chat.console_execution_projection_values import (
++    decode_session_projection,
++    encode_session_projection,
++)
++from tldw_chatbook.Chat.console_execution_protocol import ConsoleProtocolError
++
++
++def _encode(session):
++    return encode_session_composition(
++        session,
++        pending_approval_count=2,
++        pending_interrupt_copy="Waiting for review",
++        blocked_turn_reason="recovery needed",
++        is_stop_allowed=True,
++        chat_start_prepared=False,
++        change_tracking_enabled=True,
++        tools_published=False, builtin_tool_count=None, mcp_tool_count=None,
++        mcp_not_connected_count=None, selected_tool_count=0,
++        staged_evidence_present=False, staged_evidence_revision=0,
++        evidence_sent_notice=None,
++    )
++
++
++def test_composition_retains_fresh_none_and_detaches_original_policy():
++    session = ConsoleChatSession()
++    row = decode_session_projection(encode_session_projection(session))
++    payload = _encode(session)
++    result = decode_session_composition(payload, row)
++    assert result.agent_handoff_revision is None
++    assert result.library_policy == session.library_policy_holder.snapshot
++    assert result.library_policy is not session.library_policy_holder.snapshot
++    assert result.pending_approval_count == 2
++    assert result.blocked_turn_reason == "recovery needed"
++    assert result.is_stop_allowed and not result.chat_start_prepared
++    assert result.selected_tool_count == 0 and not result.tools_published
++    assert not result.staged_evidence_present
++    assert result.staged_evidence_revision == 0
++    assert result.evidence_sent_notice is None
++    assert "library_policy_holder" not in payload
++    session.agent_handoff_revision = 0
++    session.agent_handoff_state = "pending"
++    next_value = decode_session_composition(_encode(session), row)
++    assert next_value.agent_handoff_revision == 0
++    assert next_value.agent_handoff_state == "pending"
++    assert result.agent_handoff_revision is None
++
++
++def test_composition_refuses_stale_row_unknown_fields_and_authority_objects():
++    session = ConsoleChatSession()
++    row = decode_session_projection(encode_session_projection(session))
++    payload = _encode(session)
++    for changed in (
++        replace(row, incarnation_id="different"),
++        replace(row, settings_revision=row.settings_revision + 1),
++    ):
++        with pytest.raises(ConsoleProtocolError, match="session_changed"):
++            decode_session_composition(payload, changed)
++    for changed in (
++        dict(payload, library_policy=session.library_policy_holder),
++        dict(payload, controller=object()),
++        dict(payload, is_stop_allowed=1),
++    ):
++        with pytest.raises(ConsoleProtocolError):
++            decode_session_composition(changed, row)
+--- /dev/null
++++ b/Tests/Chat/test_console_execution_mounted.py
+@@ -0,0 +1,91 @@
++"""Actual selected parent route; this does not qualify journey timing."""
++
++from __future__ import annotations
++
++import asyncio
++import os
++import sys
++
++import pytest
++
++from Tests.private_profile import private_profile_test
++
++
++@private_profile_test
++@pytest.mark.asyncio
++async def test_selected_process_home_to_chat_composes_original_surface(request):
++    from Tests.Chat.test_console_control_trace import _observe
++    from Tests.UI.test_destination_shells import _wait_for_selector
++    from tldw_chatbook import config
++    from tldw_chatbook.app import TldwCli
++    from tldw_chatbook.Chat.console_execution_process import ConsoleExecutionClient
++    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
++    from tldw_chatbook.Constants import TAB_CHAT, TAB_HOME
++    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
++    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
++    from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
++
++    assert config.save_settings_to_cli_config({
++        "first_run": {"setup_completed": True},
++        "splash_screen": {"enabled": False},
++        "general": {"default_tab": "home"},
++        "chat_defaults": {"provider": "llama_cpp", "model": "local-model"},
++        "api_settings.llama_cpp": {
++            "api_url": "http://127.0.0.1:9099", "model": "local-model"
++        },
++    })
++    parent_runtime_entries = []
++
++    def runtime_entry(frame):
++        parent_runtime_entries.append(frame.f_locals["self"])
++
++    # Observe the original parent constructor without replacing its definition.
++    # A real child has a separate interpreter and owns its actual runtime.
++    with _observe(ConsoleRuntime.__init__.__code__, sys.monitoring.events.PY_START,
++                  runtime_entry):
++        app = TldwCli(console_execution="process")
++        client = app.console_execution_client
++        assert type(client) is ConsoleExecutionClient
++        assert app.console_runtime is None
++        async with app.run_test(size=(120, 40)) as pilot:
++            await app._initial_screen_setup_task
++            await app._console_execution_start_task
++            assert app.current_tab == TAB_HOME
++            assert client._process is not None
++            assert client._process.pid != os.getpid()
++            assert client.projection_view is None
++            async with asyncio.timeout(10):
++                await app.handle_screen_navigation(NavigateToScreen(TAB_CHAT))
++                await _wait_for_selector(app, pilot, "#console-composer")
++            screen = app.screen
++            assert type(screen) is ChatScreen
++            composer = screen.query_one("#console-composer", ConsoleComposerBar)
++            assert composer.is_mounted
++            client.require_view(screen, client._visit)
++            projection = client.projection_view
++            assert projection is not None
++            row = projection.session(projection.active_session_id)
++            assert screen._console_chat_store is projection
++            assert screen._session._ensure_active_console_session_settings() == row.settings
++            assert screen._active_console_settings_readiness() is not None
++            assert screen.query_one("#console-shell").is_mounted
++            assert not parent_runtime_entries
++            assert app.console_runtime is None
++            request.node.user_properties.append(
++                ("selected_original_compose_mounted", True)
++            )
++            # The original navigation ends only the visit; its backend survives.
++            async with asyncio.timeout(10):
++                await app.handle_screen_navigation(NavigateToScreen(TAB_HOME))
++            assert client._view is None
++            assert client._process.poll() is None
++            assert client.projection_view.active_session_id == row.id
++            assert app.console_runtime is None
++            await pilot.pause()
++        assert client._disposed
++        assert client._physically_closed
++        assert client._process.poll() == 0
++        assert not parent_runtime_entries
++        request.node.user_properties.append(
++            ("selected_app_shutdown_physically_closed", True)
++        )
