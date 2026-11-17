@@ -555,14 +555,17 @@ CREDENTIAL_VALUE_PATTERNS = (
 
 #: A compound credential label (TASK-41133). Labels may repeat separators
 #: (pydantic's ``APP__X``) and may be quoted, or escape-quoted inside a JSON
-#: string (``\"client_secret\":``).
+#: string (``\"client_secret\":``). ``==`` is a comparison, never a
+#: separator, and a comparison's right operand is no label (``if
+#: client_secret == other_secret: return``, review r15tr-rev8).
 _COMPOUND_LABEL = re.compile(
     r"""
     (?<![A-Za-z0-9_.-])
+    (?<![=!<>]=)(?<![=!<>]=[ \t])
     (?:\\?(?P<label_quote>["']))?
     (?P<label>[A-Za-z0-9]+(?:[_.-]+[A-Za-z0-9]+)+)
     (?(label_quote)\\?(?P=label_quote))
-    [ \t]*[:=][ \t]*
+    [ \t]*(?::|=(?!=))[ \t]*
     """,
     re.VERBOSE,
 )
@@ -594,9 +597,9 @@ _CODE_VALUE = re.compile(
     rf"""(?:\({_CODE_ARGUMENTS}\)|\[{_CODE_ARGUMENTS}\])"""
     rf"""(?:\.{_CODE_NAME}|\({_CODE_ARGUMENTS}\)|\[{_CODE_ARGUMENTS}\])*"""
 )
-#: A literal inside code; group 1 is the ``(`` or ``[`` before a first
-#: argument or an index.
-_CODE_LITERAL = re.compile(r"""([(\[])?(?:"([^"\r\n]*)"|'([^'\r\n]*)')""")
+#: A literal inside code; group 1 is the ``(`` or ``[`` (and any space or
+#: line break) before a first argument or an index.
+_CODE_LITERAL = re.compile(r"""([(\[][ \t\r\n]*)?(?:"([^"\r\n]*)"|'([^'\r\n]*)')""")
 #: Names a first argument or index may hold (review r15tr-rev7): an
 #: environment variable name (``"MY_APP_CS"``), a compound key in a call
 #: (``cfg.get("client_secret")``, not ``SecretStr("secret")``) and any
@@ -604,10 +607,6 @@ _CODE_LITERAL = re.compile(r"""([(\[])?(?:"([^"\r\n]*)"|'([^'\r\n]*)')""")
 _ENV_NAME = re.compile(r"[A-Z]+|[A-Z]+[0-9]*(?:_[A-Z0-9]+)+")
 _COMPOUND_KEY = re.compile(r"[a-z]+(?:_[a-z0-9]+)+")
 _INDEX_KEY = re.compile(r"[a-z]+(?:_[a-z0-9]+)*")
-#: The start of a call or index, read whole even when the grammar above
-#: does not parse it (``f(g("x"))``).
-_CALL_START = re.compile(rf"{_CODE_NAME}(?:\.{_CODE_NAME})*[(\[]")
-_CODE_HEAD = re.compile(rf"{_CODE_NAME}(?:\.{_CODE_NAME})*")
 _CODE_VALUE_END = re.compile(r"""[\s,;&)\]}"']|\.(?:\s|$)|$""")
 #: A YAML block scalar indicator; its value is the indented lines after it.
 _YAML_BLOCK = re.compile(r"[|>][-+]?[ \t]*(?:\r\n|\r|\n)")
@@ -698,6 +697,14 @@ _MIXED_CASE = re.compile(r"[a-z][A-Z][A-Za-z]*[a-z][A-Z]")
 #: Five consonants in a row (``y`` counts as a vowel): rare in an English
 #: word, common in random letters (``XKQZVBNMPLWRTDXK``, ``...jklmn``).
 _CONSONANT_RUN = re.compile(r"[b-df-hj-np-tv-xzB-DF-HJ-NP-TV-XZ]{5}")
+_LETTER_RUN = re.compile(r"[A-Za-z]{12,}")
+
+
+def _random_letters(word: str) -> bool:
+    """A run of 12 or more letters with five consonants in a row
+    (``XKQZVBNMPLWRTDXK``, ``abcdefghijklmn``); ``strengths`` is too short
+    (review r15tr-rev8)."""
+    return any(_CONSONANT_RUN.search(run) for run in _LETTER_RUN.findall(word))
 
 
 def _words(name: str) -> tuple[str, ...]:
@@ -785,9 +792,9 @@ def _code_literals_look_alike(value: str, label: str, strict: bool) -> bool:
     """
     for match in _CODE_LITERAL.finditer(value):
         literal = match.group(2) if match.group(2) is not None else match.group(3)
-        opener = match.group(1)
+        opener = (match.group(1) or "")[:1]
         if opener and (
-            _ENV_NAME.fullmatch(literal)
+            (_ENV_NAME.fullmatch(literal) and not _random_letters(literal))
             or (_INDEX_KEY if opener == "[" else _COMPOUND_KEY).fullmatch(literal)
         ):
             continue
@@ -928,30 +935,46 @@ _NEXT_WORD = re.compile(rf"[ \t]+(\S{{1,{_MAX_EXAMINED_VALUE}}})")
 
 
 #: Tokens of a code expression: a quoted string (skipped whole), the space
-#: before a field (``user=``, ``status:``; ``==`` is no field), a ``?`` that
-#: a ternary's ``:`` answers, brackets and top-level separators.
+#: before a field (``user=``, ``status:``, ``"user":``; ``==`` is no field),
+#: a ``?`` that a ternary's ``:`` answers, brackets, top-level separators and
+#: line breaks.
 _EXPRESSION_TOKEN = re.compile(
     r""""(?:[^"\\\r\n]|\\.)*+"|'(?:[^'\\\r\n]|\\.)*+'"""
-    r"""|(?<![ \t])[ \t]++(?=[A-Za-z0-9_.-]+[ \t]*(?P<separator>=(?!=)|:))"""
-    r"""|\?(?![?.])|[()\[\]{},;]"""
+    r"""|(?<![ \t])[ \t]++(?=(?:["'][A-Za-z0-9_.-]+["']|[A-Za-z0-9_.-]+)[ \t]*(?P<separator>=(?!=)|:))"""
+    r"""|\?(?![?.])|[()\[\]{},;\r\n]"""
 )
 
 
-def _expression_end(text: str, start: int, line_end: int) -> int:
-    """Where the code expression at ``start`` ends (review r15tr-rev7).
+#: What may follow a value that ends its expression: a top-level separator
+#: or closer, the line end, or the next field. A value with no bracket of its
+#: own followed by one of these is a lone value, judged as it is.
+_LONE_VALUE_END = re.compile(
+    r"""[ \t]*(?:[,;)\]}\r\n]|$)"""
+    r"""|(?<![ \t])[ \t]++(?=(?:["'][A-Za-z0-9_.-]+["']|[A-Za-z0-9_.-]+)[ \t]*(?:=(?!=)|:))"""
+)
+_OPENER = re.compile(r"[(\[{]")
 
-    That is before a top-level ``,`` or ``;``, an unbalanced closer or the
-    next field, or at the line end; quoted strings are skipped whole, so a
-    fallback after ``or``, ``||``, ``??`` or ``if ... else`` is inside it. An
-    expression longer than ``_MAX_EXAMINED_VALUE`` runs to the line end.
+
+def _expression_end(text: str, start: int) -> int:
+    """Where the expression at ``start`` ends (reviews r15tr-rev7, rev8).
+
+    That is before a top-level ``,`` or ``;``, an unbalanced closer, the next
+    field or the line end; quoted strings are skipped whole, so a fallback
+    after ``or``, ``||``, ``??`` or ``if ... else`` is inside it. While a
+    bracket is open the expression runs on over line ends (a black-formatted
+    call). One longer than ``_MAX_EXAMINED_VALUE`` runs to the end of the
+    line that limit falls on.
     """
-    limit = min(line_end, start + _MAX_EXAMINED_VALUE)
+    limit = min(len(text), start + _MAX_EXAMINED_VALUE)
     depth = ternaries = 0
     for token in _EXPRESSION_TOKEN.finditer(text, start, limit):
         mark = token.group()[0]
         if mark in "\"'":
             continue
-        if mark in "([{":
+        if mark in "\r\n":
+            if not depth:
+                return token.start()
+        elif mark in "([{":
             depth += 1
         elif mark in ")]}":
             if not depth:
@@ -967,7 +990,7 @@ def _expression_end(text: str, start: int, line_end: int) -> int:
             ternaries -= 1  # "a ? b : c": the colon answers the "?"
         else:
             return token.start()
-    return line_end
+    return limit if limit == len(text) else _line_end(text, limit)
 
 
 def _field_end(text: str, start: int, end: int, line_end: int) -> int:
@@ -1014,32 +1037,38 @@ def mask_credential_labels(text: str, marker: str = REDACTION_MARKER) -> str:
                     prose_follows = not (
                         _LETTER_DIGIT_WORD.search(following)
                         or _MIXED_CASE.search(following)
-                        or (len(following) >= 8 and _CONSONANT_RUN.search(following))
+                        or _random_letters(following)
                     )
                     if not prose_follows:
                         end = _field_end(text, start, word.end(1), line_end)
             value = text[start:end]
             kept = _kept_look_alike(value, name, quoted=quoted, prose_follows=prose_follows)
-            if not quoted and not prose_follows and (
-                _CODE_VALUE.fullmatch(value)
-                or _CALL_START.match(value)
-                or _CODE_HEAD.fullmatch(value)
-                or _REFERENCE.fullmatch(value)
+            if not (
+                prose_follows
+                or text.startswith(('\\"', "\\'"), label.end())
+                or ((quoted or not _OPENER.search(value)) and _LONE_VALUE_END.match(text, end + quoted))
             ):
-                # Code is judged with the whole expression it starts: kept
-                # only when every literal in it is a look-alike and no
-                # random-looking word follows, else masked whole (review
-                # r15tr-rev7: "x or 'GOCSPX-...'", "f(value='...')").
-                stop = _expression_end(text, start, line_end)
-                expression_end = start + len(text[start:stop].rstrip(" \t,;|"))
-                if expression_end > end:
-                    if kept:
-                        kept = (
-                            expression_end - start <= _MAX_EXAMINED_VALUE
-                            and _code_literals_look_alike(text[start:expression_end], name, False)
-                            and not _RANDOM_SEGMENT.search(_CODE_LITERAL.sub(" ", text[end:expression_end]))
-                        )
-                    end = expression_end
+                # Every value is judged with the whole expression it starts
+                # (reviews r15tr-rev7, rev8): kept only when every literal in
+                # it is a look-alike and no random-looking word sits outside
+                # its quotes, else masked whole ("x or 'GOCSPX-...'",
+                # '"{}".format("...")', a dict, a lambda, a call over lines).
+                # A lone value is a span of one and is judged as before.
+                span_start = label.end() if quoted else start
+                stop = _expression_end(text, span_start)
+                span_end = span_start + len(text[span_start:stop].rstrip(" \t\r\n,;|"))
+                while span_end > end and text[span_end - 1] == ".":  # a full stop
+                    span_end -= 1
+                if span_end > end + quoted:
+                    # The value itself was judged above; judge what follows it.
+                    tail = text[end + quoted : span_end]
+                    has_literal = '"' in tail or "'" in tail
+                    kept = kept and (
+                        span_end - span_start <= _MAX_EXAMINED_VALUE
+                        and (not has_literal or _code_literals_look_alike(tail, name, False))
+                        and not _RANDOM_SEGMENT.search(_CODE_LITERAL.sub(" ", tail) if has_literal else tail)
+                    )
+                    start, end = span_start, span_end
             # A masked value reads as an emitted marker, so it is kept on a
             # second pass.
             if not kept:

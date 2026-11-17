@@ -601,6 +601,7 @@ _LONG_CONCAT = _fake(1500) + _fake(1500)
 _AZURE = "abc8Q~" + _fake(30, string.ascii_letters + string.digits)
 _LONG_SIGNATURE = _fake(3000, _B64URL)
 _P8 = "Xk9mP2vL7wQ8"  # probe8's fake secret body
+_G = "GOCSPX-" + _P8  # probe16's fake Google client secret
 
 #: name -> (text, the secret that must not survive, in whole or in part).
 _MUST_MASK: dict[str, tuple[str, str]] = {
@@ -902,6 +903,33 @@ _MUST_MASK: dict[str, tuple[str, str]] = {
     "function-word-lowercase-token": ("client" + _L + "secret: use gocspx-abcdefghijklmn", "gocspx-abcdefghijklmn"),
     "function-word-consonants": ("client" + _L + "secret: see xkqzvbnmplwrtd", "xkqzvbnmplwrtd"),
     "function-word-mixed-vowels": ("client" + _L + "secret: the QaZeRtYuIoPa", "QaZeRtYuIoPa"),
+    # rev8 (probe16): every value is judged with its whole expression
+    **{
+        f"probe16-{name}": ("client" + _L + "secret" + text, secret)
+        for name, text, secret in (
+            ("nested-call", '=wrap(os.getenv("CLIENT_SECRET", "' + _G + '"))', _G),
+            ("call-in-call", '=SecretStr(os.environ.get("X") or "' + _G + '")', _G),
+            ("f-string", '=f"' + _G + '"', _G),
+            ("f-string-field", '=f"{prefix}' + _P8 + '"', _P8),
+            ("format", ' = "{}".format("' + _G + '")', _G),
+            ("percent", ' = "%s" % "' + _G + '"', _G),
+            ("plus", ' = "GOCSPX-" + "' + _P8 + '"', _P8),
+            ("empty-or", ' = "" or "' + _G + '"', _G),
+            ("empty-if-else", ' = "" if dev else "' + _G + '"', _G),
+            ("implicit-concat", ' = "GOCSPX-" "' + _P8 + '"', _P8),
+            ("black-call", ' = os.environ.get(\n    "CLIENT_SECRET", "' + _G + '"\n)', _G),
+            ("black-call-exploded", ' = os.environ.get(\n    "CLIENT_SECRET",\n    "' + _G + '",\n)', _G),
+            ("dict", ' = {"prod": "' + _G + '", "dev": "x"}', _G),
+            ("list", ' = ["' + _G + '"]', _G),
+            ("tuple", ' = ("' + _G + '",)', _G),
+            ("lambda", ' = lambda: "' + _G + '"', _G),
+            ("lambda-call", ' = lambda: os.getenv("X", "' + _G + '")', _G),
+            ("random-capitals-argument", '=SecretStr("XKQZVBNMPLWRTDXK")', "XKQZVBNMPLWRTDXK"),
+            ("nullish", '=os.getenv("CLIENT_SECRET") ?? "' + _G + '"', _G),
+            ("js-ternary", ': process.env.CLIENT_SECRET ? process.env.CLIENT_SECRET : "' + _G + '"', _G),
+        )
+    },
+    "probe16-or-changeme": ("db" + _L + 'password=os.getenv("DB_PASSWORD") or "changeme"', "changeme"),
 }
 
 #: name -> text that must survive a shared bundle unchanged.
@@ -993,6 +1021,18 @@ _MUST_KEEP: dict[str, str] = {
     "dict-entry": '{"client' + _L + 'secret": os.environ["CLIENT_SECRET"], "user": "bob"}',
     "keyword-argument-then-field": "Client(client" + _L + 'secret=os.getenv("CLIENT_SECRET"), timeout=30)',
     "function-word-acronym": "client" + _L + "secret: see HTTPS docs",
+    # rev8 (probe16): prose with a short consonant run, and comparisons
+    "function-word-strengths": "client" + _L + "secret: see strengths of each option",
+    "comparison-operand": "if client" + _L + "secret == other_secret: return",
+    "comparison-empty-literal": "if client" + _L + 'secret == "": raise ValueError("missing")',
+    "comparison-assert-name": "assert client" + _L + 'secret == "client_secret"',
+    "comparison-return": "return client" + _L + "secret == settings.CLIENT_SECRET",
+    "comparison-not-equal": "if client" + _L + "secret != other_secret: return",
+    "comparison-less-equal": "while client" + _L + "secret <= max_secret: pass",
+    "comparison-greater-equal": "if client" + _L + "secret >= min_secret: break",
+    # rev8: a quoted key ends the expression before it, comma or not
+    "quoted-keys-without-commas": '"client' + _L + 'secret": "YOUR_CLIENT_SECRET" "user": "bob"',
+    "quoted-keys-after-code": '"client' + _L + 'secret": os.getenv("CLIENT_SECRET") "user": "bob"',
 }
 
 
@@ -1114,8 +1154,24 @@ def test_a_masked_run_stops_before_the_next_field(text: str, expected: str) -> N
             "SECRET" + '_KEY=os.getenv("SECRET_KEY") or "dev-' + _P8 + '"; DEBUG=1',
             "SECRET" + "_KEY=[credential redacted]; DEBUG=1",
         ),
+        (
+            "client" + '_secret = os.environ.get(\n    "CLIENT_SECRET", "' + _G + '"\n)',
+            "client" + "_secret = [credential redacted]",
+        ),
+        (
+            "client" + '_secret = os.environ.get(\n    "CLIENT_SECRET",\n    "' + _G + '",\n)\nnext = 1',
+            "client" + "_secret = [credential redacted]\nnext = 1",
+        ),
     ],
-    ids=("keyword-default", "keyword-value", "call-word", "nested-call", "fallback-then-statement"),
+    ids=(
+        "keyword-default",
+        "keyword-value",
+        "call-word",
+        "nested-call",
+        "fallback-then-statement",
+        "black-call",
+        "black-call-exploded",
+    ),
 )
 def test_code_next_to_a_secret_is_masked_whole(text: str, expected: str) -> None:
     """Review r15tr-rev7: code and the literals next to it (a keyword
