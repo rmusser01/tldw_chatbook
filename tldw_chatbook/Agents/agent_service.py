@@ -205,6 +205,7 @@ from .project_instruction_runtime import (
     InstructionChainPayloadState,
     InstructionDeliveryReceipt,
     InstructionPreparation,
+    consent_decision,
 )
 from .tool_catalog import (
     CHECK_AGENTS_SCHEMA as CHECK_AGENTS_SCHEMA,
@@ -5653,21 +5654,9 @@ class AgentService:
                 log_active=log_active,
                 trusted_role=trusted_guidance_role,
             )
-            try:
-                decision = (
-                    self.confirm_project_instruction_dispatch(snapshot)
-                    if self.confirm_project_instruction_dispatch is not None
-                    else "cancel"
-                )
-            except Exception as exc:  # noqa: BLE001 - consent failures are content-free
-                logger.warning(
-                    "project instruction consent failed; run cancelled "
-                    "(exception_type={})",
-                    type(exc).__name__,
-                )
-                decision = "cancel"
-            if decision not in {"proceed", "cancel", "disable"}:
-                decision = "cancel"
+            decision = consent_decision(
+                self.confirm_project_instruction_dispatch, snapshot
+            )
             if decision != "proceed":
                 outcome = RunOutcome(status=RUN_CANCELLED, steps=[])
                 self._persist(run_id, outcome)
