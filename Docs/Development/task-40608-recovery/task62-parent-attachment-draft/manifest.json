@@ -1,0 +1,34 @@
+{
+  "status": "artifact-only incomplete parent integration; no runtime qualification",
+  "files": [
+    {
+      "path": "tldw_chatbook\\app.py",
+      "baseline": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\baseline\\tldw_chatbook\\app.py",
+      "before_sha256": "a5bb093a5476fc257e1bdf11bfe72597efdddd6a34e58f77c5ddac29711acd81",
+      "proposed": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\proposed\\app.py",
+      "after_sha256": "aabb326e29f6be6583410b6e11c2967524cfe6e02ee973ffe853c2f1f751dbd4"
+    },
+    {
+      "path": "tldw_chatbook\\app_service_wiring.py",
+      "baseline": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\baseline\\tldw_chatbook\\app_service_wiring.py",
+      "before_sha256": "9152b7757cc11265db73d01eda633c8c56cb1c26721e9ffeba943b9e275ed1f6",
+      "proposed": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\proposed\\app_service_wiring.py",
+      "after_sha256": "0813965716b2e10e0ebf51970f13e5bdb6ba1c63c91fbd1812662ee615546f9a"
+    },
+    {
+      "path": "tldw_chatbook\\Chat\\console_execution_process.py",
+      "baseline": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\baseline\\tldw_chatbook\\Chat\\console_execution_process.py",
+      "before_sha256": "f01912e11a843fd08b77ff773f8b7d419e4b83914c7850341061b94350c26a1a",
+      "proposed": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\proposed\\console_execution_process.py",
+      "after_sha256": "938adddb791f949170d294cffc8f026c913dccdfef7fc2a32028548e5eef08d1"
+    },
+    {
+      "path": "tldw_chatbook\\Chat\\console_runtime.py",
+      "baseline": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\baseline\\tldw_chatbook\\Chat\\console_runtime.py",
+      "before_sha256": "3da077c4d01d6e8d2582a10d3a64cffd8a3bcbb25ad6dc6fb1b450f9686d258e",
+      "proposed": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\proposed\\console_runtime.py",
+      "after_sha256": "cb863ad352d8ddc73749d6fc7a2f4b68f4045b3277a93b261649757336079cd2"
+    }
+  ],
+  "patch_sha256": "1738460b0bc153cfd03ecdd16859693e6bbef28f332ab7e40d5916d05a8408c7"
+}

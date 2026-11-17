@@ -1,0 +1,218 @@
+--- a/tldw_chatbook/app.py
++++ b/tldw_chatbook/app.py
+@@ -1070,7 +1070,11 @@
+     # User ID for notes, will be initialized in __init__
+     current_user_id: str = "default_user"  # Will be overridden by self.notes_user_id
+ 
+-    def __init__(self):
++    def __init__(self, *, console_execution: str = "local"):
++        if type(console_execution) is not str or console_execution not in {"local", "process"}:
++            raise ValueError("Unknown Console execution selection")
++        if console_execution == "process" and type(self) is not TldwCli:
++            raise TypeError("Custom App construction requires the local Console route")
+         # Track startup timing
+         self._startup_start_time = time.perf_counter()
+         self._startup_phases = {}
+@@ -1212,7 +1216,23 @@
+         # (`leave_console_runtime`); the runtime itself is destroyed once,
+         # here, at exit (`_shutdown_console_runtime`).
+         self.console_needs_attention = False
+-        self.console_runtime: ConsoleRuntime | None = ConsoleRuntime(self)
++        # Explicit qualification route; ordinary construction remains local.
++        self.console_execution_client = None
++        self._console_execution_start_task = None
++        self._console_execution_profile = None
++        if console_execution == "process":
++            from .Chat.console_execution_process import (
++                ConsoleExecutionClient, ConsoleProcessProfile,
++            )
++            from .config import get_cli_config_path, get_user_data_dir
++
++            self._console_execution_profile = ConsoleProcessProfile(
++                str(get_cli_config_path()), str(get_user_data_dir())
++            )
++            self.console_execution_client = ConsoleExecutionClient(self)
++            self.console_runtime = None
++        else:
++            self.console_runtime: ConsoleRuntime | None = ConsoleRuntime(self)
+         self._console_runtime_shutdown_task: asyncio.Task[None] | None = None
+         self.generated_video_store = _build_generated_video_store()
+         # TASK-13157: snapshot any TOML parse failure `load_settings()` just
+@@ -3310,7 +3330,13 @@
+         """Configure logging and schedule post-mount setup."""
+         self._start_persona_buddy_overlay()
+         runtime = self.console_runtime
+-        if runtime is not None:
++        client = self.console_execution_client
++        if client is not None:
++            self._console_execution_start_task = asyncio.create_task(
++                client.start(self._console_execution_profile),
++                name="console_execution_start",
++            )
++        elif runtime is not None:
+             runtime.start_async_lifecycles()
+         self._start_served_canvas_control()
+         self.watchlists_operation_coordinator = WatchlistsOperationCoordinator(
+--- a/tldw_chatbook/app_service_wiring.py
++++ b/tldw_chatbook/app_service_wiring.py
+@@ -2194,9 +2194,10 @@
+             self.workspace_registry_service.attach_change_review_consent_service(
+                 self.change_review_consent_service
+             )
+-            self.console_runtime.bind_change_review_consent_service(
+-                self.change_review_consent_service
+-            )
++            if self.console_runtime is not None:
++                self.console_runtime.bind_change_review_consent_service(
++                    self.change_review_consent_service
++                )
+         except Exception:
+             logger.opt(exception=True).warning(
+                 "Local workspace registry service unavailable during app wiring",
+@@ -3057,48 +3058,57 @@
+             server_service=self.server_mcp_governance_service,
+             policy_enforcer=self.service_policy_enforcer,
+         )
+-        self.local_mcp_store = LocalMCPStore(
+-            get_user_data_dir() / "local_mcp_store.json",
+-        )
+-        self.local_mcp_control_service = LocalMCPControlService(
+-            store=self.local_mcp_store,
+-            policy_enforcer=self.service_policy_enforcer,
+-            # The bundle is published after wiring; before then: unavailable.
+-            storage_provider=lambda: getattr(getattr(self, "services", None), "storage", None),
+-        )
+-        self.unified_mcp_context_store = UnifiedMCPContextStore(
+-            get_user_data_dir() / "unified_mcp_context.json",
+-        )
+-
+-        def _build_unified_mcp_client_for_target(target: Any) -> "MCPUnifiedClient":
+-            # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+-            from tldw_chatbook.tldw_api import MCPUnifiedClient
+-
+-            if getattr(target, "auth_reference", None) == "legacy:tldw_api":
+-                root_client = build_runtime_api_client(
+-                    app_config=self.app_config,
+-                    endpoint_url=target.base_url,
+-                    auth_method=target.auth_mode,
+-                )
+-            else:
+-                root_client = build_runtime_api_client(
+-                    endpoint_url=target.base_url,
+-                    auth_token=target.auth_reference,
+-                    auth_method=target.auth_mode,
+-                )
+-            return MCPUnifiedClient(root_client)
+-
+-        self.server_unified_mcp_service = ServerUnifiedMCPService(
+-            client_factory=_build_unified_mcp_client_for_target,
+-            policy_enforcer=self.service_policy_enforcer,
+-            target_store=self.unified_mcp_target_store,
+-        )
+-        self.unified_mcp_service = UnifiedMCPControlPlaneService(
+-            target_store=self.unified_mcp_target_store,
+-            context_store=self.unified_mcp_context_store,
+-            local_service=self.local_mcp_control_service,
+-            server_service=self.server_unified_mcp_service,
+-        )
++        if self.console_execution_client is not None:
++            # The selected singleton exists only in the backend. Affected
++            # Settings consumers use explicit asynchronous permission commands.
++            self.local_mcp_store = None
++            self.local_mcp_control_service = None
++            self.unified_mcp_context_store = None
++            self.server_unified_mcp_service = None
++            self.unified_mcp_service = None
++        else:
++            self.local_mcp_store = LocalMCPStore(
++                get_user_data_dir() / "local_mcp_store.json",
++            )
++            self.local_mcp_control_service = LocalMCPControlService(
++                store=self.local_mcp_store,
++                policy_enforcer=self.service_policy_enforcer,
++                # The bundle is published after wiring; before then: unavailable.
++                storage_provider=lambda: getattr(getattr(self, "services", None), "storage", None),
++            )
++            self.unified_mcp_context_store = UnifiedMCPContextStore(
++                get_user_data_dir() / "unified_mcp_context.json",
++            )
++
++            def _build_unified_mcp_client_for_target(target: Any) -> "MCPUnifiedClient":
++                # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
++                from tldw_chatbook.tldw_api import MCPUnifiedClient
++
++                if getattr(target, "auth_reference", None) == "legacy:tldw_api":
++                    root_client = build_runtime_api_client(
++                        app_config=self.app_config,
++                        endpoint_url=target.base_url,
++                        auth_method=target.auth_mode,
++                    )
++                else:
++                    root_client = build_runtime_api_client(
++                        endpoint_url=target.base_url,
++                        auth_token=target.auth_reference,
++                        auth_method=target.auth_mode,
++                    )
++                return MCPUnifiedClient(root_client)
++
++            self.server_unified_mcp_service = ServerUnifiedMCPService(
++                client_factory=_build_unified_mcp_client_for_target,
++                policy_enforcer=self.service_policy_enforcer,
++                target_store=self.unified_mcp_target_store,
++            )
++            self.unified_mcp_service = UnifiedMCPControlPlaneService(
++                target_store=self.unified_mcp_target_store,
++                context_store=self.unified_mcp_context_store,
++                local_service=self.local_mcp_control_service,
++                server_service=self.server_unified_mcp_service,
++            )
+         try:
+             self.server_text2sql_service = ServerText2SQLService.from_config(
+                 self.app_config,
+--- a/tldw_chatbook/Chat/console_execution_process.py
++++ b/tldw_chatbook/Chat/console_execution_process.py
+@@ -202,6 +202,33 @@
+         self.projection_view = None
+         self.pressed_inputs = None
+         self._projection_sequence = 0
++
++    def attach_view(self, view: Any) -> int:
++        """Bind the actual screen visit without constructing a parent graph."""
++        from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
++
++        if (
++            type(view) is not ChatScreen
++            or view.app_instance is not self._app
++            or view.app is not self._app
++            or getattr(self._app, "console_execution_client", None) is not self
++            or getattr(self._app, "console_runtime", None) is not None
++            or self._disposed
++            or self._shutdown_task is not None
++        ):
++            raise ConsoleChannelLost("Console attachment owner changed")
++        if self._view is not view:
++            self._visit += 1
++            self._view = view
++        return self._visit
++
++    def detach_view(self, view: Any, visit: int) -> bool:
++        """End only this screen visit; the process and turns remain app-owned."""
++        if self._view is not view or self._visit != visit:
++            return False
++        self._view = None
++        self._visit += 1
++        return True
+ 
+     async def read_projection(self, session_id: str, incarnation_id: str):
+         """Adopt one exact retired projection without constructing a local store."""
+--- a/tldw_chatbook/Chat/console_runtime.py
++++ b/tldw_chatbook/Chat/console_runtime.py
+@@ -6831,6 +6831,8 @@
+     Returns:
+         ConsoleRuntime: The runtime `view` should use.
+     """
++    if getattr(app, "console_execution_client", None) is not None:
++        raise RuntimeError("Selected Console process cannot construct a local runtime")
+     runtime = getattr(app, CONSOLE_RUNTIME_ATTR, None)
+     if not isinstance(runtime, ConsoleRuntime) and view is not None:
+         # An app object that cannot hold the attribute (`None`, or a

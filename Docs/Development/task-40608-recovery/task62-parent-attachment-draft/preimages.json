@@ -1,0 +1,32 @@
+[
+  {
+    "path": "tldw_chatbook/Chat/console_execution_process.py",
+    "sha256": "f01912e11a843fd08b77ff773f8b7d419e4b83914c7850341061b94350c26a1a",
+    "baseline": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\task-40608-windows-admission\\tldw_tui\\.superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\baseline\\tldw_chatbook\\Chat\\console_execution_process.py"
+  },
+  {
+    "path": "tldw_chatbook/app.py",
+    "sha256": "a5bb093a5476fc257e1bdf11bfe72597efdddd6a34e58f77c5ddac29711acd81",
+    "baseline": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\task-40608-windows-admission\\tldw_tui\\.superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\baseline\\tldw_chatbook\\app.py"
+  },
+  {
+    "path": "tldw_chatbook/app_lifecycle.py",
+    "sha256": "076490bad73a56c88f5012964a9251b6c84c9e83257c3065e88bf006ab64cac2",
+    "baseline": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\task-40608-windows-admission\\tldw_tui\\.superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\baseline\\tldw_chatbook\\app_lifecycle.py"
+  },
+  {
+    "path": "tldw_chatbook/app_service_wiring.py",
+    "sha256": "9152b7757cc11265db73d01eda633c8c56cb1c26721e9ffeba943b9e275ed1f6",
+    "baseline": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\task-40608-windows-admission\\tldw_tui\\.superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\baseline\\tldw_chatbook\\app_service_wiring.py"
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_runtime.py",
+    "sha256": "3da077c4d01d6e8d2582a10d3a64cffd8a3bcbb25ad6dc6fb1b450f9686d258e",
+    "baseline": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\task-40608-windows-admission\\tldw_tui\\.superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\baseline\\tldw_chatbook\\Chat\\console_runtime.py"
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/chat_screen.py",
+    "sha256": "372dc2e818e39e7b4e010468b148206b60163aa19f7948bd5e0de7e9438db8ec",
+    "baseline": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\task-40608-windows-admission\\tldw_tui\\.superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\baseline\\tldw_chatbook\\UI\\Screens\\chat_screen.py"
+  }
+]

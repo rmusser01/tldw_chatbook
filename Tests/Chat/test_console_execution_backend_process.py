@@ -64,6 +64,7 @@ def accepted_process_provider(request):
 
         def do_POST(self):  # noqa: N802 - original http.server contract
             server = self.server
+            server.post_received_at.append(time.monotonic())
             server.requests.append(("POST", self.path))
             payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             server.payloads.append(payload)
@@ -98,6 +99,7 @@ def accepted_process_provider(request):
                 + "data: [DONE]\n\n"
             )
             self._send(200, "text/event-stream", body.encode())
+            server.reply_sent_at.append(time.monotonic())
 
     class Server(_OpenAICompatibleServer):
         daemon_threads = False
@@ -107,6 +109,8 @@ def accepted_process_provider(request):
             super().__init__()
             self.RequestHandlerClass = Handler
             self.requests = []
+            self.post_received_at = []
+            self.reply_sent_at = []
 
     server = Server()
     thread = threading.Thread(target=server.serve_forever, daemon=False)
@@ -573,11 +577,23 @@ async def test_actual_process_projection_reference_and_original_pre_ack_cancel(
         assert (await asyncio.shield(ack.applied))["applied"] is True
         assert await asyncio.shield(ack.retired) is True
         assert await _until(accepted.retired.done)
-        assert await asyncio.shield(accepted.retired) is True
+        accepted_retired = await asyncio.shield(accepted.retired)
+        accepted_finished = time.monotonic()
+        if len(accepted_process_provider.post_received_at) == 1:
+            request.node.user_properties.append(
+                ("accepted_to_provider_post_seconds",
+                 accepted_process_provider.post_received_at[0] - accepted_started)
+            )
+        if len(accepted_process_provider.reply_sent_at) == 1:
+            request.node.user_properties.append(
+                ("provider_reply_to_retirement_seconds",
+                 accepted_finished - accepted_process_provider.reply_sent_at[0])
+            )
+        assert accepted_retired is True
         request.node.user_properties.append(
             (
                 "accepted_receive_to_terminal_seconds",
-                time.monotonic() - accepted_started,
+                accepted_finished - accepted_started,
             )
         )
         assert not any(event.kind == "failed" for event in accepted.events), [
