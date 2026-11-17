@@ -62,6 +62,20 @@ def test_open_unlaunched_preparation_is_reconciled_without_effects(tmp_path):
     _run(tmp_path, "unlaunched_preparation", "native", script=_SCRIPT, timeout=180)
 
 
+def test_unproven_control_return_is_released_only_by_restart(tmp_path):
+    """A Stop whose worker returned but whose outcome is unproven keeps the
+    chat until restart. Reconcile says so with `workflow_return_unproven`
+    instead of "still live, wait", and records nothing (TASK-41320)."""
+    _run(tmp_path, "unproven_control", "native", script=_SCRIPT, timeout=180)
+
+
+def test_unproven_final_metadata_read_is_released_only_by_restart(tmp_path):
+    """A phase's final status read whose storage handles did not provably
+    return keeps the chat until restart. Reconcile refuses it with
+    `workflow_return_unproven` and the Console names a restart (TASK-41320)."""
+    _run(tmp_path, "unproven_final_read", "native", script=_SCRIPT, timeout=180)
+
+
 async def _started(rig):
     rig.provider.plan["phases"][0]["tasks"].append(
         dict(
@@ -392,39 +406,74 @@ async def ownership_error(tmp_path):
         await rig.close()
 
 
+async def _retained_unlaunched(rig):
+    """Fail the phase after task-1 is prepared, before any wave binds it."""
+    import asyncio
+
+    from tldw_chatbook.Chat import console_workflow_wave
+
+    async def refused_before_launch(phase, selected, **kwargs):
+        raise RuntimeError("wave refused before launch")
+
+    decision = await _started(rig)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(console_workflow_wave, "run_workflow_wave", refused_before_launch)
+        await rig.coordinator.approve(decision, command_id="approved-once")
+        run = rig.coordinator._runs[rig.workflow.id]
+        await asyncio.wait_for(asyncio.shield(run.driver), 60)
+    # task-1 is prepared and was never enrolled in a wave or launched.
+    (item,) = run.preparations.values()
+    assert item in rig.runtime._workflow_preparations and not item._closed
+    assert item._wave is None and not item.authorization._native_launch
+    assert rig.coordinator._runs.get(rig.workflow.id) is run
+    assert not (
+        await rig.controller.submit_draft("Still held", session_id="workflow-test-chat")
+    ).accepted
+    return run, item
+
+
+async def _refused(rig, reason, command_id):
+    """Reconcile refuses with `reason`, recording nothing."""
+    from tldw_chatbook.Agents.workflow_models import WorkflowExecutionRecovery
+
+    stored = await rig.service.call(rig.service.get, rig.workflow.id)
+    with pytest.raises(ValueError, match=reason) as refused:
+        await rig.coordinator.reconcile(
+            rig.workflow.id,
+            expected_control_revision=stored.control_revision,
+            decision=WorkflowExecutionRecovery(reason="reviewed_prior_effects"),
+            command_id=command_id,
+        )
+    assert await rig.service.call(rig.service.get, rig.workflow.id) == stored
+    return refused.value
+
+
 async def unlaunched_preparation(tmp_path):
     import asyncio
 
     from Tests.Chat.workflow_rig import WorkflowProvider, build_workflow_rig
     from tldw_chatbook.Agents.goal_storage_lifetime import owned_goal_storage
     from tldw_chatbook.Agents.workflow_models import WorkflowExecutionRecovery
-    from tldw_chatbook.Chat import console_workflow_wave
 
     rig = await build_workflow_rig(tmp_path, None, WorkflowProvider())
     session_id = "workflow-test-chat"
-
-    async def refused_before_launch(phase, selected, **kwargs):
-        raise RuntimeError("wave refused before launch")
-
     try:
-        decision = await _started(rig)
-        with pytest.MonkeyPatch.context() as patch:
-            patch.setattr(
-                console_workflow_wave, "run_workflow_wave", refused_before_launch
-            )
-            await rig.coordinator.approve(decision, command_id="approved-once")
-            run = rig.coordinator._runs[rig.workflow.id]
-            await asyncio.wait_for(asyncio.shield(run.driver), 60)
-        # task-1 is prepared and was never enrolled in a wave or launched.
-        (item,) = run.preparations.values()
-        assert item in rig.runtime._workflow_preparations and not item._closed
-        assert item._wave is None and not item.authorization._native_launch
-        assert rig.coordinator._runs.get(rig.workflow.id) is run
+        run, item = await _retained_unlaunched(rig)
         snapshot = await rig.coordinator.get(rig.workflow.id)
         assert snapshot.status == "recovery_required"
-        assert not (
-            await rig.controller.submit_draft("Still held", session_id=session_id)
-        ).accepted
+        # AC #3: a wave-bound or launching preparation is never closed here;
+        # the live check refuses it.
+        item._wave = object()  # Bound to a wave.
+        try:
+            await _refused(rig, "workflow_resources_still_live", "reconcile-waved")
+        finally:
+            item._wave = None
+        item.authorization._native_launch.append(None)  # A launch in progress.
+        try:
+            await _refused(rig, "workflow_resources_still_live", "reconcile-launching")
+        finally:
+            item.authorization._native_launch.clear()
+        assert not item._closed and item in rig.runtime._workflow_preparations
         closed = await rig.coordinator.reconcile(
             rig.workflow.id,
             expected_control_revision=snapshot.control_revision,
@@ -454,6 +503,125 @@ async def unlaunched_preparation(tmp_path):
             await asyncio.wait_for(asyncio.shield(stream), 15)
     finally:
         await rig.close()
+
+
+def _restart_only(error):
+    """The Console names a restart, not a wait, for an unproven return."""
+    from tldw_chatbook.UI.Console_Modules.workflows import workflow_view_error
+
+    message = workflow_view_error("Recovery", error)
+    assert "Restart Chatbook to release this chat" in message, message
+    assert "Wait" not in message, message
+
+
+async def _close_unresolved(rig, reason):
+    # Restart-only by design (TASK-41320): shutdown reports the held run.
+    with pytest.raises(RuntimeError, match=reason):
+        await rig.close()
+
+
+async def unproven_control(tmp_path):
+    from Tests.Chat.workflow_rig import WorkflowProvider, build_workflow_rig
+    from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+
+    rig = await build_workflow_rig(tmp_path, None, WorkflowProvider())
+    try:
+        run, item = await _retained_unlaunched(rig)
+
+        def refused(decision=None, *, expected_control_revision=None):
+            raise AutomaticWorkRefused("workflow_authority_changed")
+
+        current = await rig.service.call(rig.service.get, rig.workflow.id)
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(run.phase, "_control", refused)
+            with pytest.raises(RuntimeError, match="control worker return unproven"):
+                await rig.coordinator.stop(
+                    rig.workflow.id, expected_control_revision=current.control_revision
+                )
+        # The control's worker returned; its outcome stays unproven.
+        assert run.control_unknown and run.control_return.is_set()
+        _restart_only(
+            await _refused(rig, "workflow_return_unproven", "reconcile-control")
+        )
+        assert not item._closed and rig.coordinator._runs.get(rig.workflow.id) is run
+        assert not (
+            await rig.controller.submit_draft(
+                "Still held", session_id="workflow-test-chat"
+            )
+        ).accepted
+    finally:
+        await _close_unresolved(rig, "workflow_original_shutdown_unresolved")
+
+
+async def unproven_final_read(tmp_path):
+    import asyncio
+    import contextlib
+    import functools
+    from types import MethodType
+
+    from Tests.Chat.workflow_rig import WorkflowProvider, build_workflow_rig
+    from tldw_chatbook.Chat import console_workflow_runs
+
+    rig = await build_workflow_rig(tmp_path, None, WorkflowProvider())
+    try:
+        decision = await _started(rig)
+        service = rig.service
+        original_ids, original_settle = (
+            service.phase_task_ids,
+            service.settle_execution_phase,
+        )
+        storage_return = console_workflow_runs._remaining_storage_return
+        reads, settled, lost = [], [], []
+
+        @functools.wraps(original_ids)
+        def without_first(self, phase):
+            # As in blocked_phase: the phase fails with nothing launched.
+            reads.append(phase)
+            ids = original_ids(phase)
+            return ids if len(reads) > 1 else tuple(t for t in ids if t != "task-1")
+
+        @functools.wraps(original_settle)
+        def settle(self, phase, **kwargs):
+            settled.append(original_settle(phase, **kwargs))
+            return settled[-1]
+
+        @contextlib.contextmanager
+        def handle_lost_after_settle(databases):
+            # The terminal publication's read is the first after settlement.
+            with storage_return(databases):
+                yield
+            if settled and not lost:
+                lost.append(databases)
+                raise RuntimeError("original source database handle did not return")
+
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(service, "phase_task_ids", MethodType(without_first, service))
+            patch.setattr(
+                service, "settle_execution_phase", MethodType(settle, service)
+            )
+            patch.setattr(
+                console_workflow_runs,
+                "_remaining_storage_return",
+                handle_lost_after_settle,
+            )
+            await rig.coordinator.approve(decision, command_id="approved-once")
+            run = rig.coordinator._runs[rig.workflow.id]
+            await asyncio.wait_for(asyncio.shield(run.driver), 60)
+        assert settled and lost
+        cell = run.final_metadata
+        # The read's worker returned; whether its handles did is unproven.
+        assert cell.disposed.done() and cell.disposed.result() is False
+        assert rig.coordinator._metadata_cells[cell] is cell.disposed
+        assert rig.coordinator._runs.get(rig.workflow.id) is run
+        _restart_only(await _refused(rig, "workflow_return_unproven", "reconcile-read"))
+        assert rig.coordinator._runs.get(rig.workflow.id) is run
+        assert not (
+            await rig.controller.submit_draft(
+                "Still held", session_id="workflow-test-chat"
+            )
+        ).accepted
+    finally:
+        await _close_unresolved(rig, "workflow_original_metadata_shutdown_unresolved")
 
 
 async def finalize_during_record(tmp_path):

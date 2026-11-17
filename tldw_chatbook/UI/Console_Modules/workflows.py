@@ -65,6 +65,7 @@ _VIEW_REASONS = frozenset(
         "clock_unknown",
         "clock_reversed",
         "workflow_resources_still_live",
+        "workflow_return_unproven",
         "recovery_audit_required",
         "recovery_unavailable",
         "workflow_runtime_changed",
@@ -150,6 +151,11 @@ def workflow_view_error(context: str, error: BaseException) -> str:
     logger.warning("Workflow {} unavailable: {} (cause: {})", operation, reason, cause)
     if error.args == ("workflow_resources_still_live",):
         return f"{operation} unavailable · Work or cleanup is still active. Wait, then refresh."
+    if error.args == ("workflow_return_unproven",):
+        return (
+            f"{operation} unavailable · A Pause, Stop or status read on this run "
+            "never confirmed its return. Restart Chatbook to release this chat."
+        )
     if error.args == ("recovery_audit_required",):
         return f"{operation} unavailable · Restart Chatbook to audit interrupted work, then review it."
     return f"{operation} unavailable · {reason}"

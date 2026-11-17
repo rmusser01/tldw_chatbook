@@ -2446,18 +2446,28 @@ class ConsoleWorkflowCoordinator:
                     cell = run.final_metadata
                     if (
                         run.phase is None
-                        or run.control_unknown
                         or run.control_return is not None
                         and not run.control_return.is_set()
                         or cell is not None
+                        and not cell.disposed.done()
+                    ):
+                        raise ValueError("workflow_resources_still_live")
+                    if run.control_unknown or (
+                        cell is not None
                         and not (
-                            cell.disposed.done()
-                            and not cell.disposed.cancelled()
+                            not cell.disposed.cancelled()
                             and cell.disposed.exception() is None
                             and cell.disposed.result() is True
                         )
                     ):
-                        raise ValueError("workflow_resources_still_live")
+                        # TASK-41320 (ADR-285): the control or final read
+                        # returned unproven. Only a restart releases the chat.
+                        raise ValueError("workflow_return_unproven")
+                    for item in tuple(run.preparations.values()):
+                        # TASK-41320: never enrolled in a wave means never
+                        # launched; close() rechecks that under the task lock.
+                        if item._wave is None and not item.authorization._native_launch:
+                            await item.close()
                     recorded = await self.service.call(
                         self.service.record_returned_execution,
                         run.phase,
