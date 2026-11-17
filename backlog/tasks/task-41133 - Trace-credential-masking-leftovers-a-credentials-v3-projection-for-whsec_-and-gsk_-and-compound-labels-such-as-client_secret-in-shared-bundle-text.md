@@ -3,7 +3,7 @@ id: TASK-41133
 title: "Trace credential masking leftovers: a credentials-v3 projection for whsec_ and gsk_, and compound labels such as client_secret= in shared bundle text"
 status: Done
 created_date: 2026-11-15 02:20
-updated_date: 2026-11-17 04:24
+updated_date: 2026-11-17 05:27
 assignee:
 - '@claude'
 labels:
@@ -148,3 +148,9 @@ Simple labels (`api_key=`, `token:`) stay with the export's older rule, which al
   - Moved from keep to mask: the session-token UUID and `refresh_token: rotated2024.` (the ruling masks `summer2024`). `secret1` and `tok_v2` were withdrawn.
   - Against the previous round's source, 45 table nodes were red (37 mask, 8 keep).
   - Negative controls, each reverted: keeping long values turns the 7 overflow entries red; plain quote matching turns the escaped-quote entry red; keeping quoted prose under password labels turns the passphrase entry red.
+- **Rev3 evidence.**
+  - Reviewer probes, all re-run: probe2 to probe7 and probe_labels. Every secret is masked and every look-alike kept, except the four the ruling moved (kwarg-two withdrawn; sentence-period and the UUID masked; yaml-flow is a real secret, masked with its `}` kept). `probe_equiv.py` gives corpus 4327, 0 diffs, so logs are byte-identical to base.
+  - Covering run (`-n 4`, 39 files, load 22-52): 8 failed, 1651 passed. These are the same 8 that fail at base.
+  - Serial with lane flags: the recovered-suites slice (14 targets) gives 418 passed in 37 s at load 20-26; `Tests/Utils/test_log_sanitizer.py` gives 209 passed.
+  - `Tests/CI` gives 1640 passed, 1 skipped; the module ratchet 207 passed; the ruff gate is OK.
+
