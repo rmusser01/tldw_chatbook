@@ -3351,7 +3351,7 @@ async def test_a_cut_conversation_excerpt_reads_as_partial_before_and_on_send(
         strip_row = screen.query_one("#console-staged-evidence-row-0", Static)
         tray_row = screen.query_one("#console-staged-source-primary-0")
         assert "Planning (partial excerpt)" in str(strip_row.renderable)
-        assert "Planning (partial excerpt)" in tray_row.label.plain
+        assert "Ready · Partial · Planning · conversations" == tray_row.label.plain
         launch = screen._pending_console_launch_context
         assert launch is not None
 
@@ -3363,6 +3363,102 @@ async def test_a_cut_conversation_excerpt_reads_as_partial_before_and_on_send(
     )
     assert result.context is not None
     assert "Planning (partial excerpt)" in result.context
+
+
+def _cut_media_payload() -> ChatHandoffPayload:
+    """Library's own media builder over stored text past its 500-character cap."""
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    screen = LibraryScreen(_build_test_app())
+    screen._media_state.detail = {
+        "id": 7,
+        "title": "Transformer notes",
+        "content": "x" * 600,
+        "type": "document",
+    }
+    payload = screen._media_controller._selected_media_handoff_payload()
+    assert payload is not None and payload.body_truncated
+    return payload
+
+
+def _long_note_payload() -> ChatHandoffPayload:
+    """A note body over the 4,000-character staging cap, which nothing flags."""
+    return ChatHandoffPayload(
+        source="notes",
+        item_type="note",
+        title="Meeting notes",
+        body="y" * 4_100,
+        source_id="42",
+        suggested_prompt="Use this note as context and help me work with it.",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "build_payload", (_cut_media_payload, _long_note_payload), ids=("media", "note")
+)
+@private_profile_test
+async def test_a_cut_media_or_note_excerpt_is_staged_as_partial(request, build_payload):
+    """TASK-41102 review r15co-rev1: media cut at Library's 500-character
+    excerpt (``body_truncated``) and a note cut only by the staging cap."""
+    payload = build_payload()
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        screen = _active_console_screen(host)
+        await _wait_for_selector(screen, pilot, "#console-native-composer")
+        screen._stage_handoff_as_console_live_work(payload)
+        await _wait_for_selector(
+            screen, pilot, "#console-staged-evidence-row-0", timeout=30
+        )
+        row = screen.query_one("#console-staged-evidence-row-0", Static)
+        assert f"{payload.title} (partial excerpt)" in str(row.renderable)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", ((235, 52), (211, 44)), ids=("235x52", "211x44"))
+@private_profile_test
+async def test_a_partial_tray_row_shows_partial_before_a_long_title(request, size):
+    """TASK-41102 review r15co-rev1: the Sources tray row is one 36-40 cell
+    button at the owner's full-screen sizes, so a title suffix is clipped for
+    any real title. The row says Partial beside its status word instead."""
+    import dataclasses
+
+    from Tests.UI.test_library_handoff_excerpts import _screen_with_conversation
+
+    payload = dataclasses.replace(
+        _screen_with_conversation(
+            "x" * 2994, "Later message."
+        )._selected_conversation_handoff_payload(),
+        title="Q3 planning review with design and research",
+    )
+    app = _build_test_app()  # The app's own Console, with its real CSS.
+    async with app.run_test(size=size) as pilot:
+        for _ in range(1200):
+            screen = app.screen
+            if isinstance(screen, ChatScreen) and screen.query(
+                "#console-native-composer"
+            ):
+                break
+            await pilot.pause(0.05)
+        screen._stage_handoff_as_console_live_work(payload)
+        await _wait_for_selector(
+            screen, pilot, "#console-staged-source-primary-0", timeout=30
+        )
+        for _ in range(10):
+            await pilot.pause(0.05)
+        row = screen.query_one("#console-staged-source-primary-0")
+        rendered = row.render_line(row.size.height // 2).text
+        geometry = screen.find_widget(row)
+        visible = geometry.region.intersection(geometry.clip)
+        start = rendered.find("Partial")
+        assert start >= 0, (rendered, geometry.region)
+        assert visible.x <= geometry.region.x + start, (rendered, visible)
+        assert geometry.region.x + start + len("Partial") <= visible.right, (
+            rendered,
+            visible,
+        )
 
 
 @pytest.mark.asyncio

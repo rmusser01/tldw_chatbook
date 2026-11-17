@@ -3119,3 +3119,10 @@ Tests/UI/test_console_visit_dispatch_dedupe.py
 # TASK-41102 (2026-11-15): a cut conversation excerpt reads as partial in the
 # staged strip and tray and in the model's context (private profile).
 Tests/UI/test_console_live_work_handoffs.py::test_a_cut_conversation_excerpt_reads_as_partial_before_and_on_send
+# TASK-41102 review r15co-rev1 (2026-11-16): media cut by Library's excerpt and
+# a note cut by the staging cap read as partial; the Sources tray row shows
+# Partial before a long title at 235x52 and 211x44 (private profile).
+Tests/UI/test_console_live_work_handoffs.py::test_a_cut_media_or_note_excerpt_is_staged_as_partial[media]
+Tests/UI/test_console_live_work_handoffs.py::test_a_cut_media_or_note_excerpt_is_staged_as_partial[note]
+Tests/UI/test_console_live_work_handoffs.py::test_a_partial_tray_row_shows_partial_before_a_long_title[235x52]
+Tests/UI/test_console_live_work_handoffs.py::test_a_partial_tray_row_shows_partial_before_a_long_title[211x44]

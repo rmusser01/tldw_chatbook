@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-15 02:20
-updated_date: '2026-11-15 20:00'
+updated_date: '2026-11-16 23:10'
 labels:
 - follow-up
 - console
@@ -67,3 +67,14 @@ A partial excerpt's reference title becomes "*title* (partial excerpt)". That on
 **Lane.** UI census tail; `MINIMUM_FILES` 2148, no re-deal. Serial with the lane's flags (`-p no:xdist --timeout=180 --durations=0`, load 105-115): 71.2 s (setup 2.1 + call 68.3 + teardown 0.8).
 
 Files: `tldw_chatbook/UI/Screens/chat_screen.py`, `Tests/UI/test_console_live_work_handoffs.py`, `Tests/Docs/test_console_library_controls_docs.py`, `Docs/User_Guide/library/media-and-conversations.md`, `Docs/User_Guide/console/context-and-rag.md`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`.
+
+**Review r15co-rev1 (2026-11-16).**
+- **The tray row clipped the suffix.** The Sources tray row is one button of 40 cells at 235x52 and 36 at 211x44, so "(partial excerpt)" was hidden for any title over about 15 characters. The tray now shows **Partial** after the status word ("Ready · Partial · *title* · *type*") and drops the suffix from its own title. The strip and the model's `[S1]` header keep the suffix. The suffix is one constant, `PARTIAL_EXCERPT_TITLE_SUFFIX` in `Chat/citation_evidence_models.py`, which staging writes and the tray widget reads. New `test_a_partial_tray_row_shows_partial_before_a_long_title[235x52|211x44]` stages a 43-character title in the app's own Console (real CSS) and checks "Partial" lies inside the row's rendered, clipped region. Red before the fix at both sizes (`'  Ready · Q3 planning review with   '`, region width 36; width 40 at 235x52), green after. The conversation test now pins the tray label `Ready · Partial · Planning · conversations`.
+- **The other two branches are covered.** New `test_a_cut_media_or_note_excerpt_is_staged_as_partial`:
+  - `[media]` builds the payload with Library's media builder over 600 characters of stored text (`body_truncated`). Red with the flag clause removed (`'Transformer notes — media'`).
+  - `[note]` stages a 4,100-character note, which nothing flags. Red with the length clause removed (`'Meeting notes — note'`).
+  - Each passes with its clause in place.
+- **Docs.** Both guide pages now say where the cut shows: "*title* (partial excerpt)" in the staged-evidence strip and in the model's context, and **Partial** after the status word in the Sources tray. The docs contract also pins "Ready · Partial · title" on both pages: red with the page edits reverted, then `Tests/Docs/` 32 passed.
+- **Lane.** Four more UI census tail entries; `MINIMUM_FILES` 2152. Serial with the lane's flags (load 72-92): `[235x52]` 57.8 s, `[211x44]` 71.2 s, `[media]` 57.1 s, `[note]` 42.5 s, setup + call + teardown. The earlier conversation node took 54.9 s in the same run.
+- Files added this round: `tldw_chatbook/Chat/citation_evidence_models.py`, `tldw_chatbook/Widgets/Console/console_staged_context.py`.
+- **Covering run** (same seven UI files, `-n 4`, load 86-95): 155 passed, 37 failed, 4 errors. 35 of the failures are nodes that also failed with base `chat_screen.py` in the first round. The other 2 failures (cited sources `[direct]`, `HelperTimeoutError`; a Workflows skeletal destination, `NoMatches '#workflow-panes'`) and the 4 teardown errors ("Native app workers remain uncertain" in the staged-evidence strip file) all passed when re-run at HEAD: 7 passed.

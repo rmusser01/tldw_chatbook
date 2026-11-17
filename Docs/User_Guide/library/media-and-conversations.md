@@ -614,9 +614,11 @@ question." It does not send automatically or change the conversation's Auto
 or Assistant setting. The excerpt is the first 3,000 characters of its
 transcript, each message labelled with its sender, followed by the
 conversation's title, ID, message count, workspace, and last update. A longer
-conversation is cut at 3,000 characters and its later messages are left out;
-Console's staged row then reads "*title* (partial excerpt)", and the model
-receives the excerpt under that same title.
+conversation is cut at 3,000 characters and its later messages are left out.
+Console then shows the cut: the staged-evidence strip row reads "*title*
+(partial excerpt)", the Sources tray row shows **Partial** after its status
+word ("Ready · Partial · *title*"), and the model receives the excerpt under
+"*title* (partial excerpt)".
 
 **Resume conversation** (keyboard: `c`) instead opens the original saved
 conversation and its active branch. **Restore and resume** first recovers
@@ -855,8 +857,9 @@ Global navigation keys live in the [guide index](../index.md).
   excerpt", "Stored text excerpt (truncated)", or "Metadata only (no stored
   text)". "Use as source" (conversations) sends the first 3,000 characters of
   its transcript, each message labelled with its sender; see
-  [Conversations](#conversations). In Console, a cut excerpt of either kind is
-  staged as "*title* (partial excerpt)", which the model sees too.
+  [Conversations](#conversations). In Console, a cut excerpt of either kind
+  reads "*title* (partial excerpt)" in the staged-evidence strip and to the
+  model, and shows **Partial** after the status word in the Sources tray.
 - **No conversation delete here** — by design, this panel never modifies
   chats. Manage sessions from Console itself.
 - **"Media item is unavailable."** — the item was removed while you had it

@@ -1096,6 +1096,10 @@ MINIMUM_FILES = 2147
 # TASK-41102 (2026-11-15): append the partial-excerpt node at the tail. The
 # floor is the measured entry count.
 MINIMUM_FILES = 2151
+MINIMUM_FILES = 2148
+# TASK-41102 review r15co-rev1 (2026-11-16): append the media, note and two
+# tray-width nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 2155
 
 
 def read_census(path: Path) -> list[str]:

@@ -16346,6 +16346,7 @@ class ChatScreen(BaseAppScreen):
         from pydantic import ValidationError
 
         from tldw_chatbook.Chat.citation_evidence_models import (
+            PARTIAL_EXCERPT_TITLE_SUFFIX,
             EvidenceBundle,
             EvidenceReference,
         )
@@ -16410,7 +16411,7 @@ class ChatScreen(BaseAppScreen):
                         evidence_id="S1",
                         source_id=_safe_text(payload.source_id) or "unknown",
                         source_type=_safe_text(payload.item_type) or "rag-result",
-                        title=f"{title} (partial excerpt)" if partial else title,
+                        title=title + PARTIAL_EXCERPT_TITLE_SUFFIX if partial else title,
                         snippet=snippet or title,
                         authority_label=_safe_text(payload.runtime_backend) or "local",
                         content_ref=payload.content_ref,
