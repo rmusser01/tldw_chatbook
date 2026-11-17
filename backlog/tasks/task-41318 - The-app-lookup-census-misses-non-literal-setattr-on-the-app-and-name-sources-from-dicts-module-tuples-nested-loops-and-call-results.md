@@ -1,7 +1,7 @@
 ---
 id: TASK-41318
 title: "The app-lookup census misses non-literal setattr on the app, and name sources from dicts, module tuples, nested loops and call results"
-status: In Progress
+status: Done
 created_date: 2026-11-16 19:55
 labels:
 - follow-up
@@ -34,9 +34,9 @@ Filed from the 2026-11-13..16 burn-down. These are the known ceilings of TASK-40
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The census counts or records non-literal `setattr`/`delattr` on app receivers, with a negative control that plants one and fails
-- [ ] #2 A literal reached through a dict lookup, a module-level tuple, a nested loop or a function's literal return value is counted, each with a negative control; any source left unfollowed is listed in the test's docstring with its reason
-- [ ] #3 The pins and the non-literal record are re-measured, and the census passes on dev
+- [x] #1 The census counts or records non-literal `setattr`/`delattr` on app receivers, with a negative control that plants one and fails
+- [x] #2 A literal reached through a dict lookup, a module-level tuple, a nested loop or a function's literal return value is counted, each with a negative control; any source left unfollowed is listed in the test's docstring with its reason
+- [x] #3 The pins and the non-literal record are re-measured, and the census passes on dev
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -48,3 +48,38 @@ ADR required: no. This extends an existing architecture test (TASK-36942.4, TASK
 3. Replace the loop-only follower with one that follows a name through local and module-level assignments, enclosing loops (nested loops and comprehensions), dict lookups and same-module function returns. A name that is itself an UPPER_CASE constant stays the record's business, as today.
 4. List the sources left unfollowed, with reasons, in the test docstring.
 5. Re-measure the pins and the record; record the numbers with a dated note.
+
+## Implementation Notes
+
+The census (`Tests/Architecture/test_app_string_lookup_census.py`) gains two things and keeps its rules:
+
+- **Writes are recorded.** A non-literal `setattr`/`delattr` on a census receiver is now a row in `app_nonliteral_lookups.tsv`, under the same shrink-only rule as non-literal lookups. Writes are recorded but not counted: a literal `setattr(app, "x", v)` is the assignment `app.x = v`, not a string lookup. Counting them would also have changed what the pins mean. The scan finds the 15 sites the task lists.
+- **Names are followed further.** `_loop_items` is replaced by `_Follower`. It follows a lookup's name through a plain `name = ...` (in the function or at module level), an enclosing loop's item (nested loops and comprehension generators, using Python's scoping: a loop binds in its body, not in its own iterable), a dict lookup (`D[k]`, `D.get(k[, default])`), and the `return` values of a function with that name in the same module. These compose, so `_validate_provider(provider)` -> `SERVER_PROCESS_ATTRS[provider]` -> the dict's values is followed. A cycle is cut by a per-path seen set. A name that is itself an UPPER_CASE constant is still not followed: the record's `reaches` column covers it, and the TASK-40141 `constant` control pins that. Lambdas and `*args`/`**kwargs` bind their own names. The docstring lists the sources left unfollowed, each with its reason. The real-tree ones are two conditional expressions, `self._CONSOLE_PENDING_STASH_ATTR` (a constant) and `SERVER_PROCESS_ATTRS.items()`.
+
+Evidence (2026-11-16, base fbf1c9ea74 = dev 5e3c8b2bd4 plus filing commits, load 40-100):
+
+- **Reproduction:** on the unmodified scanner, the 7 new controls failed: `test_a_nonliteral_app_write_is_recorded[setattr|delattr]` and `test_a_literal_moved_into_a_helper_or_loop_is_still_counted[dict-get|dict-subscript|module-tuple|nested-loop|call-result]`. The 8 existing controls passed. All 38 nodes pass at head.
+- **Re-measured pins**, itemized per lookup site against base:
+  - Backup_Recovery 34 -> 41: the `declarations` nested loop, 7.
+  - Event_Handlers 41 -> 89: 8 `process_attr` lookups x the 6 `SERVER_PROCESS_ATTRS` values.
+  - Scheduling 2 -> 5: `_SOURCE_DB_ATTR.get`.
+  - UI 1290 -> 1312: `LAB_SERVER_SOURCES` 6, `service_attributes[owner]` 6, `HOME_CONTROL_METHODS.get` 10.
+  - No other package moved, and `app_private_attrs.txt` is unchanged.
+- **Record:** 47 -> 62 rows, the 15 write sites.
+- **Mutation check:** each source was planted in a scratch copy of the real tree (`_planted_private`) and the census run there. Each plant failed both the right pin and the private-name rule:
+  - `_SOURCE_DB_ATTR`: Scheduling +1.
+  - `service_attributes`: UI +1.
+  - `LAB_SERVER_SOURCES`: UI +1.
+  - the `declarations` loop: Backup_Recovery +1.
+  - a literal `return` in `_validate_provider`: Event_Handlers +7, one per caller.
+  - A planted `setattr(app, name, None)` failed the record test. An unplanted copy passed all 38 nodes.
+- **Scan cost:** CPU went from 20.7 s to 22.5-22.9 s (+~10%), measured twice each.
+- `./scripts/preflight.sh` passed.
+- **Serial `Tests/Architecture` on head** (load 55-100): 1420 passed, 8 failed.
+  - Three fail on base too: `test_persistent_diagnostic_inventory::test_reviewed_diagnostic_changes_are_metadata_only` and `test_timer_path_static_update_inventory` x2.
+  - Five were `test_task_15103_review_ledger_*` 300 s pytest-timeouts while the run rebuilt the diagnostic inventory. Run alone on head, all five passed (7.5 min).
+- **Lane:** same file, so it already runs in `pr-fast-lane-arch`.
+- **Files:**
+  - `Tests/Architecture/test_app_string_lookup_census.py`
+  - `Tests/Architecture/app_lookup_census.tsv`
+  - `Tests/Architecture/app_nonliteral_lookups.tsv`
