@@ -8768,6 +8768,38 @@ _CONSOLE_PENDING_FACTS_IDENTITY_SOURCE = (
 )
 
 
+# Original finite DB denylist readers; records carry no paths or authority.
+_SENSITIVE_DB_PATH_NAMES = (
+    "get_chachanotes_db_path", "get_prompts_db_path", "get_media_db_path",
+    "get_library_collections_db_path", "get_library_ingest_jobs_db_path",
+    "get_workspaces_db_path", "get_subscriptions_db_path", "get_notifications_db_path",
+    "get_research_db_path", "get_writing_db_path", "get_scheduled_tasks_db_path",
+    "get_evals_db_path", "get_rag_indexing_db_path",
+)
+_SENSITIVE_DB_PATH_SOURCE = (
+    sys.modules[__name__],
+    _config_participants,
+    profile_paths,
+    _SENSITIVE_DB_PATH_NAMES,
+    capture_definitions(
+        tuple((globals(), name, globals()[name]) for name in (
+            *_SENSITIVE_DB_PATH_NAMES,
+            "_get_custom_database_path", "get_user_data_dir", "get_cli_setting",
+            "load_cli_config_and_ensure_existence", "_warm_config_cache_hit",
+            "_load_cli_config_bootstrap", "_load_cli_config_bootstrap_unlocked",
+            "_get_effective_config_path", "_external_edit_detected", "_user_data_dir_inputs",
+            "_user_data_dir_stamps", "_resolve_user_data_dir", "get_user_folder_name",
+            "validate_path_simple", "lexical_path",
+        ))
+        + tuple((vars(_config_participants), name, getattr(_config_participants, name))
+                for name in ("operation", "verified_user_data_directory"))
+        + tuple((vars(profile_paths), name, getattr(profile_paths, name))
+                for name in ("custom_database_input", "database_leaf", "lexical_path",
+                             "user_data_dir", "data_base", "setting", "user_folder_name",
+                             "selected_default_base_data_dir", "default_base_data_dir"))
+    ),
+)
+
 # Capture original config producers for deferred Collections and first Send.
 _COLLECTIONS_SETUP_SOURCE = _config_participants.record_config_sources(
     globals(),

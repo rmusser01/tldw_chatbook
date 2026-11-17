@@ -75,6 +75,8 @@ Task56 starts the [reviewed Console execution-service design](../../Docs/superpo
 
 Task56's constructor extraction is implemented and passes independent source/quality/evidence review with31 distinct targeted checks. Task57 continues the same approved design by making the finite domain-source/presentation boundary explicit in process; native authority, currentness, original transactions and legacy routes remain required. No detached process or original timing qualification has been released.
 
+Task62's measured preparation follow-up uses the [bounded sensitive database-path configuration-read amendment](../decisions/126-complete-local-backup-and-recovery.md#task-40608--bounded-sensitive-database-path-configuration-reads). ADR required: yes; amend ADR126. Group only the qualified original database-path getter cohort inside one original configuration operation, keeping every getter/native check, custom behavior and post-retirement memo rules. Verify causal admission counts and refusal/override controls before measuring the original accepted backend path again. The same UI integration and final sub-five journey requirements remain open.
+
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes

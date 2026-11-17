@@ -1,0 +1,172 @@
+"""Original turn retirement releases graphs without losing ACK/replay identity."""
+
+from __future__ import annotations
+
+import asyncio
+from dataclasses import replace
+
+import pytest
+
+from Tests.Chat.test_console_control_trace import _prepare
+from Tests.Chat.test_console_domain_boundary import (
+    _selection,
+    domain_case as _domain_case,
+)
+from Tests.Chat.test_console_first_send_atomicity import _until
+from Tests.Chat.test_console_refused_stream_retry import _server
+
+domain_case = _domain_case
+pytestmark = [
+    pytest.mark.asyncio,
+    pytest.mark.bootstrap_profile,
+    pytest.mark.loopback_network,
+]
+
+
+class _NoHistoryScan(dict):
+    """Keep the actual owners and keyed operations; refuse lifetime enumeration."""
+
+    def __iter__(self):
+        raise AssertionError("Control operation scanned lifetime history")
+
+    def values(self):
+        raise AssertionError("Control operation scanned lifetime history")
+
+    def items(self):
+        raise AssertionError("Control operation scanned lifetime history")
+
+
+@pytest.mark.parametrize("domain_case", ["control_trace"], indirect=True)
+async def test_original_turns_use_direct_lookup_and_retain_only_terminal_identity(
+    domain_case,
+):
+    from tldw_chatbook.Chat.console_control_dispatch import (
+        CancelTurn,
+        CommitPlanAck,
+        Drain,
+        FenceSource,
+        ReceiveTurn,
+        UpdateInputs,
+    )
+
+    case = domain_case
+    receipts = []
+    with _server() as server:
+        journey = await _prepare(case, server)
+        controls = journey.controls
+        # The sentinel changes no plan, owner, proof, task, source or callback.
+        # Original admission, SQLite commit and retirement must still run.
+        controls._plans = _NoHistoryScan(controls._plans)
+        controls._turns = _NoHistoryScan(controls._turns)
+
+        def acknowledge(plan):
+            return controls.dispatch(
+                CommitPlanAck(
+                    journey.identity(),
+                    plan.received_request_id,
+                    plan.turn_id,
+                    plan.ordinal,
+                    plan.fingerprint,
+                )
+            )
+
+        async def complete(turn_id):
+            updated = controls.dispatch(
+                UpdateInputs(
+                    journey.identity(), "Retain only identity", (1, journey.sequence)
+                )
+            )
+            receipt = controls.dispatch(
+                ReceiveTurn(
+                    journey.identity(),
+                    turn_id,
+                    updated.applied.result(),
+                    _selection(case),
+                )
+            )
+            receipts.append(receipt)
+            assert await _until(lambda: controls.commit_plans or receipt.work.done())
+            if receipt.work.done():
+                receipt.work.result()
+            plan = controls.commit_plans[0]
+            pending = controls._plans[turn_id, plan.ordinal]
+            assert pending.task is receipt.work and pending.plan is not None
+            assert pending.acknowledged is not None and plan.recovery is not None
+            assert acknowledge(plan).applied.result() is True
+            async with asyncio.timeout(20):
+                result = await asyncio.shield(receipt.work)
+                assert result.accepted
+                assert await asyncio.shield(receipt.retired) is True
+            assert pending.state == "finished"
+            assert pending.plan is pending.task is pending.acknowledged is None
+            assert pending.projection == replace(plan, recovery=None)
+            assert controls._turns[turn_id] == (receipt.identity, None, None, None)
+            assert turn_id not in controls._turn_retirements
+            assert receipt.turn_retirement.plan_keys == []
+            return pending.projection
+
+        try:
+            first = await complete("retention-first")
+            assert first.ordinal == 1 and len(server.payloads) == 1
+            assert acknowledge(first).applied.result() is True
+            assert len(server.payloads) == 1
+            assert first.turn_id not in case.runtime._turn_custody
+            with pytest.raises(RuntimeError, match="Console cancellation owner changed"):
+                controls.dispatch(CancelTurn(journey.identity(), first.turn_id))
+
+            updated = controls.dispatch(
+                UpdateInputs(
+                    journey.identity(), "Refused replay", (1, journey.sequence)
+                )
+            )
+            with pytest.raises(RuntimeError, match="identity was already received"):
+                controls.dispatch(
+                    ReceiveTurn(
+                        journey.identity(),
+                        first.turn_id,
+                        updated.applied.result(),
+                        _selection(case),
+                    )
+                )
+
+            with pytest.raises(
+                RuntimeError, match="Conflicting Console plan acknowledgement"
+            ):
+                acknowledge(
+                    replace(first, received_request_id="different-received-request")
+                )
+            assert first.turn_id in controls._fenced_turns
+            assert controls._plans[first.turn_id, first.ordinal].state == "conflict"
+            with pytest.raises(RuntimeError, match="no longer pending"):
+                acknowledge(first)
+
+            second = await complete("retention-second")
+            assert second.ordinal == 1 and len(server.payloads) == 2
+            assert acknowledge(second).applied.result() is True
+            assert len(server.payloads) == 2
+            assert controls.commit_plans == ()
+            fence = controls.dispatch(FenceSource(journey.identity(), "configuration"))
+            async with asyncio.timeout(20):
+                assert await fence.applied is controls._fence
+                drain = controls.dispatch(Drain(journey.identity()))
+                assert await drain.applied is True
+        finally:
+            # Let unchanged fixture teardown run even on the expected baseline
+            # scan refusal; do not turn its cleanup into a second failure.
+            controls._plans = dict.copy(controls._plans)
+            controls._turns = dict.copy(controls._turns)
+            for receipt in receipts:
+                if not receipt.work.done():
+                    receipt.work.cancel()
+            async with asyncio.timeout(20):
+                await asyncio.gather(
+                    *(receipt.work for receipt in receipts), return_exceptions=True
+                )
+                await asyncio.gather(
+                    *(
+                        receipt.turn_retirement.settlement
+                        for receipt in receipts
+                        if receipt.turn_retirement.settlement is not None
+                    ),
+                    return_exceptions=True,
+                )

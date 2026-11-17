@@ -380,16 +380,69 @@ def _sensitive_db_paths() -> tuple[Path, ...]:
     """
     from .. import config as _config
 
-    resolved: list[Path] = []
-    for accessor_name in _DB_PATH_ACCESSOR_NAMES:
-        accessor = getattr(_config, accessor_name, None)
-        if accessor is None:
-            continue
-        try:
-            resolved.append(accessor())
-        except Exception as exc:  # noqa: BLE001 - defensive, additive coverage only
-            _debug(f"sensitive_paths: could not resolve {accessor_name}: {exc}")
-    return tuple(resolved)
+    def collect(check=None) -> tuple[Path, ...]:
+        resolved: list[Path] = []
+        for accessor_name in _DB_PATH_ACCESSOR_NAMES:
+            if check is not None:
+                check()
+            accessor = getattr(_config, accessor_name, None)
+            if accessor is None:
+                continue
+            try:
+                resolved.append(accessor())
+            except Exception as exc:  # noqa: BLE001 - defensive, additive coverage only
+                if check is not None:
+                    check()
+                _debug(f"sensitive_paths: could not resolve {accessor_name}: {exc}")
+        return tuple(resolved)
+
+    source = getattr(_config, "_SENSITIVE_DB_PATH_SOURCE", None)
+    if source is None:
+        return collect()
+    import sys
+    from .definition_records import definitions_current
+
+    owner, life, paths, names, definitions = source
+
+    def current() -> bool:
+        return (
+            _config is owner
+            and sys.modules.get("tldw_chatbook.config") is owner
+            and _config._SENSITIVE_DB_PATH_SOURCE is source
+            and _config._config_participants is life
+            and sys.modules.get(life.__name__) is life
+            and _config.profile_paths is paths
+            and life.profile_paths is paths
+            and sys.modules.get(paths.__name__) is paths
+            and _DB_PATH_ACCESSOR_NAMES == names
+            and _sensitive_db_paths is _SENSITIVE_DB_PATHS_ORIGINAL[0]
+            and _sensitive_db_paths.__code__ is _SENSITIVE_DB_PATHS_ORIGINAL[1]
+            and _debug is _SENSITIVE_DB_PATHS_ORIGINAL[2]
+            and _debug.__code__ is _SENSITIVE_DB_PATHS_ORIGINAL[3]
+            and definitions_current(definitions)
+        )
+
+    operation = life.operation
+    if not current():
+        return collect()
+
+    def require_current():
+        if not current():
+            raise life.bootstrap.RecoveryRequired("sensitive_db_sources_changed")
+
+    # Every original accessor and guarded data-directory body still runs.
+    # Optional accessor failures stay inside the loop; admission/retirement
+    # failures propagate, so no partial denylist or memo can escape them.
+    with operation(_config):
+        require_current()
+        result = collect(require_current)
+    require_current()
+    return result
+
+
+_SENSITIVE_DB_PATHS_ORIGINAL = (
+    _sensitive_db_paths, _sensitive_db_paths.__code__, _debug, _debug.__code__,
+)
 
 
 def _sensitive_single_file_paths() -> tuple[Path, ...]:

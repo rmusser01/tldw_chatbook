@@ -1,0 +1,107 @@
+{
+  "task": "TASK-40608 Task62 plan retention",
+  "mode": "artifact-only; no Python/import/native/test execution",
+  "targets": [
+    {
+      "path": "tldw_chatbook/Chat/console_control_dispatch.py",
+      "proposed": "proposed/console_control_dispatch.py",
+      "proposed_sha256": "7aaaeba0ff97d75bc38be9a287b806b37c8c0edaef96af52cbe1a6739dda7c82",
+      "original_sha256": "393542f35bf39d779d2fdb81d43d2a5be94e8daa0dd9a4a31ef37590d9a5f42e",
+      "original_absent": false
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_execution_retirement.py",
+      "proposed": "proposed/console_execution_retirement.py",
+      "proposed_sha256": "e40f286f01296778c274b97e358b0bf0ec2d0016090d7fcfc8ded26d28e68126",
+      "original_sha256": "8733600b1584d852ddb68370fb3d1b6797ac1fa1d60da23221537b0b41b10492",
+      "original_absent": false
+    },
+    {
+      "path": "Tests/Chat/test_console_execution_retirement.py",
+      "proposed": "proposed/test_console_execution_retirement.py",
+      "proposed_sha256": "43e45ba6a24b2fc5d7378b39b65850342281e02eef082ef0678fa83d88df55bb",
+      "original_sha256": "2ff54b2f7ccc80204e2610fef320311b34c1d1bb1734fbe158b905e999c1ad05",
+      "original_absent": false
+    },
+    {
+      "path": "Tests/Chat/test_console_control_plan_retention.py",
+      "proposed": "proposed/test_console_control_plan_retention.py",
+      "proposed_sha256": "70664e6d235e54f2d8cb5c229cb07b76976d746e1fe2b8640177addd0789e4e6",
+      "original_sha256": null,
+      "original_absent": true
+    }
+  ],
+  "dependencies": [
+    {
+      "path": "tldw_chatbook/Chat/console_native_commit.py",
+      "snapshot": "source-dependencies/console_native_commit.py",
+      "sha256": "d9ca141fbc121e5d4327e3626dec452ca612f4575640cf1c176b5a6ecbac0b86"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_durable_commit_plan.py",
+      "snapshot": "source-dependencies/console_durable_commit_plan.py",
+      "sha256": "c12065629019d13af444fe05c86d4377a769fc3fb1d4c208ed27896076253008"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_chat_store.py",
+      "snapshot": "source-dependencies/console_chat_store.py",
+      "sha256": "9ac3033afce35eb0bd5beedbf46082994b1eab97f9c66b7b1e23075c8b6c05dc"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_control_trace.py",
+      "snapshot": "source-dependencies/console_control_trace.py",
+      "sha256": "194e2d3d7d214a1fb72e5770d23fd0f9c4e2e9c583a523b82ac58c32e4c74484"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_dispatch_checkpoint.py",
+      "snapshot": "source-dependencies/console_dispatch_checkpoint.py",
+      "sha256": "0d5958239bed36d034aab138db3a2d7ef5d6b47207c089cb607a4ae6e709541b"
+    },
+    {
+      "path": "Tests/Chat/test_console_control_trace.py",
+      "snapshot": "source-dependencies/test_console_control_trace.py",
+      "sha256": "ff72a51a8d1bb9a3d5de0fdb7262fb76411c027aa35013b9ebe155859d4d8c08"
+    },
+    {
+      "path": "Tests/Chat/test_console_domain_boundary.py",
+      "snapshot": "source-dependencies/test_console_domain_boundary.py",
+      "sha256": "aacea53d62c3c6ffa294a0284009851f1e31ab7b59e2508b28c13a58aa075376"
+    },
+    {
+      "path": "Tests/Chat/test_console_first_send_atomicity.py",
+      "snapshot": "source-dependencies/test_console_first_send_atomicity.py",
+      "sha256": "83e9add3f5202306ef3d02eefb6331f3fff012ff00649b578ef3a62fa4f7402e"
+    },
+    {
+      "path": "Tests/Chat/test_console_refused_stream_retry.py",
+      "snapshot": "source-dependencies/test_console_refused_stream_retry.py",
+      "sha256": "cc8e20e43c2ab3136813b4d7e30d59f52e5e71685704f5e56a5df58e1b9a2d1c"
+    },
+    {
+      "path": "Docs/Development/task-40608-recovery/task62-plan-retention-source-audit.md",
+      "snapshot": "source-dependencies/task62-plan-retention-source-audit.md",
+      "sha256": "471219534cb73ba6955ad66f7420332a4eb30c65fb2ba9ebbb53e7ff9e60d65c"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_runtime.py",
+      "snapshot": "source-dependencies/console_runtime.py",
+      "sha256": "3da077c4d01d6e8d2582a10d3a64cffd8a3bcbb25ad6dc6fb1b450f9686d258e"
+    }
+  ],
+  "report_sha256": "4334e7b845c1924ae42f91c54079b8b0168152c773379022c2a623003220b743",
+  "checked_utc": "2026-11-17T17:36:36.0293888Z",
+  "patches": [
+    {
+      "path": "product.patch",
+      "sha256": "491d380c0efa0457cc354efdfd642238af5980f02f004e3520aa84bd5bcc7993",
+      "git_apply_check": "passed against current live bytes; not applied",
+      "line_endings": "LF"
+    },
+    {
+      "path": "tests-only.patch",
+      "sha256": "c96454e561a2f750e363d0646f644494f49046c6b9b96db76b9ba40e54ddffc5",
+      "git_apply_check": "passed against current live bytes; not applied",
+      "line_endings": "LF"
+    }
+  ]
+}

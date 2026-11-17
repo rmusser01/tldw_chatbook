@@ -21,9 +21,12 @@ async def test_original_received_turn_retains_its_own_retirement(
     from Tests.Chat.test_console_first_send_atomicity import _until
     from tldw_chatbook.Chat.console_control_dispatch import (
         CancelTurn,
+        CommitPlanAck,
         ControlIdentity,
         ReceiveTurn,
         UpdateInputs,
+        _ControlReservation,
+        _PendingPlan,
     )
     from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
     from tldw_chatbook.Chat.prompt_history import PromptHistory
@@ -105,7 +108,31 @@ async def test_original_received_turn_retains_its_own_retirement(
                 for read in reads
             )
             record_property("task62_actual_retired_preparation_reads", len(reads))
-            assert not controls.admitted_effects
+            pending = controls._plans[planned.turn_id, planned.ordinal]
+            assert type(pending) is _PendingPlan and pending.task is task
+            assert pending.state == "waiting" and not pending.acknowledged.done()
+            owner = case.controller._ordinary_native_commits[
+                planned.fingerprint.preparation_id
+            ]
+            assert owner._issuer is case.controller and owner.store is case.store
+            assert owner.task is task
+            assert owner.acceptance is pending.plan.received_acceptance
+            assert case.store._native_commit_owners_by_preparation[
+                planned.fingerprint.preparation_id
+            ] is owner
+            reservation = owner.control_reservation
+            assert type(reservation) is _ControlReservation
+            assert reservation.controls is controls and reservation.owner is owner
+            assert reservation.pending is pending
+            assert len(reservation.result) == 1
+            assert reservation.result[0] is pending.plan
+            assert not reservation.writer_started and not reservation.native_retired
+            assert not reservation.cancel_requested
+            assert controls._effects == {reservation.effect}
+            assert reservation.effect.kind == "commit_reservation"
+            assert reservation.effect.owner is reservation
+            assert not reservation.effect.completed.done()
+            assert not reservation.effect.physically_retired
         else:
             assert invocation.source is None
             assert invocation.reads == []
@@ -120,6 +147,25 @@ async def test_original_received_turn_retains_its_own_retirement(
         assert received.retired.result() is True
         assert invocation.logical_closed
         assert "retirement-turn" not in controls._turn_retirements
+        assert controls._turns["retirement-turn"] == (
+            received.identity, None, None, None
+        )
+        assert invocation.plan_keys == []
+        if stage == "before-ack":
+            pending = controls._plans[planned.turn_id, planned.ordinal]
+            assert pending.state == "abandoned"
+            assert pending.plan is pending.task is pending.acknowledged is None
+            assert pending.projection.recovery is None
+            with pytest.raises(RuntimeError, match="no longer pending"):
+                controls.dispatch(
+                    CommitPlanAck(
+                        identity(4),
+                        planned.received_request_id,
+                        planned.turn_id,
+                        planned.ordinal,
+                        planned.fingerprint,
+                    )
+                )
         assert invocation.reads == [] and invocation.trees == []
         assert invocation.counts is not None
         record_property("task62_retirement_stage", stage)
@@ -296,6 +342,11 @@ async def test_actual_archive_close_uncertainty_never_becomes_turn_retired(
                 assert isinstance(outcomes[0], BaseException)
                 assert receipt.retired.result() is False
                 assert controls._turn_retirements["uncertain-turn"] is invocation
+                retained = controls._turns["uncertain-turn"]
+                assert retained[0] is receipt.identity
+                assert retained[1] is invocation.record and invocation.record is not None
+                assert retained[2] is receipt.work and invocation.task is receipt.work
+                assert retained[3] is controls._domain.sources
                 assert invocation.logical_closed and invocation.source_closed
                 effect = next(
                     e for e in invocation.source.effects if e.kind == "archive_read"

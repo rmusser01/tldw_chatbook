@@ -308,6 +308,7 @@ class ConsoleTurnRetirement:
         self.retired = controls._loop.create_future()
         self.settlement = None
         self.counts = None
+        self.plan_keys = []
 
     def require_source(self, source: object) -> None:
         entry = self.controls._turns.get(self.turn_id)
@@ -386,6 +387,47 @@ class ConsoleTurnRetirement:
                     )
                 )
             )
+            if confirmed:
+                from dataclasses import replace
+
+                from .console_control_dispatch import _PendingPlan
+
+                controls = self.controls
+                with controls._lock:
+                    entry = controls._turns.get(self.turn_id)
+                    if (
+                        controls._turn_retirements.get(self.turn_id) is not self
+                        or entry is None
+                        or entry[0] is not self.identity
+                        or entry[1] is not self.record
+                        or entry[2] is not self.task
+                    ):
+                        raise RuntimeError("Console retired control owner changed")
+                    replacements = []
+                    for ordinal, key in enumerate(self.plan_keys, 1):
+                        pending = controls._plans.get(key)
+                        if (
+                            key != (self.turn_id, ordinal)
+                            or type(pending) is not _PendingPlan
+                            or pending.task is not self.task
+                            or pending.projection.turn_id != self.turn_id
+                            or pending.projection.ordinal != ordinal
+                            or pending.projection.received_request_id
+                            != self.identity.request_id
+                            or pending.state not in {"finished", "abandoned", "conflict"}
+                        ):
+                            raise RuntimeError("Console retired plan owner changed")
+                        replacements.append(
+                            (pending, replace(pending.projection, recovery=None))
+                        )
+                    # Only the original positive physical proof reaches here.
+                    # Validate the whole turn before releasing any heavy owner.
+                    for pending, projection in replacements:
+                        pending.projection = projection
+                        pending.plan = pending.task = pending.acknowledged = None
+                    controls._turns[self.turn_id] = (self.identity, None, None, None)
+                    controls._turn_retirements.pop(self.turn_id)
+                    self.plan_keys.clear()
         except BaseException as error:
             error_type = type(error).__name__
             confirmed = False
@@ -407,7 +449,6 @@ class ConsoleTurnRetirement:
                 if self.source is not None:
                     self.source.effects.clear()
                 self.source = self.record = self.task = None
-                self.controls._turn_retirements.pop(self.turn_id, None)
 
 
 from types import FunctionType

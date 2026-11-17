@@ -1,0 +1,127 @@
+diff --git a/tldw_chatbook/config.py b/tldw_chatbook/config.py
+index 1872f48413..65dc159bf0 100644
+--- a/tldw_chatbook/config.py
++++ b/tldw_chatbook/config.py
+@@ -8768,6 +8768,38 @@ _CONSOLE_PENDING_FACTS_IDENTITY_SOURCE = (
+ )
+ 
+ 
++# Original finite DB denylist readers; records carry no paths or authority.
++_SENSITIVE_DB_PATH_NAMES = (
++    "get_chachanotes_db_path", "get_prompts_db_path", "get_media_db_path",
++    "get_library_collections_db_path", "get_library_ingest_jobs_db_path",
++    "get_workspaces_db_path", "get_subscriptions_db_path", "get_notifications_db_path",
++    "get_research_db_path", "get_writing_db_path", "get_scheduled_tasks_db_path",
++    "get_evals_db_path", "get_rag_indexing_db_path",
++)
++_SENSITIVE_DB_PATH_SOURCE = (
++    sys.modules[__name__],
++    _config_participants,
++    profile_paths,
++    _SENSITIVE_DB_PATH_NAMES,
++    capture_definitions(
++        tuple((globals(), name, globals()[name]) for name in (
++            *_SENSITIVE_DB_PATH_NAMES,
++            "_get_custom_database_path", "get_user_data_dir", "get_cli_setting",
++            "load_cli_config_and_ensure_existence", "_warm_config_cache_hit",
++            "_load_cli_config_bootstrap", "_load_cli_config_bootstrap_unlocked",
++            "_get_effective_config_path", "_external_edit_detected", "_user_data_dir_inputs",
++            "_user_data_dir_stamps", "_resolve_user_data_dir", "get_user_folder_name",
++            "validate_path_simple", "lexical_path",
++        ))
++        + tuple((vars(_config_participants), name, getattr(_config_participants, name))
++                for name in ("operation", "verified_user_data_directory"))
++        + tuple((vars(profile_paths), name, getattr(profile_paths, name))
++                for name in ("custom_database_input", "database_leaf", "lexical_path",
++                             "user_data_dir", "data_base", "setting", "user_folder_name",
++                             "selected_default_base_data_dir", "default_base_data_dir"))
++    ),
++)
++
+ # Capture original config producers for deferred Collections and first Send.
+ _COLLECTIONS_SETUP_SOURCE = _config_participants.record_config_sources(
+     globals(),
+diff --git a/tldw_chatbook/Utils/sensitive_paths.py b/tldw_chatbook/Utils/sensitive_paths.py
+index d87a02c017..8f581c95ee 100644
+--- a/tldw_chatbook/Utils/sensitive_paths.py
++++ b/tldw_chatbook/Utils/sensitive_paths.py
+@@ -380,16 +380,69 @@ def _sensitive_db_paths() -> tuple[Path, ...]:
+     """
+     from .. import config as _config
+ 
+-    resolved: list[Path] = []
+-    for accessor_name in _DB_PATH_ACCESSOR_NAMES:
+-        accessor = getattr(_config, accessor_name, None)
+-        if accessor is None:
+-            continue
+-        try:
+-            resolved.append(accessor())
+-        except Exception as exc:  # noqa: BLE001 - defensive, additive coverage only
+-            _debug(f"sensitive_paths: could not resolve {accessor_name}: {exc}")
+-    return tuple(resolved)
++    def collect(check=None) -> tuple[Path, ...]:
++        resolved: list[Path] = []
++        for accessor_name in _DB_PATH_ACCESSOR_NAMES:
++            if check is not None:
++                check()
++            accessor = getattr(_config, accessor_name, None)
++            if accessor is None:
++                continue
++            try:
++                resolved.append(accessor())
++            except Exception as exc:  # noqa: BLE001 - defensive, additive coverage only
++                if check is not None:
++                    check()
++                _debug(f"sensitive_paths: could not resolve {accessor_name}: {exc}")
++        return tuple(resolved)
++
++    source = getattr(_config, "_SENSITIVE_DB_PATH_SOURCE", None)
++    if source is None:
++        return collect()
++    import sys
++    from .definition_records import definitions_current
++
++    owner, life, paths, names, definitions = source
++
++    def current() -> bool:
++        return (
++            _config is owner
++            and sys.modules.get("tldw_chatbook.config") is owner
++            and _config._SENSITIVE_DB_PATH_SOURCE is source
++            and _config._config_participants is life
++            and sys.modules.get(life.__name__) is life
++            and _config.profile_paths is paths
++            and life.profile_paths is paths
++            and sys.modules.get(paths.__name__) is paths
++            and _DB_PATH_ACCESSOR_NAMES == names
++            and _sensitive_db_paths is _SENSITIVE_DB_PATHS_ORIGINAL[0]
++            and _sensitive_db_paths.__code__ is _SENSITIVE_DB_PATHS_ORIGINAL[1]
++            and _debug is _SENSITIVE_DB_PATHS_ORIGINAL[2]
++            and _debug.__code__ is _SENSITIVE_DB_PATHS_ORIGINAL[3]
++            and definitions_current(definitions)
++        )
++
++    operation = life.operation
++    if not current():
++        return collect()
++
++    def require_current():
++        if not current():
++            raise life.bootstrap.RecoveryRequired("sensitive_db_sources_changed")
++
++    # Every original accessor and guarded data-directory body still runs.
++    # Optional accessor failures stay inside the loop; admission/retirement
++    # failures propagate, so no partial denylist or memo can escape them.
++    with operation(_config):
++        require_current()
++        result = collect(require_current)
++    require_current()
++    return result
++
++
++_SENSITIVE_DB_PATHS_ORIGINAL = (
++    _sensitive_db_paths, _sensitive_db_paths.__code__, _debug, _debug.__code__,
++)
+ 
+ 
+ def _sensitive_single_file_paths() -> tuple[Path, ...]:

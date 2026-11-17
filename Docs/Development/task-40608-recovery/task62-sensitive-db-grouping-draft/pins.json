@@ -1,0 +1,42 @@
+{
+  "live_preimages": [
+    {
+      "file": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\task-40608-windows-admission\\tldw_tui\\tldw_chatbook\\config.py",
+      "sha256": "aad10b5730be23bb3fa9ddf63e8aba1a93fcb0e80dc970548ab9d08d9324f0ff"
+    },
+    {
+      "file": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\task-40608-windows-admission\\tldw_tui\\tldw_chatbook\\Utils\\sensitive_paths.py",
+      "sha256": "0b4563932b599d94a7f59aba8e3c2faa1df2ef58d720327c8b54c27d57858df1"
+    }
+  ],
+  "artifact_files": [
+    {
+      "file": "product.patch",
+      "sha256": "2fc734505c5be59b7275983d649c81da95f0cf6fb152e8d2bfbfe68ef322552c"
+    },
+    {
+      "file": "tests.patch",
+      "sha256": "d7b2db91d738b83120df2dbca7814ae415b5e5fedbb14ba99797ac53a974421e"
+    },
+    {
+      "file": "config.py.before",
+      "sha256": "dd285d5cd76a1fe1f828cd9be93eaeb8255430d8997792f6ae564c9db9a96777"
+    },
+    {
+      "file": "config.py.draft",
+      "sha256": "8cdd46f015cec29d89d5bfebe2664edcd3af77c6908a686e7834e168234221cf"
+    },
+    {
+      "file": "sensitive_paths.py.before",
+      "sha256": "5fda7398e0dba58f2087828d60b02f5e13e87fcc9297a7e84f0d69e8a75c5299"
+    },
+    {
+      "file": "sensitive_paths.py.draft",
+      "sha256": "6b580c77ef4cbe9d73d5d8176d77066b927dad953a17180543d4a927f2341625"
+    },
+    {
+      "file": "test_sensitive_db_path_grouping.py.draft",
+      "sha256": "0e6059b0f3fa8b04f8c88119e0690a58eda5a6c37389552ae7708e9deeb4b99e"
+    }
+  ]
+}

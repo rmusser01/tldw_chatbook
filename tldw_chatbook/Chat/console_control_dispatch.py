@@ -306,9 +306,10 @@ class CommitPlanned:
 class _PendingPlan:
     projection: CommitPlanned
     plan: Any
-    task: asyncio.Task
-    acknowledged: asyncio.Future
+    task: asyncio.Task | None
+    acknowledged: asyncio.Future | None
     source_revision: int
+    publication_order: int
     state: str = "waiting"
 
 
@@ -943,7 +944,12 @@ class ConsoleLocalControls:
         self._runtime.cancel_received_intents()
         for session in self._store.sessions():
             self._controller._signal_stop(session_id=session.id, reason="shutdown")
-        tasks = tuple(entry[2] for entry in self._turns.values())
+        with self._lock:
+            tasks = tuple(
+                retirement.task
+                for retirement in self._turn_retirements.values()
+                if retirement.task is not None
+            )
         for task in tasks:
             if not task.done():
                 task.cancel()
@@ -989,10 +995,15 @@ class ConsoleLocalControls:
     def commit_plans(self) -> tuple[CommitPlanned, ...]:
         """Return only bounded body-free projections of original sealed plans."""
         with self._lock:
+            waiting = (
+                self._plans[key]
+                for retirement in self._turn_retirements.values()
+                for key in retirement.plan_keys
+                if self._plans[key].state == "waiting"
+            )
             return tuple(
                 item.projection
-                for item in self._plans.values()
-                if item.state == "waiting"
+                for item in sorted(waiting, key=lambda item: item.publication_order)
             )
 
     @property
@@ -1023,6 +1034,14 @@ class ConsoleLocalControls:
         ):
             raise RuntimeError("Commit does not belong to the received control request")
         identity = entry[0]
+        invocation = self._turn_retirements.get(turn_id)
+        if (
+            invocation is None
+            or invocation.identity is not identity
+            or invocation.record is not source.record
+            or invocation.task is not source.task
+        ):
+            raise RuntimeError("Console commit retirement owner changed")
         reservation = _ControlReservation(self, owner, [])
         reservation.effect = self._begin_effect(
             "commit_reservation", reservation, _command_source.get()
@@ -1042,7 +1061,7 @@ class ConsoleLocalControls:
                 or plan.recovery is None
             ):
                 raise RuntimeError("Console commit source is fenced")
-            ordinal = 1 + sum(key[0] == turn_id for key in self._plans)
+            ordinal = len(invocation.plan_keys) + 1
             projection = CommitPlanned(
                 identity.request_id,
                 turn_id,
@@ -1056,8 +1075,10 @@ class ConsoleLocalControls:
                 source.task,
                 self._loop.create_future(),
                 identity.source_revision,
+                len(self._plans),
             )
             self._plans[turn_id, ordinal] = pending
+            invocation.plan_keys.append((turn_id, ordinal))
             reservation.pending = pending
         from .console_backend_presentation import ConsoleBackendPresentation
 
@@ -1186,11 +1207,20 @@ class ConsoleLocalControls:
     def native_commit_effect(self, plan, retirement):
         """Linearize the actual worker immediately before original native preflight."""
         with self._lock:
-            pending = next(
-                (item for item in self._plans.values() if item.plan is plan), None
+            owner = self._controller._ordinary_native_commits.get(
+                plan.acceptance.preparation_id
             )
+            reservation = getattr(owner, "control_reservation", None)
+            pending = getattr(reservation, "pending", None)
             if (
-                pending is None
+                type(reservation) is not _ControlReservation
+                or reservation.controls is not self
+                or reservation.owner is not owner
+                or type(pending) is not _PendingPlan
+                or self._plans.get(
+                    (pending.projection.turn_id, pending.projection.ordinal)
+                ) is not pending
+                or pending.plan is not plan
                 or pending.state != "started"
                 or pending.task is not plan.source.task
                 or pending.source_revision != self._source_revision
@@ -1381,11 +1411,13 @@ class ConsoleLocalControls:
                 self._fence = fence
                 self._fence_drained = False
                 self._publication_started = False
-                for pending in self._plans.values():
-                    if pending.state in {"waiting", "acknowledged"}:
-                        pending.state = "conflict"
-                        self._fenced_turns.add(pending.projection.turn_id)
-                        pending.task.cancel()
+                for retirement in self._turn_retirements.values():
+                    for key in retirement.plan_keys:
+                        pending = self._plans[key]
+                        if pending.state in {"waiting", "acknowledged"}:
+                            pending.state = "conflict"
+                            self._fenced_turns.add(pending.projection.turn_id)
+                            pending.task.cancel()
             self._retain_control_work(receipt, self._finish_source_fence(fence))
             return receipt
         if type(command) in (CloseIntake, Drain, Shutdown):
@@ -1457,7 +1489,8 @@ class ConsoleLocalControls:
                 ):
                     self._fenced_turns.add(command.turn_id)
                     pending.state = "conflict"
-                    pending.task.cancel()
+                    if pending.task is not None:
+                        pending.task.cancel()
                     raise RuntimeError("Conflicting Console plan acknowledgement")
                 if pending.state == "waiting":
                     pending.state = "acknowledged"

@@ -1,0 +1,128 @@
+{
+  "status": "artifact-only incomplete selected parent integration; no native/UI qualification",
+  "prior_review_patch_sha256": "195613eab53db9ea48b283239776f9cd17458b0fa727e9fa748f84bb1fe5796c",
+  "files": [
+    {
+      "path": "tldw_chatbook/Chat/console_execution_process.py",
+      "baseline": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v2\\baseline\\tldw_chatbook\\Chat\\console_execution_process.py",
+      "before_sha256": "f01912e11a843fd08b77ff773f8b7d419e4b83914c7850341061b94350c26a1a",
+      "absence_observed": false,
+      "proposed": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v2\\proposed\\tldw_chatbook\\Chat\\console_execution_process.py",
+      "after_sha256": "4186b72ae5ccbf6072eaf475e18dc980463ae2fc183990ca95067cf654f2b3f3",
+      "ast_parse": true
+    },
+    {
+      "path": "tldw_chatbook/app.py",
+      "baseline": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v2\\baseline\\tldw_chatbook\\app.py",
+      "before_sha256": "a5bb093a5476fc257e1bdf11bfe72597efdddd6a34e58f77c5ddac29711acd81",
+      "absence_observed": false,
+      "proposed": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v2\\proposed\\tldw_chatbook\\app.py",
+      "after_sha256": "aabb326e29f6be6583410b6e11c2967524cfe6e02ee973ffe853c2f1f751dbd4",
+      "ast_parse": true
+    },
+    {
+      "path": "tldw_chatbook/app_lifecycle.py",
+      "baseline": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v2\\baseline\\tldw_chatbook\\app_lifecycle.py",
+      "before_sha256": "076490bad73a56c88f5012964a9251b6c84c9e83257c3065e88bf006ab64cac2",
+      "absence_observed": false,
+      "proposed": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v2\\proposed\\tldw_chatbook\\app_lifecycle.py",
+      "after_sha256": "330b3b500d0d5852561652dbbea3881c97b4e1fd53e498658529af58329ab141",
+      "ast_parse": true
+    },
+    {
+      "path": "tldw_chatbook/app_service_wiring.py",
+      "baseline": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v2\\baseline\\tldw_chatbook\\app_service_wiring.py",
+      "before_sha256": "9152b7757cc11265db73d01eda633c8c56cb1c26721e9ffeba943b9e275ed1f6",
+      "absence_observed": false,
+      "proposed": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v2\\proposed\\tldw_chatbook\\app_service_wiring.py",
+      "after_sha256": "0813965716b2e10e0ebf51970f13e5bdb6ba1c63c91fbd1812662ee615546f9a",
+      "ast_parse": true
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_runtime.py",
+      "baseline": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v2\\baseline\\tldw_chatbook\\Chat\\console_runtime.py",
+      "before_sha256": "3da077c4d01d6e8d2582a10d3a64cffd8a3bcbb25ad6dc6fb1b450f9686d258e",
+      "absence_observed": false,
+      "proposed": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v2\\proposed\\tldw_chatbook\\Chat\\console_runtime.py",
+      "after_sha256": "cb863ad352d8ddc73749d6fc7a2f4b68f4045b3277a93b261649757336079cd2",
+      "ast_parse": true
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_execution_session_surface.py",
+      "baseline": null,
+      "before_sha256": null,
+      "absence_observed": true,
+      "proposed": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v2\\proposed\\tldw_chatbook\\Chat\\console_execution_session_surface.py",
+      "after_sha256": "0afdbd9567cf9daf6608cb989c705494e0dc4f69fb9a74498bd6c0b4fa2d3438",
+      "ast_parse": true
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/execution_sessions.py",
+      "baseline": null,
+      "before_sha256": null,
+      "absence_observed": true,
+      "proposed": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v2\\proposed\\tldw_chatbook\\UI\\Console_Modules\\execution_sessions.py",
+      "after_sha256": "c2db80fecc724fa98e12553223d7b7c1e8bdfd2fffb3502ccadfb754c8004b56",
+      "ast_parse": true
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/execution_projection.py",
+      "baseline": null,
+      "before_sha256": null,
+      "absence_observed": true,
+      "proposed": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v2\\proposed\\tldw_chatbook\\UI\\Console_Modules\\execution_projection.py",
+      "after_sha256": "3075eb9860ce5b408fa5406acf1fa15f6b40afad1b55b68305cc0ec139ea4e25",
+      "ast_parse": true
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_backend_presentation.py",
+      "baseline": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v2\\baseline\\tldw_chatbook\\Chat\\console_backend_presentation.py",
+      "before_sha256": "eead85ac83346a0b48a21590cb2724a304546e29f4f1eac9c0f6ec5026a4eced",
+      "absence_observed": false,
+      "proposed": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v2\\proposed\\tldw_chatbook\\Chat\\console_backend_presentation.py",
+      "after_sha256": "aeb23e9bfa42f8d9c3b62e848a44cbc166445ffe272bed7d198e7902b93e9665",
+      "ast_parse": true
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_execution_projection_result.py",
+      "baseline": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v2\\baseline\\tldw_chatbook\\Chat\\console_execution_projection_result.py",
+      "before_sha256": "3bbfbcd1da4d222e600acb37629e489e83ba09cea323357e9d2ec26dc6751470",
+      "absence_observed": false,
+      "proposed": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v2\\proposed\\tldw_chatbook\\Chat\\console_execution_projection_result.py",
+      "after_sha256": "cf17042141ed5786a7a0c549be78c4b3018d7b477dddaadbb3bb7daa9972e6c0",
+      "ast_parse": true
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_control_dispatch.py",
+      "baseline": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v2\\baseline\\tldw_chatbook\\Chat\\console_control_dispatch.py",
+      "before_sha256": "393542f35bf39d779d2fdb81d43d2a5be94e8daa0dd9a4a31ef37590d9a5f42e",
+      "absence_observed": false,
+      "proposed": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v2\\proposed\\tldw_chatbook\\Chat\\console_control_dispatch.py",
+      "after_sha256": "a0186716d205426d1a1efd0981567d0fb7eea476848c4adc2a33d697a50c5396",
+      "ast_parse": true
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_backend_readiness.py",
+      "baseline": null,
+      "before_sha256": null,
+      "absence_observed": true,
+      "proposed": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v2\\proposed\\tldw_chatbook\\Chat\\console_backend_readiness.py",
+      "after_sha256": "77298b61ffb3b8bf68800ff75e5ac52502815b4994b7d30fa1ec75e0fade57a6",
+      "ast_parse": true
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_execution_composition_values.py",
+      "baseline": null,
+      "before_sha256": null,
+      "absence_observed": true,
+      "proposed": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v2\\proposed\\tldw_chatbook\\Chat\\console_execution_composition_values.py",
+      "after_sha256": "484fad1f0ef083fb6fb9acb9b6bd8634fe2168fe9c13cc0fb79cdadd46e7561c",
+      "ast_parse": true
+    }
+  ],
+  "live_preimage_mismatches": [
+    "tldw_chatbook/Chat/console_control_dispatch.py"
+  ],
+  "patch_sha256": "c6e297def58c0cf0019f7b8b72988913145d3776d74f08ce084558c94972866a",
+  "diff_line_endings": "LF normalized only for unified diff; exact original/proposal bytes retained"
+}
