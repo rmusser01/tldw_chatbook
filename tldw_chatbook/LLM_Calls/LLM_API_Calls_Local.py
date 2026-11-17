@@ -108,9 +108,6 @@ def _extract_text_from_message_content(
     return "\n".join(text_parts).strip()
 
 
-# Most local LLMs with OpenAI-compatible endpoints (like LM Studio, Jan.ai, many Ollama setups)
-# can use a generic handler.
-@_provider_recovery.unqualified
 def _refuse_a_refused_endpoint(
     display_name: str, endpoint: object, contract_key: str = "custom", provider: str | None = None
 ) -> None:
@@ -142,6 +139,9 @@ def _refuse_a_refused_endpoint(
         )
 
 
+# Most local LLMs with OpenAI-compatible endpoints (like LM Studio, Jan.ai, many Ollama setups)
+# can use a generic handler.
+@_provider_recovery.unqualified
 def _chat_with_openai_compatible_local_server(
     api_base_url: str,
     model_name: Optional[str],

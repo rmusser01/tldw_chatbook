@@ -4217,3 +4217,14 @@ def test_every_engine_preset_still_resolves_its_shipped_base():
         environ={},
     )
     assert relaxed.base_url == "https://api.deepinfra.com/v1/openai"
+
+
+def test_the_shared_local_transport_keeps_its_recovery_wrapper():
+    """Review r15ep-rev1 M-1: inserting the refusal helper between
+    ``@_provider_recovery.unqualified`` and the transport moved the decorator
+    onto the helper, so local sends and streams lost recovery admission."""
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls_Local as local_calls
+
+    transport = local_calls._chat_with_openai_compatible_local_server
+    assert transport.__wrapped__.__name__ == "_chat_with_openai_compatible_local_server"
+    assert not hasattr(local_calls._refuse_a_refused_endpoint, "__wrapped__")
