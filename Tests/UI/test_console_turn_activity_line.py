@@ -999,6 +999,9 @@ def _sync_stub(activity: str, effective: str | None = None):
         set_generation_card_specs=Mock(),
         set_video_card_specs=Mock(),
         refresh_messages=AsyncMock(),
+        # TASK-41307: the sync tick also repaints the status chips' held-slots
+        # segment; query_one answers every selector with this one stand-in.
+        sync_held_slots=Mock(),
     )
     screen = MagicMock()
     screen.query_one = Mock(return_value=transcript)
