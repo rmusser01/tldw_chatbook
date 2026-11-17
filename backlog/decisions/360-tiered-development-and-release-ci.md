@@ -18,6 +18,8 @@ A default-branch-owned nightly dispatcher requests the existing broad regression
 
 PRs targeting main require broad regression plus the existing comprehensive Tests workflow and package build/install checks through reusable workflows. Publication also depends on successful comprehensive qualification and package checks on that exact main commit; neither a previous night's result nor another SHA is accepted. Weekly or fortnightly releases remain an owner decision, not automatic publishing on a timer.
 
+Main protection requires both the stable Derived context and the existing nested `Full release qualification` verdict, bound to GitHub Actions. A dev-push smoke run emits the same Derived name; GitHub accepts eligible push checks, so that shared name alone does not explicitly distinguish release evidence. Verify the nested verdict's exact emitted context before configuring protection; the skipped reusable-workflow wrapper is not the verdict. This adds no jobs or runtime.
+
 Use GitHub-hosted runners for smoke, regression and comprehensive qualification. The owner canceled the entire self-hosted CI effort and its benchmark on 2026-11-17. Neither is a prerequisite for this policy. The new smoke job directly selects a hosted runner; existing broad jobs use their hosted defaults with the runner variables unset.
 
 ## Rollout and rollback
