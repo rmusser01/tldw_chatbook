@@ -1,7 +1,8 @@
-# Development, nightly and release CI (TASK-40998 / ADR-360)
+# Development, nightly and release CI (TASK-41564 / ADR-360)
 
 This policy is **prepared, not activated**. `CI_TIERED_ENABLED` must remain unset
-until the rollout checks below pass. ADR-359 owns runner isolation and limits.
+until the rollout checks below pass. Execution uses GitHub-hosted runners. The owner
+canceled the entire self-hosted CI effort and benchmark on 2026-11-17.
 
 | Event | Checks | Blocking result |
 | --- | --- | --- |
@@ -9,7 +10,7 @@ until the rollout checks below pass. ADR-359 owns runner isolation and limits.
 | PR into dev, opt-in true | Preflight, CI contracts, core smoke, representative checks for changed Chat/UI/Widgets/Notes/CSS subsystems | Same context, fail-closed |
 | High-risk or unclassified dev PR | Existing broad census; no test command removed | Same context |
 | Protected dev push, opt-in true | Preflight, CI contracts and core smoke on the merged tree | Push result; does not rerun every PR matrix |
-| Nightly, changed dev | Existing broad census, all smoke selections and Library shell matrix | Nightly regression **workflow conclusion**, including Library shell |
+| Nightly, changed dev | Existing broad census, all smoke selections, Library shell matrix and Backup_Recovery owner suites | Nightly regression **workflow conclusion**, including Library shell |
 | PR into main | Broad regression, comprehensive core/UI suite, native lease contracts, package build and installed-distribution checks | Same stable required context |
 | Protected main push / manual TestPyPI publication | Comprehensive tests and package checks on that exact commit before publishing | Both publishing jobs need successful qualification |
 
@@ -19,8 +20,8 @@ not a measured server guarantee. The exact combined light-job invocation passed
 rebasing onto #3529, all mapped selections plus CI contracts passed 1,977 tests
 with one intentional skip in 184.02 seconds locally. These are different test
 sets, not a speed comparison. The
-isolated smoke union passed 291 cases in 68.98 seconds. Qualify it under local-runner
-load before reporting an end-to-end number. It covers representative seams, not
+isolated smoke union passed 291 cases in 68.98 seconds. Measure the hosted job
+from creation through the required aggregate before reporting an end-to-end number. It covers representative seams, not
 all transitive effects of a changed module. Most coverage is intentionally nightly.
 
 ## Selection and failure behavior
@@ -57,19 +58,17 @@ The old `nightly-deep.yml` remains disabled. This new nightly preserves the curr
 regression census, not the full Tests tree or the old deep cross-platform matrix.
 Comprehensive core/UI plus the existing native lease checks run for releases;
 other platform-specific qualification workflows remain separately available.
-Bulk regression/release jobs keep hosted runners because their budgets exceed
-our local worker lifetime. Local smoke/PR jobs keep fork fallback and VM isolation.
+Smoke, regression and release jobs use hosted runners. The light job directly
+selects `ubuntu-latest`, including fork PRs. Existing broad workflows select
+their hosted defaults with `CI_TEST_RUNNER` and `CI_CONTROL_RUNNER` unset.
 
 ## Rollout (do not skip steps)
 
-1. Let #3529 merge and retain its complete baseline. Rebase this separate policy
-   PR onto that dev commit; preserve its queue/Qodo review requirements.
-   #3529 merged as `d46f753d8287cffd48706f912bfd838dc8756edb`. Its successful
-   run [43612634465](https://github.com/rmusser01/tldw_chatbook/actions/runs/43612634465)
-   reached the required aggregate in **1h28m09s** from creation and **1h26m50s**
-   from first execution, using **626.43 runner-minutes** (51 successful jobs,
-   one expected skip). Initial queue wait was 79 seconds. Preserve #3532's
-   controlled comparison window before starting policy server measurements.
+1. Rebase only this policy onto current dev and retain a successful hosted full
+   PR gate as the timing baseline. The earlier #3529 result is historical
+   evidence from the canceled local-runner topology and does not measure the
+   current hosted rollout. The canceled #3532 benchmark and #3537 migration
+   impose no wait on light CI. Preserve current queue and review requirements.
 2. Run affected workflow contracts and actionlint. Run one normal full PR gate
    for this policy head. Keep `CI_TIERED_ENABLED` unset throughout preparation.
 3. Merge the policy into dev. Promote only `regression-nightly.yml` to default
@@ -80,8 +79,10 @@ our local worker lifetime. Local smoke/PR jobs keep fork fallback and VM isolati
    every light selection, proving both coverage paths before cutover. Retain SHA,
    job conclusions, runner identities and wall time; don't treat dispatch success
    as test success. Check the next scheduled execution as well.
-5. Qualify one exact release candidate through a safe PR or reusable qualification
-   run. Do not publish to PyPI/TestPyPI or merge a product release merely to test.
+5. Qualify one exact release candidate through a safe PR or run
+   `gh workflow run derived-artifacts.yml --ref <candidate-branch> -f release=true`.
+   Pin and retain the resulting event SHA. This calls comprehensive tests and
+   package/install checks, with no publication job in the workflow. Do not publish to PyPI/TestPyPI or merge a product release merely to test.
    Require `Derived artifacts reproduce from their sources` on main with
    strict/latest-base and admin enforcement, after verifying that context is
    emitted by a PR targeting main. Read/merge with existing
@@ -94,7 +95,7 @@ our local worker lifetime. Local smoke/PR jobs keep fork fallback and VM isolati
    association, resolved reviews, mapped/unknown/high-risk/fork routing,
    fail-closed missing/skipped/cancelled outcomes, nightly SHA/all jobs/active
    schedule/deduplication/retry, release SHA/tests/package dependencies,
-   branch protection/admin enforcement, runner isolation and benchmark overlap.
+   branch protection/admin enforcement and hosted runner selection.
    Enable `CI_TIERED_ENABLED=true` only after these checks pass. Verify normal
    mapped-source PR selection, broad fallback and post-merge smoke; compare
    measured wall time with the broad baseline. Clear the flag if cutover fails.
