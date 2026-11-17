@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import replace
+from functools import partial
 
 from ...Chat.console_control_dispatch import ConsoleProjection
 from ...Chat.console_execution_process import ConsoleExecutionClient
@@ -390,7 +391,7 @@ def refresh_selected_when_due(screen: ChatScreen) -> None:
     if client is None or time.monotonic() < client._readiness_deadline:
         return
     screen._console_attach_reconcile_worker = screen.run_worker(
-        lambda: reconcile_selected_view(screen),
+        partial(reconcile_selected_view, screen),
         group="console-attach-reconciliation", exclusive=False,
     )
 
