@@ -3,7 +3,7 @@ id: TASK-41138
 title: "Console and Buddy test leftovers: a two-MCP-rounds payload flake, a cold-home Buddy child deadline, test_buddy_conversation_modal.py on no lane, and test_fleet_wake_retry.py without a profile marker"
 status: Done
 created_date: 2026-11-15 02:20
-updated_date: 2026-11-17 02:54
+updated_date: 2026-11-17 03:46
 assignee:
 - '@claude'
 labels:
@@ -66,3 +66,4 @@ Filed in round 14 of the 2026-10-23 burn-down (closeout, 2026-11-15). Checked ag
   - The Buddy guide (`Docs/User_Guide/buddies.md`) already says a reply is typed and sent "without changing the underlying screen"; the fix makes that true from a cold Home, so no doc change.
   - `Tests/Persona_Buddy` at `-n 4`: the same 19 failures on this branch and on the base worktree (identical sets), none touching this change.
   - Files: `tldw_chatbook/UI/Navigation/buddy_conversation.py`, `Tests/UI/test_buddy_conversation_modal.py`, `Tests/UI/test_console_mcp_approval.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`.
+- **Review r15ti-rev2 (fix round 2).** `_publish_skill_trust` now returns at once when there is no local skills service (only `TldwCli` has one) and calls `app.ensure_local_skill_trust_service()` directly: the `getattr(app, "ensure_local_skill_trust_service", None)` lookup had taken `test_app_string_lookups_match_their_pin[UI]` to 1291 against its 1290 pin (red at the previous commit; green now, the census file 31 passed; the pin is unchanged). The pre-check uses `is not None`, and after the await the service is stored only if the slot is still empty, so a trust service another owner installed meanwhile is kept. The cold-home census entry has its own comment. Runs: the cold-home node 2 of 2 serially (36.6 s, 35.5 s, load ~34); the Buddy modal file at `-n 4`, 48 passed; census checker OK (2181); ruff gate rc 0.

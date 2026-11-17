@@ -16,15 +16,18 @@ async def _publish_skill_trust(app: Any) -> None:
     has, and capture reads the local skills service's slot without building
     it, so the first Buddy send was refused with
     ``RecoveryRequired('console_capture_source_not_ready')``. The build does
-    keyring discovery, so it runs through the app's off-loop builder.
+    keyring discovery, so it runs through the app's off-loop builder. Only
+    `TldwCli` holds a local skills service; any other app returns at once.
     """
     fields = vars(app)
     scope = fields.get("_skills_scope_service")
     local = getattr(scope, "local_service", None) or fields.get("_local_skills_service")
-    ensure = getattr(app, "ensure_local_skill_trust_service", None)
-    if local is None or not callable(ensure) or vars(local).get("_trust_service"):
+    if local is None or vars(local).get("_trust_service") is not None:
         return
-    local.trust_service = await ensure()
+    service = await app.ensure_local_skill_trust_service()
+    # Keep one another owner installed meanwhile, as Console preparation does.
+    if vars(local).get("_trust_service") is None:
+        local.trust_service = service
 
 
 @dataclass

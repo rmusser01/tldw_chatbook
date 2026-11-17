@@ -3253,4 +3253,6 @@ Tests/UI/test_settings_custom_endpoints.py::test_settings_screen_duplicate_seeds
 Tests/UI/test_settings_custom_endpoints.py::test_settings_screen_duplicate_reports_missing_slug_instead_of_blank
 Tests/UI/test_settings_custom_endpoints.py::test_settings_screen_duplicate_falls_back_to_view_config_when_snapshot_read_only
 Tests/UI/test_settings_custom_endpoints.py::test_settings_screen_edit_flow_clears_env_var_reference
+# TASK-41138 review r15ti-rev1 (2026-11-17): the cold-home Buddy send, laned once
+# the product stopped refusing it (35.0-99.5 s serially, load 47-76).
 Tests/UI/test_buddy_conversation_modal.py::test_cold_home_saved_buddy_bootstraps_only_after_explicit_open
