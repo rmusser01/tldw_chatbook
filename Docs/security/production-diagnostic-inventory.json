@@ -5161,7 +5161,7 @@
     },
     {
       "call_count": 111,
-      "diagnostic_digest": "e3e412b1f9591809e84e",
+      "diagnostic_digest": "25c1cd66b2418cc4affd",
       "owner": "TASK-494",
       "path": "tldw_chatbook/config.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -11613,10 +11613,10 @@
           "status": "legacy_unreviewed"
         },
         {
-          "call_digest": "632927efbc7d9d1c",
+          "call_digest": "d1d19f4c025bc920",
           "method": "debug",
           "path_expressions": [
-            "list(loaded_config.keys())"
+            "[k for k in loaded_config if not str(k).startswith('legacy_')]"
           ],
           "scope": "_load_cli_config_bootstrap_unlocked",
           "status": "legacy_unreviewed"
