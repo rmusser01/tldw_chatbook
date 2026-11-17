@@ -72,3 +72,5 @@ Outcome: 7 of 8 nodes pass; `test_runtime_first_send_retains_changed_original_so
 **AC #3.** Not ticked: workflows are off-limits to this task. The file should join `pr-fast-lane-admission` ("Run admission-sensitive suites") once the source_loss node is resolved, or join now with that node deselected.
 
 Files: `Tests/console_provider_doubles.py`, `Tests/Chat/test_console_first_send_survivor_native.py`.
+
+**Verification (2026-11-17, branch fu/41315-storage-sources-first-send).** `./scripts/preflight.sh` passed. `Tests/Architecture` (serial): 3 failed, 1418 passed. The same 3 also fail on base fbf1c9ea74 (`test_reviewed_diagnostic_changes_are_metadata_only`, plus two in `test_timer_path_static_update_inventory.py`). Covering files at `-n 4`, base = head: `test_console_skill_substitution.py` 39/39, `test_console_ordinary_tree_widening.py` 17/17, `test_native_v2_command_events.py` 35/35, `test_native_v2_mcp_events.py` 37 pass / 6 fail with the same 6 failing on both. The machine was shared throughout (load 50-117).

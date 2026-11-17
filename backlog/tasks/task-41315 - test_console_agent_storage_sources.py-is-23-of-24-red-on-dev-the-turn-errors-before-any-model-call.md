@@ -70,3 +70,5 @@ Before the fix, all of these were masked: every turn was refused at its first st
 **AC #3.** Not ticked. The file should not join a lane until the hangs above are resolved: a hung teardown would hold a lane worker. After that it belongs with `pr-fast-lane-admission`.
 
 Files: `tldw_chatbook/Agents/activation.py`, `tldw_chatbook/Agents/hooks_v2/native_commands.py`, `Tests/Chat/test_console_agent_storage_sources.py` (shared double: see TASK-41316).
+
+**Verification (2026-11-17, branch fu/41315-storage-sources-first-send).** `./scripts/preflight.sh` passed. `Tests/Architecture` (serial): 3 failed, 1418 passed. The same 3 also fail on base fbf1c9ea74 (`test_reviewed_diagnostic_changes_are_metadata_only`, plus two in `test_timer_path_static_update_inventory.py`). Covering files at `-n 4`, base = head: `test_console_skill_substitution.py` 39/39, `test_console_ordinary_tree_widening.py` 17/17, `test_native_v2_command_events.py` 35/35, `test_native_v2_mcp_events.py` 37 pass / 6 fail with the same 6 failing on both. The machine was shared throughout (load 50-117).
