@@ -279,11 +279,19 @@ class ConsoleBackendPresentation:
             or not _definition_current(_WORKSPACE_RECEIPTS_GETTER)):
             raise RuntimeError("Console workspace receipts getter changed")
         receipts = self._runtime.activity_receipts
-        if receipts is not None and type(receipts) is not ConsoleActivityReceiptService:
+        receipt_reader = _WORKSPACE_RECEIPTS
+        delegate = None
+        if type(receipts) is _LazyConsoleActivityReceiptService:
+            receipt_reader = _LAZY_WORKSPACE_RECEIPTS
+            delegate = receipts._delegate
+        elif receipts is not None and type(receipts) is not ConsoleActivityReceiptService:
             raise RuntimeError("Console workspace receipts owner changed")
+        if delegate is not None and type(delegate) is not ConsoleActivityReceiptService:
+            raise RuntimeError("Console workspace receipts delegate changed")
         for receiver, name, record in (
             (bridge, "progress_counts", _WORKSPACE_PROGRESS),
-            (receipts, "unseen_snapshot", _WORKSPACE_RECEIPTS),
+            (receipts, "unseen_snapshot", receipt_reader),
+            (delegate, "unseen_snapshot", _WORKSPACE_RECEIPTS),
         ):
             if receiver is None:
                 continue
@@ -736,9 +744,11 @@ _COMPOSITION_RUNTIME_METHODS = tuple(
 )
 
 from .console_activity_receipts import ConsoleActivityReceiptService
+from .console_runtime import _LazyConsoleActivityReceiptService
 
 _WORKSPACE_PROGRESS = _definition(_CompositionBridge.progress_counts)
 _WORKSPACE_RECEIPTS = _definition(ConsoleActivityReceiptService.unseen_snapshot)
+_LAZY_WORKSPACE_RECEIPTS = _definition(_LazyConsoleActivityReceiptService.unseen_snapshot)
 _WORKSPACE_RECEIPTS_PROPERTY = getattr_static(_CompositionRuntime, "activity_receipts")
 _WORKSPACE_RECEIPTS_GETTER = _definition(_WORKSPACE_RECEIPTS_PROPERTY.fget)
 
