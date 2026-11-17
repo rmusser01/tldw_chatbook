@@ -613,7 +613,8 @@ RECOVERED_SUITES_TARGETS = (
     "Tests/Chat/test_trace_v2_collaboration.py::test_an_older_bundle_holding_a_newly_masked_shape_is_refused_on_import",
     # TASK-41133: compound credential labels come from the log sanitizer's
     # list, the must-mask and must-keep tables hold, a value keeps its closing
-    # bracket, a masked run stops before the next field, adversarial text and
+    # bracket, a masked run stops before the next field, code is masked with
+    # the literals next to it, no value lingers in a cache, adversarial text and
     # long chains scan in bounded time, and the legacy ledger node covers a v1
     # and a v2 ledger under v3.
     "Tests/Chat/test_trace_v2_collaboration.py::test_the_bundle_masks_compound_labels_with_the_log_sanitizers_own_labels",
@@ -621,6 +622,8 @@ RECOVERED_SUITES_TARGETS = (
     "Tests/Chat/test_trace_v2_collaboration.py::test_every_look_alike_in_the_must_keep_table_is_kept_and_imports",
     "Tests/Chat/test_trace_v2_collaboration.py::test_a_masked_label_value_keeps_its_closing_bracket_and_full_stop",
     "Tests/Chat/test_trace_v2_collaboration.py::test_a_masked_run_stops_before_the_next_field",
+    "Tests/Chat/test_trace_v2_collaboration.py::test_code_next_to_a_secret_is_masked_whole",
+    "Tests/Chat/test_trace_v2_collaboration.py::test_masking_never_caches_value_text",
     "Tests/Chat/test_trace_v2_collaboration.py::test_adversarial_bundle_text_is_masked_in_bounded_time",
     "Tests/Chat/test_trace_v2_collaboration.py::test_escape_quoted_values_scan_in_linear_time",
     "Tests/Chat/test_trace_v2_collaboration.py::test_runs_after_a_value_scan_in_linear_time",

@@ -866,6 +866,42 @@ _MUST_MASK: dict[str, tuple[str, str]] = {
     "function-word-mixed-case": ("client" + _L + "secret: the XkmPvLwQabcd", "XkmPvLwQabcd"),
     "default-changeme": ("db" + _L + 'password=os.getenv("DB_PASSWORD", "changeme")', "changeme"),
     "angle-symbols": ("db" + _L + "password=<p@ss!word>", "p@ss!word"),
+    # rev7 (probe14): a literal next to kept code is judged with it
+    "fallback-or": ("SECRET" + _L + 'KEY=os.getenv("SECRET_KEY") or "dev-' + _P8 + '"', "dev-" + _P8),
+    "fallback-js-or": (
+        "client" + _L + 'secret: process.env.CLIENT_SECRET || "GOCSPX-' + _P8 + '"',
+        "GOCSPX-" + _P8,
+    ),
+    "fallback-or-single-quotes": (
+        "client" + _L + "secret=os.environ.get('CLIENT_SECRET') or 'GOCSPX-" + _P8 + "'",
+        "GOCSPX-" + _P8,
+    ),
+    "fallback-ternary": (
+        "client" + _L + 'secret=os.environ["CLIENT_SECRET"] if prod else "GOCSPX-' + _P8 + '"',
+        "GOCSPX-" + _P8,
+    ),
+    "keyword-default": ("db" + _L + 'password=os.getenv("DB_PASSWORD", default="hunter2x")', "hunter2x"),
+    "keyword-value": ("client" + _L + 'secret=SecretStr(value="GOCSPX-' + _P8 + '")', "GOCSPX-" + _P8),
+    "concat-after-name": ("client" + _L + 'secret=prefix + "' + _P8 + '"', _P8),
+    "concat-after-constant": ("client" + _L + 'secret=CLIENT_SECRET + "' + _P8 + '"', _P8),
+    # rev7 (probe9 adapted): the rule's own parts
+    "fallback-js-ternary": (
+        "client" + _L + 'secret: process.env.CLIENT_SECRET ? fallback : "GOCSPX-' + _P8 + '"',
+        "GOCSPX-" + _P8,
+    ),
+    "fallback-comparison": (
+        "client" + _L + 'secret=os.environ["CLIENT_SECRET"] if env == "dev" else "GOCSPX-' + _P8 + '"',
+        "GOCSPX-" + _P8,
+    ),
+    "call-word-argument": ("access" + _L + 'token=SecretStr("hunter")', "hunter"),
+    "call-capitals-digit": ("client" + _L + 'secret=SecretStr("HUNTER2")', "HUNTER2"),
+    "tail-random-word": ("client" + _L + "secret=CLIENT_SECRET or " + _P8, _P8),
+    "nested-call": ("client" + _L + 'secret=f(g("GOCSPX-' + _P8 + '"))', "GOCSPX-" + _P8),
+    # rev7 (probe14, probe12): a function word before random letters
+    "function-word-capitals": ("client" + _L + "secret: the XKQZVBNMPLWRTDXK", "XKQZVBNMPLWRTDXK"),
+    "function-word-lowercase-token": ("client" + _L + "secret: use gocspx-abcdefghijklmn", "gocspx-abcdefghijklmn"),
+    "function-word-consonants": ("client" + _L + "secret: see xkqzvbnmplwrtd", "xkqzvbnmplwrtd"),
+    "function-word-mixed-vowels": ("client" + _L + "secret: the QaZeRtYuIoPa", "QaZeRtYuIoPa"),
 }
 
 #: name -> text that must survive a shared bundle unchanged.
@@ -948,6 +984,15 @@ _MUST_KEEP: dict[str, str] = {
     "function-word-docs": "client" + _L + "secret: see the OAuth2 docs",
     "function-word-fields": "refresh" + _L + "token: the token expired at 10:30, retry_after=60 code=E401",
     "function-word-piped-fields": "client" + _L + "secret: see the OAuth2 docs | request_id=abc123 | status=401",
+    # rev7: code whose literals are all look-alikes, fallbacks included
+    "fallback-two-lookups": "client" + _L + 'secret=os.getenv("X") or os.getenv("Y")',
+    "default-none": "client" + _L + 'secret=os.environ.get("CLIENT_SECRET", None)',
+    "keyword-default-none": "client" + _L + 'secret=os.environ.get("CLIENT_SECRET", default=None)',
+    "ternary-none": "client" + _L + 'secret=cfg["client_secret"] if cfg else None',
+    "env-name-any": "client" + _L + "secret=os.getenv('MY_APP_CS')",
+    "dict-entry": '{"client' + _L + 'secret": os.environ["CLIENT_SECRET"], "user": "bob"}',
+    "keyword-argument-then-field": "Client(client" + _L + 'secret=os.getenv("CLIENT_SECRET"), timeout=30)',
+    "function-word-acronym": "client" + _L + "secret: see HTTPS docs",
 }
 
 
@@ -1049,6 +1094,69 @@ def test_a_masked_run_stops_before_the_next_field(text: str, expected: str) -> N
     assert trajectory_export._credential_text(text) == (expected, True)
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (
+            "db" + '_password=os.getenv("DB_PASSWORD", default="hunter2x")',
+            "db" + "_password=[credential redacted]",
+        ),
+        (
+            "client" + '_secret=SecretStr(value="GOCSPX-' + _P8 + '")',
+            "client" + "_secret=[credential redacted]",
+        ),
+        ("client" + '_secret=SecretStr("secret")', "client" + "_secret=[credential redacted]"),
+        (
+            "client" + '_secret=f(g("GOCSPX-' + _P8 + '")), user=bob',
+            "client" + "_secret=[credential redacted], user=bob",
+        ),
+        (
+            "SECRET" + '_KEY=os.getenv("SECRET_KEY") or "dev-' + _P8 + '"; DEBUG=1',
+            "SECRET" + "_KEY=[credential redacted]; DEBUG=1",
+        ),
+    ],
+    ids=("keyword-default", "keyword-value", "call-word", "nested-call", "fallback-then-statement"),
+)
+def test_code_next_to_a_secret_is_masked_whole(text: str, expected: str) -> None:
+    """Review r15tr-rev7: code and the literals next to it (a keyword
+    argument, a fallback after ``or``) are masked as one span, never in part,
+    and what follows the expression stays visible."""
+    assert trajectory_export._credential_text(text) == (expected, True)
+
+
+def test_masking_never_caches_value_text() -> None:
+    """Review r15tr-rev7: a secret must not linger in an ``lru_cache`` after
+    masking. Only label text is cached; new values leave every cache the size
+    it was once the labels are warm."""
+    from tldw_chatbook.Utils import log_sanitizer
+
+    caches = [
+        obj
+        for module in (log_sanitizer, trajectory_export)
+        for obj in vars(module).values()
+        if hasattr(obj, "cache_info")
+    ]
+    assert caches
+    assert not hasattr(log_sanitizer._words, "cache_info")
+
+    def mask(index: int) -> None:
+        for text in (
+            "db" + f"_password=summer202{index}word",
+            "client" + f'_secret=SecretStr("supersecret{index}value")',
+            "client" + f"_secret=client_secret_{index}x",
+            "client" + f"_secret=super_secret_{index}",
+            "refresh" + f"_token: the token{index}",
+            f"https://x.example/api?key=python{index}x",
+        ):
+            trajectory_export._credential_text(text)
+
+    mask(0)  # the labels are cached here
+    before = [cache.cache_info().currsize for cache in caches]
+    for index in range(1, 6):
+        mask(index)
+    assert [cache.cache_info().currsize for cache in caches] == before
+
+
 #: Review r15tr-rev2: adversarial texts of about 200 KB. The export's URL
 #: user-info rule took 198 s on the dash-separated one (quadratic), so a shared
 #: bundle could hang its import.
@@ -1064,6 +1172,10 @@ _ADVERSARIAL_TEXTS = {
     "credential-label-long-runs": ("client" + "_secret=" + "a" * 2040 + " ") * 100,
     "credential-label-then-long-field": "client" + "_secret=x&" + "a" * 200_000,
     "many-delimited-segments": "client" + "_secret=x" + "&aaaaaaaaaaaaaaaaaaaa" * 10_000,
+    # Review r15tr-rev7: code expressions scanned to their end.
+    "kept-code-quoted-keys": ("client" + '_secret=CLIENT_SECRET "client' + '_secret": CLIENT_SECRET ') * 4_000,
+    "kept-code-chain": ("client" + '_secret=os.getenv("X") or os.getenv("Y") ') * 4_000,
+    "unclosed-calls": ("client" + "_secret=f(") * 20_000,
     "label-at-end": "x " * 100_000 + "client" + "_secret=",
     "separator-run": "a" + "_" * 200_000 + "b=x1y2z3w4",
     "trailing-closers": ("db" + "_password=a1" + ")" * 2000 + " ") * 100,

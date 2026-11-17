@@ -584,18 +584,30 @@ _TEMPLATE_VALUE = re.compile(
 #: one call or index (``resp.json()['access_token']``, ``os.environ["X"]``,
 #: ``os.getenv("DB_PASSWORD", "...")``). Its arguments are names or literals.
 _CODE_NAME = r"[A-Za-z_][A-Za-z0-9_]*"
-_CODE_ARGUMENT = rf"""(?:{_CODE_NAME}(?:\.{_CODE_NAME})*|"[^"\r\n]*"|'[^'\r\n]*')"""
+_CODE_ARGUMENT = (
+    rf"""(?:{_CODE_NAME}[ \t]*=[ \t]*)?"""
+    rf"""(?:{_CODE_NAME}(?:\.{_CODE_NAME})*|"[^"\r\n]*"|'[^'\r\n]*')"""
+)
 _CODE_ARGUMENTS = rf"""(?:{_CODE_ARGUMENT}(?:[ \t]*,[ \t]*{_CODE_ARGUMENT})*)?"""
 _CODE_VALUE = re.compile(
     rf"""{_CODE_NAME}(?:\.{_CODE_NAME})*"""
     rf"""(?:\({_CODE_ARGUMENTS}\)|\[{_CODE_ARGUMENTS}\])"""
     rf"""(?:\.{_CODE_NAME}|\({_CODE_ARGUMENTS}\)|\[{_CODE_ARGUMENTS}\])*"""
 )
-#: A literal inside code; group 1 is set for a first argument or an index.
+#: A literal inside code; group 1 is the ``(`` or ``[`` before a first
+#: argument or an index.
 _CODE_LITERAL = re.compile(r"""([(\[])?(?:"([^"\r\n]*)"|'([^'\r\n]*)')""")
-#: The shape of a name in a first argument or index: an environment variable
-#: name or a lowercase key (``os.environ["CLIENT_SECRET"]``, ``['access_token']``).
-_LITERAL_NAME = re.compile(r"[A-Z]+(?:_[A-Z0-9]+)*|[a-z]+(?:_[a-z]+)*")
+#: Names a first argument or index may hold (review r15tr-rev7): an
+#: environment variable name (``"MY_APP_CS"``), a compound key in a call
+#: (``cfg.get("client_secret")``, not ``SecretStr("secret")``) and any
+#: lowercase key in an index (``cfg["token"]``).
+_ENV_NAME = re.compile(r"[A-Z]+|[A-Z]+[0-9]*(?:_[A-Z0-9]+)+")
+_COMPOUND_KEY = re.compile(r"[a-z]+(?:_[a-z0-9]+)+")
+_INDEX_KEY = re.compile(r"[a-z]+(?:_[a-z0-9]+)*")
+#: The start of a call or index, read whole even when the grammar above
+#: does not parse it (``f(g("x"))``).
+_CALL_START = re.compile(rf"{_CODE_NAME}(?:\.{_CODE_NAME})*[(\[]")
+_CODE_HEAD = re.compile(rf"{_CODE_NAME}(?:\.{_CODE_NAME})*")
 _CODE_VALUE_END = re.compile(r"""[\s,;&)\]}"']|\.(?:\s|$)|$""")
 #: A YAML block scalar indicator; its value is the indented lines after it.
 _YAML_BLOCK = re.compile(r"[|>][-+]?[ \t]*(?:\r\n|\r|\n)")
@@ -683,13 +695,15 @@ _IDENTIFIER_WORD = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
 _ANGLE_NAME = re.compile(r"[A-Za-z][A-Za-z_-]*")
 #: Mixed case beyond a camelCase word (``XkmPvLwQ``, not ``JavaScript``).
 _MIXED_CASE = re.compile(r"[a-z][A-Z][A-Za-z]*[a-z][A-Z]")
+#: Five consonants in a row (``y`` counts as a vowel): rare in an English
+#: word, common in random letters (``XKQZVBNMPLWRTDXK``, ``...jklmn``).
+_CONSONANT_RUN = re.compile(r"[b-df-hj-np-tv-xzB-DF-HJ-NP-TV-XZ]{5}")
 
 
-@lru_cache(maxsize=4096)
 def _words(name: str) -> tuple[str, ...]:
     """Lowercase words of a name, split on separators and capitals, digits and
-    ``v`` version tags dropped (``ClientSecret2`` -> client, secret). Cached:
-    the same labels recur on every line."""
+    ``v`` version tags dropped (``ClientSecret2`` -> client, secret). Not
+    cached: it also reads values, which must not linger in a cache."""
     return tuple(
         word.lower()
         for word in _IDENTIFIER_WORD.findall(name)
@@ -697,11 +711,18 @@ def _words(name: str) -> tuple[str, ...]:
     )
 
 
+@lru_cache(maxsize=1024)
+def _label_words(label: str) -> tuple[str, ...]:
+    """``_words`` of a label, cached: the same labels recur on every line.
+    Only label text is passed here, never a value (review r15tr-rev7)."""
+    return _words(label)
+
+
 def _label_name(name: str, label: str) -> bool:
     """The label's own name, versioned by at most two digits: ``client_secret``,
     ``clientSecret``, ``client_secret_2``, ``refresh_token2``, ``ClientSecret2``."""
     tokens = tuple(token.lower() for token in _IDENTIFIER_WORD.findall(name))
-    label_words = _words(label)
+    label_words = _label_words(label)
     if tokens[: len(label_words)] != label_words:
         return False
     rest = tokens[len(label_words) :]
@@ -721,13 +742,12 @@ def _code_identifier(value: str, label: str, label_words: set[str]) -> bool:
     if not _CONVENTIONAL_NAME.fullmatch(value.lstrip(":")) and not _DOTTED_NAME.fullmatch(value):
         return False
     last = value.lstrip(":").rsplit(".", 1)[-1]
-    words = _words(last)
-    if not words:
-        return False
     if _label_name(last.strip("_"), label):
         return True
-    compound = bool(_SNAKE_NAME.fullmatch(last)) and bool(re.search(r"[_-]", last.strip("_")))
-    return compound and set(words) <= label_words | _CREDENTIAL_WORDS
+    if not (_SNAKE_NAME.fullmatch(last) and "_" in last.strip("_")):
+        return False
+    words = _words(last)
+    return bool(words) and set(words) <= label_words | _CREDENTIAL_WORDS
 
 
 def _names_a_credential(name: str) -> bool:
@@ -758,14 +778,18 @@ def _template_or_marker(value: str) -> bool:
 def _code_literals_look_alike(value: str, label: str, strict: bool) -> bool:
     """Every quoted literal inside code is a look-alike (review r15tr-rev6).
 
-    A first argument or index may be a name that names a credential
-    (``os.environ["DB_PASSWORD"]``, ``['access_token']``); any other literal,
-    a default for one, is judged as the label's value, so a placeholder is
-    kept and ``os.getenv("DB_PASSWORD", "postgres")`` is masked.
+    A first argument or index may be a name (``os.environ["MY_APP_CS"]``,
+    ``['access_token']``); any other literal (a default, a keyword argument,
+    a fallback after ``or``) is judged as the label's value, so a placeholder
+    is kept and ``os.getenv("DB_PASSWORD", "postgres")`` is masked.
     """
     for match in _CODE_LITERAL.finditer(value):
         literal = match.group(2) if match.group(2) is not None else match.group(3)
-        if match.group(1) and _LITERAL_NAME.fullmatch(literal) and _names_a_credential(literal):
+        opener = match.group(1)
+        if opener and (
+            _ENV_NAME.fullmatch(literal)
+            or (_INDEX_KEY if opener == "[" else _COMPOUND_KEY).fullmatch(literal)
+        ):
             continue
         if not _kept_look_alike(literal, label, quoted=True, prose_follows=False, strict=strict):
             return False
@@ -784,7 +808,7 @@ def _strict_label(label: str) -> bool:
     """A password label, or one whose value a person chooses: a label ending
     in ``secret`` or ``secret_key`` bar issued ones (review r15tr-rev5)."""
     normalized = label.casefold().replace("-", "_").strip("_")
-    return bool(set(_words(label)) & _PASSWORD_LABEL_WORDS) or (
+    return bool(set(_label_words(label)) & _PASSWORD_LABEL_WORDS) or (
         normalized.endswith(("secret", "secret_key"))
         and not normalized.endswith(_ISSUED_SECRET_LABELS)
     )
@@ -808,7 +832,7 @@ def _kept_look_alike(
         return True
     if len(value) > _MAX_EXAMINED_VALUE:
         return False
-    label_words = set(_words(label))
+    label_words = set(_label_words(label))
     password_label = strict or _strict_label(label)
     code = _CODE_VALUE.fullmatch(value)
     if code is not None and not _code_literals_look_alike(value, label, strict):
@@ -903,6 +927,49 @@ _NEXT_FIELD = re.compile(r"[ \t]+(?=[A-Za-z0-9_.-]+[ \t]*[:=])")
 _NEXT_WORD = re.compile(rf"[ \t]+(\S{{1,{_MAX_EXAMINED_VALUE}}})")
 
 
+#: Tokens of a code expression: a quoted string (skipped whole), the space
+#: before a field (``user=``, ``status:``; ``==`` is no field), a ``?`` that
+#: a ternary's ``:`` answers, brackets and top-level separators.
+_EXPRESSION_TOKEN = re.compile(
+    r""""(?:[^"\\\r\n]|\\.)*+"|'(?:[^'\\\r\n]|\\.)*+'"""
+    r"""|(?<![ \t])[ \t]++(?=[A-Za-z0-9_.-]+[ \t]*(?P<separator>=(?!=)|:))"""
+    r"""|\?(?![?.])|[()\[\]{},;]"""
+)
+
+
+def _expression_end(text: str, start: int, line_end: int) -> int:
+    """Where the code expression at ``start`` ends (review r15tr-rev7).
+
+    That is before a top-level ``,`` or ``;``, an unbalanced closer or the
+    next field, or at the line end; quoted strings are skipped whole, so a
+    fallback after ``or``, ``||``, ``??`` or ``if ... else`` is inside it. An
+    expression longer than ``_MAX_EXAMINED_VALUE`` runs to the line end.
+    """
+    limit = min(line_end, start + _MAX_EXAMINED_VALUE)
+    depth = ternaries = 0
+    for token in _EXPRESSION_TOKEN.finditer(text, start, limit):
+        mark = token.group()[0]
+        if mark in "\"'":
+            continue
+        if mark in "([{":
+            depth += 1
+        elif mark in ")]}":
+            if not depth:
+                return token.start()
+            depth -= 1
+        elif depth:
+            continue
+        elif mark == "?":
+            ternaries += 1
+        elif mark in ",;":
+            return token.start()
+        elif ternaries and token.group("separator") == ":":
+            ternaries -= 1  # "a ? b : c": the colon answers the "?"
+        else:
+            return token.start()
+    return line_end
+
+
 def _field_end(text: str, start: int, end: int, line_end: int) -> int:
     """Where a value that runs on past ``end`` stops: before the next field
     (``user=bob``) or at the line end, a trailing separator left visible."""
@@ -945,14 +1012,37 @@ def mask_credential_labels(text: str, marker: str = REDACTION_MARKER) -> str:
                 if word is not None:
                     following = word.group(1)
                     prose_follows = not (
-                        _LETTER_DIGIT_WORD.search(following) or _MIXED_CASE.search(following)
+                        _LETTER_DIGIT_WORD.search(following)
+                        or _MIXED_CASE.search(following)
+                        or (len(following) >= 8 and _CONSONANT_RUN.search(following))
                     )
                     if not prose_follows:
                         end = _field_end(text, start, word.end(1), line_end)
             value = text[start:end]
+            kept = _kept_look_alike(value, name, quoted=quoted, prose_follows=prose_follows)
+            if not quoted and not prose_follows and (
+                _CODE_VALUE.fullmatch(value)
+                or _CALL_START.match(value)
+                or _CODE_HEAD.fullmatch(value)
+                or _REFERENCE.fullmatch(value)
+            ):
+                # Code is judged with the whole expression it starts: kept
+                # only when every literal in it is a look-alike and no
+                # random-looking word follows, else masked whole (review
+                # r15tr-rev7: "x or 'GOCSPX-...'", "f(value='...')").
+                stop = _expression_end(text, start, line_end)
+                expression_end = start + len(text[start:stop].rstrip(" \t,;|"))
+                if expression_end > end:
+                    if kept:
+                        kept = (
+                            expression_end - start <= _MAX_EXAMINED_VALUE
+                            and _code_literals_look_alike(text[start:expression_end], name, False)
+                            and not _RANDOM_SEGMENT.search(_CODE_LITERAL.sub(" ", text[end:expression_end]))
+                        )
+                    end = expression_end
             # A masked value reads as an emitted marker, so it is kept on a
             # second pass.
-            if not _kept_look_alike(value, name, quoted=quoted, prose_follows=prose_follows):
+            if not kept:
                 if not quoted and _strict_label(name) and _MORE_WORDS.match(text, end, line_end):
                     # An unquoted passphrase runs on to the next field or the line end.
                     end = _field_end(text, start, end, line_end)

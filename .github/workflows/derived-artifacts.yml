@@ -1517,9 +1517,9 @@ jobs:
       # Round 15: TASK-41112's Actor Pack export file (sandboxed, ~83 s serial
       # at load 104) joins the sandboxed block, before the bootstrap ones.
       # Round 15: TASK-41133's label-list, must-mask and must-keep table,
-      # bracket, next-field and timing nodes (pure, two CPU-time ratios) join
-      # the Trace export nodes, and its v1/v2 cases replace TASK-40303's
-      # ledger node.
+      # bracket, next-field, code-span, cache and timing nodes (pure, two
+      # CPU-time ratios) join the Trace export nodes, and its v1/v2 cases
+      # replace TASK-40303's ledger node.
       # TASK-41134's legacy trace maintenance parking and projection files
       # (sandboxed, ~42 s serial at load 51-56), on no lane before, follow.
       # test_closed_loop_pending_submit_is_emergency_detachment: deselected
@@ -1548,6 +1548,8 @@ jobs:
             Tests/Chat/test_trace_v2_collaboration.py::test_every_look_alike_in_the_must_keep_table_is_kept_and_imports \
             Tests/Chat/test_trace_v2_collaboration.py::test_a_masked_label_value_keeps_its_closing_bracket_and_full_stop \
             Tests/Chat/test_trace_v2_collaboration.py::test_a_masked_run_stops_before_the_next_field \
+            Tests/Chat/test_trace_v2_collaboration.py::test_code_next_to_a_secret_is_masked_whole \
+            Tests/Chat/test_trace_v2_collaboration.py::test_masking_never_caches_value_text \
             Tests/Chat/test_trace_v2_collaboration.py::test_adversarial_bundle_text_is_masked_in_bounded_time \
             Tests/Chat/test_trace_v2_collaboration.py::test_escape_quoted_values_scan_in_linear_time \
             Tests/Chat/test_trace_v2_collaboration.py::test_runs_after_a_value_scan_in_linear_time \
