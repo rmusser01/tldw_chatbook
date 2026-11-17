@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-15 02:20
-updated_date: '2026-11-15 19:15'
+updated_date: '2026-11-16 23:00'
 labels:
 - follow-up
 - console
@@ -68,3 +68,5 @@ Moving that connection off the window would save at most 0.15 s, so the bound wa
 **Lanes (TASK-40323 AC#3).** `[skill]` and the managed received file joined the recovered-suites job (`derived-artifacts.yml` and the `Tests/CI/test_ci_queue_pressure_contract.py` mirror). Serial with the lane's flags (`--storage-lease-guard --timeout=180`, load 91-97): `[skill]` 22.4 s (setup 3.4 + call 19.0), managed received 71.3 s. Tests/CI: 1640 passed, 1 skipped.
 
 Files: `Tests/Performance/test_console_skill_discovery_genuine_capture.py`, `Tests/Performance/test_app_wiring_held_pointer_currentness.py`, `Tests/Performance/test_console_managed_received_acceptance.py`, `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`.
+
+**Review r15co-rev1 (2026-11-16): the custody wait is a hang bound.** The 30 s bound was justified only by serial runs and failed 2 of 2 times at `-n 4`. The reviewer's probe measured 15.1-23.8 s serially at load 55-61. Ruling: how fast a received Send must finish is TASK-34563.35's open requirement, not this test's. The wait is now `CUSTODY_HANG_BOUND = CHILD_LIMIT // 2` (120 s; `CHILD_LIMIT = 240` is the script's existing exercise limit, now named), with a comment saying it catches a hang, not latency; the cleanup wait uses the same bound and the failure label is `received_custody_task_hang`. TASK-34563.35's notes record that this test no longer enforces 10 s, with the measurements. At `-n 4` with its Performance peers (the genuine-capture and held-pointer files), load 84-98: the managed node passed 3 of 3 runs (call 138.0, 91.8 and 143.8 s). Runs 2 and 3 passed 12 of 12. Run 1 had 3 genuine-capture failures from load (`HelperTimeoutError('private_sqlite_helper_timeout')`, Textual `WaitForScreenTimeout`); that file runs on no lane.

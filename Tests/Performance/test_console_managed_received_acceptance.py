@@ -30,7 +30,10 @@ from loguru import logger
 
 logger.remove()
 assert sys.argv[1:] == ["managed_received", "cold_policy_switch"]
-CUSTODY_BOUND = 30  # seconds; see the measurements at its first use
+CHILD_LIMIT = 240  # seconds for the whole exercise
+# A hang bound, not a latency bound (TASK-41140 review r15co-rev1): half the
+# child limit, leaving the rest to setup. See its first use.
+CUSTODY_HANG_BOUND = CHILD_LIMIT // 2
 
 
 def plain(value):
@@ -796,16 +799,17 @@ async def exercise():
                     observed["failed_bound"] = "held_native_read_retirement_10s"
                     raise
                 # TASK-41140: the custody task runs the whole cold first turn
-                # once the builder is released. It took 15.7-21.0 s at load
-                # 63-81 on 18 CPUs; the trace-settlement connection was 0.12-0.15 s
-                # of that, and the personal-context step alone has a 10 s product
-                # budget (CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS).
+                # once the builder is released: 14.8-24 s serially at load 55-81
+                # on 18 CPUs (the trace-settlement connection 0.12-0.15 s of it),
+                # over 30 s at -n 4. This wait only catches a hang; how fast a
+                # received Send must finish is TASK-34563.35's open requirement.
                 try:
                     await asyncio.wait_for(
-                        asyncio.shield(objects["record_task"]), timeout=CUSTODY_BOUND
+                        asyncio.shield(objects["record_task"]),
+                        timeout=CUSTODY_HANG_BOUND,
                     )
                 except TimeoutError:
-                    observed["failed_bound"] = "received_custody_task_30s"
+                    observed["failed_bound"] = "received_custody_task_hang"
                     raise
                 assert (
                     returned.is_set()
@@ -870,7 +874,7 @@ async def exercise():
                         if "record_task" in objects:
                             await asyncio.wait_for(
                                 asyncio.shield(objects["record_task"]),
-                                timeout=CUSTODY_BOUND,
+                                timeout=CUSTODY_HANG_BOUND,
                             )
                 except BaseException as cleanup:
                     if primary is None:
@@ -949,7 +953,7 @@ with user_fixture_default_owner():
         encoding="utf-8",
     )
     selected.chmod(0o600)
-    asyncio.run(asyncio.wait_for(exercise(), timeout=240))
+    asyncio.run(asyncio.wait_for(exercise(), timeout=CHILD_LIMIT))
 """
 
 
