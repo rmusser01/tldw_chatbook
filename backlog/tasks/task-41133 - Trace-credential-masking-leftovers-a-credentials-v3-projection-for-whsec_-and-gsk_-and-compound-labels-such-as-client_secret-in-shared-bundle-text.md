@@ -3,7 +3,7 @@ id: TASK-41133
 title: "Trace credential masking leftovers: a credentials-v3 projection for whsec_ and gsk_, and compound labels such as client_secret= in shared bundle text"
 status: Done
 created_date: 2026-11-15 02:20
-updated_date: 2026-11-17 02:26
+updated_date: 2026-11-17 04:24
 assignee:
 - '@claude'
 labels:
@@ -120,3 +120,7 @@ Simple labels (`api_key=`, `token:`) stay with the export's older rule, and `?ke
   - No length cap turns the chained-credential-labels timing case red (7 min 47 s).
 - **Probes** (run.sh): probe3, probe4 and probe5 give the outcomes above. The adversarial inputs run in 0.05-0.12 s; the dash-label input took 121 s before. probe2 and probe_labels are unchanged from rev1. `probe_equiv.py` gives corpus 4097, 0 diffs, and the pattern tuples are equal, so logs are byte-identical to base.
 - The bracket and timing nodes are pinned in recovered-suites.
+- **Rev2 evidence.**
+  - Covering run (`-n 4`, the same 39 files, load 37-65): 8 failed, 1645 passed. The 8 are the nodes that fail identically at base (rev1's base comparison).
+  - Serial with lane flags: the recovered-suites slice (every pinned Trace export node, the ledger node, the parking and projection files) gives 412 passed in 113 s at load 59-63; `Tests/Utils/test_log_sanitizer.py` gives 209 passed.
+  - `Tests/CI` gives 1640 passed, 1 skipped; the module ratchet 207 passed; the ruff gate is OK.
