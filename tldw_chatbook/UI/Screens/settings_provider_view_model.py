@@ -6,9 +6,11 @@ from dataclasses import dataclass, replace
 from typing import Any, Literal, Protocol
 
 from ...Chat.console_provider_endpoints import (
+    configured_provider_endpoint,
     first_configured_endpoint,
     safe_endpoint_display,
 )
+from ...Chat.provider_setup_persistence import MLX_HOST_PORT_PROVIDER_KEYS
 from ...Chat.console_session_settings import normalize_llamacpp_base_url
 from ...Chat.custom_endpoint_registry import (
     CUSTOM_ENDPOINT_ID_PREFIX,
@@ -383,6 +385,14 @@ def configured_provider_keys(
             own = provider_settings_for_key(api_settings, provider_key)
             shipped = provider_settings_for_key(shipped_settings, provider_key)
         except ProviderSettingsError:
+            continue
+        if provider_key in MLX_HOST_PORT_PROVIDER_KEYS:
+            # TASK-41145 review r15ep-rev2 I-2: MLX-LM's endpoint is its host
+            # and port; the old template's api_url placeholder is ignored.
+            if configured_provider_endpoint(provider_key, own) != (
+                configured_provider_endpoint(provider_key, shipped)
+            ):
+                configured.add(provider_key)
             continue
         if any(
             str(own.get(key) or "").strip() and own.get(key) != shipped.get(key)

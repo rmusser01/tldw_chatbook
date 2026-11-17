@@ -4727,3 +4727,37 @@ def test_the_loaded_settings_keep_an_explicit_legacy_custom_2_endpoint(tmp_path,
 
     assert settings["api_settings"]["custom_2"]["api_url"] == _LEGACY_CUSTOM_2
     assert config_path.read_bytes() == before
+
+
+#: Review r15ep-rev2: an MLX-LM table as the old template wrote it.
+_OLD_TEMPLATE_MLX = {
+    "api_settings": {
+        "local_mlx_lm": {
+            "api_url": "http://localhost:5678/v1/chat/completions",
+            "model": "custom-model-gamma",
+        }
+    }
+}
+
+
+@pytest.mark.parametrize(
+    ("user", "configured"),
+    [
+        ({}, []),
+        (_OLD_TEMPLATE_MLX, []),
+        ({"api_settings": {"local_mlx_lm": {"host": "gpu-box.lan", "port": 9000}}}, ["local_mlx_lm"]),
+    ],
+)
+def test_mlx_counts_as_configured_only_for_a_host_and_port_the_user_set(user, configured):
+    """Review r15ep-rev2 I-2: Settings' "Configured" list compared the
+    endpoint keys, so the old template's ignored ``api_url`` placeholder
+    (the new template ships none) made MLX-LM read Configured in every
+    profile written from it, and a host and port the user set did not."""
+    from tldw_chatbook.UI.Screens.settings_provider_view_model import configured_provider_keys
+    from tldw_chatbook.UI.Screens.settings_screen import PROVIDER_ENDPOINT_KEYS
+
+    catalog = [SimpleNamespace(readiness_key="local_mlx_lm")]
+
+    keys = configured_provider_keys(catalog, _merged(user), PROVIDER_ENDPOINT_KEYS, environ={})
+
+    assert sorted(keys) == configured
