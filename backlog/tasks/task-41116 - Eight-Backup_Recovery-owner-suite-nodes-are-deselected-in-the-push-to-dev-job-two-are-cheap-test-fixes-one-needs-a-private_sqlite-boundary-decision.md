@@ -4,7 +4,7 @@ title: "Eight Backup_Recovery owner-suite nodes are deselected in the push-to-de
 status: In Progress
 assignee:
 - '@claude'
-updated_date: '2026-11-17 00:58'
+updated_date: '2026-11-17 01:20'
 created_date: 2026-11-15 02:20
 labels:
 - follow-up
@@ -80,3 +80,6 @@ Commits 6673ea6661, 146f5156af, 7d9c3988b1, a7816ce8b5, 829b7d3047. Five nodes r
   - Each child refuses config, keyring, chromadb, textual and every other DB/Utils module, both on import and by a `sys.modules` check.
   - Each records `sqlite3.connect` and process audit events, allows only `":memory:"` (a controlled connect proves the hook fires) and no process.
   - Negative controls failed as they should: removing `recovery_goal_schema` -> `forbidden service import`; a subprocess in the inventory child -> `['subprocess.Popen']`.
+
+**Roundtrip capture nodes deselected again (5 deselected).** A run with the job's flags (`-n 4 --timeout=300`, load 69-87) showed the 810 s marks take effect: `[remove-include]` 417 s, `[link-include]` 358 s and the known-profiles node 332 s all passed. The plan-shared node failed at 111 s in its bind child: `RecoveryRequired: close_unenrolled_clients_and_restart`. `control_records._enrollment` gives `authority.maintenance((UNBOUND_NAMESPACE,), 0.1)` only 0.1 s when no session is passed, and under load something still holds the unbound namespace at that moment. Both nodes share that bind child, and it refused once before (round 15, load ~100). They are green when the bind wins, but not stably, so both are deselected again with that cause; their marks stay for re-admission. Follow-up: identify the holder (probably the preview's own private-SQLite helpers still exiting), then make the bind wait for it or pass the session.
+

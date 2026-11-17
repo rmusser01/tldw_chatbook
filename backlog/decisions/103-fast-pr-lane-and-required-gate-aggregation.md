@@ -513,8 +513,8 @@ all existing selectors remain exactly once across the three required profiles.
 job of its own, `backup-owner-suites-dev` ("Backup_Recovery owner suites (push
 to dev)"), runs the 13 Backup_Recovery owner suites that ran on no lane (27 of
 their nodes had gone red on dev unseen, TASK-40306) and the restore-journal
-file, whole, with 3 red nodes deselected by name (11 at first; review
-r14bk-rev1 re-admitted three, TASK-40307; TASK-41116 five more), on every push to dev and
+file, whole, with 5 red nodes deselected by name (11 at first; review
+r14bk-rev1 re-admitted three, TASK-40307; TASK-41116 three more), on every push to dev and
 never on a pull request, like `library-shell-dev`. It is not in the required
 check's `needs`, so no PR runner and no PR verdict: the counts above are
 unchanged (30 concurrent test runners, 31 with perf-guard, 48 eligible test
@@ -534,8 +534,10 @@ TASK-41125 and nine Personal Context backup/restore files of TASK-41118
 tail. None of this adds a job or a runner: the counts above are unchanged.
 Some tests in the job run past the job's 300 s per-test limit at -n 4 on a
 loaded host, so they carry measured `timeout` marks, each about 2x a complete
-loaded run. The two re-admitted roundtrip capture nodes and
-`test_replace_restore_...` get 810 s (393-403 s at load 67-110). The
+loaded run. `test_replace_restore_...` and the two roundtrip capture nodes
+get 810 s (393-417 s at load 67-110). The roundtrip nodes are deselected
+again until their bind child's 0.1 s enrollment wait stops refusing under
+load (TASK-41116). The
 fresh-process later rollback gets 1050 s (212 s setup and a 301 s child at
 load 100-129). The marks raise only those tests' hang bounds, not the
 step's measured time: 31-43 min before, plus about 12.5 min for
