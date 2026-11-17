@@ -320,10 +320,12 @@ class RepositoryKeyCustody:
         """What the review calls a damaged row: ``<kind>_history`` for an
         older version of a kind that keeps history (review r15pc-rev1)."""
         kind = row["object_type"]
-        if kind in _HISTORY and not _is_current(connection, row):
-            return kind + "_history"
         if kind == "runtime_policy" and row["object_id"] == GLOBAL_POLICY_ID:
-            return "runtime_switch"  # the global on/off setting
+            kind = "runtime_switch"  # the global on/off setting
+        if (kind in _HISTORY or kind == "runtime_switch") and not _is_current(
+            connection, row
+        ):
+            return kind + "_history"
         return kind
 
     @staticmethod

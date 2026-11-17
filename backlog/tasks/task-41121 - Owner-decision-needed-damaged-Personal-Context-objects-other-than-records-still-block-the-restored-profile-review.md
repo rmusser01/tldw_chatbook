@@ -4,7 +4,7 @@ title: "Owner decision needed: damaged Personal Context objects other than recor
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-17 02:00'
+updated_date: '2026-11-17 02:38'
 created_date: 2026-11-15 02:20
 labels:
 - follow-up
@@ -121,3 +121,7 @@ Owner decision 2026-11-15: "no"
   - UI: four copy cases failed on the copy assertion; the refusal test failed on import.
   - Already green there, as coverage additions: the no-evidence global case, the unmapped workspace case, and the Off round-trip.
 - **Covering (load 54-63, `-n 4`).** `Tests/Personal_Context/test_repository.py` + `test_settings_personal_context.py` + `test_personal_context_proposal_review.py` + `Tests/Agents/test_profile_tool_provider.py` + `test_profile_tool_scope.py`: 247 passed. The owner-inventory node passed serially (162 s). Ruff gate, markup census and preflight pass.
+
+**2026-11-16, fix round 4 (review r15pc-rev3).**
+- **Minor fixed.** Older versions of the global on/off switch (`GLOBAL_POLICY_ID`) counted as `runtime_policy_history` ("older agent access setting version"). `_damage_kind` now checks the switch first and returns `runtime_switch_history`, which reads "older Personal Context on/off setting version(s)". `_every_kind` now holds two switch versions. Test: `test_reencryption_removes_a_damaged_object_of_each_removable_kind[runtime_switch_history]`. Red on 50afbeb9c0: `{'runtime_policy_history': 1} == {'runtime_switch_history': 1}`. Green: `Tests/Personal_Context/test_repository.py` 104 passed.
+- **Accepted residual (coordinator, no code change).** The reviewer noted that a foreign writer could name a pulled workspace `scope-global-*` and defeat the prefix evidence. The coordinator checked tldw_server: `Personalization/personal_context_service.py` mints every scope id, global or workspace, as `f"scope-{uuid4}"` (`_id_factory("scope")` at lines 149, 545 and 806, and `_sync_plan_id(profile_id, "scope")` at 367). The server therefore never mints `scope-global-*`, and after a link the global id carries no prefix. Two damaged unsettled scopes in that state refuse as ambiguous, which is safe. Only a writer outside Chatbook and the server could plant the prefix.

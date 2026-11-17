@@ -2141,6 +2141,14 @@ def _every_kind(tmp_path, record_factory, proposal_factory):
         ).model_copy(update={"scope_id": workspace.scope_id}),
         expected_version_id=None,
     )
+    from tldw_chatbook.Personal_Context.runtime_policy import GLOBAL_POLICY_ID
+
+    first = repo.commit_runtime_policy(  # the global switch, with an older version
+        GLOBAL_POLICY_ID, {"version": 1, "enabled": True}
+    )
+    repo.commit_runtime_policy(
+        GLOBAL_POLICY_ID, {"version": 1, "enabled": False}, expected_version_id=first
+    )
     protector = KeyringProfileKeyProtector(backend)
     restored = "personal-context:recovery_" + "e" * 32
     protector.install(restored, protector.load(_stored_account(db_path)))
@@ -2184,7 +2192,12 @@ def _damage_object(db_path, key) -> None:
 def _pick(db_path, kind) -> tuple[str, str, str]:
     """One version of ``kind``; ``<kind>_history`` picks an older (not
     current) one, and a bare local kind the current one."""
+    from tldw_chatbook.Personal_Context.runtime_policy import GLOBAL_POLICY_ID
+
     object_type = kind.removesuffix("_history")
+    switch = object_type == "runtime_switch"  # the global on/off setting
+    if switch:
+        object_type = "runtime_policy"
     current = {"scope_binding": True, "runtime_policy": True}.get(kind)
     if kind.endswith("_history"):
         current = False
@@ -2198,7 +2211,8 @@ def _pick(db_path, kind) -> tuple[str, str, str]:
                 "o WHERE object_type = ? ORDER BY rowid",
                 (object_type,),
             )
-            if current is None or bool(row[3]) is current
+            if (current is None or bool(row[3]) is current)
+            and (object_type != "runtime_policy" or (row[1] == GLOBAL_POLICY_ID) is switch)
         ]
     assert rows, kind
     return rows[0][:3]
@@ -2218,6 +2232,9 @@ def _pick(db_path, kind) -> tuple[str, str, str]:
         # one stays.
         "scope_binding_history",
         "runtime_policy_history",
+        # Review r15pc-rev3: the global on/off setting's older version reads as
+        # its own kind.
+        "runtime_switch_history",
     ],
 )
 def test_reencryption_removes_a_damaged_object_of_each_removable_kind(

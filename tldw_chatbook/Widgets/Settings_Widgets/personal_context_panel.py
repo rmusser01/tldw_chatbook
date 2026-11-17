@@ -169,6 +169,10 @@ _DAMAGED_NOUNS = {
         "Personal Context on/off setting",
         "Personal Context on/off settings",
     ),
+    "runtime_switch_history": (
+        "older Personal Context on/off setting version",
+        "older Personal Context on/off setting versions",
+    ),
     "runtime_policy_history": (
         "older agent access setting version",
         "older agent access setting versions",
