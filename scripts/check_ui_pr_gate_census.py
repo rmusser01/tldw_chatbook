@@ -1130,6 +1130,11 @@ MINIMUM_FILES = 2170
 # Settings file's nine repaired nodes at the tail. The floor is the measured
 # entry count.
 MINIMUM_FILES = 2241
+MINIMUM_FILES = 2179
+# TASK-41138 review r15ti-rev1 (2026-11-17): split the real Console Buddy send
+# by parameter and append the repaired cold-home node. The floor is the
+# measured entry count.
+MINIMUM_FILES = 2243
 
 
 def read_census(path: Path) -> list[str]:

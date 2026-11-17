@@ -3212,9 +3212,11 @@ Tests/UI/test_settings_custom_endpoints.py::test_custom_endpoint_rows_render_saf
 Tests/UI/test_settings_custom_endpoints.py::test_delete_guard_lists_referencing_sessions
 Tests/UI/test_settings_custom_endpoints.py::test_edit_mutation_rejects_malformed_env_var_reference
 Tests/UI/test_settings_custom_endpoints.py::test_edit_mutation_keeps_valid_env_var_without_delete
-# TASK-41138 (2026-11-16): the Buddy conversation modal file's 21 green
-# tests, on no lane before (about 317 s serially, load 68-77; the real
-# Console send pair alone 156 s). The cold-home node stays off (red).
+# TASK-41138 (2026-11-16): the Buddy conversation modal file's green tests,
+# on no lane before (about 317 s serially, load 68-77). Review r15ti-rev1
+# (2026-11-17) split the real Console send by parameter ([False] 42.5-98.6 s,
+# [True] 49.1-102.1 s serially, load 47-76) and laned the cold-home node
+# once its send stopped being refused (35.0-99.5 s, same runs).
 Tests/UI/test_buddy_conversation_modal.py::test_buddy_rendered_typed_head_spends_one_visible_allowance
 Tests/UI/test_buddy_conversation_modal.py::test_completed_buddy_release_fences_inflight_expiry_snapshot
 Tests/UI/test_buddy_conversation_modal.py::test_buddy_typed_mixed_head_blocks_later_or_other_owner_resolution
@@ -3232,7 +3234,8 @@ Tests/UI/test_buddy_conversation_modal.py::test_dictation_finishes_into_reviewab
 Tests/UI/test_buddy_conversation_modal.py::test_closing_buddy_discards_microphone_and_ignores_late_result
 Tests/UI/test_buddy_conversation_modal.py::test_buddy_refuses_unseen_input_and_unavailable_owners
 Tests/UI/test_buddy_conversation_modal.py::test_late_voice_completion_after_close_cannot_change_the_draft
-Tests/UI/test_buddy_conversation_modal.py::test_real_console_buddy_send_preserves_both_durable_console_drafts
+Tests/UI/test_buddy_conversation_modal.py::test_real_console_buddy_send_preserves_both_durable_console_drafts[False]
+Tests/UI/test_buddy_conversation_modal.py::test_real_console_buddy_send_preserves_both_durable_console_drafts[True]
 Tests/UI/test_buddy_conversation_modal.py::test_recorder_buffer_callback_runs_on_textual_app_thread
 Tests/UI/test_buddy_conversation_modal.py::test_saved_buddy_bulk_reads_allow_loop_progress_and_recheck_owner
 Tests/UI/test_buddy_conversation_modal.py::test_deferred_transcript_scroll_after_close_keeps_draft
@@ -3250,3 +3253,4 @@ Tests/UI/test_settings_custom_endpoints.py::test_settings_screen_duplicate_seeds
 Tests/UI/test_settings_custom_endpoints.py::test_settings_screen_duplicate_reports_missing_slug_instead_of_blank
 Tests/UI/test_settings_custom_endpoints.py::test_settings_screen_duplicate_falls_back_to_view_config_when_snapshot_read_only
 Tests/UI/test_settings_custom_endpoints.py::test_settings_screen_edit_flow_clears_env_var_reference
+Tests/UI/test_buddy_conversation_modal.py::test_cold_home_saved_buddy_bootstraps_only_after_explicit_open
