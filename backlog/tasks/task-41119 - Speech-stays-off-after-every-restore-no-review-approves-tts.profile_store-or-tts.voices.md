@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-15 02:20
-updated_date: 2026-11-15 19:10
+updated_date: 2026-11-17 00:05
 labels:
 - follow-up
 - backup
@@ -61,8 +61,10 @@ Filed in round 14 of the 2026-10-23 burn-down (closeout, 2026-11-15). Checked ag
 - **Screen.** `Tests/UI/test_backup_restore_setup_entry.py::test_restored_profiles_speech_review_approves_voices_alone[approved|changed]` (whole-file UI census entry, no census edit): copy, button label, the approval call with the shown generation, the review going while the settings review stays, and the stale refusal message.
 - `test_the_config_review_turns_config_consumers_back_on_and_never_sync` and `test_only_the_settings_review_calls_approve_config` still pass after the refactor.
 
-**Concern (not changed): `models.artifacts`.** Speech start-up also needs `models.artifacts`, and its only approver is the local embedding model review (`RAG_Search/model_recovery.py`), offered only when the active RAG profile names an existing local HF embedding model. A user without one cannot approve `models.artifacts`, so speech still stays off after any restore. The AC names "the existing config and model reviews", and the copy and docs say what is needed. Whether speech should keep requiring `models.artifacts`, or which review should approve it for speech, is a product decision (proposed follow-up).
+**Concern (resolved by TASK-41301, owner decision 2026-11-16): `models.artifacts`.** Speech start-up also needs `models.artifacts`, and its only approver is the local embedding model review (`RAG_Search/model_recovery.py`), offered only when the active RAG profile names an existing local HF embedding model. A user without one cannot approve `models.artifacts`, so speech still stays off after any restore. The AC names "the existing config and model reviews", and the copy and docs say what is needed. Whether speech should keep requiring `models.artifacts`, or which review should approve it for speech, is a product decision (proposed follow-up).
 
 **Docs.** `Docs/Backup-and-Recovery.md` (the backup user page; there is no `Docs/User_Guide/` page for it): what the speech review turns back on and what else speech needs.
 
 **Files.** `tldw_chatbook/Backup_Recovery/recovery_service.py`, `tldw_chatbook/UI/Screens/backup_restore_screen.py`, `Tests/Architecture/test_backup_owner_inventory.py`, `Tests/UI/test_backup_restore_setup_entry.py`, `Docs/Backup-and-Recovery.md`.
+
+**Review r15br-rev1 (fixed).** The `[changed]` case could pass even if the refused review never came back. It now waits for `#backup-speech-review` and an enabled `#backup-approve-speech` after the refusal. Red with the list refresh after a refusal temporarily removed (`TimeoutError`). The speech child and the screen copy later moved to TASK-41301's model-files review; see that task.

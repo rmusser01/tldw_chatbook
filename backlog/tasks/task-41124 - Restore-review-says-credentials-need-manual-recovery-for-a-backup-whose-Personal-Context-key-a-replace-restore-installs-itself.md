@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-15 02:20
-updated_date: 2026-11-15 19:12
+updated_date: 2026-11-17 00:05
 labels:
 - follow-up
 - backup
@@ -61,3 +61,9 @@ Filed in round 14 of the 2026-10-23 burn-down (closeout, 2026-11-15). Checked ag
 **Docs.** `Docs/Backup-and-Recovery.md`, beside the credential-omission paragraph.
 
 **Files.** `tldw_chatbook/Backup_Recovery/recovery_service.py`, `tldw_chatbook/UI/Screens/backup_restore_screen.py`, `Tests/UI/test_backup_restore_setup_entry.py`, `Tests/Architecture/test_backup_owner_inventory.py`, `Tests/Backup_Recovery/test_restore_data_groups.py`, `Docs/Backup-and-Recovery.md`.
+
+**Review r15br-rev1 (fixed).**
+- **Important: no hashing to choose copy.** The first classifier called `publication._descriptor`, which re-hashes every staged file, twice, with an uncancellable `Event()`. `_retention_installs_keys` now reads only `candidate.json` and `credential-recovery.json` in one `pinned_directory` block. It returns manual unless the descriptor's `archive_digest` and `issues` match the plan. The redundant local `pinned_directory` import is gone.
+  - New `Tests/Architecture/test_backup_owner_inventory.py::test_retention_classification_reads_without_hashing_staged_files` spies `publication.observe_artifact`, `journal.observe_artifact` and `archive_reader._hash`. It asserts the classifier calls none of them, returns True for a minimal candidate, and returns False for another plan's digest.
+  - Red on the previous head (`assert False is True`). Red with a temporary `_hash` of each staged artifact added to the classifier (`assert ['_hash'] == []`).
+- **The result flag is merged into the operation's existing result, not replacing it.** This is done under the service's RLock, so a `journal_operation_id` already recorded is kept.

@@ -1,11 +1,11 @@
 ---
 id: TASK-41301
 title: "Restored profiles offers a separate Model files review, so speech can restart without a local embedding model"
-status: In Progress
+status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-16 23:33
-updated_date: 2026-11-16 23:33
+updated_date: 2026-11-17 00:30
 labels:
 - follow-up
 - backup
@@ -31,10 +31,10 @@ Filed in round 15 of the 2026-10-23 burn-down from TASK-41119's concern (review 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Restored profiles offers its own Model files review whenever `models.artifacts` is pending, and it approves only `models.artifacts` for the reviewed current generation (a stale generation is refused)
-- [ ] #2 With the settings, speech and model-files reviews done, speech start-up runs again without a local embedding model; a real-binding test pins it off until both the speech and model-files reviews are done, red first
-- [ ] #3 `models.artifacts` keeps exactly one approver unless both are needed, with the decision about RAG's "Review local model" explained; the approver census pins the result and its disjointness
-- [ ] #4 The Speech review copy and the backup docs name the Model files review instead of RAG's local model review
+- [x] #1 Restored profiles offers its own Model files review whenever `models.artifacts` is pending, and it approves only `models.artifacts` for the reviewed current generation (a stale generation is refused)
+- [x] #2 With the settings, speech and model-files reviews done, speech start-up runs again without a local embedding model; a real-binding test pins it off until both the speech and model-files reviews are done, red first
+- [x] #3 `models.artifacts` keeps exactly one approver unless both are needed, with the decision about RAG's "Review local model" explained; the approver census pins the result and its disjointness
+- [x] #4 The Speech review copy and the backup docs name the Model files review instead of RAG's local model review
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -65,7 +65,9 @@ Filed in round 15 of the 2026-10-23 burn-down from TASK-41119's concern (review 
   - `test_activation_local_embedding.py`'s `_REVIEW` now asserts the receipt alone approves nothing and still refuses construction. It then approves through the real `RecoveryService.approve_models`.
   - The isolated child approves the owner as the model-files review would.
   - `test_rag_model_recovery_controls.py` checks for the receipt instead of the owner approval.
-  - Results are in the round-1 notes below.
+  - At load 65-90 the fixed 45/60 s child budgets of these files timed out for almost every node, base and head alike: 41 of 43 failures in a `-n 4` run of the four RAG/model activation files were `TimeoutExpired`. The other two (`test_activation_rag.py`) passed serially.
+  - With the child budgets temporarily raised and then reverted, 5 of 5 `test_activation_local_embedding.py` nodes passed serially: `review_and_retirement[approved|changed]`, `finalized_isolated_generation_reopens_local_model_receipt`, `receipt_is_durable_and_generation_bound[generation]` and `projection_identity…[identity_owner]`. These run the routed flow for real: receipt alone refused, then the real `approve_models`, then the model loads.
+  - **Not verified:** `test_rag_model_recovery_controls.py`'s three approve paths fail at the child's line 121 (`escape(str(model)) in dialog.message`), which runs before any approval. The `[cancel]` node fails at the same line on base source (cc6006fcf5), so it is red at base and not this task's. My edits there (a receipt check, then the model-files approval) therefore never run.
 
 **Docs.** `Docs/Backup-and-Recovery.md`: a Model files review paragraph, the Speech review sentence, and RAG's step 1, which now says the restored model files also need **Approve model files**.
 

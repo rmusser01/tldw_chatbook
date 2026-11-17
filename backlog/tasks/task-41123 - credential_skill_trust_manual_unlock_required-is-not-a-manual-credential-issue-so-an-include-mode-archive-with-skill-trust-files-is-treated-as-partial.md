@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-15 02:20
-updated_date: 2026-11-15 19:05
+updated_date: 2026-11-17 00:05
 labels:
 - follow-up
 - backup
@@ -53,3 +53,5 @@ Filed in round 14 of the 2026-10-23 burn-down (closeout, 2026-11-15). Checked ag
 - First attempts failed on setup, not the product: without the required stores the backup review never settled (`missing_identity`, `shared_identity_unavailable`), so the child now runs TASK-40135's store preparation in a subprocess.
 
 **Files.** `tldw_chatbook/Backup_Recovery/credential_policies.py`, `Tests/Backup_Recovery/test_skills_recovery_controls.py`.
+
+**Review r15br-rev1 (fixed).** The node's fixed `_run(..., timeout=150)` failed twice under `-n 4` (114.7 s serial at load 75-88). It now runs `_run`'s scratch layout itself and waits through `Tests/Backup_Recovery/test_config_sibling_capture._wait_while_busy`: it fails once the child's process tree is idle for 60 s, with an 840 s wall backstop and `@pytest.mark.timeout(900)` over the lane's 180 s. Under `-n 4` at load about 89 it passed in 150 s. In that run, five older nodes in the file failed their fixed 45 s `_run` budgets; they are not this task's.
