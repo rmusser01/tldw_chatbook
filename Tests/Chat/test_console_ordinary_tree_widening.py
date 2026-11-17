@@ -406,7 +406,6 @@ async def test_fleet_child_script_after_its_parent_runs_only_while_the_turn_is_c
     chat's conversation is rebound, the same call is refused.
     """
     from Tests.Chat.test_console_agent_bridge import SUBAGENT_PROMPT_PREFIX
-    from Tests.console_provider_doubles import provider_resolution
 
     monkeypatch.setenv("TLDW_AGENTS_MAX_LIVE_SUBAGENTS", "3")
     monkeypatch.setenv("TLDW_AGENTS_AUTOWAKE_ENABLED", "false")
@@ -427,12 +426,6 @@ async def test_fleet_child_script_after_its_parent_runs_only_while_the_turn_is_c
     child_payloads = []
 
     class Gateway(_RecordingGateway):
-        async def resolve_for_send(self, selection):
-            # A child run needs the continuation fields a real resolution has.
-            return provider_resolution(
-                provider="llama_cpp", model="m", continuation_protocol=None, api_mode=None
-            )
-
         async def stream_chat(self, resolution, messages, **kwargs):
             self.payloads.append(messages)
             system = str(messages[0].get("content", "")) if messages else ""
