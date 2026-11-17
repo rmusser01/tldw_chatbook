@@ -188,6 +188,18 @@ def test_ci_exercises_mcp_against_minimum_textual() -> None:
     )
 
 
+def test_native_lease_windows_checkout_enables_long_paths_first() -> None:
+    block = _artifact_lease_job_block()
+    setup = (
+        "- name: Enable long checkout paths on Windows\n"
+        "      if: runner.os == 'Windows'\n"
+        "      shell: pwsh\n"
+        "      run: git config --global core.longpaths true"
+    )
+    assert setup in block
+    assert block.index(setup) < block.index("uses: actions/checkout@v4")
+
+
 def test_artifact_lease_spike_runs_three_os_on_main_and_manual_events() -> None:
     """The comprehensive workflow retains cross-platform lease evidence."""
     block = _artifact_lease_job_block()

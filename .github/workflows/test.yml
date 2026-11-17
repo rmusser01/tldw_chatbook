@@ -156,6 +156,11 @@ jobs:
         python-version: ["3.12"]
 
     steps:
+    - name: Enable long checkout paths on Windows
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: git config --global core.longpaths true
+
     - uses: actions/checkout@v4
 
     - name: Set up Python ${{ matrix.python-version }}
