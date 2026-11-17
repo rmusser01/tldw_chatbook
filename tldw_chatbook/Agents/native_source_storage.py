@@ -143,6 +143,12 @@ class _AgentSources:
             and prepared in self.runtime._workflow_preparations
             and prepared._source_scope is not None
         )
+        # As after disposal, a retained tree may return and release after its
+        # session closed (TASK-41311); a replaced session never matches. Tool
+        # effects still pass ``OrdinaryTurn.check``, which refuses a closed one.
+        session = self.store._sessions.get(
+            self.session.id, self.session if retained else None
+        )
         if (
             self.controller._hooks_v2_runtime is not self.runtime
             or self.controller._agent_bridge is not self.bridge
@@ -151,7 +157,7 @@ class _AgentSources:
             or self.runtime._chat_store is not self.store
             or self.controller.app is not self.app
             or self.controller.store is not self.store
-            or self.store._sessions.get(self.session.id) is not self.session
+            or session is not self.session
             or self.session.incarnation_id != self.incarnation
             or self.session.workspace_id != self.workspace_id
             or (self.controller._disposed or self.runtime._disposed)
