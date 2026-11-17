@@ -38,6 +38,15 @@ including when source capture had PII redaction off.
 | Transcript grouping | `Chat/console_turn_grouping.py` | `group_console_transcript_messages()`, `ConsoleAssistantTurn` |
 | Compaction | `Chat/console_context_compaction.py`, `console_context_policy.py`, `console_context_repository.py` | `CompactionPlan`, `ResolvedConsoleContextPolicy`, memory records |
 
+Prompt recall remains owned by `Chat/prompt_history.py::PromptHistory` and its
+original `Backup_Recovery/async_file_participants.py::FileJob`. The history's
+`_load_job` retains the actual attempt, outcome and producer future for a later
+selected display reader. `FileJob.native_retired` records only that job's atomic
+no-entry result or its issued raw scope's positive cleanup; it does not certify
+executor return. A selected reader joins the original producer separately before
+publishing history. Ordinary read errors retain existing retry/error behavior,
+and uncertain cleanup cannot become success because a registry entry disappears.
+
 `Chat/console_execution_service.py::ConsoleExecutionService` is the in-process
 construction owner behind the runtime's three public store/bridge/controller
 factories (TASK-40608, ADR126/230/353). It retains the same real runtime and

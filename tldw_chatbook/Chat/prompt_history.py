@@ -172,6 +172,7 @@ class PromptHistory:
         self._current: str | None = None
         self._draft_revision = 0
         self._loaded: bool = False
+        self._load_job: FileJob | None = None
         # Serializes append() so a whole-file cap rewrite can never
         # interleave with another append from a concurrent send.
         self._append_lock = asyncio.Lock()
@@ -240,11 +241,13 @@ class PromptHistory:
         """
         return max(-self.size, min(0, index))
 
-    def _history_io(self, selected, payload):
+    def _history_io(self, selected, payload, *, _job=None):
         """Own the complete real thread scope; payload is a fixed write snapshot."""
         with raw.scope(
             self, "prompt_history", writing=payload is not None, selected_read=selected
         ) as operation:
+            if _job is not None:
+                FileJob._note_history_scope(_job, operation)
             if payload is None:
                 entries = []
                 try:
@@ -306,7 +309,10 @@ class PromptHistory:
     async def _load_locked(self) -> None:
         if self._loaded:
             return
+        # A failed later creation cannot borrow an earlier attempt's receipt.
+        self._load_job = None
         with await self._file_job() as job:
+            self._load_job = job
             outcome = await job.run(None)
             if outcome.error is None:
                 self._entries = outcome.value[-self.max_entries :]

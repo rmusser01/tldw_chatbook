@@ -46,6 +46,12 @@ class FileJob:
             self._task = storage._task_identity()
             self._lock = threading.Lock()
             self._state = "new"
+            self._entered = False
+            self._closed = False
+            self._outcome = None
+            self._producer = None
+            self._raw_operation = None
+            self._raw_state = None
             _jobs.add(self)
         except BaseException:
             self._attempt.close()
@@ -61,6 +67,46 @@ class FileJob:
                 raise RuntimeError("source_job_not_retired")
             self._state = "closed"
         self._attempt.close()
+        self._closed = True
+
+    @property
+    def native_retired(self):
+        """Inspect raw/native retirement; the original producer is separate."""
+        with self._lock:
+            if (
+                type(self) is not FileJob or self not in _jobs
+                or self._pid != os.getpid() or not self._closed
+                or self._state != "closed"
+            ):
+                return False
+            if self._route != "prompt_history":
+                return False
+            if not self._entered:
+                return True  # The original queue lock prevented source entry.
+            state = self._raw_state
+            return bool(
+                self._raw_operation is not None and state is not None
+                and state.source is self._source
+                and state.route == self._route
+                and state.selected == self.selected
+                and state.retired
+            )
+
+    def _note_history_scope(self, operation):
+        """Keep only this original worker's actually issued source operation."""
+        with self._lock:
+            state = raw._states.get(operation)
+            if (
+                type(self) is not FileJob or self not in _jobs
+                or self._pid != os.getpid() or self._route != "prompt_history"
+                or self._state != "running" or not self._entered
+                or self._raw_operation is not None
+                or getattr(raw._local, "operation", None) is not operation
+                or state is None or state.source is not self._source
+                or state.selected != self.selected or state.route != self._route
+            ):
+                raise bootstrap.RecoveryRequired("source_job_provenance_invalid")
+            self._raw_operation, self._raw_state = operation, state
 
     def _check_creator(self):
         if (
@@ -74,6 +120,7 @@ class FileJob:
 
     def _complete(self, outcome):
         if not self._completion.done():
+            self._outcome = outcome
             self._completion.set_result(outcome)
 
     def _executor_finished(self, future):
@@ -100,12 +147,15 @@ class FileJob:
             if self._state != "queued" or self._pid != os.getpid():
                 return
             self._state = "running"
+            self._entered = True
         try:
             # Unbound class members, never caller-provided callbacks/metadata.
             if self._route == "prompt_history":
                 from ..Chat.prompt_history import PromptHistory
 
-                value = PromptHistory._history_io(self._source, self.selected, payload)
+                value = PromptHistory._history_io(
+                    self._source, self.selected, payload, _job=self
+                )
             elif self._route == "note_templates":
                 from ..Event_Handlers.note_ingest_events import _import_template_files
 
@@ -138,6 +188,7 @@ class FileJob:
         self._completion = self._loop.create_future()
         try:
             future = self._loop.run_in_executor(None, self._work, payload)
+            self._producer = future
             future.add_done_callback(self._executor_finished)
         except BaseException:
             with self._lock:
@@ -161,9 +212,11 @@ class FileJob:
             else:
                 if outcome.cancelled:
                     raise asyncio.CancelledError
-                return _Outcome(
+                result = _Outcome(
                     outcome.value, outcome.error, cancelled or self._executor_cancelled
                 )
+                self._outcome = result
+                return result
 
 
 _FileJob = FileJob  # private alias kept for unmigrated importers (TASK-36948.2)

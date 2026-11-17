@@ -564,6 +564,7 @@ class _State:
     backup_temporary: Path | None = None
     active: bool = False
     uncertain: bool = False
+    retired: bool = False
     config_failed: bool = False
     config_generation: int | None = None
     config_publication: tuple[Path, tuple[int, int]] | None = None
@@ -1202,6 +1203,7 @@ def scope(
     source_lock = None
     locked = False
     body_completed = False
+    physical_retired = False
     preparation = None
     preparation_adopted = False
     ordinary_permission_read = None
@@ -1553,6 +1555,7 @@ def scope(
                         del _states[operation]
                         storage._raw_operations.discard(operation)
                         storage._changed.notify_all()
+                    physical_retired = True
         finally:
             try:
                 if preparation is not None:
@@ -1575,6 +1578,10 @@ def scope(
                 except BaseException:
                     _local.operation = None
                     raise
+        if physical_retired:
+            # Preserve the actual successful issuer outcome for retained jobs.
+            # A read exception can retire positively; failed cleanup cannot.
+            state.retired = True
 
 
 def selected_target(operation):
