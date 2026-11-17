@@ -3138,3 +3138,7 @@ Tests/UI/test_library_collection_reader_journeys.py::test_collections_actions_re
 # call serial at load 96-100. Its 170x48 pair (60.8 s + 67.1 s) is left off.
 Tests/UI/test_library_collection_reader_journeys.py::test_annotation_drafts_survive_disclosures_modes_and_capture_return[textual-dark-size1]
 Tests/UI/test_library_collection_reader_journeys.py::test_annotation_drafts_survive_disclosures_modes_and_capture_return[textual-light-size1]
+# TASK-41126 review r15lc-rev2 (2026-11-16): typed, unsubmitted filter and
+# Linked-note text outlives an action's pane repaint; Clear and a landed link
+# still empty it. 7.5 s call / 14.3 s serial at load ~32.
+Tests/UI/test_library_collection_reader_journeys.py::test_unsubmitted_filter_and_link_text_survives_a_pane_repaint

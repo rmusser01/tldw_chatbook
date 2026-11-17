@@ -1071,6 +1071,11 @@ class LibraryCollectionsController:
     ) -> None:
         event.stop()
         request = self._library_collection_capture_filter_request(clear=True)
+        # A repaint keeps unsubmitted text (TASK-41126); Clear empties it.
+        for field in self._screen.query(
+            "#library-collections-filters-form Input, #library-collections-filter"
+        ):
+            field.value = ""
         if request is not None:
             await self._apply_library_collection_capture_request(request)
 
@@ -1469,6 +1474,10 @@ class LibraryCollectionsController:
             return
         self._library_collections_action_status = f"Linked Note {note_id}."
         self._library_collections_action_content = ""
+        # A landed link clears its ID; a repaint would keep it (TASK-41126).
+        for field in self._screen.query("#library-collections-linked-note-id"):
+            if field.value.strip() == note_id:
+                field.value = ""
         self._refresh_library_collections_capture_reader()
 
     @on(Button.Pressed, ".library-collections-linked-note-unlink")

@@ -173,7 +173,9 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-16, TASK-41126 review r15lc-rev1: the saved-search page repaint
     # takes the same pane-sync lock: 1740 -> 1741 (measured). The pane sync
     # reads an open Quick Capture form's mounted fields: 1741 -> 1747 (measured).
-    "tldw_chatbook/UI/Library_Modules/library_collections_controller.py": 1747,
+    # Review r15lc-rev2: Clear and a landed link empty the free-text fields a
+    # repaint now keeps: 1747 -> 1756 (measured).
+    "tldw_chatbook/UI/Library_Modules/library_collections_controller.py": 1756,
     # TASK-32659: bounded saved-search loading, including authority/request fencing.
     "tldw_chatbook/UI/Library_Modules/library_collections_saved_search_controller.py": 49,
     # TASK-33628.10: 976 -> 964. The ensure-selection decision moved to

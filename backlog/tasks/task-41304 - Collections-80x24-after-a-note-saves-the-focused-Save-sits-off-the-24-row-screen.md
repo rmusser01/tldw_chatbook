@@ -4,7 +4,7 @@ title: "Collections 80x24: after a note saves, the focused Save sits off the 24-
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-16 23:54'
+updated_date: '2026-11-17 03:04'
 created_date: 2026-11-16 23:32
 labels:
 - follow-up
@@ -44,7 +44,7 @@ Filed in round 15 of the 2026-10-23 burn-down (coordinator authorization, libcol
 ## Implementation Notes
 
 - **Reproduced and fixed by TASK-41126's in-place repaint (28c4c9fffa); no further source change.** With the `bootstrap_profile` marker, the journey's two 80x24 cases fail with base sources (dev cc6006fcf5) in each of two runs: Save focused at `Region(x=11, y=26, ...)`, painted ''. With head sources they pass 14 of 14 runs (load 88-100).
-- **Mechanism.** On dev the note save ended in a whole-screen recompose. It built a new Work pane at scroll offset 0 and restored focus with `scroll_visible=False`, and the controller's `reveal_current_focus` ran two `call_after_refresh` hops later. Those hops are not a layout pass (lessons-textual), so Work was never scrolled to Save. Now only the pane's children are rebuilt and the Work pane keeps its scroll offset, so Save stays where the user had it, in view. Negative control: with the refocus in `recompose_capture_panes` changed to `focus(scroll_visible=False)`, both cases still pass 8 of 8. The retained offset is what keeps Save visible, not the refocus scroll.
+- **Mechanism.** On dev the note save ended in a whole-screen recompose. It built a new Work pane at scroll offset 0 and restored focus with `scroll_visible=False`, and the controller's `reveal_current_focus` ran two `call_after_refresh` hops later. Those hops are not a layout pass (lessons-textual), so Work was never scrolled to Save. Now only the pane's children are rebuilt and the Work pane keeps its scroll offset, so Save stays where the user had it, in view. Either mechanism alone keeps Save in view: the kept scroll offset, or the refocus in `recompose_capture_panes`, which scrolls. With the refocus changed to `focus(scroll_visible=False)` both cases still pass 8 of 8 (the offset alone). Review r15lc-rev2's control showed the refocus alone also does it; removing both brings back y=26.
 - **Test** (AC#2): `test_annotation_drafts_survive_disclosures_modes_and_capture_return` is marked `bootstrap_profile` (the Library harness's profile, as its neighbours are). Unmarked it fails locally with RecoveryRequired (raw_source_selection_changed). Red at base and green at head as above; the whole node passes 4 of 4 plainly at head.
 - **Lane** (AC#3): `[textual-dark-size1]` and `[textual-light-size1]` are appended at the census tail, `MINIMUM_FILES` 2146 -> 2148. Serial with the lane's flags at load 96-100: 48.5 s and 50.8 s of call. The 170x48 pair (60.8 s and 67.1 s) is left off: it does not pin this bug, and the lane has no margin.
 - Files: `Tests/UI/test_library_collection_reader_journeys.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`.

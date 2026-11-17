@@ -617,6 +617,75 @@ async def test_collections_actions_repaint_their_panes_without_a_library_recompo
 
 @pytest.mark.asyncio
 @pytest.mark.bootstrap_profile  # the Library harness's profile (TASK-39141)
+async def test_unsubmitted_filter_and_link_text_survives_a_pane_repaint():
+    """TASK-41126 review r15lc-rev2: typed, unsubmitted text outlives a repaint.
+
+    The filter box, the filter form and the Linked-note ID are read by their
+    own actions, not kept in state, so an unrelated action's repaint (More)
+    composed them blank. Their own actions still empty them: a link that
+    lands clears its ID, and Clear empties the filter fields.
+    """
+    app, _scope, _identities = await _seed()
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = await _open(host, pilot)
+
+        def value(name: str) -> str:
+            return screen.query_one(f"#library-collections-{name}", Input).value
+
+        await _wait_for_condition(
+            pilot,
+            lambda: not any(
+                not worker.is_finished
+                and worker.group == "library_collections_capture_entry"
+                for worker in screen.app.workers
+            ),
+            message="Collections entry never settled",
+        )
+        await _activate(screen, host, pilot, "#library-collections-mode-notes", "Notes")
+        await _activate(screen, host, pilot, "#library-collections-filters", "Filters")
+        typed = {
+            "filter": "unsubmitted search",
+            "filter-domain": "example.org",
+            "filter-tags": "x, y",
+            "filter-date-from": "2026-01-01",
+            "filter-date-to": "2026-02-01",
+            "linked-note-id": "note-42",
+        }
+        for name, text in typed.items():
+            field = await _wait_for_selector(screen, pilot, f"#library-collections-{name}")
+            field.value = text
+        before = screen.query_one("#library-collections-filter-domain")
+        await _activate(screen, host, pilot, "#library-collections-more", "More")
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(screen.query("#library-collections-hard-delete"))
+            and screen.query_one("#library-collections-filter-domain") is not before,
+            message="More never repainted the panes",
+        )
+        for _ in range(3):
+            await pilot.pause()
+        assert {name: value(name) for name in typed} == typed
+
+        await _activate(
+            screen, host, pilot, "#library-collections-linked-note-save", "Link Note"
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._collections_state.action_status == "Linked Note note-42."
+            and value("linked-note-id") == "",
+            message=lambda: f"Link left its ID: {value('linked-note-id')!r}",
+        )
+        await _activate(screen, host, pilot, "#library-collections-filters-clear", "Clear")
+        await _wait_for_condition(
+            pilot,
+            lambda: all(value(name) == "" for name in typed),
+            message=lambda: f"Clear left {[value(name) for name in typed]}",
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile  # the Library harness's profile (TASK-39141)
 async def test_a_pane_repaint_cancelled_mid_recompose_is_rebuilt_by_the_next():
     """TASK-40328 review r14ls-rev1: a cancelled repaint never strands a pane.
 
