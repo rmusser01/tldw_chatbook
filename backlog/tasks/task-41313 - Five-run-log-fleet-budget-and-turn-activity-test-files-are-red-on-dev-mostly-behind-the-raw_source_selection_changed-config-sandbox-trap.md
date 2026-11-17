@@ -1,7 +1,7 @@
 ---
 id: TASK-41313
 title: "Five run-log, fleet-budget and turn-activity test files are red on dev, mostly behind the raw_source_selection_changed config-sandbox trap"
-status: To Do
+status: In Progress
 created_date: 2026-11-16 19:55
 labels:
 - follow-up
@@ -45,3 +45,12 @@ Filed from the 2026-11-13..16 burn-down. TASK-40715's PR #3548 listed the run-lo
 - [ ] #2 The two activity-line repaint nodes are classified as test drift (naming the commit) or a product defect (fixed, with the test red first)
 - [ ] #3 Each file runs on a PR lane, or the task notes record why it should not
 <!-- AC:END -->
+
+## Implementation Plan
+
+ADR required: no. This applies the existing `bootstrap_profile` test marker (TASK-38111 / TASK-32873) and classifies two test nodes; no product boundary changes.
+
+1. Reproduce all five files on base (fu-base, `-n 4`) and confirm the `raw_source_selection_changed` refusal in each file's own tracebacks.
+2. Add `pytestmark = pytest.mark.bootstrap_profile` to each file; re-run each file alone at `-n 4` under the scratch-profile wrapper.
+3. For the two repaint nodes, find the commit that changed `ChatScreen._sync_native_console_transcript` (git log -S/-L) and classify as test drift (update the test, name the commit) or a lost repaint (red test, then fix).
+4. Fix any residual non-RR reds the marker exposes; report the lane each file should join (no workflow edits in this PR).
