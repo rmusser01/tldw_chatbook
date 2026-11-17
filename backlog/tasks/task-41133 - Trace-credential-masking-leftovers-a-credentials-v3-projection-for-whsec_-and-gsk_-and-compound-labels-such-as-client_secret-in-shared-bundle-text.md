@@ -56,21 +56,24 @@ The rule comment beside `_CREDENTIAL_PROJECTIONS` now names both of these, so th
 - User names: `user_name=`, `username:`.
 - Labels that are not credentials: `max_tokens`, `next_page_token`.
 
-Known limits, after review r15tr-rev4. Under a compound credential label the bundle keeps only the allowlist, so these are the remaining ways a real secret could be kept:
+Known limits, after review r15tr-rev5. Under a compound credential label the bundle keeps only the allowlist, so these are the remaining ways a real secret could be kept:
 - Under any label:
-  - a placeholder (`your-word`, `example`, `none`, all-`x`/`*`);
-  - an UPPER_SNAKE reference (`$SECRET`, `%SECRET%`, `${secret_name}`);
+  - a placeholder (`your-word`, `YOUR_WORD`, `YourWordHere`, `example`, `none`, all-`x`/`*`);
+  - a reference or template that names a credential (`$CLIENT_SECRET`, `{api_key}`);
   - a known-root path with no random-looking segment;
-  - a dotted name of conventional segments, or a dotted call or index chain whose arguments are empty, quoted or names;
+  - a dotted name of conventional segments;
+  - a dotted call or index chain whose literals are env names, lowercase keys or paths;
   - an UPPER_SNAKE constant holding every label word.
-- Under other labels only (not password or user-chosen secret labels):
+- Under issued-secret and token labels only (not password labels or labels ending in `secret`/`secret_key`):
   - `changeme`;
   - a non-dotted call;
   - a value that is wholly a time or an ISO date, or starts with `scheme://` or `file:/`;
-  - a conventional name holding every label word (`ClientSecret2024`), or a snake name of credential words only;
-  - a quoted sentence with no letter-and-digit word, or a function word that a sentence continues.
+  - the label's own name versioned by at most two digits (`client_secret_2`, `ClientSecret2`);
+  - a snake name of credential words only (`token_v2`);
+  - a quoted sentence with no letter-and-digit word, or a function word that lowercase words continue.
+- A URL's `?key=` value is judged as a strict `api_key` value, and lowercase words or a `/`-path with no letter-and-digit word are kept too.
 
-Simple labels (`api_key=`, `token:`) stay with the export's older rule. A trailing full stop after a masked value stays visible. Masked by design although they are not secrets: a URL's `?key=python` or `?key=photos/2024/cat.jpg`, `tokens[0]`, and a date or code under a password or user-chosen secret label.
+Simple labels (`api_key=`, `token:`) stay with the export's older rule. A trailing full stop after a masked value stays visible. Masked by design although they are not secrets: `tokens[0]`, code with a call as an argument, a date or code under a strict label, and names with words besides the label's (`oauth-client-secret`, `ClientSecretFromVaultConfig`).
 
 **Review r15tr-rev1.** The first rule missed real values and over-masked look-alikes, and it could leave a partial mask (`db_password=Tr0ub4dor&3` came out as `[credential redacted]&3`).
 - **Value extent.** A value is now quoted whole, or bare up to whitespace, a quote, or a `&`/`;`/`,` that starts another field (`name=`) or ends the text. So a value is never cut inside itself. Labels may repeat separators (pydantic's `APP__CLIENT_SECRET`).
@@ -196,4 +199,26 @@ Simple labels (`api_key=`, `token:`) stay with the export's older rule. A traili
   - Covering run (`-n 4`, 39 files with UI, load 50-104): 9 failed, 1712 passed in 63 min. The 8 known base failures, plus `Tests/UI/test_console_context_modal.py::test_context_modal_none_preview_replaces_stale_loaded_state`, which passes 3 of 3 on its own and only imports `content_fingerprint`.
   - Serial with lane flags: the recovered-suites slice (15 targets) gives 480 passed in 207 s at load 64-172; `Tests/Utils/test_log_sanitizer.py` gives 209 passed. The CPU-time and ratio tests passed at that load.
   - `Tests/CI` gives 1640 passed, 1 skipped (load 57); the module ratchet 207 passed; the ruff gate is OK.
+
+**Review r15tr-rev5.**
+- **The reviewer's three fixes:**
+  1. **Strict labels by shape.** Any label ending in `secret` or `secret_key` is strict (`_strict_label`), except names ending in `client_secret`, `consumer_secret`, `api_secret`, `aws_secret_access_key` or `secret_access_key`. This replaces the fixed user-chosen list.
+  2. **Literals inside code.** A code value is kept only when every quoted literal in it is an env name, a lowercase key or a known path. Multi-argument calls are read whole, so `os.getenv("DB_PASSWORD", "...")` and `os.environ.get("CLIENT_SECRET", "...")` mask whole with no tail. `os.getenv('CLIENT_SECRET_2')`, `os.environ["CLIENT_SECRET"]` and `resp.json()['access_token']` stay kept.
+  3. **`?key=`.** A value is judged as a strict `api_key` value, plus lowercase words or a `/`-path with no letter-and-digit word. `?key=python` and `?key=photos/2024/cat.jpg` are kept and import.
+- **Further changes probe10's 0-kept gate needed:**
+  - **Names.** An identifier counts only as the label's own name, versioned by at most two digits; a camelCase name needs the version. The credential-words branch is snake only, not kebab. This masks `myClientSecret99`, `accessToken2024`, `token-token`, `client_secret_prod` and `clientSecret`.
+  - **Templates and placeholders.** References and templates must name a credential (`$ADMIN123`, `{hunter}` masked). `<...>` needs a phrase (`<letmein>` masked). `your-` placeholders keep one case (`Your-Password` masked).
+  - **Function words.** A function word before a token makes the rest of the line the value (`client_secret: the <token>`).
+  - **Unquoted passphrases.** Under a strict label, a masked unquoted value runs on to the next field or the line end, so `db_password: correct horse battery staple` leaves no word.
+  - **Reclassified from keep to mask:** `oauth-client-secret` and `ClientSecretFromVaultConfig` (words besides the label's).
+- **Linear scans.** `_LETTER_DIGIT_WORD` and `_RANDOM_SEGMENT` are anchored at word starts, so a long run is scanned once. The rest-of-line check after a function word is capped.
+  - Unanchored, the 200 KB long-run and spaced-label cases failed their CPU bound.
+  - The slowest adversarial case now takes 0.39 s CPU (best of three, load 47), over 5x under the 2 s bound.
+  - probe11: the line-end cache gives a 4.1x ratio for 4x the text (11.6x without it); 8 MB takes 2.2 s.
+- **Tables.** `_MUST_MASK` has 180 rows (every probe10 secret, the coordinator's four, and rows for new rules), `_MUST_KEEP` 57. Against the rev4 source, 35 table nodes were red (33 mask, 2 keep).
+- **Adapted probe9** (`$FU/r15tr-probe9-r5.py`): 37 loosenings, which are the rev4 set (fragments updated where the code moved) plus one or more for each rev5 rule. Baseline is 0 red, and every loosening turns at least one must-mask row red.
+- **Probes.**
+  - probe10: 0 kept (33 masked). probe8: 0 kept (47 masked).
+  - probe2, probe_labels, probe3 and probe6 keep no secret; probe3's fixed point holds. probe4 and probe5 mask all 7 nested cases. probe7 agrees with rev2.
+  - `probe_equiv` gives corpus 4561, 0 diffs, so logs are byte-identical to base.
 

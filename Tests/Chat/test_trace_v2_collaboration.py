@@ -805,6 +805,57 @@ _MUST_MASK: dict[str, tuple[str, str]] = {
     "upper-snake-password": ("db" + _L + "password=SUMMER_2024", "SUMMER_2024"),
     "call-password": ("db" + _L + "password=Hunter2()", "Hunter2()"),
     "junk-dotted-prefix": ("client" + _L + "secret=hunter2!.client_secret", "hunter2!"),
+    # rev5: moved from the keep table: a name with words besides the label's.
+    "name-with-other-words": ("client" + _L + "secret=oauth-client-secret", "oauth-client-secret"),
+    "camel-name-with-other-words": (
+        "client" + _L + "secret=ClientSecretFromVaultConfig",
+        "ClientSecretFromVaultConfig",
+    ),
+    # rev5 (probe10): labels ending in "secret" are strict, bar issued ones
+    "probe10-nextauth": ("NEXTAUTH" + _L + 'SECRET="my super secret value"', "my super secret value"),
+    "probe10-auth-quoted": ('"auth' + _L + 'secret": "correct horse battery staple"', "correct horse battery staple"),
+    "probe10-hmac-changeme": ("hmac" + _L + "secret=changeme", "changeme"),
+    "probe10-shared-prose": ("shared" + _L + "secret: the quick brown fox", "quick brown fox"),
+    "probe10-admin-snake": ("admin" + _L + "secret=secret_key_2024", "secret_key_2024"),
+    "probe10-encryption-time": ("encryption" + _L + "secret=12:30", "12:30"),
+    "probe10-master-date": ("master" + _L + "secret=2024-01-01", "2024-01-01"),
+    "probe10-session-quoted": ("session" + _L + 'secret="correct horse battery staple"', "correct horse battery staple"),
+    "unquoted-passphrase": ("db" + _L + "password: correct horse battery staple", "horse battery staple"),
+    # rev5 (probe10): code whose literal is not a look-alike masks whole
+    "probe10-secretstr": ("client" + _L + 'secret=SecretStr("GOCSPX-' + _P8 + '")', "GOCSPX-" + _P8),
+    "probe10-pydantic-secretstr": (
+        "client" + _L + 'secret=pydantic.SecretStr("GOCSPX-' + _P8 + '")',
+        "GOCSPX-" + _P8,
+    ),
+    "probe10-b64decode": ("db" + _L + 'password=base64.b64decode("cGFzc3dvcmQxMjM=")', "cGFzc3dvcmQxMjM="),
+    "probe10-fromhex": ("api" + _L + 'token=bytes.fromhex("deadbeef00112233aabb")', "deadbeef00112233aabb"),
+    "probe10-cfg-get": ("refresh" + _L + 'token=cfg.get("1//0g' + _P8 + '")', "1//0g" + _P8),
+    "probe10-environ-get-default": (
+        "client" + _L + 'secret=os.environ.get("CLIENT_SECRET", "GOCSPX-' + _P8 + '")',
+        "GOCSPX-" + _P8,
+    ),
+    "probe10-getenv-default": ("db" + _L + 'password=os.getenv("DB_PASSWORD", "Tr0ub4dor&3")', "Tr0ub4dor&3"),
+    "probe10-secret-call": ("client" + _L + "secret=Secret('" + _P8 + "')", _P8),
+    # rev5 (probe10): names, templates and placeholders
+    "probe10-my-name": ("client" + _L + "secret=myClientSecret99", "myClientSecret99"),
+    "probe10-year-version": ("access" + _L + "token=accessToken2024", "accessToken2024"),
+    "probe10-kebab-words": ("api" + _L + "token=token-token", "token-token"),
+    "probe10-name-suffix": ("client" + _L + "secret=client_secret_prod", "client_secret_prod"),
+    "probe10-camel-unversioned": ("client" + _L + "secret=clientSecret", "clientSecret"),
+    "probe10-angle-word": ("db" + _L + "password=<letmein>", "letmein"),
+    "probe10-angle-camel": ("db" + _L + "password=<MyPassword>", "MyPassword"),
+    "probe10-brace-word": ("db" + _L + "password={hunter}", "hunter"),
+    "probe10-mustache-word": ("db" + _L + "password={{ hunter }}", "hunter"),
+    "probe10-percent-word": ("db" + _L + "password=%(hunter)s", "hunter"),
+    "probe10-title-placeholder": ("db" + _L + "password=Your-Password", "Your-Password"),
+    "probe10-reference-word": ("db" + _L + "password=$ADMIN123", "ADMIN123"),
+    "probe10-function-word-token": ("client" + _L + "secret: the " + _P8, _P8),
+    "probe10-url-key-snake": ("https://x.example/api?key=api" + _L + "key_2024", "api_key_2024"),
+    "probe10-url-key-call": ("https://x.example/api?key=Secret(abc)", "Secret(abc)"),
+    "probe10-url-key-token": ("https://x.example/api?key=" + _P8 + "abc", _P8),
+    # rev5 (probe9 adapted): rules whose loosening needs its own row
+    "lowercase-reference": ("db" + _L + "password=$db_password", "$db_password"),
+    "title-snake-versioned": ("client" + _L + "secret=Client_Secret_2", "Client_Secret_2"),
 }
 
 #: name -> text that must survive a shared bundle unchanged.
@@ -813,7 +864,6 @@ _MUST_KEEP: dict[str, str] = {
     "placeholder-your": "client" + _L + "secret=your-client-secret",
     "placeholder-your-capitals": "refresh" + _L + "token: YOUR-REFRESH-TOKEN",
     "placeholder-x": "client" + _L + "secret=xxxxxxxx-xxxx",
-    "kebab-secret-name": "client" + _L + "secret=oauth-client-secret",
     "path-etc": "private" + _L + "key=/etc/ssl/private/server.key",
     "path-run": "client" + _L + "secret=/run/secrets/client_secret",
     "path-relative": "private" + _L + "key=./keys/id_rsa2",
@@ -839,7 +889,6 @@ _MUST_KEEP: dict[str, str] = {
     "keyword-argument-paren": "fetch(refresh" + _L + "token=refresh_token2)",
     "semver-label": "api" + _L + "key_version=1.2.3",
     "prose-section": "client" + _L + "secret: see section 4.2 of the guide",
-    "word-run-config": "client" + _L + "secret=ClientSecretFromVaultConfig",
     "word-run-placeholder": "client" + _L + "secret=YourClientSecretHere",
     "mustache": "client" + _L + "secret={{ secrets.CLIENT_SECRET }}",
     "jinja": "client" + _L + "secret={{secrets.CLIENT_SECRET}}",
@@ -870,6 +919,9 @@ _MUST_KEEP: dict[str, str] = {
     "url-key-placeholder": "https://maps.googleapis.com/maps/api/js?key=YOUR_API_KEY&callback=init",
     "url-key-constant": "https://x.example/api?key=API" + _L + "KEY",
     "url-key-template": "https://x.example/api?key={api" + _L + "key}",
+    # rev5 (probe10): a ?key= value with no token-shaped word.
+    "url-key-word": "https://example.com/search?key=python",
+    "url-key-path": "https://s3.example.com/bucket?key=photos/2024/cat.jpg",
 }
 
 
