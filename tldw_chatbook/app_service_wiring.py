@@ -3061,11 +3061,15 @@ class ServiceWiringMixin(
         if self.console_execution_client is not None:
             # The selected singleton exists only in the backend. Affected
             # Settings consumers use explicit asynchronous permission commands.
+            from .Chat.console_execution_permission_service import ConsoleProcessPermissionService
+
             self.local_mcp_store = None
             self.local_mcp_control_service = None
             self.unified_mcp_context_store = None
             self.server_unified_mcp_service = None
-            self.unified_mcp_service = None
+            self.unified_mcp_service = ConsoleProcessPermissionService(
+                self.console_execution_client, self._console_execution_profile,
+            )
         else:
             self.local_mcp_store = LocalMCPStore(
                 get_user_data_dir() / "local_mcp_store.json",

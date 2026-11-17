@@ -15,6 +15,7 @@ import subprocess
 import sys
 import threading
 import time
+from concurrent.futures import Future
 from dataclasses import dataclass, field
 from typing import Any, BinaryIO, Callable, Mapping
 
@@ -48,9 +49,9 @@ class ConsoleProcessReceipt:
 
     identity: WireIdentity
     operation: str
-    received: asyncio.Future[None]
-    applied: asyncio.Future[Mapping[str, Any]]
-    retired: asyncio.Future[bool]
+    received: asyncio.Future[None] | Future[None]
+    applied: asyncio.Future[Mapping[str, Any]] | Future[Mapping[str, Any]]
+    retired: asyncio.Future[bool] | Future[bool]
     potentially_committed: bool = False
     turn_id: str | None = None
     events: list[ConsoleWireMessage] = field(default_factory=list, repr=False)
@@ -92,7 +93,7 @@ class _ConsoleFramedChannel:
         self,
         input_stream: BinaryIO,
         output_stream: BinaryIO,
-        loop: asyncio.AbstractEventLoop,
+        loop: asyncio.AbstractEventLoop | None,
         receive: Callable[[ConsoleWireMessage], None],
         failed: Callable[[BaseException], None],
     ) -> None:
@@ -113,7 +114,7 @@ class _ConsoleFramedChannel:
 
     def start(self) -> None:
         """Start only after the lifecycle owner has retained this channel."""
-        if self._started:
+        if self._started or self.loop is None:
             raise RuntimeError("Console channel already started")
         for thread in (self.reader, self.writer):
             try:
@@ -202,7 +203,8 @@ class ConsoleExecutionClient:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._profile: ConsoleProcessProfile | None = None
         self._start_task: asyncio.Task[None] | None = None
-        self._ready: asyncio.Future[None] | None = None
+        self._ready: asyncio.Future[None] | Future[None] | None = None
+        self._permission_bootstrap = None
         self._channel: _ConsoleFramedChannel | None = None
         self._process: subprocess.Popen[bytes] | None = None
         self._tree: Any = None
@@ -897,6 +899,34 @@ class ConsoleExecutionClient:
         await self.read_projection(row.id, row.incarnation_id)
         self.require_view(view, visit)
 
+    def set_global_default_before_mount(
+        self, profile: ConsoleProcessProfile, *, state: str,
+        profile_id: str = "default", expected_profile_digest: str | None = None,
+        expected_revision: int | None = None,
+    ) -> None:
+        """Complete the original fixed setup mutation before async UI startup."""
+        from .console_execution_bootstrap import ConsolePermissionBootstrap
+
+        if type(profile) is not ConsoleProcessProfile:
+            raise TypeError("Original Console profile selection is required")
+        if (self._loop is not None or self._start_task is not None
+            or self._shutdown_task is not None or self._channel_error is not None):
+            raise ConsoleChannelLost("Console synchronous setup is no longer available")
+        operation = {
+            "kind": "SetGlobalDefault", "state": state, "profile_id": profile_id,
+            "expected_profile_digest": expected_profile_digest,
+            "expected_revision": expected_revision,
+        }
+        # Validate the existing closed operation before launching any backend.
+        ConsoleWireMessage(
+            WireIdentity(self.profile_epoch, self.service_epoch, self._sent_sequence + 1,
+                         secrets.token_hex(16), "", "", self._source_revision),
+            "command", "PermissionAction", {"operation": operation},
+        )
+        if self._permission_bootstrap is None:
+            self._permission_bootstrap = ConsolePermissionBootstrap(self)
+        self._permission_bootstrap.invoke(profile, operation)
+
     async def start(self, profile: ConsoleProcessProfile) -> None:
         """Join the exact retained startup, including a Send made before Ready."""
         if type(profile) is not ConsoleProcessProfile:
@@ -907,32 +937,45 @@ class ConsoleExecutionClient:
         if self._loop is not None and self._loop is not loop:
             raise ConsoleChannelLost("Console owner loop changed")
         if self._start_task is None:
+            bootstrap = self._permission_bootstrap
+            if bootstrap is not None:
+                bootstrap.require_adoptable(profile)
             self._profile = profile
             self._loop = loop
-            self._ready = loop.create_future()
-            self._start_task = loop.create_task(self._start())
+            if bootstrap is None:
+                self._ready = loop.create_future()
+            self._start_task = loop.create_task(self._start(bootstrap=bootstrap))
         await asyncio.shield(self._start_task)
 
-    async def _start(self) -> None:
+    async def _start(self, *, bootstrap=None) -> None:
         try:
             # Creation is retained independently of observer cancellation. No
             # native/backend work starts until containment is established and
             # the fixed initialization frame is transmitted.
-            await asyncio.to_thread(self._launch)
+            if bootstrap is None:
+                await asyncio.to_thread(self._launch)
+            else:
+                if self._permission_bootstrap is not bootstrap:
+                    raise ConsoleChannelLost("Console pre-mount startup owner changed")
+                bootstrap.require_adoptable(self._profile)
+                self._ready = self._loop.create_future()
+                self._ready.set_result(None)  # Already validated original Ready.
+                self._channel.loop = self._loop
+                self._channel.start()
             assert self._ready is not None
             await self._ready
         except BaseException as error:
             self._fail(error)
             raise
 
-    def _launch(self) -> None:
+    def _launch(self, *, start_channel: bool = True) -> None:
         from tldw_chatbook.STT.executor_process_tree import (
             ExecutorProcessTree,
             WorkerContainmentIdentity,
         )
         from tldw_chatbook.Tools.workspace_tool_executor import _PopenProcessAdapter
 
-        assert self._profile is not None and self._loop is not None
+        assert self._profile is not None and (not start_channel or self._loop is not None)
         root = Path(__file__).resolve().parents[2]
         application_paths = [str(root)]
         profile_core = root / "packages" / "tldw_profile_core" / "src"
@@ -997,7 +1040,8 @@ class ConsoleExecutionClient:
             self._receive,
             self._channel_failed,
         )
-        self._channel.start()
+        if start_channel:
+            self._channel.start()
 
         def monitor() -> None:
             # Drain diagnostics continuously so stderr capacity cannot stop the
@@ -1006,10 +1050,12 @@ class ConsoleExecutionClient:
             while process.stderr.read(65536):
                 pass
             process.wait()
-            try:
-                self._loop.call_soon_threadsafe(self._exited, process.returncode)
-            except RuntimeError:
-                pass
+            loop = self._loop
+            if loop is not None:
+                try:
+                    loop.call_soon_threadsafe(self._exited, process.returncode)
+                except RuntimeError:
+                    pass
 
         self._monitor = threading.Thread(
             target=monitor, name="console-service-monitor", daemon=True
@@ -1027,6 +1073,32 @@ class ConsoleExecutionClient:
         """Retain a fixed command before handing bytes to the serialized writer."""
         if self._loop is not asyncio.get_running_loop():
             raise ConsoleChannelLost("Console command came from another owner loop")
+        return self._submit_command(
+            operation, payload, session_id=session_id, incarnation_id=incarnation_id,
+        )
+
+    def _submit_command(
+        self, operation: str, payload: Mapping[str, Any], *,
+        session_id: str = "", incarnation_id: str = "",
+    ) -> ConsoleProcessReceipt:
+        """Issue through the same sequencer on one actual transport owner."""
+        synchronous = self._loop is None
+        if synchronous:
+            from .console_execution_bootstrap import ConsolePermissionBootstrap
+
+            owner = self._permission_bootstrap
+            if (type(owner) is not ConsolePermissionBootstrap or owner.client is not self
+                or owner.thread is not threading.current_thread()
+                or self._start_task is not None or operation != "PermissionAction"
+                or payload.get("operation", {}).get("kind") != "SetGlobalDefault"
+                or session_id or incarnation_id or self._channel is None
+                or self._channel._started or owner.aborted.is_set()):
+                raise ConsoleChannelLost("Console pre-mount command owner changed")
+            future = Future
+        else:
+            if self._loop is not asyncio.get_running_loop():
+                raise ConsoleChannelLost("Console command came from another owner loop")
+            future = self._loop.create_future
         if self._channel_error is not None:
             raise ConsoleChannelLost(
                 "Console channel is unavailable"
@@ -1061,9 +1133,9 @@ class ConsoleExecutionClient:
         receipt = ConsoleProcessReceipt(
             identity,
             operation,
-            self._loop.create_future(),
-            self._loop.create_future(),
-            self._loop.create_future(),
+            future(),
+            future(),
+            future(),
         )
         receipt.turn_id = message.payload["turn_id"] if operation == "ReceiveTurn" else None
         self._requests[identity.request_id] = receipt
@@ -1095,7 +1167,10 @@ class ConsoleExecutionClient:
         if operation in {"FenceSource", "CloseIntake", "Drain", "Shutdown"}:
             self._intake_open = False
         try:
-            self._channel.send(message)
+            if synchronous:
+                write_message(self._channel.output, encode_message(message))
+            else:
+                self._channel.send(message)
         except BaseException as error:
             self._fail(error)
             raise
@@ -1278,6 +1353,8 @@ class ConsoleExecutionClient:
         cancellation = None
         try:
             async with asyncio.timeout(None if deadline is None else max(0.0, deadline - time.monotonic())):
+                if self._permission_bootstrap is not None and self._start_task is None:
+                    await self.start(self._profile)
                 if self._start_task is not None:
                     await asyncio.shield(self._start_task)
                 # Retain issued session commands through their exact retirement;
@@ -1333,6 +1410,11 @@ class ConsoleExecutionClient:
                 cancellation = error
         finally:
             self._intake_open = False
+            if self._permission_bootstrap is not None:
+                if self._permission_bootstrap.thread is not None and self._permission_bootstrap.thread.is_alive():
+                    self._permission_bootstrap.aborted.set()
+                    await asyncio.to_thread(self._permission_bootstrap.stop)
+                await asyncio.to_thread(self._permission_bootstrap.join)
             # A timeout of the observer does not cancel the off-loop creator.
             # Keep this cleanup Task until it can see every resource that the
             # exact startup actually published, including partial construction.
@@ -1454,9 +1536,10 @@ class ConsoleExecutionClient:
             except BaseException as error:
                 all_closed = False
                 self._cleanup_errors.append(error)
-                try:
-                    self._loop.call_soon_threadsafe(self._fail, error)
-                except RuntimeError:
-                    pass
+                if self._loop is not None:
+                    try:
+                        self._loop.call_soon_threadsafe(self._fail, error)
+                    except RuntimeError:
+                        pass
             all_closed = all_closed and stream.closed
         return all_closed
