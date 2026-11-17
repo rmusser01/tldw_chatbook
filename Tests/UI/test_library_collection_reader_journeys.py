@@ -533,7 +533,14 @@ async def test_collections_actions_repaint_their_panes_without_a_library_recompo
             await _wait_for_condition(
                 pilot,
                 lambda: done() and not screen._recompose_required,
-                message=f"{action} never settled",
+                timeout=30,
+                message=lambda: (
+                    f"{action} never settled: rows={rows()}, "
+                    f"status={work().action_status!r}, "
+                    f"focus={getattr(screen.focused, 'id', None)}, "
+                    f"page_loading={engine.state.page_loading}, "
+                    f"confirming={screen._collections_state.confirming_hard_delete}"
+                ),
             )
             for _ in range(3):
                 await pilot.pause()
@@ -579,22 +586,25 @@ async def test_collections_actions_repaint_their_panes_without_a_library_recompo
             and bool(screen.query(".library-collections-highlight-delete")),
         )
 
+        # Delete a seeded capture before Quick Capture adds one: a fresh
+        # capture's background extraction bumps its revision, and deleting it
+        # meanwhile is refused (revision_conflict), as it should be.
+        await _activate(screen, host, pilot, "#library-collections-more", "More")
+        await _activate(screen, host, pilot, "#library-collections-hard-delete", "Delete")
+        await act(
+            "delete",
+            "#library-collections-hard-delete-confirm",
+            lambda: rows() == 1 and not engine.state.page_loading,
+            kept_focus=False,
+        )
+
         await _activate(screen, host, pilot, "#library-collections-quick-capture", "Quick")
         url = await _wait_for_selector(screen, pilot, "#library-collections-capture-url")
         url.value = "https://example.test/gamma"
         await act(
             "capture",
             "#library-collections-capture-save",
-            lambda: rows() == 3 and work().action_status.startswith("Saved"),
-            kept_focus=False,
-        )
-
-        await _activate(screen, host, pilot, "#library-collections-more", "More")
-        await _activate(screen, host, pilot, "#library-collections-hard-delete", "Delete")
-        await act(
-            "delete",
-            "#library-collections-hard-delete-confirm",
-            lambda: rows() == 2 and not engine.state.page_loading,
+            lambda: rows() == 2 and work().action_status.startswith("Saved"),
             kept_focus=False,
         )
 

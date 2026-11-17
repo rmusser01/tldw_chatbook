@@ -4,7 +4,7 @@ title: "35 Library Collections controller call sites and three export paths stil
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-16 23:53'
+updated_date: '2026-11-17 00:52'
 created_date: 2026-11-15 02:20
 labels:
 - follow-up
@@ -56,3 +56,5 @@ Filed in round 14 of the 2026-10-23 burn-down (closeout, 2026-11-15). Checked ag
 - **Size.** `library_collections_controller.py` 1720 -> 1733 (measured); pin raised by exactly that with a dated comment.
 - Files: `tldw_chatbook/UI/Library_Modules/library_collections_controller.py`, `tldw_chatbook/Widgets/Library/library_collections_capture_reader.py`, `Tests/UI/test_library_collection_reader_journeys.py`, `Tests/Architecture/test_library_modules_size_ratchet.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`.
 - **Fix round 1 (review r15lc-rev1, 2026-11-16; no code defects found).** The saved-search page repaint (`_page_library_collection_saved_searches` -> `LibraryCollectionsScopeRows.show_page`) now takes the same `_pane_sync_lock`, so every in-place pane recompose is serialized. `test_library_collection_browse_journeys.py` and `test_library_collection_saved_search_loading.py`: 20 passed (load ~80). The focus note above was corrected: an unsubmitted filter box still resets, as the reviewer's probe showed. Size: `library_collections_controller.py` 1740 -> 1741 (measured), pin raised with a dated comment.
+  - *The new census test raced a background extraction.* The fix round's covering re-run failed it once ("delete never settled"), and it then failed 2 of 8 standalone. A trace of pane rebuilds, focus, presses and warnings showed the hard-delete confirm press arriving and being refused with `revision_conflict`. The capture saved one step earlier was being deleted while its background extraction (blocked from the network, as intended) bumped its revision. The product is correct here. The test now deletes a seeded capture before Quick Capture adds one, and its settle wait takes 30 s and reports rows, status, focus and the hard-delete state on timeout. 16 of 16 at load 66-76; still red at base on its first action ("1 Library recomposes for one scope change"); 27.1 s call / 46.3 s serial at load ~70.
+  - *Two off-lane tests asserted one `pilot.pause()` after a press.* `test_library_collection_browse_journeys.py::test_clear_restores_results_and_valid_sort_within_scope[textual-light-size0]` failed 2 of 8 at head (base 8 of 8 at that size; its 80x24 cases fail 8 of 8 at base and pass at head). The trace showed the Sort press landing and the assertion running before its awaited page load finished. The characterization test `test_quick_capture_refresh_hard_delete_cancel_and_legacy_recovery_close` failed twice in about 30 head runs, at its hard-delete-cancel and legacy-close checks; base was 0 of 13. Those three assertions now wait for the state with `_wait_for_condition` (a lost press still fails them). 16 of 16 for both nodes after (load 62-75).
