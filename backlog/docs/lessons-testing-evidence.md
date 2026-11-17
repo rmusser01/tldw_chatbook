@@ -11958,6 +11958,14 @@ exactly the "old data wrongly discarded" bug.
 
 ## A settle whose predicate can RAISE is still a one-shot sample — and a value flip is not its message cascade (task-19047, 2026-08-20)
 
+**Recurrence (TASK-41251, 2026-11-17).** PR #3537 run 44057405523 UI shard 15
+raised `NoMatches` while its Custom endpoints Rename poll read the status.
+Holding the original Textual remount after its child removal reproduced that
+same failure. Treating only predicate `NoMatches` as not ready within the
+existing poll passed the held-remount control; withholding the status still
+failed at the unchanged final check. Keep the visible success assertion and
+deadline, rather than accepting saved model state as UI completion.
+
 Follow-up to the pilot.pause() entry above: `_wait_until`-style condition polls
 only settle what their predicate can *survive observing*. Two incidents from
 the same file, both reproduced under CPU-burner load before patching:
