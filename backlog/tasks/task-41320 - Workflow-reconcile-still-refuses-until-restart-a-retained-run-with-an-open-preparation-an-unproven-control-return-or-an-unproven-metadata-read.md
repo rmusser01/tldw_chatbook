@@ -105,4 +105,12 @@ Review-round evidence (load 50-132):
 - The new scenarios do not exist on fbf1c9ea74. Their red runs on acfb7f7ed1 and the mutation checks above are the base evidence.
 - Preflight passes.
 - No Tests/Architecture file names the changed modules. The previous round's full serial run showed only the 3 known base failures. `test_timer_path_static_update_inventory.py` on head fails only the 2 known `ProjectIndexBindingCard` nodes, the same as base; no workflow view appears in its findings.
+Delta review (acfb7f7ed1..7bc401b108, "ready to merge"). All Minors are fixed:
+- **M1.** The per-run check now refuses only `control_unknown`. An unproven final read stays registered, so the up-front check already refuses it, and no test needed the dropped clause.
+- **M2.** The marker blocks reads for every workflow in the coordinator, so the copy is now neutral: "…Restart Chatbook to read workflows again and release held chats." `unproven_earlier_read` opens another chat's saved workflow, which holds nothing. Its view shows the restart copy and does not say "this chat".
+- **M3.** The read that becomes unproven now raises `workflow_return_unproven` itself, chained from the original error, from both of `_metadata`'s unproven exits; `cell.source_error` keeps the original. On 7bc401b108's product code the new assertion was red: the first `get` raised "original workflow reader return unproven".
+- **M4 (docs).** ADR-285 and the User Guide say that workflow details and reviews stay unavailable in every chat until restart.
+- **M5.** `_metadata_unproven()` counts a cancelled marker as unproven instead of raising `CancelledError`, as the preceding-read check and shutdown already do.
+
+DELTA_EVIDENCE
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

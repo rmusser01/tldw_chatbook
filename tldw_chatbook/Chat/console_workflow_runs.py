@@ -872,7 +872,7 @@ class ConsoleWorkflowCoordinator:
     def _metadata_unproven(self):
         """A read returned without proof; only a restart clears it (ADR-285)."""
         return any(
-            future.done() and future.result() is False
+            future.done() and (future.cancelled() or future.result() is not True)
             for future in self._metadata_cells.values()
         )
 
@@ -1075,12 +1075,9 @@ class ConsoleWorkflowCoordinator:
                 self._metadata_cells.pop(cell)
                 if self._metadata_tail is future:
                     self._metadata_tail = None
-            if (
-                cell.source_error is not None
-                and outcome is None
-                and cell.caller_error is None
-            ):
-                raise cell.source_error
+            if cell.source_error is not None and cell.caller_error is None:
+                # TASK-41320: this read is now unproven; say so, as later reads do.
+                raise RuntimeError("workflow_return_unproven") from cell.source_error
 
     async def _publish(self, workflow_id, *, _terminal_run=None):
         import asyncio
@@ -2458,16 +2455,9 @@ class ConsoleWorkflowCoordinator:
                         and not cell.disposed.done()
                     ):
                         raise ValueError("workflow_resources_still_live")
-                    if run.control_unknown or (
-                        cell is not None
-                        and not (
-                            not cell.disposed.cancelled()
-                            and cell.disposed.exception() is None
-                            and cell.disposed.result() is True
-                        )
-                    ):
-                        # TASK-41320 (ADR-285): the control or final read
-                        # returned unproven. Only a restart releases the chat.
+                    if run.control_unknown:
+                        # TASK-41320 (ADR-285): the control returned unproven.
+                        # An unproven read was refused above, before any change.
                         raise ValueError("workflow_return_unproven")
                     # TASK-41320: never enrolled in a wave means never launched;
                     # close() rechecks that under the task lock.

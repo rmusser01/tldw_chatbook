@@ -85,7 +85,9 @@ def test_an_earlier_unproven_metadata_read_keeps_the_chat_until_restart(tmp_path
     read. Reconcile refused only the final read's marker, so it closed the
     preparation, stored the run closed and released the chat, then failed
     at its own trailing publication (TASK-41320 review). It now refuses first,
-    with `workflow_return_unproven`, and changes nothing."""
+    with `workflow_return_unproven`, and changes nothing. The read that became
+    unproven already carries that reason, and another chat's detail view names
+    a restart without saying that chat is held."""
     _run(tmp_path, "unproven_earlier_read", "native", script=_SCRIPT, timeout=180)
 
 
@@ -526,7 +528,9 @@ def _restart_only(error):
     from tldw_chatbook.UI.Console_Modules.workflows import workflow_view_error
 
     message = workflow_view_error("Recovery", error)
-    assert "Restart Chatbook to release this chat" in message, message
+    assert (
+        "Restart Chatbook to read workflows again and release held chats" in message
+    ), message
     assert "Wait" not in message, message
 
 
@@ -646,13 +650,15 @@ async def unproven_final_read(tmp_path):
         # The detail view reads through coordinator.get, which the marker
         # refuses: it names a restart and does not offer a refresh.
         notice = await _detail_notice(rig)
-        assert "Restart Chatbook to release this chat" in notice, notice
+        assert (
+            "Restart Chatbook to read workflows again and release held chats" in notice
+        ), notice
         assert "Refresh" not in notice, notice
     finally:
         await _close_unresolved(rig, "workflow_original_metadata_shutdown_unresolved")
 
 
-async def _detail_notice(rig):
+async def _detail_notice(rig, conversation_id=None, workflow_id=None):
     """Show the real workflow detail view over the real coordinator; return
     its notice. A bare host: the full Console's workspace tree cannot compose
     while this chat holds a run (a KeyError on its running-attention style)."""
@@ -666,8 +672,8 @@ async def _detail_notice(rig):
 
     status = ConsoleWorkflowStatus(
         rig.coordinator,
-        rig.workflow.request.conversation_id,
-        rig.workflow.id,
+        conversation_id or rig.workflow.request.conversation_id,
+        workflow_id or rig.workflow.id,
         open_changes=lambda *args: None,
         open_fleet=lambda *args: None,
         pending_approvals=lambda *args: False,
@@ -695,12 +701,20 @@ async def unproven_earlier_read(tmp_path):
     import contextlib
 
     from Tests.Chat.workflow_rig import WorkflowProvider, build_workflow_rig
+    from tldw_chatbook.Agents.goal_storage_lifetime import owned_goal_storage
     from tldw_chatbook.Chat import console_workflow_runs
+    from tldw_chatbook.UI.Console_Modules.workflows import workflow_view_error
 
     rig = await build_workflow_rig(tmp_path, None, WorkflowProvider())
     try:
         run, item = await _retained_unlaunched(rig)
         assert run.final_metadata is None
+        with owned_goal_storage(rig.service):
+            # Another chat's workflow, which holds nothing.
+            other = rig.service.db.workflow_runs.create(
+                rig.workflow.request.model_copy(update={"conversation_id": "other"}),
+                launch_id="other-chat-workflow",
+            )
         storage_return = console_workflow_runs._remaining_storage_return
 
         @contextlib.contextmanager
@@ -713,15 +727,24 @@ async def unproven_earlier_read(tmp_path):
             patch.setattr(
                 console_workflow_runs, "_remaining_storage_return", handle_lost
             )
-            with pytest.raises(RuntimeError):
+            with pytest.raises(RuntimeError) as became:
                 # Its own task, as a view's read is: shutdown cannot drain a
                 # read issued by the task that disposes the runtime.
                 await asyncio.create_task(rig.coordinator.get(rig.workflow.id))
+        # The read that becomes unproven already names a restart.
+        assert became.value.args == ("workflow_return_unproven",), became.value
+        _restart_only(became.value)
+        assert "Refresh" not in workflow_view_error("Review", became.value)
         # An ordinary status read, not the run's final one, is now unproven.
         assert run.final_metadata is None
         assert [f.result() for f in rig.coordinator._metadata_cells.values()] == [False]
         _restart_only(await _refused(rig, "workflow_return_unproven", "reconcile-read"))
         assert not item._closed and item in rig.runtime._workflow_preparations
+        # The marker refuses every workflow's reads, so another chat's view
+        # names a restart without claiming that chat is held.
+        notice = await _detail_notice(rig, "other", other.id)
+        assert "Restart Chatbook to read workflows again" in notice, notice
+        assert "this chat" not in notice, notice
         assert rig.coordinator._runs.get(rig.workflow.id) is run
         assert not (
             await rig.controller.submit_draft(

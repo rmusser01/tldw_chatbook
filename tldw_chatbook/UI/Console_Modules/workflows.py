@@ -154,8 +154,8 @@ def workflow_view_error(context: str, error: BaseException) -> str:
     if error.args == ("workflow_return_unproven",):
         return (
             f"{operation} unavailable · Chatbook could not confirm that a Pause, "
-            "Stop or background check finished cleanly. Restart Chatbook to "
-            "release this chat."
+            "Stop or background check finished cleanly. Restart Chatbook to read "
+            "workflows again and release held chats."
         )
     if error.args == ("recovery_audit_required",):
         return f"{operation} unavailable · Restart Chatbook to audit interrupted work, then review it."
