@@ -90,6 +90,114 @@ def test_the_real_home_is_exported_so_workers_and_children_inherit_it(
     assert guard._real_home() == tmp_path
 
 
+def test_child_snapshot_retains_real_profile_aliases_without_metadata_reads(
+    monkeypatch, tmp_path
+):
+    home = tmp_path / "real-home"
+    (home / ".config").mkdir(parents=True)
+    target = tmp_path / "profile-target"
+    target.mkdir()
+    (home / ".config/tldw_cli").symlink_to(target, target_is_directory=True)
+    monkeypatch.setenv(guard.REAL_HOME_ENV, str(home))
+    expected = guard.protected_roots()
+    child_env = guard.child_environment()
+    assert guard._norm(str(target)) in expected
+
+    with monkeypatch.context() as contained:
+        for name, value in child_env.items():
+            contained.setenv(name, value)
+        contained.setattr(
+            os.path,
+            "realpath",
+            lambda *_args, **_kwargs: pytest.fail("child probed profile metadata"),
+        )
+        assert guard.protected_roots() == expected
+        assert guard.resolved_real_home() == home
+        assert guard.child_environment() == child_env
+
+
+@pytest.mark.parametrize(
+    "snapshot",
+    [
+        "not-json",
+        "[]",
+        "{}",
+        '{"home":"relative","roots":[]}',
+        '{"home":"/tmp","roots":[]}',
+        '{"home":"/tmp","roots":["relative"]}',
+        '{"home":"/tmp","roots":["/unrelated"]}',
+    ],
+)
+def test_invalid_child_snapshot_fails_without_profile_metadata_fallback(
+    monkeypatch, snapshot
+):
+    with monkeypatch.context() as contained:
+        contained.setenv(guard.PROFILE_SNAPSHOT_ENV, snapshot)
+        contained.setattr(
+            os.path,
+            "realpath",
+            lambda *_args, **_kwargs: pytest.fail("invalid snapshot probed metadata"),
+        )
+        with pytest.raises(ValueError, match="invalid real-profile guard snapshot"):
+            guard.protected_roots()
+
+
+def test_child_snapshot_installs_the_real_write_guard(monkeypatch, tmp_path):
+    home = tmp_path / "real-home"
+    profile = home / ".config/tldw_cli"
+    profile.parent.mkdir(parents=True)
+    physical_profile = tmp_path / "physical-profile"
+    physical_profile.mkdir()
+    profile.symlink_to(physical_profile, target_is_directory=True)
+    target = profile / "ui_state.toml"
+    target.write_text(OWNER_STATE)
+    monkeypatch.setenv(guard.REAL_HOME_ENV, str(home))
+    environment = {**os.environ, **guard.child_environment()}
+    child = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import os
+import sys
+from pathlib import Path
+from Tests import real_profile_guard as guard
+
+original_realpath = os.path.realpath
+
+def forbidden_metadata(*args, **kwargs):
+    raise AssertionError("guard installation probed real-profile metadata")
+
+os.path.realpath = forbidden_metadata
+try:
+    guard.install()
+    assert guard._roots == guard.protected_roots()
+    assert guard.resolved_real_home() == Path(os.environ[guard.REAL_HOME_ENV])
+finally:
+    os.path.realpath = original_realpath
+
+for raw_target in sys.argv[1:]:
+    target = Path(raw_target)
+    try:
+        target.write_text("overwritten")
+    except guard.RealProfileWriteError:
+        assert guard.take_violations()
+    else:
+        raise AssertionError("snapshot disabled the real profile write guard")
+""",
+            str(target),
+            str(physical_profile / "ui_state.toml"),
+        ],
+        cwd=REPO_ROOT,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert child.returncode == 0, child.stdout + child.stderr
+    assert target.read_text() == OWNER_STATE
+
+
 def _dir_fd(call):
     def run(root):
         fd = os.open(root, os.O_RDONLY)
@@ -482,6 +590,31 @@ def test_the_ui_conftest_bootstrap_moves_home_into_a_sandbox_away_from_the_real_
         )
     assert Path(os.environ["HOME"]).resolve() == used_root / "home"
     assert os.environ["USERPROFILE"] == os.environ["HOME"]
+
+
+def test_ui_bootstrap_uses_parent_snapshot_without_real_home_metadata(
+    monkeypatch, tmp_path
+):
+    home, sandbox, fresh = (
+        tmp_path / name for name in ("real-home", "sandbox", "fresh")
+    )
+    for path in (home, sandbox, fresh):
+        path.mkdir()
+    monkeypatch.setenv(guard.REAL_HOME_ENV, str(home))
+    for name, value in guard.child_environment().items():
+        monkeypatch.setenv(name, value)
+    original_resolve = Path.resolve
+
+    def contained_resolve(path, *args, **kwargs):
+        if path == home:
+            pytest.fail("UI bootstrap probed real-home metadata")
+        return original_resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", contained_resolve)
+    namespace = _run_ui_bootstrap(
+        monkeypatch, real_home=home, root=sandbox, home=sandbox / "home", tempdir=fresh
+    )
+    assert namespace["_BOOTSTRAP_CONFIG_ROOT"] == sandbox
 
 
 def test_the_ui_conftest_session_end_keeps_tldw_config_path(monkeypatch, tmp_path):

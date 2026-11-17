@@ -2414,6 +2414,14 @@ def _read_relative_file(relative: Path, *, workspace: Path, offset: int, limit: 
     target = workspace / relative
     if not _relative_target_is_safe(relative, workspace, sensitive_exclusions, is_directory=False) or not target.is_file():
         raise LocalToolError(f'file not found: {display_path or relative}')
+    if target.is_symlink():
+        try:
+            resolved_relative = target.resolve().relative_to(workspace.resolve())
+        except (OSError, RuntimeError, ValueError):
+            raise LocalToolError(f'file not found: {display_path or relative}') from None
+        if not _relative_target_is_safe(resolved_relative, workspace, sensitive_exclusions, is_directory=False):
+            raise LocalToolError(f'file not found: {display_path or relative}')
+        target = workspace / resolved_relative
     data = _read_bounded_bytes(target)
     if b'\x00' in data[:8192]:
         raise LocalToolError(f"'{display_path or relative}' appears to be binary; fs_read only reads text files")
@@ -5849,4 +5857,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("6ee03d93f1905684ef06a39553baf84bd19cfea81e0d139524c67c690b31f9b7")
+BUNDLE_SHA256 = _enter_worker_exchange("8eeeedca0f435f9b60a55b4233332c4daef0f54773ff058c0e28bb289c396e26")

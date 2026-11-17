@@ -70,6 +70,7 @@ def provider_resolution(
 
     if visible_copy is None:
         visible_copy = "" if ready else DEFAULT_BLOCKED_COPY
+    extra.setdefault("execution_key", "")
     resolution = SimpleNamespace(
         ready=ready,
         provider=provider,
