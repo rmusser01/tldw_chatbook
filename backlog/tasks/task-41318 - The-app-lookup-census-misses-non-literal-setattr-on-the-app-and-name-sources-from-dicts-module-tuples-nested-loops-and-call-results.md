@@ -54,7 +54,7 @@ ADR required: no. This extends an existing architecture test (TASK-36942.4, TASK
 The census (`Tests/Architecture/test_app_string_lookup_census.py`) gains two things and keeps its rules:
 
 - **Writes are recorded.** A non-literal `setattr`/`delattr` on a census receiver is now a row in `app_nonliteral_lookups.tsv`, under the same shrink-only rule as non-literal lookups. Writes are recorded but not counted: a literal `setattr(app, "x", v)` is the assignment `app.x = v`, not a string lookup. Counting them would also have changed what the pins mean. The scan finds the 15 sites the task lists.
-- **Names are followed further.** `_loop_items` is replaced by `_Follower`. It follows a lookup's name through a plain `name = ...` (in the function or at module level), an enclosing loop's item (nested loops and comprehension generators, using Python's scoping: a loop binds in its body, not in its own iterable), a dict lookup (`D[k]`, `D.get(k[, default])`), and the `return` values of a function with that name in the same module. These compose, so `_validate_provider(provider)` -> `SERVER_PROCESS_ATTRS[provider]` -> the dict's values is followed. A cycle is cut by a per-path seen set. A name that is itself an UPPER_CASE constant is still not followed: the record's `reaches` column covers it, and the TASK-40141 `constant` control pins that. Lambdas and `*args`/`**kwargs` bind their own names. The docstring lists the sources left unfollowed, each with its reason. The real-tree ones are two conditional expressions, `self._CONSOLE_PENDING_STASH_ATTR` (a constant) and `SERVER_PROCESS_ATTRS.items()`.
+- **Names are followed further.** `_loop_items` is replaced by `_Follower`. It follows a lookup's name through a plain `name = ...` (in the function or at module level), an enclosing loop's item (nested loops and comprehension generators, using Python's scoping: a loop binds in its body, not in its own iterable), a dict lookup (`D[k]`, `D.get(k[, default])`), and the `return` values of a function with that name in the same module. These compose, so `_validate_provider(provider)` -> `SERVER_PROCESS_ATTRS[provider]` -> the dict's values is followed. A cycle is cut by a per-path seen set. A name that is itself an UPPER_CASE constant is still not followed: the record's `reaches` column covers it, and the TASK-40141 `constant` control pins that. A function that binds the name in any way (`=`, `for`/`with`/`except`/import targets, tuple unpacking) owns it, and only its `=` values count, in any order. Otherwise the follower continues to enclosing functions and lambdas, then the module. A returned parameter does not make its function a lookup helper. Each lookup counts a literal node once. The docstring lists the sources left unfollowed, each with its reason. The real-tree ones are two conditional expressions, `self._CONSOLE_PENDING_STASH_ATTR` (a constant) and `SERVER_PROCESS_ATTRS.items()`.
 
 Evidence (2026-11-16, base fbf1c9ea74 = dev 5e3c8b2bd4 plus filing commits, load 40-100):
 
@@ -79,6 +79,19 @@ Evidence (2026-11-16, base fbf1c9ea74 = dev 5e3c8b2bd4 plus filing commits, load
   - Three fail on base too: `test_persistent_diagnostic_inventory::test_reviewed_diagnostic_changes_are_metadata_only` and `test_timer_path_static_update_inventory` x2.
   - Five were `test_task_15103_review_ledger_*` 300 s pytest-timeouts while the run rebuilt the diagnostic inventory. Run alone on head, all five passed (7.5 min).
 - **Lane:** same file, so it already runs in `pr-fast-lane-arch`.
+- **Review round (2026-11-17, Opus review of 7366b6641e):**
+  - The pin-failure message now explains per-site counting and gives the remedy for a new dict, tuple or return value. It also says return-following matches callees by name.
+  - Locality and closures were fixed as described above, returned parameters are no longer recorded as helpers, and each lookup counts a literal once.
+  - The docstring's not-followed list was completed, and it now states order-insensitivity.
+  - New controls:
+    - `test_a_literal_moved_into_a_helper_or_loop_is_still_counted[dict-get-default|call-cycle|lambda-closure|nested-def-closure]`
+    - `test_a_literal_the_name_cannot_hold_is_not_counted[9 cases]`
+    - `test_a_literal_reached_twice_by_one_lookup_counts_once`
+  - Before the fix, 8 of the new nodes failed. The census file now passes 52 nodes.
+  - Mutation check: each of 7 mutants was caught by its control. They dropped the `.get` default, the cycle guard (RecursionError), the comprehension scope filter, closure following, binding-based locality, the helper-off-on-return rule, and dedupe.
+  - Pins and record re-measured: unchanged.
+  - Real-tree plants: re-run with the same results, and the unplanted copy passes 52 nodes.
+  - `./scripts/preflight.sh` passed with `PYTHON=` set to the repo's 3.12.11 venv. This worktree has no `.venv`, so preflight otherwise picks `python3.14` (3.14.7), and the Canvas Mermaid check then fails on its 3.12.11 build pin. That failure is environmental.
 - **Files:**
   - `Tests/Architecture/test_app_string_lookup_census.py`
   - `Tests/Architecture/app_lookup_census.tsv`

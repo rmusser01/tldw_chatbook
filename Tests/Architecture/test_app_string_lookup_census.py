@@ -16,21 +16,29 @@ app-like when its last name segment is ``app``, ``app_instance``, ``tldw_app``,
 A literal can also reach the app through a name: a helper's parameter
 (``_optional(app, "chachanotes_db")``), a loop over a literal tuple
 (``for name in ("media_db", ...): getattr(app, name)``), and since TASK-41318
-a plain ``name = ...`` in the function or module, an enclosing loop's item
-(nested loops and comprehensions included), a dict lookup (``D[key]``,
-``D.get(key)``) or a same-module function's return value, composed in any
-order. Those literals count as lookups in the pins and the private-name rule,
-so moving a literal lookup into one is not a reduction (TASK-40141). Each
-lookup counts every literal its name can hold, so a dict read at eight sites
-counts its values eight times.
+a plain ``name = ...`` in the scope that binds the name (the function, an
+enclosing function or lambda, or the module), an enclosing loop's item (nested
+loops and comprehensions included), a dict lookup (``D[key]``,
+``D.get(key, default)``) or a same-module function's return value, composed in
+any order. Every ``=`` to the name in that scope counts, whatever its order or
+branch. Those literals count as lookups in the pins and the private-name rule,
+so moving a literal lookup into one is not a reduction (TASK-40141). A literal
+counts once per lookup that can read it, so a dict read at eight sites counts
+its values eight times.
 
 Not followed, because TASK-41318 did not name them (follow one if a literal
-moves there): conditional expressions (``"a" if x else "b"``), iterating a
-dict or its ``.items()``, tuple subscripts, closures over an enclosing
-function's names, names imported from another module, class attributes,
-functions defined in another module, and other bindings (tuple unpacking,
-``with``, walrus, augmented). A name that is itself an UPPER_CASE constant
-is not followed either; its row in the record names the attribute it reaches.
+moves there): conditional and boolean expressions (``"a" if x else "b"``,
+``x or "y"``), parameter defaults, a parameter reassigned in its function, a
+function's returned parameter (the caller's argument), iterating a dict or its
+``.items()``, tuple subscripts, ``*``/``**`` unpacking inside a literal, a
+comprehension used as a loop's iterable, a loop variable read after its loop,
+names imported from another module, class attributes, functions defined in
+another module, and bindings other than a plain ``=`` (tuple unpacking,
+``with``/``except``/``import`` targets, walrus, augmented). A name bound only
+those ways still shadows a module-level one. A lookup whose own argument is an
+UPPER_CASE constant is not followed either: its row in the record names the
+attribute it reaches. A constant reached any other way (``x = CONST``, a dict
+holding one) is followed.
 
 Every lookup whose name is not a literal, and every ``setattr``/``delattr`` on
 the app whose name is not a literal (TASK-41318), is also recorded in
@@ -109,13 +117,33 @@ def _parameter(
 
 
 def _own(scope: ast.AST) -> Iterator[ast.AST]:
-    """The nodes in ``scope`` outside any function, lambda or class nested in it."""
+    """The nodes in ``scope``, not descending into a nested function, lambda or class."""
     todo = list(ast.iter_child_nodes(scope))
     while todo:
         node = todo.pop()
+        yield node
         if not isinstance(node, (*_FUNCTIONS, ast.Lambda, ast.ClassDef)):
-            yield node
             todo.extend(ast.iter_child_nodes(node))
+
+
+def _bound_names(scope: ast.AST) -> set[str]:
+    """Every name ``scope`` itself binds, by any statement.
+
+    A comprehension's loop variable belongs to the comprehension, not ``scope``.
+    """
+    nodes = list(_own(scope))
+    loop_variables = {
+        id(n) for c in nodes if type(c) is ast.comprehension for n in ast.walk(c.target)
+    }
+    names = set()
+    for n in nodes:
+        if type(n) is ast.Name and type(n.ctx) is ast.Store and id(n) not in loop_variables:
+            names.add(n.id)
+        elif isinstance(n, (*_FUNCTIONS, ast.ClassDef, ast.ExceptHandler)) and n.name:
+            names.add(n.name)
+        elif type(n) is ast.alias:
+            names.add(n.asname or n.name.partition(".")[0])
+    return names
 
 
 def _assigned(scope: ast.AST, name: str) -> list[ast.expr]:
@@ -193,50 +221,56 @@ class _Follower:
                 chain.append(scope)
         return chain
 
-    def _bindings(self, node: ast.Name, seen: frozenset[int]) -> list[ast.expr]:
+    def _bindings(self, node: ast.Name, seen: frozenset[int], helper: bool) -> list[ast.expr]:
+        """The expressions bound to ``node``'s name where it is read.
+
+        A parameter found while ``helper`` makes its function a lookup helper
+        (its call sites' literals count); a returned parameter does not.
+        """
         name = node.id
         for scope in self._chain(node):
             if isinstance(scope, (*_FUNCTIONS, ast.Lambda)):
                 args = scope.args
                 if spec := _parameter(scope, name):
-                    if not isinstance(scope, ast.Lambda):
+                    if helper and not isinstance(scope, ast.Lambda):
                         self.params[scope.name].add(spec)
                     return []
                 if name in (a.arg for a in (args.vararg, args.kwarg) if a):
                     return []
-                if isinstance(scope, ast.Lambda):
-                    continue
-                if values := _assigned(scope, name):
-                    return values
-                break  # a global (closures are not followed)
+                if name in _bound_names(scope):
+                    return _assigned(scope, name)
             elif (index := _unpacked(scope.target, name)) is not None:
                 if index == -2:
                     return []
-                items = [e for i in self.values(scope.iter, seen) for e in getattr(i, "elts", ())]
+                iterated = self.values(scope.iter, seen, helper)
+                items = [e for i in iterated for e in getattr(i, "elts", ())]
                 if index == -1:
                     return items
                 return [
                     v.elts[index]
                     for item in items
-                    for v in self.values(item, seen)
+                    for v in self.values(item, seen, helper)
                     if len(getattr(v, "elts", ())) > index
                 ]
         return _assigned(self.tree, name)
 
-    def values(self, expr: ast.expr, seen: frozenset[int] = frozenset()) -> list[ast.expr]:
+    def values(
+        self, expr: ast.expr, seen: frozenset[int] = frozenset(), helper: bool = True
+    ) -> list[ast.expr]:
         """What ``expr`` can evaluate to, through names, dicts and returns."""
         if id(expr) in seen:
             return []
         seen |= {id(expr)}
 
-        def follow(nodes: list[ast.expr]) -> list[ast.expr]:
-            return [v for n in nodes for v in self.values(n, seen)]
+        def follow(nodes: list[ast.expr], helper: bool = helper) -> list[ast.expr]:
+            return [v for n in nodes for v in self.values(n, seen, helper)]
 
         def dict_values(mapping: ast.expr) -> list[ast.expr]:
-            return [v for d in self.values(mapping, seen) if type(d) is ast.Dict for v in d.values]
+            found = self.values(mapping, seen, helper)
+            return [v for d in found if type(d) is ast.Dict for v in d.values]
 
         if type(expr) is ast.Name:
-            return follow(self._bindings(expr, seen))
+            return follow(self._bindings(expr, seen, helper))
         if type(expr) is ast.Subscript:
             return follow(dict_values(expr.value))
         if type(expr) is ast.Call:
@@ -249,7 +283,8 @@ class _Follower:
                     for f in self.defs.get(_receiver(func), ())
                     for node in _own(f)
                     if type(node) is ast.Return and node.value is not None
-                ]
+                ],
+                helper=False,
             )
         return [expr]
 
@@ -323,12 +358,12 @@ def _scan(
                     constant = type(arg) is ast.Name and _CONSTANT.fullmatch(arg.id)
                     if callee in _LOOKUPS and not constant:
                         followed.append(arg)
-        # The literals a lookup's name can hold: through a helper's parameter
-        # (counted at its call sites below), a loop, an assignment, a dict
-        # lookup or a same-module function's return value.
+        # The literals a lookup's name can hold, each once: through a helper's
+        # parameter (counted at its call sites below), a loop, an assignment, a
+        # dict lookup or a same-module function's return value.
         follower = _Follower(tree, scopes, params)
         for arg in followed:
-            for value in follower.values(arg):
+            for value in {id(v): v for v in follower.values(arg)}.values():
                 count(pkg, value)
 
     # A literal passed for a helper's name parameter, at any call site.
@@ -405,10 +440,14 @@ def test_app_string_lookups_match_their_pin(pkg: str) -> None:
     count, pin = _COUNTS.get(pkg, 0), _PINS.get(pkg, 0)
     assert count <= pin, (
         f"{pkg}: {count} literal getattr/hasattr lookups on the app object "
-        f"(pinned {pin}, +{count - pin}). Reach the service explicitly; do NOT "
-        f"raise the pin ({CENSUS.name}). Helper calls are matched by name: if "
-        f"the new count is an unrelated call that shares a lookup helper's "
-        f"name, rename that call instead."
+        f"(pinned {pin}, +{count - pin}). A literal counts once per lookup site "
+        "that can read it, so one value added to a dict, tuple or return that N "
+        "lookups read by name adds N. Reach the service explicitly (for a new "
+        "value, move the lookups that read it behind one explicit accessor); do "
+        f"NOT raise the pin ({CENSUS.name}). Callees are matched by name (helper "
+        "call sites package-wide, function returns within the module): if the "
+        "increase is an unrelated call sharing such a name, rename that call "
+        "instead."
     )
     assert count >= pin, (
         f"{pkg}: {count} lookups, pinned {pin}. Lower the pin to {count} in "
@@ -491,8 +530,14 @@ _HELPERS = (
     # The name sources TASK-41318 follows, each feeding one lookup.
     '_BY_KIND = {"media": "media_db"}\n'
     '_PAIRS: tuple[tuple[str, str], ...] = (("notes_db", "Notes"),)\n\n'
+    '_FALLBACK = {"k": "media_db"}\n\n'
     "def _default(kind):\n"
     '    return "media_db"\n\n'
+    "def _first(kind):\n"
+    "    if kind:\n        return _second(kind)\n"
+    '    return "notes_db"\n\n'
+    "def _second(kind):\n"
+    "    return _first(kind)\n\n"
     "def sources(app, kind):\n"
     "    attr = _BY_KIND.get(kind)\n"
     "    getattr(app, attr, None)\n"
@@ -503,6 +548,14 @@ _HELPERS = (
     "        [getattr(app, attribute, None) for attribute, module in declarations]\n"
     "    returned = _default(kind)\n"
     "    getattr(app, returned, None)\n"
+    "    fallback = _FALLBACK.get(kind)\n"
+    "    getattr(app, fallback, None)\n"
+    "    getattr(app, _first(kind), None)\n"
+    '    closed = "notes_db"\n'
+    "    pick = lambda: getattr(app, closed, None)\n"
+    '    enclosed = "media_db"\n\n'
+    "    def inner():\n"
+    "        return getattr(app, enclosed, None)\n"
 )
 
 
@@ -527,6 +580,17 @@ _HELPERS = (
             '    return "media_db"\n',
             '    if kind:\n        return "_planted_private"\n    return "media_db"\n',
         ),
+        _HELPERS.replace("_FALLBACK.get(kind)", '_FALLBACK.get(kind, "_planted_private")'),
+        _HELPERS.replace(
+            "    return _first(kind)\n",
+            '    if not kind:\n        return "_planted_private"\n    return _first(kind)\n',
+        ),
+        _HELPERS.replace(
+            '    closed = "notes_db"\n', '    closed = "notes_db"\n    closed = "_planted_private"\n'
+        ),
+        _HELPERS.replace(
+            '    enclosed = "media_db"\n', '    enclosed = "media_db"\n    enclosed = "_planted_private"\n'
+        ),
     ],
     ids=[
         "helper",
@@ -539,6 +603,10 @@ _HELPERS = (
         "module-tuple",
         "nested-loop",
         "call-result",
+        "dict-get-default",
+        "call-cycle",
+        "lambda-closure",
+        "nested-def-closure",
     ],
 )
 def test_a_literal_moved_into_a_helper_or_loop_is_still_counted(
@@ -552,6 +620,61 @@ def test_a_literal_moved_into_a_helper_or_loop_is_still_counted(
     after = _plant(tmp_path, planted)
     assert "_planted_private" in after[1]
     assert after == before  # same count, same private names, same record rows
+
+
+_SHADOWED = 'attr = "_planted_private"\n\n'
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "source",
+    [
+        'def other():\n    attr = "_planted_private"\n\ndef f(app):\n    getattr(app, attr, None)\n',
+        'def f(app):\n    [x for x in ("_planted_private",)]\n    getattr(app, x, None)\n',
+        'def f(app):\n    x = "media_db"\n'
+        '    [y for y in (getattr(app, x, None),) for x in ("_planted_private",)]\n',
+        _SHADOWED + "def f(app, items):\n    for attr in items:\n        pass\n"
+        "    getattr(app, attr, None)\n",
+        _SHADOWED + "def f(app, cm):\n    with cm as attr:\n        getattr(app, attr, None)\n",
+        _SHADOWED + "def f(app, pair):\n    attr, other = pair\n    getattr(app, attr, None)\n",
+        _SHADOWED + "def f(app):\n    try:\n        pass\n    except Exception as attr:\n"
+        "        getattr(app, attr, None)\n",
+        _SHADOWED + "def f(app, svc):\n    attr = svc.name\n\n"
+        "    def inner():\n        getattr(app, attr, None)\n",
+        "def ident(name):\n    return name\n\ndef f(app, n):\n    getattr(app, ident(n), None)\n\n"
+        'def g():\n    ident("_planted_private")\n',
+    ],
+    ids=[
+        "other-function",
+        "comprehension-variable",
+        "comprehension-own-iterable",
+        "loop-variable-after-loop",
+        "with-target",
+        "tuple-unpacking",
+        "except-target",
+        "enclosing-function",
+        "returned-parameter",
+    ],
+)
+def test_a_literal_the_name_cannot_hold_is_not_counted(tmp_path: Path, source: str) -> None:
+    """Following stays inside the name's scope (TASK-41318 review).
+
+    A function that binds the name in any way shadows the module's binding, a
+    comprehension's loop variable is its own, and a returned parameter does
+    not make its function a lookup helper.
+    """
+    assert "_planted_private" not in _plant(tmp_path, {"UI/scoped.py": source})[1]
+
+
+@pytest.mark.unit
+def test_a_literal_reached_twice_by_one_lookup_counts_once(tmp_path: Path) -> None:
+    """Two paths to one literal are one lookup of it (TASK-41318 review)."""
+    source = (
+        'def _named():\n    return "media_db"\n\n'
+        "def f(app, k):\n    if k:\n        attr = _named()\n    else:\n        attr = _named()\n"
+        "    getattr(app, attr, None)\n"
+    )
+    assert _plant(tmp_path, {"UI/twice.py": source})[0]["UI"] == 1
 
 
 @pytest.mark.unit
