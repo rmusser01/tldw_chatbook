@@ -3,7 +3,7 @@ id: TASK-41133
 title: "Trace credential masking leftovers: a credentials-v3 projection for whsec_ and gsk_, and compound labels such as client_secret= in shared bundle text"
 status: Done
 created_date: 2026-11-15 02:20
-updated_date: 2026-11-16 22:56
+updated_date: 2026-11-17 02:26
 assignee:
 - '@claude'
 labels:
@@ -49,14 +49,26 @@ Filed in round 14 of the 2026-10-23 burn-down (closeout, 2026-11-15). Checked ag
 
 The rule comment beside `_CREDENTIAL_PROJECTIONS` now names both of these, so the next version does not miss them.
 
-**Compound labels in bundles (AC#2).** The log sanitizer's diagnostic label list is split into credential labels (`_DIAGNOSTIC_CREDENTIAL_LABELS`, the suffixes and the `x_*_token/_key` rule, read by `_is_credential_label`) and PII labels. `_is_sensitive_diagnostic_key` is their union, so log behaviour is unchanged. `mask_credential_labels` masks a value only under a compound label (it has a `_`, `-` or `.`) that `_is_credential_label` accepts, and only a credential-shaped value: 8 or more token characters holding a digit or one of `~+/=-`, bare or quoted whole. `trajectory_export._credential_text` applies it after its regexes, so import refuses an older bundle that holds such a value, the same way it refuses other credential material. The result is idempotent: `client_secret=[credential redacted]` does not match again. Values the rule deliberately keeps:
+**Compound labels in bundles (AC#2).** The log sanitizer's diagnostic label list is split into credential labels (`_DIAGNOSTIC_CREDENTIAL_LABELS`, the suffixes and the `x_*_token/_key` rule, read by `_is_credential_label`) and PII labels. `_is_sensitive_diagnostic_key` is their union, so log behaviour is unchanged. `mask_credential_labels` masks a value only under a compound label (it has a `_`, `-` or `.`) that `_is_credential_label` accepts, and only a credential-shaped value, always masked whole (rules below, as revised in review r15tr-rev1). `trajectory_export._credential_text` applies it after its regexes, so import refuses an older bundle that holds such a value, the same way it refuses other credential material. The result is idempotent: `client_secret=[credential redacted]` does not match again. Values the rule deliberately keeps:
 - Code: `client_secret=client_secret`, `os.environ[...]`.
 - Placeholders: `<your refresh token>`, `${CLIENT_SECRET}`.
 - Prose: `client_secret: it comes from ...`.
 - User names: `user_name=`, `username:`.
 - Labels that are not credentials: `max_tokens`, `next_page_token`.
 
-The known limits are the 8-character floor and that an all-letter value is kept. Simple labels were left to the existing export rule, as the criterion is about compound ones.
+Known limits: an all-letter, one-case value, a value under 6 characters, a purely numeric or date-shaped value, a dotted name and a value starting with `/`, `.`, `~` or `$` are all kept. Simple labels were left to the existing export rule, as the criterion is about compound ones.
+
+**Review r15tr-rev1.** The first rule missed real values and over-masked look-alikes, and it could leave a partial mask (`db_password=Tr0ub4dor&3` came out as `[credential redacted]&3`).
+- **Value extent.** A value is now quoted whole, or bare up to whitespace, a quote, or a `&`/`;`/`,` that starts another field (`name=`) or ends the text. So a value is never cut inside itself. Labels may repeat separators (pydantic's `APP__CLIENT_SECRET`).
+- **What counts as credential-shaped** (`_credential_shaped`): a digit (6+ characters), or mixed case (16+). A `-` or `/` alone does not count. A value is rejected when it starts like a path, reference or placeholder (`/`, `.`, `~`, `$`, `<`, `{`, `%`, `:`, `*`, `[`, `(`), when it is a call, index or time (`b64encode(`, `os.environ[`, `10:00`), a date or number, or a dotted name.
+- **Red first** (run.sh, `-n 4`, load 81, before the rule change):
+  - In `_LOG_SANITIZER_SHAPES`, 18 nodes for six new shapes (punctuation, JSON with `&`, a `&3` tail, a `%2F` tail, URL-encoded `refresh_token`, pydantic env) were red.
+  - The new `test_label_look_alikes_survive_a_shared_bundle_and_an_older_one_imports` (placeholders, a Kubernetes secret name, paths, code, a date and a time, references) had 33 red nodes. It asserts the text survives export and that an older bundle holding it imports.
+  - The query-shape fake gained digits (`GOCSPX-...a1B2`), as a real client secret has them.
+  - After the change, the collaboration file gives 338 passed.
+- **Reviewer probes** (run.sh): `probe2.py` and `probe_labels.py` show every listed false negative masked whole and every listed false positive kept. `_has_credential_material` is False for the placeholder and the path. Three cases still masked by the export's older simple-label rule, not by this one: `api_key=config.provider2.key`, `api_key=$OPENAI_API_KEY_2` and `X-Request-Token: abc`. `?key=` in a URL is still kept, because `key` is not a compound label. `probe_equiv.py` gives corpus 4001, 0 diffs, and the token and value pattern tuples are unchanged, so log output is byte-identical to base.
+- The `sanitize_trace_credentials_v2` docstring now describes it as the stored v2 projection.
+- The look-alike node is pinned in recovered-suites beside the label-list node.
 
 **Red first.** At base cc6006fcf5 (run.sh, `-n 4`, load 72-81): 28 red in `Tests/Utils/test_log_sanitizer.py` plus the v2 ledger case. These cover v3 detection, stored v1/v2 traces holding `whsec_`/`gsk_` (read, export and share), v2 frozen spans, cut spans, and `test_webhook_secrets_and_groq_keys_are_masked_in_logs_and_from_v3`. In `test_trace_v2_collaboration.py`, 15 shape nodes for the five new compound-label shapes are red (the `X-Auth-Token:` header was already masked by the export's `\btoken` rule), and the label-list node fails with an AttributeError. Negative controls on the fixed tree, each reverted:
 - Dropping the `whsec_` floor turns the identifier pin red.
@@ -71,3 +83,7 @@ The known limits are the 8-character floor and that an all-letter value is kept.
 **User Guide.** `Docs/User_Guide/console/semantic-trace-capture.md` already says recognised secret formats are removed and lists none, so it needed no change.
 
 **Files.** `tldw_chatbook/Utils/log_sanitizer.py`, `tldw_chatbook/Chat/console_trace_redaction.py`, `tldw_chatbook/Chat/console_semantic_revision.py`, `tldw_chatbook/Chat/console_trace_legacy.py`, `tldw_chatbook/Chat/trajectory_export.py`, `Tests/Utils/test_log_sanitizer.py`, `Tests/Chat/test_trace_v2_collaboration.py`, `Tests/Chat/test_console_trace_legacy_migration.py`, `Tests/Chat/test_console_trace_credential_filter.py`, `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`.
+- **Review-round covering run** (`-n 4`, load 50-70): the 39 files that touch the export, the import, the log sanitizer or the maintenance loop give 11 failed, 1570 passed.
+  - 8 of the 11 fail the same way with the base source swapped in.
+  - The other 3 pass at HEAD on their own: a bug-report child timing, a logging timing assertion (13.4 s against 2 s), and an sdist release check that timed out at 300 s.
+  - Serial with lane flags: `Tests/Utils/test_log_sanitizer.py` 209 passed; the recovered-suites slice 310 passed.

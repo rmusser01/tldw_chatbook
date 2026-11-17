@@ -3,7 +3,7 @@ id: TASK-41134
 title: "Trace maintenance parking and projection tests fail ImportError on maintenance_error_must_propagate, and test_console_thinking.py imports a module that no longer exists"
 status: Done
 created_date: 2026-11-15 02:20
-updated_date: 2026-11-15 18:32
+updated_date: 2026-11-17 02:26
 assignee:
 - '@claude'
 labels:
@@ -66,6 +66,18 @@ The import failure cannot happen outside tests: the same commit defined the thre
 
 **Evidence.** Red at base cc6006fcf5 (run.sh, `-n 4`, load 26) over the parking, projection, event-projection and thinking files: 11 failed, 97 passed, 1 error, all 11 on the ImportError. After: the first three files give 108 passed (load 55); `Tests/CI` gives 1640 passed, 1 skipped.
 
-**Files.** `Tests/Chat/test_console_trace_maintenance_parking.py`, `Tests/Chat/test_console_trace_projection.py`, `Tests/Chat/test_console_thinking.py` (deleted), `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`.
+**Files.** `Tests/Chat/test_console_trace_maintenance_parking.py`, `Tests/Chat/test_console_trace_projection.py`, `Tests/Chat/test_console_thinking.py` (deleted), `tldw_chatbook/Chat/console_trace_maintenance_runtime.py`, `Tests/Architecture/test_module_size_ratchet.py`, `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`.
 
-**Outside this task.** 3a6263c8a7 added three more files from the same snapshot that are red on dev on the same missing APIs: `Tests/Chat/test_local_qwen_reasoning.py` and `Tests/Chat/test_local_reasoning_toggle.py` (collection errors), and `Tests/UI/test_settings_console_thinking.py` (5 failed). They are listed for the coordinator to file.
+**Review r15tr-rev1.**
+- **The swallow is removed.** `run_legacy_trace_maintenance` used to catch `ImportError` around the physical-maintenance imports ("Narrow test doubles may provide only the legacy worker", b4e6570dde), which would have hidden a renamed GC worker in production for the life of the process. The loop now imports `PhysicalTraceCompactor` and `TraceGarbageCollector` with its other names at start, and that `except ImportError` is gone. Nothing else needed it: the bare stubs it served are now built with `fake_maintenance_module`.
+- **The new test is red first.** `test_a_missing_physical_worker_fails_the_loop_before_any_pass` deletes `TraceGarbageCollector` from the stand-in module. It requires the task to end with that ImportError before any batch runs, and `dispose()` to re-raise it. Before the runtime change it was red ("the loop kept running without its GC worker").
+- **`fake_maintenance_module` changed.**
+  - It asserts that each double names a worker the real module still has.
+  - Instead of leaving GC workers out, it now defaults them to inert doubles: a collector with nothing to collect and a compactor with nothing to compact.
+  - Leaving the real GC classes against fake databases instead made two fixed-window projection tests flakier. An interleaved A/B gave 2 of 5 runs red on the new code against 1 of 5 on the old.
+- **Two fixed sleeps are now polls.** `test_runtime_starts_legacy_maintenance_only_after_ui_ready` slept 70 ms and `test_runtime_retries_legacy_maintenance_after_unexpected_failure` slept 80 ms; both now poll a 5 s deadline (`_until`). The old code failed one of them too, at load 70. After: 6 of 6 runs green, 96 passed each, at load 53-73.
+- `console_trace_maintenance_runtime.py`'s ratchet pin is 185, its measured size.
+
+**Outside this task.** 3a6263c8a7 also added `Tests/UI/test_settings_console_thinking.py`, which is red on dev on the same missing APIs (5 failed). Its two Tests/Chat siblings are already in TASK-41031.
+
+Review-round evidence (run.sh): with the lane's flags, the recovered-suites slice (both files plus TASK-41133's nodes) gives 310 passed in 146 s serial at load 57-68. `Tests/CI` gives 1640 passed, 1 skipped; the module ratchet 207 passed; the ruff gate is OK.
