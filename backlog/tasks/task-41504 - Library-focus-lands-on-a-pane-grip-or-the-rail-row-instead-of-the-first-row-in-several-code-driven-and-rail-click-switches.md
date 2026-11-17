@@ -27,12 +27,12 @@ Found by the libfocus stream and its review (TASK-41128 to TASK-41130 area, roun
 - code-driven switches landing on a pane grip: landing then empty Notes `press()` at 170x48 lands on `#library-browse-library-grip`; Media then Collections `press()` lands on `#library-collections-library-grip`; Notes then resident Media `press()` lands on a grip about 1 in 3;
 - a rail click Media then already-open Notes lands on the rail row (3 of 3 on base, 1 of 3 on head);
 - at 170x48 rail entry into an empty Notes list sometimes leaves focus on the Library grip (libtests fix round);
-- "View imported notes" on the Import once receipt still lands in the filter (`library_notes_controller.py:6546`), inconsistent with the TASK-41128 landing.
+- the Import once receipt's "view the imported notes" action still lands in the filter (the earlier line cite was wrong; find the receipt button by its copy in `library_notes_controller.py`), inconsistent with the TASK-41128 landing.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 Each listed switch lands on its first row (or the documented empty-state control) 10 of 10 runs, and never on a pane grip
-- [ ] #2 "View imported notes" lands where TASK-41128 decided Escape lands, or the difference is documented as a decision
+- [ ] #2 The Import once receipt's view-imported-notes action lands where TASK-41128 decided Escape lands, or the difference is documented as a decision
 - [ ] #3 Tests drive each switch and assert the focused widget id
 <!-- AC:END -->

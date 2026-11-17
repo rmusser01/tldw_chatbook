@@ -24,7 +24,8 @@ Each of these waits one `pilot.pause()` after `Button.press` (or after a flag) a
 - libcoll: `test_quick_capture_refresh_hard_delete_cancel_and_legacy_recovery_close` (characterization test), and the open-original check (the handler runs on a background thread);
 - libtests review: `test_analyze_bulk_action_follows_the_selection_in_place` and `test_pressing_analyze_leaves_select_mode_and_paints_its_receipt` (render_fixes, off lane), `test_info_describes_the_same_stored_text_representation_sent_to_console` and other press-after-flag media nodes;
 - libtests: existing census nodes flaky at load about 100: `test_navigation_keypress_during_splash_is_safely_ignored`, `test_boot_with_mcp_default_tab_lands_on_settings_tools_hub`;
-- endpoint fix r1: `test_actual_handler_review_wake_waits_for_pinned_capacity_and_finishes` failed 2 of 2 at load 65-110 but 4 of 4 passed at load 8-40 (timing, unproven).
+- endpoint fix r1: `test_actual_handler_review_wake_waits_for_pinned_capacity_and_finishes` failed 2 of 2 at load 65-110 but 4 of 4 passed at load 8-40 (timing, unproven);
+- `Tests/Workspaces/test_native_confirmed_undo.py` fails at base and head on different nodes each run ("timed out waiting for ..." and `'after\n' == 'before\n'`); TASK-40716 only notes it.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
@@ -32,4 +33,5 @@ Each of these waits one `pilot.pause()` after `Button.press` (or after a flag) a
 - [ ] #1 Each listed test waits on its observable condition (a state predicate with a bounded deadline), not on a fixed pause count
 - [ ] #2 Each passes 10 of 10 at `-n 4` with the load recorded in the Implementation Notes
 - [ ] #3 `test_actual_handler_review_wake_waits_for_pinned_capacity_and_finishes` has its cause identified, as timing or as a defect
+- [ ] #4 `Tests/Workspaces/test_native_confirmed_undo.py` passes 10 of 10 at `-n 4`, with the cause of each of its two failure shapes named
 <!-- AC:END -->
