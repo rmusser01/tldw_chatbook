@@ -3,7 +3,7 @@ id: TASK-41133
 title: "Trace credential masking leftovers: a credentials-v3 projection for whsec_ and gsk_, and compound labels such as client_secret= in shared bundle text"
 status: Done
 created_date: 2026-11-15 02:20
-updated_date: 2026-11-17 19:20
+updated_date: 2026-11-17 20:27
 assignee:
 - '@claude'
 labels:
@@ -453,3 +453,8 @@ AC #3 was added for it.
   - probe11: ratio 3.9; escaped 1.36 s, quoted-prose 1.68 s, mixed-unclosed 2.60 s.
   - probe13 (rev5/head): 0.32/0.35 s, 0.27/0.29 s, 0.36/0.37 s. probe15 chain/plain: 1.2 and 1.0.
 - **Tables:** `_MUST_MASK` now has 248 rows.
+- **Rev10 evidence:**
+  - Covering run (`-n 4`, 41 files with UI, load 35-70): 8 failed, 1964 passed in 35 min. These are exactly the 8 base failures.
+  - Serial with lane flags: the recovered-suites slice (20 targets) gives 645 passed in 216 s at load 46-54; `Tests/Utils/test_log_sanitizer.py` gives 209 passed.
+  - `Tests/CI` gives 1640 passed, 1 skipped. The module ratchet gives 207 passed, and the ruff gate is OK.
+  - `./scripts/preflight.sh` passes (rc 0, load 37-47).
