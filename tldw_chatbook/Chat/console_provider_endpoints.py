@@ -334,29 +334,32 @@ def reapply_legacy_custom_2_bridge(view: dict) -> None:
         keep_legacy_custom_2_endpoint(view, bridge.get("legacy"), DEFAULT_CONFIG_FROM_TOML)
 
 
-def endpoint_to_save_unedited(
-    provider_key: str, shown: str, app_config: Mapping[str, object]
-) -> str:
+def endpoint_to_save_unedited(provider_key: str, shown: str) -> str:
     """The endpoint a save writes when the Endpoint field was not edited.
 
     The field shows Custom 2's bridged legacy endpoint (``keep_legacy_custom_2
     _endpoint``); a save that did not touch it writes back what the slot held
     before the bridge, so the legacy key keeps being read (TASK-41145 ruling,
-    review r15ep-rev2 I-1). Any other value is written as shown.
+    review r15ep-rev2 I-1). Any other value is written as shown. The bridge is
+    read from the file as it is now, not from the live view: once first-run or
+    a save wrote a real ``api_url`` there is none (review r15ep-rev4).
 
     Args:
         provider_key: The provider the save is for.
         shown: The Endpoint field's value.
-        app_config: The settings view (``load_settings`` or merged shape).
 
     Returns:
         The endpoint to write.
     """
-    raw = app_config.get("COMPREHENSIVE_CONFIG_RAW")
-    bridge = app_config.get(LEGACY_CUSTOM_2_BRIDGE) or (
-        raw.get(LEGACY_CUSTOM_2_BRIDGE) if isinstance(raw, Mapping) else None
-    )
-    if provider_key != "custom_2" or not isinstance(bridge, Mapping):
+    if provider_key != "custom_2":
+        return shown
+    from tldw_chatbook.config import get_atomic_config_snapshot
+
+    try:
+        bridge = get_atomic_config_snapshot().values.get(LEGACY_CUSTOM_2_BRIDGE)
+    except ValueError:  # unreadable or undecryptable; the save's write refuses it too
+        return shown
+    if not isinstance(bridge, Mapping):
         return shown
     return str(bridge.get("before") or "") if shown == bridge.get("legacy") else shown
 

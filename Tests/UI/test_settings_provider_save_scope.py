@@ -470,3 +470,94 @@ async def test_a_model_only_custom_2_save_keeps_the_legacy_endpoint_unsaved(
         streaming=False,
     )
     assert requests == [legacy]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("first_write", ["first_run", "edited_legacy"])
+@private_profile_test
+async def test_a_written_custom_2_endpoint_survives_a_later_model_only_save(
+    request, first_write
+) -> None:
+    """TASK-41145 review r15ep-rev4: once first-run or an edited Settings save
+    wrote a real ``api_url`` (even exactly the legacy address), a later
+    model-only save in the same session wrote the placeholder recorded at boot
+    over it, because the live view kept the boot-time bridge provenance. The
+    unedited save now reads the bridge from the file as it is."""
+    import tomllib
+    from types import SimpleNamespace
+
+    from tldw_chatbook import config as config_module
+    from tldw_chatbook.config import save_settings_to_cli_config
+
+    legacy = "http://legacy-box.lan:5000/v1/chat/completions"
+    assert save_settings_to_cli_config(
+        {
+            "API": {"custom_openai2_api_ip": legacy},
+            "api_settings.custom_2": {
+                "api_url": "http://localhost:5678/v1/chat/completions",
+                "model": "old-model",
+            },
+        }
+    )
+    path = config_module._get_effective_config_path()
+
+    def file_api_url() -> str:
+        saved = tomllib.loads(path.read_text(encoding="utf-8"))
+        return saved["api_settings"]["custom_2"]["api_url"]
+
+    host = DestinationHarness(_build_test_app(), "settings")
+    async with host.run_test(size=(211, 44)) as pilot:
+        screen = _active_destination_screen(host)
+        screen._select_category(SettingsCategoryId.PROVIDERS_MODELS.value)
+        await _wait_for_selector(screen, pilot, "#settings-model-value", timeout=30.0)
+
+        async def choose(key: str) -> None:
+            provider = screen.query_one("#settings-provider-value", Select)
+            provider.value = key
+            screen.handle_provider_value_changed(Select.Changed(provider, key))
+            await pilot.pause()
+
+        async def save(model_id: str, endpoint: str | None = None) -> None:
+            if endpoint is not None:
+                screen.query_one("#settings-provider-endpoint-value", Input).value = endpoint
+            screen.query_one("#settings-model-value", Input).value = model_id
+            result = await _save_provider_card(screen, pilot)
+            assert result.startswith("Provider settings saved"), result
+
+        if first_write == "first_run":
+            # The first-run wizard's commit: built from the atomic snapshot,
+            # persisted by the shared owner, mirrored into the live view.
+            from tldw_chatbook.Chat.provider_setup_persistence import (
+                persist_provider_setup,
+            )
+            from tldw_chatbook.config import get_atomic_config_snapshot
+            from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard
+            from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+                SetupWizardContainer,
+            )
+
+            mutation = wizard.build_first_run_provider_commit(
+                wizard.FirstRunProviderDraft(
+                    "custom_2", legacy, wizard.ProviderCredentialDraft("none", "", 0)
+                ),
+                "first-run-model",
+                get_atomic_config_snapshot().values,
+            )
+            assert persist_provider_setup(mutation).fully_applied
+            SetupWizardContainer._mirror_into_app_config(
+                SimpleNamespace(app_instance=screen.app_instance),
+                mutation.section_values,
+                mutation.delete_keys,
+            )
+            await choose("vllm")
+            await choose("custom_2")
+        else:
+            await choose("custom_2")
+            await save("edited-model", "http://edited.lan:7000/v1/chat/completions")
+            await save("edited-model", legacy)
+        assert file_api_url() == legacy
+
+        assert screen.query_one("#settings-provider-endpoint-value", Input).value == legacy
+        await save("new-model")
+
+    assert file_api_url() == legacy

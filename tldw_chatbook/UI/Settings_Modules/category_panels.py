@@ -897,9 +897,7 @@ class ProvidersModelsPanel(SettingsCategoryPanel):
             )
 
             if not endpoint_dirty:
-                endpoint = endpoint_to_save_unedited(
-                    provider_key, endpoint, screen._app_config_mapping()
-                )
+                endpoint = endpoint_to_save_unedited(provider_key, endpoint)
 
             if refusal := typed_endpoint_refusal(provider_key, endpoint):
                 screen._provider_save_result = refusal
