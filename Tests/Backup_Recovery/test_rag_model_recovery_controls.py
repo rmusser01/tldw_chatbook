@@ -137,7 +137,11 @@ async def main():
     if worker.group.startswith('settings-local-model-'):await worker.wait()
   else:await host.workers.wait_for_complete()
   await pilot.pause()
-  assert store.allowed(witness['generation'],'models.artifacts')==(mode in ('approve','accepted-cancel','rebuild'))
+  # TASK-41301: the review records its exact-files receipt and approves no
+  # owner; Backup & Restore's model-files review approves models.artifacts.
+  receipts=list(store._generation(witness['generation']).glob('local-embedding-*.json'))
+  assert bool(receipts)==(mode in ('approve','accepted-cancel','rebuild')),receipts
+  assert not store.allowed(witness['generation'],'models.artifacts')
   unrelated_inactive()
   assert Path(entry.config).read_bytes()==before_config
   assert not loads
@@ -145,6 +149,7 @@ async def main():
   if mode not in ('approve','accepted-cancel','rebuild'):
    assert not blocked_attempts()
    return
+  store.approve(witness['generation'],'models.artifacts')  # the model-files review
   if mode=='rebuild':
    assert indexing.get_shared_rag_service() is None,'model approval enabled RAG before its own review'
    library._HuggingFaceEmbedder.__init__=original_load

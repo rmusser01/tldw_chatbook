@@ -962,6 +962,31 @@ class BackupRestoreScreen(Screen):
                         classes="backup-restore-screen-button",
                     )
                 )
+            if (
+                current["requirements_checked"]
+                and "models.artifacts" in current["pending_owners"]
+            ):
+                # TASK-41301 (owner, 2026-11-16): the one approver of model files.
+                widgets.append(
+                    Static(
+                        "Model files review\nUntil you approve the restored model "
+                        "files, local model downloads, installs and activation, "
+                        "speech start-up and a restored local embedding model stay "
+                        "off. Approving covers every profile this recovery restored "
+                        "and approves only the model files. A local embedding model "
+                        "also keeps its own review in Settings > Library/RAG.",
+                        id="backup-models-review",
+                        markup=False,
+                    )
+                )
+                widgets.append(
+                    Button(
+                        "Approve model files",
+                        id="backup-approve-models",
+                        name=current["generation"],
+                        classes="backup-restore-screen-button",
+                    )
+                )
             if current["requirements_checked"] and {
                 "tts.profile_store",
                 "tts.voices",
@@ -972,9 +997,9 @@ class BackupRestoreScreen(Screen):
                         "Speech review\nUntil you approve the restored voices and "
                         "voice profiles, speech start-up stays off. Approving covers "
                         "every profile this recovery restored. Speech also needs the "
-                        "restored settings approved (Approve settings) and its model "
-                        "files (Review local model in Settings > Library/RAG), and "
-                        "starts from the next start once all three are approved.",
+                        "restored settings and model files approved (Approve settings, "
+                        "Approve model files), and starts from the next start once all "
+                        "three are approved.",
                         id="backup-speech-review",
                         markup=False,
                     )
@@ -1148,18 +1173,44 @@ class BackupRestoreScreen(Screen):
 
     @work(exclusive=True, thread=True, group="backup-speech-review")
     def _run_speech_approval(self, app, revision, generation):
+        self._owner_approval(
+            app,
+            revision,
+            lambda: self.service.approve_speech(generation),
+            "Speech review",
+            "speech_review_changed",
+            "Voices approved. Speech starts from the next start once the "
+            "settings and model files are approved too.",
+        )
+
+    @on(Button.Pressed, "#backup-approve-models")
+    def _approve_models(self, event):
+        event.button.disabled = True
+        self._run_models_approval(self.app, self._revision, event.button.name)
+
+    @work(exclusive=True, thread=True, group="backup-models-review")
+    def _run_models_approval(self, app, revision, generation):
+        self._owner_approval(
+            app,
+            revision,
+            lambda: self.service.approve_models(generation),
+            "Model files review",
+            "models_review_changed",
+            "Model files approved. Speech starts from the next start once its "
+            "other reviews are approved too.",
+        )
+
+    def _owner_approval(self, app, revision, approve, label, changed, done):
+        """Run one Restored profiles owner review on its worker thread."""
         try:
-            self.service.approve_speech(generation)
-            message = (
-                "Voices approved. Speech starts from the next start once the "
-                "settings and local model reviews are approved too."
-            )
+            approve()
+            message = done
         except (OSError, ValueError, RuntimeError) as error:
-            if str(error) == "speech_review_changed":
-                message = "Speech review unavailable: the current profile changed. Review it again."
+            if str(error) == changed:
+                message = f"{label} unavailable: the current profile changed. Review it again."
             else:
                 code = self.service.issue_code(error)
-                message = f"Speech review unavailable: {self.service.issue_message(code)} ({code})"
+                message = f"{label} unavailable: {self.service.issue_message(code)} ({code})"
         self._deliver(app, self._config_approval_done, revision, message)
 
     @on(Button.Pressed, "#backup-approve-sync-identity")

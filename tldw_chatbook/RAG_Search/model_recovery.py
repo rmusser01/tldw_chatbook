@@ -308,7 +308,12 @@ def preview_local_embedding(config):
 
 
 def approve_local_embedding(config, expected_fingerprint):
-    """Confirm current evidence and approve only its model owner, without loading."""
+    """Record the reviewed model's exact-files receipt, without loading.
+
+    TASK-41301: the receipt no longer approves `models.artifacts`; Backup &
+    Restore's model-files review is that owner's one approver, and
+    ``_require`` needs both.
+    """
     with _review(config_spec(config)) as (review, records, _):
         if review is None or review.fingerprint != expected_fingerprint:
             raise ValueError("local_model_review_changed")
@@ -327,7 +332,6 @@ def approve_local_embedding(config, expected_fingerprint):
                     _write(parent, name, record)
                 except FileExistsError:
                     _flush_existing(parent, name, record)
-            store.approve(record.generation, "models.artifacts")
         return review
 
 

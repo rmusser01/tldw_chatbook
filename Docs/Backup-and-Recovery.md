@@ -280,9 +280,17 @@ them, speech start-up stays off: **Current profile** lists `tts / profile store`
 `tts / voices` under **Needs setup**, followed by a **Speech review** note and
 **Approve voices**. Approving records the review for the generation shown, which
 covers every profile that recovery restored, and approves only those two. Speech
-also needs the restored settings (**Approve settings**) and its model files
-(**Review local model** in **Settings → Library/RAG**, offered for a local HF
-embedding model) approved; it starts from the next start once all three are.
+also needs the restored settings (**Approve settings**) and model files (**Approve
+model files**) approved; it starts from the next start once all three are.
+
+Restored model files have their own review too. Until you approve them, local model
+files (downloading, installing, activating or using them), speech start-up and a
+restored local embedding model stay off: **Current profile** lists
+`models / artifacts` under **Needs setup**, followed by a **Model files review** note
+and **Approve model files**. Approving records the review for the generation shown,
+which covers every profile that recovery restored, and approves only the model files.
+A local embedding model for RAG also keeps its own review in **Settings →
+Library/RAG** (below), which checks its exact files; RAG needs both.
 
 Server sync has its own review too, beside **Approve settings**. A restore brings
 back the old device's sync identity, so server sync (Notes, Chat and Personal
@@ -359,7 +367,9 @@ active RAG profile selected and any draft changes saved or discarded:
 
 1. Choose **Review local model**. Check the displayed model directory, file count,
    and recovery generations, then choose **Approve local model**. This records
-   only the model review; it does not load or download a model or rebuild an index.
+   only the review of that model's exact files; it does not load or download a
+   model or rebuild an index. The restored model files also need **Approve model
+   files** in **Backup & Restore → Restored profiles**, in either order.
 2. Choose **Review recovery**, inspect the RAG owners, sources, and prerequisites,
    then choose **Approve RAG owners**. Model permission and RAG permission are
    separate; neither approval completes index validation.

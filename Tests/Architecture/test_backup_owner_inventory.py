@@ -1843,7 +1843,6 @@ def test_no_reviewer_approves_the_shared_sync_owners():
             ("tldw_chatbook/Personal_Context/recovery.py", "OWNER"): 1,
             ("tldw_chatbook/Plugins/backup.py", "OWNER"): 1,
             ("tldw_chatbook/RAG_Search/activation.py", "owner"): 1,
-            ("tldw_chatbook/RAG_Search/model_recovery.py", "'models.artifacts'"): 1,
             ("tldw_chatbook/Skills_Interop/recovery_activation.py", "'skills'"): 1,
             # TASK-40711: Backup & Restore's settings review, `config` only.
             ("tldw_chatbook/Backup_Recovery/recovery_service.py", "'config'"): 1,
@@ -1854,12 +1853,16 @@ def test_no_reviewer_approves_the_shared_sync_owners():
             # of the two speech owners speech start-up admits through.
             ("tldw_chatbook/Backup_Recovery/recovery_service.py", "'tts.profile_store'"): 1,
             ("tldw_chatbook/Backup_Recovery/recovery_service.py", "'tts.voices'"): 1,
+            # TASK-41301 (owner, 2026-11-16): Backup & Restore's model-files
+            # review is the one approver of `models.artifacts`; RAG's local
+            # model review now records only its exact-files receipt.
+            ("tldw_chatbook/Backup_Recovery/recovery_service.py", "'models.artifacts'"): 1,
         }
     )
     assert {"config", "runtime.sync_state"}.isdisjoint(
         {*mcp_owners, personal_context_owner, plugins_owner, *rag_owners}
     )
-    assert {"tts.profile_store", "tts.voices"}.isdisjoint(
+    assert {"tts.profile_store", "tts.voices", "models.artifacts"}.isdisjoint(
         {
             *mcp_owners,
             personal_context_owner,
@@ -2103,27 +2106,34 @@ with authority.maintenance(('profile',), 2) as session:
 (root / ('pending-' + bootstrap._key('restore') + '.json')).unlink()
 store = ActivationStore(control / 'activation')
 SPEECH = ('tts.profile_store', 'tts.voices')
+REVIEWS = {'speech': (SPEECH, 'approve_speech', 'speech_review_changed'),
+           'models': (('models.artifacts',), 'approve_models', 'models_review_changed')}
+done = {'pending': (), 'speech': ('speech',), 'models': ('models',),
+        'both': ('speech', 'models')}[state]
 service = RecoveryService(selector.parent.parent / 'jobs')
 try:
-    # The existing reviews: settings (TASK-40711) and the local model review.
-    service.approve_config('generation')
-    store.approve('generation', 'models.artifacts')
+    service.approve_config('generation')  # the settings review (TASK-40711)
     before = service.current_requirements()
-    assert before['pending_owners'] == SPEECH, dict(before)
-    if state == 'approved':
+    assert before['pending_owners'] == ('models.artifacts', *SPEECH), dict(before)
+    for review in done:
+        _, approve, changed = REVIEWS[review]
         try:
-            service.approve_speech('another-generation')
+            getattr(service, approve)('another-generation')
         except ValueError as error:
-            assert str(error) == 'speech_review_changed', error
+            assert str(error) == changed, error
         else:
-            raise AssertionError('a stale review approved speech')
-        service.approve_speech('generation')
+            raise AssertionError('a stale review approved ' + review)
+        getattr(service, approve)('generation')
     after = service.current_requirements()
 finally:
     service.close()
-approved = state == 'approved'
-assert after['pending_owners'] == (() if approved else SPEECH), dict(after)
-assert [store.allowed('generation', owner) for owner in SPEECH] == [approved] * 2
+approved = {owner for review in done for owner in REVIEWS[review][0]}
+assert after['pending_owners'] == tuple(
+    owner for owner in ('models.artifacts', *SPEECH) if owner not in approved
+), dict(after)
+for owner in ('models.artifacts', *SPEECH):
+    assert store.allowed('generation', owner) == (owner in approved), owner
+approved = state == 'both'
 
 # Speech start-up: the admitted initializer runs only once speech is approved.
 effects = []
@@ -2140,29 +2150,32 @@ print('retired and reopened')
 """
 
 
-@pytest.mark.parametrize("state", ["pending", "approved"])
+@pytest.mark.parametrize("state", ["pending", "speech", "models", "both"])
 def test_the_speech_review_turns_speech_start_up_back_on(tmp_path, state):
-    """TASK-41119: speech start-up admits through `config`, `models.artifacts`,
-    `tts.profile_store` and `tts.voices`, and nothing approved the two speech
-    owners, so speech stayed off after every restore. With the settings and
-    local model reviews done, speech stays off while Backup & Restore's speech
-    review is pending, and starts once `approve_speech` approves the reviewed
-    generation's speech owners; a stale generation is refused."""
+    """TASK-41119 / TASK-41301: speech start-up admits through `config`,
+    `models.artifacts`, `tts.profile_store` and `tts.voices`. With the settings
+    review done, speech stays off until both Backup & Restore's speech review
+    (`approve_speech`, the two speech owners) and its model-files review
+    (`approve_models`, `models.artifacts`, no local embedding model needed)
+    approve the reviewed generation, then starts; each refuses a stale
+    generation and approves only its own owners."""
     from Tests.Backup_Recovery.test_home_citation_retirement import _run
 
     _run(tmp_path, state, "speech_review", script=_SPEECH_REVIEW, timeout=90)
 
 
-def test_only_the_speech_review_calls_approve_speech():
-    """TASK-41119: like `approve_config`, `approve_speech` approves its owners
-    for every profile its generation restored, so only Backup & Restore's
-    reviewed **Approve voices** may call it."""
+@pytest.mark.parametrize("approval", ["approve_speech", "approve_models"])
+def test_only_backup_and_restore_calls_its_owner_reviews(approval):
+    """TASK-41119 / TASK-41301: like `approve_config`, `approve_speech` and
+    `approve_models` approve their owners for every profile their generation
+    restored, so only Backup & Restore's reviewed **Approve voices** and
+    **Approve model files** may call them."""
     uses = Counter()
     for path in sorted((ROOT / "tldw_chatbook").rglob("*.py")):
         text = path.read_text(encoding="utf-8")
-        if "approve_speech" not in text:
+        if approval not in text:
             continue
         for node in ast.walk(ast.parse(text)):
-            if isinstance(node, ast.Attribute) and node.attr == "approve_speech":
+            if isinstance(node, ast.Attribute) and node.attr == approval:
                 uses[path.relative_to(ROOT).as_posix()] += 1
     assert uses == Counter({"tldw_chatbook/UI/Screens/backup_restore_screen.py": 1})

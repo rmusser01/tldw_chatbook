@@ -29866,7 +29866,8 @@ class SettingsScreen(BaseAppScreen):
         def approve():
             return approve_local_embedding(resolve_active_rag_config(), fingerprint)
 
-        message = "Local model review recorded. No model loaded and no index rebuilt."
+        message = ("Local model review recorded. No model loaded and no index rebuilt. "
+                   "Approve model files in Backup & Restore > Restored profiles too, if pending.")
         try:
             task = asyncio.create_task(asyncio.to_thread(approve))
             await join_retained_task(task)

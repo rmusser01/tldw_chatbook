@@ -1330,6 +1330,19 @@ class RecoveryService:
         ) as store:
             store.approve(generation, "config")
 
+    def approve_models(self, generation):
+        """Approve only `models.artifacts` for the reviewed current generation
+        (TASK-41301; owner decision 2026-11-16, "Separate model-files review").
+
+        The one approver of restored model files: local model downloads,
+        installs and activation, speech start-up and a restored local embedding
+        model (which also keeps its own exact-files receipt) all use it.
+        """
+        with self._reviewed_generation(
+            generation, ("models.artifacts",), "models_review_changed"
+        ) as store:
+            store.approve(generation, "models.artifacts")
+
     def approve_speech(self, generation):
         """Approve only the restored voices and voice profiles (TASK-41119).
 
