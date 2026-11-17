@@ -14,7 +14,7 @@ import time
 import weakref
 from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import wraps
 from pathlib import Path
 
@@ -156,6 +156,10 @@ class LocalEmbeddingReview:
     model_path: str
     file_count: int
     generations: tuple[str, ...]
+    # TASK-41301 review r15br-rev2: generations other than the current
+    # profile's whose `models.artifacts` is still unapproved. Backup & Restore's
+    # Approve model files covers only the current profile's generation.
+    elsewhere_pending: tuple[str, ...] = ()
 
 
 def _settings(cfg):
@@ -300,11 +304,56 @@ def _require(records):
 
 
 def preview_local_embedding(config):
-    """Inspect exact configured local files without constructing an embedder."""
-    with _review(config_spec(config)) as (review, _, _):
+    """Inspect exact configured local files without constructing an embedder.
+
+    The review also names any other restored generation (a model directory
+    inside another restored profile) whose model files still await their own
+    Approve model files, since RAG stays off until every one is approved.
+    """
+    with _review(config_spec(config)) as (review, records, leases):
         if review is None:
             raise ValueError("local_model_recovery_not_required")
-        return review
+        selector = bootstrap.effective_config_path()
+        root, _ = leases[selector].execution_context(selector)
+        _, profiles, _ = bootstrap._control_records(root)
+        current = next(
+            (
+                (row.get("activation") or {}).get("generation")
+                for row in profiles
+                if row["selector"] == str(selector)
+            ),
+            None,
+        )
+        pending = {
+            record.generation
+            for store, record in records
+            if record.generation != current
+            and not store.allowed(record.generation, "models.artifacts")
+        }
+        return replace(review, elsewhere_pending=tuple(sorted(pending)))
+
+
+def local_embedding_review_text(review):
+    """The Settings dialog's copy for one review (TASK-41301, review r15br-rev2).
+
+    Confirming records the review of these exact files only. The model files
+    themselves need Backup & Restore's Approve model files, once per restored
+    generation, so any other generation still pending is named here.
+    """
+    text = (
+        f"Model directory: {review.model_path}\nFiles: {review.file_count}\n"
+        f"Generations: {', '.join(review.generations)}\n\n"
+        "Record the review of these exact files? No model will load or download. "
+        "The model also needs Approve model files in Backup & Restore > Restored "
+        "profiles. RAG review and Reconcile / rebuild are separate actions."
+    )
+    if review.elsewhere_pending:
+        text += (
+            "\n\nThese files are also part of another restored profile (generation "
+            f"{', '.join(review.elsewhere_pending)}). Approve model files from that "
+            "profile's own Restored profiles view too, or RAG stays off."
+        )
+    return text
 
 
 def approve_local_embedding(config, expected_fingerprint):

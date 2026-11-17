@@ -15,7 +15,6 @@ import sqlite3
 import threading
 from contextlib import closing
 from types import SimpleNamespace
-from rich.markup import escape
 from textual.app import App
 from textual.widgets import Button
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
@@ -103,7 +102,10 @@ async def main():
    return
   await wait_for(lambda:isinstance(host.screen,ConfirmationDialog) and host.screen.query('#confirm-button'))
   dialog=host.screen
-  assert escape(str(model)) in dialog.message
+  # The dialog renders its message with markup off, so the path is not escaped.
+  assert str(model) in dialog.message
+  assert 'Record the review of these exact files?' in dialog.message
+  assert str(dialog.query_one('#confirm-button',Button).label)=='Record review'
   assert witness['generation'] in dialog.message
   assert 'Files:' in dialog.message
   assert not loads

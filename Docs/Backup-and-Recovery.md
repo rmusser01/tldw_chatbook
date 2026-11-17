@@ -366,10 +366,12 @@ For an existing local HF embedding model, use **Settings → Library/RAG** with 
 active RAG profile selected and any draft changes saved or discarded:
 
 1. Choose **Review local model**. Check the displayed model directory, file count,
-   and recovery generations, then choose **Approve local model**. This records
-   only the review of that model's exact files; it does not load or download a
-   model or rebuild an index. The restored model files also need **Approve model
-   files** in **Backup & Restore → Restored profiles**, in either order.
+   and recovery generations, then choose **Record review**. This records only the
+   review of that model's exact files; it does not load or download a model or
+   rebuild an index. The restored model files also need **Approve model files** in
+   **Backup & Restore → Restored profiles**, in either order. If the folder is also
+   part of another restored profile, the review names that profile's generation:
+   its model files need their own **Approve model files** too, or RAG stays off.
 2. Choose **Review recovery**, inspect the RAG owners, sources, and prerequisites,
    then choose **Approve RAG owners**. Model permission and RAG permission are
    separate; neither approval completes index validation.

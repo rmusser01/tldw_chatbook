@@ -2179,3 +2179,125 @@ def test_only_backup_and_restore_calls_its_owner_reviews(approval):
             if isinstance(node, ast.Attribute) and node.attr == approval:
                 uses[path.relative_to(ROOT).as_posix()] += 1
     assert uses == Counter({"tldw_chatbook/UI/Screens/backup_restore_screen.py": 1})
+
+
+_ELSEWHERE_MODEL = r"""
+import os, sys
+from pathlib import Path
+from Tests.network_guard import install, blocked_attempts
+install()
+import keyring
+from keyring.backends.null import Keyring
+keyring.set_keyring(Keyring())
+from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission as storage
+from tldw_chatbook.Backup_Recovery.activation import ActivationStore, bind_activation
+from tldw_chatbook.Backup_Recovery.control_records import admission_authority, register_pending
+from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+# Imported before binding, as the app is: config computes its client id on import.
+from tldw_chatbook.Embeddings.Embeddings_Lib import HFModelCfg
+from tldw_chatbook.RAG_Search import model_recovery as recovery
+from tldw_chatbook.RAG_Search.activation import require_local_model_construction
+from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
+state = sys.argv[1]
+base = Path(os.environ['TLDW_CONFIG_PATH']).parent.parent
+profiles = {}
+for name in ('current', 'other'):
+    folder = base / name
+    (folder / 'config').mkdir(parents=True, mode=0o700)
+    (folder / 'data').mkdir(mode=0o700)
+    selector = folder / 'config' / 'config.toml'
+    selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir="'
+                        + str(folder / 'data') + '"\n')
+    selector.chmod(0o600)
+    profiles[name] = selector
+selector = Path(os.environ['TLDW_CONFIG_PATH'])
+selector.write_text(profiles['current'].read_text())
+selector.chmod(0o600)
+profiles['current'] = selector
+# A local model directory in the current profile's data that the OTHER
+# restored profile's roots also cover (its recovery restored that folder).
+shared = base / 'current' / 'data' / 'models'
+shared.mkdir(mode=0o700)
+model = shared / 'local-model'
+model.mkdir(mode=0o700)
+(model / 'config.json').write_text('{}')
+(model / 'model.safetensors').write_bytes(b'weights')
+root = bootstrap.default_bootstrap_root()
+startup = storage._startups.pop((os.getpid(), str(root)), None)
+if startup: startup.close()
+authority = admission_authority(root)
+authority.register('current', (selector.parent, base / 'current' / 'data'))
+authority.register('other', (profiles['other'].parent, shared))
+stores = {}
+for name, generation in (('current', 'generation'), ('other', 'other-generation')):
+    control = base / ('operation-' + name)
+    control.mkdir(mode=0o700)
+    register_pending(root, name, (name,), control, (profiles[name],))
+    with authority.maintenance((name,), 2) as session:
+        bind_activation(root, name, profiles[name], generation,
+                        ('config', 'models.artifacts'), session=session)
+    (root / ('pending-' + bootstrap._key(name) + '.json')).unlink()
+    stores[generation] = ActivationStore(control / 'activation')
+config = RAGConfig.from_dict({
+    'embedding': {'model': str(model), 'device': 'cpu'},
+    'vector_store': {'persist_directory': str(base / 'current' / 'data' / 'vectors')}})
+service = RecoveryService(base / 'jobs')
+try:
+    service.approve_models('generation')  # the current profile's Approve model files
+finally:
+    service.close()
+if state == 'approved':  # the other profile's own Approve model files
+    stores['other-generation'].approve('other-generation', 'models.artifacts')
+review = recovery.preview_local_embedding(config)
+assert set(review.generations) == {'generation', 'other-generation'}, review
+assert review.elsewhere_pending == (
+    () if state == 'approved' else ('other-generation',)), review
+recovery.approve_local_embedding(config, review.fingerprint)
+try:
+    require_local_model_construction(config)
+except (OSError, ValueError, RuntimeError):
+    allowed = False
+else:
+    allowed = True
+assert allowed == (state == 'approved'), (state, allowed)
+assert not blocked_attempts(), blocked_attempts()
+print('retired and reopened')
+"""
+
+
+@pytest.mark.parametrize("state", ["pending", "approved"])
+def test_local_model_review_names_another_restored_generation(tmp_path, state):
+    """TASK-41301 review r15br-rev2: a RAG model directory inside another
+    restored profile carries that profile's generation, and RAG needs
+    `models.artifacts` approved for every generation it touches. The current
+    profile's Approve model files covers only its own, so the review names the
+    other generation still pending (``elsewhere_pending``) instead of leaving
+    RAG off silently; once that profile's model files are approved, nothing is
+    named and the model is admitted."""
+    from Tests.Backup_Recovery.test_home_citation_retirement import _run
+
+    _run(tmp_path, state, "elsewhere_model", script=_ELSEWHERE_MODEL, timeout=120)
+
+
+@pytest.mark.parametrize("elsewhere", [(), ("other-generation",)])
+def test_local_model_review_copy_records_files_and_names_the_model_files_review(
+    elsewhere,
+):
+    """TASK-41301 review r15br-rev2: Settings' local model dialog no longer says
+    it allows the model. Confirming records the review of these exact files,
+    the copy names Backup & Restore's Approve model files, and any other
+    restored generation still pending is named."""
+    from tldw_chatbook.RAG_Search.model_recovery import (
+        LocalEmbeddingReview,
+        local_embedding_review_text,
+    )
+
+    text = local_embedding_review_text(
+        LocalEmbeddingReview("f", "/models/m", 3, ("generation",), elsewhere)
+    )
+    assert "Record the review of these exact files?" in text
+    assert "Approve model files in Backup & Restore > Restored profiles" in text
+    assert "Allow" not in text
+    assert ("another restored profile (generation other-generation)" in text) is bool(
+        elsewhere
+    )
