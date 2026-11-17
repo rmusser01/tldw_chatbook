@@ -11,7 +11,7 @@ import pytest
 @pytest.fixture(scope="module")
 def native_package(tmp_path_factory):
     """Install the application wheel and preserve every installed file."""
-    from Tests.Backup_Recovery.test_config_sibling_capture import _wait_while_busy
+    from Tests.Backup_Recovery.restart_observation import _wait_while_busy
     from Tests.Packaging.test_backup_helper_distribution import (
         _build_wheel,
         _copy_build_source,

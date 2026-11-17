@@ -624,7 +624,7 @@ def _run_profile_child(root, name, script, environment, *, timeout=60):
     program = root / (name + ".py")
     program.write_text(script, encoding="utf-8")
     output_path = root / (name + ".log")
-    from Tests.Backup_Recovery.test_config_sibling_capture import _wait_while_busy
+    from Tests.Backup_Recovery.restart_observation import _wait_while_busy
 
     with output_path.open("w", encoding="utf-8") as output:
         # Fixed interpreter and fixture-owned source; no shell or external command.

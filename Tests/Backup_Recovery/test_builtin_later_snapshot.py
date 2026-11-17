@@ -1108,7 +1108,7 @@ original = load_plan(Journal(root/'control',operation))
 test_later_execution_restores_old_core_and_preserves_current_files((operation,original,_current(root)),root)
 print('FRESH_NATIVE_LATER_COMPLETE')
 """
-    from Tests.Backup_Recovery.test_config_sibling_capture import _wait_while_busy
+    from Tests.Backup_Recovery.restart_observation import _wait_while_busy
 
     log = tmp_path / "fresh-later.log"
     with log.open("w") as stream:

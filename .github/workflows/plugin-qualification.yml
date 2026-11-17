@@ -20,6 +20,7 @@ on:
       - "tldw_chatbook/Backup_Recovery/staging.py"
       - "Tests/Backup_Recovery/test_capture_service.py"
       - "Tests/Backup_Recovery/test_config_sibling_capture.py"
+      - "Tests/Backup_Recovery/restart_observation.py"
       - "Tests/Backup_Recovery/test_core_owners.py"
       - "Tests/Backup_Recovery/test_operational_owners.py"
       - "tldw_chatbook/Agents/hooks_v2/**"
