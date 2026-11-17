@@ -532,6 +532,15 @@ TASK-41125 and nine Personal Context backup/restore files of TASK-41118
 (step) and 75 (job). TASK-41112's Actor Pack export file joins the existing
 `recovered-suites` step and TASK-41125's known-profiles file the UI census
 tail. None of this adds a job or a runner: the counts above are unchanged.
+Some tests in the job run past the job's 300 s per-test limit at -n 4 on a
+loaded host, so they carry measured `timeout` marks, each about 2x a complete
+loaded run. The two re-admitted roundtrip capture nodes and
+`test_replace_restore_...` get 810 s (393-403 s at load 67-110). The
+fresh-process later rollback gets 1050 s (212 s setup and a 301 s child at
+load 100-129). The marks raise only those tests' hang bounds, not the
+step's measured time: 31-43 min before, plus about 12.5 min for
+`test_restore_data_groups` and about 7.5 min for the other new files at
+-n 4, is about 51-63 min, inside the 70 min step cap.
 
 ## Amendment (2026-11-15, TASK-39144): 38 shards, 19 at once
 

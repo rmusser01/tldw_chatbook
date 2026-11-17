@@ -754,6 +754,10 @@ print('retired and reopened')
 '''
 
 
+# TASK-41118 review r15bt-rev1: at -n 4 and load 67-110 the slowest cases ran
+# 343-403 s to completion (link, remove, no_keyring), past the job's 300 s
+# per-test limit; this is 2x the 403 s.
+@pytest.mark.timeout(810)
 @pytest.mark.parametrize(
     ("scenario", "mode"),
     [

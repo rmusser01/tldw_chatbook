@@ -6,6 +6,8 @@ import subprocess  # nosec B404
 import sys
 from pathlib import Path, PurePath, PureWindowsPath
 
+import pytest
+
 from Tests.Backup_Recovery.native_package import (
     native_package as native_package,  # noqa: PLC0414 - installed product fixture
 )
@@ -765,6 +767,10 @@ def _capture_two_profiles(tmp_path, installed_package=None):
     return root, environment
 
 
+# TASK-41116 review r15bt-rev1: at -n 4 and load 67-110 these two capture
+# nodes ran 393 s and 403 s to completion, past the job's 300 s per-test
+# limit; this is 2x the 403 s.
+@pytest.mark.timeout(810)
 def test_two_known_profiles_complete_capture_preserves_native_state_and_resumes(
     tmp_path,
 ):
@@ -871,6 +877,10 @@ def _isolated_environment(root, environment):
     )
 
 
+# TASK-41116 review r15bt-rev1: at -n 4 and load 67-110 these two capture
+# nodes ran 393 s and 403 s to completion, past the job's 300 s per-test
+# limit; this is 2x the 403 s.
+@pytest.mark.timeout(810)
 def test_two_captured_profiles_plan_shared_concrete_roots_for_isolated_restore(
     tmp_path,
 ):
