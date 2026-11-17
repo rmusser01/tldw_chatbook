@@ -108,9 +108,13 @@ Review-round evidence (load 50-132):
 Delta review (acfb7f7ed1..7bc401b108, "ready to merge"). All Minors are fixed:
 - **M1.** The per-run check now refuses only `control_unknown`. An unproven final read stays registered, so the up-front check already refuses it, and no test needed the dropped clause.
 - **M2.** The marker blocks reads for every workflow in the coordinator, so the copy is now neutral: "…Restart Chatbook to read workflows again and release held chats." `unproven_earlier_read` opens another chat's saved workflow, which holds nothing. Its view shows the restart copy and does not say "this chat".
-- **M3.** The read that becomes unproven now raises `workflow_return_unproven` itself, chained from the original error, from both of `_metadata`'s unproven exits; `cell.source_error` keeps the original. On 7bc401b108's product code the new assertion was red: the first `get` raised "original workflow reader return unproven".
+- **M3.** The read that becomes unproven now raises `workflow_return_unproven` itself, chained from the original error, from `_metadata`'s single unproven exit in its `finally`; `cell.source_error` keeps the original. The check before entering (`original_sources()` raising `PermissionError`) still marks the read unproven under its own message; it means the runtime was replaced. On 7bc401b108's product code the new assertion was red: the first `get` raised "original workflow reader return unproven".
 - **M4 (docs).** ADR-285 and the User Guide say that workflow details and reviews stay unavailable in every chat until restart.
 - **M5.** `_metadata_unproven()` counts a cancelled marker as unproven instead of raising `CancelledError`, as the preceding-read check and shutdown already do.
 
-DELTA_EVIDENCE
+Delta evidence (load 70-81):
+- The test file plus `test_workflow_setup_worker` pass 19/19 on head.
+- The view tests (navigation, history controls, existing admission, workflow command) fail only on 2 navigation nodes, `test_detach_preserves_planning_and_background_link_identifies_owner` and `test_malformed_saved_objective_stays_out_of_console_diagnostics`. Both are subprocess timeouts and both fail on base too.
+- Mutations: restoring `raise cell.source_error` makes the first `get` raise "original workflow reader return unproven"; restoring the old copy fails `_restart_only`. M5 is a one-line guard with no test, because no path cancels these futures.
+- Preflight passes.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
