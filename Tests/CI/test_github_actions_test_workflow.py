@@ -150,7 +150,10 @@ def test_full_suite_job_is_bounded_and_manual_only() -> None:
     all_tests_job = _all_tests_job_block()
 
     assert "timeout-minutes:" in all_tests_job
-    assert "if: github.workflow == 'Tests' && github.event_name == 'workflow_dispatch'" in all_tests_job
+    assert (
+        "if: github.workflow == 'Tests' && github.event_name == 'workflow_dispatch'"
+        in all_tests_job
+    )
     assert "pull_request" not in all_tests_job
     assert "name: Full Test Suite (Manual)" in all_tests_job
     assert "pytest ./Tests/" in all_tests_job
@@ -231,7 +234,10 @@ def test_ci_shape_regression_runs_in_dedicated_comprehensive_job() -> None:
     ]
 
     assert "runs-on: ubuntu-latest" in shape
-    assert "if: github.event_name != 'workflow_dispatch' || inputs.backup_platform_only != true" in shape
+    assert (
+        "if: github.event_name != 'workflow_dispatch' || inputs.backup_platform_only != true"
+        in shape
+    )
     assert "uses: actions/checkout@v4" in shape
     assert "uses: actions/setup-python@v5" in shape
     assert 'python-version: "3.11"' in shape
@@ -252,7 +258,10 @@ def test_artifact_lease_gate_exposes_stable_required_context() -> None:
     assert "name: Artifact Lease Gate" in gate
     assert "runs-on: ubuntu-latest" in gate
     assert "needs: [artifact-lease-spike, artifact-lease-shape]" in gate
-    assert "if: always() && (github.event_name != 'workflow_dispatch' || inputs.backup_platform_only != true)" in gate
+    assert (
+        "if: always() && (github.event_name != 'workflow_dispatch' || inputs.backup_platform_only != true)"
+        in gate
+    )
     assert (
         'if [ "${{ needs.artifact-lease-spike.result }}" != "success" ] || '
         '[ "${{ needs.artifact-lease-shape.result }}" != "success" ]; then' in gate
@@ -472,3 +481,14 @@ def test_the_test_summary_job_can_actually_fail() -> None:
         "the verdict must be the final step, after the summary is generated; "
         f"steps end with {step_names[-2:]}"
     )
+
+
+def test_textual_floor_uses_two_workers_within_the_existing_job_budget() -> None:
+    block = _textual_minimum_job_block()
+    assert "timeout-minutes: 10" in block
+    assert "pip install pytest pytest-asyncio pytest-timeout pytest-xdist" in block
+    assert len(_pytest_invocations(block)) == 1
+    invocation = _pytest_invocations(block)[0]
+    assert invocation[invocation.index("-n") + 1] == "2"
+    assert "--dist=load" in invocation
+    assert "--timeout=180" in invocation
