@@ -68,7 +68,7 @@ ADR required: no. The change is display copy plus, at most, one model-facing lin
 
 **Change.**
 - `MCP/console_snapshot.console_mcp_unavailable_reason(service)` returns "store isn't in this profile's data folder" when `unbound_console_sources(service)`, the same pure predicate that makes the Send drop MCP, and "" otherwise. It reads no file and costs about 0.07-0.4 ms a call at load 70.
-- `ChatScreen._derive_console_inspector_state` passes the reason (lazy import, no new method) to `ConsoleInspectorState.from_values(mcp_unavailable_reason=...)`.
+- `ChatScreen._derive_console_inspector_state` passes the reason to `ConsoleInspectorState.from_values(mcp_unavailable_reason=...)`. It uses lazy imports and adds no method. It reaches the service through `app_services.read_mcp_service`, not a literal `getattr`, which the app-lookup census refuses.
 - `_mcp_inspector_row` returns `MCP: off · <reason>`, status blocked, ahead of its count branches. An empty reason keeps every existing branch, so a bound store renders as before.
 - The row shows from mount, before the first Send, and stays after it.
 - The `unbound_console_sources` docstring no longer says "every Windows install".
@@ -98,8 +98,18 @@ ADR required: no. The change is display copy plus, at most, one model-facing lin
 - The 342 shared reds are pre-existing: `test_console_internals_decomposition` 122, `test_console_session_settings` 97, `test_console_right_rail` 33, `test_console_async_mcp_snapshot` 32, `test_console_rail_reconciliation` 27, `test_console_snapshot_source_contracts` 16, and others.
 - This run predates the premise correction, which changed only copy, docstrings, the dropped Windows unit test and test ids. The touched files were rerun after it: 75 passed.
 
+**Preflight and Architecture.**
+- `./scripts/preflight.sh` passed.
+- `Tests/Architecture`, run serially at load 50-75: 1416 passed, 5 failed.
+  - 3 also fail on base: `test_reviewed_diagnostic_changes_are_metadata_only` and two `test_timer_path_static_update_inventory` nodes.
+  - 2 were this change, and both are fixed:
+    - The app-lookup census: the service is now reached through `read_mcp_service`.
+    - The `console_display_state.py` module size ratchet: raised 2875 -> 2884 with a dated note, under the owner rule that a fix raises the row by its own lines.
+  - After those fixes, the census, both size ratchets, `test_layer_direction` and `test_application_services_bundle` pass (279 nodes). The whole directory was not rerun.
+
 **Files.**
-- Product: `tldw_chatbook/MCP/console_snapshot.py`, `tldw_chatbook/Chat/console_display_state.py`, `tldw_chatbook/UI/Screens/chat_screen.py` (+6 lines, no method; within the size ratchet).
+- Product: `tldw_chatbook/MCP/console_snapshot.py`, `tldw_chatbook/Chat/console_display_state.py`, `tldw_chatbook/UI/Screens/chat_screen.py` (+7 lines, no method; within the screen size ratchet).
+- Ratchet: `Tests/Architecture/test_module_size_ratchet.py`.
 - Tests: `Tests/UI/test_console_send_without_mcp_store.py`, `Tests/Chat/test_console_display_state.py`, `Tests/UI/test_console_internals_decomposition.py`, `Tests/Chat/test_console_configuration_preparation.py` (docstring).
 - Docs: `Docs/User_Guide/console/agent-runs-and-tools.md` (MCP tools section).
 

@@ -103,7 +103,9 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/app_shutdown.py": 225,
     # 2026-10-31: re-measured after rebasing onto dev 4d6764b132 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 2873 -> 2899.
     # PR3301, 2026-10-31: user size waiver; exact integrated measurement.
-    "tldw_chatbook/Chat/console_display_state.py": 2875,
+    # 2026-11-17, TASK-41308 (owner rule: raise by the change's own lines):
+    # 2875 -> 2884 (+9), the MCP row says off, and why, for an unbound store.
+    "tldw_chatbook/Chat/console_display_state.py": 2884,
     "tldw_chatbook/Widgets/Console/console_selection.py": 379,
     # PR #3361, 2026-11-07 (owner size waiver, 2026-11-02 audit TASK-38580..38613):
     # 244 -> 257 (+13), TASK-38585 renders labels literally, not as markup.
