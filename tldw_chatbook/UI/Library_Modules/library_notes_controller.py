@@ -3259,8 +3259,7 @@ class LibraryNotesController:
                 self._library_note_import_controller.cancel()
                 return
             self._library_notes_view = "list"
-            # TASK-41128: Import once is part of Add from files.
-            _sync_library_canvas(self, "notes", then=self._arm_library_list_entry_focus)
+            _sync_library_canvas(self, "notes", then=self._land_on_library_notes_page)
             return
         if self._library_notes_sort_choices_visible:
             self._library_notes_sort_choices_visible = False
@@ -5760,9 +5759,7 @@ class LibraryNotesController:
         )
         header.update(self._library_header_line(shell.header_line))
         if leaving_create:
-            # TASK-41128 (owner, 2026-11-15): leaving Create lands on the
-            # Notes page's blank-center entry focus, not in the filter.
-            _sync_library_canvas(self, "notes", then=self._arm_library_list_entry_focus)
+            _sync_library_canvas(self, "notes", then=self._land_on_library_notes_page)
             return True
         identity = LibraryNotesFocusIdentity(
             stage="notes",
@@ -5850,6 +5847,20 @@ class LibraryNotesController:
         if self._library_notes_mutation_fenced():
             return
         await self._select_library_rail_row(LIBRARY_ROW_CREATE_NOTE)
+    def _land_on_library_notes_page(self) -> None:
+        """Land where the blank Notes page puts focus, never in the filter.
+
+        TASK-41128 (owner, 2026-11-15: "Library notes page/blank center"):
+        the exits from Create, Add from files, Import once and Manage sync
+        folders land on the first note row through the list entry channel.
+        With no note row ("No notes yet." or a filter with no match) the
+        page's New button takes it instead of the filter.
+        """
+        new = self.query("#library-notes-new")
+        if self.query("#library-notes-empty") and new and new.first().focusable:
+            new.first().focus()
+            return
+        self._arm_library_list_entry_focus()
     def _focus_library_notes_filter_input(self) -> None:
         """Restore focus to the notes filter box after a filter recompose."""
         try:
@@ -6354,23 +6365,15 @@ class LibraryNotesController:
         await self._library_notes_sync_controller.abandon_setup()
         self._supersede_library_notes_navigation()
         self._library_notes_lasting_origin = None
-        # TASK-41128 (owner, 2026-11-15): leaving Add from files lands on the
-        # Notes page's blank-center entry focus. Manage sync folders was not
-        # part of that decision and keeps the filter.
-        land = (
-            self._focus_library_notes_filter_input
-            if self._library_notes_view == "lasting_roots"
-            else self._arm_library_list_entry_focus
-        )
         self._library_notes_view = "list"
-        _sync_library_canvas(self, "notes", then=land)
+        _sync_library_canvas(self, "notes", then=self._land_on_library_notes_page)
         return True
     @on(Button.Pressed, "#library-notes-import-back")
     def handle_library_notes_import_back(self, event: Button.Pressed) -> None:
         """Return to Notes while any running import continues off-canvas."""
         event.stop()
         self._library_notes_view = "list"
-        _sync_library_canvas(self, "notes", then=self._arm_library_list_entry_focus)
+        _sync_library_canvas(self, "notes", then=self._land_on_library_notes_page)
     @on(LibraryNoteImportCanvas.AddSourceRequested)
     def handle_library_note_import_add_source(
         self, event: LibraryNoteImportCanvas.AddSourceRequested

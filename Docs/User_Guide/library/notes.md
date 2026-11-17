@@ -197,7 +197,10 @@ leaves it alone. This holds in Library notes and in Folder files.
   "Obsidian vaults" below). Keep a folder synced reads front matter only
   inside a vault and always keeps the block in the body.
 - **Manage sync folders** — appears when roots or migration candidates exist;
-  it shows text-explicit status and the valid action for each root.
+  it shows text-explicit status and the valid action for each root. Escape or
+  its **‹ Notes** returns to the Notes list the way leaving Add from files
+  does: nothing open in the work area, focus on the first note row (or
+  **New**, with no notes).
 
 ### Library notes vs. Folder files vs. lasting sync
 
@@ -689,7 +692,8 @@ note** never appeared at all. Escape (or **‹ Notes**) returns to the list
 at the same size, with nothing open in the work area ("Select a note to edit
 it here.") and focus on the first note row — where opening Notes puts it —
 not in the filter, so the next letter is a list key rather than filter text.
-With no notes yet there is no row, and focus goes to the filter.
+With no notes yet the list reads "No notes yet. Create your first note." and
+has no row, so focus goes to its **New** button instead.
 
 Opening this view parks keyboard focus on **Blank note**, so Enter creates
 a note straight away without tabbing to find it; ↑/↓ move between Blank
@@ -717,7 +721,7 @@ is and imports nothing; the strip above the canvas is where you switch to it.
 The bar below the chooser holds only **‹ Notes**. Escape or **‹ Notes**,
 from the chooser or from **Import once**, returns to the Notes list the way
 leaving the New note view does: nothing open in the work area, and focus on
-the first note row rather than in the filter. Until lasting sync is ready
+the first note row (or **New**, with no notes) rather than in the filter. Until lasting sync is ready
 on the profile, the second button reads "○ Keep a folder synced" with the line
 "Keeping a folder synced isn't ready on this profile yet. Nearest valid
 action: Import once." under it.

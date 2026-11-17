@@ -3712,7 +3712,13 @@ async def test_lasting_setup_escape_abandons_review_before_restoring_notes_focus
 
         assert abandoned == [root_id]
         assert screen._notes_state.view == "list"
-        assert getattr(screen.focused, "id", None) == "library-notes-filter"
+        # TASK-41128 (coordinator ruling, 2026-11-16): with no notes the
+        # blank Notes page lands on its New button, not in the filter.
+        await _wait_for_condition(
+            pilot,
+            lambda: getattr(screen.focused, "id", None) == "library-notes-new",
+            message=lambda: f"Escape left focus on {screen.focused!r}.",
+        )
 
 
 @pytest.mark.asyncio
@@ -34167,16 +34173,37 @@ async def test_library_note_footer_covers_navigator_create_sync_and_exit() -> No
 
 
 @pytest.mark.asyncio
-async def test_escape_from_create_and_add_from_files_lands_on_the_blank_notes_page() -> None:
+@pytest.mark.parametrize("seeded", ["two-notes", "no-notes"])
+async def test_escape_from_create_and_add_from_files_lands_on_the_blank_notes_page(
+    seeded,
+) -> None:
     """TASK-41128: owner, 2026-11-15, "Library notes page/blank center".
 
     Wide, with the production stylesheet: Escape from Create, from the Add
-    from files chooser and from Import once each return to the Notes page
-    with its center blank ("Select a note to edit it here.") and focus on
-    the first note row, where Notes entry puts it -- never the filter.
+    from files chooser, from Import once and from Manage sync folders (and
+    the ‹ Notes of the last two) each return to the Notes page with its
+    center blank ("Select a note to edit it here.") and focus on the first
+    note row, where Notes entry puts it -- never the filter. With no notes
+    there is no row, and the page's New button takes focus (coordinator
+    ruling, 2026-11-16, which also extended the rule to Manage sync folders).
     """
+    from tldw_chatbook.Notes.notes_sync_runtime import (
+        NotesSyncRootRuntimeSnapshot,
+        NotesSyncRuntimeSnapshot,
+    )
+
+    async def abandon_setup(_root_id: str) -> None:
+        return None
+
     app = _build_test_app()
-    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    notes = _two_notes() if seeded == "two-notes" else []
+    _seed_conversations(app, _two_conversations(), notes=notes)
+    # One bound root, so the toolbar offers Manage sync folders.
+    root = NotesSyncRootRuntimeSnapshot("root-1", "up_to_date", "sync_now")
+    app.notes_sync_runtime_owner = SimpleNamespace(
+        snapshot=lambda: NotesSyncRuntimeSnapshot("active", "sync_now", (root,)),
+        abandon_setup=abandon_setup,
+    )
     host = LibraryProductionCSSHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -34184,12 +34211,27 @@ async def test_escape_from_create_and_add_from_files_lands_on_the_blank_notes_pa
         await _wait_for_library_shell(screen, pilot)
         await _wait_for_library_notes_compact(screen, pilot, False)
         screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_NOTES}").press()
-        await _wait_for_selector(screen, pilot, ".library-notes-row")
+        await _wait_for_selector(
+            screen, pilot, ".library-notes-row" if notes else "#library-notes-empty"
+        )
+        await _wait_for_selector(screen, pilot, "#library-notes-manage-sync-folders")
+
+        def landing():
+            rows = list(screen.query(".library-notes-row"))
+            return rows[0] if rows else screen.query_one("#library-notes-new")
 
         async def assert_blank_center_landing(flow: str) -> None:
-            await _wait_for_notes_entry_focus_landing(screen, pilot)
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen._notes_state.view == "list" and screen.focused is landing()
+                ),
+                message=lambda: (
+                    f"{flow}: focus is on {screen.focused!r}, not {landing()!r}."
+                ),
+            )
             await pilot.pause(0.3)
-            assert screen.focused is screen.query(".library-notes-row").first(), flow
+            assert screen.focused is landing(), flow
             assert screen.query_one("#library-note-work-empty").display is True, flow
             assert not screen.query("#library-notes-create-blank"), flow
 
@@ -34241,6 +34283,16 @@ async def test_escape_from_create_and_add_from_files_lands_on_the_blank_notes_pa
         back = await _wait_for_selector(screen, pilot, "#library-notes-import-back")
         await pilot.click(back)
         await assert_blank_center_landing("Import once ‹ Notes")
+
+        # Manage sync folders: its Escape and its ‹ Notes land the same way.
+        for leave in ("escape", "back"):
+            screen.query_one("#library-notes-manage-sync-folders", Button).press()
+            back = await _wait_for_selector(screen, pilot, "#notes-sync-roots-back")
+            if leave == "escape":
+                await pilot.press("escape")
+            else:
+                await pilot.click(back)
+            await assert_blank_center_landing(f"Manage sync folders {leave}")
 
 
 @pytest.mark.asyncio
