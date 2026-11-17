@@ -54,6 +54,7 @@ class ConsoleProcessReceipt:
     potentially_committed: bool = False
     events: list[ConsoleWireMessage] = field(default_factory=list, repr=False)
     projection_message: ConsoleWireMessage | None = field(default=None, repr=False)
+    changed: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
 
 
 class _ConsoleFrameInput:
@@ -143,12 +144,12 @@ class _ConsoleFramedChannel:
         except BaseException as error:
             self._report_failure(error)
 
-    def close_after_exit(self, deadline: float) -> bool:
+    def close_after_exit(self, deadline: float | None) -> bool:
         """Join pipes only after the actual peer process has exited."""
         self._closing.set()
         self.outbox.put_nowait(None)
         for thread in self._started:
-            thread.join(max(0.0, deadline - time.monotonic()))
+            thread.join(None if deadline is None else max(0.0, deadline - time.monotonic()))
         return all(not thread.is_alive() for thread in self._started)
 
 
@@ -196,32 +197,286 @@ class ConsoleExecutionClient:
         self._shutdown_task: asyncio.Task[bool] | None = None
         self._physically_closed = False
         self._disposed = False
+        self._attachment_id = secrets.token_hex(16)
+        self._view_checkpoints: set[asyncio.Task] = set()
         self._view: Any = None
         self._visit = 0
         self._projection = None
         self.projection_view = None
         self.pressed_inputs = None
-        self._projection_sequence = 0
+        self.settings_readiness = None
+        self.context_summary = None
+        self.agent_rail = None
+        self.workspace_surface = None
+        self.session_surface = None
+        from .console_execution_prompt_history import ConsolePromptHistoryView
 
-    async def read_projection(self, session_id: str, incarnation_id: str):
+        self.prompt_history = ConsolePromptHistoryView(self)
+        self.provider_model_display = None
+        self.control_provider_label = None
+        self._readiness_deadline = 0.0
+        self.session_composition = None
+        self._projection_sequence = 0
+        self._initial_session_task: asyncio.Task | None = None
+        self._initial_conversation_id: str | None = None
+        self._resume_view_request = None
+        self._view_preparation = None
+        self._opening_sessions: set[asyncio.Task] = set()
+
+    def attach_view(self, view: Any) -> int:
+        """Bind the actual screen visit without constructing a parent graph."""
+        from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+        if (
+            type(view) is not ChatScreen
+            or view.app_instance is not self._app
+            or view.app is not self._app
+            or self._app.screen is not view
+            or getattr(view, "_console_chat_tearing_down", False)
+            or getattr(view, "_closing", False)
+            or (self._view is not view and view._task is not asyncio.current_task())
+            or getattr(self._app, "console_execution_client", None) is not self
+            or getattr(self._app, "console_runtime", None) is not None
+            or self._disposed
+            or self._shutdown_task is not None
+        ):
+            raise ConsoleChannelLost("Console attachment owner changed")
+        if self._view is not view:
+            self._visit += 1
+            self._view = view
+        return self._visit
+
+    def detach_view(self, view: Any, visit: int) -> bool:
+        """End only this screen visit; the process and turns remain app-owned."""
+        if self._view is not view or self._visit != visit:
+            return False
+        # Revoke before any row lookup, channel submission or task creation.
+        # The request carries the captured old visit, never the new generation.
+        self._view = None
+        self._visit += 1
+        if self.projection_view is not None and self._channel_error is None and self._shutdown_task is None:
+            row = self.projection_view.session(self.projection_view.active_session_id)
+            receipt = self.submit("ReadProjection", {
+                "known_display_revision": None,
+                "view_checkpoint": {
+                    "attachment_id": self._attachment_id, "visit": visit, "action": "hidden",
+                },
+            }, session_id=row.id, incarnation_id=row.incarnation_id)
+            task = asyncio.create_task(self._join_hidden_checkpoint(receipt))
+            self._view_checkpoints.add(task)
+            task.add_done_callback(self._view_checkpoint_finished)
+        return True
+
+    async def _join_hidden_checkpoint(self, receipt) -> None:
+        try:
+            await asyncio.shield(receipt.applied)
+        except ConsoleRemoteFailure as error:
+            if error.code != "view_checkpoint_superseded" or error.stage != "applied":
+                raise
+            # This exact old hidden command lost presentation currentness.
+            # The finally still requires its original physical retirement.
+        finally:
+            if await asyncio.shield(receipt.retired) is not True:
+                raise ConsoleChannelLost("Console hidden checkpoint did not retire")
+
+    def _view_checkpoint_finished(self, task: asyncio.Task) -> None:
+        self._view_checkpoints.discard(task)
+        if task.cancelled():
+            self._fail(ConsoleChannelLost("Console hidden checkpoint observer cancelled"))
+        elif task.exception() is not None:
+            self._fail(task.exception())
+
+    def require_view(self, view: Any, visit: int) -> None:
+        """Recheck this actual App and visit after an asynchronous boundary."""
+        from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+        if (
+            type(view) is not ChatScreen
+            or self._view is not view
+            or self._visit != visit
+            or view.app_instance is not self._app
+            or view.app is not self._app
+            or self._app.screen is not view
+            or getattr(self._app, "console_execution_client", None) is not self
+            or getattr(self._app, "console_runtime", None) is not None
+            or getattr(view, "_console_chat_tearing_down", False)
+            or self._disposed
+            or self._shutdown_task is not None
+            or self._channel_error is not None
+        ):
+            raise ConsoleChannelLost("Console attachment visit changed")
+
+    async def prepare_view(
+        self, view: Any, *, conversation_id: str | None = None
+    ) -> tuple[int, Any]:
+        """Join the original target before this actual visit derives content."""
+        if self._view is not view and view._task is None:
+            # Stock eager startup publishes the actual message-pump Task on
+            # return from create_task. No session/native entry precedes this.
+            await asyncio.sleep(0)
+        visit = self.attach_view(view)
+        request = object()
+        self._view_preparation = request
+        try:
+            profile = getattr(self._app, "_console_execution_profile", None)
+            await self.start(profile)
+            self._require_view_preparation(view, visit, request)
+            if self.projection_view is None:
+                if self._initial_session_task is None:
+                    self._initial_conversation_id = conversation_id
+                    self._initial_session_task = self._retain_open_session(conversation_id)
+                # An absent target means resume the existing first-session
+                # command, including a saved target whose observer was cancelled.
+                # It is not an instruction to create another blank session.
+                if conversation_id is None or self._initial_conversation_id == conversation_id:
+                    session_id, incarnation = await asyncio.shield(self._initial_session_task)
+                else:
+                    await asyncio.shield(self._initial_session_task)
+                    self._require_view_preparation(view, visit, request)
+                    session_id, incarnation = await asyncio.shield(
+                        self._retain_open_session(conversation_id)
+                    )
+            elif conversation_id is not None:
+                current = self._resume_view_request
+                if (
+                    current is None or current[0] is not view
+                    or current[1] != visit or current[2] != conversation_id
+                ):
+                    current = (view, visit, conversation_id, self._retain_open_session(conversation_id))
+                    self._resume_view_request = current
+                session_id, incarnation = await asyncio.shield(current[3])
+                if self._resume_view_request is not current:
+                    raise ConsoleChannelLost("Console saved target was superseded")
+            else:
+                row = self.projection_view.session(self.projection_view.active_session_id)
+                session_id, incarnation = row.id, row.incarnation_id
+            self._require_view_preparation(view, visit, request)
+            projection = await self.read_projection(
+                session_id, incarnation, _preparation=request
+            )
+            self._require_view_preparation(view, visit, request)
+            return visit, projection
+        finally:
+            if self._view_preparation is request:
+                self._view_preparation = None
+
+    def _require_view_preparation(self, view: Any, visit: int, request: object) -> None:
+        self.require_view(view, visit)
+        if self._view_preparation is not request:
+            raise ConsoleChannelLost("Console target preparation was superseded")
+
+    def _retain_open_session(self, conversation_id: str | None) -> asyncio.Task:
+        task = asyncio.create_task(
+            self._open_initial_session(conversation_id),
+            name="console_execution_open_session",
+        )
+        self._opening_sessions.add(task)
+        task.add_done_callback(self._open_session_finished)
+        return task
+
+    def _open_session_finished(self, task: asyncio.Task) -> None:
+        self._opening_sessions.discard(task)
+        # A superseded/cancelled screen may no longer await this command.
+        # Retrieve its exception without changing the original receipt outcome.
+        if not task.cancelled():
+            task.exception()
+
+    async def _open_initial_session(
+        self, conversation_id: str | None
+    ) -> tuple[str, str]:
+        receipt = self.submit("OpenSession", {
+            "title": "New chat", "workspace_id": None,
+            "conversation_id": conversation_id,
+        })
+        try:
+            value = await asyncio.shield(receipt.applied)
+        finally:
+            if await asyncio.shield(receipt.retired) is not True:
+                error = ConsoleChannelLost("Console initial session did not retire")
+                self._fail(error)
+                raise error
+        return value["session_id"], value["incarnation_id"]
+
+    def acknowledge_plan(self, receipt: ConsoleProcessReceipt, plan: ConsoleWireMessage) -> ConsoleProcessReceipt:
+        """Acknowledge only the exact retained plan after parent presentation."""
+        if (
+            type(receipt) is not ConsoleProcessReceipt
+            or type(plan) is not ConsoleWireMessage
+            or self._requests.get(receipt.identity.request_id) is not receipt
+            or receipt.operation != "ReceiveTurn"
+            or plan.kind != "commit_planned"
+            or self._plans.get((receipt.identity.request_id, plan.payload["ordinal"])) is not plan
+            or plan.identity.session_id != receipt.identity.session_id
+            or plan.identity.incarnation_id != receipt.identity.incarnation_id
+        ):
+            raise ConsoleProtocolError("unknown_commit_request")
+        values = encode_message(plan)["payload"]
+        return self.submit(
+            "CommitPlanAck",
+            {name: values[name] for name in (
+                "received_request_id", "turn_id", "ordinal", "fingerprint"
+            )},
+            session_id=receipt.identity.session_id,
+            incarnation_id=receipt.identity.incarnation_id,
+        )
+
+    async def next_turn_event(self, receipt: ConsoleProcessReceipt, index: int) -> ConsoleWireMessage | None:
+        """Observe the next original event without replay or receipt cancellation."""
+        if (type(receipt) is not ConsoleProcessReceipt
+            or receipt.operation != "ReceiveTurn"
+            or type(index) is not int or index < 0
+        ):
+            raise ConsoleProtocolError("turn_receipt_required")
+        while True:
+            receipt.changed.clear()
+            if index < len(receipt.events):
+                return receipt.events[index]
+            if receipt.retired.done():
+                receipt.retired.result()
+                return None
+            if self._channel_error is not None:
+                raise ConsoleChannelLost("Console outcome is unknown")
+            if self._requests.get(receipt.identity.request_id) is not receipt:
+                raise ConsoleProtocolError("turn_receipt_changed")
+            await receipt.changed.wait()
+
+    async def read_projection(
+        self, session_id: str, incarnation_id: str, *, _preparation=None,
+        _checkpoint: str | None = None,
+    ):
         """Adopt one exact retired projection without constructing a local store."""
+        requested_at = time.monotonic()
         from .console_execution_projection_result import (
             decode_projection_payload,
             decode_projection_view,
+            decode_projection_readiness,
             projection_key,
         )
+        from .console_execution_composition_values import decode_session_composition
 
         previous = self._projection
         view, visit = self._view, self._visit
+        if self._view_preparation is not _preparation:
+            raise ConsoleChannelLost("Console target preparation is pending")
+        if view is not None:
+            self.require_view(view, visit)
         binding = (self._source_revision, session_id, incarnation_id)
         known = (
             previous.display_revision
             if previous is not None and projection_key(previous)[:3] == binding
             else None
         )
+        payload = {"known_display_revision": known}
+        if _checkpoint is not None:
+            if view is None or _checkpoint not in {"mount", "visible"}:
+                raise ConsoleChannelLost("Console visible checkpoint requires its view")
+            self.require_view(view, visit)
+            payload["view_checkpoint"] = {
+                "attachment_id": self._attachment_id, "visit": visit, "action": _checkpoint,
+            }
         receipt = self.submit(
             "ReadProjection",
-            {"known_display_revision": known},
+            payload,
             session_id=session_id,
             incarnation_id=incarnation_id,
         )
@@ -233,6 +488,7 @@ class ConsoleExecutionClient:
             or self._source_revision != binding[0]
             or self._view is not view
             or self._visit != visit
+            or self._view_preparation is not _preparation
             or receipt.identity.sequence <= self._projection_sequence
         ):
             raise ConsoleChannelLost("Console projection source changed")
@@ -244,11 +500,57 @@ class ConsoleExecutionClient:
         payload = encode_message(message)["payload"]
         value = decode_projection_payload(payload, previous=previous)
         projection_view = decode_projection_view(payload, value)
+        from .console_execution_workspace_values import decode_workspace_surface
+        from .console_execution_session_surface import decode_session_surface_projection
+
+        workspace_surface = decode_workspace_surface(payload["session_view"]["workspace"])
+        session_surface = decode_session_surface_projection(
+            projection_view, payload["session_view"]["session_surface"],
+        )
+        effective, readiness, provider, model, remaining, elapsed, provider_chip, context_summary, agent_rail, prompt_history = decode_projection_readiness(
+            payload, projection_view
+        )
+        composition = (
+            decode_session_composition(
+                payload["session_view"]["composition"],
+                projection_view.session(projection_view.active_session_id),
+            ) if projection_view.active_session_id is not None else None
+        )
+        # Durations, not clock epochs, cross the channel. Including the actual
+        # command duration preserves a cold read's lifetime while charging all
+        # transport/queue/serialization delay conservatively to its remaining age.
+        deadline = requested_at + elapsed + remaining
+        if time.monotonic() >= deadline:
+            raise ConsoleChannelLost("Console readiness expired before adoption")
+        if view is not None:
+            self.require_view(view, visit)
         self._projection = value
         self.projection_view = projection_view
+        self.settings_readiness = effective, readiness
+        self.context_summary = context_summary
+        self.agent_rail = agent_rail
+        self.workspace_surface = workspace_surface
+        self.session_surface = session_surface
+        self.prompt_history.publish(prompt_history)
+        self.control_provider_label = provider_chip
+        self.provider_model_display = provider, model, projection_view.session(session_id).settings
+        self._readiness_deadline = deadline
+        self.session_composition = composition
         self.pressed_inputs = payload["session_view"]["pressed_inputs"]
         self._projection_sequence = receipt.identity.sequence
         return value
+
+    async def refresh_prompt_history(self, history) -> None:
+        """Retry the original backend load through this view's named projection."""
+        from .console_execution_prompt_history import ConsolePromptHistoryView
+
+        if type(history) is not ConsolePromptHistoryView or history is not self.prompt_history:
+            raise ConsoleChannelLost("Console prompt history view changed")
+        view, visit = self._view, self._visit
+        self.require_view(view, visit)
+        row = self.projection_view.session(self.projection_view.active_session_id)
+        await self.read_projection(row.id, row.incarnation_id)
+        self.require_view(view, visit)
 
     async def start(self, profile: ConsoleProcessProfile) -> None:
         """Join the exact retained startup, including a Send made before Ready."""
@@ -516,6 +818,7 @@ class ConsoleExecutionClient:
                 ):
                     raise ConsoleProtocolError("unexpected_retired")
                 receipt.retired.set_result(message.payload["retired"])
+                receipt.changed.set()
                 if (
                     receipt.operation == "Shutdown"
                     and message.payload["retired"] is True
@@ -564,8 +867,9 @@ class ConsoleExecutionClient:
         self, receipt: ConsoleProcessReceipt, message: ConsoleWireMessage
     ) -> None:
         """Keep retained events until the exact attachment consumes them."""
-        # The actual projection adapter is installed with the selected UI route;
-        # retention here never creates a parent runtime, store or command proof.
+        # Events wake the exact original receipt's UI observer; they grant no
+        # command/source/native authority and never trigger automatic ACK.
+        receipt.changed.set()
 
     def _fail(self, error: BaseException) -> None:
         if self._channel_error is not None:
@@ -575,6 +879,7 @@ class ConsoleExecutionClient:
         if self._ready is not None and not self._ready.done():
             self._ready.set_exception(ConsoleChannelLost("Console startup failed"))
         for receipt in self._requests.values():
+            receipt.changed.set()
             for future in (receipt.received, receipt.applied, receipt.retired):
                 if not future.done():
                     future.set_exception(
@@ -598,11 +903,12 @@ class ConsoleExecutionClient:
         """Report lifecycle cleanup, independently of command retirement."""
         return self._physically_closed
 
-    async def shutdown(self, *, deadline: float) -> bool:
+    async def shutdown(self, *, deadline: float | None) -> bool:
         """Retain original drain and process cleanup across observer cancellation.
 
         Args:
-            deadline: The initiating lifecycle owner's existing monotonic bound.
+            deadline: The initiating lifecycle owner's existing monotonic bound, or None
+                for the original App quit path, which has no deadline.
 
         Returns:
             Whether backend drain, process exit, pipes, monitor and containment
@@ -612,13 +918,24 @@ class ConsoleExecutionClient:
             self._shutdown_task = asyncio.create_task(self._shutdown(deadline))
         return await asyncio.shield(self._shutdown_task)
 
-    async def _shutdown(self, deadline: float) -> bool:
+    async def _shutdown(self, deadline: float | None) -> bool:
         drained = False
         cancellation = None
         try:
-            async with asyncio.timeout(max(0.0, deadline - time.monotonic())):
+            async with asyncio.timeout(None if deadline is None else max(0.0, deadline - time.monotonic())):
                 if self._start_task is not None:
                     await asyncio.shield(self._start_task)
+                # These tasks only observe already-issued OpenSession receipts.
+                # Prevent a late view preparation from issuing after intake closes.
+                opening = tuple(self._opening_sessions)
+                if opening:
+                    await asyncio.gather(
+                        *(asyncio.shield(task) for task in opening),
+                        return_exceptions=True,
+                    )
+                checkpoints = tuple(self._view_checkpoints)
+                if checkpoints:
+                    await asyncio.gather(*(asyncio.shield(task) for task in checkpoints))
                 for operation in ("CloseIntake", "Drain", "Shutdown"):
                     receipt = self.submit(operation, {})
                     await asyncio.shield(receipt.received)
@@ -629,7 +946,7 @@ class ConsoleExecutionClient:
                 if self._process is not None:
                     returncode = await asyncio.to_thread(
                         self._process.wait,
-                        max(0.0, deadline - time.monotonic()),
+                        None if deadline is None else max(0.0, deadline - time.monotonic()),
                     )
                     if returncode != 0:
                         raise ConsoleChannelLost(
@@ -653,6 +970,12 @@ class ConsoleExecutionClient:
                     await asyncio.shield(self._start_task)
                 except BaseException as error:
                     self._fail(error)
+            opening = tuple(self._opening_sessions)
+            if opening:
+                await asyncio.gather(
+                    *(asyncio.shield(task) for task in opening),
+                    return_exceptions=True,
+                )
             closed = False
             if self._tree is not None:
                 try:
@@ -688,7 +1011,7 @@ class ConsoleExecutionClient:
                     try:
                         await asyncio.to_thread(
                             self._monitor.join,
-                            max(0.0, deadline - time.monotonic()),
+                            None if deadline is None else max(0.0, deadline - time.monotonic()),
                         )
                         joined = joined and not self._monitor.is_alive()
                     except BaseException as error:

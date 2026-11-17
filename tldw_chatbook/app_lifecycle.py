@@ -588,7 +588,8 @@ class LifecycleMixin:
         task = self._console_runtime_shutdown_task
         if task is None:
             runtime = getattr(self, "console_runtime", None)
-            view = getattr(runtime, "view", None)
+            client = getattr(self, "console_execution_client", None)
+            view = client._view if client is not None else getattr(runtime, "view", None)
             image = getattr(view, "_image", None)
             if view is not None:
                 view._console_chat_tearing_down = True
@@ -609,7 +610,15 @@ class LifecycleMixin:
                 finally:
                     if image is not None:
                         await image._recovered_images_close()
-                await dispose_console_runtime(self)
+                if client is None:
+                    await dispose_console_runtime(self)
+                else:
+                    from .Chat.console_execution_process import ConsoleExecutionClient
+
+                    if type(client) is not ConsoleExecutionClient or client._app is not self:
+                        raise RuntimeError("Console shutdown owner changed")
+                    if not await client.shutdown(deadline=None):
+                        raise RuntimeError("Console process shutdown did not retire")
 
             task = asyncio.create_task(
                 settle_view_and_dispose(),

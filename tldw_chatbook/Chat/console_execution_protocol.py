@@ -628,7 +628,13 @@ def _projection_request(value, path):
     _object(value, path)
     if not value:
         return  # Original callers request a complete first snapshot.
-    _record(known_display_revision=_MAYBE_REVISION)(value, path)
+    fields = {"known_display_revision": _MAYBE_REVISION}
+    if "view_checkpoint" in value:
+        fields["view_checkpoint"] = _record(
+            attachment_id=_NONEMPTY, visit=_SEQUENCE,
+            action=_enum("mount", "visible", "hidden"),
+        )
+    _record(**fields)(value, path)
 
 
 def _projection_result(value, path):

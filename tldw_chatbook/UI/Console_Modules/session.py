@@ -4664,6 +4664,17 @@ class ConsoleSessionController:
         entry, exactly as before -- later entries in the same pass would have
         found the state already converged and returned the same object.
         """
+        from .execution_state import selected_client
+
+        selected = selected_client(self._screen)
+        if selected is not None:
+            row = selected.projection_view.session(
+                selected.projection_view.active_session_id
+            )
+            if row.settings is None:
+                raise RuntimeError("Console published settings are unavailable")
+            return row.settings
+
         from ...Chat.console_control_settings import require_settings_settled
 
         store = getattr(self._screen, "_console_chat_store", None)
@@ -5742,11 +5753,21 @@ class ConsoleSessionController:
         session = self._active_native_console_session()
         if store is None or session is None:
             return
-        try:
-            draft = store.session_draft(session.id)
-            revision = store.session_input_snapshot(session.id).draft_revision
-        except KeyError:
-            return
+        from .execution_state import selected_client
+
+        selected = selected_client(self._screen)
+        if selected is not None:
+            draft, revision = session.draft, session.draft_revision
+            handoff_state = selected.session_composition.agent_handoff_state
+            handoff_revision = selected.session_composition.agent_handoff_revision
+        else:
+            try:
+                draft = store.session_draft(session.id)
+                revision = store.session_input_snapshot(session.id).draft_revision
+            except KeyError:
+                return
+            handoff_state = session.agent_handoff_state
+            handoff_revision = session.agent_handoff_revision
         composer.load_draft(draft)
         composer.restore_undo_history(self._console_undo_histories.get(session.id))
         self._console_visible_draft_session_id = session.id
@@ -5755,10 +5776,10 @@ class ConsoleSessionController:
             (
                 session.id,
                 session.incarnation_id,
-                session.agent_handoff_revision,
+                handoff_revision,
                 composer.capture_draft_snapshot(),
             )
-            if session.agent_handoff_state == "pending"
+            if handoff_state == "pending"
             else None
         )
         # Mount-time config work may defer the first full sync. Its UI/hook
@@ -6198,12 +6219,17 @@ class ConsoleSessionController:
         conversations and need to remain reachable from the rail while they are
         open, including before the first persisted message exists.
         """
+        from .execution_state import selected_workspace_surface
+
+        surface = selected_workspace_surface(self._screen)
+
         store = self._console_chat_store
         if store is None:
             return state
 
         active_workspace_id = str(
-            store.workspace_context.active_workspace_id or ""
+            (surface.active_workspace_id if surface is not None
+             else store.workspace_context.active_workspace_id) or ""
         ).strip()
         active_session_id = store.active_session_id
         rows = list(state.conversation_rows)
@@ -6245,6 +6271,7 @@ class ConsoleSessionController:
             state,
             conversation_rows=tuple(self._merge_workspace_rows(native_rows, rows)),
         )
+
 
     # -- Screen-state (de)serialization for one session ----------------------
 

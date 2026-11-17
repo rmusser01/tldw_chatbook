@@ -3265,15 +3265,26 @@ class ConsoleWorkspaceController:
         current_conversation_id: str | None = None,
     ) -> list[ConsoleConversationBrowserInputRow]:
         """Return open native Console sessions across all workspaces."""
+        from .execution_state import selected_workspace_surface
+
+        surface = selected_workspace_surface(self._screen)
+        facts = (
+            {item.session_id: item for item in surface.sessions}
+            if surface is not None else {}
+        )
+
         store = self._console_chat_store
         if store is None:
             return []
         labels = self._console_browser_workspace_labels()
         starred_ids = self._starred_console_conversation_ids()
         active_session_id = store.active_session_id
-        controller = self._console_chat_controller
+        if surface is None:
+            controller = self._console_chat_controller
 
         def _session_character_id(session: Any) -> str | None:
+            if surface is not None:
+                return str(facts[session.id].character_id or "").strip() or None
             local_character_id = getattr(session, "local_character_id", None)
             if not callable(local_character_id):
                 return None
@@ -3289,7 +3300,10 @@ class ConsoleWorkspaceController:
             for character_id in (
                 _session_character_id(session)
                 for session in store.sessions()
-                if not str(getattr(session, "character_name", "") or "").strip()
+                if not str(
+                    (facts[session.id].character_name if surface is not None
+                     else getattr(session, "character_name", "")) or ""
+                ).strip()
             )
             if character_id is not None
         ]
@@ -3314,7 +3328,8 @@ class ConsoleWorkspaceController:
             session_character_label = ""
             if session_character_id is not None:
                 session_character_label = str(
-                    getattr(session, "character_name", "") or ""
+                    (facts[session.id].character_name if surface is not None
+                     else getattr(session, "character_name", "")) or ""
                 ).strip() or character_labels.get(session_character_id, "")
             persisted_id = (
                 str(session.persisted_conversation_id).strip()
@@ -3323,23 +3338,45 @@ class ConsoleWorkspaceController:
             )
             row_key = persisted_id or f"native:{session.id}"
             selected = session.id == active_session_id
-            run_marker = (
-                resolve_glyph(
-                    CONSOLE_RUN_MARKER_GLYPHS.get(
-                        self._console_run_marker_with_unseen(
-                            controller, session, self._console_fleet_unseen_ids()
-                        ),
-                        "",
+            if surface is not None:
+                session_facts = facts[session.id]
+                marker = session_facts.run_marker
+                if surface.controller_present:
+                    if marker is ConsoleRunMarker.NONE and (
+                        (session.persisted_conversation_id or session.id)
+                        in self._console_fleet_unseen_ids()
+                    ):
+                        marker = ConsoleRunMarker.SUBAGENT_UNSEEN
+                    run_marker = resolve_glyph(CONSOLE_RUN_MARKER_GLYPHS.get(marker, ""))
+                else:
+                    run_marker = ""
+                queued_count = session_facts.queued_count
+                handoff_label = session_facts.handoff_label
+                updated_at = session_facts.updated_at
+            else:
+                run_marker = (
+                    resolve_glyph(
+                        CONSOLE_RUN_MARKER_GLYPHS.get(
+                            self._console_run_marker_with_unseen(
+                                controller, session, self._console_fleet_unseen_ids()
+                            ),
+                            "",
+                        )
                     )
+                    if controller is not None
+                    else ""
                 )
-                if controller is not None
-                else ""
-            )
-            queued_count = (
-                controller.activity_for(session.id).queued_count
-                if controller is not None
-                else 0
-            )
+                queued_count = (
+                    controller.activity_for(session.id).queued_count
+                    if controller is not None
+                    else 0
+                )
+                handoff_label = (
+                    session.agent_handoff_launch.label
+                    if getattr(session, "agent_handoff_launch", None) is not None
+                    else None
+                )
+                updated_at = str(session.updated_at or "")
             row = ConsoleConversationBrowserInputRow(
                 row_key=row_key,
                 conversation_id=persisted_id or None,
@@ -3351,15 +3388,15 @@ class ConsoleWorkspaceController:
                     workspace_id, labels
                 ),
                 status=(
-                    session.agent_handoff_launch.label
-                    if getattr(session, "agent_handoff_launch", None) is not None
+                    handoff_label
+                    if handoff_label is not None
                     else "active session"
                     if selected
                     else "open session"
                 ),
                 selected=selected,
                 source_kind="native",
-                updated_sort=str(session.updated_at or ""),
+                updated_sort=updated_at,
                 run_marker=run_marker,
                 queued_count=queued_count,
                 character_id=session_character_id,
@@ -4880,6 +4917,10 @@ class ConsoleWorkspaceController:
 
     def _active_console_workspace_id_for_conversation_search(self) -> str:
         """Return the current active workspace id for Console conversation search."""
+        from .execution_state import selected_workspace_surface
+
+        surface = selected_workspace_surface(self._screen)
+
         try:
             workspace_id = str(
                 self._current_console_workspace_context().active_workspace_id or ""
@@ -4904,6 +4945,8 @@ class ConsoleWorkspaceController:
             workspace_id = str(getattr(workspace, "workspace_id", "") or "").strip()
             if workspace_id:
                 return workspace_id
+        if surface is not None:
+            return str(surface.active_workspace_id) if surface.active_workspace_id else ""
         store = self._console_chat_store
         if store is not None and store.workspace_context.active_workspace_id:
             return str(store.workspace_context.active_workspace_id)
@@ -7664,6 +7707,9 @@ class ConsoleWorkspaceController:
                 self._workspace_files_availability_task = None
 
     def _build_console_workspace_context_state(self) -> ConsoleWorkspaceContextState:
+        from .execution_state import selected_workspace_surface
+
+        selected_workspace_surface(self._screen)
         builds = getattr(self, "_console_tick_builds", None)
         if builds is not None and builds.accepts_current_task():
             return builds.state()
@@ -7744,6 +7790,13 @@ class ConsoleWorkspaceController:
         registry lacks a real ``int`` generation or any component read
         fails.
         """
+        from .execution_state import selected_client, selected_workspace_surface
+
+        surface = selected_workspace_surface(self._screen)
+        selected = selected_client(self._screen) if surface is not None else None
+        if surface is not None and selected is None:
+            raise RuntimeError("Console selected workspace owner changed")
+
         try:
             registry_service = getattr(
                 self.app_instance, "workspace_registry_service", None
@@ -7753,30 +7806,54 @@ class ConsoleWorkspaceController:
                 isinstance(generation, bool) or not isinstance(generation, int)
             ):
                 return None
-            store = self._console_chat_store
-            controller = self._console_chat_controller
-            sessions_token: tuple = ()
-            active_session_id = None
-            queued_token: tuple = ()
-            if store is not None:
-                active_session_id = store.active_session_id
-                sessions = tuple(store.sessions())
+            if surface is not None:
+                view = selected.projection_view
+                facts = {item.session_id: item for item in surface.sessions}
+                active_session_id = view.active_session_id
+                sessions = view.session_rows
                 sessions_token = tuple(
                     (
                         session.id,
                         str(session.title or ""),
-                        str(session.updated_at or ""),
+                        facts[session.id].updated_at,
                         str(session.persisted_conversation_id or ""),
                         str(session.workspace_id or ""),
                     )
                     for session in sessions
                 )
-                if controller is not None:
-                    queued_token = tuple(
-                        controller.activity_for(session.id).queued_count
+                queued_token = (
+                    tuple(facts[session.id].queued_count for session in sessions)
+                    if surface.controller_present else ()
+                )
+                run_status = (
+                    selected._projection.run_state.status
+                    if surface.controller_present else None
+                )
+            else:
+                store = self._console_chat_store
+                controller = self._console_chat_controller
+                sessions_token: tuple = ()
+                active_session_id = None
+                queued_token: tuple = ()
+                if store is not None:
+                    active_session_id = store.active_session_id
+                    sessions = tuple(store.sessions())
+                    sessions_token = tuple(
+                        (
+                            session.id,
+                            str(session.title or ""),
+                            str(session.updated_at or ""),
+                            str(session.persisted_conversation_id or ""),
+                            str(session.workspace_id or ""),
+                        )
                         for session in sessions
                     )
-            run_status = controller.run_state.status if controller is not None else None
+                    if controller is not None:
+                        queued_token = tuple(
+                            controller.activity_for(session.id).queued_count
+                            for session in sessions
+                        )
+                run_status = controller.run_state.status if controller is not None else None
             flat_lane = self._flat_conversation_search
             workspace_lane = self._workspace_tree_search
             attempts_token = tuple(
@@ -8196,6 +8273,10 @@ class ConsoleWorkspaceController:
         state: ConsoleWorkspaceContextState,
     ) -> ConsoleWorkspaceContextState:
         """Attach renderable Conversations subsection state to workspace context."""
+        from .execution_state import selected_workspace_surface
+
+        surface = selected_workspace_surface(self._screen)
+
         workspace_id = ""
         try:
             workspace_id = str(
@@ -8205,7 +8286,12 @@ class ConsoleWorkspaceController:
             workspace_id = ""
         store = self._console_chat_store
         if not workspace_id:
-            if store is not None and store.workspace_context.active_workspace_id:
+            if surface is not None:
+                if surface.active_workspace_id:
+                    workspace_id = str(surface.active_workspace_id)
+                elif state.workspace_label.startswith("Workspace: "):
+                    workspace_id = state.workspace_label.removeprefix("Workspace: ").strip()
+            elif store is not None and store.workspace_context.active_workspace_id:
                 workspace_id = str(store.workspace_context.active_workspace_id)
             elif state.workspace_label.startswith("Workspace: "):
                 workspace_id = state.workspace_label.removeprefix("Workspace: ").strip()

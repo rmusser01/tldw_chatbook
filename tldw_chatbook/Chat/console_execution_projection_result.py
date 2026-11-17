@@ -101,10 +101,10 @@ def _session_view(payload: dict) -> tuple:
     from .console_execution_protocol import _PROJECTED_INPUTS, _detach
 
     value = payload["session_view"]
+    fields = {"sessions", "active_session_id", "fingerprints", "pressed_inputs"}
     if (
         type(value) is not dict
-        or set(value)
-        != {"sessions", "active_session_id", "fingerprints", "pressed_inputs"}
+        or set(value) not in (fields, fields | {"readiness", "composition", "workspace", "session_surface"})
         or type(value["sessions"]) is not list
         or type(value["fingerprints"]) is not list
     ):
@@ -166,7 +166,84 @@ def _session_view(payload: dict) -> tuple:
         )
     ):
         raise ConsoleProtocolError("projection_input_row_changed")
+    if "readiness" in value:
+        _readiness(value["readiness"], current_row)
+        from .console_execution_composition_values import decode_session_composition
+
+        if active is None:
+            if value["composition"] is not None:
+                raise ConsoleProtocolError("projection_composition_without_active_session")
+        else:
+            decode_session_composition(
+                value["composition"], next(row for row in rows if row.id == active)
+            )
+        from .console_execution_workspace_values import decode_workspace_surface
+        from .console_execution_projection_view import ConsoleProjectionView
+        from .console_execution_session_surface import decode_session_surface_projection
+
+        surface = decode_workspace_surface(value["workspace"])
+        if tuple(item.session_id for item in surface.sessions) != tuple(row.id for row in rows):
+            raise ConsoleProtocolError("workspace_projection_sessions_changed")
+        # This validation-only row view explicitly contains no transcript frame.
+        row_view = ConsoleProjectionView(
+            payload["source_revision"], rows, active, tuple(fingerprints), (),
+        )
+        decode_session_surface_projection(row_view, value["session_surface"])
     return rows, active, tuple(fingerprints)
+
+
+def _readiness(value, row) -> tuple:
+    import math
+    from dataclasses import replace
+    from .console_execution_projection_values import _settings
+    from .console_execution_readiness_values import decode_settings_readiness
+    from .console_execution_context_summary_values import decode_context_summary
+
+    if (
+        type(value) is not dict
+        or set(value) != {
+            "effective_settings", "state", "provider_label", "control_provider_label", "model",
+            "remaining_seconds", "projection_elapsed_seconds", "context_summary", "agent_rail", "prompt_history",
+        }
+        or type(value["provider_label"]) is not str
+        or type(value["control_provider_label"]) is not str
+        or value["model"] is not None and type(value["model"]) is not str
+        or row.settings is None
+    ):
+        raise ConsoleProtocolError("invalid_projection_readiness")
+    for name in ("remaining_seconds", "projection_elapsed_seconds"):
+        number = value[name]
+        if type(number) not in (int, float) or not math.isfinite(number) or number < 0:
+            raise ConsoleProtocolError("invalid_projection_readiness_clock")
+    if value["remaining_seconds"] > 1.0:
+        raise ConsoleProtocolError("invalid_projection_readiness_clock")
+    effective = _settings(value["effective_settings"], True)
+    readiness = decode_settings_readiness(value["state"])
+    if (
+        effective.model != value["model"]
+        or replace(row.settings, model=effective.model, base_url=effective.base_url)
+        != effective
+    ):
+        raise ConsoleProtocolError("projection_readiness_settings_changed")
+    from .console_execution_agent_rail_values import decode_agent_rail_projection
+    from .console_execution_prompt_history import decode_prompt_history
+
+    return (
+        effective, readiness, value["provider_label"], value["model"],
+        value["remaining_seconds"], value["projection_elapsed_seconds"],
+        value["control_provider_label"], decode_context_summary(value["context_summary"]),
+        decode_agent_rail_projection(value["agent_rail"]),
+        decode_prompt_history(value["prompt_history"]),
+    )
+
+
+def decode_projection_readiness(payload: dict, view: ConsoleProjectionView) -> tuple:
+    """Decode only readiness captured with this exact session publication."""
+    row = view.session(payload["session_id"])
+    body = payload.get("session_view")
+    if type(body) is not dict or "readiness" not in body:
+        raise ConsoleProtocolError("projection_readiness_missing")
+    return _readiness(body["readiness"], row)
 
 
 def encode_pressed_inputs(

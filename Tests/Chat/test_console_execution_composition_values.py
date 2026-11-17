@@ -1,0 +1,75 @@
+"""The composition value boundary keeps actual session provenance and no owner."""
+
+from dataclasses import replace
+
+import pytest
+
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
+from tldw_chatbook.Chat.console_execution_composition_values import (
+    decode_session_composition,
+    encode_session_composition,
+)
+from tldw_chatbook.Chat.console_execution_projection_values import (
+    decode_session_projection,
+    encode_session_projection,
+)
+from tldw_chatbook.Chat.console_execution_protocol import ConsoleProtocolError
+
+
+def _encode(session):
+    return encode_session_composition(
+        session,
+        pending_approval_count=2,
+        pending_interrupt_copy="Waiting for review",
+        blocked_turn_reason="recovery needed",
+        is_stop_allowed=True,
+        chat_start_prepared=False,
+        change_tracking_enabled=True,
+        tools_published=False, builtin_tool_count=None, mcp_tool_count=None,
+        mcp_not_connected_count=None, selected_tool_count=0,
+        staged_evidence_present=False, staged_evidence_revision=0,
+        evidence_sent_notice=None,
+    )
+
+
+def test_composition_retains_fresh_none_and_detaches_original_policy():
+    session = ConsoleChatSession()
+    row = decode_session_projection(encode_session_projection(session))
+    payload = _encode(session)
+    result = decode_session_composition(payload, row)
+    assert result.agent_handoff_revision is None
+    assert result.library_policy == session.library_policy_holder.snapshot
+    assert result.library_policy is not session.library_policy_holder.snapshot
+    assert result.pending_approval_count == 2
+    assert result.blocked_turn_reason == "recovery needed"
+    assert result.is_stop_allowed and not result.chat_start_prepared
+    assert result.selected_tool_count == 0 and not result.tools_published
+    assert not result.staged_evidence_present
+    assert result.staged_evidence_revision == 0
+    assert result.evidence_sent_notice is None
+    assert "library_policy_holder" not in payload
+    session.agent_handoff_revision = 0
+    session.agent_handoff_state = "pending"
+    next_value = decode_session_composition(_encode(session), row)
+    assert next_value.agent_handoff_revision == 0
+    assert next_value.agent_handoff_state == "pending"
+    assert result.agent_handoff_revision is None
+
+
+def test_composition_refuses_stale_row_unknown_fields_and_authority_objects():
+    session = ConsoleChatSession()
+    row = decode_session_projection(encode_session_projection(session))
+    payload = _encode(session)
+    for changed in (
+        replace(row, incarnation_id="different"),
+        replace(row, settings_revision=row.settings_revision + 1),
+    ):
+        with pytest.raises(ConsoleProtocolError, match="session_changed"):
+            decode_session_composition(payload, changed)
+    for changed in (
+        dict(payload, library_policy=session.library_policy_holder),
+        dict(payload, controller=object()),
+        dict(payload, is_stop_allowed=1),
+    ):
+        with pytest.raises(ConsoleProtocolError):
+            decode_session_composition(changed, row)

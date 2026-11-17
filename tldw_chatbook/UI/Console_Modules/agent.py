@@ -1358,6 +1358,18 @@ class ConsoleAgentController:
         tick) -- a live/in-process run always reports non-"idle" and keeps
         precedence over the fallback.
         """
+        from .execution_state import selected_agent_rail, selected_client
+
+        if selected_client(self._screen) is not None:
+            conversation_id = self._current_console_rail_conversation_id() or ""
+            if conversation_id != self._console_agent_drilldown_conversation_id:
+                self._console_agent_drilldown_run_id = None
+                self._console_agent_drilldown_conversation_id = conversation_id
+            projected = selected_agent_rail(self._screen)
+            if projected is None:
+                raise RuntimeError("Console selected Agent presentation owner changed")
+            return projected.overview_lines
+
         bridge = self._ensure_console_agent_bridge()
         conversation_id = self._current_console_rail_conversation_id() or ""
         if bridge is None:
@@ -1500,6 +1512,12 @@ class ConsoleAgentController:
         fleet Static in that case (absent, not present-but-blank) so it
         never crowds the rail with an empty line.
         """
+        from .execution_state import selected_agent_rail
+
+        projected = selected_agent_rail(self._screen)
+        if projected is not None:
+            return projected.fleet_summary
+
         controller = getattr(self, "_console_chat_controller", None)
         if controller is None:
             return ""
@@ -1522,6 +1540,12 @@ class ConsoleAgentController:
 
     def _console_agent_full_log_available(self, *, allow_probe: bool = True) -> bool:
         """Return the cache; resolve metadata and scan logs only in a worker."""
+        from .execution_state import selected_agent_rail
+
+        projected = selected_agent_rail(self._screen)
+        if projected is not None:
+            return projected.full_log_available
+
         if not allow_probe:
             return self._console_agent_full_log_cache_available
         worker = self._console_agent_full_log_probe_worker
@@ -1962,6 +1986,13 @@ class ConsoleAgentController:
             fallback tiers) -- empty when there is no bridge, no active
             conversation, or no sub-agent has ever run for it.
         """
+        from .execution_state import selected_client
+
+        if selected_client(self._screen) is not None:
+            raise RuntimeError(
+                "Console selected raw fleet rows require their separate capture"
+            )
+
         bridge = self._ensure_console_agent_bridge()
         if bridge is None:
             self.release_historical_presentation()
@@ -2057,6 +2088,12 @@ class ConsoleAgentController:
         Durable budget counters are for run inspection; feeding them back
         here would duplicate usage already attached through ProviderUsage.
         """
+        from .execution_state import selected_agent_rail
+
+        projected = selected_agent_rail(self._screen)
+        if projected is not None:
+            return projected.fleet_token_total
+
         bridge = self._ensure_console_agent_bridge()
         if bridge is None:
             return 0
@@ -2120,6 +2157,12 @@ class ConsoleAgentController:
             live (non-terminal) handle in its fleet snapshot; ``False``
             -- never raises -- otherwise.
         """
+        from .execution_state import selected_agent_rail
+
+        projected = selected_agent_rail(self._screen)
+        if projected is not None:
+            return projected.cancel_all_visible
+
         bridge = self._ensure_console_agent_bridge()
         if bridge is None:
             return False
@@ -2264,6 +2307,12 @@ class ConsoleAgentController:
         everything else. With no current rows, a real history provider keeps
         a "Run history" entry available for the selected conversation.
         """
+        from .execution_state import selected_agent_rail
+
+        projected = selected_agent_rail(self._screen)
+        if projected is not None:
+            return projected.fleet_section
+
         if self._console_agent_drilldown_run_id:
             return ConsoleInspectorSectionState(rows=(), summary="")
         controller = self._console_chat_controller

@@ -6831,6 +6831,8 @@ def ensure_console_runtime(app: Any, *, view: Any | None = None) -> ConsoleRunti
     Returns:
         ConsoleRuntime: The runtime `view` should use.
     """
+    if getattr(app, "console_execution_client", None) is not None:
+        raise RuntimeError("Selected Console process cannot construct a local runtime")
     runtime = getattr(app, CONSOLE_RUNTIME_ATTR, None)
     if not isinstance(runtime, ConsoleRuntime) and view is not None:
         # An app object that cannot hold the attribute (`None`, or a

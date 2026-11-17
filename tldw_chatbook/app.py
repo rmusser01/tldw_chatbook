@@ -1070,7 +1070,11 @@ class TldwCli(
     # User ID for notes, will be initialized in __init__
     current_user_id: str = "default_user"  # Will be overridden by self.notes_user_id
 
-    def __init__(self):
+    def __init__(self, *, console_execution: str = "local"):
+        if type(console_execution) is not str or console_execution not in {"local", "process"}:
+            raise ValueError("Unknown Console execution selection")
+        if console_execution == "process" and type(self) is not TldwCli:
+            raise TypeError("Custom App construction requires the local Console route")
         # Track startup timing
         self._startup_start_time = time.perf_counter()
         self._startup_phases = {}
@@ -1212,7 +1216,23 @@ class TldwCli(
         # (`leave_console_runtime`); the runtime itself is destroyed once,
         # here, at exit (`_shutdown_console_runtime`).
         self.console_needs_attention = False
-        self.console_runtime: ConsoleRuntime | None = ConsoleRuntime(self)
+        # Explicit qualification route; ordinary construction remains local.
+        self.console_execution_client = None
+        self._console_execution_start_task = None
+        self._console_execution_profile = None
+        if console_execution == "process":
+            from .Chat.console_execution_process import (
+                ConsoleExecutionClient, ConsoleProcessProfile,
+            )
+            from .config import get_cli_config_path, get_user_data_dir
+
+            self._console_execution_profile = ConsoleProcessProfile(
+                str(get_cli_config_path()), str(get_user_data_dir())
+            )
+            self.console_execution_client = ConsoleExecutionClient(self)
+            self.console_runtime = None
+        else:
+            self.console_runtime: ConsoleRuntime | None = ConsoleRuntime(self)
         self._console_runtime_shutdown_task: asyncio.Task[None] | None = None
         self.generated_video_store = _build_generated_video_store()
         # TASK-13157: snapshot any TOML parse failure `load_settings()` just
@@ -3310,7 +3330,13 @@ class TldwCli(
         """Configure logging and schedule post-mount setup."""
         self._start_persona_buddy_overlay()
         runtime = self.console_runtime
-        if runtime is not None:
+        client = self.console_execution_client
+        if client is not None:
+            self._console_execution_start_task = asyncio.create_task(
+                client.start(self._console_execution_profile),
+                name="console_execution_start",
+            )
+        elif runtime is not None:
             runtime.start_async_lifecycles()
         self._start_served_canvas_control()
         self.watchlists_operation_coordinator = WatchlistsOperationCoordinator(

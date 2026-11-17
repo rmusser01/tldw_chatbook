@@ -346,6 +346,12 @@ class ConsoleContextSpendController:
         self,
     ) -> ConsoleSettingsContextEstimate:
         """Return context usage for the active native Console settings snapshot."""
+        from .execution_state import selected_context_summary
+
+        projected = selected_context_summary(self._screen)
+        if projected is not None:
+            return projected.estimate
+
         store = self._ensure_console_chat_store()
         session_id = store.active_session_id
         if session_id is None:
@@ -794,16 +800,37 @@ class ConsoleContextSpendController:
 
     def compaction_pause_expected(self) -> bool:
         """Whether the active chat's next send will pause for compaction."""
+        from .execution_state import selected_context_summary
+
+        projected = selected_context_summary(self._screen)
+        if projected is not None:
+            return projected.compaction_pause_expected
+
         state = self._last_console_context_control_state
         return state is not None and state.compaction_pause_forecast is not None
 
     def compaction_forecast_unavailable(self) -> bool:
         """Whether current tool/input facts cannot qualify a forecast."""
+        from .execution_state import selected_context_summary
+
+        projected = selected_context_summary(self._screen)
+        if projected is not None:
+            return projected.compaction_forecast_unavailable
+
         state = self._last_console_context_control_state
         return state is not None and bool(state.forecast_unavailable_reason)
 
     def _build_console_settings_summary_state(self) -> ConsoleSettingsSummaryState:
         """Build compact summary state for the active Console session settings."""
+        from .execution_state import selected_context_summary
+
+        projected = selected_context_summary(self._screen)
+        if projected is not None:
+            settings, readiness = self._active_console_settings_readiness()
+            return build_console_settings_summary_state(
+                settings, projected.estimate, readiness
+            )
+
         settings, readiness = self._active_console_settings_readiness()
         estimate = self._active_console_settings_context_estimate()
         try:
@@ -820,6 +847,13 @@ class ConsoleContextSpendController:
 
     def _refresh_settings_summary(self) -> None:
         """Refresh the mounted Console settings summary surfaces if present."""
+        from .execution_state import selected_client
+
+        if selected_client(self._screen) is not None:
+            self._apply_console_settings_summary_state(
+                self._build_console_settings_summary_state()
+            )
+            return
         from tldw_chatbook.Chat.console_parent_settings import parent_settings_render
 
         with parent_settings_render(self._screen):

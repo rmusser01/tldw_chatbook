@@ -449,6 +449,7 @@ class ConsoleLocalControls:
         self._gateway._console_local_controls = self
 
     async def _read_projection(self, identity):
+        import time
         from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
         from tldw_chatbook.UI.Console_Modules import composer_run_controls
 
@@ -457,7 +458,12 @@ class ConsoleLocalControls:
         view = self._runtime.view
         association = self._domain.presentation.association
         self._domain.presentation.require_association(association)
+        projection_started = time.monotonic()
         if view is None:
+            from .console_backend_presentation import ConsoleBackendPresentation
+
+            if type(self._domain.presentation) is ConsoleBackendPresentation:
+                await self._domain.presentation.prepare_view_checkpoint(identity)
             owner = self._runtime._execution_service.prepare_display_owner()
             owner.bind_original_graph()
             if owner._full is not None or owner.context.pending_key is not None:
@@ -469,6 +475,10 @@ class ConsoleLocalControls:
             context.config_projection = None
             context._display_view_stamp = None
             await owner.read()
+            from .console_backend_presentation import ConsoleBackendPresentation
+
+            if type(self._domain.presentation) is ConsoleBackendPresentation:
+                await self._domain.presentation.prepare_readiness(identity)
         else:
             if (
                 type(view) is not ChatScreen
@@ -506,7 +516,9 @@ class ConsoleLocalControls:
             from .console_backend_presentation import ConsoleBackendPresentation
 
             if type(self._domain.presentation) is ConsoleBackendPresentation:
-                self._domain.presentation.capture_projection_view(self, identity, projection)
+                self._domain.presentation.capture_projection_view(
+                    self, identity, projection, started_at=projection_started
+                )
             return projection
 
     def _require_source_publication(self, fence):
@@ -963,6 +975,10 @@ class ConsoleLocalControls:
             ),
             return_exceptions=True,
         )
+        from .console_backend_presentation import ConsoleBackendPresentation
+
+        if type(self._domain.presentation) is ConsoleBackendPresentation:
+            await self._domain.presentation.drain_view_lifecycle()
         await self._runtime._drain_ordinary_native_commits(self._controller)
         await self._runtime._drain_ordinary_turns()
         from .console_preparation_reads import drain_preparation_reads

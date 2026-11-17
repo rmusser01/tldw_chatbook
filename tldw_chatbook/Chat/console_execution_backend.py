@@ -226,7 +226,12 @@ class ConsoleExecutionBackend:
             raise ConsoleProtocolError("backend_command_order_changed")
         self._sequence = message.identity.sequence
         command = self.adapter.command(message)
-        receipt = self.controls.dispatch(command)
+        checkpoint = self.presentation.admit_view_checkpoint(message)
+        try:
+            receipt = self.controls.dispatch(command)
+        except BaseException:
+            self.presentation.release_view_checkpoint(message.identity, checkpoint)
+            raise
         if message.operation == "Shutdown":
             self._shutdown_receipt = receipt
         self.adapter.retain(message, receipt, command)
@@ -237,6 +242,11 @@ class ConsoleExecutionBackend:
         from .console_control_dispatch import ControlIdentity, Shutdown
 
         error = None
+        try:
+            if self.presentation is not None:
+                await self.presentation.drain_view_lifecycle()
+        except BaseException as failure:
+            error = failure
         try:
             self.ready = False
             if self.controls is not None:
@@ -267,7 +277,8 @@ class ConsoleExecutionBackend:
                 if not self._runtime_initialized:
                     raise RuntimeError("Partial Console runtime retirement is unproven")
         except BaseException as failure:
-            error = failure
+            if error is None:
+                error = failure
         try:
             await self.profile.aclose()
         except BaseException as failure:

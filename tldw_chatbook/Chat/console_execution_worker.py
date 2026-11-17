@@ -731,6 +731,13 @@ class _BackendService:
             self.applied(message.identity, command, result)
             applied = True
         except BaseException as error:
+            from .console_backend_view_lifecycle import ConsoleBackendViewSuperseded
+
+            superseded = (
+                message.operation == "ReadProjection"
+                and "view_checkpoint" in message.payload
+                and type(error) is ConsoleBackendViewSuperseded
+            )
             self._failure(message.operation, "applied", error)
             self.emit(
                 message.identity,
@@ -739,7 +746,7 @@ class _BackendService:
                 {
                     "code": "cancelled"
                     if isinstance(error, asyncio.CancelledError)
-                    else "command_failed",
+                    else "view_checkpoint_superseded" if superseded else "command_failed",
                     "stage": "applied",
                 },
             )

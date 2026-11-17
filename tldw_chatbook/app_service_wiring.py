@@ -2194,9 +2194,10 @@ class ServiceWiringMixin(
             self.workspace_registry_service.attach_change_review_consent_service(
                 self.change_review_consent_service
             )
-            self.console_runtime.bind_change_review_consent_service(
-                self.change_review_consent_service
-            )
+            if self.console_runtime is not None:
+                self.console_runtime.bind_change_review_consent_service(
+                    self.change_review_consent_service
+                )
         except Exception:
             logger.opt(exception=True).warning(
                 "Local workspace registry service unavailable during app wiring",
@@ -3057,48 +3058,57 @@ class ServiceWiringMixin(
             server_service=self.server_mcp_governance_service,
             policy_enforcer=self.service_policy_enforcer,
         )
-        self.local_mcp_store = LocalMCPStore(
-            get_user_data_dir() / "local_mcp_store.json",
-        )
-        self.local_mcp_control_service = LocalMCPControlService(
-            store=self.local_mcp_store,
-            policy_enforcer=self.service_policy_enforcer,
-            # The bundle is published after wiring; before then: unavailable.
-            storage_provider=lambda: getattr(getattr(self, "services", None), "storage", None),
-        )
-        self.unified_mcp_context_store = UnifiedMCPContextStore(
-            get_user_data_dir() / "unified_mcp_context.json",
-        )
+        if self.console_execution_client is not None:
+            # The selected singleton exists only in the backend. Affected
+            # Settings consumers use explicit asynchronous permission commands.
+            self.local_mcp_store = None
+            self.local_mcp_control_service = None
+            self.unified_mcp_context_store = None
+            self.server_unified_mcp_service = None
+            self.unified_mcp_service = None
+        else:
+            self.local_mcp_store = LocalMCPStore(
+                get_user_data_dir() / "local_mcp_store.json",
+            )
+            self.local_mcp_control_service = LocalMCPControlService(
+                store=self.local_mcp_store,
+                policy_enforcer=self.service_policy_enforcer,
+                # The bundle is published after wiring; before then: unavailable.
+                storage_provider=lambda: getattr(getattr(self, "services", None), "storage", None),
+            )
+            self.unified_mcp_context_store = UnifiedMCPContextStore(
+                get_user_data_dir() / "unified_mcp_context.json",
+            )
 
-        def _build_unified_mcp_client_for_target(target: Any) -> "MCPUnifiedClient":
-            # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
-            from tldw_chatbook.tldw_api import MCPUnifiedClient
+            def _build_unified_mcp_client_for_target(target: Any) -> "MCPUnifiedClient":
+                # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+                from tldw_chatbook.tldw_api import MCPUnifiedClient
 
-            if getattr(target, "auth_reference", None) == "legacy:tldw_api":
-                root_client = build_runtime_api_client(
-                    app_config=self.app_config,
-                    endpoint_url=target.base_url,
-                    auth_method=target.auth_mode,
-                )
-            else:
-                root_client = build_runtime_api_client(
-                    endpoint_url=target.base_url,
-                    auth_token=target.auth_reference,
-                    auth_method=target.auth_mode,
-                )
-            return MCPUnifiedClient(root_client)
+                if getattr(target, "auth_reference", None) == "legacy:tldw_api":
+                    root_client = build_runtime_api_client(
+                        app_config=self.app_config,
+                        endpoint_url=target.base_url,
+                        auth_method=target.auth_mode,
+                    )
+                else:
+                    root_client = build_runtime_api_client(
+                        endpoint_url=target.base_url,
+                        auth_token=target.auth_reference,
+                        auth_method=target.auth_mode,
+                    )
+                return MCPUnifiedClient(root_client)
 
-        self.server_unified_mcp_service = ServerUnifiedMCPService(
-            client_factory=_build_unified_mcp_client_for_target,
-            policy_enforcer=self.service_policy_enforcer,
-            target_store=self.unified_mcp_target_store,
-        )
-        self.unified_mcp_service = UnifiedMCPControlPlaneService(
-            target_store=self.unified_mcp_target_store,
-            context_store=self.unified_mcp_context_store,
-            local_service=self.local_mcp_control_service,
-            server_service=self.server_unified_mcp_service,
-        )
+            self.server_unified_mcp_service = ServerUnifiedMCPService(
+                client_factory=_build_unified_mcp_client_for_target,
+                policy_enforcer=self.service_policy_enforcer,
+                target_store=self.unified_mcp_target_store,
+            )
+            self.unified_mcp_service = UnifiedMCPControlPlaneService(
+                target_store=self.unified_mcp_target_store,
+                context_store=self.unified_mcp_context_store,
+                local_service=self.local_mcp_control_service,
+                server_service=self.server_unified_mcp_service,
+            )
         try:
             self.server_text2sql_service = ServerText2SQLService.from_config(
                 self.app_config,
