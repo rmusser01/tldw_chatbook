@@ -316,3 +316,75 @@ async def test_a_stored_koboldcpp_chat_route_refuses_only_saves_that_write_it(
     windows = saved["model_capabilities"]["models"]
     assert windows["kobold-model"]["context_window"] == 4096
 
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_mlx_settings_edits_the_host_and_port_its_send_uses(
+    request, monkeypatch
+) -> None:
+    """TASK-41145 (owner decision 2026-11-16, "Settings edits host/port"):
+    Settings showed and saved MLX-LM's endpoint as ``api_url``, which
+    ``chat_with_mlx_lm`` never reads, so chats still went to 127.0.0.1:8080.
+    The field now shows the host and port (a saved ``api_url`` is ignored),
+    refuses what they cannot express, and saves them; the send then posts to
+    the saved address."""
+    from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+    from tldw_chatbook.Chat.provider_setup_persistence import MLX_HTTPS_REFUSAL
+    from tldw_chatbook.config import (
+        load_cli_config_and_ensure_existence,
+        save_settings_to_cli_config,
+    )
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls_Local as local
+    from tldw_chatbook.LLM_Calls import provider_sessions
+
+    requests = []
+
+    class _Session:
+        def post(self, url, **kwargs):
+            requests.append(url)
+            return httpx.Response(
+                200,
+                json={"choices": [{"message": {"content": "synthetic-mlx-reply"}}]},
+                request=httpx.Request("POST", url),
+            )
+
+    monkeypatch.setattr(local, "create_pooled_default_session", lambda **kw: _Session())
+    monkeypatch.setattr(provider_sessions, "get_session", lambda _key, factory: factory())
+    ignored = "http://localhost:5678/v1/chat/completions"
+    assert save_settings_to_cli_config({"api_settings.local_mlx_lm": {"api_url": ignored}})
+    host = DestinationHarness(_build_test_app(), "settings")
+
+    async def _save(screen, pilot, endpoint: str) -> str:
+        screen.query_one("#settings-provider-endpoint-value", Input).value = endpoint
+        screen.query_one("#settings-model-value", Input).value = "mlx-model"
+        return await _save_provider_card(screen, pilot)
+
+    async with host.run_test(size=(211, 44)) as pilot:
+        screen = _active_destination_screen(host)
+        screen._select_category(SettingsCategoryId.PROVIDERS_MODELS.value)
+        await _wait_for_selector(screen, pilot, "#settings-model-value", timeout=30.0)
+        provider = screen.query_one("#settings-provider-value", Select)
+        provider.value = "local_mlx_lm"
+        screen.handle_provider_value_changed(Select.Changed(provider, "local_mlx_lm"))
+        await pilot.pause()
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        assert endpoint.value == "http://127.0.0.1:8080/v1"
+
+        assert await _save(screen, pilot, "https://gpu-box.lan:9000/v1") == MLX_HTTPS_REFUSAL
+        assert load_cli_config_and_ensure_existence(force_reload=True)["api_settings"][
+            "local_mlx_lm"
+        ].get("host", "127.0.0.1") == "127.0.0.1"
+        result = await _save(screen, pilot, "http://gpu-box.lan:9000/v1")
+        assert result.startswith("Provider settings saved"), result
+
+    saved = load_cli_config_and_ensure_existence(force_reload=True)["api_settings"]["local_mlx_lm"]
+    assert (saved["host"], saved["port"], saved["api_url"]) == ("gpu-box.lan", 9000, ignored)
+    reply = chat_api_call(
+        "local_mlx_lm",
+        [{"role": "user", "content": "synthetic prompt"}],
+        model="mlx-model",
+        streaming=False,
+    )
+    assert reply["choices"][0]["message"]["content"] == "synthetic-mlx-reply"
+    assert requests == ["http://gpu-box.lan:9000/v1/chat/completions"]

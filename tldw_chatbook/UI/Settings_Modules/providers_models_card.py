@@ -882,7 +882,13 @@ def endpoint_row_copy(
     else:
         word = BUILT_IN
     # TASK-38964: Save's refusal, said while the user types (as the wizard does).
-    if refusal := koboldcpp_route_refusal(provider_config_key(provider), endpoint):
+    # TASK-41145: so is MLX-LM's host-and-port rule.
+    from ...Chat.provider_setup_persistence import host_port_refusal
+
+    provider_key = provider_config_key(provider)
+    if refusal := koboldcpp_route_refusal(provider_key, endpoint) or host_port_refusal(
+        provider_key, endpoint
+    ):
         return word, refusal
     if required:
         # A held address is not an error: "required:" is for the empty field.

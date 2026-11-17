@@ -127,8 +127,10 @@ from ...Chat.provider_readiness import (
     required_base_url_target,
 )
 from ...Chat.provider_setup_persistence import (
+    MLX_HOST_PORT_PROVIDER_KEYS,
     ProviderSetupDraft,
     canonical_provider_key,
+    mlx_saved_endpoint,
     # The Providers & Models panel resolves the writer here at call time, so
     # tests that patch settings_screen.persist_provider_settings_atomic reach it.
     persist_provider_settings_atomic,  # noqa: F401
@@ -16189,6 +16191,9 @@ class SettingsScreen(BaseAppScreen):
 
     def _provider_endpoint_value(self, provider: str) -> str:
         provider_config = self._provider_config(provider)
+        if provider_config_key(provider) in MLX_HOST_PORT_PROVIDER_KEYS:
+            # TASK-41145: MLX-LM's endpoint is its host and port.
+            return mlx_saved_endpoint(provider_config)
         endpoint_key = self._provider_endpoint_setting_key(provider)
         value = provider_config.get(endpoint_key)
         if value is None:
@@ -16258,6 +16263,8 @@ class SettingsScreen(BaseAppScreen):
         provider_key = provider_config_key(provider)
         if not provider_key:
             return "Endpoint key: provider required"
+        if provider_key in MLX_HOST_PORT_PROVIDER_KEYS:
+            return f"Endpoint keys: api_settings.{provider_key}.host and .port"
         endpoint_key = self._provider_endpoint_setting_key(provider)
         return f"Endpoint key: api_settings.{provider_key}.{endpoint_key}"
 

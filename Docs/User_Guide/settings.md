@@ -382,6 +382,18 @@ server, choose Custom instead." The Endpoint row's help says the same while the
 field holds such an address, as you type it and before **s**, as first-run
 setup does.
 
+MLX-LM is reached at `http://<host>:<port>/v1`, built from
+`[api_settings.local_mlx_lm]` `host` and `port` (127.0.0.1 and 8080 when
+unset), so its Endpoint field shows that address and **s** saves the host and
+port. It refuses what a host and port cannot hold, before anything is written
+and in the row's help as you type: an `https://` address ("MLX-LM is saved as
+a host and port and reached over http://, so an https:// address cannot be
+saved for it."), a path other than `/v1` (such as `/v1/chat/completions`), and
+user information. An `api_url` saved for MLX-LM by an earlier version was
+never used by its chats and is still ignored: the field shows the host and
+port (`http://127.0.0.1:8080/v1` until you set them) until you enter the
+address again.
+
 The vLLM, TabbyAPI, Aphrodite, Custom and Custom 2 saved lists start empty and
 fill through **Discover models**. A config file written by an older version
 may still hold their sample IDs (`vllm-model-z`, `tabby-model`,

@@ -62,6 +62,9 @@ _API_BASE_ENDPOINT_KEYS = frozenset({"api_base_url", "api_base", "base_url"})
 _ROOT_ENDPOINT_PROVIDER_KEYS = frozenset({"llama_cpp", "local_llamacpp"})
 _ROUTING_SETTING_KEYS = (
     *_ENDPOINT_KEY_PRECEDENCE,
+    # TASK-41145: MLX-LM's endpoint.
+    "host",
+    "port",
     "auth_source",
     "api_endpoint",
     "router_base_url",
@@ -218,6 +221,118 @@ def _ownership_for(provider: object) -> _ProviderOwnership:
         "api_url" if provider_key in _API_URL_PROVIDER_KEYS else "api_base_url"
     )
     return _ProviderOwnership(provider_key, config_section, endpoint_key)
+
+
+#: TASK-41145 (owner decision 2026-11-16, "Settings edits host/port"):
+#: ``chat_with_mlx_lm`` builds ``http://<host>:<port>/v1`` from its table and
+#: never reads ``api_url``, so Settings, first-run setup and Make default
+#: read and write ``host`` and ``port`` for it. A saved ``api_url`` is
+#: ignored, as it always was by the send.
+MLX_HOST_PORT_PROVIDER_KEYS = frozenset({"local_mlx_lm", "mlx_lm"})
+MLX_HTTPS_REFUSAL = (
+    "MLX-LM is saved as a host and port and reached over http://, so an "
+    "https:// address cannot be saved for it."
+)
+MLX_PATH_REFUSAL = (
+    "MLX-LM is saved as a host and port and always serves /v1, so an address "
+    "with another path cannot be saved for it."
+)
+
+
+def mlx_endpoint_refusal(endpoint: str) -> str:
+    """Why an MLX-LM endpoint cannot be saved as a host and port, or "".
+
+    Args:
+        endpoint: The endpoint as typed.
+
+    Returns:
+        The endpoint contract's reason first (it refuses user info, a query,
+        ``127.1``...), then https, then a path other than ``/v1``.
+    """
+    from ..Provider_Contract.provider_endpoint_contract import (
+        endpoint_refusal,
+        read_schemeless_loopback,
+    )
+
+    if refusal := endpoint_refusal("local_mlx_lm", endpoint):
+        return refusal
+    parsed = urlsplit(read_schemeless_loopback(endpoint.strip()))
+    if parsed.scheme.lower() != "http":
+        return MLX_HTTPS_REFUSAL
+    if parsed.path.rstrip("/") not in {"", "/v1"}:
+        return MLX_PATH_REFUSAL
+    return ""
+
+
+def host_port_refusal(provider: object, endpoint: str) -> str:
+    """``mlx_endpoint_refusal`` for an MLX-LM endpoint as typed, else "".
+
+    Args:
+        provider: The provider key or alias the endpoint is typed for.
+        endpoint: The endpoint as typed; blank is never refused here.
+
+    Returns:
+        The refusal copy, or "" for another provider or a blank endpoint.
+    """
+    if provider not in MLX_HOST_PORT_PROVIDER_KEYS or not str(endpoint or "").strip():
+        return ""
+    return mlx_endpoint_refusal(endpoint)
+
+
+def configured_provider_endpoint(
+    provider: object, provider_settings: Mapping[str, object]
+) -> str | None:
+    """The endpoint a provider's table holds, as setup screens show it.
+
+    Args:
+        provider: The provider key or alias.
+        provider_settings: The provider's ``api_settings`` table.
+
+    Returns:
+        MLX-LM's host and port as ``http://<host>:<port>/v1`` (TASK-41145),
+        else the table's first configured endpoint alias, or None.
+    """
+    from .console_provider_endpoints import first_configured_endpoint
+
+    if provider in MLX_HOST_PORT_PROVIDER_KEYS:
+        return mlx_saved_endpoint(provider_settings)
+    return first_configured_endpoint(provider_settings)
+
+
+def mlx_saved_endpoint(provider_settings: Mapping[str, object]) -> str:
+    """The URL MLX-LM's saved host and port make, as its adapter builds it.
+
+    Args:
+        provider_settings: The ``[api_settings.local_mlx_lm]`` table.
+
+    Returns:
+        ``http://<host>:<port>/v1``, 127.0.0.1:8080 where either is unset.
+    """
+    from .console_provider_endpoints import mlx_endpoint
+
+    return mlx_endpoint(provider_settings)
+
+
+def mlx_host_port(endpoint: str) -> dict[str, object]:
+    """The ``host`` and ``port`` an MLX-LM endpoint is saved as.
+
+    Args:
+        endpoint: The endpoint as typed.
+
+    Returns:
+        ``{"host": ..., "port": ...}``; an IPv6 host keeps its brackets, as
+        the adapter puts the host in its URL verbatim.
+
+    Raises:
+        ValueError: With ``mlx_endpoint_refusal``'s copy.
+    """
+    from ..Provider_Contract.provider_endpoint_contract import read_schemeless_loopback
+
+    if refusal := mlx_endpoint_refusal(endpoint):
+        raise ValueError(refusal)
+    parsed = urlsplit(read_schemeless_loopback(endpoint.strip()))
+    host = parsed.hostname or ""
+    return {"host": f"[{host}]" if ":" in host else host, "port": parsed.port or 80}
 
 
 def canonical_provider_key(provider: object) -> str:
@@ -906,7 +1021,19 @@ def build_provider_setup_mutation(
     semantic_identity: ProviderDraftIdentity | None = None
 
     endpoint = draft.endpoint.strip()
-    if endpoint:
+    if ownership.provider_key in MLX_HOST_PORT_PROVIDER_KEYS:
+        # TASK-41145: MLX-LM's endpoint is its host and port; ``api_url``
+        # stays as it is (ignored by the send, as before).
+        if endpoint:
+            provider_values.update(mlx_host_port(endpoint))
+            section_values["provider_setup.confirmed"] = {ownership.provider_key: True}
+            connection_identity = canonical_connection_identity(
+                ownership.provider_key, mlx_saved_endpoint(provider_values)
+            )
+        else:
+            deletes[provider_section] = ["host", "port"]
+            deletes["provider_setup.confirmed"] = [ownership.provider_key]
+    elif endpoint:
         persisted_endpoint = persisted_endpoint_for_key(
             ownership.provider_key, endpoint_key, endpoint
         )
@@ -1882,7 +2009,8 @@ def _validate_provider_setup_mutation(
             if (
                 type(key) is not str
                 or _CONFIG_KEY_PATTERN.fullmatch(key) is None
-                or type(value) not in {str, bool}
+                # TASK-41145: MLX-LM's port is the one integer written.
+                or not (type(value) in {str, bool} or (key == "port" and type(value) is int))
             ):
                 raise error
     for section, keys in delete_keys.items():
@@ -1953,11 +2081,14 @@ def _validate_provider_setup_mutation(
     provider_values = section_values.get(provider_section)
     if type(provider_values) is not _MAPPING_PROXY_TYPE:
         raise error
+    # TASK-41145: MLX-LM's endpoint is its host and port, set or cleared together.
+    mlx = ownership.provider_key in MLX_HOST_PORT_PROVIDER_KEYS
+    endpoint_keys = ("host", "port") if mlx else _ENDPOINT_KEY_PRECEDENCE
     allowed_provider_keys = {
         ownership.model_key,
         "credential_source",
         *ownership.credential_keys,
-        *_ENDPOINT_KEY_PRECEDENCE,
+        *endpoint_keys,
     }
     if not set(provider_values).issubset(allowed_provider_keys):
         raise error
@@ -1978,17 +2109,19 @@ def _validate_provider_setup_mutation(
     }:
         raise error
     if not set(provider_deletes).issubset(
-        {*ownership.credential_keys, *_ENDPOINT_KEY_PRECEDENCE}
+        {*ownership.credential_keys, *endpoint_keys}
     ):
         raise error
 
-    set_endpoint_keys = [
-        key for key in _ENDPOINT_KEY_PRECEDENCE if key in provider_values
-    ]
-    deleted_endpoint_keys = [
-        key for key in _ENDPOINT_KEY_PRECEDENCE if key in provider_deletes
-    ]
-    if len(set_endpoint_keys) + len(deleted_endpoint_keys) != 1:
+    set_endpoint_keys = [key for key in endpoint_keys if key in provider_values]
+    deleted_endpoint_keys = [key for key in endpoint_keys if key in provider_deletes]
+    if mlx:
+        if sorted((tuple(set_endpoint_keys), tuple(deleted_endpoint_keys))) != [
+            (),
+            ("host", "port"),
+        ]:
+            raise error
+    elif len(set_endpoint_keys) + len(deleted_endpoint_keys) != 1:
         raise error
 
     stored_key, environment_key = ownership.credential_keys
@@ -2044,7 +2177,11 @@ def _validate_provider_setup_mutation(
             raise identity_error
         if not _provider_draft_identity_is_valid(semantic_identity):
             raise identity_error
-        endpoint_value = provider_values[set_endpoint_keys[0]]
+        endpoint_value = (
+            mlx_saved_endpoint(provider_values)
+            if mlx
+            else provider_values[set_endpoint_keys[0]]
+        )
         if type(endpoint_value) is not str:
             raise error
         connection_identity = canonical_connection_identity(

@@ -893,7 +893,13 @@ class ProvidersModelsPanel(SettingsCategoryPanel):
                 koboldcpp_route_refusal,
             )
 
-            if refusal := koboldcpp_route_refusal(provider_key, endpoint):
+            from tldw_chatbook.Chat.provider_setup_persistence import (
+                host_port_refusal,
+            )
+
+            if refusal := koboldcpp_route_refusal(
+                provider_key, endpoint
+            ) or host_port_refusal(provider_key, endpoint):
                 screen._provider_save_result = refusal
                 screen._set_static_text(
                     "#settings-provider-save-result", screen._provider_save_result

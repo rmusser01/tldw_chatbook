@@ -2,6 +2,7 @@
 
 import errno
 import itertools
+import re
 import tomllib
 from pathlib import Path
 from types import SimpleNamespace
@@ -3584,8 +3585,10 @@ async def test_mlx_sends_to_its_own_host_and_port_never_the_shipped_api_url(user
     """Review r14ep-rev4 C-1: round 4b pinned ``[api_settings.local_mlx_lm]
     api_url``, which the shipped template sets to a placeholder and MLX-LM
     ignores, so every MLX send went there. Console checks and pins the URL MLX-LM
-    builds from its host and port, or its 8080 default."""
+    builds from its host and port, or its 8080 default. (TASK-41145: the
+    template no longer ships that placeholder; one saved earlier stays.)"""
     config = _merged(user)
+    config["api_settings"]["local_mlx_lm"]["api_url"] = "http://localhost:5678/v1/chat/completions"
     assert config["api_settings"]["local_mlx_lm"]["api_url"] != pinned
 
     await _assert_ready_and_pinned("mlx_lm", config, pinned)
@@ -4419,3 +4422,195 @@ def test_custom_2_still_reads_its_legacy_api_ip_when_the_slot_has_none(monkeypat
     _dispatch("custom-openai-api-2")
 
     assert posts == [legacy]
+
+
+# --- TASK-41145, owner decision 2026-11-16: "Settings edits host/port" -------
+
+#: Typed MLX-LM endpoints, and the host and port each is saved as.
+_MLX_ACCEPTED = (
+    ("http://gpu-box.lan:9000/v1", "gpu-box.lan", 9000),
+    ("http://gpu-box.lan:9000", "gpu-box.lan", 9000),
+    ("http://gpu-box.lan:9000/v1/", "gpu-box.lan", 9000),
+    ("localhost:9000", "localhost", 9000),
+    ("http://[::1]:9000/v1", "[::1]", 9000),
+)
+
+
+_MLX_REFUSED_ENDPOINTS = (
+    "https://gpu-box.lan:9000/v1",
+    "http://gpu-box.lan:9000/v1/chat/completions",
+    "http://gpu-box.lan:9000/mlx/v1",
+    "http://user:pw@gpu-box.lan:9000/v1",
+    "http://127.1:9000/v1",
+)
+
+
+def _mlx_refused():
+    """Each refused MLX-LM endpoint and the copy that refuses it."""
+    from tldw_chatbook.Chat.provider_setup_persistence import (
+        MLX_HTTPS_REFUSAL,
+        MLX_PATH_REFUSAL,
+    )
+
+    return dict(
+        zip(
+            _MLX_REFUSED_ENDPOINTS,
+            (
+                MLX_HTTPS_REFUSAL,
+                MLX_PATH_REFUSAL,
+                MLX_PATH_REFUSAL,
+                "Endpoint URL must not include user information.",
+                "Endpoint URL must include a valid host and port.",
+            ),
+            strict=True,
+        )
+    )
+
+
+def _applied(config, mutation):
+    """``config`` with a provider setup mutation's writes and deletes applied."""
+    import copy
+
+    out = copy.deepcopy(config)
+    for section, values in mutation.section_values.items():
+        node = out
+        for part in section.split("."):
+            node = node.setdefault(part, {})
+        node.update(values)
+    for section, keys in mutation.delete_keys.items():
+        node = out
+        for part in section.split("."):
+            node = node.get(part, {})
+        for key in keys:
+            node.pop(key, None)
+    return out
+
+
+def _mlx_draft(endpoint):
+    return ProviderSetupDraft(
+        provider="local_mlx_lm",
+        model="m",
+        endpoint=endpoint,
+        credential_source="none",
+        credential_revision=0,
+        draft_generation=1,
+    )
+
+
+@pytest.mark.parametrize(("endpoint", "host", "port"), _MLX_ACCEPTED)
+def test_saving_an_mlx_endpoint_writes_the_host_and_port_the_adapter_reads(
+    endpoint, host, port, monkeypatch
+):
+    """TASK-41145: Settings' (and first-run setup's) save wrote the endpoint
+    to ``[api_settings.local_mlx_lm] api_url``, which ``chat_with_mlx_lm``
+    never reads, so chats still went to 127.0.0.1:8080. The save now writes
+    ``host`` and ``port``, leaves ``api_url`` alone, and the adapter calls
+    the saved address."""
+    config = _merged({})
+    placeholder = config["api_settings"]["local_mlx_lm"].get("api_url")
+
+    mutation = build_provider_setup_mutation(_mlx_draft(endpoint), config)
+    written = mutation.section_values["api_settings.local_mlx_lm"]
+    saved = _applied(config, mutation)
+    posts = _local_world(monkeypatch, saved)
+    _dispatch("local_mlx_lm")
+
+    assert (written["host"], written["port"]) == (host, port)
+    assert "api_url" not in written
+    assert saved["api_settings"]["local_mlx_lm"].get("api_url") == placeholder
+    assert posts == [f"http://{host}:{port}/v1/chat/completions"]
+
+
+def test_an_mlx_save_refuses_what_host_and_port_cannot_express():
+    """TASK-41145: https, a path other than /v1 and user info cannot be
+    saved as a host and port; the save refuses with copy that says why."""
+    from tldw_chatbook.Chat.provider_setup_persistence import mlx_endpoint_refusal
+
+    for endpoint, copy_ in _mlx_refused().items():
+        assert mlx_endpoint_refusal(endpoint) == copy_, endpoint
+        with pytest.raises(ValueError, match=re.escape(copy_)):
+            build_provider_setup_mutation(_mlx_draft(endpoint), _merged({}))
+
+
+def test_first_run_setup_reads_and_writes_mlx_host_and_port():
+    """TASK-41145: first-run setup showed the template's unused ``api_url``
+    placeholder as MLX-LM's endpoint and saved the typed one to it."""
+    from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
+
+    config = _merged({"api_settings": {"local_mlx_lm": {"host": "gpu-box.lan", "port": 9000}}})
+
+    def draft(endpoint):
+        return wizard_state.FirstRunProviderDraft(
+            "local_mlx_lm", endpoint, wizard_state.ProviderCredentialDraft("none", "", 0)
+        )
+
+    shown = wizard_state.resolve_first_run_provider_draft(draft(""), config)
+    mutation = wizard_state.build_first_run_provider_commit(
+        draft("http://other-box.lan:9100/v1"), "m", config
+    )
+
+    assert shown.endpoint == "http://gpu-box.lan:9000/v1"
+    written = mutation.section_values["api_settings.local_mlx_lm"]
+    assert (written["host"], written["port"]) == ("other-box.lan", 9100)
+    assert "api_url" not in written
+    for endpoint, copy_ in _mlx_refused().items():
+        with pytest.raises(ValueError, match=re.escape(copy_)):
+            wizard_state.build_first_run_provider_commit(draft(endpoint), "m", config)
+
+
+@pytest.mark.parametrize("endpoint", ["http://gpu-box.lan:9000/v1", *_MLX_REFUSED_ENDPOINTS])
+def test_make_default_writes_mlx_host_and_port(
+    tmp_path, monkeypatch, _reset_console_default_intents, endpoint
+):
+    """TASK-41145: Chat settings' Make default wrote MLX-LM's endpoint to the
+    ``api_url`` its adapter ignores. It writes ``host`` and ``port``, and
+    refuses what they cannot express, writing nothing."""
+    config_path = tmp_path / "config.toml"
+    placeholder = "http://localhost:5678/v1/chat/completions"
+    config_path.write_text(
+        toml.dumps(
+            {
+                "api_settings": {"local_mlx_lm": {"api_url": placeholder}},
+                "chat_defaults": {"provider": "openai", "model": "old-model"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    select_config_source(monkeypatch, config_path, vars(defaults_module))
+    before = config_path.read_bytes()
+    refusal = _mlx_refused().get(endpoint, "")
+
+    outcome = defaults_module.apply_console_default_intent(
+        defaults_module.ConsoleDefaultMutationIntent(
+            generation=1,
+            action=ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+            provider_config_key="local_mlx_lm",
+            literal_model_id="mlx-model",
+            field_mask=FULL_MODEL_DEFAULT_FIELDS,
+            values={"temperature": 0.25},
+            endpoint_patch=defaults_module.ConsoleEndpointPatch(
+                endpoint, "local_mlx_lm", True, True
+            ),
+        )
+    )
+
+    assert defaults_module.console_default_endpoint_refusal("local_mlx_lm", endpoint) == refusal
+    if refusal:
+        assert outcome.file_replaced is False
+        assert config_path.read_bytes() == before
+    else:
+        assert outcome.runtime_published is True, outcome
+        saved = tomllib.loads(config_path.read_text(encoding="utf-8"))["api_settings"]["local_mlx_lm"]
+        assert (saved["host"], saved["port"], saved["api_url"]) == ("gpu-box.lan", 9000, placeholder)
+
+
+def test_the_shipped_mlx_table_holds_the_host_and_port_its_adapter_reads():
+    """TASK-41145 AC#2: the template shipped an ``api_url`` placeholder
+    (localhost:5678) that MLX-LM never reads, which Settings then showed as
+    its endpoint. It ships the adapter's own defaults instead."""
+    from tldw_chatbook.config import DEFAULT_CONFIG_FROM_TOML
+
+    table = DEFAULT_CONFIG_FROM_TOML["api_settings"]["local_mlx_lm"]
+
+    assert "api_url" not in table
+    assert (table["host"], table["port"]) == ("127.0.0.1", 8080)

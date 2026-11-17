@@ -2400,6 +2400,9 @@ def _persisted_endpoint(provider: str, endpoint: str) -> str:
     assert values["api_key"] == "sk-setup-ownership-0001"
     assert values[provider_model_key(provider)] == "setup-model"
     assert mutation.section_values["chat_defaults"]["model"] == "setup-model"
+    if canonical_provider_key(provider) == "local_mlx_lm":
+        # TASK-41145: MLX-LM's endpoint is saved as its host and port.
+        return f"{values['host']}:{values['port']}"
     return values[provider_endpoint_key(provider)]
 
 

@@ -273,6 +273,18 @@ _ADAPTER_OWN_ENDPOINTS: dict[str, tuple[tuple[str, ...], ...]] = {
 ADAPTER_ONLY_ENDPOINT_KEYS = frozenset({"mlx_lm", "local_mlx_lm"})
 
 
+def mlx_endpoint(table: Mapping[str, object]) -> str:
+    """The URL ``chat_with_mlx_lm`` builds from its table's host and port.
+
+    Args:
+        table: MLX-LM's ``api_settings`` table.
+
+    Returns:
+        ``http://<host>:<port>/v1``, 127.0.0.1 and 8080 where unset.
+    """
+    return f"http://{table.get('host', '127.0.0.1')}:{table.get('port', 8080)}/v1"
+
+
 def adapter_own_endpoint(
     dispatch: str, app_config: Mapping[str, object]
 ) -> str | None:
@@ -304,8 +316,7 @@ def adapter_own_endpoint(
     if dispatch in ADAPTER_ONLY_ENDPOINT_KEYS:
         api_settings = app_config.get("api_settings")
         table = api_settings.get(dispatch) if isinstance(api_settings, Mapping) else None
-        table = table if isinstance(table, Mapping) else {}
-        return f"http://{table.get('host', '127.0.0.1')}:{table.get('port', 8080)}/v1"
+        return mlx_endpoint(table if isinstance(table, Mapping) else {})
     record = RECORDS_BY_KEY.get(dispatch)
     return record.default_base_url if record and record.engine_driven else None
 
