@@ -555,7 +555,12 @@ _BUDGETS: dict[str, int] = {
     # ruling R2(a)'s four tokens, with their separators and a section comment
     # (+932), 11 callbacks out (-66), 5 shell helpers, 1 getter and 1 setter
     # in (+44), imports (+4), prose (+36).
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 10969,
+    # 2026-11-17, TASK-36952.3.8 (media series cleanup slice, ruling R3, the
+    # same sanctioned move): 10969 -> 10997 (+28): `_sanitize_media_field`
+    # byte-for-byte as a staticmethod with its separator and a section comment
+    # (+30), its group-(e) callback out (-15), its two imports (+1), prose
+    # (+12).
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 10997,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only

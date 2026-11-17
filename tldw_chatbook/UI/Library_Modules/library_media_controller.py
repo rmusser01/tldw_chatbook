@@ -371,9 +371,9 @@ moved bodies for every ``self.<attr>`` load/store AND every
 state fields and the movers themselves -- **90 names** -- and then adding
 **2 more the walk cannot see**, for **92**, every one pinned in
 ``test_media_controller_binds_every_name_its_moved_bodies_use``. That pin
-holds **84** since TASK-36952.3.7 (measured: 18 framework services, the 24
-state accessors of groups (b)/(b')/(c), 41 group-(a) helpers and 1 group-(e)
-callable):
+holds **83** since TASK-36952.3.8 (measured: 18 framework services, the 24
+state accessors of groups (b)/(b')/(c) and 41 group-(a) helpers; group (e)
+is empty):
 
 1. **Framework services** (``app``, ``app_instance``, ``call_after_refresh``,
    ``call_next``, ``check_action``, ``focused``, ``is_attached``,
@@ -410,10 +410,11 @@ callable):
    TASK-36952.3.1 moved seven of their bodies here, TASK-36952.3.2 two
    more, TASK-36952.3.3 seven more, TASK-36952.3.4 six more,
    TASK-36952.3.5 two more, TASK-36952.3.6 eight more and TASK-36952.3.7
-   eleven more; the one left, ``_sanitize_media_field``, is pinned) -- each a
-   ``lambda`` re-reading ``screen.<name>`` on every invocation, at CALL time,
-   which is exactly why every bypass fixture named above keeps working
-   unmodified after this move.
+   eleven more; TASK-36952.3.8 moved the last, ``_sanitize_media_field``,
+   here as a staticmethod, so the group is empty) -- each a ``lambda``
+   re-reading ``screen.<name>`` on every invocation, at CALL time, which is
+   exactly why every bypass fixture named above kept working unmodified
+   after the wave-7 move.
 
 **The two bindings a ``self.<attr>`` walk cannot produce, and the precedent
 that already knew about them.** ``_library_canvas_projection_depth`` and
@@ -596,6 +597,15 @@ patches of ``_arm_library_media_return_settlement``,
 controller; class 5's ``_sync_library_media_reader_layout_from_shell``
 class patches, which now patch this class; and class 9, which the R2(a)
 tokens resolve.
+
+**TASK-36952.3.8 (2026-11-17), slice 8 of 8: the cleanup.** Ruling R3:
+``_sanitize_media_field`` (wave-7 class 6) moved here byte-for-byte as a
+``@staticmethod``, so its group-(e) callable is gone and group (e) is empty.
+``LibraryScreen`` keeps a static delegator at the old name, because it
+imports this module lazily: the Prompts, Skills and Notes clusters' bindings
+to the screen name are unchanged. ``_toggle_library_media_reader_pane``
+(class 7) stays on the screen: it is the parent task's one AC #1 exception,
+the multi-subsystem reader-pane dispatcher.
 """
 from __future__ import annotations
 
@@ -680,6 +690,7 @@ from ...Library.meeting_speaker_rename import (
     can_rename_meeting_speakers,
 )
 from ...Utils.adaptive_reader_state import list_holds_the_stage
+from ...Utils.input_validation import sanitize_string, validate_text_input
 from ...Utils.library_rail_width import ordinary_emergency_required
 from ...Widgets.Library import (
     LIBRARY_ADAPTIVE_READER_GRIP_CLASS,
@@ -763,6 +774,8 @@ class LibraryMediaController:
     TASK-36952.3.5 moved 17 more and kept a delegator for 8;
     TASK-36952.3.6 moved 16 more and kept a delegator for 8;
     TASK-36952.3.7 moved 23 more and kept a delegator for 17.
+    TASK-36952.3.8 moved ``_sanitize_media_field`` here behind a static
+    screen delegator.
     """
 
     def __init__(
@@ -850,9 +863,6 @@ class LibraryMediaController:
         update_library_ingest_dynamic_regions,
         walk_active_review_set,
         request_library_reader_layout_refresh,
-        # -- named late-binding callables for the media exclusions (group
-        #    (e)) that a MOVER still calls internally.
-        sanitize_media_field,
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
@@ -956,7 +966,6 @@ class LibraryMediaController:
         self._update_library_ingest_dynamic_regions_fn = update_library_ingest_dynamic_regions
         self._walk_active_review_set_fn = walk_active_review_set
         self.request_library_reader_layout_refresh_fn = request_library_reader_layout_refresh
-        self._sanitize_media_field_fn = sanitize_media_field
 
     # -- framework services: live-read properties, never snapshotted ------
 
@@ -1398,17 +1407,6 @@ class LibraryMediaController:
     def request_library_reader_layout_refresh(self) -> Any:
         return self.request_library_reader_layout_refresh_fn
 
-
-    # -- named late-binding callables for the exclusions (group (e)) -------
-    #
-    # TASK-36952.3.7 moved the last of the media bodies these callables
-    # reached, so the one left is the shared ``_sanitize_media_field`` (the
-    # Prompts and Notes clusters call it too). Same late-binding shape as
-    # every other row.
-
-    @property
-    def _sanitize_media_field(self) -> Any:
-        return self._sanitize_media_field_fn
 
     # -- moved cluster methods (140), byte-for-byte, original file order --
     def _project_library_media_stage_classes(self, shell_grid: Widget) -> bool:
@@ -10942,6 +10940,36 @@ class LibraryMediaController:
             return
         self._media_state.review_dismiss_receipt = None
         _sync_library_canvas(self, "media")
+
+    # -- TASK-36952.3.8 mover (1), byte-for-byte: ruling R3's shared sanitizer --
+    @staticmethod
+    def _sanitize_media_field(value: Any, *, max_length: int) -> str:
+        """Sanitize a user-entered media field at the UI boundary.
+
+        Runs the shared ``input_validation`` helpers before the value is
+        handed to a persistence service (``update_media_item`` /
+        ``create_highlight`` / ``save_analysis_version``), so over-long
+        input is truncated and control characters are stripped, and any
+        HTML/script markup that trips ``validate_text_input`` is neutralized
+        -- keeping unsafe or oversized content from reaching storage. Normal
+        text (including a lone ``<``/``>`` in prose) is returned unchanged.
+
+        Args:
+            value: The raw widget value to sanitize.
+            max_length: Maximum length to allow before truncation.
+
+        Returns:
+            The sanitized field value.
+        """
+        text = sanitize_string(str(value or ""), max_length=max_length)
+        if not validate_text_input(text, max_length=max_length, allow_html=False):
+            # A dangerous HTML/script pattern was detected: break it up
+            # (drop the angle brackets and inline handlers) but keep the
+            # rest of the field rather than discarding user content.
+            text = text.replace("<", "").replace(">", "")
+            for pattern in ("javascript:", "onclick=", "onerror="):
+                text = text.replace(pattern, "")
+        return text
 
 
 # --- BEGIN generated media-controller-state shims ---

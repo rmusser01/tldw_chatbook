@@ -600,6 +600,10 @@ _MEDIA_CLUSTER_METHOD_NAMES: tuple[str, ...] = (
     "handle_library_media_rail_return",
     "handle_library_media_review_dismiss_receipt_close",
     "handle_library_media_review_dismiss_undo",
+    # TASK-36952.3.8 (2026-11-17): ruling R3 -- the shared field sanitizer the
+    # Prompts, Skills and Notes clusters also call; its screen name stays as a
+    # static delegator, so their bindings are unchanged.
+    "_sanitize_media_field",
 )
 
 #: The names above that are ``@staticmethod`` on ``LibraryScreen``. Their
@@ -613,6 +617,8 @@ _MEDIA_CLUSTER_STATICMETHOD_NAMES: frozenset[str] = frozenset(
         "_valid_library_media_trash_delete_ack",
         # TASK-36952.3.4: moved with the Trash restore; its delegator is pruned.
         "_validated_library_media_trash_restore_summary",
+        # TASK-36952.3.8: ruling R3's shared sanitizer.
+        "_sanitize_media_field",
     }
 )
 
@@ -913,11 +919,12 @@ _MEDIA_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
     "_toggle_reviewed_unguarded",
     "action_library_narrow_stage_return",
     # -- named late-binding callables for the excluded media methods a mover
-    #    still calls (35; TASK-36952.3.1 moved 5 of them here: 30;
+    #    still calls: 35 at wave 7; TASK-36952.3.1 moved 5 of them here: 30;
     #    TASK-36952.3.2 moved 2 more: 28; TASK-36952.3.3 moved 6 more: 22;
     #    TASK-36952.3.4 moved 5 more: 17; TASK-36952.3.5 moved 2 more: 15;
-    #    TASK-36952.3.6 moved 5 more: 10; TASK-36952.3.7 moved 9 more: 1)
-    "_sanitize_media_field",
+    #    TASK-36952.3.6 moved 5 more: 10; TASK-36952.3.7 moved 9 more: 1;
+    #    TASK-36952.3.8 moved the last, ``_sanitize_media_field``, here as a
+    #    staticmethod (ruling R3): 0.
 )
 
 
@@ -958,8 +965,10 @@ def test_media_cluster_method_names_are_genuinely_media_named() -> None:
     # speaker-rename and review-decoration bodies.
     # 2026-11-17, TASK-36952.3.7: 265 -> 288, the 23 return-settlement,
     # reader-layout, rail-return and review-action bodies.
-    assert len(_MEDIA_CLUSTER_METHOD_NAMES) == 288, (
-        f"expected 288 moved names, got {len(_MEDIA_CLUSTER_METHOD_NAMES)}"
+    # 2026-11-17, TASK-36952.3.8: 288 -> 289, ``_sanitize_media_field``
+    # (ruling R3).
+    assert len(_MEDIA_CLUSTER_METHOD_NAMES) == 289, (
+        f"expected 289 moved names, got {len(_MEDIA_CLUSTER_METHOD_NAMES)}"
     )
     assert len(set(_MEDIA_CLUSTER_METHOD_NAMES)) == len(_MEDIA_CLUSTER_METHOD_NAMES), (
         "duplicate entries in _MEDIA_CLUSTER_METHOD_NAMES"
@@ -1149,8 +1158,10 @@ def test_media_controller_binds_every_name_its_moved_bodies_use() -> None:
     # 2026-11-17, TASK-36952.3.7: 87 -> 84. Nine pinned late-binding callbacks
     # became moved methods (-9); five shell helpers and the
     # `_review_dismiss_undo_in_flight` getter and setter were bound (+6).
-    assert len(_MEDIA_CONTROLLER_BOUND_NAMES) == 84, (
-        f"expected 84 bound names, got {len(_MEDIA_CONTROLLER_BOUND_NAMES)}"
+    # 2026-11-17, TASK-36952.3.8: 84 -> 83. The last late-binding callback,
+    # `_sanitize_media_field`, became a staticmethod on the controller (-1).
+    assert len(_MEDIA_CONTROLLER_BOUND_NAMES) == 83, (
+        f"expected 83 bound names, got {len(_MEDIA_CONTROLLER_BOUND_NAMES)}"
     )
     assert len(set(_MEDIA_CONTROLLER_BOUND_NAMES)) == len(
         _MEDIA_CONTROLLER_BOUND_NAMES

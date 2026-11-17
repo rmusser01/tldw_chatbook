@@ -1474,7 +1474,13 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: binding kwargs arrived (-20), and ``ascii_glyph_mode``, imported only
     #: for those bodies, went with them (-1): 33780 -> 32912 lines,
     #: 1330 -> 1324 methods (measured with ``_measure``).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32996, 1326),
+    #: 2026-11-17, TASK-36952.3.8 (architecture review F2, media series
+    #: cleanup slice 8 of 8), commit 1 of 2: ``_sanitize_media_field``'s body
+    #: moved to ``LibraryMediaController`` behind a static delegator (ruling
+    #: R3, 28 -> 9 lines, -19) and its callback kwarg left the controller
+    #: call (-3): 32912 -> 32890 lines, 1324 methods (measured with
+    #: ``_measure``).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32974, 1326),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard
@@ -1622,7 +1628,9 @@ def test_budget_is_not_left_slack_after_a_wave(rel_path: str) -> None:
 #: TASK-36952.3.7 lowered it to 398: the media controller lost 11 callbacks
 #: whose bodies it now owns, and gained 5 shell-helper callbacks, 1 getter and
 #: 1 setter (`_review_dismiss_undo_in_flight`).
-_LIBRARY_INIT_LAMBDAS = 398
+#: TASK-36952.3.8 lowered it to 397: the media controller lost its last
+#: media-named callback, `_sanitize_media_field` (ruling R3).
+_LIBRARY_INIT_LAMBDAS = 397
 #: Measured at dev 26b2e677dd by `_unbound_class_calls` over Tests/**/*.py:
 #: 724 in 59 files. TASK-36952.2 lowered it to 722 (still 59 files): the two
 #: `LibraryScreen.handle_library_media_reader_more(fake, ...)` calls now call

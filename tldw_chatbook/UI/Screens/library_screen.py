@@ -3257,9 +3257,6 @@ class LibraryScreen(BaseAppScreen):
             request_library_reader_layout_refresh=(
                 lambda *a, **k: self.request_library_reader_layout_refresh(*a, **k)
             ),
-            # -- named late-binding callables for the media exclusions a
-            #    MOVER still calls internally.
-            sanitize_media_field=(lambda *a, **k: self._sanitize_media_field(*a, **k)),
         )
         # wave-8 task 2 (notes series 2/N): constructed right after the
         # Media controller, matching every other controller in this file.
@@ -12911,32 +12908,13 @@ class LibraryScreen(BaseAppScreen):
 
     @staticmethod
     def _sanitize_media_field(value: Any, *, max_length: int) -> str:
-        """Sanitize a user-entered media field at the UI boundary.
+        from ..Library_Modules.library_media_controller import (
+            LibraryMediaController,
+        )
 
-        Runs the shared ``input_validation`` helpers before the value is
-        handed to a persistence service (``update_media_item`` /
-        ``create_highlight`` / ``save_analysis_version``), so over-long
-        input is truncated and control characters are stripped, and any
-        HTML/script markup that trips ``validate_text_input`` is neutralized
-        -- keeping unsafe or oversized content from reaching storage. Normal
-        text (including a lone ``<``/``>`` in prose) is returned unchanged.
-
-        Args:
-            value: The raw widget value to sanitize.
-            max_length: Maximum length to allow before truncation.
-
-        Returns:
-            The sanitized field value.
-        """
-        text = sanitize_string(str(value or ""), max_length=max_length)
-        if not validate_text_input(text, max_length=max_length, allow_html=False):
-            # A dangerous HTML/script pattern was detected: break it up
-            # (drop the angle brackets and inline handlers) but keep the
-            # rest of the field rather than discarding user content.
-            text = text.replace("<", "").replace(">", "")
-            for pattern in ("javascript:", "onclick=", "onerror="):
-                text = text.replace(pattern, "")
-        return text
+        return LibraryMediaController._sanitize_media_field(
+            value, max_length=max_length
+        )
 
     @staticmethod
     def _sanitize_note_content(value: Any, *, max_length: int) -> str:
