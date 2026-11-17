@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-16 23:33
-updated_date: 2026-11-17 00:30
+updated_date: 2026-11-17 01:50
 labels:
 - follow-up
 - backup
@@ -67,8 +67,25 @@ Filed in round 15 of the 2026-10-23 burn-down from TASK-41119's concern (review 
   - `test_rag_model_recovery_controls.py` checks for the receipt instead of the owner approval.
   - At load 65-90 the fixed 45/60 s child budgets of these files timed out for almost every node, base and head alike: 41 of 43 failures in a `-n 4` run of the four RAG/model activation files were `TimeoutExpired`. The other two (`test_activation_rag.py`) passed serially.
   - With the child budgets temporarily raised and then reverted, 5 of 5 `test_activation_local_embedding.py` nodes passed serially: `review_and_retirement[approved|changed]`, `finalized_isolated_generation_reopens_local_model_receipt`, `receipt_is_durable_and_generation_bound[generation]` and `projection_identity…[identity_owner]`. These run the routed flow for real: receipt alone refused, then the real `approve_models`, then the model loads.
-  - **Not verified:** `test_rag_model_recovery_controls.py`'s three approve paths fail at the child's line 121 (`escape(str(model)) in dialog.message`), which runs before any approval. The `[cancel]` node fails at the same line on base source (cc6006fcf5), so it is red at base and not this task's. My edits there (a receipt check, then the model-files approval) therefore never run.
+  - `test_rag_model_recovery_controls.py` was red at base on its child's line 121 (`escape(str(model)) in dialog.message`), before any approval. Round 2 fixed that line, and the settings route now passes; see below.
 
 **Docs.** `Docs/Backup-and-Recovery.md`: a Model files review paragraph, the Speech review sentence, and RAG's step 1, which now says the restored model files also need **Approve model files**.
 
 **Files.** `tldw_chatbook/Backup_Recovery/recovery_service.py`, `tldw_chatbook/UI/Screens/backup_restore_screen.py`, `tldw_chatbook/RAG_Search/model_recovery.py`, `tldw_chatbook/UI/Screens/settings_screen.py` (message only, +1 line, under its 35,020 ceiling), `Tests/Architecture/test_backup_owner_inventory.py`, `Tests/UI/test_backup_restore_setup_entry.py`, `Tests/Backup_Recovery/test_activation_local_embedding.py`, `Tests/Backup_Recovery/test_rag_model_recovery_controls.py`, `Docs/Backup-and-Recovery.md`.
+
+**Review r15br-rev2 (fixed).**
+- **A RAG model folder covered by another restored profile no longer stays off without a reason.** Such a folder carries that profile's generation, and `_require` needs `models.artifacts` approved for every generation it touches. Approve model files covers only the current profile's.
+  - `preview_local_embedding` now returns `elsewhere_pending`: the witness generations other than the current profile's whose `models.artifacts` is still unapproved.
+  - The Settings dialog names them and says that profile's model files need their own Approve model files, or RAG stays off.
+  - Test: `Tests/Architecture/test_backup_owner_inventory.py::test_local_model_review_names_another_restored_generation[pending|approved]`, a real binding. Two profiles in separate namespaces; the other profile's roots cover a model folder inside the current data. The current profile approves its own model files.
+    - `pending`: the other generation is named and construction is still refused.
+    - `approved`: nothing is named and the model is admitted.
+    - Red on an assertion with the naming temporarily removed (`[pending]`).
+- **The dialog no longer says Allow / Approve local model.** It reads "Record the review of these exact files? … The model also needs Approve model files in Backup & Restore > Restored profiles", and its button is **Record review**.
+  - The copy now lives in `model_recovery.local_embedding_review_text`, so `settings_screen.py` is 35,014 lines against its 35,020 ceiling. No raise was needed.
+  - Test: `test_local_model_review_copy_records_files_and_names_the_model_files_review[()|(other)]`. Red with the old "Allow…" copy restored.
+  - Docs: RAG's step 1 now says **Record review** and covers the other-profile case.
+- **The RAG settings route runs end to end.** `ConfirmationDialog` renders its message with markup off, so the child's `escape(...)` assertion was stale; it now checks the raw path, the new copy and the **Record review** label.
+  - With the child budgets raised for the local run only (45/60/25 s cannot hold at load 50-75): 10 of 11 passed under `-n 3`. That covers approve, all eight boundaries and ordinary.
+  - `test_settings_separate_rag_review_and_explicit_rebuild` failed once under `-n 3` with a `WorkerCancelled` in `wait_for_complete`, then passed 2 of 2 serially.
+  - `test_activation_local_embedding.py`, which covers review/retirement, isolated reopen, the generation-bound receipt, projection identity and the closure refusals, ran with the same raised budgets: 19 passed under `-n 3`.
