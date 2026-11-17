@@ -450,7 +450,11 @@ def pytest_exception_interact(node, call, report):
     settings = _get_item_settings(node)
     if not settings.timeout or settings.func_only:
         return
-    node.config.pluginmanager.hook.pytest_timeout_set_timer(item=node, settings=settings)
+    hooks = node.config.pluginmanager.hook
+    # pytest-timeout's own hook has cancelled it already; cancelling again is
+    # a no-op that keeps a thread-method timer from ever running twice.
+    hooks.pytest_timeout_cancel_timer(item=node)
+    hooks.pytest_timeout_set_timer(item=node, settings=settings)
     if settings.method == "signal" and threading.current_thread() is threading.main_thread():
         # Fire again every `timeout` seconds until the protocol's cancel.
         signal.setitimer(signal.ITIMER_REAL, settings.timeout, settings.timeout)

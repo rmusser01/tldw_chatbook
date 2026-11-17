@@ -3,7 +3,7 @@ id: TASK-41135
 title: "Two test hangs no timeout ends: the 239-file non-UI set at -n 4 stalls with all workers idle, and test_original_stop_hook_holds_same_ordinary_tree runs over an hour"
 status: Done
 created_date: 2026-11-15 02:20
-updated_date: 2026-11-16 21:37
+updated_date: 2026-11-17 00:41
 assignee:
 - '@claude'
 labels:
@@ -51,3 +51,4 @@ Filed in round 14 of the 2026-10-23 burn-down (closeout, 2026-11-15). Checked ag
 - **AC#3.** TASK-40300's notes do not list its 239 files. A reconstruction by its rule (non-UI test files naming that round's changed helpers; 255 files, minus the two `Tests/ProductionApp` files, which need their own invocation) ran to completion at `-n 4` and the process exited: `485 failed, 11251 passed, 6 skipped, 7 errors in 7676.15s` (load 70-110). The stalling node TASK-41028 identified is handled the same way: `Tests/Chat/test_console_ordinary_tree.py` at `-n 4 --timeout=120` now finishes and exits (`33 failed, 42 passed, 2 errors in 696.90s`, rc 1, 716 s wall), where TASK-41028 saw it stop at 74/75 until a watchdog killed it.
 - Lesson added to `backlog/docs/lessons-testing-evidence.md`.
 - Files: `Tests/private_profile.py`, `Tests/CI/test_pytest_timeout_rearm.py` (new), `Tests/conftest.py`, `backlog/docs/lessons-testing-evidence.md`.
+- **Review r15ti-rev1 (fix round 1).** The hook now calls `pytest_timeout_cancel_timer(item=node)` before `pytest_timeout_set_timer`. pytest-timeout's own `tryfirst` hook has cancelled it already, so this is a no-op for the signal method; for the thread method it makes sure no earlier timer thread can fire alongside the new one. `Tests/CI/test_pytest_timeout_rearm.py` and `test_private_profile_child_deadline.py`: 11 passed, 1 skipped.
