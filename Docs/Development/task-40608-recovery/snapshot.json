@@ -1,0 +1,62 @@
+[
+  {
+    "path": "task-62-process-integration-plan.md",
+    "sha256": "94577bed0bf7674f8f568f4a0264f9a95f67aa4ea93a818c747fea92ead544f4",
+    "bytes": 7881
+  },
+  {
+    "path": "task62-accepted-process-turn-test-contract.md",
+    "sha256": "dec266e8b465c9ec7e39b9a65f068b1103d5c62f92aa139b3ec5dd047bd85d4c",
+    "bytes": 2766
+  },
+  {
+    "path": "task62-parent-transcript-adapter-contract.md",
+    "sha256": "5975726421459da078fd5668f22751cadfac0786783243831b871ec8e38c658c",
+    "bytes": 3029
+  },
+  {
+    "path": "task62-readonly-projection-view-contract.md",
+    "sha256": "68b416cd2a0c61490849dcf39bb32ba7205c31d4a176d4516f6fb9f1d910b507",
+    "bytes": 2943
+  },
+  {
+    "path": "task62-session-view-publication-contract.md",
+    "sha256": "2ae719555d6bb0f737734681305824b1c07424649d66a6fed3bb62c60aa62485",
+    "bytes": 3809
+  },
+  {
+    "path": "task62-accepted-process-turn-test-draft/proposal.diff",
+    "sha256": "9686410a5a8f3df96c1812ff0fd237130a8dbc4d5f9dc91a76228b7d2616993a",
+    "bytes": 17223
+  },
+  {
+    "path": "task62-accepted-process-turn-test-draft/report.md",
+    "sha256": "860c3bb1831ac9c8b0347eeffb3cb98868b61de2979efe33605ab76986706574",
+    "bytes": 3802
+  },
+  {
+    "path": "task62-parent-transcript-adapter-draft/report.md",
+    "sha256": "338a64cf2935a49dc256c58ec209b2d37fca8fe8e76731545baec46ab4e45a6a",
+    "bytes": 3160
+  },
+  {
+    "path": "task62-parent-transcript-adapter-draft/proposed/execution_projection.py",
+    "sha256": "3075eb9860ce5b408fa5406acf1fa15f6b40afad1b55b68305cc0ec139ea4e25",
+    "bytes": 6750
+  },
+  {
+    "path": "task62-readonly-projection-view-draft/report.md",
+    "sha256": "9315f95fcad3066ec5f711aaa90ac9584c4493c9514c926a723e176ef1456ebe",
+    "bytes": 2707
+  },
+  {
+    "path": "task62-session-view-publication-draft/incremental.diff",
+    "sha256": "25936e6409e79ab87fec17af60a0f6f6feaa4d021b8e85defa1c06b7278d3a75",
+    "bytes": 23094
+  },
+  {
+    "path": "task62-session-view-publication-draft/manifest.json",
+    "sha256": "54f93d6c35ab3f03862b81e7b50dfadb30e9643b36bd36719235e5bbad1d9385",
+    "bytes": 1777
+  }
+]

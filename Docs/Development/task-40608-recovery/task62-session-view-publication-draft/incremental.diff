@@ -1,0 +1,537 @@
+--- a/tldw_chatbook/Chat/console_backend_presentation.py
++++ b/tldw_chatbook/Chat/console_backend_presentation.py
+@@ -28,6 +28,63 @@
+         self._display_context_demands = {}
+         self._display_character_demands = {}
+         self.parent_attachment = None
++        self._projection_views = {}
++
++    def capture_projection_view(self, controls, identity, projection) -> None:
++        """Retain inert row facts at the original synchronous projection boundary."""
++        from .console_control_dispatch import (
++            ConsoleLocalControls,
++            require_control_source,
++        )
++        from .console_execution_projection_values import encode_session_projection
++        from .console_execution_projection_result import encode_pressed_inputs
++
++        self.require_association(self.association)
++        source = require_control_source(self._runtime)
++        if (
++            type(controls) is not ConsoleLocalControls
++            or controls is not self.backend.controls
++            or source.identity is not identity
++            or identity.source_revision != controls.source_revision
++            or projection.source_revision != identity.source_revision
++            or projection.session_id != identity.session_id
++            or projection.incarnation_id != identity.incarnation_id
++            or identity.request_id in self._projection_views
++        ):
++            raise RuntimeError("Backend projection capture changed")
++        store = controls._store
++        sessions = store.sessions()
++        body = {
++            "sessions": [encode_session_projection(session) for session in sessions],
++            "active_session_id": store.active_session_id,
++            "fingerprints": [],
++            "pressed_inputs": encode_pressed_inputs(
++                store.session_input_snapshot(identity.session_id),
++                store._sessions[identity.session_id],
++            ),
++        }
++        for session in sessions:
++            count, length = store.session_fingerprint(session.id)
++            body["fingerprints"].append(
++                {
++                    "session_id": session.id,
++                    "count": count,
++                    "last_content_length": length,
++                }
++            )
++        self._projection_views[identity.request_id] = (identity, projection, body)
++
++    def projection_view(self, identity, projection) -> dict:
++        """Return only this completed command's already-captured row values."""
++        self.require_association(self.association)
++        captured = self._projection_views.get(identity.request_id)
++        if (
++            captured is None
++            or captured[0] is not identity
++            or captured[1] is not projection
++        ):
++            raise RuntimeError("Backend projection result association changed")
++        return captured[2]
+ 
+     def bind_runtime(self, runtime) -> None:
+         if self._runtime is not None or runtime._app is not None:
+--- a/tldw_chatbook/Chat/console_control_dispatch.py
++++ b/tldw_chatbook/Chat/console_control_dispatch.py
+@@ -479,7 +479,7 @@
+             session = self._store._sessions.get(identity.session_id)
+             if session is None or session.incarnation_id != identity.incarnation_id:
+                 raise RuntimeError("Console projection session changed")
+-            return ConsoleProjection(
++            projection = ConsoleProjection(
+                 revision,
+                 session.id,
+                 session.incarnation_id,
+@@ -488,6 +488,11 @@
+                 self._controller.run_state_for(session.id),
+                 self._controller.pending_decision_projection(session.id),
+             )
++            from .console_backend_presentation import ConsoleBackendPresentation
++
++            if type(self._domain.presentation) is ConsoleBackendPresentation:
++                self._domain.presentation.capture_projection_view(self, identity, projection)
++            return projection
+ 
+     def _require_source_publication(self, fence):
+         with self._lock:
+--- a/tldw_chatbook/Chat/console_execution_process.py
++++ b/tldw_chatbook/Chat/console_execution_process.py
+@@ -199,15 +199,20 @@
+         self._view: Any = None
+         self._visit = 0
+         self._projection = None
++        self.projection_view = None
++        self.pressed_inputs = None
++        self._projection_sequence = 0
+ 
+     async def read_projection(self, session_id: str, incarnation_id: str):
+         """Adopt one exact retired projection without constructing a local store."""
+         from .console_execution_projection_result import (
+             decode_projection_payload,
++            decode_projection_view,
+             projection_key,
+         )
+ 
+         previous = self._projection
++        view, visit = self._view, self._visit
+         binding = (self._source_revision, session_id, incarnation_id)
+         known = (
+             previous.display_revision
+@@ -223,17 +228,26 @@
+         await asyncio.shield(receipt.applied)
+         if await asyncio.shield(receipt.retired) is not True:
+             raise ConsoleChannelLost("Console projection retirement is unproven")
+-        if self._channel_error is not None or self._source_revision != binding[0]:
++        if (
++            self._channel_error is not None
++            or self._source_revision != binding[0]
++            or self._view is not view
++            or self._visit != visit
++            or receipt.identity.sequence <= self._projection_sequence
++        ):
+             raise ConsoleChannelLost("Console projection source changed")
+         # Thaw only this validated message using the canonical codec. The
+         # reference resolves against the snapshot captured for this request.
+         message = receipt.projection_message
+         if message is None:
+             raise ConsoleProtocolError("projection_message_missing")
+-        value = decode_projection_payload(
+-            encode_message(message)["payload"], previous=previous
+-        )
++        payload = encode_message(message)["payload"]
++        value = decode_projection_payload(payload, previous=previous)
++        projection_view = decode_projection_view(payload, value)
+         self._projection = value
++        self.projection_view = projection_view
++        self.pressed_inputs = payload["session_view"]["pressed_inputs"]
++        self._projection_sequence = receipt.identity.sequence
+         return value
+ 
+     async def start(self, profile: ConsoleProcessProfile) -> None:
+--- a/tldw_chatbook/Chat/console_execution_projection_result.py
++++ b/tldw_chatbook/Chat/console_execution_projection_result.py
+@@ -13,6 +13,9 @@
+ 
+ if TYPE_CHECKING:
+     from .console_control_dispatch import ConsoleProjection
++    from .console_chat_store import ConsoleChatSession
++    from .console_received_intent import ConsoleSessionInputSnapshot
++    from .console_execution_projection_view import ConsoleProjectionView
+ 
+ 
+ def projection_key(value: ConsoleProjection) -> tuple[int, str, str, int]:
+@@ -47,7 +50,7 @@
+ 
+ 
+ def _shape(value: object) -> None:
+-    if type(value) is not dict or set(value) != {
++    fields = {
+         "source_revision",
+         "session_id",
+         "incarnation_id",
+@@ -55,7 +58,8 @@
+         "messages",
+         "run_state",
+         "decision",
+-    }:
++    }
++    if type(value) is not dict or set(value) not in (fields, fields | {"session_view"}):
+         raise ConsoleProtocolError("invalid_projection_fields")
+     for name in ("source_revision", "display_revision"):
+         if type(value[name]) is not int or value[name] < 0:
+@@ -85,6 +89,161 @@
+     decision = decode_pending_decision(value["decision"])
+     if decision is not None and decision.session_id != value["session_id"]:
+         raise ConsoleProtocolError("projection_decision_session_changed")
++    if "session_view" in value:
++        _session_view(value)
++
++
++def _session_view(payload: dict) -> tuple:
++    from .console_execution_projection_values import (
++        decode_session_projection,
++        _settings,
++    )
++    from .console_execution_protocol import _PROJECTED_INPUTS
++
++    value = payload["session_view"]
++    if (
++        type(value) is not dict
++        or set(value)
++        != {"sessions", "active_session_id", "fingerprints", "pressed_inputs"}
++        or type(value["sessions"]) is not list
++        or type(value["fingerprints"]) is not list
++    ):
++        raise ConsoleProtocolError("invalid_projection_view_fields")
++    rows = tuple(decode_session_projection(row) for row in value["sessions"])
++    identities = {}
++    for row in rows:
++        if not row.id or not row.incarnation_id or row.id in identities:
++            raise ConsoleProtocolError("invalid_projection_view_session")
++        identities[row.id] = row.incarnation_id
++    active = value["active_session_id"]
++    if active is not None and (type(active) is not str or active not in identities):
++        raise ConsoleProtocolError("invalid_projection_view_active")
++    fingerprints = []
++    seen = set()
++    for item in value["fingerprints"]:
++        if type(item) is not dict or set(item) != {
++            "session_id",
++            "count",
++            "last_content_length",
++        }:
++            raise ConsoleProtocolError("invalid_projection_view_fingerprint")
++        session_id = item["session_id"]
++        if (
++            type(session_id) is not str
++            or session_id not in identities
++            or session_id in seen
++        ):
++            raise ConsoleProtocolError("invalid_projection_view_fingerprint")
++        numbers = (item["count"], item["last_content_length"])
++        if any(type(number) is not int or number < 0 for number in numbers):
++            raise ConsoleProtocolError("invalid_projection_view_fingerprint")
++        seen.add(session_id)
++        fingerprints.append((session_id, numbers))
++    if (
++        seen != identities.keys()
++        or identities.get(payload["session_id"]) != payload["incarnation_id"]
++    ):
++        raise ConsoleProtocolError("projection_view_session_changed")
++    pressed = value["pressed_inputs"]
++    _PROJECTED_INPUTS(pressed, "payload.session_view.pressed_inputs")
++    if (
++        pressed["session_id"] != payload["session_id"]
++        or pressed["incarnation_id"] != payload["incarnation_id"]
++        or [item["attachment_id"] for item in pressed["attachments"]]
++        != pressed["attachment_ids"]
++    ):
++        raise ConsoleProtocolError("projection_pressed_inputs_changed")
++    current_row = next(row for row in rows if row.id == payload["session_id"])
++    if (
++        pressed["draft"] != current_row.draft
++        or pressed["settings_revision"] != current_row.settings_revision
++        or pressed["settings"]
++        != (
++            None
++            if current_row.settings is None
++            else _settings(current_row.settings, False)
++        )
++    ):
++        raise ConsoleProtocolError("projection_input_row_changed")
++    return rows, active, tuple(fingerprints)
++
++
++def encode_pressed_inputs(
++    snapshot: ConsoleSessionInputSnapshot, session: ConsoleChatSession
++) -> dict:
++    """Detach the original coherent input snapshot without transferring its proof."""
++    import base64
++    from .attachment_core import PendingAttachment
++    from .console_received_intent import ConsoleSessionInputSnapshot
++    from .console_chat_store import ConsoleChatSession
++    from .console_execution_projection_values import _settings
++    from .console_execution_protocol import _PROJECTED_INPUTS
++
++    if (
++        type(snapshot) is not ConsoleSessionInputSnapshot
++        or type(session) is not ConsoleChatSession
++    ):
++        raise ConsoleProtocolError("invalid_original_input_snapshot")
++    if (
++        snapshot.session_id != session.id
++        or snapshot.incarnation_id != session.incarnation_id
++    ):
++        raise ConsoleProtocolError("projection_pressed_inputs_changed")
++    attachments = []
++    for item in snapshot.attachments:
++        if type(item) is not PendingAttachment:
++            raise ConsoleProtocolError("invalid_original_attachment")
++        body = {
++            name: getattr(item, name)
++            for name in (
++                "attachment_id",
++                "file_path",
++                "display_name",
++                "file_type",
++                "insert_mode",
++                "mime_type",
++                "text_content",
++                "original_size",
++                "processed_size",
++            )
++        }
++        body["data"] = (
++            None if item.data is None else base64.b64encode(item.data).decode("ascii")
++        )
++        attachments.append(body)
++    body = {
++        "draft": snapshot.draft,
++        "authored_token": None
++        if session._draft_authored_token is None
++        else list(session._draft_authored_token),
++        "settings": None
++        if snapshot._settings is None
++        else _settings(snapshot._settings, False),
++        "settings_revision": snapshot.settings_revision,
++        "attachment_revision": snapshot.attachment_revision,
++        "attachment_ids": list(snapshot._attachment_ids),
++        "attachments": attachments,
++        "one_shot_prefill": snapshot.one_shot_prefill,
++        "prefill_revision": snapshot.prefill_revision,
++        "session_id": snapshot.session_id,
++        "incarnation_id": snapshot.incarnation_id,
++    }
++    _PROJECTED_INPUTS(body, "payload.session_view.pressed_inputs")
++    return body
++
++
++def decode_projection_view(
++    payload: dict, projection: ConsoleProjection
++) -> ConsoleProjectionView:
++    """Build the finite read-only view from this exact retired frame and rows."""
++    from .console_execution_projection_view import ConsoleProjectionView
++
++    if "session_view" not in payload:
++        raise ConsoleProtocolError("projection_view_missing")
++    rows, active, fingerprints = _session_view(payload)
++    return ConsoleProjectionView(
++        projection.source_revision, rows, active, fingerprints, (projection,)
++    )
+ 
+ 
+ def decode_projection_payload(
+--- /dev/null
++++ b/tldw_chatbook/Chat/console_execution_projection_view.py
+@@ -0,0 +1,155 @@
++"""Finite read-only Console values; no local store or execution authority."""
++
++from __future__ import annotations
++
++from dataclasses import dataclass
++
++from .console_chat_controller import ConsolePendingDecisionProjection
++from .console_chat_models import (
++    ConsoleChatMessage,
++    ConsoleRunState,
++    ConsoleRunStatus,
++    copy_console_message,
++)
++from .console_control_dispatch import ConsoleProjection
++from .console_execution_projection_values import (
++    _SESSION,
++    ConsoleSessionView,
++    _record,
++)
++
++
++class ConsoleProjectionUnavailable(LookupError):
++    """The publication contains no transcript frame for the requested session."""
++
++
++def _count(value: object) -> None:
++    if type(value) is not int or value < 0:
++        raise ValueError("Console projection revision or count is invalid")
++
++
++@dataclass(frozen=True, slots=True)
++class ConsoleProjectionView:
++    """One published set of inert rows and explicitly supplied transcript frames.
++
++    Epoch, visit, physical retirement and adoption belong to the real client.
++    Message records are decoded render values; methods never read native state.
++    """
++
++    source_revision: int
++    session_rows: tuple[ConsoleSessionView, ...]
++    active_session_id: str | None
++    fingerprints: tuple[tuple[str, tuple[int, int]], ...]
++    projections: tuple[ConsoleProjection, ...]
++
++    def __post_init__(self) -> None:
++        _count(self.source_revision)
++        if any(
++            type(values) is not tuple
++            for values in (self.session_rows, self.fingerprints, self.projections)
++        ):
++            raise TypeError("Console projection collections must be original tuples")
++        rows = {}
++        for row in self.session_rows:
++            # Reuse the existing finite row schema; never traverse a session graph.
++            _record(row, ConsoleSessionView, _SESSION, False)
++            if not row.id or not row.incarnation_id or row.id in rows:
++                raise ValueError("Console projection session identity is invalid")
++            rows[row.id] = row
++        if self.active_session_id is not None and (
++            type(self.active_session_id) is not str
++            or self.active_session_id not in rows
++        ):
++            raise ValueError("Console projection active session is unavailable")
++
++        fingerprint_ids = set()
++        for entry in self.fingerprints:
++            if type(entry) is not tuple or len(entry) != 2:
++                raise TypeError("Console projection fingerprint entry is invalid")
++            session_id, fingerprint = entry
++            if (
++                type(session_id) is not str
++                or session_id not in rows
++                or session_id in fingerprint_ids
++            ):
++                raise ValueError("Console projection fingerprint identity is invalid")
++            if type(fingerprint) is not tuple or len(fingerprint) != 2:
++                raise TypeError("Console projection fingerprint is invalid")
++            for value in fingerprint:
++                _count(value)
++            fingerprint_ids.add(session_id)
++        if fingerprint_ids != rows.keys():
++            raise ValueError("Console projection fingerprints do not cover its rows")
++
++        frame_ids = set()
++        for frame in self.projections:
++            if type(frame) is not ConsoleProjection:
++                raise TypeError("Original Console projection frame is required")
++            _count(frame.source_revision)
++            _count(frame.display_revision)
++            if (
++                type(frame.session_id) is not str
++                or frame.session_id not in rows
++                or frame.session_id in frame_ids
++                or frame.source_revision != self.source_revision
++                or type(frame.incarnation_id) is not str
++                or frame.incarnation_id != rows[frame.session_id].incarnation_id
++            ):
++                raise ValueError("Console projection frame identity changed")
++            if type(frame.messages) is not tuple or any(
++                type(message) is not ConsoleChatMessage for message in frame.messages
++            ):
++                raise TypeError("Original decoded Console messages are required")
++            if (
++                type(frame.run_state) is not ConsoleRunState
++                or type(frame.run_state.status) is not ConsoleRunStatus
++                or type(frame.run_state.visible_copy) is not str
++            ):
++                raise TypeError("Original decoded Console run state is required")
++            if frame.decision is not None and (
++                type(frame.decision) is not ConsolePendingDecisionProjection
++                or frame.decision.session_id != frame.session_id
++            ):
++                raise ValueError("Console projection decision session changed")
++            frame_ids.add(frame.session_id)
++
++    def sessions(self) -> list[ConsoleSessionView]:
++        """Return original frozen rows in their supplied creation order."""
++        return list(self.session_rows)
++
++    def session(self, session_id: str) -> ConsoleSessionView:
++        """Return the exact frozen row, raising KeyError when it is absent."""
++        for row in self.session_rows:
++            if row.id == session_id:
++                return row
++        raise KeyError(session_id)
++
++    def _projection_for_session(self, session_id: str) -> ConsoleProjection:
++        for frame in self.projections:
++            if frame.session_id == session_id:
++                return frame
++        raise ConsoleProjectionUnavailable(session_id)
++
++    def messages_for_session(self, session_id: str) -> list[ConsoleChatMessage]:
++        """Return original shallow rendering copies from the supplied frame.
++
++        Raises:
++            ConsoleProjectionUnavailable: No frame was supplied for this session.
++        """
++        frame = self._projection_for_session(session_id)
++        return [copy_console_message(message) for message in frame.messages]
++
++    def session_fingerprint(self, session_id: str) -> tuple[int, int]:
++        """Return the supplied count/last-visible-length pair, or raise KeyError.
++
++        Equal-length edits and non-final message changes may be invisible. This
++        original cheap hint is neither complete snapshot nor source authority.
++        """
++        for original_id, fingerprint in self.fingerprints:
++            if original_id == session_id:
++                return fingerprint
++        raise KeyError(session_id)
++
++    def display_projection_revision(self, session_id: str) -> int:
++        """Return the supplied frame revision, refusing an unavailable frame."""
++        return self._projection_for_session(session_id).display_revision
+--- a/tldw_chatbook/Chat/console_execution_protocol.py
++++ b/tldw_chatbook/Chat/console_execution_protocol.py
+@@ -442,7 +442,7 @@
+     original_size=_REVISION,
+     processed_size=_REVISION,
+ )
+-_PRESSED_INPUTS = _record(
++_INPUT_FIELDS = dict(
+     draft=_TEXT,
+     authored_token=_AUTHORED_TOKEN,
+     settings=_optional(_SESSION_SETTINGS),
+@@ -454,6 +454,11 @@
+     prefill_revision=_REVISION,
+     session_id=_REFERENCE,
+     incarnation_id=_REFERENCE,
++)
++_PRESSED_INPUTS = _record(**_INPUT_FIELDS)
++# A pristine backend session has no authored token until a real input update.
++_PROJECTED_INPUTS = _record(
++    **{**_INPUT_FIELDS, "authored_token": _optional(_AUTHORED_TOKEN)}
+ )
+ 
+ 
+--- a/tldw_chatbook/Chat/console_execution_worker.py
++++ b/tldw_chatbook/Chat/console_execution_worker.py
+@@ -563,6 +563,9 @@
+                 messages=None
+                 if current and known == result.display_revision
+                 else self._projection_messages,
++            )
++            body["session_view"] = self.backend.presentation.projection_view(
++                command.identity, result
+             )
+             message = ConsoleWireMessage(identity, "applied", "ReadProjection", body)
+             self.channel.send(message)
+@@ -741,6 +744,7 @@
+             self._release_result(message)
+ 
+     def _release_result(self, message) -> None:
++        self.backend.presentation._projection_views.pop(message.identity.request_id, None)
+         # Only these actual results can be consumed by a later named command.
+         retained = message.operation in {
+             "FenceSource",

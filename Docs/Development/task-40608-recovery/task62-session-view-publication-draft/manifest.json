@@ -1,0 +1,40 @@
+{
+  "status": "artifact-only; uninstalled/unexecuted",
+  "files": [
+    {
+      "name": "console_backend_presentation.py",
+      "proposed_sha256": "b04b41ff715b144ad8f04cecc0facb322d2695b1b0a557b5b7980a1b56b27e81",
+      "baseline_sha256": "7058619f8c2e2fca0e5b08c97ca9d846c5308e6f638f0dfabb8571c170c9575a"
+    },
+    {
+      "name": "console_control_dispatch.py",
+      "proposed_sha256": "2262de0bc83e59459cf5982c986d2fa0ea820a008f0d6738fd6d814a20876539",
+      "baseline_sha256": "e40b9e750e6773b7b4c784b17dfa4fc73085c3285e8d56842c351839582ec645"
+    },
+    {
+      "name": "console_execution_process.py",
+      "proposed_sha256": "f01912e11a843fd08b77ff773f8b7d419e4b83914c7850341061b94350c26a1a",
+      "baseline_sha256": "d6301b9a8e5a8b21329b40a45645a8fde93770abbc21d39abeb3916ade98551f"
+    },
+    {
+      "name": "console_execution_projection_result.py",
+      "proposed_sha256": "ac2c3161f6c408386e8dbe36b8bafd3289fad744e9d238037ab050e3d9c17843",
+      "baseline_sha256": "5f637a5f82f73e1dc8a2b6539e3634bc38a5c746fde73956a5561534794e0702"
+    },
+    {
+      "name": "console_execution_projection_view.py",
+      "proposed_sha256": "7263fff0f9f8c742b4342b03524e9d68adedbeda2031c5705c77dcba8518027d",
+      "baseline_sha256": null
+    },
+    {
+      "name": "console_execution_protocol.py",
+      "proposed_sha256": "b0bdcdf1e4a240f2a94cda8cf354b861cbf0b7afa2dde45137833855b6882192",
+      "baseline_sha256": "45aa2c996542d3a5024113f3459ecef8f7fdaa1f7e67fce1b4b774b07c23a988"
+    },
+    {
+      "name": "console_execution_worker.py",
+      "proposed_sha256": "aa3cbac4a851f7bcc1810f92657b374573a7eef0278e2722d05bf80648ef7b62",
+      "baseline_sha256": "f98d1f13624e7cedda214084b1e81c47214aa59820e26760547d9bd28d5b7720"
+    }
+  ]
+}
