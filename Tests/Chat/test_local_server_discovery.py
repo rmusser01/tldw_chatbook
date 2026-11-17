@@ -4411,17 +4411,60 @@ def test_an_ingest_analysis_on_custom_2_reaches_the_endpoint_settings_saved(monk
     assert (text, failure) == ("ok", None)
 
 
-def test_custom_2_still_reads_its_legacy_api_ip_when_the_slot_has_none(monkeypatch):
-    """Owner decision 2026-11-16: the old top-level ``api_ip`` stays the
-    fallback, so a config that set only it keeps sending there."""
-    legacy = "http://127.0.0.1:5000/v1/chat/completions"
-    config = _merged({"custom_openai_api_2": {"api_ip": legacy}})
-    config["api_settings"]["custom_2"].pop("api_url", None)
-    posts = _local_world(monkeypatch, config)
+@pytest.mark.parametrize(
+    "legacy",
+    [
+        # Set explicitly: the merged view carries it as the slot's api_url.
+        "http://legacy-box.lan:5000/v1/chat/completions",
+        # At its code default: the bridge leaves the slot alone and the
+        # adapter falls back to load_settings' ``custom_openai_api_2.api_ip``.
+        "http://127.0.0.1:5000/v1/chat/completions",
+    ],
+)
+def test_custom_2_still_reads_its_legacy_api_ip_when_the_slot_has_none(
+    legacy, tmp_path, monkeypatch
+):
+    """Owner decision 2026-11-16: the legacy ``[API] custom_openai2_api_ip``
+    (``load_settings`` builds ``custom_openai_api_2.api_ip`` from it) stays the
+    fallback, so a config that set only it keeps sending there. Review
+    r15ep-rev2 M-2: through a real scratch file, not a patched loader."""
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls_Local as local_calls
+    from tldw_chatbook.LLM_Calls import provider_sessions
+
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        toml.dumps(
+            {
+                "API": {"custom_openai2_api_ip": legacy},
+                "api_settings": {"custom_2": {"api_url": ""}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    select_config_source(monkeypatch, config_path, vars(local_calls))
+    posts: list[str] = []
+    monkeypatch.setattr(
+        local_calls, "create_pooled_default_session", lambda **_kw: _RecordingSession(posts)
+    )
+    monkeypatch.setattr(provider_sessions, "get_session", lambda _key, factory: factory())
 
     _dispatch("custom-openai-api-2")
 
     assert posts == [legacy]
+
+
+def test_custom_2_without_an_endpoint_names_the_setting_to_fill(monkeypatch):
+    """Review r15ep-rev2 M-1: the copy named only the legacy ``api_ip``."""
+    from tldw_chatbook.Provider_Contract import ChatConfigurationError
+
+    config = _merged({})
+    config["api_settings"]["custom_2"]["api_url"] = ""
+    _local_world(monkeypatch, config)
+
+    with pytest.raises(ChatConfigurationError) as caught:
+        _dispatch("custom-openai-api-2")
+
+    assert "[api_settings.custom_2] api_url" in str(caught.value)
 
 
 # --- TASK-41145, owner decision 2026-11-16: "Settings edits host/port" -------
