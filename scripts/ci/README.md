@@ -11,7 +11,7 @@ canceled the entire self-hosted CI effort and benchmark on 2026-11-17.
 | High-risk or unclassified dev PR | Existing broad census; no test command removed | Same context |
 | Protected dev push, opt-in true | Preflight, CI contracts and core smoke on the merged tree | Push result; does not rerun every PR matrix |
 | Nightly, changed dev | Existing broad census, all smoke selections, Library shell matrix and Backup_Recovery owner suites | Nightly regression **workflow conclusion**, including Library shell |
-| PR into main | Broad regression, comprehensive core/UI suite, native lease contracts, package build and installed-distribution checks | Same stable required context |
+| PR into main | Broad regression, comprehensive core/UI suite, native lease contracts, package build and installed-distribution checks | Stable Derived context and release-only qualification verdict |
 | Protected main push / manual TestPyPI publication | Comprehensive tests and package checks on that exact commit before publishing | Both publishing jobs need successful qualification |
 
 The small smoke tier targets 5–10 minutes including setup and queueing; this is
@@ -83,9 +83,12 @@ their hosted defaults with `CI_TEST_RUNNER` and `CI_CONTROL_RUNNER` unset.
    `gh workflow run derived-artifacts.yml --ref <candidate-branch> -f release=true`.
    Pin and retain the resulting event SHA. This calls comprehensive tests and
    package/install checks, with no publication job in the workflow. Do not publish to PyPI/TestPyPI or merge a product release merely to test.
-   Require `Derived artifacts reproduce from their sources` on main with
-   strict/latest-base and admin enforcement, after verifying that context is
-   emitted by a PR targeting main. Read/merge with existing
+   Require `Derived artifacts reproduce from their sources` and the nested
+   `Full release qualification` verdict on main, bound to GitHub Actions, with
+   strict/latest-base and admin enforcement. Verify both exact emitted contexts
+   on the main PR; the skipped release wrapper is not the verdict. The extra
+   existing verdict prevents earlier dev-push smoke from serving as release
+   evidence under the shared Derived name. Read/merge with existing
    rulesets rather than overwriting them. A read on 2026-11-13 found no legacy
    branch protection on main; its active `safe` ruleset only prevents deletion
    and force pushes. Recheck both protections and rulesets during activation.

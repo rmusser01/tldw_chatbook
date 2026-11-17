@@ -182,6 +182,26 @@ BUILTIN_SKILL_RESOURCE_PATHS = {
     "tldw_chatbook/assets/skills/character-creator/SKILL.md",
 }
 
+# Immutable templates and assets served by Web_Server.serve.
+SERVED_STATIC_RESOURCE_PATHS = frozenset(
+    f"tldw_chatbook/Web_Server/static/{name}"
+    for name in (
+        "served_shell.html",
+        "served_shell.css",
+        "served_shell.js",
+        "devices.js",
+        "qrcodegen.js",
+        "passkeys.js",
+        "mobile/index.html",
+        "mobile/app.css",
+        "mobile/app.js",
+        "mobile/manifest.webmanifest",
+        "mobile/icon-192.png",
+        "mobile/icon-512.png",
+        "mobile/apple-touch-icon.png",
+    )
+)
+
 REQUIRED_SDIST_PATHS = (
     {
         "LICENSE",
@@ -214,6 +234,7 @@ REQUIRED_SDIST_PATHS = (
     | CANVAS_GUIDE_RESOURCE_PATHS
     | CODE_REVIEW_GUIDE_RESOURCE_PATHS
     | BUILTIN_SKILL_RESOURCE_PATHS
+    | SERVED_STATIC_RESOURCE_PATHS
 )
 
 REQUIRED_WHEEL_PATHS = (
@@ -240,6 +261,7 @@ REQUIRED_WHEEL_PATHS = (
     | CANVAS_GUIDE_RESOURCE_PATHS
     | CODE_REVIEW_GUIDE_RESOURCE_PATHS
     | BUILTIN_SKILL_RESOURCE_PATHS
+    | SERVED_STATIC_RESOURCE_PATHS
 )
 
 REQUIRED_SDIST_GLOBS = {

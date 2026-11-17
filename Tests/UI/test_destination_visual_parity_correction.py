@@ -3774,8 +3774,19 @@ async def test_watchlists_tab_strip_hit_regions_match_its_painted_labels(size):
             # one is exactly the kind of harness coordinate error this test
             # exists to catch in the *app* -- it must not reintroduce the
             # same class of bug in the *test*.
-            strip = screen.query_one("#wl-tabs")
-            row = strip.region.y
+            # A replacement strip can be in the DOM before the next reflow.
+            # Wait for its layout region before using it to select a painted row.
+            deadline = time.monotonic() + 2.0
+            while True:
+                strip = next(iter(screen.query("#wl-tabs")), None)
+                region = strip.region if strip is not None else None
+                if region:
+                    break
+                assert time.monotonic() < deadline, (
+                    "Watchlists tabs did not receive a layout region"
+                )
+                await pilot.pause(0.01)
+            row = region.y
             painted = "".join(
                 segment.text for segment in screen._compositor.render_strips()[row]
             )

@@ -2150,6 +2150,8 @@ async def test_auth_failure_during_reconnect_gives_up_instead_of_hanging(monkeyp
 async def test_transport_drop_reconnects_once_and_reseeds(monkeypatch):
     _patch_realtime_config(monkeypatch)
     app = _build_test_app()
+    buddy = PersonaBuddyController()
+    app.persona_buddy_controller = buddy
     rig = _install_realtime_fakes(app)
     host = ConsoleHarness(app)
 
@@ -2157,6 +2159,9 @@ async def test_transport_drop_reconnects_once_and_reseeds(monkeypatch):
         console = await _mounted_console(host, pilot)
         notifications = _capture_notifications(console)
         session = await _enter_live_realtime(console, pilot, rig)
+        listening = buddy.snapshot()
+        assert listening.state == "listening"
+        assert listening.state_owner is not None
         store = console._ensure_console_chat_store()
         store.append_message(
             store.active_session_id,
@@ -2167,6 +2172,9 @@ async def test_transport_drop_reconnects_once_and_reseeds(monkeypatch):
         session.fire_closed("connection lost")
         await _wait_for(lambda: len(rig.sessions) == 2, pilot)
         assert console._console_realtime.controller.state == "reconnecting"
+        reconnecting = buddy.snapshot()
+        assert reconnecting.state == "offline"
+        assert reconnecting.state_owner == listening.state_owner
         assert any("reconnect" in message.lower() for message, _kw in notifications)
 
         await _wait_for(lambda: rig.sessions[1].connected, pilot)
@@ -2175,6 +2183,8 @@ async def test_transport_drop_reconnects_once_and_reseeds(monkeypatch):
             lambda: console._console_realtime.controller.state == "live", pilot
         )
 
+        assert buddy.snapshot().state == "listening"
+        assert buddy.snapshot().state_owner == listening.state_owner
         items, _instructions = rig.sessions[1].seeds[0]
         assert ("user", "remember this") in items
         # M6: the docs promise a toast confirming the reconnect landed --
@@ -2186,6 +2196,8 @@ async def test_transport_drop_reconnects_once_and_reseeds(monkeypatch):
         # A SECOND drop within the same loop entry gives up outright.
         rig.sessions[1].fire_closed("connection lost")
         await _wait_for(lambda: console._console_realtime is None, pilot)
+        assert buddy.snapshot().state == "idle"
+        assert buddy.snapshot().state_owner is None
         assert any(
             "connection lost" in message for message, _kwargs in notifications
         ), notifications

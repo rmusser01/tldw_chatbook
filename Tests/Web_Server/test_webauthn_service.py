@@ -21,7 +21,8 @@ from pathlib import Path
 import pytest
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
-from fido2 import cbor
+
+cbor = pytest.importorskip("fido2.cbor", reason="requires the web extra")
 
 from tldw_chatbook.Canvas.web_auth import AuthenticationError
 from tldw_chatbook.Web_Server import serve
