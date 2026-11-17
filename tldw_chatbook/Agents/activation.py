@@ -121,6 +121,17 @@ def captured_sources(service: object) -> tuple:
     return _guard.captured_sources(service)
 
 
+def sources_changed(captured: tuple, service: object = None) -> bool:
+    """Whether this task's admitted sources differ from ``captured``.
+
+    Compared as a set: nesting order depends on which execution was entered
+    first (a worker guard admits the bridge's sources before the turn's own),
+    not on which sources are admitted. Any added, removed or moved source
+    still counts as a change.
+    """
+    return set(_guard.captured_sources(service)) != set(captured)
+
+
 def execution(service=None, *, sources=()):
     """Retain admission through final persistence in this native task/thread."""
     return _guard.execution(service, sources=sources)

@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 from tldw_chatbook.Workspaces.worktree_activity import WorktreeFootprint
 
-from ..activation import _guard, execution
+from ..activation import _guard, execution, sources_changed
 from ..execution_capacity import CapacityRefused, WorkOrigin, current_execution_owner
 from ..legacy_hook_ownership import _EventCustody, _EventCustodyRegistry
 from .causality import current_chain
@@ -359,7 +359,7 @@ class _CommandEvent:
         if not self._returned_context():
             return
         self._check_sources()
-        if _guard.captured_sources(None) != self.sources:
+        if sources_changed(self.sources):
             raise RuntimeError("Command event activation source changed.")
         if self.agent_sources is not None:
             self.agent_sources.check_storage()
@@ -370,7 +370,7 @@ class _CommandEvent:
 
     def check(self):
         self.check_memory()
-        if _guard.captured_sources(None) != self.sources:
+        if sources_changed(self.sources):
             raise RuntimeError("Command event activation source changed.")
 
     def _reachable(self, handler):

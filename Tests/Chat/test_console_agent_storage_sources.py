@@ -403,7 +403,8 @@ async def test_original_console_mcp_context_reaches_child_model(
             assert len(case.service.execution_log.read_recent()) == 1
             return
         assert len(gateway.payloads) == 3, rows
-        assert model_sources == [sources[0].sources] * 3
+        # Admitted sources are a set; nesting order follows the entry path.
+        assert [set(seen) for seen in model_sources] == [set(sources[0].sources)] * 3
         assert bool(child_threads) is (workers > 1)
         assert any(
             row["id"] in model_runs for row in rows if row["agent_kind"] == "subagent"
@@ -469,3 +470,21 @@ async def test_original_mcp_capture_retains_structured_names_with_definition_has
         case.tool.description, case.tool.input_schema
     )
     assert getattr(configuration, "mcp_definition_sources", ()) == (expected,)
+
+
+async def test_reordered_admission_is_not_a_source_change(tmp_path):
+    """A worker guard nests the same sources in another order (TASK-41315)."""
+    from tldw_chatbook.Agents.activation import (
+        captured_sources,
+        execution,
+        selected_sources,
+        sources_changed,
+    )
+
+    with execution(sources=tuple(reversed(selected_sources(None)))):
+        reordered = captured_sources(None)
+    with execution():
+        assert captured_sources(None) != reordered
+        assert not sources_changed(reordered)
+        assert sources_changed(reordered[1:])
+        assert sources_changed((*reordered, ("agents.history", tmp_path)))
