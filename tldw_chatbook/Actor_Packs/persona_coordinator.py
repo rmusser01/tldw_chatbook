@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import threading
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from tldw_chatbook.Character_Chat.local_character_persona_service import (
@@ -297,6 +297,14 @@ class PersonaActorPackCoordinator:
                 raise PersonaActorPackCoordinatorError(
                     "actor_pack_recovery_clear_failed"
                 ) from None
+            finally:
+                # The app's next recovery read returns this cached summary, so
+                # it must not keep naming a cleared intent (review r15ac-rev2).
+                if self._recovery_result is not None:
+                    self._recovery_result = replace(
+                        self._recovery_result,
+                        blocked_intent_ids=self._blocked_intent_ids,
+                    )
         return cleared
 
     def recover(self) -> PersonaActorPackRecoveryResult:
