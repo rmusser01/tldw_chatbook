@@ -444,7 +444,7 @@ def test_production_pypi_publish_checks_version_before_upload() -> None:
     assert 'run: python Packaging/check_pypi_release.py "$RELEASE_VERSION"' in check_job
     assert "Install output path validation dependencies" in check_job
     assert "python -m pip install loguru packaging psutil pydantic" in check_job
-    assert "needs: [build, check_pypi_release]" in publish_job
+    assert "needs: [build, qualify, check_pypi_release]" in publish_job
     assert "needs.check_pypi_release.outputs.publish_release == 'true'" in publish_job
 
 
@@ -456,6 +456,23 @@ def test_release_workflow_serializes_same_ref_runs() -> None:
         "  group: ${{ github.workflow }}-${{ github.ref }}\n"
         "  cancel-in-progress: false"
     ) in workflow
+
+
+def test_publishers_wait_for_comprehensive_tests_at_the_caller_commit() -> None:
+    workflow = _publish_workflow_text()
+    qualification = _workflow_job_block(workflow, "qualify")
+    assert qualification.strip() == "uses: ./.github/workflows/test.yml"
+    for name in ("publish-testpypi", "check_pypi_release", "publish-pypi"):
+        block = _workflow_job_block(workflow, name)
+        needs = next(line for line in block.splitlines() if "needs:" in line)
+        assert "qualify" in needs
+        assert "always()" not in block
+        assert "continue-on-error" not in block
+    tests = (REPO_ROOT / ".github/workflows/test.yml").read_text()
+    trigger = tests.split("\n# Comprehensive tests", maxsplit=1)[0]
+    assert "  workflow_call:" in trigger
+    assert "  push:" not in trigger
+    assert "group: comprehensive-${{ github.workflow }}" in tests
 
 
 def test_release_workflow_uses_validated_github_output_writes() -> None:

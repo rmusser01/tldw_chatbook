@@ -14,6 +14,9 @@ permissions:
   contents: read
 
 jobs:
+  qualify:
+    uses: ./.github/workflows/test.yml
+
   build:
     name: Build and check distributions
     runs-on: ubuntu-latest
@@ -103,7 +106,7 @@ jobs:
   publish-testpypi:
     name: Publish to TestPyPI
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev' && github.ref_protected
-    needs: build
+    needs: [build, qualify]
     runs-on: ubuntu-latest
     environment:
       name: testpypi
@@ -127,7 +130,7 @@ jobs:
   check_pypi_release:
     name: Check PyPI release status
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: build
+    needs: [build, qualify]
     runs-on: ubuntu-latest
     outputs:
       release_exists: ${{ steps.check.outputs.release_exists }}
@@ -165,7 +168,7 @@ jobs:
   publish-pypi:
     name: Publish to PyPI
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.ref_protected && needs.check_pypi_release.outputs.publish_release == 'true'
-    needs: [build, check_pypi_release]
+    needs: [build, qualify, check_pypi_release]
     runs-on: ubuntu-latest
     environment:
       name: pypi
