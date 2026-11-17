@@ -54,7 +54,7 @@ ADR required: no. The private child's setup is out of date with the product; no 
 
 ## Implementation Notes
 
-Outcome: 7 of 8 nodes pass; `test_runtime_first_send_retains_changed_original_source` is a product defect, not fixed here (stopped for a decision).
+Outcome: 7 of 8 nodes pass. `test_runtime_first_send_retains_changed_original_source` needs a design decision (options below); TASK-41315's seam fix already removes the live-owner hang it exposed.
 
 **Cause (AC #1), from the private child's own AgentRuns rows (`list_runs`/`get_run`, written to a scratch file from inside the script).** Two test-side causes, one hiding the other; neither is new:
 - The parent ran on plain chat's light tool surface: its run's allowed tools were `('calculator', 'get_current_datetime')`, and the `spawn_subagent` call's `tool_result` was `ERROR: Tool not permitted: spawn_subagent`, so no child ever existed. The script's config has no `[tools] full_agent_tools_enabled`, which defaults off (TASK-34100.5.3, cf3ab5e2c8, merged as #3295 on 10-31, before this file was written).
@@ -67,7 +67,23 @@ Outcome: 7 of 8 nodes pass; `test_runtime_first_send_retains_changed_original_so
 
 **Evidence.** Each cause was confirmed by fixing only the other: with only the double fixed, the child is still `Tool not permitted`; with only the config fixed, the child still fails on `continuation_protocol`. With both fixed, the `native` node passes alone (28 s at load 56). Final run at `-n 4` (load 55): 7 passed, and only `retains_changed_original_source` failed. An earlier run at load 83-115 also failed `admission`, on a 30 s child-entry detector now widened to 60 s; that node passes alone in 66 s. `writer_wrapped`, which qualifies TASK-40719's fix, passes.
 
-**Not fixed: product defect (source_loss).** After the script swaps `TLDW_CONFIG_PATH` (so `config.current_config_identity()` changes) and releases the surviving child, the child completes. Its row is stored `subagent done` with its reply, nothing raises `original agent storage source changed`, and the tree has not retired. The result is the same with TASK-41315's product change reverted. The child path no longer re-checks `_AgentSources._check_original_sources` after its model call returns. Deciding where a surviving child must re-check its sources touches child custody, so this needs a decision.
+**source_loss: stopped for a design decision.** The script changes `TLDW_CONFIG_PATH`, so `config.current_config_identity()` changes, and then releases the surviving child. Observed with TASK-41315's seam fix:
+- The child's in-flight reply is stored `done` in the original AgentRuns DB.
+- Its host return under the changed source is refused, and the child settles unproven: host returned, not durable, the turn's claim held (TASK-40716).
+- The tree never retires, so the first-send save never runs. The replaced config file is not written, and the draft is preserved.
+
+Before that fix, the child owner stayed `live`, so disposal would have waited on it forever.
+
+The node still fails because it expects the refusal as an uncaught `RuntimeError` in the child thread. `run_child_owned` has contained cleanup failures as unproven since 6125fbc5b8.
+
+Also found: with the turn held, `runtime.dispose()` waits forever on the `console-first-send-persistence` task, which waits for a retirement that cannot come.
+
+Options:
+- **(a) Retain (current behavior).** Keep the reply recorded and the turn held. Retarget the node to assert those guarantees, and make the first-send waiter give up when the turn is `unproven_only`.
+- **(b) Refuse.** Re-check the original sources before a child persists its outcome, and store it `error` with the refusal.
+- **(c) Crash loudly.** Let the refusal reach the thread, which reverses 6125fbc5b8's containment.
+
+Recommendation: (a). The reply went only to the original database, nothing was written through the changed source, and (b) would discard work the user already received.
 
 **AC #3.** Not ticked: workflows are off-limits to this task. The file should join `pr-fast-lane-admission` ("Run admission-sensitive suites") once the source_loss node is resolved, or join now with that node deselected.
 

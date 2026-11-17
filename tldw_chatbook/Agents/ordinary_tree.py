@@ -921,24 +921,49 @@ class OrdinaryTurn:
             self.primary_hosts.remove(token)
         self._finish_primary_if_returned()
 
+    def return_host(self, owner, release):
+        """Return an owner's host under the original sources.
+
+        A changed original source refuses the scope before any effect. The
+        owner still returned: its host settles unproven (its durability read
+        is refused too), so the claim stays held (TASK-40716) and disposal can
+        leave the turn instead of waiting on a live owner (TASK-41315).
+
+        Returns:
+            None, or the refusal when an original source changed.
+        """
+        try:
+            with (
+                self.source.activate()
+                if self.source is not None
+                else self.retain_source_scope()
+            ):
+                release()
+                self.close_unused_events(owner)
+                self.host_returned(owner)
+                owner.finish_root()
+        except RuntimeError as refused:
+            self.host_returned(owner)
+            owner.finish_root()
+            return refused
+        return None
+
     def _finish_primary_if_returned(self):
         with self.lock:
             if not self.sealed or self.primary_hosts or self.primary_finishing:
                 return
             self.primary_finishing = True
         if self.owner is not None:
-            with (
-                self.source.activate()
-                if self.source is not None
-                else self.retain_source_scope()
-            ):
+
+            def release():
                 if self.stop_notification is not None:
                     _engine, custody = self.stop_notification
                     if custody is not None and not custody.notification_claimed:
                         custody.abandon_unstarted()
-                self.close_unused_events(self.owner)
-                self.host_returned(self.owner)
-                self.owner.finish_root()
+
+            # The turn's run already recorded its outcome; a refusal here is
+            # left held, not raised into the Send that is returning.
+            self.return_host(self.owner, release)
 
 
 def capture_ordinary_local_provider_sources(provider, names):
