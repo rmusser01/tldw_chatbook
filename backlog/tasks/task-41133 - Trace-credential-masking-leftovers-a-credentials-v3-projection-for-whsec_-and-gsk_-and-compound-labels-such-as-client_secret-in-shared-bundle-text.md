@@ -31,6 +31,7 @@ Filed in round 14 of the 2026-10-23 burn-down (closeout, 2026-11-15). Checked ag
 <!-- AC:BEGIN -->
 - [x] #1 A credentials-v3 stored-trace projection masks whsec_ and gsk_ values; existing v1/v2 history still verifies, and new traces use v3
 - [x] #2 Shared bundle text masks compound credential labels the log sanitizer masks (client_secret=, refresh_token= and the like), with tests red first
+- [x] #3 An older trace bundle whose text looks like it holds a credential imports, with every such value masked by the current rules, and is never refused for it
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -56,7 +57,7 @@ The rule comment beside `_CREDENTIAL_PROJECTIONS` now names both of these, so th
 - User names: `user_name=`, `username:`.
 - Labels that are not credentials: `max_tokens`, `next_page_token`.
 
-Known limits, after review r15tr-rev8. Under a compound credential label the bundle keeps only the allowlist. Every value, quoted or not, is judged with the whole expression it starts. That expression runs to a top-level `,` or `;`, an unbalanced closer, or the next field (`name=`, `name:`, `"name":`). It also runs over line ends while a bracket is open. It is kept only when the value is kept, every later literal is a look-alike, and no random-looking word sits outside quotes. These are the remaining ways a real secret could be kept:
+Known limits, after review r15tr-rev9. Under a compound credential label the bundle keeps only the allowlist. Every value, quoted or not, is judged with the whole expression it starts. That expression runs to a `;`, a comma before a field, an unbalanced closer, the next field (a quoted key only when it names a credential), or the line end. It also runs over line ends while a bracket is open or after a `\` continuation. It is kept only when the value is kept, every later literal is a look-alike, and no random-looking word sits outside quotes. These are the remaining ways a real secret could be kept:
 - Under any label:
   - a placeholder (`your-word`, `YOUR_WORD`, `YourWordHere`, `example`, `none`, all-`x`/`*`);
   - a digit-free name or a phrase in angle brackets (`<letmein>` is kept by design);
@@ -64,10 +65,11 @@ Known limits, after review r15tr-rev8. Under a compound credential label the bun
   - a known-root path with no random-looking segment;
   - a dotted name of conventional segments;
   - an UPPER_SNAKE constant holding every label word;
-  - code whose first arguments and indexes are names (an UPPER env name that is not 12+ letters with five consonants in a row, a compound key in a call, any lowercase key in an index) and whose other literals are look-alike values. So `SecretStr("HUNTER")` and `SecretStr("super_secret")` are kept.
+  - code whose first arguments and indexes are names (an UPPER env name that is not 12+ letters with five consonants in a row, a compound key in a call, any lowercase key in an index, a lowercase `/`-path with no letter-and-digit word) and whose other literals are look-alike values. So `SecretStr("HUNTER")` and `SecretStr("super_secret")` are kept.
+  - a type annotation (`str`, `SecretStr`, `Optional[str]`, `str | None`), whose `= default` is judged as the value.
 - Under issued-secret and token labels only (not password labels or labels ending in `secret`/`secret_key`):
   - `changeme`;
-  - a non-dotted call;
+  - a call, including one the grammar does not parse (nested, a number or keyword argument, over lines), when its literals and words pass and every credential label inside it holds a look-alike;
   - a value that is wholly a time or an ISO date, or starts with `scheme://` or `file:/`;
   - the label's own name, bare or versioned by at most two digits;
   - a snake name of credential words only;
@@ -75,18 +77,22 @@ Known limits, after review r15tr-rev8. Under a compound credential label the bun
   - a function word followed by a word that is not token-shaped. Token-shaped means letters and digits, two case humps, or 12+ letters with five consonants in a row. So random letters with vowels between, such as `client_secret: the abcdefghijkl`, are still read as prose.
 - A URL's `?key=` value: lowercase words or a `/`-path with no letter-and-digit word are kept.
 - An unquoted value that runs on past its first word stops before the next `name=` field (`db_password=my pass=word here` leaves `pass=word here`).
-- An escape-quoted value (`\"client_secret\": \"...\"`, JSON inside a string) is judged as a lone literal, with nothing after it.
+- An escape-quoted value (JSON inside a string) is judged as a lone literal.
+- A label after a comparison with space before its operator (`a == other_secret: return`) is an operand when a statement keyword follows its colon.
 
-Simple labels (`api_key=`, `token:`) stay with the export's older rule. A trailing full stop and a separator before the next field stay visible. `==` is never a separator, and a comparison's right operand is not a label, so `if client_secret == other_secret: return` is kept.
+Simple labels (`api_key=`, `token:`) stay with the export's older rule, shared with the logs, so `api_key: str = os.getenv("API_KEY", "")` is still masked. A trailing full stop and a separator before the next field stay visible. `==` is never a separator.
 
 Masked by design although they are not secrets:
-- Any call the grammar does not parse, masked whole: nested, with a number argument, or spread over lines. That includes a look-alike like a black-formatted `os.environ.get(\n    "CLIENT_SECRET",\n    "",\n)`.
-- `tokens[0]`.
+- A call under a strict label that the grammar does not parse, such as `secret_key=base64.b64encode(os.urandom(32))`.
+- `tokens[0]`, since an index head is not a call.
 - `cfg.get("token")`, since a lowercase call key needs an underscore.
 - An expression longer than 2 KB, masked to the end of the line the limit falls on.
 - A label read as a condition without a comparison (`if client_secret: return`).
+- A value followed, without a comma, by a quoted non-credential key (`"user": "bob"`).
 - A date or code under a strict label.
 - Names with words besides the label's.
+
+Older bundles are never refused for credential-looking text. On import, every value the current rules mask is masked by the export's own `_mask_credential_material` (owner decision 2026-11-17).
 
 **Review r15tr-rev1.** The first rule missed real values and over-masked look-alikes, and it could leave a partial mask (`db_password=Tr0ub4dor&3` came out as `[credential redacted]&3`).
 - **Value extent.** A value is now quoted whole, or bare up to whitespace, a quote, or a `&`/`;`/`,` that starts another field (`name=`) or ends the text. So a value is never cut inside itself. Labels may repeat separators (pydantic's `APP__CLIENT_SECRET`).
@@ -364,3 +370,60 @@ Masked by design although they are not secrets:
   - Serial with lane flags: the recovered-suites slice (19 targets) gives 610 passed in 202 s at load 48-63; `Tests/Utils/test_log_sanitizer.py` gives 209 passed.
   - `Tests/CI` gives 1640 passed, 1 skipped (load 65-100). The module ratchet gives 207 passed, and the ruff gate is OK.
   - `./scripts/preflight.sh` passes (rc 0, load 42-46).
+
+**Owner decision (2026-11-17), recorded verbatim as relayed in review round r15tr-rev9:**
+
+> **Owner decision (2026-11-17), to add to fix round 9:** "Re-mask on import". Importing an older trace bundle whose text looks like it holds a credential no longer refuses it. The bundle is imported with those values masked by the current rules.
+
+AC #3 was added for it.
+
+**Review r15tr-rev9.**
+- **The fixes:**
+  1. **Comparison operands.**
+     - The `_COMPOUND_LABEL` lookbehinds are gone. A label is now skipped as an operand only when its separator is `:`, a statement keyword (`return`, `pass`, `break`, `continue`, `raise`) follows, and a comparison with space before its operator precedes it.
+     - So `session_token=...== client_secret=...`, `sig=...== client_secret=...`, `x>= client_secret=...` and `a == client_secret: GOCSPX-...` are all masked (in `_MUST_MASK`), while the seven comparison rows stay kept and import.
+     - The spaced-operator test follows the ruling. On its own it masks none of the four rows: the statement test does that, since a glued operator never comes before a statement in them.
+  2. **Type annotations.**
+     - Under a `:` label, a type annotation is kept: builtin and `typing` names, `SecretStr`/`SecretBytes` (not any `Secret*` word, which would keep `Secretpassword`), one level of brackets, and `|` unions.
+     - A `= default` after it is judged as the value.
+     - The six annotation rows are in `_MUST_KEEP` and import; `client_secret: str = "GOCSPX-..."` is in `_MUST_MASK`.
+  3. **Balanced calls.**
+     - Under a non-strict label, a call the grammar does not parse (nested, a number, `None` or keyword argument, over lines) is kept when its brackets balance, its literals pass the tail judgement, no random word sits outside quotes, and every credential label inside it holds a look-alike under its own label.
+     - It is then not scanned again, which keeps nested calls linear: probe16's nested-kept-spans went from 0.81 s back to 0.05 s at 0.21 MB.
+     - First-argument names may also be a lowercase `/`-path (`vault.read("secret/data/app")`).
+     - The four reviewer rows are in `_MUST_KEEP` and import.
+     - An index head (`tokens[0]`) and any strict label stay masked, and both JSON-leak cases from rev8 stay masked in the serialized bundle.
+- **Other probe17 leaks:**
+  - `\` line continuations and triple-quoted strings are expression tokens; a triple-quoted literal is judged as a value.
+  - A top-level comma ends an expression only before a field, closer or line end, so the tuple `CLIENT_SECRET, "GOCSPX-..."` is masked.
+  - A quoted key ends an expression only when it names a credential, so `cfg.get("x") "note": "GOCSPX-..."` is masked. My rev8 rows `quoted-keys-without-commas` and `quoted-keys-after-code` now use a credential key (`"refresh_token":`); with `"user":` they are masked.
+- **Re-mask on import** (owner decision, recorded verbatim above; AC #3).
+  - `trajectory_export._mask_credential_material` mirrors the old `_has_credential_material` walk and returns a masked copy:
+    - a credential-looking key becomes `[credential key redacted]`;
+    - a credential-named key's value becomes `[credential redacted]`;
+    - text goes through `_credential_text`.
+  - `_has_credential_material` is now `_mask_credential_material(...)[1]`, so the export's final gate and import's re-mask are one function.
+  - `trajectory_import._validate_v2` no longer raises "Trace v2 import blocked: credentials are forbidden ...". It re-masks the manifest and events after the digest check, which still runs on the file as written. Every other refusal (size bounds, malformed bundles, digest) is unchanged.
+  - Tests:
+    - The `_MUST_MASK` test now imports an older bundle per row and asserts the imported text equals the export's masking and keeps no part of the secret. The `_MUST_KEEP` test asserts the import is unchanged.
+    - `test_an_older_bundle_holding_a_newly_masked_shape_is_refused_on_import` became `..._imports_masked`, and `test_resigned_bundle_with_credentials_is_rejected_on_import` became `..._imports_with_them_masked`.
+    - The new `test_an_import_of_a_must_mask_bundle_stores_only_masked_text` loads every must-mask text, a credential-named key and a credential-looking key into one bundle, and checks what the import keeps.
+    - Against the refusal code, all 245 of these import tests were red.
+  - Lane: the renamed and new nodes are pinned in the recovered-suites lane. No other test pinned the refusal copy.
+  - User Guide: no page said such a bundle was refused. `console/semantic-trace-capture.md` gains one sentence on masking as an older bundle loads.
+- **Cost.**
+  - `_credential_label_text` caches the credential check for label text only. Statement and annotation checks run only when a known word starts the value. String tokens dispatch on their first quote.
+  - probe13 (rev5/head): 0.33/0.33 s, 0.28/0.30 s and 0.35/0.36 s. probe15 chain/plain: 1.2 and 1.0.
+  - probe11: ratio 4.1. At MB scale, escaped 8 MB takes 1.39 s, quoted-prose 9.2 MB 1.67 s and mixed-unclosed 6.8 MB 2.63 s (rev8 1.39, 1.66 and 2.55).
+  - Head against my rev8 commit at 3.4–5 MB, same load: equal within 0-5%.
+- **Tables.** `_MUST_MASK` has 245 rows, all 15 probe17 hunt rows among them. `_MUST_KEEP` has 100 rows. Against the rev8 sanitizer, 17 nodes were red: 8 mask, 9 keep.
+- **Adapted probe9** (`$FU/r15tr-probe9-r9.py`): 64 loosenings, with fragments updated and 18 new for rev9. Baseline is 0 red, and every loosening turns at least one must-mask row red.
+  - I dropped a backslash guard on balanced calls after its loosening turned no row red; an escaped literal is judged as a value anyway.
+- **Probes.**
+  - probe17: 0 kept of 15, each masked whole. 14 of its 15 look-alike rows are kept and import. The last is `api_key: str = os.getenv(...)`, masked by the shared simple-label rule and imported masked.
+  - probe16: 0 kept. probe14: 0 kept (its `SecretStr("secret")` KEPT line is the label-substring artifact).
+  - probe12: no fields swallowed.
+  - probe10: KEPT only for the three declined rows. probe8: 0 kept.
+  - probe2, probe_labels and probe3-7: as before.
+  - `probe_equiv` (rev9 corpus 4870): 0 diffs.
+  - Adversarial: the slowest case is 0.36 s CPU.

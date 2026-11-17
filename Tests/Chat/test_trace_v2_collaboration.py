@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import copy
+import dataclasses
 import hashlib
 import json
 import random
@@ -930,6 +931,32 @@ _MUST_MASK: dict[str, tuple[str, str]] = {
         )
     },
     "probe16-or-changeme": ("db" + _L + 'password=os.getenv("DB_PASSWORD") or "changeme"', "changeme"),
+    # rev9 (probe17): every hunt row
+    **{
+        f"probe17-{name}": (text, secret)
+        for name, text, secret in (
+            ("after-padding", "session" + _L + "token=dGVzdHRva2VuMTIz== client" + _L + "secret=" + _G, _G),
+            ("after-short-padding", "sig=AbCdEf123== client" + _L + "secret=" + _G, _G),
+            ("after-glued-comparison", "x>= client" + _L + "secret=" + _G, _G),
+            ("after-spaced-comparison", "a == client" + _L + "secret: " + _G, _G),
+            ("ternary-first", "client" + _L + 'secret: isProd ? "' + _G + '" : "dev"', _G),
+            ("ternary-second", "client" + _L + 'secret: isProd ? "dev" : "' + _G + '"', _G),
+            ("ternary-in-dict", '{"client' + _L + 'secret": prod ? "' + _G + '" : "x", "user": "bob"}', _G),
+            ("quoted-key-after-code", "client" + _L + 'secret = cfg.get("x") "note": "' + _G + '"', _G),
+            ("dict-over-lines", "client" + _L + 'secret = {\n    "prod": "' + _G + '",\n}', _G),
+            ("parenthesised-concat", "client" + _L + 'secret = (\n    "GOCSPX-"\n    "' + _P8 + '"\n)', _P8),
+            ("continued-line", "client" + _L + 'secret = "GOCSPX-" \\\n    "' + _P8 + '"', _P8),
+            ("triple-quoted", "client" + _L + 'secret = """\n' + _G + '\n"""', _G),
+            ("black-call-exploded", "client" + _L + 'secret = os.environ.get(\n    "CLIENT_SECRET",\n    "' + _G + '",\n)', _G),
+            ("tuple", "client" + _L + 'secret = CLIENT_SECRET, "' + _G + '"', _G),
+            ("dotted-or", "client" + _L + 'secret = cfg.client_secret or "' + _G + '"', _G),
+        )
+    },
+    "annotation-secret-default": ("client" + _L + 'secret: str = "' + _G + '"', _G),
+    # rev9 (probe9 adapted): the rules' own parts
+    "quoted-key-after-name": ("client" + _L + 'secret = CLIENT_SECRET "note": "' + _G + '"', _G),
+    "annotation-like-word": ("db" + _L + "password: Secretpassword", "Secretpassword"),
+    "path-key-token": ("client" + _L + 'secret = vault.read("secret/k9mp2vl7wq8z")', "k9mp2vl7wq8z"),
 }
 
 #: name -> text that must survive a shared bundle unchanged.
@@ -1030,9 +1057,25 @@ _MUST_KEEP: dict[str, str] = {
     "comparison-not-equal": "if client" + _L + "secret != other_secret: return",
     "comparison-less-equal": "while client" + _L + "secret <= max_secret: pass",
     "comparison-greater-equal": "if client" + _L + "secret >= min_secret: break",
-    # rev8: a quoted key ends the expression before it, comma or not
-    "quoted-keys-without-commas": '"client' + _L + 'secret": "YOUR_CLIENT_SECRET" "user": "bob"',
-    "quoted-keys-after-code": '"client' + _L + 'secret": os.getenv("CLIENT_SECRET") "user": "bob"',
+    # rev8/rev9: a quoted credential key ends the expression before it, comma
+    # or not ('"note": "..."' does not: it belongs to the value)
+    "quoted-keys-without-commas": '"client' + _L + 'secret": "YOUR_CLIENT_SECRET" "refresh' + _L + 'token": "YOUR_TOKEN"',
+    "quoted-keys-after-code": '"client' + _L + 'secret": os.getenv("CLIENT_SECRET") "refresh' + _L + 'token": "YOUR_TOKEN"',
+    # rev9 (probe17): type annotations, kept, with a look-alike default
+    "annotation-str": "client" + _L + "secret: str",
+    "annotation-secretstr": "client" + _L + "secret: SecretStr",
+    "annotation-field-default": "client" + _L + 'secret: str = Field(..., description="OAuth client secret")',
+    "annotation-union-none": "client" + _L + "secret: str | None = None",
+    "annotation-optional-none": "client" + _L + "secret: Optional[str] = None",
+    "annotation-indented": "    client" + _L + "secret: str | None = None",
+    # rev9 (probe17): balanced calls judged by their literals
+    "balanced-nested-call": "client" + _L + 'secret = base64.b64decode(os.environ["CLIENT_SECRET_B64"])',
+    "balanced-call-then-index": "client" + _L + 'secret = json.loads(os.environ["SECRETS"])["client_secret"]',
+    "balanced-numeric-keyword": "client" + _L + 'secret = vault.read("secret/data/app", version=2)',
+    "balanced-call-over-lines": "client" + _L + 'secret = os.environ.get(\n    "CLIENT_SECRET"\n)',
+    # rev9 (probe17): comparisons
+    "comparison-none": "if access" + _L + "token == None:",
+    "comparison-two-names": "ok = refresh" + _L + "token == expected_token",
 }
 
 
@@ -1047,25 +1090,35 @@ def _survives(secret: str, original: str, output: str) -> bool:
     )
 
 
+def _imported_result(text: str) -> str:
+    """Import an older bundle holding ``text`` and return it as imported."""
+    older = _build(_snapshot())
+    older["events"][0]["payload"]["result"] = text
+    imported = trajectory_import.load_imported_trace(_resign(older))
+    return imported.snapshot.turns[0].records[0].payload["result"]
+
+
 @pytest.mark.parametrize("name", sorted(_MUST_MASK))
 def test_every_secret_in_the_must_mask_table_is_masked(name: str) -> None:
-    """Review r15tr-rev3: masked whole in a shared bundle, a second pass
-    changes nothing, and an older bundle holding it is refused on import."""
+    """Review r15tr-rev3: masked whole in a shared bundle and a second pass
+    changes nothing. An older bundle holding it imports, with the secret
+    masked (owner decision 2026-11-17, "Re-mask on import")."""
     text, secret = _MUST_MASK[name]
 
     masked, changed = trajectory_export._credential_text(text)
     serialized, _payload = _export_bytes_with(text, "full_trace")
+    imported = _imported_result(text)
 
     assert changed and not _survives(secret, text, masked), masked
     assert trajectory_export._credential_text(masked) == (masked, False)
-    assert trajectory_export._has_credential_material({"result": text})
     assert secret.encode() not in serialized
+    assert imported == masked and not _survives(secret, text, imported), imported
 
 
 @pytest.mark.parametrize("name", sorted(_MUST_KEEP))
 def test_every_look_alike_in_the_must_keep_table_is_kept_and_imports(name: str) -> None:
     """Review r15tr-rev3: kept unchanged in every profile, and an older bundle
-    holding it imports."""
+    holding it imports unchanged."""
     text = _MUST_KEEP[name]
     assert trajectory_export._credential_text(text) == (text, False)
 
@@ -1078,9 +1131,7 @@ def test_every_look_alike_in_the_must_keep_table_is_kept_and_imports(name: str) 
             item["reason"] in {"credential", "credential_key"}
             for item in payload["manifest"]["redaction_provenance"]
         ), profile
-    older = _build(_snapshot())
-    older["events"][0]["payload"]["result"] = text
-    trajectory_import.load_imported_trace(_resign(older))
+    assert _imported_result(text) == text
 
 
 @pytest.mark.parametrize(
@@ -1315,7 +1366,8 @@ def test_code_and_docs_that_only_look_like_credentials_survive_a_shared_bundle(
     unterminated private key also masked these in a new export and refused an
     older bundle holding them. The bundle uses their credential-shaped forms,
     so these survive and import, while real ones stay masked (the shapes
-    test above) and refused (the import test below)."""
+    test above), also when an older bundle holds them (the import test
+    below)."""
     assert trajectory_export._credential_text(text) == (text, False)
 
     _serialized, payload = _export_bytes_with(text, profile)
@@ -1329,20 +1381,17 @@ def test_code_and_docs_that_only_look_like_credentials_survive_a_shared_bundle(
     trajectory_import.load_imported_trace(_resign(older))
 
 
-def test_an_older_bundle_holding_a_newly_masked_shape_is_refused_on_import() -> None:
+def test_an_older_bundle_holding_a_newly_masked_shape_imports_masked() -> None:
     """TASK-40301 AC#3: a bundle exported before the export masked these
-    shapes can still hold one verbatim; import refuses it as it refuses any
-    bundle with credential material, and asks for a privacy-safe export."""
+    shapes can still hold one verbatim. It was refused on import; since the
+    owner decision of 2026-11-17 ("Re-mask on import", TASK-41133) it imports
+    with the value masked by the current rules."""
     secret, _body = _LOG_SANITIZER_SHAPES["github-ghp"]
-    payload = _build(_snapshot())
-    payload["events"][0]["payload"]["result"] = f"cloned with {secret}"
-    _resign(payload)
 
-    with pytest.raises(
-        trajectory_import.TrajectoryImportError,
-        match="credentials are forbidden",
-    ):
-        trajectory_import.load_imported_trace(payload)
+    imported = _imported_result(f"cloned with {secret}")
+
+    assert secret not in imported
+    assert imported == trajectory_export._credential_text(f"cloned with {secret}")[0]
 
 
 def test_preflight_has_one_decision_per_material_field_without_count_drift() -> None:
@@ -1615,16 +1664,53 @@ def test_resigned_bundle_cannot_claim_digest_authenticity() -> None:
         trajectory_import.load_imported_trace(payload)
 
 
-def test_resigned_bundle_with_credentials_is_rejected_on_import() -> None:
+def test_resigned_bundle_with_credentials_imports_with_them_masked() -> None:
+    """Owner decision 2026-11-17 ("Re-mask on import", TASK-41133): a
+    resigned bundle holding a credential imports, masked."""
     payload = _build(_snapshot())
     payload["events"][0]["payload"]["injected"] = "password=IMPORTED-SECRET"
     _resign(payload)
 
-    with pytest.raises(
-        trajectory_import.TrajectoryImportError,
-        match="credentials.*forbidden|credential material",
-    ):
-        trajectory_import.load_imported_trace(payload)
+    imported = trajectory_import.load_imported_trace(payload)
+
+    injected = imported.snapshot.turns[0].records[0].payload["injected"]
+    assert "IMPORTED-SECRET" not in injected
+    assert injected == trajectory_export._credential_text("password=IMPORTED-SECRET")[0]
+
+
+def _strings(value: object) -> list[str]:
+    """Every string in a nested structure: keys, values and fields."""
+    if dataclasses.is_dataclass(value):
+        value = dataclasses.asdict(value)
+    if isinstance(value, dict):
+        return [s for key, item in value.items() for s in (*_strings(key), *_strings(item))]
+    if isinstance(value, (list, tuple)):
+        return [s for item in value for s in _strings(item)]
+    return [value] if isinstance(value, str) else []
+
+
+def test_an_import_of_a_must_mask_bundle_stores_only_masked_text() -> None:
+    """Owner decision 2026-11-17 ("Re-mask on import", TASK-41133): an older
+    bundle holding every must-mask secret, under ordinary keys, under a
+    credential-named key and as a key, imports; what the import keeps holds
+    none of them, and nothing in it is credential material any more."""
+    payload = _build(_snapshot())
+    texts = {f"r{index}": text for index, (text, _secret) in enumerate(_MUST_MASK.values())}
+    payload["events"][0]["payload"].update(texts)
+    payload["events"][0]["payload"]["api" + "_key"] = "sk-" + _P8 + _P8
+    payload["events"][0]["payload"]["client" + _L + "secret=" + _G] = "x"
+    _resign(payload)
+
+    imported = trajectory_import.load_imported_trace(payload)
+
+    stored = imported.snapshot.turns[0].records[0].payload
+    kept = "\n".join(_strings(imported.snapshot))
+    for index, (text, secret) in enumerate(_MUST_MASK.values()):
+        assert not _survives(secret, text, stored[f"r{index}"]), secret
+    # The token-shaped fakes appear nowhere in what the import keeps.
+    assert _P8 not in kept and "DONOTUSE" + "abc123" not in kept
+    records = [record for turn in imported.snapshot.turns for record in turn.records]
+    assert not trajectory_export._has_credential_material([record.payload for record in records])
 
 
 @pytest.mark.parametrize("field", ["sensitive", "included", "observed"])
