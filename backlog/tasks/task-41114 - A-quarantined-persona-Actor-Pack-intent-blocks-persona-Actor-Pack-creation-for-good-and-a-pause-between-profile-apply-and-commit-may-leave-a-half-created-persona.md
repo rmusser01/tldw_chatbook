@@ -4,7 +4,7 @@ title: "A quarantined persona Actor Pack intent blocks persona Actor Pack creati
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-15 02:20
-updated_date: 2026-11-17 03:37
+updated_date: 2026-11-17 04:14
 labels:
 - follow-up
 - actor-packs
@@ -97,3 +97,8 @@ Files: `tldw_chatbook/Actor_Packs/persona_coordinator.py`, `tldw_chatbook/Actor_
   - `personas_screen.py` +3 lines; ratchet row 16,889 -> 16,892 with a dated comment.
 - **Finding 4:** the User Guide now places the notice just below the line that names the current mode and its item count (`#personas-purpose`), above the mode buttons.
 - Runs (load 24-41): the inventory file serially with `--timeout=1500`: 56 passed. `Tests/Actor_Packs`, the persona Character_Chat tests, the two Actor Pack UI files, the DB retirement file and the archive-recovery query/search files with `-n 4`: 489 passed, 2 failed (the export golden-byte pair, red at base). Module size ratchet + worker group inventory + three boundary files + undefined globals, serially: 256 passed. `ruff_gate.py` exit 0; `check_markup_interpolation.py` OK.
+
+### Review r15ac-rev3, round 3
+
+- Partial clear: `test_a_pause_between_two_clears_keeps_the_remaining_intent_blocked` sets up two quarantined intents and begins a local pause right after the first delete. The second is refused (`actor_pack_storage_unavailable`). The live `blocked_intent_ids`, the cached summary from `ensure_recovered()`, and the intent table all name only the remaining intent. The app's next recovery read keeps `actor_pack_recovery_blocked`, and `show_actor_pack_recovery_notice` still mounts the notice. Red with the `finally` refresh removed: `assert ('ddd…', 'eee…') == ('eee…',)` on the cached summary. `_stuck_persona_import` now takes the intent ids. The 7 related tests pass.
+- ADR-074's dated note now says a refused persona Actor Pack creation names the stuck import and shows the notice, as a refused import does.

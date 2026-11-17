@@ -1554,29 +1554,30 @@ def test_actor_pack_pause_between_persona_apply_and_commit_leaves_no_half_person
     assert (identity, intents, live) == (None, [], []), "a half-created persona"
 
 
-def _stuck_persona_import(activation):
-    """TASK-41114: a prepared persona intent whose store the user then changed.
+def _stuck_persona_import(activation, intent_ids=("d" * 32,)):
+    """TASK-41114: prepared persona intents whose store the user then changed.
 
-    Startup recovery quarantines it (``authority_mismatch``), which blocks
+    Startup recovery quarantines them (``authority_mismatch``), which blocks
     every later persona Actor Pack creation.
     """
     local, repository = activation.local_service, activation.repository
-    stuck = {"id": "local-persona-stuck", "name": "Stuck", "version": 1}
-    plan = local._actor_pack_plan_persona_profile(stuck, operation="create")
-    repository.prepare_persona_intent(
-        persona_id="local-persona-stuck",
-        operation="create",
-        old_profile=None,
-        new_profile=stuck,
-        old_store_sha256=plan.old_store_sha256,
-        new_store_sha256=plan.new_store_sha256,
-        old_registry_uuid=None,
-        new_registry_uuid="223e4567-e89b-42d3-a456-426614174000",
-        intent_id="d" * 32,
-    )
+    for index, intent_id in enumerate(intent_ids):
+        stuck = {"id": f"local-persona-stuck-{index}", "name": "Stuck", "version": 1}
+        plan = local._actor_pack_plan_persona_profile(stuck, operation="create")
+        repository.prepare_persona_intent(
+            persona_id=stuck["id"],
+            operation="create",
+            old_profile=None,
+            new_profile=stuck,
+            old_store_sha256=plan.old_store_sha256,
+            new_store_sha256=plan.new_store_sha256,
+            old_registry_uuid=None,
+            new_registry_uuid=f"{index + 2}23e4567-e89b-42d3-a456-426614174000",
+            intent_id=intent_id,
+        )
     local.create_persona_profile({"name": "Existing persona"})
     activation.persona_coordinator.ensure_recovered()
-    assert activation.persona_coordinator.blocked_intent_ids == ("d" * 32,)
+    assert activation.persona_coordinator.blocked_intent_ids == tuple(intent_ids)
 
 
 def test_interrupted_persona_import_blocks_until_cleared_and_keeps_personas(
@@ -1650,6 +1651,87 @@ def test_clearing_the_interrupted_import_refuses_during_a_storage_pause(
             "quarantined"
         ]
         assert coordinator.clear_blocked_intents() == 1
+    finally:
+        db.close_idle_connections()
+        db.close_connection()
+
+
+def test_a_pause_between_two_clears_keeps_the_remaining_intent_blocked(
+    tmp_path, monkeypatch
+):
+    """TASK-41114, review r15ac-rev3: a pause that begins after the first of
+    two deletes refuses the second. The live ids and the cached recovery
+    summary the app reads next both name only the remaining intent, and the
+    Personas notice still shows for it."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from textual.app import App
+    from textual.containers import Vertical
+    from textual.widgets import Static
+
+    from tldw_chatbook.Actor_Packs.persona_coordinator import (
+        PersonaActorPackCoordinatorError,
+    )
+    from tldw_chatbook.app_service_wiring import ServiceWiringMixin
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+    from tldw_chatbook.Widgets.Persona_Widgets.actor_pack_recovery_notice import (
+        NOTICE_ID,
+        show_actor_pack_recovery_notice,
+    )
+
+    db, activation, review, trees = _actor_pack_activation_on_profile(
+        tmp_path, monkeypatch, bound=True
+    )
+    coordinator, repository = activation.persona_coordinator, activation.repository
+    first, remaining = "d" * 32, "e" * 32
+    pauses = []
+    cleanup = repository.cleanup_persona_intent
+
+    def cleanup_then_pause(intent_id, *, expected_state):
+        cleanup(intent_id, expected_state=expected_state)  # The pause refuses the 2nd.
+        pauses.append(storage._begin_local_pause())
+
+    try:
+        _stuck_persona_import(activation, (first, remaining))
+        monkeypatch.setattr(repository, "cleanup_persona_intent", cleanup_then_pause)
+        try:
+            with pytest.raises(PersonaActorPackCoordinatorError) as raised:
+                coordinator.clear_blocked_intents()
+        finally:
+            for pause in pauses:
+                pause.resume()
+        assert raised.value.category == "actor_pack_storage_unavailable"
+        assert len(pauses) == 1
+        assert coordinator.blocked_intent_ids == (remaining,)
+        assert coordinator.ensure_recovered().blocked_intent_ids == (remaining,)
+        assert [
+            (row.intent_id, row.state) for row in repository.list_persona_intents()
+        ] == [(remaining, "quarantined")]
+        app = SimpleNamespace(
+            persona_actor_pack_coordinator=coordinator,
+            chachanotes_db=db,
+            actor_pack_recovery_error=None,
+            local_character_persona_service=activation.local_service,
+            loguru_logger=SimpleNamespace(error=lambda *a: None, warning=lambda *a: None),
+        )
+        ServiceWiringMixin.ensure_actor_pack_recovery(app)
+        assert app.actor_pack_recovery_error == "actor_pack_recovery_blocked"
+
+        class Personas(App):
+            def compose(self):
+                with Vertical(id="personas-shell"):
+                    yield Static("Characters", id="personas-purpose")
+
+        async def notice_shows():
+            shell = Personas()
+            shell.persona_actor_pack_coordinator = coordinator
+            async with shell.run_test(size=(140, 20)) as pilot:
+                await show_actor_pack_recovery_notice(shell.screen)
+                await pilot.pause()
+                return bool(shell.screen.query(f"#{NOTICE_ID}"))
+
+        assert asyncio.run(notice_shows())
     finally:
         db.close_idle_connections()
         db.close_connection()

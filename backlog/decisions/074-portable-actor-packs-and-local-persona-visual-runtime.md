@@ -66,8 +66,9 @@ matrix:
   personas and clear the interrupted import**. It deletes only the quarantined intent
   rows under ChaChaNotes admission (a backup or restore pause refuses it and changes
   nothing); Persona JSON and the identity registry stay exactly as they are, and new
-  persona Actor Pack creation works again. A refused import names the stuck import
-  and this action instead of the generic activation failure.
+  persona Actor Pack creation works again. A refused import, and a refused persona
+  Actor Pack creation, name the stuck import and this action (and show the notice)
+  instead of the generic failure.
 
 Because the SQLite rows and committed status change atomically, `prepared` + new
 SQLite is impossible under normal operation and is treated as a contradiction. Intent
