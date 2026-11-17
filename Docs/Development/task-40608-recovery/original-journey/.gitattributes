@@ -1,0 +1,4 @@
+test_task40608.py text eol=crlf
+# The two historical inputs include a final empty line in their SHA-256 digest.
+task40608_trace.py text eol=lf whitespace=-blank-at-eof
+summarize.py text eol=lf whitespace=-blank-at-eof

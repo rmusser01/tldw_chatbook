@@ -12,6 +12,8 @@ The selected Send and Settings access paths now have implementation and focused 
 
 ## Required outcome
 
+The [original journey](original-journey/test_task40608.py), [trace](original-journey/task40608_trace.py), and [timing summary](original-journey/summarize.py) are preserved here. Copy the first two files into `Tests/QA/` in each benchmark checkout. Run `Tests/QA/test_task40608.py::test_project_chat_uat[native]` using the private Windows profile runner and the same loopback fixture. Both journeys run in one test so the write grant and edit use the original chat. The SHA-256 digests of the checked-out test and trace begin with `448015c99604ce96` and `afe87984e26d77b8`. Each side uses identical QA bytes.
+
 Keep every existing storage, permission, currentness, approval, persistence, and retirement check. Both unchanged README and approved-edit journeys must finish below five seconds in every candidate of three sequential pairs, also retaining the original 30% comparison. Order: B1,C1,C2,B2,B3,C3. Subtract only actual measured human approval wait. The final pairs have not started; TASK-40608 remains In Progress.
 
 The accepted architecture uses one contained backend runtime/store/controller/domain/permission owner, finite IPC values, a readonly parent projection adapter, and the real UI attachment. Production process selection remains disabled. Tasks 60 and 61 are complete; Task 62 is active; Task 63's complete mounted-caller qualification is conditional.
