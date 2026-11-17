@@ -78,6 +78,18 @@ async def test_selected_process_home_to_chat_composes_original_surface(request):
                         import inspect
 
                         selected_screen = app.screen
+                        from textual.widgets import Static
+                        import re
+
+                        error_panel = next(iter(selected_screen.query("#screen-content-error-message")), None)
+                        missing_attribute = None
+                        if isinstance(error_panel, Static):
+                            missing = re.search(
+                                r"'(\w+)' object has no attribute '(\w+)'",
+                                str(getattr(error_panel, "content", getattr(error_panel, "renderable", ""))),
+                            )
+                            if missing:
+                                missing_attribute = missing.groups()
                         task = getattr(selected_screen, "_task", None)
                         current = task.get_coro() if type(task) is asyncio.Task else None
                         frames = []
@@ -94,6 +106,7 @@ async def test_selected_process_home_to_chat_composes_original_surface(request):
                         diagnostic = {
                             "app_exception": type(getattr(app, "_exception", None)).__name__,
                             "screen": type(selected_screen).__name__,
+                            "missing_attribute": missing_attribute,
                             "compose_exception": type(getattr(selected_screen, "_console_process_compose_error", None)).__name__,
                             "channel_exception": type(client._channel_error).__name__,
                             "screen_task_done": task.done() if type(task) is asyncio.Task else None,

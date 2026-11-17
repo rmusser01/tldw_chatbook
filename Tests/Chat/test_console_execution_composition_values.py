@@ -34,6 +34,9 @@ def _encode(session):
 
 
 def test_composition_retains_fresh_none_and_detaches_original_policy():
+    from tldw_chatbook.Chat.console_display_state import ConsoleRetrievalScopeState
+    from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem
+
     session = ConsoleChatSession()
     row = decode_session_projection(encode_session_projection(session))
     payload = _encode(session)
@@ -41,6 +44,14 @@ def test_composition_retains_fresh_none_and_detaches_original_policy():
     assert result.agent_handoff_revision is None
     assert result.library_policy == session.library_policy_holder.snapshot
     assert result.library_policy is not session.library_policy_holder.snapshot
+    assert result.held_retrieval_scope == ConsoleRetrievalScopeState.unscoped()
+    scope = RagScope((ScopeItem("note", "private-item"),), "2026-11-17")
+    session.rag_scope_holder.set(scope)
+    scoped = _encode(session)
+    assert decode_session_composition(scoped, row).held_retrieval_scope == (
+        ConsoleRetrievalScopeState.from_scope(scope)
+    )
+    assert "private-item" not in str(scoped)
     assert result.pending_approval_count == 2
     assert result.blocked_turn_reason == "recovery needed"
     assert result.is_stop_allowed and not result.chat_start_prepared

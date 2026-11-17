@@ -20,6 +20,8 @@ from .console_library_policy import (
     ConsoleLibraryPolicyHolder,
     ConsoleLibraryPolicySnapshot,
 )
+from .console_display_state import ConsoleRetrievalScopeState
+from .rag_scope import SessionScopeHolder
 
 
 if TYPE_CHECKING:
@@ -48,6 +50,14 @@ def _policy(value, decode):
     return _record(value, ConsoleLibraryPolicySnapshot, _POLICY, decode)
 
 
+def _held_scope(value, decode):
+    return _record(value, ConsoleRetrievalScopeState, {
+        "is_scoped": _boolean, "item_count": _count, "is_empty": _boolean,
+        "cause": _optional(_text), "conv_item_count": _optional(_count),
+        "ws_item_count": _optional(_count),
+    }, decode)
+
+
 @dataclass(frozen=True, slots=True)
 class ConsoleSessionComposition:
     """Display inputs only; these values never grant Library or session authority."""
@@ -60,6 +70,7 @@ class ConsoleSessionComposition:
     assistant_name: str | None
     character_name: str | None
     library_policy: ConsoleLibraryPolicySnapshot
+    held_retrieval_scope: ConsoleRetrievalScopeState
     agent_handoff_state: str | None
     agent_handoff_revision: int | None
     pending_approval_count: int
@@ -88,6 +99,7 @@ _COMPOSITION = {
     "assistant_name": _optional(_text),
     "character_name": _optional(_text),
     "library_policy": _policy,
+    "held_retrieval_scope": _held_scope,
     "agent_handoff_state": _optional(_text),
     "agent_handoff_revision": _optional(_count),
     "pending_approval_count": _count,
@@ -131,6 +143,7 @@ def encode_session_composition(
     if (
         type(session) is not ConsoleChatSession
         or type(session.library_policy_holder) is not ConsoleLibraryPolicyHolder
+        or type(session.rag_scope_holder) is not SessionScopeHolder
     ):
         raise ConsoleProtocolError("invalid_original_composition_session")
     value = ConsoleSessionComposition(
@@ -142,6 +155,7 @@ def encode_session_composition(
         session.assistant_name,
         session.character_name,
         session.library_policy_holder.snapshot,
+        ConsoleRetrievalScopeState.from_scope(session.rag_scope_holder.scope),
         session.agent_handoff_state,
         session.agent_handoff_revision,
         pending_approval_count,

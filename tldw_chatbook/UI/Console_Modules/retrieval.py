@@ -228,6 +228,19 @@ class ConsoleRetrievalController:
         if cached is not None:
             return cached
         if session.persisted_conversation_id is None:
+            client = getattr(self.app_instance, "console_execution_client", None)
+            if client is not None:
+                from .execution_state import selected_client
+
+                view = client._view
+                if (
+                    selected_client(view) is not client
+                    or view._retrieval is not self
+                    or client.projection_view.active_session_id != session.id
+                    or client.projection_view.session(session.id) is not session
+                ):
+                    raise RuntimeError("Console retrieval display session changed")
+                return client.session_composition.held_retrieval_scope
             return ConsoleRetrievalScopeState.from_scope(session.rag_scope_holder.scope)
         return ConsoleRetrievalScopeState.unscoped()
 
