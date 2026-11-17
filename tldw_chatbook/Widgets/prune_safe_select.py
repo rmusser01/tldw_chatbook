@@ -54,6 +54,8 @@ every region" shape — should use this class instead of `Select`.
 
 from __future__ import annotations
 
+from functools import wraps
+
 from textual.message_pump import NoActiveAppError
 from textual.widgets import Select
 
@@ -141,13 +143,21 @@ def _past_exit_fence(select: Select) -> bool:
 def install_select_exit_gate() -> bool:
     """Give every stock `Select` the `App._exit` half of the guard. Idempotent.
 
-    TASK-41141: about 70 modules compose a stock `Select`, and any of them
-    whose mount is in flight when `App._exit` is set composes no children
-    and then raised `NoMatches: 'SelectOverlay'`. Patching the two methods
-    on `Select` itself covers them all; the `_pruning`/`_closing` half stays
-    on `PruneSafeSelect`, whose controls pin that stock `Select` still raises
-    under a prune. `TldwCli.__init__` installs it, so no app module import
-    pays for it.
+    TASK-41141: 98 modules construct a stock `Select`, and any of them whose
+    mount is in flight when `App._exit` is set composes no children and then
+    raised `NoMatches` (`SelectOverlay` from `_on_mount`/`set_options`,
+    `#label` from a value change). This wraps the two methods on `Select`
+    itself, so it covers them all. Past `App._exit`, every stock `Select`,
+    with or without its children, stops repainting and stops posting
+    `Select.Changed`; only `_value` and the stored options stay current. The
+    `_pruning`/`_closing` half stays on `PruneSafeSelect`, whose controls pin
+    that stock `Select` still raises under a prune.
+
+    `TldwCli.__init__` installs it, so no app module import pays for it. The
+    patch is process-wide and permanent: in a test process, stock `Select`
+    behaves differently once any `TldwCli` has been built, in any test or
+    worker, so a test of stock behaviour past `_exit` must not depend on
+    which tests ran before it.
 
     Returns:
         ``True`` if this call installed the gate, ``False`` if it already was.
@@ -156,15 +166,20 @@ def install_select_exit_gate() -> bool:
     if getattr(setup, "_exit_gated", False):
         return False
 
-    def _setup_options_renderables(self) -> None:
+    @wraps(setup)
+    def _setup_options_renderables(self, *args, **kwargs):
         if not _past_exit_fence(self):
-            setup(self)
+            return setup(self, *args, **kwargs)
+        return None
 
-    def _watch_value(self, value) -> None:
+    # `wraps` keeps upstream's signature, which Textual reads to decide
+    # whether a watcher gets `(value)` or `(old, value)`.
+    @wraps(watch)
+    def _watch_value(self, *args, **kwargs):
         if _past_exit_fence(self):
-            self._value = value  # The one non-DOM statement upstream.
-            return
-        watch(self, value)
+            self._value = args[-1]  # The one non-DOM statement upstream.
+            return None
+        return watch(self, *args, **kwargs)
 
     _setup_options_renderables._exit_gated = True
     Select._setup_options_renderables = _setup_options_renderables

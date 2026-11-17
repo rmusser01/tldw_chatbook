@@ -1080,3 +1080,45 @@ async def test_a_stock_select_composed_after_app_exit_began_does_not_crash(
             assert select.value == "c"
         finally:
             app._exit = False  # Let run_test's own teardown run as usual.
+
+
+@pytest.mark.asyncio
+async def test_a_stock_select_whose_label_composes_after_app_exit_keeps_its_value(
+    monkeypatch,
+):
+    """TASK-41141 review: the `_watch_value` half of the stock Select gate.
+
+    `SelectCurrent` mounts before `App._exit` and composes `#label` after it,
+    so the label never mounts; the stock watcher then raised
+    `NoMatches('#label')` on the next value change.
+    """
+    from textual.containers import Vertical
+    from textual.widgets._select import SelectCurrent
+
+    from Tests.UI.app_factory import _build_test_app
+
+    class HostApp(App):
+        def compose(self):
+            yield Vertical(id="host")
+
+    real_compose = SelectCurrent.compose
+
+    def compose_as_exit_begins(current):
+        current.app._exit = True  # What App.exit and TldwCli._shutdown set.
+        return real_compose(current)
+
+    _build_test_app()  # TldwCli.__init__ installs the gate on stock Select.
+    monkeypatch.setattr(SelectCurrent, "compose", compose_as_exit_begins)
+    app = HostApp()
+    async with app.run_test() as pilot:
+        try:
+            select = Select([("A", "a"), ("B", "b")], id="stock")
+            await app.query_one("#host").mount(select)
+            await pilot.pause()
+            assert not select.query("#label")
+            select.value = "b"
+            await pilot.pause()
+            assert app._exception is None, "the stock Select's value change crashed"
+            assert select.value == "b"
+        finally:
+            app._exit = False
