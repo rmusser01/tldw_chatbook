@@ -19,8 +19,8 @@ def _observe(monkeypatch, platform, elapsed, *, missing=None, failure=None):
         "persona-restored-capture": "NATIVE_PERSONA_CAPTURE_COMPLETE",
     }
 
-    def child(home, script, label, *, timeout):
-        calls.append((label, timeout))
+    def child(home, script, label, *, timeout, idle=None):
+        calls.append((label, timeout, idle))
         if label == "persona-later" and failure is not None:
             raise failure
         return "" if label == missing else markers.get(label, "")
@@ -41,22 +41,25 @@ def _observe(monkeypatch, platform, elapsed, *, missing=None, failure=None):
 
 @pytest.mark.parametrize("platform,elapsed,later", [
     ("linux", 0, 650), ("linux", 50, 600), ("linux", 500, 150),
-    ("linux", 610, 40), ("darwin", 50, 150), ("win32", 50, 900),
+    ("linux", 610, 40), ("darwin", 50, 600), ("win32", 50, 900),
 ])
 def test_later_observation_spends_only_remaining_setup_headroom(
     tmp_path, monkeypatch, platform, elapsed, later
 ):
     calls = _observe(monkeypatch, platform, elapsed)
     workflow.test_native_nested_persona_pack_survives_reopen_and_later_rollback(tmp_path)
+    idle = workflow._HANG_SECONDS
+    # TASK-40306/41115: the fixture's children and the later child fail only
+    # once idle, under their caps; the final observations keep fixed budgets.
     assert calls == [
-        ("seed-persona", 480 if platform == "win32" else 70),
-        ("seed-persona", 480 if platform == "win32" else 70),
-        ("persona-capture", 480 if platform == "win32" else 120),
-        ("persona-replacement", 600 if platform == "win32" else 150),
-        ("persona-reopen", 300 if platform == "win32" else 90),
-        ("persona-later", later),
-        ("persona-restored-reopen", 300 if platform == "win32" else 90),
-        ("persona-restored-capture", 480 if platform == "win32" else 120),
+        ("seed-persona", 600, idle),
+        ("seed-persona", 600, idle),
+        ("persona-capture", 600, idle),
+        ("persona-replacement", 600, idle),
+        ("persona-reopen", 600, idle),
+        ("persona-later", later, idle),
+        ("persona-restored-reopen", 300 if platform == "win32" else 90, None),
+        ("persona-restored-capture", 480 if platform == "win32" else 120, None),
     ]
 
 
@@ -86,4 +89,4 @@ def test_later_child_timeout_is_preserved_without_running_final_checks(tmp_path,
     with pytest.raises(subprocess.TimeoutExpired) as caught:
         workflow.test_native_nested_persona_pack_survives_reopen_and_later_rollback(tmp_path)
     assert caught.value is original
-    assert calls[-1] == ("persona-later", 600)
+    assert calls[-1] == ("persona-later", 600, workflow._HANG_SECONDS)
