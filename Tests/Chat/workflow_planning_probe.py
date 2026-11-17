@@ -573,6 +573,47 @@ async def exercise():
         )
         assert request.conversation_id == session.persisted_conversation_id
         assert request.conversation_id != session.id
+
+        def assert_returned_failure_recovery(error_text):
+            # ADR-356 decision 6 (TASK-39147): a required failure after positive
+            # physical return hands its unresolved tail to a recovery receipt and
+            # then retires the actual owner once. It is never a settled drain.
+            returned = prepared.planning_recovery_return()
+            assert prepared._planning_physical_returned
+            assert returned.owner is prepared.primary_owner
+            assert returned.claim is prepared.primary_claim
+            assert str(returned.error) == error_text, "original failure was hidden"
+            assert not prepared.primary_owner.is_admitted
+            assert prepared.primary_owner._root_finished
+            assert not prepared._planning_settled
+            assert prepared.primary_claim.id not in runtime.worktree_activity._claims
+            assert attempt.workflow_id in runtime.worktree_activity._recovery
+            assert (
+                controller._fleet_wake._automatic_primary_claims.get(session.id) is None
+            )
+            committed = mode in {"required-return", "late-source-return"}
+            with owned_goal_storage(service), service.db.connection() as conn:
+                native = conn.execute(
+                    "SELECT a.state,p.status,p.retirement FROM automatic_wake_attempts a "
+                    "JOIN workflow_phase_attempts p ON p.native_attempt_id=a.id WHERE a.id=?",
+                    (attempt.id,),
+                ).fetchone()
+                saved = service.get(attempt.workflow_id)
+            assert tuple(native) == (
+                ("completed", "completed", "drained")
+                if committed
+                else ("review_required", "uncertain", "unknown")
+            )
+            assert saved.status == "recovery_required"
+            assert bool(saved.plans) is committed
+            assert saved.accounting.uncertain is not committed
+            assert saved.accounting.used["generation"] == 1
+            assert saved.accounting.used["model_call"] == 1
+            assert saved.accounting.used["child_launch"] == 0
+            assert len(calls) == 1
+            assert (root / "source.py").read_text() == "original source\n"
+            print("F_RETURNED_REQUIRED_FAILURE_RECOVERED_" + mode, flush=True)
+
         if mode == "late-source-return":
             source_code = prepared._planning_return_source.__func__.__code__
 
@@ -596,22 +637,12 @@ async def exercise():
             release.set()
             try:
                 await driver
-            except (asyncio.CancelledError, RuntimeError):
+            except asyncio.CancelledError:
                 threading.setprofile_all_threads(None)
-                assert prepared.primary_owner.is_admitted, (
-                    "cancelled caller hid original producer failure and retired root"
+                assert_returned_failure_recovery(
+                    "late original tracked source return failed"
                 )
-                assert not prepared._planning_settled
-                assert (
-                    controller._fleet_wake._automatic_primary_claims.get(session.id)
-                    is prepared._planning_token
-                )
-                assert prepared.primary_claim.id in runtime.worktree_activity._claims
-                with owned_goal_storage(service):
-                    saved = service.get(attempt.workflow_id)
-                assert saved.plans and saved.accounting.used["generation"] == 1
-                retained_failure = True
-                raise RuntimeError("F_REQUIRED_CUSTODY_RETAINED_" + mode) from None
+                return
             raise AssertionError("late tracked failure returned native completion")
         if mode == "unused":
             await prepared.close()
@@ -650,6 +681,13 @@ async def exercise():
                 await prepared.run_planning()
             except Exception:  # noqa: BLE001 - retain original uncertainty or inspect exact native failure.
                 threading.setprofile_all_threads(None)
+                if mode in {"required-write", "required-return"}:
+                    assert_returned_failure_recovery(
+                        "required plan write failed"
+                        if mode == "required-write"
+                        else "required terminal return unknown"
+                    )
+                    return
                 assert prepared.primary_owner.is_admitted
                 if mode == "worker-failure":
                     assert entered.is_set() and prepared._planning_provider_failure
@@ -663,7 +701,7 @@ async def exercise():
                 assert prepared.primary_claim.id in runtime.worktree_activity._claims
                 with owned_goal_storage(service):
                     saved = service.get(attempt.workflow_id)
-                assert bool(saved.plans) == (mode == "required-return")
+                assert not saved.plans
                 assert saved.accounting.used["generation"] == 1
                 retained_failure = True
                 raise RuntimeError("F_REQUIRED_CUSTODY_RETAINED_" + mode) from None
@@ -686,6 +724,9 @@ async def exercise():
             except TimeoutError:
                 assert prepared.primary_owner.is_admitted
                 assert not prepared._planning_terminal_returned
+                assert disposal is None or not disposal.done(), (
+                    "runtime shutdown returned before provider worker"
+                )
             else:
                 raise AssertionError(
                     "planning retired before original provider worker returned"
@@ -693,7 +734,21 @@ async def exercise():
             finally:
                 release.set()
                 if not driver.done():
-                    await driver
+                    await asyncio.wait([driver])
+            if mode == "shutdown-worker-tail":
+                # Shutdown ends the reply's wait (TASK-33666), so the held call's
+                # usage is interrupted and stays uncertain; the planner then
+                # refuses settlement and takes the ADR-356 recovery path.
+                assert_returned_failure_recovery("workflow_not_settled")
+                assert driver.exception() is prepared.planning_recovery_return().error
+                with owned_goal_storage(service), service.db.connection() as conn:
+                    assert [
+                        tuple(row)
+                        for row in conn.execute(
+                            "SELECT state,actual_amount FROM automatic_work_reservations WHERE kind='tokens'"
+                        )
+                    ] == [("uncertain", None)]
+                return
             result = driver.result()
         elif mode in {"cancel-cleanup", "maintenance-tail"}:
             if mode == "maintenance-tail":
@@ -800,7 +855,6 @@ async def exercise():
             "budget-zero",
             "cancel-cleanup",
             "maintenance-tail",
-            "shutdown-worker-tail",
             "wrapper-changed",
             "wrapper-unavailable",
             "executor-replaced",

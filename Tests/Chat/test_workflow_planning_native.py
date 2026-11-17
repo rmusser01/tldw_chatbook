@@ -77,17 +77,9 @@ def test_native_planning_original_input_and_receivers(tmp_path, mode):
     )
 
 
-@pytest.mark.parametrize(
-    "mode",
-    [
-        "required-write",
-        "required-return",
-        "worker-failure",
-        "response-close-failure",
-        "late-source-return",
-    ],
-)
+@pytest.mark.parametrize("mode", ["worker-failure", "response-close-failure"])
 def test_native_planning_required_failure_retains_original_custody(tmp_path, mode):
+    # A failed native scope retains its real owner (ADR-356 decision 6).
     # This is an uncertainty-retention control, never a successful drain receipt.
     with pytest.raises(AssertionError, match="F_REQUIRED_CUSTODY_RETAINED_" + mode):
         _run(
@@ -97,6 +89,25 @@ def test_native_planning_required_failure_retains_original_custody(tmp_path, mod
             script=Path(__file__).with_name("workflow_planning_probe.py").read_text(),
             timeout=60,
         )
+
+
+@pytest.mark.parametrize(
+    "mode", ["required-write", "required-return", "late-source-return"]
+)
+def test_native_planning_returned_required_failure_hands_custody_to_recovery(
+    tmp_path, mode
+):
+    # After positive physical return, ADR-356 decision 6 records the failure in a
+    # recovery receipt and retires the owner once; never a settled drain.
+    _run(
+        tmp_path,
+        mode,
+        "success",
+        script=Path(__file__).with_name("workflow_planning_probe.py").read_text(),
+        timeout=60,
+    )
+    output = (tmp_path / "restart-output.log").read_text(encoding="utf-8")
+    assert "F_RETURNED_REQUIRED_FAILURE_RECOVERED_" + mode in output
 
 
 def test_planning_retains_root_until_original_provider_worker_returns(tmp_path):
@@ -117,6 +128,8 @@ def test_shutdown_waits_for_same_native_planning_worker_return(tmp_path):
         script=Path(__file__).with_name("workflow_planning_probe.py").read_text(),
         timeout=60,
     )
+    output = (tmp_path / "restart-output.log").read_text(encoding="utf-8")
+    assert "F_RETURNED_REQUIRED_FAILURE_RECOVERED_shutdown-worker-tail" in output
 
 
 @pytest.mark.parametrize(
