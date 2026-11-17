@@ -4,7 +4,7 @@ title: "A Library Media-to-Notes switch is reported to leave focus on a hidden M
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-17 05:35'
+updated_date: '2026-11-17 08:33'
 created_date: 2026-11-15 02:20
 labels:
 - follow-up
@@ -103,7 +103,7 @@ Reproduced on base cc6006fcf5, and fixed.
 - **Census node re-pinned.** `test_library_notes_move_never_false_conflicts.py::test_a_genuine_conflict_offers_a_working_refresh` asserted the old "empty list → filter" landing after Refresh. It now waits for the first note row, with the entry window raised to the file's `WAIT` (10 s) so CI load cannot close it first, and Tab still moves on.
   - With only the arm-level grip clearing it still failed 4 of 5 serial runs. A trace showed the waiting arm revoked by the sync's own restore landing on the filter (a stale "notice-refresh" identity) and by a grip reset. The `on_descendant_focus` rule above fixed it.
   - It then passed 5 of 5 serial runs and 3 runs of 4 copies at `-n 4` (12 of 12, load 20-27). Lesson added under the TASK-41129 entry in `lessons-textual.md`.
-- **The restore guard (round 1) is no longer independently pinned.** With the descendant-focus rule, the reviewer's `noguard` mode leaves `[late]` and both revisit cases green, 2 of 2. The guard is kept because it stops the stale restore from moving focus at all.
+- **The restore guard (round 1) is still pinned, under load** (corrected in fix round 4). With the reviewer's `noguard` mode, `[late]` and the revisit cases failed 4 of 4 runs at load 30-62 (review r15lf-rev3). The "green 2 of 2" I first recorded was measured at load 20-27, where the race does not open.
 - **Runs.**
   - The 16 changed shell cases passed 3 of 3 at `-n 4` (load 23-44).
   - Widened covering set (16 Library files, adding folder navigator, tree keys, the filter files and the census file, plus every Notes node of `test_library_shell.py`, run through the reviewer's `bootstrap_ui` mode): 537 passed, 21 failed (load 22-32). 2 of the failures were `RecoveryRequired`.
@@ -111,3 +111,25 @@ Reproduced on base cc6006fcf5, and fixed.
   - Other destinations' filter and entry tests (conversations continuity, crit9 shell, prompt journeys, skills canvas, filter fast path extended): 37 passed.
   - Ratchets and wiring: 103 passed.
 - **Size.** `library_screen.py` 38232 -> 38268 lines, 1379 methods.
+
+**Fix round 4 (review r15lf-rev3, 2026-11-17).**
+- **A user's click on a pane grip during a waiting entry ended with nothing focused.** Textual focuses the clicked grip before the `MouseDown` reaches the screen, so round 3's grip rule cleared the user's own landing, and `on_mouse_down` then disarmed. Fix: `get_focusable_widget_at`, which Textual calls only for a press and just before focusing, now disarms a pending Database Notes entry. The grip's focus event then finds nothing armed, and the click wins.
+- **The exemption is narrowed.** `on_descendant_focus` no longer exempts every landing carrying the programmatic marker. It exempts only the Notes canvas sync's own default restore, whose landing `_restore_library_notes_after_targeted_sync` now records in `_library_entry_restore_landing` (cleared on use and on disarm), plus a grip. A deliberate marked `set_focus` during the wait disarms the entry.
+- **Folder files.** Every round-2 and round-3 rule (waiting for rows, grip clearing at arm and at expiry, the descendant rule, the click disarm) now applies only to the Database list: `_library_notes_database_entry()` requires the BROWSE_NOTES row and the Database source. A probe of Folder files mode found the Database filter and rows still mounted but hidden (not in the focus chain). The same probe found focus left on that hidden filter after switching to Folder files, on base cc6006fcf5 as on head; it is pre-existing and listed as a follow-up.
+- **Pins** (`Tests/UI/test_library_shell.py`):
+  - `test_a_click_on_a_grip_while_the_notes_entry_waits_keeps_the_grip[media-switch|create-escape]`: a real `pilot.click` on the Library grip while rows are held. The grip must keep focus, the entry must be disarmed, and the arriving rows must not take focus to a row. Red on round 3 (`2855776855`), 2 of 2 runs ("The clicked grip lost focus to None").
+  - `test_a_deliberate_programmatic_focus_during_the_notes_wait_is_kept`: a marked `set_focus` on the rail search box while the entry waits must disarm it, and the rows must not take focus to a row. Red on round 3, 2 of 2 ("left the entry armed"). The box sits outside the repainting canvas; a canvas control such as Sort or New was pruned by the loading repaint within 20 ms, so its focus event arrived stale.
+  - `test_the_entry_window_expiry_treats_a_grip_as_unset`: the reviewer's deterministic sequence (arm with New as the target, `set_focus(grip)`, expire synchronously) must land on New. Red with the grip clause removed (`noexpgrip`): focus stays on `library-browse-items-grip`.
+  - `test_the_empty_list_fallback_never_focuses_a_hidden_control`: zero notes, the Notes canvas hidden, entry armed and attempted. Focus must not go to the hidden filter. Red without the focus-chain check (`nochain`, the round-2 body): "focus went to a hidden filter". The case is reachable in Folder files mode, where the Database filter stays mounted but hidden, so the hardening stays.
+- **Two pins stop short of "the clicked or chosen control keeps focus".** When the held rows arrive, the canvas sync replays its own focus identity. A grip has no role, so that falls back to the filter; the rail search box resolves to the rail row. That is the canvas sync's general rule, older than this task, so the pins assert only that the entry does not take focus back. Listed as a follow-up.
+- **The 12 Library lane nodes the reviewer flagged** (`$FU/r15lf-rev3/lane-failed.txt`). Each was run 3 times (`REV_REPEAT=3`) at `-n 3`, with head, the round-2 emulation (reviewer modes `nodesc,noarmclear,noexpgrip,nochain`) and base cc6006fcf5 running at the same time so they share the load. Failures out of 36:
+
+| tree | before this fix (load 59-110) | after this fix (load 60-83) |
+|---|---|---|
+| head | 8 | 0 |
+| round-2 emulation | 6 | 3 |
+| base | 6 | 1 |
+
+  `test_resume_arms_exactly_one_timer_and_it_fires_once` failed 3 of 3 on all three trees in the first comparison, and 2 of 3 on the round-2 emulation in the second. The other failures scatter one or two per tree. Round 3 did not cause them. They are load flakes, and after this round's Database gate head is green 36 of 36.
+- **Runs.** The 11 changed nodes (22 cases, the census node included) passed 3 of 3 at `-n 4` (load 68-82). Ratchets and wiring: 103 passed.
+- **Size.** `library_screen.py` 38268 -> 38287 lines, 1379 -> 1380 methods. `library_notes_controller.py` 7459 -> 7462.

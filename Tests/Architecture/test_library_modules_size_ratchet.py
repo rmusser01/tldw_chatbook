@@ -667,7 +667,9 @@ _BUDGETS: dict[str, int] = {
     # restore stands down while the list entry channel is armed: -> 7463.
     # 2026-11-17, TASK-41129 follow-up: the landing helper only arms the
     # entry with New as its empty target: 7463 -> 7459.
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7459,
+    # 2026-11-17, TASK-41129 review r15lf-rev3: the targeted-sync restore
+    # names its landing for the entry's descendant rule: 7459 -> 7462.
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7462,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_

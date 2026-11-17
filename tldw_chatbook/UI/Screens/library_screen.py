@@ -4173,6 +4173,10 @@ class LibraryScreen(BaseAppScreen):
         self._library_pending_list_entry_focus_anchor: Widget | None = None
         #: TASK-41128: where an armed entry lands when the list is truly empty.
         self._library_pending_list_entry_empty_target = "#library-notes-filter"
+        #: TASK-41129 review r15lf-rev3: the widget a Notes canvas sync's own
+        #: focus restore just landed on, so its queued focus event does not
+        #: revoke an entry armed right after it.
+        self._library_entry_restore_landing: Widget | None = None
         # task-2856 review (PR #1410, Qodo): the settle-window timer
         # ``_arm_library_list_entry_focus`` schedules used to be fire-and-
         # forget -- the ``Timer`` ``set_timer`` returns was never kept, so
@@ -8569,6 +8573,11 @@ class LibraryScreen(BaseAppScreen):
         programmatic, and a compact transition's settled restore took it back.
         """
         self._mark_library_notes_user_interaction()
+        if self._library_pending_list_entry_focus and self._library_notes_database_entry():
+            # Review r15lf-rev3: the click is the user's choice. Disarm before
+            # Textual focuses its target, so a waiting Notes entry's rules for
+            # the app's own landings never see it.
+            self._disarm_library_list_entry_focus()
         return super().get_focusable_widget_at(x, y)
 
     def on_mouse_down(self, event: events.MouseDown) -> None:
@@ -11035,7 +11044,7 @@ class LibraryScreen(BaseAppScreen):
         self._media_state.successful_focus_ownership = None
         focused = self.focused
         if (
-            self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+            self._library_notes_database_entry()
             and focused is not None
             and focused.has_class(LIBRARY_ADAPTIVE_READER_GRIP_CLASS)
         ):
@@ -11163,7 +11172,7 @@ class LibraryScreen(BaseAppScreen):
                 focused is None
                 or focused.has_class(LIBRARY_ADAPTIVE_READER_GRIP_CLASS)
             )
-            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+            and self._library_notes_database_entry()
         ):
             chain = self.focus_chain
             for selector in (
@@ -11199,6 +11208,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_pending_list_entry_focus = False
         self._library_pending_list_entry_media_return = None
         self._library_pending_list_entry_empty_target = "#library-notes-filter"
+        self._library_entry_restore_landing = None
         self._library_pending_list_entry_focus_anchor = None
         self._media_state.return_settlement = None
         self._media_state.last_exact_settlement = None
@@ -11381,19 +11391,20 @@ class LibraryScreen(BaseAppScreen):
             and self._library_pending_list_entry_media_return is not None
         ):
             return
-        if row_class == "library-notes-row" and (
-            target_restore
-            or (widget is not None and widget.has_class(LIBRARY_ADAPTIVE_READER_GRIP_CLASS))
-        ):
-            # TASK-41129 review: neither is the user leaving the list -- a
-            # key or a click disarms first, in ``on_key``/``on_mouse_down``.
-            # A Notes repaint's own focus restore (a stale identity resolving
-            # to the filter) keeps the entry waiting for its rows; so does a
-            # grip, Textual's reset off a control the repaint removed, which
-            # is also not left holding focus.
-            if not target_restore:
+        if self._library_notes_database_entry() and widget is not None:
+            # TASK-41129 reviews: two landings are the app's own, not the user
+            # leaving the list (a key or a click disarms first, in ``on_key``
+            # and ``get_focusable_widget_at``). A Notes canvas sync's default
+            # restore -- a stale identity resolving to the filter -- keeps the
+            # entry waiting for its rows; so does a grip, Textual's reset off
+            # a control the repaint removed, which is not left holding focus.
+            # Any other landing, a deliberate marked one included, disarms.
+            if widget is self._library_entry_restore_landing:
+                self._library_entry_restore_landing = None
+                return
+            if widget.has_class(LIBRARY_ADAPTIVE_READER_GRIP_CLASS):
                 self.set_focus(None)
-            return
+                return
         self._disarm_library_list_entry_focus()
 
     def _focus_library_list_entry_if_current(self, generation: int) -> None:
@@ -11479,6 +11490,13 @@ class LibraryScreen(BaseAppScreen):
                 return control
         return None
 
+    def _library_notes_database_entry(self) -> bool:
+        """The Notes entry targets the Database list, not Folder files."""
+        return (
+            self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+            and self._notes_state.source == LIBRARY_NOTES_SOURCE_DATABASE
+        )
+
     def _library_notes_entry_list_settled(self) -> bool:
         """Whether the Notes list has loaded with no note row (TASK-41129)."""
         projection = self._build_library_notes_tree_projection()
@@ -11534,6 +11552,7 @@ class LibraryScreen(BaseAppScreen):
                 return
             if (
                 row_class == "library-notes-row"
+                and self._library_notes_database_entry()
                 and not self._library_notes_entry_list_settled()
             ):
                 # TASK-41129: rows still loading -- wait for them, not the

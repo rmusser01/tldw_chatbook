@@ -34492,6 +34492,208 @@ async def test_an_exit_while_the_notes_list_reloads_never_parks_on_a_grip(
             assert on_new(), f"after the rows: {screen.focused!r}"
 
 
+def _hold_notes_placements(app):
+    """Hold the Notes placements load while ``hold["on"]``; ``release`` frees it."""
+    service = app.notes_scope_service
+    release = asyncio.Event()
+    hold = {"on": False}
+    page_placements = service.page_note_placements
+
+    async def maybe_held(**kwargs):
+        if hold["on"]:
+            await release.wait()
+        return await page_placements(**kwargs)
+
+    service.page_note_placements = maybe_held
+    return hold, release
+
+
+async def _start_a_waiting_notes_entry(screen, pilot, start: str, hold) -> None:
+    """Leave a Notes entry waiting for held rows, by one of two real routes."""
+    if start == "media-switch":
+        hold["on"] = True
+        screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_MEDIA}").press()
+        media_row = await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                not screen._library_pending_list_entry_focus
+                and media_row in screen.focus_chain
+            ),
+            message="Media entry did not settle with its rows reachable.",
+        )
+        screen.set_focus(media_row)
+        screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_NOTES}").press()
+    else:
+        screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_NOTES}").press()
+        await _wait_for_notes_entry_focus_landing(screen, pilot)
+        screen.query_one("#library-notes-new", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+        await pilot.pause(0.3)
+        hold["on"] = True
+        screen._request_library_notes_tree_initial_load()
+        await pilot.press("escape")
+    await _wait_for_selector(screen, pilot, "#library-browse-library-grip")
+    await _wait_for_condition(
+        pilot,
+        lambda: (
+            screen._library_pending_list_entry_focus
+            and screen._notes_state.view == "list"
+            and not screen.query(".library-notes-row")
+        ),
+        message="The Notes entry never started waiting for its rows.",
+    )
+    await pilot.pause(0.3)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("start", ["media-switch", "create-escape"])
+async def test_a_click_on_a_grip_while_the_notes_entry_waits_keeps_the_grip(
+    start, monkeypatch
+) -> None:
+    """Review r15lf-rev3: a user's click on a pane grip wins over a waiting entry.
+
+    Textual focuses the clicked grip before the screen sees the MouseDown, so
+    the rule that clears a grip landing (Textual's reset) cleared the user's
+    click too, and ``on_mouse_down`` then disarmed: nothing was focused.
+    """
+    monkeypatch.setattr(
+        library_screen_module, "LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS", 10.0
+    )
+    app = _build_test_app()
+    _seed_conversations(
+        app, _two_conversations(), notes=_two_notes(), media=_two_media_items()
+    )
+    hold, release = _hold_notes_placements(app)
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _start_a_waiting_notes_entry(screen, pilot, start, hold)
+        grip = screen.query_one("#library-browse-library-grip")
+        await pilot.click(grip)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.focused is grip,
+            message=lambda: f"The clicked grip lost focus to {screen.focused!r}.",
+        )
+        assert not screen._library_pending_list_entry_focus
+        release.set()
+        await _wait_for_selector(screen, pilot, ".library-notes-row")
+        await pilot.pause(0.5)
+        # The disarmed entry does not take focus back to a row. (The rows'
+        # repaint then replays its own focus identity; a grip has no role,
+        # so that falls back to the filter -- a canvas-sync rule outside
+        # this pin.)
+        assert not (
+            screen.focused is not None and screen.focused.has_class("library-notes-row")
+        ), f"after the rows: {screen.focused!r}"
+
+
+@pytest.mark.asyncio
+async def test_a_deliberate_programmatic_focus_during_the_notes_wait_is_kept(
+    monkeypatch,
+) -> None:
+    """Review r15lf-rev3: only the canvas sync's own stale restore keeps the
+    waiting entry armed. Code that deliberately moves focus with the
+    programmatic marker (as Sort's hand-offs do) is a new owner: the entry
+    disarms, and the rows arriving later do not take focus to a row."""
+    monkeypatch.setattr(
+        library_screen_module, "LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS", 10.0
+    )
+    app = _build_test_app()
+    _seed_conversations(
+        app, _two_conversations(), notes=_two_notes(), media=_two_media_items()
+    )
+    hold, release = _hold_notes_placements(app)
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _start_a_waiting_notes_entry(screen, pilot, "media-switch", hold)
+        # A control outside the repainting canvas, so the landing survives.
+        search = screen.query_one("#library-search-input")
+        assert search in screen.focus_chain
+        screen._library_notes_programmatic_focus_target = search
+        screen.set_focus(search)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.focused is search,
+            message=lambda: f"Could not focus the search box: {screen.focused!r}.",
+        )
+        await pilot.pause(0.3)
+        assert not screen._library_pending_list_entry_focus, (
+            "a deliberate marked landing left the entry armed"
+        )
+        release.set()
+        await _wait_for_selector(screen, pilot, ".library-notes-row")
+        await pilot.pause(0.5)
+        # The entry does not take focus to a row. (The rows' own repaint then
+        # replays its focus identity; outside the canvas that resolves to the
+        # rail row -- a canvas-sync rule outside this pin.)
+        assert not (
+            screen.focused is not None and screen.focused.has_class("library-notes-row")
+        ), f"the entry took focus back: {screen.focused!r}"
+
+
+@pytest.mark.asyncio
+async def test_the_entry_window_expiry_treats_a_grip_as_unset() -> None:
+    """Review r15lf-rev3: the expiry's grip clause, deterministically.
+
+    Focus on a pane grip when the window closes is Textual's reset, not a
+    choice; the expiry lands the arm's empty-list target, never leaving the
+    grip holding focus.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=[])
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_NOTES}").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-empty")
+        grip = await _wait_for_selector(screen, pilot, "#library-browse-items-grip")
+        await pilot.pause(0.5)
+        screen._arm_library_list_entry_focus(empty_target="#library-notes-new")
+        screen.set_focus(grip)
+        assert screen.focused is grip
+        screen._expire_library_list_entry_focus()
+        assert getattr(screen.focused, "id", None) == "library-notes-new", (
+            screen.focused
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_empty_list_fallback_never_focuses_a_hidden_control() -> None:
+    """Review r15lf-rev3: the fallback only lands inside the focus chain.
+
+    ``set_focus`` accepts a widget whose ancestor is display-hidden (it checks
+    ``focusable``, which reads visibility, not display). With the Notes canvas
+    hidden, an armed entry on an empty list must not put focus in its filter.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=[])
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_NOTES}").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-empty")
+        await pilot.pause(0.5)
+        notes_filter = screen.query_one("#library-notes-filter")
+        screen.set_focus(None)
+        screen.query_one("#library-notes-canvas").display = False
+        await pilot.pause()
+        assert notes_filter not in screen.focus_chain
+        screen._arm_library_list_entry_focus()
+        screen._focus_library_list_entry()
+        assert screen.focused is not notes_filter, "focus went to a hidden filter"
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("load", ["late", "past-window"])
 async def test_notes_entry_waits_for_rows_that_are_still_loading(

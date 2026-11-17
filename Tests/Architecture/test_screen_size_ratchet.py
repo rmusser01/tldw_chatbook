@@ -1380,7 +1380,12 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: a grip landing when it arms, is not revoked by the app's own restore or
     #: a grip reset, counts a grip as unset at expiry, and lands its fallback
     #: only inside the focus chain: 38232 -> 38268 lines, 1379 methods.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38268, 1379),
+    #: 2026-11-17, TASK-41129 review r15lf-rev3: a click disarms a waiting
+    #: Notes entry before Textual focuses its target, only the canvas sync's
+    #: own restore landing is exempt, and every rule is limited to the
+    #: Database list (``_library_notes_database_entry``): 38268 -> 38287
+    #: lines, 1379 -> 1380 methods.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38287, 1380),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

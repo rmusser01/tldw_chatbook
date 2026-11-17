@@ -2304,6 +2304,9 @@ class LibraryNotesController:
         # row (TASK-41129 review r15lf-rev1).
         if not getattr(self._screen, "_library_pending_list_entry_focus", False):
             self._restore_library_notes_focus_identity(identity)
+            # Review r15lf-rev3: name this landing; an entry armed by the
+            # sync's own ``then`` must not be revoked by its focus event.
+            self._screen._library_entry_restore_landing = self.focused
         # Scroll SECOND and deferred. The restore above already attempts it,
         # but at this point the freshly mounted children have not been laid
         # out yet -- the container's max scroll is still 0, so ``scroll_to``
