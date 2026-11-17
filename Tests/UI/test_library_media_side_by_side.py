@@ -692,7 +692,7 @@ async def test_compact_media_empty_page_landing_survives_a_queued_grip_focus(
         )
         controller = screen._library_media_browse_controller
         service.media_items = []
-        screen._request_library_media_browse(
+        screen._media_controller._request_library_media_browse(
             controller.mutation_refresh_scope, focus_identity=None
         )
         await _wait_for_condition(
@@ -740,7 +740,7 @@ async def test_wide_media_reader_reset_leaves_focus_the_user_holds_in_the_rail()
         assert screen.focused is search
         controller = screen._library_media_browse_controller
         service.media_items = []
-        screen._request_library_media_browse(
+        screen._media_controller._request_library_media_browse(
             controller.mutation_refresh_scope, focus_identity=None
         )
         await _wait_for_condition(
