@@ -75,6 +75,7 @@ def provider_resolution(
     # defaults both to None.
     extra.setdefault("continuation_protocol", None)
     extra.setdefault("api_mode", None)
+    extra.setdefault("execution_key", "")
     resolution = SimpleNamespace(
         ready=ready,
         provider=provider,

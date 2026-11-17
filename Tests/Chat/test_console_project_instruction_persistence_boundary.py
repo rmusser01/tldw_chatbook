@@ -7,6 +7,7 @@ import time
 from io import BytesIO
 from pathlib import Path
 
+import pytest
 from loguru import logger
 
 import tldw_chatbook.Chat.console_agent_bridge as bridge_module
@@ -23,7 +24,10 @@ from tldw_chatbook.Chat.console_chat_models import (
     ProjectInstructionActivationEvent,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-from tldw_chatbook.Chat.console_provider_gateway import ProviderToolCalls
+from tldw_chatbook.Chat.console_provider_gateway import (
+    ConsoleProviderResolution,
+    ProviderToolCalls,
+)
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.Tools.workspace_tool_executor import (
@@ -31,7 +35,7 @@ from tldw_chatbook.Tools.workspace_tool_executor import (
     WorkspaceToolExecutor,
 )
 from tldw_chatbook.Tools.workspace_tool_protocol import WorkspaceToolResponse
-from tldw_chatbook.Tools.workspace_tool_worker import run_workspace_worker
+from Tests.workspace_worker_test_support import run_in_process_workspace_worker
 
 
 SENTINEL = "CHATBOOK_AGENTS_SENTINEL_7d1e9c"
@@ -49,7 +53,7 @@ class _InProcessWorkspaceExecutor:
     def execute(self, operation: str, arguments: dict, *, intent: str) -> str:
         request = self._executor._build_request(operation, arguments, intent=intent)
         stdout = BytesIO()
-        run_workspace_worker(BytesIO(request.to_bytes()), stdout, BytesIO())
+        run_in_process_workspace_worker(BytesIO(request.to_bytes()), stdout, BytesIO())
         response = WorkspaceToolResponse.from_bytes(
             stdout.getvalue().splitlines()[-1],
             expected_operation_id=request.operation_id,
@@ -59,9 +63,15 @@ class _InProcessWorkspaceExecutor:
         return response.result or ""
 
 
-class _Resolution:
-    provider = "Groq"
-    execution_key = "groq"
+def _resolution() -> ConsoleProviderResolution:
+    return ConsoleProviderResolution(
+        provider="Groq",
+        execution_key="groq",
+        model="model",
+        base_url="",
+        ready=True,
+        readiness_key="groq",
+    )
 
 
 class _ProviderSpy:
@@ -90,6 +100,7 @@ def _native_fs_read():
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_automatic_nested_body_is_absent_from_every_durable_and_diagnostic_surface(
     tmp_path,
 ):
@@ -141,7 +152,7 @@ def test_automatic_nested_body_is_absent_from_every_durable_and_diagnostic_surfa
         _run_id, outcome = bridge.run_reply(
             conversation_id="conv",
             session_id=session.id,
-            resolution=_Resolution(),
+            resolution=_resolution(),
             assistant_message_id=assistant.id,
             model="model",
             session_system_prompt="",
@@ -181,6 +192,7 @@ def test_automatic_nested_body_is_absent_from_every_durable_and_diagnostic_surfa
     assert MODEL_QUOTATION in repr(store.messages_for_session(session.id))
 
 
+@pytest.mark.bootstrap_profile
 def test_activation_callback_failure_is_content_free_and_does_not_block_provider(
     tmp_path, monkeypatch
 ):
@@ -242,7 +254,7 @@ def test_activation_callback_failure_is_content_free_and_does_not_block_provider
         _run_id, outcome = bridge.run_reply(
             conversation_id="conv",
             session_id=session.id,
-            resolution=_Resolution(),
+            resolution=_resolution(),
             assistant_message_id=assistant.id,
             model="model",
             session_system_prompt="",

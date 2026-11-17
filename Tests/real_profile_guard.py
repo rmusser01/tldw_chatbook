@@ -21,7 +21,9 @@ into the profile can still be removed. Paths relative to a directory fd are
 resolved through the fd. The real home comes from ``TLDW_TEST_REAL_HOME``,
 which the first process to install the guard exports so xdist workers and
 pytest children inherit it, then from the password database, never from the
-sandboxed ``HOME``.
+sandboxed ``HOME``. A containment parent can pass an explicit resolved-root
+snapshot so guard installation and sandbox checks need no real-profile metadata
+reads in the child; the audit hook and refusal reporting remain the same.
 
 Each refusal raises at the call site and is recorded with the writing thread
 and stack, so a writer that swallows the exception still fails its test (the
@@ -47,6 +49,7 @@ Known limits:
 from __future__ import annotations
 
 import atexit
+import json
 import os
 import sys
 import threading
@@ -60,6 +63,7 @@ if TYPE_CHECKING:
     from xdist.workermanage import WorkerController
 
 REAL_HOME_ENV = "TLDW_TEST_REAL_HOME"
+PROFILE_SNAPSHOT_ENV = "TLDW_TEST_REAL_PROFILE_SNAPSHOT"
 WORKEROUTPUT_KEY = "tldw_real_profile_refusals"
 _WRITE_FLAGS = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND
 # event -> ((path arg, dir-fd arg or None, destructive tree op), ...). The
@@ -119,6 +123,62 @@ def _norm(path: str) -> str:
     return path.lower() if sys.platform == "darwin" else path
 
 
+def _profile_snapshot() -> tuple[Path, tuple[str, ...]] | None:
+    raw = os.environ.get(PROFILE_SNAPSHOT_ENV)
+    if raw is None:
+        return None
+    try:
+        snapshot = json.loads(raw)
+        if not isinstance(snapshot, dict) or set(snapshot) != {"home", "roots"}:
+            raise ValueError
+        home, roots = snapshot["home"], snapshot["roots"]
+        if (
+            not isinstance(home, str)
+            or not os.path.isabs(home)
+            or os.path.abspath(home) != home
+            or not isinstance(roots, list)
+            or not roots
+            or any(
+                not isinstance(root, str)
+                or not os.path.isabs(root)
+                or _norm(os.path.abspath(root)) != root
+                for root in roots
+            )
+        ):
+            raise ValueError
+        real_home = _real_home()
+        if real_home is None or not {
+            _norm(os.path.abspath(real_home / ".config" / "tldw_cli")),
+            _norm(os.path.abspath(real_home / ".local" / "share" / "tldw_cli")),
+        }.issubset(roots):
+            raise ValueError
+    except (TypeError, ValueError) as error:
+        raise ValueError("invalid real-profile guard snapshot") from error
+    return Path(home), tuple(roots)
+
+
+def resolved_real_home() -> Path | None:
+    """Return the parent's resolved home without probing it in contained children."""
+    snapshot = _profile_snapshot()
+    if snapshot is not None:
+        return snapshot[0]
+    home = _real_home()
+    return home.resolve() if home is not None else None
+
+
+def child_environment() -> dict[str, str]:
+    """Resolve guard identities in the parent before a child's metadata boundary."""
+    home = _real_home()
+    if home is None:
+        return {}
+    return {
+        REAL_HOME_ENV: str(home),
+        PROFILE_SNAPSHOT_ENV: json.dumps(
+            {"home": str(resolved_real_home()), "roots": protected_roots()}
+        ),
+    }
+
+
 def protected_roots() -> tuple[str, ...]:
     """Return the real-profile directories the guard protects.
 
@@ -126,6 +186,9 @@ def protected_roots() -> tuple[str, ...]:
         Absolute, case-normalised paths of the real user's tldw config and
         data directories, or an empty tuple when no real home is known.
     """
+    snapshot = _profile_snapshot()
+    if snapshot is not None:
+        return snapshot[1]
     home = _real_home()
     if home is None:
         return ()
