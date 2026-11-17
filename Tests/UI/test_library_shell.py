@@ -6267,7 +6267,12 @@ def test_library_resize_geometry_rejects_transient_without_polling(
     retry = Mock()
     monkeypatch.setattr(screen, "call_after_refresh", retry)
 
-    getattr(screen, sync_name)()
+    receiver = (
+        screen._media_controller
+        if sync_name == "_sync_library_media_reader_layout_from_shell"
+        else screen
+    )
+    getattr(receiver, sync_name)()
 
     retry.assert_not_called()
 
