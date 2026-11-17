@@ -6039,18 +6039,56 @@ class ChatScreen(BaseAppScreen):
             return
         store = self._ensure_console_chat_store()
         session_id = store.active_session_id
-        session = (
-            getattr(store, "_sessions", {}).get(session_id)
-            if session_id is not None
-            else None
-        )
         rail.sync_model_recovery(
             session_id=session_id,
-            failures=(
-                session.settings_persistence_failures if session is not None else {}
-            ),
+            failures=self._console_settings_failure_display(),
             default_state=self._console_default_durability_state(),
         )
+
+    def _console_settings_failure_display(self):
+        """Read the current session's displayed failures, without retry authority."""
+        from ..Console_Modules.execution_state import selected_client
+
+        selected = selected_client(self)
+        if selected is not None:
+            return {
+                failure.component: failure
+                for failure in selected.session_composition.recovery.settings_failures
+            }
+        store = self._ensure_console_chat_store()
+        session = store._sessions.get(store.active_session_id)
+        return session.settings_persistence_failures if session is not None else {}
+
+    def _console_selected_continuation_recovery(self):
+        """Return this visit's published original continuation display."""
+        from ..Console_Modules.execution_state import selected_client
+
+        selected = selected_client(self)
+        if selected is None:
+            raise RuntimeError("Console recovery projection owner changed")
+        return selected.session_composition.recovery.continuation
+
+    def _sync_console_selected_recovery(self) -> None:
+        """Refresh the original recovery widgets from one current publication."""
+        from ..Console_Modules.execution_state import selected_client
+
+        selected = selected_client(self)
+        if selected is None:
+            raise RuntimeError("Console recovery projection owner changed")
+        if region := self._console_transcript_region_or_none():
+            region.sync_recovery()
+        try:
+            dispatch = self.query_one(
+                "#console-dispatch-recovery", ConsoleDispatchRecoveryRegion,
+            )
+        except QueryError:
+            pass
+        else:
+            dispatch.sync_recovery(
+                selected.session_composition.session_id,
+                selected.session_composition.recovery.dispatch,
+            )
+        self._sync_console_settings_recovery_surfaces()
 
     @on(Button.Pressed, f"#{CONSOLE_RETRY_GENERATION_SETTINGS_ID}")
     @on(Button.Pressed, f"#{CONSOLE_RETRY_CONTEXT_SETTINGS_ID}")
@@ -15016,7 +15054,10 @@ class ChatScreen(BaseAppScreen):
             if workspace is None:
                 raise RuntimeError("terminal workspace opened before resolution")
             return workspace
-        # Passive recovery reads use only the installed controller.
+        from ..Console_Modules.execution_state import selected_client
+
+        selected = selected_client(self)
+        # Passive recovery reads use only the installed controller or publication.
         return ConsoleTranscriptRegion(
             session_surface_builder=lambda: self._ensure_console_session_surface(),
             recovery_message_builder=(
@@ -15041,6 +15082,10 @@ class ChatScreen(BaseAppScreen):
                 )
             ),
             trace_recovery_state_builder=self._session._console_trace_recovery_state,
+            recovery_state_builder=(
+                self._console_selected_continuation_recovery
+                if selected is not None else None
+            ),
             on_trace_recovery_action=self._session._dispatch_console_trace_recovery,
         )
 
@@ -15270,11 +15315,7 @@ class ChatScreen(BaseAppScreen):
                 settings_summary_state = self._context_spend._build_console_settings_summary_state()
                 settings_store = self._ensure_console_chat_store()
                 settings_session_id = settings_store.active_session_id
-                settings_session = (
-                    getattr(settings_store, "_sessions", {}).get(settings_session_id)
-                    if settings_session_id is not None
-                    else None
-                )
+                settings_failures = self._console_settings_failure_display()
                 system_line_text, system_line_dim = (
                     self._console_rail_system_line_state()
                 )
@@ -15394,11 +15435,7 @@ class ChatScreen(BaseAppScreen):
                         self._session._manual_reaction_label_for_current_actor()
                     ),
                     settings_session_id=settings_session_id,
-                    settings_persistence_failures=(
-                        settings_session.settings_persistence_failures
-                        if settings_session is not None
-                        else {}
-                    ),
+                    settings_persistence_failures=settings_failures,
                     default_durability_state=(self._console_default_durability_state()),
                 )
                 left_rail.can_focus = True
@@ -15609,7 +15646,12 @@ class ChatScreen(BaseAppScreen):
             )
             store = self._console_chat_store
             recovery = None
-            if store is not None and store.active_session_id is not None:
+            from ..Console_Modules.execution_state import selected_client
+
+            selected = selected_client(self)
+            if selected is not None:
+                recovery = selected.session_composition.recovery.dispatch
+            elif store is not None and store.active_session_id is not None:
                 recovery = store.dispatch_recovery_for_presentation(
                     store.active_session_id
                 )

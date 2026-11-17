@@ -14,6 +14,7 @@ from tldw_chatbook.Chat.console_execution_projection_values import (
     encode_session_projection,
 )
 from tldw_chatbook.Chat.console_execution_protocol import ConsoleProtocolError
+from tldw_chatbook.Chat.console_execution_recovery_values import ConsoleRecoveryDisplay
 
 
 def _encode(session):
@@ -30,6 +31,7 @@ def _encode(session):
         mcp_not_connected_count=None, selected_tool_count=0,
         staged_evidence_present=False, staged_evidence_revision=0,
         evidence_sent_notice=None,
+        recovery=ConsoleRecoveryDisplay(None, None, None, ()),
     )
 
 

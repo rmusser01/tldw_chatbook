@@ -417,6 +417,7 @@ class ConsoleBackendPresentation:
             raise RuntimeError("Console composition owner changed")
         for receiver, names in (
             (controller, _COMPOSITION_CONTROLLER_METHODS),
+            (controller.store, _COMPOSITION_STORE_METHODS),
             (controller._chat_start, _COMPOSITION_START_METHODS),
             (self._runtime, _COMPOSITION_RUNTIME_METHODS),
         ):
@@ -446,6 +447,12 @@ class ConsoleBackendPresentation:
         pending = controller.has_pending_approval_round(session.id)
         activity = controller.activity_for(session.id)
         blocked = _COMPOSITION_COPY[1][2][0](controller)
+        if (
+            _recovery_values.capture_recovery_display is not _RECOVERY_CAPTURE[0]
+            or not _definition_current(_RECOVERY_CAPTURE)
+        ):
+            raise RuntimeError("Console recovery capture changed")
+        recovery = _RECOVERY_CAPTURE[0](controller, session)
         return encode_session_composition(
             session,
             pending_approval_count=controller.pending_round_count(session.id),
@@ -468,6 +475,7 @@ class ConsoleBackendPresentation:
             staged_evidence_present=launch is not None,
             staged_evidence_revision=staged_revision,
             evidence_sent_notice=sent_notice,
+            recovery=recovery,
         )
 
     def projection_view(self, identity, projection) -> dict:
@@ -688,6 +696,8 @@ _COMPOSITION_CONTROLLER_METHODS = tuple(
         "trace_call_recovery_preparation", "context_compaction_hold", "preparation_outcome",
         "activity_for", "run_marker_for", "streaming_session_id", "run_state_for",
         "conversation_attention_for",
+        "provider_continuation_recovery_message", "provider_continuation_replay_available",
+        "provider_continuation_owner_is_live", "trace_call_provider_contact",
     )
 )
 _COMPOSITION_START_METHODS = (("is_prepared", _definition(_CompositionStart.is_prepared)),)
@@ -756,3 +766,13 @@ from . import console_backend_run_history as _history_module
 
 _HistoryRead = _history_module.ConsoleBackendRunHistoryRead
 _HISTORY_METHODS = _history_module._METHODS
+
+from . import console_execution_recovery_values as _recovery_values
+from .console_chat_store import ConsoleChatStore as _CompositionStore
+
+_RECOVERY_CAPTURE = _definition(_recovery_values.capture_recovery_display)
+_COMPOSITION_STORE_METHODS = tuple(
+    (name, _definition(getattr(_CompositionStore, name)))
+    for name in ("dispatch_recovery_for_presentation", "dispatch_recovery_for_session",
+                 "provider_continuation_recovery_message")
+)

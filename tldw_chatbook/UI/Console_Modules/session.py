@@ -2044,6 +2044,22 @@ class ConsoleSessionController:
     def _current_visual_identity_actor_scope(self) -> tuple[str, str, str] | None:
         """Return the active local Character or Persona actor scope."""
 
+        from .execution_state import selected_client, selected_workspace_surface
+
+        selected = selected_client(self._screen)
+        if selected is not None:
+            composition = selected.session_composition
+            if composition.runtime_backend != "local":
+                return None
+            if composition.assistant_kind == "persona":
+                actor_id = composition.assistant_id
+                if type(actor_id) is not str or not actor_id or len(actor_id) > 200:
+                    return None
+                return (composition.session_id, "persona", actor_id)
+            facts = next(row for row in selected_workspace_surface(self._screen).sessions
+                         if row.session_id == composition.session_id)
+            return ((composition.session_id, "character", str(facts.character_id))
+                    if facts.character_id is not None else None)
         session = self._active_native_console_session()
         if session is None or session.runtime_backend != "local":
             return None
@@ -7195,6 +7211,11 @@ class ConsoleSessionController:
         Passive display reads only the installed controller and never refreshes settings.
         """
 
+        from .execution_state import selected_client
+
+        selected = selected_client(self._screen)
+        if selected is not None:
+            return selected.session_composition.recovery.trace
         from ...Chat.console_turn_preparation import (
             ConsolePreparationPauseKind,
             library_pause_copy,

@@ -276,6 +276,7 @@ async def refresh_selected_view(screen: ChatScreen, *, checkpoint: str | None = 
             control, screen._build_console_workbench_state(control),
         )
         screen._sync_console_settings_summary()
+        screen._sync_console_selected_recovery()
     await present_selected_decision(screen, client, visit)
     client.require_view(screen, visit)
     return True
@@ -288,6 +289,8 @@ _REFRESH_METHODS = tuple(
         "_build_console_workbench_state", "_push_console_control_state_if_changed",
         "_sync_console_settings_summary", "_sync_console_rail_system_line",
         "_sync_console_agent_section",
+        "_sync_console_selected_recovery", "_console_settings_failure_display",
+        "_console_selected_continuation_recovery", "_sync_console_settings_recovery_surfaces",
     )
 )
 

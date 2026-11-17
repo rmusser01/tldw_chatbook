@@ -22,6 +22,7 @@ from .console_library_policy import (
 )
 from .console_display_state import ConsoleRetrievalScopeState
 from .rag_scope import SessionScopeHolder
+from .console_execution_recovery_values import ConsoleRecoveryDisplay, recovery_display
 
 
 if TYPE_CHECKING:
@@ -88,6 +89,8 @@ class ConsoleSessionComposition:
     staged_evidence_present: bool
     staged_evidence_revision: int
     evidence_sent_notice: int | None
+    runtime_backend: str
+    recovery: ConsoleRecoveryDisplay
 
 
 _COMPOSITION = {
@@ -117,6 +120,8 @@ _COMPOSITION = {
     "staged_evidence_present": _boolean,
     "staged_evidence_revision": _count,
     "evidence_sent_notice": _optional(_count),
+    "runtime_backend": _text,
+    "recovery": recovery_display,
 }
 
 
@@ -135,6 +140,7 @@ def encode_session_composition(
     selected_tool_count: int | None,
     staged_evidence_present: bool, staged_evidence_revision: int,
     evidence_sent_notice: int | None,
+    recovery: ConsoleRecoveryDisplay,
 ) -> dict:
     """Capture only named fields of the original session and its policy snapshot."""
     from .console_chat_store import ConsoleChatSession
@@ -168,6 +174,7 @@ def encode_session_composition(
         tools_published, builtin_tool_count, mcp_tool_count,
         mcp_not_connected_count, selected_tool_count,
         staged_evidence_present, staged_evidence_revision, evidence_sent_notice,
+        session.runtime_backend, recovery,
     )
     return _record(value, ConsoleSessionComposition, _COMPOSITION, False)
 
@@ -187,6 +194,10 @@ def decode_session_composition(
         result.settings_revision,
     ) != (row.id, row.incarnation_id, row.settings_revision):
         raise ConsoleProtocolError("projection_composition_session_changed")
+    trace = result.recovery.trace
+    if (trace is not None and trace.context_hold is not None
+        and trace.context_hold.session_id != result.session_id):
+        raise ConsoleProtocolError("projection_recovery_session_changed")
     if not result.tools_published and any(
         value is not None for value in (
             result.builtin_tool_count, result.mcp_tool_count, result.mcp_not_connected_count

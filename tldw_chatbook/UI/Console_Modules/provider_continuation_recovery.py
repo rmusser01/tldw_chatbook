@@ -943,6 +943,7 @@ class ProviderContinuationTranscriptRegion(ConsoleTranscriptRegion):
         trace_recovery_state_builder: Callable[
             [], TraceCallRecoveryState | None
         ] = lambda: None,
+        recovery_state_builder: Callable[[], ProviderContinuationRecoveryState | None] | None = None,
         on_trace_recovery_action: TraceCallAction = lambda *_args: False,
         **kwargs: object,
     ) -> None:
@@ -952,6 +953,7 @@ class ProviderContinuationTranscriptRegion(ConsoleTranscriptRegion):
         self._recovery_owner_live_builder = recovery_owner_live_builder
         self._on_recovery_action = on_recovery_action
         self._trace_recovery_state_builder = trace_recovery_state_builder
+        self._recovery_state_builder = recovery_state_builder
         self._on_trace_recovery_action = on_trace_recovery_action
 
     def compose(self) -> ComposeResult:
@@ -971,6 +973,8 @@ class ProviderContinuationTranscriptRegion(ConsoleTranscriptRegion):
             yield self._session_surface_builder()
 
     def _recovery_state(self) -> ProviderContinuationRecoveryState | None:
+        if self._recovery_state_builder is not None:
+            return self._recovery_state_builder()
         message = self._recovery_message_builder()
         return provider_continuation_recovery_state(
             message,
