@@ -1,7 +1,7 @@
 ---
 id: TASK-41316
 title: "test_console_first_send_survivor_native.py is 5 of 8 red on dev: the spawned child never reaches its model call"
-status: To Do
+status: In Progress
 created_date: 2026-11-16 19:55
 labels:
 - follow-up
@@ -42,3 +42,12 @@ Lead, not confirmed: the gateway subclasses `Tests/Chat/test_console_skill_subst
 - [ ] #2 All 8 nodes pass on dev at `-n 4`, including the wrapped-config-writer node; any product defect found is fixed with a test that is red first
 - [ ] #3 The file runs on a PR lane, or the task notes record why it should not
 <!-- AC:END -->
+
+## Implementation Plan
+
+ADR required: no. The private child's setup is out of date with the product; no product decision.
+
+1. Probe the private child: dump the parent and sub-agent run steps from AgentRuns to name why the child never reaches its model call.
+2. Fix the cause in the test setup or the shared double (`provider_resolution`, shared with TASK-41315), not per file.
+3. Run all 8 nodes at `-n 4`; re-run any timeout alone and record load.
+4. Preflight; Tests/Architecture.

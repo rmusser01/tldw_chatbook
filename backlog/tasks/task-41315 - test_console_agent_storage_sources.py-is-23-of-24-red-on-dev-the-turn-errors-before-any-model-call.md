@@ -1,7 +1,7 @@
 ---
 id: TASK-41315
 title: "test_console_agent_storage_sources.py is 23 of 24 red on dev: the turn errors before any model call"
-status: To Do
+status: In Progress
 created_date: 2026-11-16 19:55
 labels:
 - follow-up
@@ -35,3 +35,13 @@ Filed from the 2026-11-13..16 burn-down, which saw this file at 23 failing. Re-r
 - [ ] #2 Every node passes on dev at `-n 4`, or is retargeted or retired with the reason recorded; any product defect found is fixed with a test that is red first
 - [ ] #3 The file runs on a PR lane, or the task notes record why it should not
 <!-- AC:END -->
+
+## Implementation Plan
+
+ADR required: no. Test-double drift plus one comparison bug in existing agent-source admission; no new policy or interface.
+
+1. Reproduce `[none-1]` and read the primary run's error step from AgentRuns (not the log line).
+2. Fix the shared provider double (`Tests/console_provider_doubles.provider_resolution`) once, if a child run needs fields the real resolution has.
+3. If the primary error is a product defect, keep `[none-1]` as the red test, fix at the shared comparison, add a focused unit test, mutation-check both.
+4. Classify every remaining node (drift, product, retire) from its own failure text; record the cause of the missing `local:fixture::fixture` definition.
+5. Covering files on base and head; preflight; Tests/Architecture.
