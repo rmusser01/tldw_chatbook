@@ -15,6 +15,10 @@ os.environ["TLDW_AGENTS_AUTOWAKE_ENABLED"] = "false"
 os.environ["OPENAI_API_KEY"] = "private-native-planning-test"
 network_guard.install()
 real_profile_guard.install()
+# A hang bound, not a speed bound: the held-worker and late-source waits below
+# took tens of seconds at load 90 (lessons-testing-evidence: "A fixed child
+# budget kills a child that is only slow").
+HANG_WAIT_SECONDS = 60
 
 
 async def exercise():
@@ -429,7 +433,7 @@ async def exercise():
                     entered.set()
                     if mode == "worker-failure":
                         raise RuntimeError("original provider worker return failed")
-                    assert release.wait(15), (
+                    assert release.wait(HANG_WAIT_SECONDS), (
                         "original provider worker return was not released"
                     )
 
@@ -522,13 +526,18 @@ async def exercise():
             returned = prepared.planning_recovery_return()
             assert prepared._planning_physical_returned
             assert returned.owner is prepared.primary_owner
+            assert returned.owner is calls[0], "receipt names another owner"
             assert returned.claim is prepared.primary_claim
             assert str(returned.error) == error_text, "original failure was hidden"
             assert not prepared.primary_owner.is_admitted
             assert prepared.primary_owner._root_finished
             assert not prepared._planning_settled
             assert prepared.primary_claim.id not in runtime.worktree_activity._claims
-            assert attempt.workflow_id in runtime.worktree_activity._recovery
+            protected = runtime.worktree_activity._recovery[attempt.workflow_id]
+            (scope,) = protected.writes
+            assert not protected.reads and scope.subtree
+            assert scope.root == capture_directory_chain(root)
+            assert scope.path == scope.root.canonical_root
             assert (
                 controller._fleet_wake._automatic_primary_claims.get(session.id) is None
             )
@@ -568,12 +577,12 @@ async def exercise():
                     and not entered.is_set()
                 ):
                     entered.set()
-                    assert release.wait(15)
+                    assert release.wait(HANG_WAIT_SECONDS)
                     raise RuntimeError("late original tracked source return failed")
 
             threading.setprofile_all_threads(fail_original_source_return)
             driver = asyncio.create_task(prepared.run_planning())
-            assert await asyncio.to_thread(entered.wait, 15)
+            assert await asyncio.to_thread(entered.wait, HANG_WAIT_SECONDS)
             driver.cancel()
             release.set()
             try:
@@ -649,7 +658,7 @@ async def exercise():
             raise AssertionError("required failure unexpectedly returned completion")
         if mode in {"worker-tail", "shutdown-worker-tail"}:
             driver = asyncio.create_task(prepared.run_planning())
-            assert await asyncio.to_thread(entered.wait, 15)
+            assert await asyncio.to_thread(entered.wait, HANG_WAIT_SECONDS)
             if mode == "shutdown-worker-tail":
                 disposal = asyncio.create_task(runtime.dispose())
                 try:
@@ -677,19 +686,40 @@ async def exercise():
                 if not driver.done():
                     await asyncio.wait([driver])
             if mode == "shutdown-worker-tail":
-                # Shutdown ends the reply's wait (TASK-33666), so the held call's
-                # usage is interrupted and stays uncertain; the planner then
-                # refuses settlement and takes the ADR-356 recovery path.
-                assert_returned_failure_recovery("workflow_not_settled")
-                assert driver.exception() is prepared.planning_recovery_return().error
+                # Required on every path: shutdown waited for this held worker (above)
+                # and no live owner, claim or wake slot outlives it.
+                assert prepared.primary_owner is calls[0]
+                assert not prepared.primary_owner.is_admitted
+                assert prepared.primary_owner._root_finished
+                assert (
+                    prepared.primary_claim.id not in runtime.worktree_activity._claims
+                )
+                assert (
+                    controller._fleet_wake._automatic_primary_claims.get(session.id)
+                    is None
+                )
                 with owned_goal_storage(service), service.db.connection() as conn:
-                    assert [
+                    tokens = [
                         tuple(row)
                         for row in conn.execute(
                             "SELECT state,actual_amount FROM automatic_work_reservations WHERE kind='tokens'"
                         )
-                    ] == [("uncertain", None)]
-                return
+                    ]
+                print("F_SHUTDOWN_WAITED_FOR_PLANNING_WORKER", flush=True)
+                # Current behaviour, not a contract: shutdown ends the reply's wait
+                # (TASK-33666), the usage the provider already returned is kept as
+                # uncertain, and the planner takes the ADR-356 recovery path. The
+                # shutdown-keeps-received-usage follow-up recorded in TASK-41314's
+                # notes would make this a settled no-plan drain with the actual
+                # tokens, as on the pre-#3480 lineage; both paths are checked whole.
+                if driver.exception() is not None:
+                    assert_returned_failure_recovery("workflow_not_settled")
+                    error = prepared.planning_recovery_return().error
+                    assert driver.exception() is error
+                    assert tokens == [("uncertain", None)]
+                    return
+                assert tokens == [("settled", 10)]
+                assert prepared._planning_recovery_return is None
             result = driver.result()
         elif mode in {"cancel-cleanup", "maintenance-tail"}:
             if mode == "maintenance-tail":
@@ -774,6 +804,7 @@ async def exercise():
             "budget-zero",
             "cancel-cleanup",
             "maintenance-tail",
+            "shutdown-worker-tail",
             "wrapper-changed",
             "wrapper-unavailable",
         }:

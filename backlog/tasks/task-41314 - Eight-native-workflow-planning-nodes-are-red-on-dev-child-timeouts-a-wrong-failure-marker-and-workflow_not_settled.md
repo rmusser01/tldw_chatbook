@@ -68,7 +68,11 @@ Owner decision, 2026-11-17: delete the 4 params as superseded by ADR-356 decisio
 
 `worker-failure` and `response-close-failure` are failed native scopes and keep the retained-owner control.
 
-**(c) shutdown: drift. Shutdown still waits for the same worker.** `01c1a0e332` (TASK-33666, on dev since #3169) lets Stop/quit end a reply's wait. The planning lineage only got it with the #3480 integration (`6125fbc5b8`). On shutdown, the stall watchdog now throws into the stream while the held worker returns. `_automatic_generation` then records the usage as interrupted (`tokens` `uncertain`), so `settle_workflow_phase` refuses `workflow_not_settled` and the `06f8b0bf94` recovery path runs. On `e08627ac38` the same mode settles tokens at 10. The test keeps the 0.1 s and 5 s wait checks, adds that disposal is still pending when the worker is released, and asserts the recovery outcome.
+**(c) shutdown: drift. Shutdown still waits for the same worker.** `01c1a0e332` (TASK-33666, on dev since #3169) lets Stop/quit end a reply's wait. The planning lineage only got it with the #3480 integration (`6125fbc5b8`). On shutdown, the stall watchdog now throws into the stream while the held worker returns. `_automatic_generation` then records the usage as interrupted (`tokens` `uncertain`), so `settle_workflow_phase` refuses `workflow_not_settled` and the `06f8b0bf94` recovery path runs. On `e08627ac38` the same mode settles tokens at 10. The test keeps the 0.1 s and 5 s wait checks and adds that disposal is still pending when the worker is released. Those checks, and "no live owner, claim or wake slot afterwards", are required on every path. After that, the test accepts either outcome, each checked in full:
+- today's recovery path, with the `uncertain` token reservation;
+- a settled no-plan drain with the actual tokens.
+
+The recovery path is current behaviour, not a contract. Follow-up to file (shutdown keeps received usage): shutdown should keep the usage the provider already returned, rather than discarding it and forcing a recovery review. A temporary mutation makes `_automatic_generation` read usage on interruption; with it, the node takes the settled path and passes.
 
 **Checks:**
 - Mutations: skipping `record_planning_recovery` fails all 4 retargeted nodes. Making dispose skip the planning driver fails the shutdown node.
@@ -78,6 +82,17 @@ Owner decision, 2026-11-17: delete the 4 params as superseded by ADR-356 decisio
 **Preflight and Architecture.** `./scripts/preflight.sh` passes. On head, the serial `Tests/Architecture` run had 7 failed / 1414 passed at load 50-95. Three of those fail on base too: `test_reviewed_diagnostic_changes_are_metadata_only` and the two `test_timer_path_static_update_inventory` nodes. The other four (`test_task_15103_review_ledger_*`) pass when rerun alone on head (45 passed).
 
 **After the deletion.** The whole file on head at `-n 4`: 27 passed, 0 failed in 283 s at load 50-107, maintenance-tail included.
+
+**Review round (Opus, head `daa847b2a5`).**
+- **I1:** the shutdown node now accepts either outcome, as described under (c). Its marker check requires exactly one outcome marker.
+- **I2:** the recovery receipt's owner must be the execution owner the provider call captured (`calls[0]`). The old check only compared the product with itself.
+- **M1:** recovery protection must be one subtree write scope on the captured planning root.
+- **M2:** the held-worker and late-source waits are 60 s hang bounds (were 15 s). The recovery and shutdown children get a 180 s budget (was 60 s; the shutdown child took 62 s at load ~90).
+- **M3:** two frozen QA rulings still name the deleted node: `Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/rulings/sha256/906e98a3…md` (lines 91, 97) and `35318fe7…md` (line 37). They are left unchanged as historical records.
+- **Mutations rerun:** skipping `record_planning_recovery` fails all 4 recovery/shutdown nodes; making dispose skip the planning driver fails the shutdown node.
+- **Mutation S:** a temporary mutation makes the gateway keep usage on interruption; with it, the shutdown node takes the settled branch and passes.
+- **Budgets:** the first whole-file rerun had 3 failures (`receiving_boundaries[cancel-cleanup]` and `[tools]`, worker-tail) at load 70-80. All 3 pass alone, at 36-50 s against the old 60 s budget. Every child in the file now uses the 180 s hang budget.
+- **After the round:** the whole file on head at `-n 4` has 27 passed in 274 s at load 68-82. Preflight passes with `PYTHON=.venv/bin/python` (3.12.11).
 
 **AC #3 is not ticked.** Workflow files are not edited here. The lane is recorded in the hand-off.
 
