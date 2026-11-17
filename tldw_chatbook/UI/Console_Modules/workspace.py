@@ -6549,7 +6549,7 @@ class ConsoleWorkspaceController:
                 from ..Screens.chat_screen import _console_screen_is_torn_down as torn_down
                 if (
                     projected is False
-                    or not self._screen_running_accessor() or torn_down(self._screen)
+                    or not self._screen_running_accessor() or torn_down(self._screen)  # quit precedes pump stop
                     or self._ensure_console_chat_store() is not store
                     or store.active_session_epoch() != epoch
                 ):

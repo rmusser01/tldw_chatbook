@@ -337,6 +337,8 @@ async def test_installed_activation_rejects_stale_or_failed_owner_and_preserves_
         )
         original = getattr(workspace, name)
 
+        faulted = []  # The coordinator turns a raise in held() into FAILED.
+
         async def held(request):
             result = await original(request)
             entered.set()
@@ -349,7 +351,8 @@ async def test_installed_activation_rejects_stale_or_failed_owner_and_preserves_
                     active_console_transcript,
                 )
 
-                active_console_transcript(chat)._session_identity = "wrong"
+                faulted.append(active_console_transcript(chat))
+                faulted[-1]._session_identity = "wrong"
             if fault == "open-failure":
                 return ConsoleActivationCommit(False, result.owned_runtime_token)
             return result
@@ -371,6 +374,8 @@ async def test_installed_activation_rejects_stale_or_failed_owner_and_preserves_
         finally:
             release.set()
             await asyncio.wait_for(modal._activation_task, 5)
+        if fault == "transcript":
+            assert len(faulted) == 1 and faulted[0] is not None
         assert store.active_session_id == prior
         assert not [
             s for s in store.sessions() if s.persisted_conversation_id == "exact"
