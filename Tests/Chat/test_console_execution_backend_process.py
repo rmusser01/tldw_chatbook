@@ -556,10 +556,13 @@ async def test_actual_process_projection_reference_and_original_pre_ack_cancel(
         assert accepted_plan.payload["turn_id"] == "process-accepted"
         assert not accepted.retired.done() and not accepted.potentially_committed
         assert not accepted_process_provider.requests
+        from tldw_chatbook.Chat.console_execution_protocol import encode_message
+
+        acknowledged_plan = encode_message(accepted_plan)["payload"]
         ack = client.submit(
             "CommitPlanAck",
             {
-                name: accepted_plan.payload[name]
+                name: acknowledged_plan[name]
                 for name in ("received_request_id", "turn_id", "ordinal", "fingerprint")
             },
             session_id=sid,

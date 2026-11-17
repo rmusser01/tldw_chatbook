@@ -344,27 +344,52 @@ class ConsoleTurnRetirement:
 
     async def _settle(self) -> None:
         confirmed = False
+        last_check = None
+        error_type = None
+
+        def checked(name, result):
+            nonlocal last_check
+            last_check = (name, result)
+            return result
+
         try:
             for tree in self.trees:
                 await asyncio.shield(asyncio.wrap_future(tree.retired))
             source = self.source
             confirmed = (
-                _definitions_current()
-                and self.task.done()
-                and self.logical_closed
-                and not self.unqualified_read
-                and (self.source_closed or source is None)
-                and all(read.confirmed() for read in self.reads)
+                checked("definitions", _definitions_current())
+                and checked("task", self.task.done())
+                and checked("logical_closed", self.logical_closed)
+                and checked("qualified_reads", not self.unqualified_read)
+                and checked("source_closed", self.source_closed or source is None)
                 and all(
-                    effect.completed.done()
-                    and effect.physically_retired
-                    and effect.completed.result() is True
-                    for effect in (() if source is None else source.effects)
+                    checked(f"read_{index}", read.confirmed())
+                    for index, read in enumerate(self.reads)
+                )
+                and all(
+                    checked(
+                        f"effect_{index}_{effect.kind}",
+                        effect.completed.done()
+                        and effect.physically_retired
+                        and effect.completed.result() is True,
+                    )
+                    for index, effect in enumerate(
+                        () if source is None else source.effects
+                    )
                 )
             )
-        except BaseException:
+        except BaseException as error:
+            error_type = type(error).__name__
             confirmed = False
         finally:
+            if not confirmed:
+                # Temporary body-free diagnostic; preserve short-circuit checks.
+                from loguru import logger
+
+                logger.warning(
+                    "Console turn retirement unconfirmed; last_check={} error_type={} reads={} trees={}",
+                    last_check, error_type, len(self.reads), len(self.trees),
+                )
             if not self.retired.done():
                 self.retired.set_result(bool(confirmed))
             if confirmed:
