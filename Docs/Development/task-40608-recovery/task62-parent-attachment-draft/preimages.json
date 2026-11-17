@@ -28,5 +28,33 @@
     "path": "tldw_chatbook/UI/Screens/chat_screen.py",
     "sha256": "372dc2e818e39e7b4e010468b148206b60163aa19f7948bd5e0de7e9438db8ec",
     "baseline": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\task-40608-windows-admission\\tldw_tui\\.superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\baseline\\tldw_chatbook\\UI\\Screens\\chat_screen.py"
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_backend_presentation.py",
+    "sha256": "eead85ac83346a0b48a21590cb2724a304546e29f4f1eac9c0f6ec5026a4eced",
+    "baseline": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\task-40608-windows-admission\\tldw_tui\\.superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\baseline\\tldw_chatbook\\Chat\\console_backend_presentation.py"
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_execution_projection_result.py",
+    "sha256": "3bbfbcd1da4d222e600acb37629e489e83ba09cea323357e9d2ec26dc6751470",
+    "baseline": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\task-40608-windows-admission\\tldw_tui\\.superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\baseline\\tldw_chatbook\\Chat\\console_execution_projection_result.py"
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_execution_session_surface.py",
+    "absent": true,
+    "artifact_source": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-session-surface-draft\\proposed\\console_execution_session_surface.py",
+    "artifact_source_sha256": "0afdbd9567cf9daf6608cb989c705494e0dc4f69fb9a74498bd6c0b4fa2d3438"
+  },
+  {
+    "path": "tldw_chatbook/UI/Console_Modules/execution_sessions.py",
+    "absent": true,
+    "artifact_source": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-session-surface-draft\\proposed\\execution_sessions.py",
+    "artifact_source_sha256": "c2db80fecc724fa98e12553223d7b7c1e8bdfd2fffb3502ccadfb754c8004b56"
+  },
+  {
+    "path": "tldw_chatbook/UI/Console_Modules/execution_projection.py",
+    "absent": true,
+    "artifact_source": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-transcript-adapter-draft\\proposed\\execution_projection.py",
+    "artifact_source_sha256": "3075eb9860ce5b408fa5406acf1fa15f6b40afad1b55b68305cc0ec139ea4e25"
   }
 ]

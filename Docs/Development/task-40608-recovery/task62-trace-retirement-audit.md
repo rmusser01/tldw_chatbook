@@ -1,0 +1,32 @@
+# Task62 trace retirement audit
+
+Source-only inspection, 2026-11-17. No product/test edits, imports, native execution, or test runs. Root remains the sole launcher and product editor. This identifies a scheduling hole; the observed `effect_22_trace=False` still needs its pending-versus-negative diagnostic before attributing that run to the hole.
+
+## Existing ownership and the gap
+
+- `console_execution_retirement.py:345` awaits original ordinary trees, then checks `effect.completed.done()` once. It neither waits for unfinished trace effects nor accounts for a terminal handoff whose worker has not entered yet. A completed negative physical proof must remain negative.
+- `console_control_provider.py:20` retains each `_ProviderDispatch` as the owner of its original `provider_dispatch` effect. `bind_trace_call` (`console_control_trace.py:33`) binds its exact `_TraceWriteOwner` before adapter handoff. Thus the closed turn's provider-dispatch effects already identify its trace owners. No new global owner registry is necessary.
+- `_TraceWriteOwner` retains dispatch/source, original boundary, service/coordinator, DB and call ID. **It has no completion receipt.** `ConsoleTraceSettlementHandoff` also has no completion receipt; it retains the sanitized prepared record, including that original owner.
+- Store registration (`console_chat_store.py:19655`) can retain a handoff on its assistant message before terminal persistence submits it. Submission (`:19900`) records the exact handoff in `_provider_trace_settlement_work`; the single original worker calls it later (`:19971`). Only the entered `run_trace_write` (`console_control_trace.py:62`) creates the `trace` native effect. Queued-before-entry work can therefore be absent from `source.effects` altogether.
+- The store's only executor future is `_provider_trace_settlement_worker_future`, shared by its draining worker. `drain_trace_worker` deliberately joins that future and follows replacements; it is the lifecycle-wide drain, not an existing per-call receipt.
+
+## Smallest owner-local integration
+
+Retain the **existing original executor Future associated with the exact handoff** on its existing `_TraceWriteOwner`. Capture it under `_provider_trace_settlement_lock` when the original store accepts that handoff into `_provider_trace_settlement_work`. There are two paths: when the worker is already active, retain its current future before the early return; when submission starts a worker, retain the future immediately after successful `executor.submit` assignment. Keep distinct futures across genuine retries; do not replace unfinished history. This adds no replacement completion signal or global registry.
+
+The original queue lock handles fast completion: `_submit_provider_trace_settlement` holds it through `executor.submit` and `_worker_future` assignment. `_drain_provider_trace_settlement_work` must acquire the same lock before reading or removing the work, so it cannot complete that work before the original future is published and captured. If an old worker has set `active=False` but is held at function return, a new submission captures the new future; it does not confuse the old inactive flag with completion. Submission failure produces no new future and must retain its original exception/ownership handling.
+
+Before final effect checks, turn retirement can discover its original trace owners through `source.effects` entries whose kind is `provider_dispatch`, validate the original owner/store/call association, and shield their captured original futures. Then re-read/check all original effects, including ones appended by those workers. The captured future may include coalesced work already owned by that same original worker; that is acceptable and preserves the existing physical-future proof. Do not call the global drain or follow replacement futures after those retained originals. No unconditional future is needed at trace binding, because synchronous/fallback settlement and pre-response failure routes can bypass the store worker.
+
+Future completion alone is not settlement success: `_drain` returns normally even if `_run_provider_trace_settlement` returns False. Failed handoffs remain in `_failed_work` and may remain in coordinator `_pending`; preserve these records and original retry/Shutdown outcome checks unchanged. Never change a completed false native effect into True because the executor subsequently returns or a retry succeeds. Keep the lifecycle-wide original executor-future join in Drain/Shutdown unchanged.
+
+Direct `handoff.settle` and `boundary.settle_response` routes (`console_provider_gateway.py:2386`) already run under the original provider/ordinary owners; captured worker futures supplement only the store-owned asynchronous path. Coordinator retry snapshots can include old calls, so retain original prepared owners rather than rebind them to the current source. Awaiting a later call's captured worker naturally covers its synchronous `retry_pending` work without changing retry ownership.
+
+## Causal controls to preserve/add
+
+1. Existing `test_trace_stage_finishes_before_exact_executor_future_and_drain` (`Tests/Chat/test_console_control_trace.py:156`) proves native effects can finish while the original executor future is still held at return. Per-turn call completion must not weaken that separate lifecycle drain.
+2. Existing `test_old_trace_retry_keeps_each_call_source_and_shutdown_retains_failure` (`:202`) proves old prepared records retain each original source and failed outcomes survive Shutdown. Preserve it unchanged.
+3. Hold the original store worker before handoff entry: logical turn completes, no trace effect exists yet, and turn retirement must remain pending. Release it and require the original native effects plus exact handoff outcome before positive retirement.
+4. Hold an entered trace effect: pending completion must wait; completed false physical proof must remain false. Also hold the original executor at return, then submit a different call after `active=False`: the first turn must await its old captured future and must not follow the replacement future. Coalesced work in the original shared future remains covered.
+
+The narrower immediate diagnostic remains necessary: report `completed.done`, `completed.cancelled`, `physically_retired`, and result only if done/noncancelled for the first failing effect. A pending receipt explains a premature sample; a completed false result requires a native-retirement investigation instead.

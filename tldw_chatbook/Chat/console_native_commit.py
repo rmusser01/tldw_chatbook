@@ -93,6 +93,10 @@ def _capture_plan_native_connection(binding):
 
 def _invoke_plan_native(binding, callback):
     """Observe this creator's exact new handle and original operation retirement."""
+    import time
+    from loguru import logger
+
+    observed_start, observed_cpu = time.monotonic(), time.thread_time()
     from tldw_chatbook.DB.base_db import operation_owned_connection
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
     from tldw_chatbook.Backup_Recovery import storage_admission as storage
@@ -173,6 +177,13 @@ def _invoke_plan_native(binding, callback):
                     )
                 )
             )
+        logger.warning(
+            "Console native write timing; kind={} elapsed={} thread_cpu={} retired={}",
+            binding.control_phase[1] if binding.control_phase is not None else "commit",
+            time.monotonic() - observed_start,
+            time.thread_time() - observed_cpu,
+            state.confirmed,
+        )
 
 
 _native_commit_binding: contextvars.ContextVar[_ConsoleNativeBinding | None] = (

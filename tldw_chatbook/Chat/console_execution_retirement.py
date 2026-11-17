@@ -345,6 +345,7 @@ class ConsoleTurnRetirement:
     async def _settle(self) -> None:
         confirmed = False
         last_check = None
+        last_effect = None
         error_type = None
 
         def checked(name, result):
@@ -352,10 +353,22 @@ class ConsoleTurnRetirement:
             last_check = (name, result)
             return result
 
+        def checked_effect(index, effect):
+            nonlocal last_effect
+            done = effect.completed.done()
+            physical = effect.physically_retired if done else None
+            outcome = effect.completed.result() if done and physical else None
+            last_effect = (done, physical, outcome)
+            return checked(f"effect_{index}_{effect.kind}", done and physical and outcome is True)
+
         try:
             for tree in self.trees:
                 await asyncio.shield(asyncio.wrap_future(tree.retired))
             source = self.source
+            if source is not None:
+                if not _definitions_current():
+                    raise RuntimeError("Console turn retirement definitions changed")
+                await _control_trace.drain_source_trace_workers(source)
             confirmed = (
                 checked("definitions", _definitions_current())
                 and checked("task", self.task.done())
@@ -367,12 +380,7 @@ class ConsoleTurnRetirement:
                     for index, read in enumerate(self.reads)
                 )
                 and all(
-                    checked(
-                        f"effect_{index}_{effect.kind}",
-                        effect.completed.done()
-                        and effect.physically_retired
-                        and effect.completed.result() is True,
-                    )
+                    checked_effect(index, effect)
                     for index, effect in enumerate(
                         () if source is None else source.effects
                     )
@@ -387,8 +395,8 @@ class ConsoleTurnRetirement:
                 from loguru import logger
 
                 logger.warning(
-                    "Console turn retirement unconfirmed; last_check={} error_type={} reads={} trees={}",
-                    last_check, error_type, len(self.reads), len(self.trees),
+                    "Console turn retirement unconfirmed; last_check={} effect_facts={} error_type={} reads={} trees={}",
+                    last_check, last_effect, error_type, len(self.reads), len(self.trees),
                 )
             if not self.retired.done():
                 self.retired.set_result(bool(confirmed))
@@ -406,6 +414,7 @@ from types import FunctionType
 from tldw_chatbook.Utils.definition_records import capture_definitions
 from tldw_chatbook.Backup_Recovery import participants as _participants
 from tldw_chatbook.MCP import permission_process as _permission_process
+from . import console_control_trace as _control_trace
 from .console_domain_services import _definition
 
 _DEFINITIONS = capture_definitions(
@@ -424,9 +433,20 @@ _DEFINITIONS = capture_definitions(
         ),
         *(
             (owner, name, value)
-            for owner in (_ReadResources, ConsoleTurnRetirement)
+            for owner in (
+                _ReadResources,
+                ConsoleTurnRetirement,
+                _control_trace._TraceWriteOwner,
+            )
             for name, value in vars(owner).items()
             if type(value) is FunctionType
+        ),
+        *(
+            (_control_trace, name, getattr(_control_trace, name))
+            for name in (
+                "retain_trace_worker_future",
+                "drain_source_trace_workers",
+            )
         ),
         (
             _participants,

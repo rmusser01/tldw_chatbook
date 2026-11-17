@@ -19924,6 +19924,8 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         call_id = getattr(handoff, "call_id", None)
         if not isinstance(call_id, str) or not call_id:
             raise TypeError("trace settlement handoff")
+        from .console_control_trace import retain_trace_worker_future
+
         with self._provider_trace_settlement_lock:
             if self._provider_trace_settlement_executor_closed:
                 raise _ProviderTraceSettlementSchedulerClosed(
@@ -19952,6 +19954,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                 canonical_message_id,
             )
             if self._provider_trace_settlement_worker_active:
+                retain_trace_worker_future(self, handoff)
                 return
             self._provider_trace_settlement_worker_active = True
             try:
@@ -19967,6 +19970,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                         all_waiters=True
                     )
                 raise
+            retain_trace_worker_future(self, handoff)
 
     def _drain_provider_trace_settlement_work(self) -> None:
         """Run one visible, deduplicated queue from the single settlement worker."""

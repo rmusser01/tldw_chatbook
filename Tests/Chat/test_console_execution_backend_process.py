@@ -24,7 +24,7 @@ class _ObservedStderr:
     def read(self, count):
         value = self.original.read(count)
         self.tail.extend(value)
-        del self.tail[:-32768]
+        del self.tail[:-131072]
         return value
 
     def close(self):

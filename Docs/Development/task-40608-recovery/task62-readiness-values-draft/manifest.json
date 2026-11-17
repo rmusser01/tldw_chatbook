@@ -1,0 +1,68 @@
+{
+  "kind": "artifact-only original readiness display value codec and authored tests",
+  "contract": ".superpowers/sdd/2026-11-13-task-40608-sub-five/task62-readiness-values-contract.md",
+  "contract_sha256": "413467d5be6276c668a500dbb080219ee68ebec1fd03aa2fabb66b950d5dd4fc",
+  "targets": [
+    {
+      "target": "tldw_chatbook/Chat/console_execution_readiness_values.py",
+      "preimage_exists": false,
+      "preimage_sha256": null,
+      "proposed": "proposed/console_execution_readiness_values.py",
+      "proposed_sha256": "69c23860fc192e87fee4361ba91a93ec31342e0030d48cabb1051bbc1b2ae39e"
+    },
+    {
+      "target": "Tests/Chat/test_console_execution_readiness_values.py",
+      "preimage_exists": false,
+      "preimage_sha256": null,
+      "proposed": "proposed/test_console_execution_readiness_values.py",
+      "proposed_sha256": "4f6f3f56cf897b5550b2da98913b1280f95b5689396eace8696e5614e43d9fb5"
+    }
+  ],
+  "preimages": "preimages.json",
+  "preimages_sha256": "457f16863e3fa32f31331dbf2467f1d83375f7f1a2e4e961e8372e8134ef2225",
+  "source_dependencies": [
+    {
+      "path": ".superpowers/sdd/2026-11-13-task-40608-sub-five/task62-readiness-values-contract.md",
+      "sha256": "413467d5be6276c668a500dbb080219ee68ebec1fd03aa2fabb66b950d5dd4fc",
+      "saved": "source-dependencies/task62-readiness-values-contract.md"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_execution_projection_values.py",
+      "sha256": "217b83b6cab53c9b082f11fab4682fefe44a42ac76db79889a37109840494f8f",
+      "saved": "source-dependencies/console_execution_projection_values.py"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_execution_protocol.py",
+      "sha256": "1016c9c4cef0093529bfcdd54656ca6bed7ef5e4052f2ce63ec39ae0fc91d93e",
+      "saved": "source-dependencies/console_execution_protocol.py"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_session_settings.py",
+      "sha256": "7396470f8fb722bc77c80887e56385e3bcc01f6e180b8462b178706059d5dd15",
+      "saved": "source-dependencies/console_session_settings.py"
+    },
+    {
+      "path": "tldw_chatbook/Chat/provider_test_evidence.py",
+      "sha256": "cb23ce5add1fa9ef820b83694117022c45bab4a04b74aa7b845fb71f54766c1e",
+      "saved": "source-dependencies/provider_test_evidence.py"
+    },
+    {
+      "path": "tldw_chatbook/Provider_Contract/provider_endpoint_contract.py",
+      "sha256": "e4b600d20d57015d059c9e0e482092b384c82a31dc8186fa54a2eea6bb07abb6",
+      "saved": "source-dependencies/provider_endpoint_contract.py"
+    },
+    {
+      "path": "tldw_chatbook/Chat/provider_readiness.py",
+      "sha256": "eff7801ba34187e42d056b7cf245e4480dbbadfb58ae3512f19a3dc39f6591c7",
+      "saved": "source-dependencies/provider_readiness.py"
+    },
+    {
+      "path": "Tests/Chat/test_console_session_settings.py",
+      "sha256": "127aadeb1175f8374068db0afca6994c3f8893982428ff7ca1f7f650a89f5f64",
+      "saved": "source-dependencies/test_console_session_settings.py"
+    }
+  ],
+  "report": "report.md",
+  "report_sha256": "137aa862df63126e38b43bb7bb84101e0ec30b497b04f797cb2fe17effb75008",
+  "validation": "source-only; no Python/import/native/test execution"
+}

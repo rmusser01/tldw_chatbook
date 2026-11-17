@@ -178,6 +178,14 @@ async def test_trace_stage_finishes_before_exact_executor_future_and_drain(domai
                 assert (
                     await asyncio.wait_for(asyncio.shield(receipt.work), 20)
                 ).accepted
+                assert await _until(
+                    lambda: receipt.turn_retirement.settlement is not None
+                    and all(
+                        tree.retired.done() for tree in receipt.turn_retirement.trees
+                    )
+                )
+                await asyncio.sleep(0)
+                assert not receipt.retired.done()
                 assert not journey.controls.admitted_effects
                 with case.store._provider_trace_settlement_lock:
                     future = case.store._provider_trace_settlement_worker_future
@@ -193,6 +201,60 @@ async def test_trace_stage_finishes_before_exact_executor_future_and_drain(domai
                 release.set()
                 assert await drain.applied is True
                 assert future.done()
+                assert await asyncio.shield(receipt.retired) is True
+            finally:
+                release.set()
+                await asyncio.gather(receipt.work, return_exceptions=True)
+
+
+@pytest.mark.parametrize("domain_case", ["control_trace"], indirect=True)
+async def test_turn_waits_for_original_queued_trace_before_native_entry(domain_case):
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+
+    case = domain_case
+    entered, release = threading.Event(), threading.Event()
+
+    def hold_entry(frame):
+        if frame.f_locals.get("self") is case.store:
+            entered.set()
+            assert release.wait(10), "Original queued trace was not released"
+
+    with _server() as server:
+        journey = await _prepare(case, server)
+        with _observe(
+            ConsoleChatStore._drain_provider_trace_settlement_work.__code__,
+            sys.monitoring.events.PY_START,
+            hold_entry,
+        ):
+            receipt = await journey.start()
+            try:
+                assert await _until(entered.is_set)
+                assert (
+                    await asyncio.wait_for(asyncio.shield(receipt.work), 20)
+                ).accepted
+                invocation = receipt.turn_retirement
+                assert await _until(
+                    lambda: invocation.settlement is not None
+                    and all(tree.retired.done() for tree in invocation.trees)
+                )
+                await asyncio.sleep(0)
+                assert not receipt.retired.done()
+                with case.store._provider_trace_settlement_lock:
+                    future = case.store._provider_trace_settlement_worker_future
+                    queued = tuple(case.store._provider_trace_settlement_work.values())
+                    assert case.store._provider_trace_settlement_worker_active
+                    assert queued
+                    assert future is not None and not future.done()
+                    for handoff, _message in queued:
+                        owner = handoff._prepared._control_owner
+                        assert owner.dispatch.source is invocation.source
+                        assert future in owner.worker_futures
+                release.set()
+                assert (
+                    await asyncio.wait_for(asyncio.shield(receipt.retired), 20)
+                ) is True
+                assert future.done()
+                assert not journey.controls.admitted_effects
             finally:
                 release.set()
                 await asyncio.gather(receipt.work, return_exceptions=True)

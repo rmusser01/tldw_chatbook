@@ -11,6 +11,7 @@ class _TraceWriteOwner:
         self.coordinator = boundary.service._settlement
         self.database = boundary.database
         self.call_id = boundary._started.call_id
+        self.worker_futures = []
 
     def require(self, coordinator, database, call_id):
         controls = self.dispatch.controls
@@ -81,6 +82,75 @@ def run_trace_write(owner, coordinator, database, call_id, callback):
     )
     with controls.native_write_effect(binding):
         return _invoke_plan_native(binding, callback)
+
+
+def retain_trace_worker_future(store, handoff):
+    """Retain the original submission while its queue lock still binds the call."""
+    from concurrent.futures import Future
+
+    from .console_trace_settlement import ConsoleTraceSettlementHandoff
+
+    if type(handoff) is not ConsoleTraceSettlementHandoff:
+        return
+    owner = handoff._prepared._control_owner
+    if owner is None:
+        return
+    if type(owner) is not _TraceWriteOwner:
+        raise RuntimeError("Console trace worker owner changed")
+    owner.require(handoff._coordinator, handoff._database, handoff.call_id)
+    with store._provider_trace_settlement_lock:
+        future = store._provider_trace_settlement_worker_future
+        queued = store._provider_trace_settlement_work.get(handoff.call_id)
+        if (
+            owner.dispatch.controls._store is not store
+            or queued is None
+            or queued[0] is not handoff
+            or not store._provider_trace_settlement_worker_active
+            or type(future) is not Future
+        ):
+            raise RuntimeError("Console trace worker submission changed")
+        if future not in owner.worker_futures:
+            owner.worker_futures.append(future)
+
+
+async def drain_source_trace_workers(source):
+    """Join the captured submissions without following replacement workers."""
+    import asyncio
+    from concurrent.futures import Future
+
+    from .console_control_dispatch import _CommandSource
+    from .console_control_provider import _ProviderDispatch
+
+    if type(source) is not _CommandSource:
+        raise RuntimeError("Console trace retirement source changed")
+    controls = source.controls
+    with controls._lock:
+        dispatches = tuple(
+            effect.owner
+            for effect in source.effects
+            if effect.kind == "provider_dispatch"
+        )
+    futures = set()
+    for dispatch in dispatches:
+        if (
+            type(dispatch) is not _ProviderDispatch
+            or dispatch.source is not source
+            or dispatch.controls is not controls
+        ):
+            raise RuntimeError("Console trace retirement dispatch changed")
+        owner = dispatch.trace_owner
+        if owner is None:
+            continue
+        if type(owner) is not _TraceWriteOwner or owner.dispatch is not dispatch:
+            raise RuntimeError("Console trace retirement owner changed")
+        owner.require(owner.coordinator, owner.database, owner.call_id)
+        with controls._store._provider_trace_settlement_lock:
+            for future in owner.worker_futures:
+                if type(future) is not Future:
+                    raise RuntimeError("Console trace retirement future changed")
+                futures.add(future)
+    for future in futures:
+        await asyncio.shield(asyncio.wrap_future(future))
 
 
 async def drain_trace_worker(store):
