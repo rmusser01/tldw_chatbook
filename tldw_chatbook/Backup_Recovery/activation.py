@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
+import sys
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
+from types import MethodType
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -227,6 +231,192 @@ def execution_allowed(owners: tuple[str, ...], path: Path | None = None) -> bool
         return allowed
 
 
+@dataclass(frozen=True)
+class _OrdinaryActivation:
+    """Fresh ordinary evidence confined to one ordered guard entry."""
+
+    root: Path
+    selector: Path
+    names: tuple[str, ...] | None
+    warm: tuple
+    observation: tuple
+
+    @classmethod
+    def begin(cls, path, lease):
+        from . import storage_admission as storage
+
+        if type(lease) is not storage.StorageLease or lease._warm_execution is None:
+            return None
+        selector = bootstrap.effective_config_path()
+        root, names = lease.execution_context(path)
+        warm = lease._warm_execution
+        if warm is None or not _warm_activation_current(lease, warm, root, selector):
+            return None
+        observation = _ordinary_activation_observation(root, selector)
+        if observation is None:
+            return None
+        return cls(root, selector, names, warm, observation)
+
+    def admits(self, owners, path, lease):
+        """Return None for a later cold row that requires the original route."""
+        from .storage_admission import StorageLease
+
+        if (type(lease) is not StorageLease
+                or not vars(lease).keys().isdisjoint(("execution_context", "execution_scope"))):
+            return None
+        if self.selector != bootstrap.effective_config_path():
+            return False
+        root, names = lease.execution_context(path)
+        if root != self.root or names != self.names:
+            return False
+        if lease._warm_execution is None:
+            return None
+        if not _warm_activation_current(lease, self.warm, root, self.selector):
+            return False
+        return self.admits_owners(owners)
+
+    def admits_owners(self, owners):
+        return all(_identifier(owner) for owner in owners) and (
+            self.names is None or set(Admission._names(self.names)) <= self.observation[1].keys()
+        )
+
+    def finish(self, rows):
+        return (
+            self.still_ordinary()
+            and all(self.admits(owners, path, lease) is True for owners, path, lease in rows)
+        )
+
+    def still_ordinary(self):
+        return (
+            self.selector == bootstrap.effective_config_path()
+            and self.observation == _ordinary_activation_observation(self.root, self.selector)
+        )
+
+
+def _warm_activation_current(lease, warm, root, selector):
+    from . import storage_admission as storage
+
+    hold, evidence = warm
+    with storage._lock:
+        actual = lease._warm_execution
+        return (
+            actual is not None and actual[0] is hold and actual[1] is evidence
+            and lease in storage._live_leases and storage._holds.get(lease._key) is hold
+            and storage._hold_serving(hold) and storage._pause is None
+            and not storage._windows_initializing(root)
+            and hold.evidence.get(str(selector)) is evidence
+            and evidence.confirmed and evidence.names == hold.names
+            and evidence.epoch == bootstrap._admission_epoch
+        )
+
+
+def _ordinary_activation_observation(root, selector):
+    inputs = None
+    if _ordinary_activation_sources_current():
+        try:
+            bootstrap.lexical_path(selector)
+            if os.name == "nt" and _ordinary_native_readers_current() and root.exists():
+                pinned = bootstrap._pinned_ordinary_inputs(
+                    root, selector, _require_ordinary_native_readers
+                )
+                _require_ordinary_native_readers()
+                if pinned is not None:
+                    profiles, registry, lock, fingerprint = pinned
+                    return sorted(profiles, key=lambda profile: profile["selector"]), registry, lock, fingerprint
+            else:
+                inputs = bootstrap._control_records(root, ordinary_only=True)
+        except bootstrap.RecoveryRequired:
+            raise
+        except (OSError, ValueError, TypeError, KeyError, RuntimeError, AttributeError) as error:
+            if bootstrap._ordinary_close_uncertain(error):
+                raise
+            raise bootstrap.RecoveryRequired("recovery_scope_uncertain") from None
+        _require_ordinary_activation_sources()
+    if inputs is None:
+        allowed, reason = bootstrap.startup_permission(selector, root)
+        if not allowed:
+            raise bootstrap.RecoveryRequired(reason)
+        pending, profiles, associations = bootstrap._control_records(root)
+        if pending or associations or any("activation" in profile for profile in profiles):
+            return None
+    else:
+        _, profiles, _ = inputs
+    lock = root / "admission" / "registry.lock"
+    try:
+        before = os.stat(lock, follow_symlinks=False)
+    except OSError as error:
+        if inputs is None or bootstrap._ordinary_close_uncertain(error):
+            raise
+        raise bootstrap.RecoveryRequired("recovery_scope_uncertain") from None
+    if inputs is None:
+        registry = bootstrap._registry(root)
+    else:
+        _require_ordinary_activation_sources()
+        registry, allowed, reason = bootstrap._ordinary_registry(root, profiles)
+        if not allowed:
+            raise bootstrap.RecoveryRequired(reason)
+        _require_ordinary_activation_sources()
+    after = os.stat(lock, follow_symlinks=False)
+    if registry is None or (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino):
+        raise bootstrap.RecoveryRequired("ordinary_activation_registry_changed")
+    fingerprint = None
+    if any(profile["selector"] == str(selector) for profile in profiles):
+        if inputs is not None:
+            _require_ordinary_activation_sources()
+        fingerprint = bootstrap._fingerprint(selector)
+    if inputs is not None:
+        _require_ordinary_activation_sources()
+    return sorted(profiles, key=lambda profile: profile["selector"]), registry, (after.st_dev, after.st_ino), fingerprint
+
+
+def _require_ordinary_activation_sources():
+    if not _ordinary_activation_sources_current():
+        raise bootstrap.RecoveryRequired("ordinary_activation_sources_changed")
+
+
+def _require_ordinary_native_readers():
+    _require_ordinary_activation_sources()
+    if not _ordinary_native_readers_current():
+        raise bootstrap.RecoveryRequired("ordinary_activation_sources_changed")
+
+
+def _ordinary_native_readers_current():
+    flock = _ORDINARY_LOCK_CLASS.flock if os.name == "nt" else None
+    return (
+        bootstrap.os is os is _ORDINARY_OS
+        and bootstrap.fcntl is _ORDINARY_LOCKS
+        and type(_ORDINARY_LOCKS) is _ORDINARY_LOCK_CLASS
+        and "flock" not in vars(_ORDINARY_LOCKS)
+        and flock is _ORDINARY_FLOCK
+        and all(
+            getattr(_ORDINARY_OS, name) is method
+            for name, method in _ORDINARY_NATIVE_READERS
+        )
+    )
+
+
+def _ordinary_activation_sources_current():
+    for namespace, name, original, function, code, defining_globals, defaults, keywords, items, cells, values, wrapped in _ORDINARY_ACTIVATION_SOURCES:
+        if (
+            namespace.get(name) is not original
+            or function.__code__ is not code or function.__defaults__ is not defaults
+            or function.__kwdefaults__ is not keywords
+            or function.__globals__ is not defining_globals
+            or function.__closure__ is not cells
+            or getattr(function, "__wrapped__", None) is not wrapped
+            or any(cell.cell_contents is not value for cell, value in values)
+            or (keywords is not None and (
+                len(keywords) != len(items)
+                or any(key not in keywords or keywords[key] is not value for key, value in items)
+            ))
+        ):
+            return False
+    return (
+        sys.modules.get(bootstrap.__name__) is bootstrap is _ORDINARY_BOOTSTRAP
+        and Admission is _ORDINARY_ADMISSION
+    )
+
+
 class _Requirement(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
     version: int = Field(ge=1, le=1)
@@ -245,6 +435,47 @@ def _identifier(value: str) -> str:
     if type(value) is not str or not 0 < len(value) <= 256 or "\0" in value:
         raise ValueError("activation_identifier_invalid")
     return value
+
+
+_ORDINARY_BOOTSTRAP, _ORDINARY_ADMISSION = bootstrap, Admission
+_ORDINARY_OS, _ORDINARY_LOCKS = bootstrap.os, bootstrap.fcntl
+_ORDINARY_LOCK_CLASS = type(_ORDINARY_LOCKS)
+_ORDINARY_FLOCK = getattr(_ORDINARY_LOCK_CLASS, "flock", None)
+_ORDINARY_NATIVE_READERS = tuple(
+    (name, getattr(_ORDINARY_OS, name))
+    for name in ("open", "close", "fstat", "stat", "listdir", "read", "geteuid")
+) if os.name == "nt" else ()
+_ORDINARY_ACTIVATION_SOURCES = tuple(
+    (namespace, name, original, function, function.__code__, function.__globals__, function.__defaults__,
+     function.__kwdefaults__, tuple((function.__kwdefaults__ or {}).items()),
+     function.__closure__, tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+     getattr(function, "__wrapped__", None))
+    for namespace, names in (
+        (globals(), ("execution_scope", "activation_permission", "_source_scope_admitted",
+                     "_identifier", "_ordinary_activation_observation", "_warm_activation_current",
+                     "_require_ordinary_activation_sources", "_ordinary_activation_sources_current",
+                     "_require_ordinary_native_readers", "_ordinary_native_readers_current")),
+        (vars(_OrdinaryActivation), ("admits", "admits_owners", "finish", "still_ordinary")),
+        (vars(bootstrap), ("startup_permission", "_records", "_control_records", "_registry",
+                           "_registry_read_lock", "_fingerprint", "effective_config_path", "lexical_path",
+                           "_ordinary_registry", "_ordinary_startup_permission", "_ordinary_close_uncertain",
+                           "pinned_directory", "_open_verified_parent", "_native_close", "_read",
+                           "_read_record_bytes", "_strings", "_paths", "_key", "_activation_witness",
+                           "_validate_ancestry_record", "_control_names", "_parse_control_records",
+                           "_decode_record", "_input_identity", "_pinned_admission_child",
+                           "_pinned_ordinary_inputs", "_require_enrollment_marker",
+                           "_require_finished_registry", "_parse_registry")),
+        (vars(Admission), ("_names",)),
+        *(((
+            vars(type(_ORDINARY_OS)),
+            tuple(name for name, method in _ORDINARY_NATIVE_READERS if type(method) is MethodType),
+        ), (vars(_ORDINARY_LOCK_CLASS), ("flock",))) if os.name == "nt" else ()),
+    )
+    for name in names
+    for original in (namespace[name],)
+    for callback in (original.__func__ if type(original) is staticmethod else original,)
+    for function in ((callback, inspect.unwrap(callback)) if hasattr(callback, "__wrapped__") else (callback,))
+)
 
 
 def _key(value: str) -> str:

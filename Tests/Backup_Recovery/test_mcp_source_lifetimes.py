@@ -78,6 +78,7 @@ def test_permission_rmw_admitted_before_pause_finishes(mcp_sources, monkeypatch)
         return acquire(*args, **kwargs)
 
     monkeypatch.setattr(recovery_activation, "acquire_storage", admitted)
+    monkeypatch.setattr(storage, "acquire_storage", admitted)
 
     def loaded_then_pause(value, *args, **kwargs):
         result = original(value, *args, **kwargs)
@@ -286,9 +287,15 @@ def test_permission_preflight_pause_has_no_payload_or_backup_effects(
     original = storage.acquire_storage
     pauses = []
 
-    def acquired(path=None):
-        lease = original(path)
-        if path is not None and str(path).endswith(".bak") and not pauses:
+    def acquired(path=None, *, related_paths=()):
+        lease = original(path, related_paths=related_paths)
+        if (
+            any(
+                member is not None and str(member).endswith(".bak")
+                for member in (path, *related_paths)
+            )
+            and not pauses
+        ):
             pauses.append(storage._begin_local_pause())
         return lease
 

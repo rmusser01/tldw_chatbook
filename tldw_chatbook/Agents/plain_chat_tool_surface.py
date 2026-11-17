@@ -248,6 +248,43 @@ class AppToolKillSwitch:
         return tool_kill_switch_engaged(self.app)
 
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class ControlPlaneToolKillSwitch:
+    """Read the one explicitly supplied live control-plane receiver."""
+
+    service: Any
+
+    def __call__(self) -> bool:
+        if self.service is None:
+            return False
+        getter = getattr(self.service, "get_kill_switch", None)
+        from tldw_chatbook.MCP.console_snapshot import (
+            _original_method,
+            controller_precheck_pipeline_current,
+        )
+        from tldw_chatbook.MCP.unified_control_plane_service import (
+            UnifiedMCPControlPlaneService,
+        )
+
+        if (
+            not controller_precheck_pipeline_current()
+            or type(self.service) is not UnifiedMCPControlPlaneService
+            or not _original_method(
+                getter, self.service, "get_kill_switch", UnifiedMCPControlPlaneService
+            )
+        ):
+            return True
+        try:
+            from tldw_chatbook.Chat.console_control_tools import (
+                service_permission_scope,
+            )
+
+            with service_permission_scope(self.service):
+                return bool(getter())
+        except Exception:  # noqa: BLE001 -- preserve original fail-closed reads.
+            return True
+
+
 def _bridge_local_tools_available(bridge: Any | None) -> bool:
     check = getattr(bridge, "light_surface_local_tools_available", None)
     if not callable(check):

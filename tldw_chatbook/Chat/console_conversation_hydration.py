@@ -380,7 +380,11 @@ def _refresh_console_message_parents(
 
 
 async def load_console_conversation_tree(
-    app: Any, conversation_id: str
+    app: Any,
+    conversation_id: str,
+    *,
+    _conversation_service: Any = None,
+    _read_owner: Any = None,
 ) -> Mapping[str, Any] | None:
     """Load one persisted conversation's WHOLE tree.
 
@@ -402,7 +406,11 @@ async def load_console_conversation_tree(
         ConversationServiceUnavailable: No conversation service is wired.
         ConversationLoadFailed: The service raised.
     """
-    service = getattr(app, "chat_conversation_scope_service", None)
+    service = (
+        _conversation_service
+        if _conversation_service is not None
+        else getattr(app, "chat_conversation_scope_service", None)
+    )
     get_conversation_tree = getattr(service, "get_conversation_tree", None)
     if not callable(get_conversation_tree):
         raise ConversationServiceUnavailable(
@@ -412,8 +420,13 @@ async def load_console_conversation_tree(
         # Task 8: raise the depth/root caps well past the service defaults
         # (50) so a long or branchy conversation's full tree -- every
         # branch, not just the latest -- is loaded intact, not truncated.
+        selected = {} if _read_owner is None else {"_read_owner": _read_owner}
         maybe_tree = get_conversation_tree(
-            conversation_id, mode="local", depth_cap=10_000, root_limit=10_000
+            conversation_id,
+            mode="local",
+            depth_cap=10_000,
+            root_limit=10_000,
+            **selected,
         )
         tree = await maybe_tree if inspect.isawaitable(maybe_tree) else maybe_tree
     except Exception as exc:  # noqa: BLE001 -- re-raised as this module's type
@@ -527,7 +540,13 @@ class ConsoleConversationHydrationData:
 
 
 async def prepare_console_session_data(
-    *, app: Any, store: Any, conversation_id: str, tree: Mapping[str, Any]
+    *,
+    app: Any,
+    store: Any,
+    conversation_id: str,
+    tree: Mapping[str, Any],
+    _database: Any = None,
+    _read_owner: Any = None,
 ) -> ConsoleConversationHydrationData:
     """Read size-dependent hydration data off-loop without publishing a session.
 
@@ -541,7 +560,7 @@ async def prepare_console_session_data(
         Detached nodes, cursor and optional bulk persistence metadata. The caller
         must revalidate authority after awaiting this read and before publication.
     """
-    db = getattr(app, "chachanotes_db", None)
+    db = _database if _database is not None else getattr(app, "chachanotes_db", None)
     persistence = store.persistence
     persistence_db = getattr(persistence, "db", None)
     databases = tuple(
@@ -636,8 +655,16 @@ async def prepare_console_session_data(
                 for database in databases:
                     close = getattr(database, "close_connection", None)
                     if callable(close):
+                        if _read_owner is not None:
+                            from .console_control_sessions import (
+                                capture_saved_read_close,
+                            )
+
+                            capture_saved_read_close(database)
                         close()
 
+    if _read_owner is not None:
+        return await _read_owner.run(read, threaded=threaded)
     return await asyncio.to_thread(read) if threaded else read()
 
 
@@ -657,6 +684,9 @@ async def hydrate_console_session(
     activate: bool = True,
     session_id: str | None = None,
     prepared_data: ConsoleConversationHydrationData | None = None,
+    _database: Any = None,
+    _domain_sources: Any = None,
+    _read_owner: Any = None,
 ) -> Any:
     """Create a Console session from a persisted tree.
 
@@ -689,6 +719,10 @@ async def hydrate_console_session(
         The newly created `ConsoleChatSession`, activated when ``activate``
         is true.
     """
+    if _domain_sources is not None:
+        from .console_control_sessions import require_saved_open_sources
+
+        require_saved_open_sources(*_domain_sources, store=store, database=_database)
     target = str(conversation_id or "").strip()
     conversation = tree.get("conversation")
     if not isinstance(conversation, dict):
@@ -720,7 +754,7 @@ async def hydrate_console_session(
     # the active branch from the stored two-component cursor. Loading all
     # branches (not just the latest) is what makes off-path siblings
     # navigable (swipe) right after resume.
-    db = getattr(app, "chachanotes_db", None)
+    db = _database if _database is not None else getattr(app, "chachanotes_db", None)
     if prepared_data is not None:
         if prepared_data.conversation_id != target:
             raise ValueError("Conversation hydration identity changed")
@@ -821,8 +855,24 @@ async def hydrate_console_session(
             await store.prepare_progress_inbox_owned(session.id)
         except MessageError:
             pass  # Saved report refusal does not invalidate the native chat.
-        await store.hydrate_session_library_policy(session.id)
-        await store.reconcile_pending_workspace_projection(session.id)
+        if _domain_sources is not None:
+            require_saved_open_sources(*_domain_sources, store=store, database=db)
+        if _read_owner is None:
+            await store.hydrate_session_library_policy(session.id)
+        else:
+            await store.hydrate_session_library_policy(
+                session.id, _read_owner=_read_owner
+            )
+        if _domain_sources is not None:
+            require_saved_open_sources(*_domain_sources, store=store, database=db)
+        if _read_owner is None:
+            await store.reconcile_pending_workspace_projection(session.id)
+        else:
+            await store.reconcile_pending_workspace_projection(
+                session.id, _read_owner=_read_owner
+            )
+        if _domain_sources is not None:
+            require_saved_open_sources(*_domain_sources, store=store, database=db)
         if activate:
             store.switch_session(session.id)
     except BaseException:

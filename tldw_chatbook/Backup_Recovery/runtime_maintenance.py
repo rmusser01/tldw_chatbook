@@ -12,6 +12,7 @@ from .local_content_lifetime import participant as content_lifetime
 from .rag_definition_participant import participant as definition_participant
 from .rag_definition_participant import retained_issues
 from .rag_projection_lifetime import participant as projection_lifetime
+from ..Workspaces.project_index.key_process import participant as key_process_lifetime
 
 
 @dataclass(frozen=True)
@@ -103,6 +104,11 @@ async def _resume_hooks(closed):
 
 def _app_hook(app, prefix):
     return _bind(app, "app", "TldwCli", prefix)
+
+
+def _permission_process_owner():
+    module = sys.modules.get("tldw_chatbook.MCP.permission_process")
+    return None if module is None else module.participant
 
 
 def _console_hooks(app, screens):
@@ -244,6 +250,8 @@ class RuntimeMaintenance:
         return tuple(
             id(owner)
             for owner in (
+                _permission_process_owner(),
+                key_process_lifetime,
                 runtime,
                 None if runtime is None else runtime.chat_controller,
                 app.console_image_edit_operations,
@@ -462,6 +470,22 @@ class RuntimeMaintenance:
             )
         # The installed service may have lazily created its client while its
         # previously accepted connect call drained. Never instantiate one here.
+        await _settle_stage(
+            [
+                _bind(
+                    key_process_lifetime,
+                    "Workspaces.project_index.key_process",
+                    "KeyProcessLifetime",
+                )
+            ],
+            self.closed,
+            deadline,
+        )
+        await _settle_stage(
+            [_bind(_permission_process_owner(), "MCP.permission_process", "PermissionProcessLifetime")],
+            self.closed,
+            deadline,
+        )
         local_mcp = getattr(app, "local_mcp_control_service", None)
         self._local_mcp_client = None if local_mcp is None else local_mcp.client
         await _settle_stage(
@@ -611,6 +635,11 @@ class RuntimeMaintenance:
         self._check()
         if not self._settled:
             raise RecoveryRequired("runtime_producers_not_settled")
+        permission_owner = _permission_process_owner()
+        if permission_owner is not None and not permission_owner.drained():
+            raise RecoveryRequired("runtime_producers_not_settled")
+        if not key_process_lifetime.drained():
+            raise RecoveryRequired("runtime_producers_not_settled")
         if self.pause is not None:
             raise RecoveryRequired("local_pause_already_active")
         self.pause = storage._begin_local_pause()
@@ -635,6 +664,11 @@ class RuntimeMaintenance:
         ):
             raise RecoveryRequired("participant_runtime_coverage_incomplete")
         if not pause.drain(time.monotonic()):
+            raise RecoveryRequired("runtime_native_resources_not_settled")
+        permission_owner = _permission_process_owner()
+        if permission_owner is not None and not permission_owner.drained():
+            raise RecoveryRequired("runtime_native_resources_not_settled")
+        if not key_process_lifetime.drained():
             raise RecoveryRequired("runtime_native_resources_not_settled")
 
 

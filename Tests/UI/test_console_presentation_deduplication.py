@@ -77,6 +77,9 @@ def test_new_appearance_queries_do_not_renew_an_older_missing_id(monkeypatch):
     clock[0] += workspace.CONSOLE_APPEARANCE_MAP_CACHE_TTL_SECONDS / 2
     controller._console_conversation_appearance_map(["known"])
     values["missing"] = SimpleNamespace(icon="arrived", color="")
+    assert "missing" not in controller._console_conversation_appearance_map(["missing"])
+    assert len(calls) == 2
+    clock[0] += workspace.CONSOLE_APPEARANCE_MAP_CACHE_TTL_SECONDS / 2
     assert controller._console_conversation_appearance_map(["missing"])["missing"] == (
         "arrived",
         "",

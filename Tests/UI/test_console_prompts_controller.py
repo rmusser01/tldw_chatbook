@@ -801,6 +801,7 @@ async def test_prompt_application_refuses_stale_draft_system_session_and_expiry(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_prompt_application_rolls_back_draft_when_system_mutation_raises(
     monkeypatch,
 ) -> None:
@@ -857,6 +858,7 @@ async def test_prompt_application_rolls_back_draft_when_system_mutation_raises(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_prompt_application_reports_durable_system_failure_separately(
     monkeypatch,
 ) -> None:
@@ -924,6 +926,7 @@ async def test_prompt_application_reports_durable_system_failure_separately(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_prompt_application_keeps_durable_system_when_surface_sync_fails(
     monkeypatch,
 ) -> None:
@@ -1212,6 +1215,7 @@ async def test_prompt_history_store_is_lazy_shared_and_factory_seamed() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_library_prompt_insert_handoff_appends_onto_the_live_draft() -> None:
     from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
 

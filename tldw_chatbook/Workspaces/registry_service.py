@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 
 from loguru import logger
 
+from tldw_chatbook.Utils.definition_records import capture_definitions
 from tldw_chatbook.Chat.rag_scope import (
     RagScope,
     ScopeItem,
@@ -4291,4 +4292,57 @@ _NATIVE_ORDINARY_REVIEW_READS = tuple(
         getattr(LocalWorkspaceRegistryService, name).__code__,
     )
     for name in ("read_change_review_consent", "list_folder_bindings")
+)
+
+
+# Definition-time anchors for the fixed key command; never a lazy-import baseline.
+_KEY_PROCESS_DEFINITIONS = capture_definitions(
+    (
+        (
+            LocalWorkspaceRegistryService,
+            "__init__",
+            LocalWorkspaceRegistryService.__init__,
+        ),
+        (
+            LocalWorkspaceRegistryService,
+            "project_index_authority_adapters",
+            LocalWorkspaceRegistryService.project_index_authority_adapters,
+        ),
+        (
+            LocalWorkspaceRegistryService,
+            "binding_authority_fence",
+            LocalWorkspaceRegistryService.binding_authority_fence,
+        ),
+        (
+            globals(),
+            "_runtime_binding_from_row",
+            globals().get("_runtime_binding_from_row"),
+        ),
+        (
+            globals(),
+            "binding_exclusion_entries",
+            globals().get("binding_exclusion_entries"),
+        ),
+    )
+)
+
+_KEY_PROCESS_GLOBALS = globals()
+_KEY_PROCESS_DEFINITIONS += (
+    (globals(), "LocalWorkspaceRegistryService", LocalWorkspaceRegistryService, ()),
+)
+
+# Definition-time provenance for the finite Console plugin constructor callback.
+_CONSOLE_PLUGIN_LOOKUP_SOURCE = (
+    globals(),
+    LocalWorkspaceRegistryService,
+    LocalWorkspaceRegistryService.get_workspace.__globals__,
+    capture_definitions(
+        (
+            (
+                LocalWorkspaceRegistryService,
+                "get_workspace",
+                LocalWorkspaceRegistryService.get_workspace,
+            ),
+        )
+    ),
 )

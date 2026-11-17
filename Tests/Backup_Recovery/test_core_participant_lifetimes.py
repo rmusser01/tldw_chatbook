@@ -529,10 +529,10 @@ def test_pause_cancels_independent_nested_admission_and_keeps_outer_live(
     outer = PromptsDatabase(tmp_path / "outer-race.sqlite", "outer-test")
     inner = PromptsDatabase(tmp_path / "inner-race.sqlite", "inner-test")
     entered, finish, retired = (threading.Event() for _ in range(3))
-    original = storage.admission_authority
+    original = storage.acquire_storage
     errors = []
 
-    def delayed_authority(root):
+    def delayed_admission(path=None, **kwargs):
         if any(
             getattr(operation, "path", None) == inner.db_path
             and operation.lease is None
@@ -540,9 +540,11 @@ def test_pause_cancels_independent_nested_admission_and_keeps_outer_live(
         ):
             entered.set()
             assert finish.wait(5)
-        return original(root)
+        return original(path, **kwargs)
 
-    monkeypatch.setattr(storage, "admission_authority", delayed_authority)
+    # Reuse may avoid admission_authority; the ordinary acquisition boundary
+    # still runs and must refuse when pause wins before it returns.
+    monkeypatch.setattr(storage, "acquire_storage", delayed_admission)
 
     def work():
         try:

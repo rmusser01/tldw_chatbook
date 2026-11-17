@@ -19,6 +19,42 @@ from tldw_chatbook.UI.Screens import chat_screen
 pytestmark = pytest.mark.bootstrap_profile
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("expired", [False, True])
+async def test_full_shares_config_read_after_archive_settles(tmp_path, monkeypatch, expired):
+    database, _store, controller, screen, tasks = _screen(tmp_path)
+    try:
+        effects = _full_screen(screen, controller, monkeypatch)
+        projection = await _warm(screen, tasks)
+        await asyncio.sleep(projection.max_age + 0.02 if expired else 0.55)
+
+        async def archive():
+            if expired:
+                await asyncio.sleep(1.02)
+
+        screen._archive_recovery_view = lambda: SimpleNamespace(sync=archive)
+        reads = []
+        old_main, old_thread = sys.getprofile(), threading.getprofile()
+
+        def observe(frame, event, _argument):
+            if event == "call" and frame.f_code is projection.read_current.__code__:
+                reads.append(threading.get_ident())
+
+        threading.setprofile_all_threads(observe)
+        try:
+            assert await chat_screen.ChatScreen._sync_native_console_chat_ui(screen)
+        finally:
+            threading.setprofile_all_threads(old_thread)
+            sys.setprofile(old_main)
+        assert effects.count("rail") == 1 and "attach" in effects
+        assert len(reads) == (1 if expired else 0), "FULL repeated a valid or prematurely warmed config read"
+        assert all(thread != threading.get_ident() for thread in reads)
+        assert not projection.pending and not projection._reads
+    finally:
+        await asyncio.gather(*tasks, return_exceptions=True)
+        database.close()
+
+
 def _full_screen(screen, controller, monkeypatch):
     """Keep original FULL and rail/config entry; omit unrelated UI projections."""
     effects = []

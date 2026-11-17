@@ -6024,6 +6024,12 @@ _CONSOLE_CONTROLLER_SWITCH_METHODS = tuple(
     for function in (descriptor.fget if type(descriptor) is property else descriptor,)
 )
 
+_CONSOLE_LOCAL_GATE_METHODS = tuple(
+    (name, function, function.__code__, _capture_controller_inputs(function))
+    for name in ("gate_tool_test", "gate_tool_test_for_profile")
+    for function in (vars(UnifiedMCPControlPlaneService)[name],)
+)
+
 
 # Definition-time provenance for pure policy projection moved to the owner loop.
 # Replaced helpers keep the public worker route; this table carries no authority.
@@ -6045,4 +6051,42 @@ _CONSOLE_TOOL_STATE_RESOLVER_BINDINGS = tuple(
             )
         ),
     )
+)
+
+# Definition-time provenance for the finite optional local permission surface.
+_LOCAL_PERMISSION_DEFINITIONS = tuple(
+    (
+        name,
+        member,
+        tuple(
+            (function, function.__code__, _capture_controller_inputs(function))
+            for function in (
+                (member.fget,)
+                if isinstance(member, property)
+                else (member, member.__wrapped__)
+                if hasattr(member, "__wrapped__")
+                else (member,)
+            )
+        ),
+    )
+    for name in (
+        "permission_store",
+        "effective_tool_states",
+        "_audit_downgrade_if_fresh",
+        "get_kill_switch",
+        "set_kill_switch",
+        "set_tool_state",
+        "set_server_default",
+        "set_global_default",
+        "list_session_approvals",
+        "revoke_session_approval",
+        "clear_session_approvals",
+        "add_tool_arg_rule",
+        "remove_tool_arg_rule",
+        "list_tool_arg_rules",
+        "dismiss_permission_suggestion",
+        "restore_permission_suggestion",
+        "clear_permission_suggestion_dismissals",
+    )
+    for member in (vars(UnifiedMCPControlPlaneService)[name],)
 )

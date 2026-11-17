@@ -1517,6 +1517,15 @@ def _active_lineage_rows(db, conversation_id: str, rows: list[dict]) -> list[dic
     return lineage if len(lineage) == len(seen) else lineage
 
 
+@dataclass(slots=True)
+class _ConsoleSettingsPublication:
+    """Inert exact push outcome retained by its original opening caller."""
+
+    modal: Any = None
+    report_transfer_committed: Callable[[], bool] | None = None
+    mount: Awaitable[None] | None = None
+
+
 @dataclass(frozen=True, slots=True)
 class _ConsolePendingSend:
     """One keyboard capture claimable only by its scheduled callback."""
@@ -1530,13 +1539,19 @@ class _ConsolePendingSend:
 @spend.retry_after_config_rebuild
 def _show_console_fleet_coachmark(screen: "ChatScreen") -> None:
     """The cap reads config: a held rebuild defers the show (TASK-39166)."""
-    if screen._console_fleet_coachmark_seen() or (surface := screen.console_session_surface) is None:
-        return  # dismissed during the deferral; the surface is read at show time
-    max_parallel_runs = screen._ensure_console_chat_controller().max_parallel_runs
-    surface.show_fleet_coachmark(
-        f"Each tab runs its own agent — up to {max_parallel_runs} in "
-        "parallel (change in Settings > Console Behavior)."
-    )
+    from ...Chat.console_parent_settings import parent_settings_render
+
+    with parent_settings_render(screen):
+        if (
+            screen._console_fleet_coachmark_seen()
+            or (surface := screen.console_session_surface) is None
+        ):
+            return  # dismissed during the deferral; the surface is read at show time
+        max_parallel_runs = screen._ensure_console_chat_controller().max_parallel_runs
+        surface.show_fleet_coachmark(
+            f"Each tab runs its own agent — up to {max_parallel_runs} in "
+            "parallel (change in Settings > Console Behavior)."
+        )
 
 
 class ChatScreen(BaseAppScreen):
@@ -3043,6 +3058,167 @@ class ChatScreen(BaseAppScreen):
         (``/endpoint``) can retain it instead of re-opening settings or
         guessing at the screen stack.
         """
+        from ...Chat.console_parent_settings import (
+            ParentSettingsOriginChanged,
+            run_parent_async_settings_action,
+        )
+
+        try:
+            selected, initial = await run_parent_async_settings_action(
+                self, "settings-open-prepare", (transfer, suspended_draft)
+            )
+        except ParentSettingsOriginChanged:
+            return False
+        if not selected:
+            initial = self._prepare_console_settings_open(transfer, suspended_draft)
+        if initial is False:
+            return False
+        (
+            controller,
+            store,
+            draft,
+            session_id,
+            origin,
+            settings,
+            initial_draft,
+            display_name,
+            active_provider,
+            active_model,
+        ) = initial
+        prepared_context = await spend.prepare_console_settings_context(
+            self, controller, store, session_id, origin,
+            max_age=CONSOLE_SETTINGS_ESTIMATE_TTL_SECONDS,
+        )
+        if prepared_context is None:
+            return False
+        effective_thinking_policy, context_facts = prepared_context
+        try:
+            selected, displayed = await run_parent_async_settings_action(
+                self,
+                "settings-display-prepare",
+                (initial, transfer, suspended_draft, effective_thinking_policy),
+            )
+        except ParentSettingsOriginChanged:
+            return False
+        if not selected:
+            displayed = self._prepare_console_settings_display(
+                initial, transfer, suspended_draft, effective_thinking_policy
+            )
+        initial, committed, context_estimate, context_state = displayed
+        (
+            controller,
+            store,
+            draft,
+            session_id,
+            origin,
+            settings,
+            initial_draft,
+            display_name,
+            active_provider,
+            active_model,
+        ) = initial
+        providers_models = await self._providers_models_for_console_settings(
+            active_provider,
+            current_model=active_model,
+        )
+        publication = _ConsoleSettingsPublication()
+        mount_started = False
+        final_args = (
+            displayed,
+            context_facts,
+            providers_models,
+            transfer,
+            suspended_draft,
+            focus_model,
+            focus_context,
+            _pre_push_guard,
+            _on_transfer_committed,
+            publication,
+        )
+        try:
+            try:
+                selected, prepared_modal = await run_parent_async_settings_action(
+                    self, "settings-modal-prepare", final_args
+                )
+            except ParentSettingsOriginChanged:
+                if publication.modal is None:
+                    return False
+                raise
+            if not selected:
+                prepared_modal = self._prepare_console_settings_modal(*final_args)
+            if prepared_modal is False:
+                return False
+            # The retained phase has retired before the original mount await.
+            mount_started = True
+            await publication.mount
+        except asyncio.CancelledError:
+            if publication.modal is None:
+                raise
+            if not mount_started and publication.mount is not None:
+                # Cancellation before result delivery must not dismantle a
+                # modal whose original Compose/Mount is still initializing.
+                mount_work = asyncio.ensure_future(publication.mount)
+                while not mount_work.done():
+                    try:
+                        await asyncio.shield(mount_work)
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception:
+                        break
+                if not mount_work.cancelled():
+                    mount_work.exception()  # retrieve outcome; preserve cancellation
+            modal = publication.modal
+            report_transfer_committed = publication.report_transfer_committed
+            removed = await self._unwind_failed_console_settings_modal(modal)
+            if (
+                not removed
+                and self._console_settings_modal_is_on_stack(modal)
+                and suspended_draft is not None
+                and _suspended_owner_token is not None
+                and getattr(self, "_suspended_conversation_settings", None)
+                is suspended_draft
+                and getattr(self, "_suspended_conversation_settings_token", None)
+                == _suspended_owner_token
+            ):
+                committed = report_transfer_committed()
+                if committed and (
+                    getattr(self, "_suspended_conversation_settings", None)
+                    is suspended_draft
+                    and getattr(
+                        self,
+                        "_suspended_conversation_settings_token",
+                        None,
+                    )
+                    == _suspended_owner_token
+                ):
+                    self._suspended_conversation_settings = None
+                    self._suspended_conversation_settings_token = None
+            raise
+        except Exception:
+            if publication.modal is None:
+                raise
+            modal = publication.modal
+            report_transfer_committed = publication.report_transfer_committed
+            removed = await self._unwind_failed_console_settings_modal(modal)
+            if not removed and self._console_settings_modal_is_on_stack(modal):
+                # A concurrently covered modal still owns the only live
+                # draft. Report ownership so a suspended snapshot is not
+                # retained as a second owner.
+                if report_transfer_committed():
+                    return True
+                return False
+            return False
+        modal = publication.modal
+        report_transfer_committed = publication.report_transfer_committed
+        if report_transfer_committed():
+            if _pushed_modal_sink is not None:
+                _pushed_modal_sink(modal)
+            return True
+        await self._unwind_failed_console_settings_modal(modal)
+        return False
+
+    def _prepare_console_settings_open(self, transfer, suspended_draft):
+        """Keep the original synchronous Settings opening preparation."""
         controller = self._ensure_console_chat_controller()
         store = self._ensure_console_chat_store()
         draft = suspended_draft  # identity checks below keep the original
@@ -3080,12 +3256,35 @@ class ChatScreen(BaseAppScreen):
             active_model = suspended_draft.provider_model_drafts.get(
                 active_provider, active_model
             )
-        prepared_context = await spend.prepare_console_settings_context(
-            self, controller, store, session_id, origin,
-            max_age=CONSOLE_SETTINGS_ESTIMATE_TTL_SECONDS,
+        return (
+            controller,
+            store,
+            draft,
+            session_id,
+            origin,
+            settings,
+            initial_draft,
+            display_name,
+            active_provider,
+            active_model,
         )
-        if prepared_context is None:
-            return False
+
+    def _prepare_console_settings_display(
+        self, initial, transfer, suspended_draft, effective_thinking_policy
+    ):
+        """Build the original suspended/current draft and context display phase."""
+        (
+            controller,
+            store,
+            draft,
+            session_id,
+            origin,
+            settings,
+            initial_draft,
+            display_name,
+            active_provider,
+            active_model,
+        ) = initial
         # TASK-36534: one read of the chat, after preparation, is what a
         # suspended draft's untouched fields follow and its pair is kept with.
         committed = store.session_settings(session_id)
@@ -3108,7 +3307,6 @@ class ChatScreen(BaseAppScreen):
                 )
             # TASK-35190: and the chat's own pair.
             initial_draft = remember_session_pair(initial_draft, committed)
-        effective_thinking_policy, context_owner_current = prepared_context
         context_estimate = self._context_spend._console_settings_context_estimate_for_session(
             session_id,
             settings=settings,
@@ -3119,11 +3317,52 @@ class ChatScreen(BaseAppScreen):
             settings=settings,
             thinking_history_effective_policy=effective_thinking_policy,
         )
-        providers_models = await self._providers_models_for_console_settings(
-            active_provider,
-            current_model=active_model,
+        return (
+            (
+                controller,
+                store,
+                draft,
+                session_id,
+                origin,
+                settings,
+                initial_draft,
+                display_name,
+                active_provider,
+                active_model,
+            ),
+            committed,
+            context_estimate,
+            context_state,
         )
-        if not context_owner_current():
+
+    def _prepare_console_settings_modal(
+        self,
+        displayed,
+        context_facts,
+        providers_models,
+        transfer,
+        suspended_draft,
+        focus_model,
+        focus_context,
+        _pre_push_guard,
+        _on_transfer_committed,
+        publication: _ConsoleSettingsPublication,
+    ):
+        """Keep final guards adjacent to push, leaving mount to the caller."""
+        initial, committed, context_estimate, context_state = displayed
+        (
+            controller,
+            store,
+            draft,
+            session_id,
+            origin,
+            settings,
+            initial_draft,
+            display_name,
+            active_provider,
+            active_model,
+        ) = initial
+        if not self._console_settings_context_current(*context_facts):
             return False
         active_run = self._console_run_active()
 
@@ -3223,50 +3462,33 @@ class ChatScreen(BaseAppScreen):
             suspended_draft is not None and current != committed
         ):  # TASK-36534 backstop; the owner check after discovery refuses first
             return False
-        try:
-            await self.app.push_screen(modal, callback=apply_origin_result)
-        except asyncio.CancelledError:
-            removed = await self._unwind_failed_console_settings_modal(modal)
-            if (
-                not removed
-                and self._console_settings_modal_is_on_stack(modal)
-                and suspended_draft is not None
-                and _suspended_owner_token is not None
-                and getattr(self, "_suspended_conversation_settings", None)
-                is suspended_draft
-                and getattr(self, "_suspended_conversation_settings_token", None)
-                == _suspended_owner_token
-            ):
-                committed = report_transfer_committed()
-                if committed and (
-                    getattr(self, "_suspended_conversation_settings", None)
-                    is suspended_draft
-                    and getattr(
-                        self,
-                        "_suspended_conversation_settings_token",
-                        None,
-                    )
-                    == _suspended_owner_token
-                ):
-                    self._suspended_conversation_settings = None
-                    self._suspended_conversation_settings_token = None
-            raise
-        except Exception:
-            removed = await self._unwind_failed_console_settings_modal(modal)
-            if not removed and self._console_settings_modal_is_on_stack(modal):
-                # A concurrently covered modal still owns the only live
-                # draft. Report ownership so a suspended snapshot is not
-                # retained as a second owner.
-                if report_transfer_committed():
-                    return True
-                return False
+        # Save before push: even partial publication or cancellation before
+        # result delivery must leave the original caller its exact unwind target.
+        publication.modal = modal
+        publication.report_transfer_committed = report_transfer_committed
+        publication.mount = self.app.push_screen(modal, callback=apply_origin_result)
+        return modal, apply_origin_result, report_transfer_committed
+
+    def _console_settings_context_current(
+        self, controller, store, session_id, origin, reader, key
+    ):
+        """Run the original complete context owner predicate without new proof."""
+        if (
+            getattr(self, "_closing", False)
+            or getattr(controller, "_disposed", False)
+            or getattr(spend._readiness_runtime(self), "_disposed", False)
+            or self._ensure_console_chat_controller() is not controller
+            or self._ensure_console_chat_store() is not store
+            or (
+                reader is not None
+                and (key is None or reader._key(controller, session_id) != key)
+            )
+        ):
             return False
-        if report_transfer_committed():
-            if _pushed_modal_sink is not None:
-                _pushed_modal_sink(modal)
-            return True
-        await self._unwind_failed_console_settings_modal(modal)
-        return False
+        try:
+            return store.capture_console_settings_origin(session_id) == origin
+        except KeyError:
+            return False
 
     def _console_settings_modal_is_on_stack(
         self,
@@ -4631,6 +4853,32 @@ class ChatScreen(BaseAppScreen):
 
     async def action_show_workbench_help(self) -> None:
         """Open contextual help for visible Console Workbench actions."""
+        from tldw_chatbook.Chat.console_parent_settings import wait_parent_settings
+
+        from tldw_chatbook.Chat.console_parent_settings import (
+            ParentSettingsOriginChanged,
+        )
+
+        try:
+            await wait_parent_settings(self)
+        except ParentSettingsOriginChanged:
+            return
+        # Keep the original decision gate before any selected admission/read.
+        if self._console_decision_blocking():
+            return
+        from tldw_chatbook.Chat.console_parent_settings import (
+            run_parent_async_settings_action,
+        )
+
+        try:
+            if await run_parent_async_settings_action(self, "workbench-help", ()):
+                return
+        except ParentSettingsOriginChanged:
+            return
+        self._show_console_workbench_help()
+
+    def _show_console_workbench_help(self) -> None:
+        """Read and publish help at the original decision/settings checkpoint."""
         # TASK-25715: help over an unanswered decision card put a third layer
         # on screen with nothing indicating which surface owned input.
         if self._console_decision_blocking():
@@ -7373,6 +7621,11 @@ class ChatScreen(BaseAppScreen):
         Served from the per-pass memo inside a `_console_derivation_scope`
         (task-15452): one draft-edit sync called this 63 times.
         """
+        from ...Chat.console_parent_settings import due_settings_config
+
+        due_config = due_settings_config(self)
+        if due_config is not None:
+            return due_config
         active = getattr(self, "_console_readiness_projection_active", None)
         if active is not None and active[0] == threading.get_ident():
             return active[1]
@@ -8502,18 +8755,25 @@ class ChatScreen(BaseAppScreen):
         unconditionally, forcing a ``Static.update()`` even when the system
         prompt hadn't changed since the last apply.
         """
-        payload = self._console_rail_system_line_state()
-        if payload == self._console_rail_system_line_last:
-            return
-        try:
-            system_line = self.query_one("#console-rail-system-line", Static)
-        except (NoMatches, QueryError):
-            return
-        line_text, is_dim = payload
-        system_line.update(line_text)
-        system_line.set_class(is_dim, "console-rail-system-line-dim")
-        self._console_rail_system_line_last = payload
-        self._request_console_context_allocation_reconcile()
+        from tldw_chatbook.Chat.console_parent_settings import parent_settings_render
+
+        with parent_settings_render(self):
+            from ...Chat.console_parent_settings import defer_parent_settings_render
+
+            if defer_parent_settings_render(self):
+                return
+            payload = self._console_rail_system_line_state()
+            if payload == self._console_rail_system_line_last:
+                return
+            try:
+                system_line = self.query_one("#console-rail-system-line", Static)
+            except (NoMatches, QueryError):
+                return
+            line_text, is_dim = payload
+            system_line.update(line_text)
+            system_line.set_class(is_dim, "console-rail-system-line-dim")
+            self._console_rail_system_line_last = payload
+            self._request_console_context_allocation_reconcile()
 
     def _request_console_context_allocation_reconcile(self) -> None:
         """Safely invalidate the mounted Context allocator after a DOM mutation."""
@@ -8539,7 +8799,14 @@ class ChatScreen(BaseAppScreen):
 
     def _sync_console_settings_summary(self) -> None:
         """Refresh through the current Screen presentation entry."""
-        self._context_spend._refresh_settings_summary()
+        from tldw_chatbook.Chat.console_parent_settings import parent_settings_render
+
+        with parent_settings_render(self):
+            from ...Chat.console_parent_settings import defer_parent_settings_render
+
+            if defer_parent_settings_render(self):
+                return
+            self._context_spend._refresh_settings_summary()
 
     def _request_console_agent_fleet_sync(self) -> None:
         """Coalesce Agent-fleet-section syncs into one trailing run (task-5).
@@ -9224,6 +9491,8 @@ class ChatScreen(BaseAppScreen):
         # enumerated `CONSOLE_VIEW_HOOK_SLOTS` list, so that the same list
         # can clear all of them at detach. This block used to assign each
         # one by hand and had no counterpart anywhere.
+        if runtime.domain_services is not None:
+            runtime._execution_service.prepare_display_owner().bind_original_graph()
         generation = runtime.attach_view(
             self,
             prior_generation=getattr(
@@ -10602,87 +10871,102 @@ class ChatScreen(BaseAppScreen):
 
     def _poll_console_credential_readiness(self) -> None:
         """Refresh send controls as background credentials complete or expire."""
-        from tldw_chatbook.LLM_Calls.anthropic_subscription import (
-            subscription_credential_status,
-            subscription_readiness_revision,
-        )
+        from tldw_chatbook.Chat.console_parent_settings import parent_settings_render
 
-        if (
-            not self._console_attach_reconciled
-            or not self.is_attached
-            or not self.is_current
-            or getattr(self, "_console_sync_maintenance_paused", False)
-        ):
-            return
-        # TASK-34956: cheap pre-gate BEFORE the ~8ms derivation-scope
-        # build. Same signals the snapshot gate relies on -- status()
-        # reports a credential's time-based expiry with no revision bump,
-        # and version covers connection-evidence settlements. Provider and
-        # draft edits sync the send controls through their own watcher
-        # paths; this poll only owns background credential transitions.
-        # Reads no config, so it sits ahead of the maintenance locks.
-        version = getattr(
-            shared_connection_evidence(lambda: self.app), "version", 0
-        )
-        pre_gate = (
-            subscription_credential_status(background=True),
-            subscription_readiness_revision(),
-            version,
-        )
-        if pre_gate == getattr(self, "_console_credential_pre_gate", None):
-            return
-        from contextlib import ExitStack
+        with parent_settings_render(self):
+            from ...Chat.console_parent_settings import defer_parent_settings_render
 
-        from tldw_chatbook import config
+            from tldw_chatbook.LLM_Calls.anthropic_subscription import (
+                subscription_credential_status,
+                subscription_readiness_revision,
+            )
 
-        from ..Console_Modules.config_sync import run_console_config_sync
-
-        def sync() -> None:
-            # task-32804.3: build readiness inside the derivation scope so the
-            # per-tick config reads share ONE app_config admission instead of six
-            # (~49 ms -> ~8 ms/tick). The (revision, status) gate is preserved
-            # exactly -- status() reports a credential's time-based expiry with no
-            # revision bump, so gating on the revision alone would leave the send
-            # controls stale; both signals stay in the snapshot.
-            with self._console_derivation_scope():
-                # TASK-33005.2/.5: a test settled on any surface refreshes once. Read
-                # before the build: a switcher probe settles off-thread mid-build.
-                _settings, readiness = self._active_console_settings_readiness()
-                snapshot = (
-                    subscription_readiness_revision(),
-                    readiness.subscription_status,
-                    version,
-                )
-                if snapshot != self._console_credential_snapshot:
-                    self._sync_console_settings_summary()
-                    if self._sync_console_control_bar():
-                        self._console_credential_snapshot = snapshot
-                # TASK-36511.4: an unchanged snapshot is a completed pass too.
-                # Commit the pre-gate only from a completed pass (review
-                # finding): lock contention, a dropped deferred sync, or a
-                # build failure must leave it unset so the next tick
-                # retries -- the contract the old comment promised.
-                self._console_credential_pre_gate = pre_gate
-
-        with ExitStack() as acquired:
-            for lock in (config._settings_rebuild_lock(), config._config_file_lock()):
-                if not lock.acquire(blocking=False):
-                    return  # The next credential tick retries with fresh state.
-                acquired.callback(lock.release)
-            if spend.defer_cold_live_read(self, "_poll_console_credential_readiness"):
-                # TASK-36511.4: warm config off the loop; the next tick renders.
-                spend.ConsoleReadinessConfigProjection.for_screen(self).run(
-                    lambda: None
-                )
+            if (
+                not self._console_attach_reconciled
+                or not self.is_attached
+                or not self.is_current
+                or getattr(self, "_console_sync_maintenance_paused", False)
+            ):
                 return
-            if config._settings_cache_hit(config._get_effective_config_path()) is None:
-                run_console_config_sync(
-                    sync,
-                    maintenance_paused=False,
-                    defer=lambda: None,
-                )
-            else:
-                sync()
+            # TASK-34956: cheap pre-gate BEFORE the ~8ms derivation-scope
+            # build. Same signals the snapshot gate relies on -- status()
+            # reports a credential's time-based expiry with no revision bump,
+            # and version covers connection-evidence settlements. Provider and
+            # draft edits sync the send controls through their own watcher
+            # paths; this poll only owns background credential transitions.
+            # Reads no config, so it sits ahead of the maintenance locks.
+            version = getattr(
+                shared_connection_evidence(lambda: self.app), "version", 0
+            )
+            pre_gate = (
+                subscription_credential_status(background=True),
+                subscription_readiness_revision(),
+                version,
+            )
+            if pre_gate == getattr(self, "_console_credential_pre_gate", None):
+                return
+            if defer_parent_settings_render(self):
+                return
+            from contextlib import ExitStack
+
+            from tldw_chatbook import config
+
+            from ..Console_Modules.config_sync import run_console_config_sync
+
+            def sync() -> None:
+                # task-32804.3: build readiness inside the derivation scope so the
+                # per-tick config reads share ONE app_config admission instead of six
+                # (~49 ms -> ~8 ms/tick). The (revision, status) gate is preserved
+                # exactly -- status() reports a credential's time-based expiry with no
+                # revision bump, so gating on the revision alone would leave the send
+                # controls stale; both signals stay in the snapshot.
+                with self._console_derivation_scope():
+                    # TASK-33005.2/.5: a test settled on any surface refreshes once. Read
+                    # before the build: a switcher probe settles off-thread mid-build.
+                    _settings, readiness = self._active_console_settings_readiness()
+                    snapshot = (
+                        subscription_readiness_revision(),
+                        readiness.subscription_status,
+                        version,
+                    )
+                    if snapshot != self._console_credential_snapshot:
+                        self._sync_console_settings_summary()
+                        if self._sync_console_control_bar():
+                            self._console_credential_snapshot = snapshot
+                    # TASK-36511.4: an unchanged snapshot is a completed pass too.
+                    # Commit the pre-gate only from a completed pass (review
+                    # finding): lock contention, a dropped deferred sync, or a
+                    # build failure must leave it unset so the next tick
+                    # retries -- the contract the old comment promised.
+                    self._console_credential_pre_gate = pre_gate
+
+            with ExitStack() as acquired:
+                for lock in (
+                    config._settings_rebuild_lock(),
+                    config._config_file_lock(),
+                ):
+                    if not lock.acquire(blocking=False):
+                        return  # The next credential tick retries with fresh state.
+                    acquired.callback(lock.release)
+                if spend.defer_cold_live_read(
+                    self, "_poll_console_credential_readiness"
+                ):
+                    # TASK-36511.4: warm config off the loop; the next tick renders.
+                    spend.ConsoleReadinessConfigProjection.for_screen(self).run(
+                        lambda: None
+                    )
+                    return
+                if (
+                    config._settings_cache_hit(config._get_effective_config_path())
+                    is None
+                ):
+                    run_console_config_sync(
+                        sync,
+                        maintenance_paused=False,
+                        defer=lambda: None,
+                    )
+                else:
+                    sync()
 
     def _stop_console_credential_poll_timer(self) -> None:
         """Stop completion polling when the mounted Console view goes away."""
@@ -13863,52 +14147,63 @@ class ChatScreen(BaseAppScreen):
     @spend.console_readiness_presentation  # TASK-35645: every caller reads owned config
     def _sync_console_transcript_guidance(self) -> None:
         """Refresh Console onboarding and provider recovery copy in place."""
-        # These synchronous presentation helpers consume one result. Keep the
-        # acquisition (including session convergence) complete before sharing
-        # it, and acquire afresh on the next update or independent helper call.
-        settings_readiness = self._active_console_settings_readiness()
-        blocker_copy = self._console_provider_blocker_copy(
-            settings_readiness=settings_readiness
-        )
-        action_label, _action_target, action_tooltip = (
-            self._console_provider_recovery_action(
+        from tldw_chatbook.Chat.console_parent_settings import parent_settings_render
+
+        with parent_settings_render(self):
+            from tldw_chatbook.Chat.console_parent_settings import (
+                defer_parent_settings_render,
+            )
+
+            if defer_parent_settings_render(self):
+                return
+            # These synchronous presentation helpers consume one result. Keep the
+            # acquisition (including session convergence) complete before sharing
+            # it, and acquire afresh on the next update or independent helper call.
+            settings_readiness = self._active_console_settings_readiness()
+            blocker_copy = self._console_provider_blocker_copy(
                 settings_readiness=settings_readiness
             )
-        )
-        if blocker_copy:
-            empty_action_label, empty_action_tooltip = (
-                self._console_empty_recovery_action_copy(
-                    blocker_copy,
-                    provider_action_label=action_label,
-                    provider_action_tooltip=action_tooltip,
+            action_label, _action_target, action_tooltip = (
+                self._console_provider_recovery_action(
+                    settings_readiness=settings_readiness
                 )
             )
-        else:
-            # TASK-2154.8 (FR-03): no blocker -> the empty transcript offers no
-            # recovery action (it would dead-end as a misleading "Choose model"
-            # button when nothing is broken). The setup modal keeps its own
-            # default-label fallback, so card mode is unaffected.
-            empty_action_label, empty_action_tooltip = "", ""
+            if blocker_copy:
+                empty_action_label, empty_action_tooltip = (
+                    self._console_empty_recovery_action_copy(
+                        blocker_copy,
+                        provider_action_label=action_label,
+                        provider_action_tooltip=action_tooltip,
+                    )
+                )
+            else:
+                # TASK-2154.8 (FR-03): no blocker -> the empty transcript offers no
+                # recovery action (it would dead-end as a misleading "Choose model"
+                # button when nothing is broken). The setup modal keeps its own
+                # default-label fallback, so card mode is unaffected.
+                empty_action_label, empty_action_tooltip = "", ""
 
-        card_state = self._build_console_setup_card_state(
-            settings_readiness=settings_readiness
-        )
-        try:
-            surface = self.query_one("#console-session-surface", ConsoleSessionSurface)
-        except QueryError:
-            pass
-        else:
-            surface.sync_inline_guidance(
-                card_state,
-                provider_action_label=empty_action_label,
-                provider_action_tooltip=empty_action_tooltip,
+            card_state = self._build_console_setup_card_state(
+                settings_readiness=settings_readiness
             )
+            try:
+                surface = self.query_one(
+                    "#console-session-surface", ConsoleSessionSurface
+                )
+            except QueryError:
+                pass
+            else:
+                surface.sync_inline_guidance(
+                    card_state,
+                    provider_action_label=empty_action_label,
+                    provider_action_tooltip=empty_action_tooltip,
+                )
 
-        self._sync_console_setup_modal(
-            card_state,
-            action_label=empty_action_label,
-            action_tooltip=empty_action_tooltip,
-        )
+            self._sync_console_setup_modal(
+                card_state,
+                action_label=empty_action_label,
+                action_tooltip=empty_action_tooltip,
+            )
 
     def _sync_console_setup_modal(
         self,
@@ -14615,10 +14910,47 @@ class ChatScreen(BaseAppScreen):
             )
         )
 
+    async def _compose(self) -> None:
+        """Settle only an original cold prefix before synchronous composition."""
+        from ...Chat.console_parent_settings import (
+            finish_initial_console_compose,
+            prepare_initial_console_compose,
+        )
+
+        phase = None
+        try:
+            phase = await prepare_initial_console_compose(self)
+            await super()._compose()
+        finally:
+            if phase is None:
+                phase = getattr(self, "_console_initial_compose", None)
+            finish_initial_console_compose(phase)
+            if getattr(self, "_console_initial_compose", None) is phase:
+                self._console_initial_compose = None
+
     def compose_content(self) -> ComposeResult:
-        """Compose the chat content."""
-        pending_launch = self._consume_pending_console_launch()
-        control_state = self._build_console_control_state(pending_launch)
+        """Compose the chat content inside the original error-panel boundary."""
+        from ...Chat.console_parent_settings import (
+            consume_initial_console_compose,
+            finish_initial_console_compose,
+        )
+
+        phase = getattr(self, "_console_initial_compose", None)
+        try:
+            prepared = consume_initial_console_compose(self)
+            if prepared is None:
+                pending_launch = self._consume_pending_console_launch()
+                control_state = self._build_console_control_state(pending_launch)
+            else:
+                pending_launch, control_state = prepared
+            yield from self._compose_console_content(pending_launch, control_state)
+            if phase is not None:
+                phase.content_completed = True
+        finally:
+            finish_initial_console_compose(phase)
+
+    def _compose_console_content(self, pending_launch, control_state) -> ComposeResult:
+        """Yield the unchanged content after its once-only original prefix."""
         staged_context_state = self._build_console_staged_context_state(pending_launch)
         inspector_state = self._build_console_inspector_state(pending_launch)
         workspace_context_state = (
@@ -15017,6 +15349,7 @@ class ChatScreen(BaseAppScreen):
                 right_rail.add_class("w-4fr")
                 right_rail.styles.min_width = 34
                 if not rail_state.right_open:
+                    setattr(right_rail, CONSOLE_RAIL_COLLAPSED, True)
                     right_rail.styles.display = "none"
                 yield self._frame_console_region(right_rail, edges=("left",))
 
@@ -15434,11 +15767,11 @@ class ChatScreen(BaseAppScreen):
             )
             self.set_timer(
                 self.CONSUMER_SETTLE_HEDGE_SECONDS,
-                self._session.consume_pending_vllm_console_intent,
+                self._consume_settled_vllm_console_intent,
             )
             self.set_timer(
                 self.CONSUMER_SETTLE_HEDGE_SECONDS,
-                self._session.consume_pending_llamacpp_console_intent,
+                self._consume_settled_llamacpp_console_intent,
             )
             # PR3a-2 Task 4: claim a background sub-agent completion's deep
             # link (staged while Console was not mounted) and switch to the
@@ -17606,13 +17939,22 @@ class ChatScreen(BaseAppScreen):
             self._console_completed_full_source = None
         self._console_sync_in_progress = True
         self._record_ui_worker_started("console-sync")
+
         def poll_is_current() -> bool:
             if poll_record is None or run_controls.preparing_poll_record(self) is poll_record:
                 return True
             self._console_sync_requested = True
             return False
 
+        from ...Chat.console_display_phases import ConsoleDisplaySessionChanged
+
+        display_entry = None
+        display_port = None
         try:
+            display_owner = getattr(self, "_console_domain_display_owner", None)
+            if display_owner is not None and poll_record is None:
+                display_port = display_owner.domain.presentation
+                display_entry = display_port.begin_display_full(self)
             store = self._console_chat_store
             self._message.reconcile_console_speech_context()
             if store is not None:
@@ -17630,7 +17972,20 @@ class ChatScreen(BaseAppScreen):
                 self._console_preparing_display_task = asyncio.current_task()
                 self._console_preparing_display_record = poll_record
             if poll_record is None:
-                config_sync.sync_console_core_state(self)
+                from ...Chat.console_parent_settings import (
+                    ParentSettingsDeferred,
+                    ParentSettingsOriginChanged,
+                    prepare_parent_default_settings,
+                )
+
+                try:
+                    await prepare_parent_default_settings(
+                        self, purpose="early-full-defaults"
+                    )
+                except ParentSettingsDeferred:
+                    return config_sync.replay_whole_console_sync(self)
+                except ParentSettingsOriginChanged:
+                    return False
             self._session._sync_console_session_draft()
             # AC10: publish current tabs before cold presentation reads can
             # defer the rest of FULL. The tab owner revalidates every await.
@@ -17683,9 +18038,9 @@ class ChatScreen(BaseAppScreen):
             # on every existing native sync seam; the stable fingerprint makes
             # settled ticks a no-op while profile, current-character, and local
             # conversation mutations reload and fence stale commits.
-            from ..Console_Modules.character_context import character_presentation_work
+            from ..Console_Modules.config_sync import prepare_main_db_display
 
-            await character_presentation_work(self._character_context, self)
+            await prepare_main_db_display(self)
             if not poll_is_current():
                 return False
             # task-280: hand the control bar a pre-await snapshot (its own
@@ -17706,6 +18061,17 @@ class ChatScreen(BaseAppScreen):
             # and the later reads rebuild, while a settled tick pays for one
             # build. Task-scoped: only THIS coroutine's task reads the cache —
             # workers and handlers interleaving during the awaits build live.
+            app = self.app_instance
+            try:
+                ui_ready = app._ui_ready
+            except AttributeError:
+                ui_ready = True
+            if poll_record is None and ui_ready:
+                # Archive recovery is independent awaited work. Complete it
+                # before issuing the readiness snapshot consumed by FULL's
+                # controls and final rail publication, so it cannot expire
+                # that snapshot and force an identical second native read.
+                await self._archive_recovery_view().sync()
             if poll_record is None:
                 from ..Console_Modules.config_sync import prepare_console_presentation_sync
 
@@ -17757,12 +18123,7 @@ class ChatScreen(BaseAppScreen):
                         _console_screen_is_torn_down,
                     ) is False:
                         return False
-                app = self.app_instance
-                try:
-                    ui_ready = app._ui_ready
-                except AttributeError:
-                    ui_ready = True
-                if ui_ready:
+                if poll_record is not None and ui_ready:
                     await self._archive_recovery_view().sync()
                 if poll_record is None:  # Those awaits can outlive the display's 1 s life.
                     await config_sync.rewarm_console_presentation(self)
@@ -17792,6 +18153,23 @@ class ChatScreen(BaseAppScreen):
 
                 restore_returned_reading_after_publication(self)
             return True
+        except ConsoleDisplaySessionChanged as error:
+            # An old request must not rearm a superseded view, even when another
+            # FULL owed replay before this failed operation finished retiring.
+            self._console_sync_requested = False
+            try:
+                if display_owner is None or not display_owner.retired_session_change(
+                    display_entry, error
+                ):
+                    raise
+            except Exception:
+                # Revalidation can itself refuse a closing view. Preserve the
+                # original teardown-only outcome; a live refusal still escapes.
+                if not _console_screen_is_torn_down(self):
+                    raise
+                return False
+            self._console_sync_requested = True
+            return False
         except run_controls.PreparingPollChanged:
             self._console_sync_requested = True
             return False
@@ -17815,31 +18193,51 @@ class ChatScreen(BaseAppScreen):
             # fmt: on
             return False
         finally:
-            if poll_record is not None:
-                self._console_preparing_display_task = None
-                self._console_preparing_display_record = None
-            self._record_ui_worker_finished("console-sync")
-            self._console_sync_in_progress = False
-            if (
-                self._console_sync_requested
-                and not getattr(self, "_console_sync_maintenance_paused", False)
-                and not getattr(self, "_console_control_bar_replay_whole_sync", False)
-            ):
-                self._console_sync_requested = False
-                # A dead screen must not re-arm itself: `run_worker` here
-                # runs AFTER Textual's unmount sweep
-                # (`Widget._on_unmount` -> `workers.cancel_node`), so the
-                # worker it creates is never in the cancelled set and
-                # outlives the screen that owns it.
-                if not _console_screen_is_torn_down(self):
-                    self.run_worker(
-                        self._sync_native_console_chat_ui,
-                        exclusive=True,
-                        group="console-sync",
+            try:
+                if display_entry is not None:
+                    display_port.end_display_full(display_entry)
+            finally:
+                if poll_record is not None:
+                    self._console_preparing_display_task = None
+                    self._console_preparing_display_record = None
+                self._record_ui_worker_finished("console-sync")
+                self._console_sync_in_progress = False
+                if (
+                    self._console_sync_requested
+                    and not getattr(self, "_console_sync_maintenance_paused", False)
+                    and not getattr(
+                        self, "_console_control_bar_replay_whole_sync", False
                     )
+                ):
+                    self._console_sync_requested = False
+                    # A dead screen must not re-arm itself: `run_worker` here
+                    # runs AFTER Textual's unmount sweep
+                    # (`Widget._on_unmount` -> `workers.cancel_node`), so the
+                    # worker it creates is never in the cancelled set and
+                    # outlives the screen that owns it.
+                    if not _console_screen_is_torn_down(self):
+                        self.run_worker(
+                            self._sync_native_console_chat_ui,
+                            exclusive=True,
+                            group="console-sync",
+                        )
+
+    def _prepare_console_tabs_settings(self):
+        """Run only the original tabs missing-settings ensure checkpoint."""
+        return self._session._ensure_active_console_session_settings()
 
     async def _sync_console_native_session_tabs(self, *, _preparing_record=None) -> bool | None:
         """Serialize current-owner Console tabs through actual publication."""
+        from tldw_chatbook.Chat.console_parent_settings import wait_parent_settings
+
+        from tldw_chatbook.Chat.console_parent_settings import (
+            ParentSettingsOriginChanged,
+        )
+
+        try:
+            await wait_parent_settings(self)
+        except ParentSettingsOriginChanged:
+            return False
         self._console_session_tabs_sync_calls += 1
         try:
             async with self._console_session_tabs_sync_lock:
@@ -17864,7 +18262,18 @@ class ChatScreen(BaseAppScreen):
                     if active_session is None or active_session.settings is None:
                         if _preparing_record is not None:
                             return False
-                        self._session._ensure_active_console_session_settings()
+                        from ...Chat.console_parent_settings import (
+                            run_parent_async_settings_action,
+                        )
+
+                        try:
+                            selected, _ = await run_parent_async_settings_action(
+                                self, "tabs-settings", ()
+                            )
+                        except ParentSettingsOriginChanged:
+                            return False
+                        if not selected:
+                            self._prepare_console_tabs_settings()
                         store = self._ensure_console_chat_store()
                         sessions = store.sessions()
                         active_session_id = store.active_session_id
@@ -18159,8 +18568,32 @@ class ChatScreen(BaseAppScreen):
         """
         event.stop()
         return await self._send_console_message_from_visible_action(
-            session_id=self._console_visible_send_session_id()
+            session_id=self._console_visible_draft_session_id
         )
+
+    async def _consume_settled_vllm_console_intent(self):
+        from ...Chat.console_parent_settings import (
+            ParentSettingsOriginChanged,
+            wait_parent_settings,
+        )
+
+        try:
+            await wait_parent_settings(self)
+        except ParentSettingsOriginChanged:
+            return False
+        return self._session.consume_pending_vllm_console_intent()
+
+    async def _consume_settled_llamacpp_console_intent(self):
+        from ...Chat.console_parent_settings import (
+            ParentSettingsOriginChanged,
+            wait_parent_settings,
+        )
+
+        try:
+            await wait_parent_settings(self)
+        except ParentSettingsOriginChanged:
+            return False
+        return self._session.consume_pending_llamacpp_console_intent()
 
     def _console_visible_send_session_id(self) -> str | None:
         """Return the exact session represented by the mounted composer."""
@@ -18207,6 +18640,12 @@ class ChatScreen(BaseAppScreen):
             Send's hook review (TASK-33621.28).
         """
         received_inputs = None
+        from tldw_chatbook.Chat.console_parent_settings import wait_parent_settings
+
+        from tldw_chatbook.Chat.console_parent_settings import (
+            ParentSettingsOriginChanged,
+        )
+
         from tldw_chatbook.Chat.console_send_diagnostics import record_send_stage
 
         # A scheduled Enter callback may consume only its own capture.
@@ -18233,8 +18672,34 @@ class ChatScreen(BaseAppScreen):
             session_id = pending_send.session_id
             stash = pending_send.stash
             received_inputs = pending_send.received_inputs
-        if session_id is None:
-            session_id = self._console_visible_send_session_id()
+        from ...Chat.console_parent_settings import prepare_parent_visible_send_target
+
+        retained_visible = False
+        try:
+            selected, prepared = await prepare_parent_visible_send_target(
+                self,
+                expected_session=session_id,
+                capture_supplied=pending_send_token is not None,
+                supplied_stash=stash,
+            )
+            if selected:
+                if prepared is None:
+                    return False
+                session_id, stash, settled_inputs = prepared
+                retained_visible = True
+                if pending_send_token is None:
+                    received_inputs = settled_inputs
+            else:
+                await wait_parent_settings(self)
+                if session_id is None:
+                    session_id = self._console_visible_send_session_id()
+        except ParentSettingsOriginChanged:
+            self.app_instance.notify(
+                "Console chat changed before send; the draft was kept in its original chat.",
+                severity="warning",
+            )
+            return False
+        pressed_capture = pending_send_token is not None or retained_visible
         if (
             pending_send_token is None
             and self._console_pending_send is not None
@@ -18269,7 +18734,7 @@ class ChatScreen(BaseAppScreen):
                 commit_captured=partial(
                     _commit_captured_console_draft, self, session_id
                 ),
-                captured=pending_send_token is not None,
+                captured=pressed_capture,
                 raw_capture_scope=lambda: (
                     self._console_runtime()._first_send_source_scope()
                 ),
@@ -18288,7 +18753,7 @@ class ChatScreen(BaseAppScreen):
         from ..Console_Modules.hooks import in_worker_task
 
         spoken_capture = pending_send_token is None and in_worker_task()
-        if spoken_capture and (stash is not None or not draft):
+        if spoken_capture and not retained_visible and (stash is not None or not draft):
             received_inputs = _send_acknowledgement().capture_visible_send_inputs(
                 self, session_id, stash
             )
@@ -18318,7 +18783,7 @@ class ChatScreen(BaseAppScreen):
         )
         if argument_free_rewind:
             self._console_unknown_send_armed = None
-            opening_composer = composer if pending_send_token is None else None
+            opening_composer = composer if not pressed_capture else None
             opening_revision = None
             if opening_composer is not None:
                 opening_revision = (
@@ -18327,7 +18792,7 @@ class ChatScreen(BaseAppScreen):
                     draft,
                 )
             opened = await self._console_command_rewind(parse)
-            if opened and pending_send_token is not None:  # TASK-33620.15
+            if opened and pressed_capture:  # TASK-33620.15
                 _commit_captured_console_draft(self, session_id, stash)
                 self._sync_console_command_popup()
             if opened and opening_composer is not None and opening_revision is not None:
@@ -18731,6 +19196,24 @@ class ChatScreen(BaseAppScreen):
         await self._prompts._console_command_apply_system(parse)
 
     async def _console_command_prefill(self, parse: CommandParse) -> None:
+        """Retain the selected prefill action before any introduced wait."""
+        from ...Chat.console_parent_settings import (
+            ParentSettingsOriginChanged,
+            run_parent_async_settings_action,
+        )
+
+        try:
+            if await run_parent_async_settings_action(
+                self, "prefill-command", (parse,)
+            ):
+                return
+            await self._run_console_prefill_command(parse)
+        except ParentSettingsOriginChanged:
+            from ..Console_Modules.command_handoff import refuse_if_chat_changed
+
+            refuse_if_chat_changed("prefill")
+
+    async def _run_console_prefill_command(self, parse: CommandParse) -> None:
         """Set, pin, clear, or report the Console response prefill (`/prefill`).
 
         One-shot (`/prefill <text>`) applies to the next normal send only
@@ -18740,9 +19223,29 @@ class ChatScreen(BaseAppScreen):
         the draft in place for correction (mirrors `/system`'s
         no-system-part behavior); handled outcomes clear it.
         """
+        from tldw_chatbook.Chat.console_parent_settings import wait_parent_settings
+
+        from tldw_chatbook.Chat.console_parent_settings import (
+            ParentSettingsOriginChanged,
+        )
+
+        try:
+            await wait_parent_settings(self)
+        except ParentSettingsOriginChanged:
+            from ..Console_Modules.command_handoff import refuse_if_chat_changed
+
+            refuse_if_chat_changed("prefill")
+            return
         action = parse_prefill_args(parse.args)
         store = self._ensure_console_chat_store()
-        self._session._ensure_active_console_session_settings()
+        from ...Chat.console_parent_settings import (
+            ensure_parent_async_action_settings,
+            mutate_parent_prefill,
+            finish_parent_prefill_core,
+            finish_parent_prefill_output,
+        )
+
+        await ensure_parent_async_action_settings(self)
         session = store.ensure_session()
         if session.settings is None:
             # `ensure_session` only applies `settings=` when it CREATES the
@@ -18750,11 +19253,16 @@ class ChatScreen(BaseAppScreen):
             # system-message append) would make the pinned-prefill update a
             # silent no-op in `set_session_pinned_prefill` (PR #729 Qodo
             # finding 3), so seed defaults before any pin/clear below.
-            session = store.replace_session_settings(
-                session.id, self._session._default_console_session_settings()
+            defaults = self._session._default_console_session_settings()
+            seeded = await mutate_parent_prefill(self, defaults, seed=True)
+            session = (
+                seeded
+                if seeded is not None
+                else store.replace_session_settings(session.id, defaults)
             )
         if action.kind == ACTION_ERROR:
-            await self._append_native_console_system_message(action.error)
+            if not await finish_parent_prefill_output(self, action.error, clear=False):
+                await self._append_native_console_system_message(action.error)
             return
         if action.kind == ACTION_STATUS:
             one_shot = store.session_one_shot_prefill(session.id)
@@ -18774,19 +19282,27 @@ class ChatScreen(BaseAppScreen):
             # them) that make the confirmation visible to a polling caller
             # before this coroutine resumes past the `await` -- clearing
             # first closes that window instead of racing it.
-            self._clear_console_composer_draft()
-            await self._append_native_console_system_message("\n".join(lines))
+            if not await finish_parent_prefill_output(self, "\n".join(lines)):
+                self._clear_console_composer_draft()
+                await self._append_native_console_system_message("\n".join(lines))
             return
         if action.kind == ACTION_CLEAR:
             store.set_session_one_shot_prefill(session.id, None)
-            _session, persisted = store.set_session_pinned_prefill(session.id, None)
-            self._sync_console_chat_core_state()
-            self._sync_console_settings_summary()
+            applied = await mutate_parent_prefill(self, None)
+            _session, persisted = (
+                applied
+                if applied is not None
+                else store.set_session_pinned_prefill(session.id, None)
+            )
+            if not await finish_parent_prefill_core(self):
+                self._sync_console_chat_core_state()
+                self._sync_console_settings_summary()
             copy = "Prefill cleared."
             if not persisted:
                 copy += " (Warning: saved conversation not updated.)"
-            self._clear_console_composer_draft()
-            await self._append_native_console_system_message(copy)
+            if not await finish_parent_prefill_output(self, copy):
+                self._clear_console_composer_draft()
+                await self._append_native_console_system_message(copy)
             return
         # Deliberately NOT markup-escaped: native Console transcript rows
         # render as literal Content (never parsed as Rich markup), so an
@@ -18794,11 +19310,15 @@ class ChatScreen(BaseAppScreen):
         # containing '[' — matching every neighboring system-row handler.
         preview = describe_prefill_preview(action.text)
         if action.kind == ACTION_PIN:
-            _session, persisted = store.set_session_pinned_prefill(
-                session.id, action.text
+            applied = await mutate_parent_prefill(self, action.text)
+            _session, persisted = (
+                applied
+                if applied is not None
+                else store.set_session_pinned_prefill(session.id, action.text)
             )
-            self._sync_console_chat_core_state()
-            self._sync_console_settings_summary()
+            if not await finish_parent_prefill_core(self):
+                self._sync_console_chat_core_state()
+                self._sync_console_settings_summary()
             copy = (
                 f"Prefill pinned: '{preview}'. Applies to every send, retry, and "
                 "regenerate until /prefill clear. The reply continues directly "
@@ -18806,19 +19326,23 @@ class ChatScreen(BaseAppScreen):
             )
             if not persisted:
                 copy += " (Warning: saved conversation not updated.)"
-            self._clear_console_composer_draft()
-            await self._append_native_console_system_message(copy)
+            if not await finish_parent_prefill_output(self, copy):
+                self._clear_console_composer_draft()
+                await self._append_native_console_system_message(copy)
             return
         if action.kind == ACTION_ONE_SHOT:
             store.set_session_one_shot_prefill(session.id, action.text)
-            self._sync_console_chat_core_state()
-            self._sync_console_settings_summary()
-            self._clear_console_composer_draft()
-            await self._append_native_console_system_message(
+            if not await finish_parent_prefill_core(self):
+                self._sync_console_chat_core_state()
+                self._sync_console_settings_summary()
+            copy = (
                 f"Prefill armed for next send: '{preview}'. The reply continues "
                 "directly from the last character; tool calling is skipped on "
                 "prefilled sends."
             )
+            if not await finish_parent_prefill_output(self, copy):
+                self._clear_console_composer_draft()
+                await self._append_native_console_system_message(copy)
         return
 
     _workflows = property(wiring.console_workflows_for_screen)
@@ -19576,9 +20100,25 @@ class ChatScreen(BaseAppScreen):
 
     async def _paste_console_clipboard_image(self) -> None:
         """Read the clipboard off-loop and stage its image (or route paths)."""
+        from tldw_chatbook.Chat.console_parent_settings import (
+            ParentSettingsOriginChanged,
+            capture_parent_attachment_origin,
+            complete_parent_attachment,
+            wait_parent_settings,
+        )
+
+        try:
+            await wait_parent_settings(self)
+        except ParentSettingsOriginChanged:
+            return
         from datetime import datetime as _datetime
 
+        origin = capture_parent_attachment_origin(self)
         grab = await asyncio.to_thread(grab_clipboard_image)
+        try:
+            await complete_parent_attachment(self, origin, "validate", None)
+        except ParentSettingsOriginChanged:
+            return
         if grab.kind == "unavailable":
             self.app_instance.notify(
                 "Clipboard images aren't readable on this platform — "
@@ -19595,20 +20135,35 @@ class ChatScreen(BaseAppScreen):
             if not attachable_paths:
                 self.app_instance.notify("No image on the clipboard.")
                 return
-            store = self._ensure_console_chat_store()
-            self._session._ensure_active_console_session_settings()
-            session = store.ensure_session()
+            try:
+                selected, target = await complete_parent_attachment(
+                    self, origin, "paths-target", None
+                )
+            except ParentSettingsOriginChanged:
+                return
+            store, session = (
+                target if selected else self._prepare_console_attachment_target()
+            )
             # Attach sequentially, stopping as soon as the cap is hit, so a
             # capacity-exhausted drop gets ONE truncation toast here instead
             # of one "limit reached" toast per remaining file.
             attached_count = 0
             for candidate in attachable_paths:
-                if (
-                    len(store.pending_attachments(session.id))
-                    >= MAX_PENDING_ATTACHMENTS
-                ):
-                    break
-                await self._process_console_attachment(candidate)
+                try:
+                    selected, at_cap = await complete_parent_attachment(
+                        self, origin, "paths-cap", None
+                    )
+                    if not selected:
+                        at_cap = (
+                            len(store.pending_attachments(session.id))
+                            >= MAX_PENDING_ATTACHMENTS
+                        )
+                    if at_cap:
+                        break
+                    await self._process_console_attachment(candidate, _origin=origin)
+                    await complete_parent_attachment(self, origin, "validate", None)
+                except ParentSettingsOriginChanged:
+                    return
                 attached_count += 1
             if attached_count < total_dropped:
                 self.app_instance.notify(
@@ -19627,12 +20182,27 @@ class ChatScreen(BaseAppScreen):
                 )
             )
         except Exception as exc:
+            try:
+                await complete_parent_attachment(self, origin, "validate", None)
+            except ParentSettingsOriginChanged:
+                return
             logger.opt(exception=True).warning("Clipboard image processing failed.")
             self.app_instance.notify(
                 f"Could not attach clipboard image: {escape_markup(str(exc))}",
                 severity="error",
             )
             return
+        try:
+            selected, _result = await complete_parent_attachment(
+                self, origin, "clipboard-image", attachment
+            )
+        except ParentSettingsOriginChanged:
+            return
+        if not selected:
+            self._finish_console_clipboard_attachment(attachment)
+
+    def _finish_console_clipboard_attachment(self, attachment) -> None:
+        """Apply the original processed clipboard result to its current target."""
         store = self._ensure_console_chat_store()
         self._session._ensure_active_console_session_settings()
         session = store.ensure_session()
@@ -19649,20 +20219,55 @@ class ChatScreen(BaseAppScreen):
         self.app_instance.notify(f"{escape_markup(attachment.display_name)} attached")
         self._sync_console_control_bar()
 
-    async def _process_console_attachment(self, file_path: str) -> None:
+    async def _process_console_attachment(
+        self, file_path: str, *, _origin=None
+    ) -> None:
         """Process a picked file and route it into the native Console composer."""
+        from tldw_chatbook.Chat.console_parent_settings import (
+            ParentSettingsOriginChanged,
+            capture_parent_attachment_origin,
+            complete_parent_attachment,
+            wait_parent_settings,
+        )
+
+        try:
+            await wait_parent_settings(self)
+        except ParentSettingsOriginChanged:
+            return
         from tldw_chatbook.Chat.attachment_core import process_attachment_path
 
+        origin = (
+            _origin if _origin is not None else capture_parent_attachment_origin(self)
+        )
+        try:
+            await complete_parent_attachment(self, origin, "validate", None)
+        except ParentSettingsOriginChanged:
+            return
         try:
             attachment = await asyncio.to_thread(
                 lambda: asyncio.run(process_attachment_path(file_path))
             )
         except Exception as exc:
+            try:
+                await complete_parent_attachment(self, origin, "validate", None)
+            except ParentSettingsOriginChanged:
+                return
             logger.error(f"Console attachment processing failed for {file_path}: {exc}")
             self.app_instance.notify(
                 str(exc) or "Failed to process attachment.", severity="error"
             )
             return
+        try:
+            selected, _result = await complete_parent_attachment(
+                self, origin, "file", attachment
+            )
+        except ParentSettingsOriginChanged:
+            return
+        if not selected:
+            self._finish_console_attachment(attachment)
+
+    def _finish_console_attachment(self, attachment) -> None:
+        """Apply the original processed file result to its current composer."""
         composer = self._console_composer_or_none()
         if attachment.insert_mode == "inline":
             if composer is None or not attachment.text_content:
@@ -19700,6 +20305,11 @@ class ChatScreen(BaseAppScreen):
                 f"{escape_markup(attachment.display_name)} attached"
             )
         self._sync_console_control_bar()
+
+    def _prepare_console_attachment_target(self):
+        store = self._ensure_console_chat_store()
+        self._session._ensure_active_console_session_settings()
+        return store, store.ensure_session()
 
     @on(Button.Pressed, "#console-clear-attachment, #console-attachment-block-remove")
     def handle_console_clear_attachment(self, event: Button.Pressed) -> None:
@@ -19751,22 +20361,44 @@ class ChatScreen(BaseAppScreen):
 
     async def _open_console_provider_recovery(self) -> None:
         """Route provider setup recovery to the smallest relevant settings surface."""
+        from tldw_chatbook.Chat.console_parent_settings import wait_parent_settings
+
+        from tldw_chatbook.Chat.console_parent_settings import (
+            ParentSettingsOriginChanged,
+        )
+
+        try:
+            await wait_parent_settings(self)
+        except ParentSettingsOriginChanged:
+            return
+        from ...Chat.console_parent_settings import run_parent_async_settings_action
+
+        try:
+            selected, focus_model = await run_parent_async_settings_action(
+                self, "recovery-prepare", ()
+            )
+        except ParentSettingsOriginChanged:
+            return
+        if not selected:
+            focus_model = self._prepare_console_provider_recovery()
+        if focus_model is not None:
+            await self._open_console_settings(focus_model=focus_model)
+
+    def _prepare_console_provider_recovery(self) -> bool | None:
+        """Dispatch original synchronous recovery, or return Settings intent."""
         _label, target, _tooltip = self._console_provider_recovery_action()
         if target == "retry":
-            from ..Console_Modules.connection_probe import retry_console_connection
+            from ..Console_Modules.connection_probe import (
+                _prepare_retry_console_connection,
+            )
 
-            return await retry_console_connection(self)
+            return _prepare_retry_console_connection(self)
         if target in {"console", "hidden"} and getattr(self, "is_mounted", False):
             from ..Console_Modules.model_switcher import open_card_recovery_switcher
 
             if open_card_recovery_switcher(self):  # The card's Choose provider/model.
                 return
-            await self._open_console_settings(
-                focus_model=(
-                    target == "hidden" or self._is_console_choose_model_action(_label)
-                )
-            )
-            return
+            return target == "hidden" or self._is_console_choose_model_action(_label)
         from ..Console_Modules.model_switcher import open_provider_setup
 
         provider, model, settings = self._active_console_provider_model_display()
@@ -21014,32 +21646,41 @@ class ChatScreen(BaseAppScreen):
         workbench_state: Any | None = None,
     ) -> None:
         """Refresh visible Workbench primitives from current Console state."""
-        if workbench_state is None:
-            workbench_state = self._build_console_workbench_state(control_state)
-        try:
-            self.query_one("#console-workbench-header", DestinationHeader).sync_state(
-                workbench_state.header
+        from tldw_chatbook.Chat.console_parent_settings import parent_settings_render
+
+        with parent_settings_render(self):
+            from tldw_chatbook.Chat.console_parent_settings import (
+                defer_parent_settings_render,
             )
-        except QueryError:
-            pass
-        try:
-            self.query_one("#console-workbench-mode-strip", ModeStrip).sync_modes(
-                workbench_state.modes
-            )
-        except QueryError:
-            pass
-        try:
-            self.query_one(
-                "#console-workbench-command-strip", CommandStrip
-            ).sync_actions(workbench_state.actions)
-        except QueryError:
-            pass
-        try:
-            self.query_one("#workbench-recovery-callout", RecoveryCallout).sync_state(
-                workbench_state.recovery
-            )
-        except QueryError:
-            pass
+
+            if defer_parent_settings_render(self):
+                return
+            if workbench_state is None:
+                workbench_state = self._build_console_workbench_state(control_state)
+            try:
+                self.query_one(
+                    "#console-workbench-header", DestinationHeader
+                ).sync_state(workbench_state.header)
+            except QueryError:
+                pass
+            try:
+                self.query_one("#console-workbench-mode-strip", ModeStrip).sync_modes(
+                    workbench_state.modes
+                )
+            except QueryError:
+                pass
+            try:
+                self.query_one(
+                    "#console-workbench-command-strip", CommandStrip
+                ).sync_actions(workbench_state.actions)
+            except QueryError:
+                pass
+            try:
+                self.query_one(
+                    "#workbench-recovery-callout", RecoveryCallout
+                ).sync_state(workbench_state.recovery)
+            except QueryError:
+                pass
 
     def _sync_console_workbench_actions_from_draft(self) -> None:
         """Refresh Workbench command readiness after composer draft changes.
@@ -21056,13 +21697,22 @@ class ChatScreen(BaseAppScreen):
         filters on the draft text itself, which moves on every keystroke
         while the derived Workbench state does not.
         """
-        with self._console_derivation_scope():
-            control_state = self._build_console_control_state(
-                self._pending_console_launch_context
+        from tldw_chatbook.Chat.console_parent_settings import parent_settings_render
+
+        with parent_settings_render(self):
+            from tldw_chatbook.Chat.console_parent_settings import (
+                defer_parent_settings_render,
             )
-            workbench_state = self._build_console_workbench_state(control_state)
-        self._push_console_control_state_if_changed(control_state, workbench_state)
-        self._sync_console_command_popup()
+
+            if defer_parent_settings_render(self):
+                return
+            with self._console_derivation_scope():
+                control_state = self._build_console_control_state(
+                    self._pending_console_launch_context
+                )
+                workbench_state = self._build_console_workbench_state(control_state)
+            self._push_console_control_state_if_changed(control_state, workbench_state)
+            self._sync_console_command_popup()
 
     def _console_command_popup_or_none(self) -> ConsoleCommandPopup | None:
         try:
@@ -21347,168 +21997,182 @@ class ChatScreen(BaseAppScreen):
         Both composer and workbench Save Chatbook actions consult the same
         ephemeral-session accessor (task-9 review F1).
         """
-        try:
-            composer = self.query_one("#console-native-composer", ConsoleComposerBar)
-        except QueryError:
-            return
+        from tldw_chatbook.Chat.console_parent_settings import parent_settings_render
 
-        run_active = False
-        send_blocked = False
-        dispatch_recovery_blocked = False
-        controller = self._console_chat_controller
-        queue_presentation = None
-        if controller is not None:
-            run_state = getattr(controller, "run_state", None)
-            run_active = bool(getattr(run_state, "is_stop_allowed", False))
-            send_blocked = not bool(getattr(run_state, "is_send_allowed", True))
-            active_id = controller.store.active_session_id or ""
-            run_active = run_active or controller._chat_start.is_accepted(active_id)
-            if active_id:
-                queue_presentation = self._prompt_queue.presentation_for(
-                    active_id,
-                    composer_collapsed=composer.collapsed,
-                )
-                # TASK-22000/ADR-098: queue presentation owns Send availability.
-                # Recombining it with raw run status regressed live-turn Queue:
-                # since
-                # `not is_send_allowed` is exactly the VALIDATING/STREAMING/
-                # CHECKING_CITATIONS/RETRYING set that `derive_prompt_queue_
-                # presentation` already reads as `occupies_slot`, the only
-                # thing that `or` could still change was the one state ADR-098
-                # exists for: an ACCEPTED live turn, which must read "Queue"
-                # and admit a FIFO follow-up. It rendered as a greyed-out
-                # button labelled "Queue" for the whole duration of every run.
-                #
-                # Nothing is lost by deferring: before acceptance the same
-                # projection returns "Preparing..." with `send_enabled=False`,
-                # so an unaccepted live run still refuses. The recovery
-                # predicate stays in the `or` and still refuses for a genuinely
-                # unresolved owner (see `dispatch_recovery_blocks_submission`).
-                dispatch_recovery_blocked = (
-                    controller.store.dispatch_recovery_blocks_submission(active_id)
-                )
-                send_blocked = (
-                    not queue_presentation.send_enabled or dispatch_recovery_blocked
-                )
-                try:
-                    queue_region = self.query_one(
-                        "#console-prompt-queue", ConsolePromptQueueRegion
-                    )
-                except QueryError:
-                    pass
-                else:
-                    queue_region.sync_presentation(active_id, queue_presentation)
-                composer.sync_prompt_queue_state(
-                    count=queue_presentation.count,
-                    paused=queue_presentation.paused,
-                )
-                try:
-                    recovery_region = self.query_one(
-                        "#console-dispatch-recovery",
-                        ConsoleDispatchRecoveryRegion,
-                    )
-                except QueryError:
-                    pass
-                else:
-                    recovery_region.sync_recovery(
-                        active_id,
-                        controller.store.dispatch_recovery_for_presentation(active_id),
-                    )
-        # task-3401.5: an in-flight video generation shows the same Stop
-        # affordance (it sets the adapter's cooperative cancel event).
-        store_for_videogen = self._console_chat_store
-        active_session_id = (
-            store_for_videogen.active_session_id
-            if store_for_videogen is not None
-            else None
-        )
-        videogen_active = (
-            active_session_id is not None
-            and active_session_id in self._video._console_videogen_inflight_sessions()
-        )
-        image_edit_active = (
-            active_session_id is not None
-            and self._image._h3_image_edit_registry().active(active_session_id)
-            is not None
-        )
-        run_active = run_active or videogen_active or image_edit_active
-        send_blocked = send_blocked or image_edit_active
-        # TASK-33621.11: the blocker's code rides beside its sentence.
-        send_blocker = self._console_composer_send_blocker()
-        send_blocked = send_blocked or bool(send_blocker)
-        attachment_block = run_controls.sync_attachment_block(self)  # TASK-33620.2
-        # TASK-33620.1: an active emergency stop holds Send (and Queue).
-        held_reason = (
-            CONSOLE_EMERGENCY_STOP_SEND_REASON
-            if self._console_emergency_stop_copy
-            else ""
-        )
-        send_blocked = (
-            send_blocked
-            or bool(send_blocker)
-            or attachment_block is not None
-            or bool(held_reason)
-        )
+        with parent_settings_render(self):
+            from ...Chat.console_parent_settings import defer_parent_settings_render
 
-        composer.sync_action_state(
-            has_draft=composer.has_sendable_payload(),  # TASK-33620.15.22
-            run_active=run_active,
-            stop_available=run_active
-            or bool(getattr(controller, "is_stop_allowed", False)),
-            can_save_chatbook=can_save_chatbook,
-            send_blocked=send_blocked,
-            dispatch_recovery_blocked=dispatch_recovery_blocked,
-            setup_blocked_reason=send_blocker,
-            attachment_block=attachment_block,
-            queue_blocked_reason=held_reason
-            or (
-                queue_presentation.send_tooltip
-                if queue_presentation is not None
-                and not queue_presentation.send_enabled
-                else ""
-            ),
-            ephemeral=self._console_active_session_is_ephemeral(),
-            send_label=(
-                queue_presentation.send_label
-                if queue_presentation is not None
-                else "Send"
-            ),
-            # task-15862 AC#3: mid-wake, the queue tooltip above rode the
-            # setup slot and painted as "finish provider setup"; the flag
-            # makes the composer name the wake instead.
-            wake_turn_active=self._fleet._console_wake_turn_active(active_session_id),
-        )
-        run_controls.sync_stop_affordances(self)
-        run_controls.sync_dictation_presentation(self, composer)
-        # sync_action_state resets the attach button's tooltip to generic copy
-        # (console_composer_bar.py L303); apply the pending-attachment label
-        # after, not before, so "Attached: ..." wins over the generic tooltip.
-        # One staged item keeps its own descriptive label ("photo.png ·
-        # 240 KB"); more than one collapses to an "N files" summary. The
-        # composer prepends its own 📎 glyph to whatever label it's given
-        # (console_composer_bar.py's `set_pending_attachment_label`, which
-        # stays untouched), so the label passed here carries NO glyph and
-        # the rendered indicator reads exactly "📎 {N} files". The full
-        # per-file name list is surfaced via the "<name> attached" toast
-        # each staged file already fires, not a composer tooltip.
-        store = self._console_chat_store
-        pendings: list[Any] = []
-        if store is not None and store.active_session_id is not None:
+            if defer_parent_settings_render(self):
+                return
             try:
-                pendings = store.pending_attachments(store.active_session_id)
-            except KeyError:
-                pendings = []
-        if not pendings:
-            attachment_label = None
-        elif len(pendings) == 1:
-            attachment_label = pendings[0].label
-        else:
-            attachment_label = f"{len(pendings)} files"
-        composer.set_pending_attachment_label(
-            attachment_label,
-            count=len(pendings),
-            total=MAX_PENDING_ATTACHMENTS,
-        )
+                composer = self.query_one(
+                    "#console-native-composer", ConsoleComposerBar
+                )
+            except QueryError:
+                return
+
+            run_active = False
+            send_blocked = False
+            dispatch_recovery_blocked = False
+            controller = self._console_chat_controller
+            queue_presentation = None
+            if controller is not None:
+                run_state = getattr(controller, "run_state", None)
+                run_active = bool(getattr(run_state, "is_stop_allowed", False))
+                send_blocked = not bool(getattr(run_state, "is_send_allowed", True))
+                active_id = controller.store.active_session_id or ""
+                run_active = run_active or controller._chat_start.is_accepted(active_id)
+                if active_id:
+                    queue_presentation = self._prompt_queue.presentation_for(
+                        active_id,
+                        composer_collapsed=composer.collapsed,
+                    )
+                    # TASK-22000/ADR-098: queue presentation owns Send availability.
+                    # Recombining it with raw run status regressed live-turn Queue:
+                    # since
+                    # `not is_send_allowed` is exactly the VALIDATING/STREAMING/
+                    # CHECKING_CITATIONS/RETRYING set that `derive_prompt_queue_
+                    # presentation` already reads as `occupies_slot`, the only
+                    # thing that `or` could still change was the one state ADR-098
+                    # exists for: an ACCEPTED live turn, which must read "Queue"
+                    # and admit a FIFO follow-up. It rendered as a greyed-out
+                    # button labelled "Queue" for the whole duration of every run.
+                    #
+                    # Nothing is lost by deferring: before acceptance the same
+                    # projection returns "Preparing..." with `send_enabled=False`,
+                    # so an unaccepted live run still refuses. The recovery
+                    # predicate stays in the `or` and still refuses for a genuinely
+                    # unresolved owner (see `dispatch_recovery_blocks_submission`).
+                    dispatch_recovery_blocked = (
+                        controller.store.dispatch_recovery_blocks_submission(active_id)
+                    )
+                    send_blocked = (
+                        not queue_presentation.send_enabled or dispatch_recovery_blocked
+                    )
+                    try:
+                        queue_region = self.query_one(
+                            "#console-prompt-queue", ConsolePromptQueueRegion
+                        )
+                    except QueryError:
+                        pass
+                    else:
+                        queue_region.sync_presentation(active_id, queue_presentation)
+                    composer.sync_prompt_queue_state(
+                        count=queue_presentation.count,
+                        paused=queue_presentation.paused,
+                    )
+                    try:
+                        recovery_region = self.query_one(
+                            "#console-dispatch-recovery",
+                            ConsoleDispatchRecoveryRegion,
+                        )
+                    except QueryError:
+                        pass
+                    else:
+                        recovery_region.sync_recovery(
+                            active_id,
+                            controller.store.dispatch_recovery_for_presentation(
+                                active_id
+                            ),
+                        )
+            # task-3401.5: an in-flight video generation shows the same Stop
+            # affordance (it sets the adapter's cooperative cancel event).
+            store_for_videogen = self._console_chat_store
+            active_session_id = (
+                store_for_videogen.active_session_id
+                if store_for_videogen is not None
+                else None
+            )
+            videogen_active = (
+                active_session_id is not None
+                and active_session_id
+                in self._video._console_videogen_inflight_sessions()
+            )
+            image_edit_active = (
+                active_session_id is not None
+                and self._image._h3_image_edit_registry().active(active_session_id)
+                is not None
+            )
+            run_active = run_active or videogen_active or image_edit_active
+            send_blocked = send_blocked or image_edit_active
+            # TASK-33621.11: the blocker's code rides beside its sentence.
+            send_blocker = self._console_composer_send_blocker()
+            send_blocked = send_blocked or bool(send_blocker)
+            attachment_block = run_controls.sync_attachment_block(self)  # TASK-33620.2
+            # TASK-33620.1: an active emergency stop holds Send (and Queue).
+            held_reason = (
+                CONSOLE_EMERGENCY_STOP_SEND_REASON
+                if self._console_emergency_stop_copy
+                else ""
+            )
+            send_blocked = (
+                send_blocked
+                or bool(send_blocker)
+                or attachment_block is not None
+                or bool(held_reason)
+            )
+
+            composer.sync_action_state(
+                has_draft=composer.has_sendable_payload(),  # TASK-33620.15.22
+                run_active=run_active,
+                stop_available=run_active
+                or bool(getattr(controller, "is_stop_allowed", False)),
+                can_save_chatbook=can_save_chatbook,
+                send_blocked=send_blocked,
+                dispatch_recovery_blocked=dispatch_recovery_blocked,
+                setup_blocked_reason=send_blocker,
+                attachment_block=attachment_block,
+                queue_blocked_reason=held_reason
+                or (
+                    queue_presentation.send_tooltip
+                    if queue_presentation is not None
+                    and not queue_presentation.send_enabled
+                    else ""
+                ),
+                ephemeral=self._console_active_session_is_ephemeral(),
+                send_label=(
+                    queue_presentation.send_label
+                    if queue_presentation is not None
+                    else "Send"
+                ),
+                # task-15862 AC#3: mid-wake, the queue tooltip above rode the
+                # setup slot and painted as "finish provider setup"; the flag
+                # makes the composer name the wake instead.
+                wake_turn_active=self._fleet._console_wake_turn_active(
+                    active_session_id
+                ),
+            )
+            run_controls.sync_stop_affordances(self)
+            run_controls.sync_dictation_presentation(self, composer)
+            # sync_action_state resets the attach button's tooltip to generic copy
+            # (console_composer_bar.py L303); apply the pending-attachment label
+            # after, not before, so "Attached: ..." wins over the generic tooltip.
+            # One staged item keeps its own descriptive label ("photo.png ·
+            # 240 KB"); more than one collapses to an "N files" summary. The
+            # composer prepends its own 📎 glyph to whatever label it's given
+            # (console_composer_bar.py's `set_pending_attachment_label`, which
+            # stays untouched), so the label passed here carries NO glyph and
+            # the rendered indicator reads exactly "📎 {N} files". The full
+            # per-file name list is surfaced via the "<name> attached" toast
+            # each staged file already fires, not a composer tooltip.
+            store = self._console_chat_store
+            pendings: list[Any] = []
+            if store is not None and store.active_session_id is not None:
+                try:
+                    pendings = store.pending_attachments(store.active_session_id)
+                except KeyError:
+                    pendings = []
+            if not pendings:
+                attachment_label = None
+            elif len(pendings) == 1:
+                attachment_label = pendings[0].label
+            else:
+                attachment_label = f"{len(pendings)} files"
+            composer.set_pending_attachment_label(
+                attachment_label,
+                count=len(pendings),
+                total=MAX_PENDING_ATTACHMENTS,
+            )
 
     def _focus_console_composer_if_needed(self, *, force: bool = False) -> None:
         """Focus the native Console composer when no other control owns focus."""
@@ -22058,41 +22722,50 @@ class ChatScreen(BaseAppScreen):
         menu action.
         """
         event.stop()
-        if not event.quote.strip():
-            # Same blank-selection window as ``_console_selection_quote_
-            # requested`` above: the row range was cleared while the menu
-            # was open (streaming replace, reconciliation), so there is
-            # nothing to ask about -- pushing the modal (or auto-sending
-            # a contentless More Details prompt) would be a lie (T5 final
-            # review).
+        from ...Chat.console_parent_settings import defer_parent_settings_action
+
+        if defer_parent_settings_action(self, "sidechat-open", (event,)):
             return
-        from ...Chat.console_side_chat import ConsoleSideChatService, render_prompt
+        from ...Chat.console_parent_settings import initial_parent_settings_action
 
-        sidechat_model = str(get_cli_setting("console", "sidechat_model", "") or "")
-        template = str(
-            get_cli_setting(
-                "console",
-                "sidechat_prompt_template",
-                DEFAULT_CONSOLE_SIDECHAT_PROMPT_TEMPLATE,
-            )
-            or ""
-        )
-        auto_send_prompt = (
-            render_prompt(template, event.quote)
-            if event.mode == ConsoleSideChatRequested.MODE_MORE_DETAILS
-            else None
-        )
-        from ...Widgets.Console.console_side_chat_modal import ConsoleSideChatModal
+        with initial_parent_settings_action(self, "sidechat-open", (event,)):
+            if not event.quote.strip():
+                # Same blank-selection window as ``_console_selection_quote_
+                # requested`` above: the row range was cleared while the menu
+                # was open (streaming replace, reconciliation), so there is
+                # nothing to ask about -- pushing the modal (or auto-sending
+                # a contentless More Details prompt) would be a lie (T5 final
+                # review).
+                return
+            from ...Chat.console_side_chat import ConsoleSideChatService, render_prompt
 
-        self.app.push_screen(
-            ConsoleSideChatModal(
-                service=ConsoleSideChatService(self._ensure_console_provider_gateway()),
-                provider_selection=self._build_console_provider_selection(),
-                sidechat_model=sidechat_model,
-                quote=event.quote,
-                auto_send_prompt=auto_send_prompt,
+            sidechat_model = str(get_cli_setting("console", "sidechat_model", "") or "")
+            template = str(
+                get_cli_setting(
+                    "console",
+                    "sidechat_prompt_template",
+                    DEFAULT_CONSOLE_SIDECHAT_PROMPT_TEMPLATE,
+                )
+                or ""
             )
-        )
+            auto_send_prompt = (
+                render_prompt(template, event.quote)
+                if event.mode == ConsoleSideChatRequested.MODE_MORE_DETAILS
+                else None
+            )
+            from ...Widgets.Console.console_side_chat_modal import ConsoleSideChatModal
+
+            self.app.push_screen(
+                ConsoleSideChatModal(
+                    service=ConsoleSideChatService(
+                        self._ensure_console_provider_gateway()
+                    ),
+                    provider_selection=self._build_console_provider_selection(),
+                    sidechat_model=sidechat_model,
+                    quote=event.quote,
+                    auto_send_prompt=auto_send_prompt,
+                )
+            )
 
     @on(ConsoleTraceCopyRequested)
     @on(ConsoleSelectionNoteRequested)
@@ -22615,6 +23288,44 @@ class ChatScreen(BaseAppScreen):
         displayed values and the session settings replacement below are
         unchanged.
         """
+        from tldw_chatbook.Chat.console_parent_settings import (
+            defer_parent_settings_action,
+        )
+
+        if defer_parent_settings_action(
+            self, "compact-controls", (provider, model, temperature)
+        ):
+            return
+        updates, next_settings = self._prepare_compact_shell_controls(
+            provider=provider,
+            model=model,
+            temperature=temperature,
+        )
+        if not updates:
+            return
+        if next_settings is not None:
+            try:
+                self._session._replace_active_console_session_settings(next_settings)
+            except Exception as error:
+                logger.debug(
+                    f"Unable to sync compact controls into Console session settings: {error}"
+                )
+        self._finish_compact_shell_controls(updates)
+
+    def _prepare_compact_shell_controls(
+        self, *, provider=None, model=None, temperature=None
+    ):
+        """Derive the original override-preserving selection before replacement."""
+        from ...Chat.console_control_settings import (
+            ConsoleDefaultConvergenceRequired,
+            ConsoleSettingsPending,
+        )
+        from ...Chat.console_parent_settings import (
+            ParentSettingsDeferred,
+            ParentSettingsOriginChanged,
+            ParentSettingsSourceChanged,
+        )
+
         updates: Dict[str, str] = {}
         if provider is not None:
             updates["provider"] = provider
@@ -22624,7 +23335,7 @@ class ChatScreen(BaseAppScreen):
             updates["temperature"] = temperature
 
         if not updates:
-            return
+            return updates, None
 
         try:
             settings = self._session._ensure_active_console_session_settings()
@@ -22678,13 +23389,24 @@ class ChatScreen(BaseAppScreen):
                     )
                 except (TypeError, ValueError):
                     logger.debug("Ignoring invalid Console temperature sync value")
-            if next_settings != settings:
-                self._session._replace_active_console_session_settings(next_settings)
+            return updates, next_settings if next_settings != settings else None
+        except (
+            ConsoleDefaultConvergenceRequired,
+            ConsoleSettingsPending,
+            ParentSettingsDeferred,
+            ParentSettingsOriginChanged,
+            ParentSettingsSourceChanged,
+        ):
+            raise
         except Exception as e:
             logger.debug(
                 f"Unable to sync compact controls into Console session settings: {e}"
             )
 
+        return updates, None
+
+    def _finish_compact_shell_controls(self, updates):
+        """Keep original compact bar/control publication after the replacement."""
         try:
             compact_bar = self.query_one("#console-compact-model-bar", CompactModelBar)
         except QueryError:
@@ -23008,11 +23730,11 @@ class ChatScreen(BaseAppScreen):
                 ),
                 self.set_timer(
                     self.CONSUMER_SETTLE_HEDGE_SECONDS,
-                    self._session.consume_pending_vllm_console_intent,
+                    self._consume_settled_vllm_console_intent,
                 ),
                 self.set_timer(
                     self.CONSUMER_SETTLE_HEDGE_SECONDS,
-                    self._session.consume_pending_llamacpp_console_intent,
+                    self._consume_settled_llamacpp_console_intent,
                 ),
                 # PR3a-2 Task 4: mirrors the on_mount claim -- a completion
                 # staged while the user was on another screen is claimed on
@@ -24522,3 +25244,232 @@ run_controls.bind_preparing_screen_sources(ChatScreen)
 
 # Complete the finite discovery binding after the real view definition.
 skill_controller.bind_console_skill_discovery(ChatScreen, build_console_controllers)
+
+
+_selected_identity_settings_action = (
+    ChatScreen._sync_console_identity_surfaces,
+    ChatScreen._sync_console_identity_surfaces.__wrapped__,
+    ChatScreen._sync_console_identity_surfaces.__code__,
+    ChatScreen._sync_console_identity_surfaces.__wrapped__.__code__,
+)
+_selected_identity_settings_sources = tuple(
+    (owner, name, getattr(owner, name), getattr(owner, name).__code__)
+    for owner, name in (
+        (spend, "_retry_after_config_rebuild"),
+        (spend, "retry_console_identity_after_config_rebuild"),
+        (spend, "_readiness_runtime"),
+        (config_sync, "_owe_console_config_sync"),
+        (config_sync._ConsoleConfigHandoff, "retire"),
+        (config_sync._ConsoleConfigHandoff, "current"),
+        (config_sync._ConsoleConfigHandoff, "begin"),
+        (config_sync._ConsoleConfigHandoff, "eligible"),
+    )
+)
+
+
+_selected_compact_settings_action = ChatScreen._sync_compact_shell_controls
+
+
+_selected_parent_settings_helpers = (
+    (
+        "_prepare_compact_shell_controls",
+        ChatScreen._prepare_compact_shell_controls,
+        ChatScreen._prepare_compact_shell_controls.__code__,
+    ),
+    (
+        "_finish_compact_shell_controls",
+        ChatScreen._finish_compact_shell_controls,
+        ChatScreen._finish_compact_shell_controls.__code__,
+    ),
+)
+
+_selected_sidechat_settings_action = ChatScreen._console_side_chat_requested
+_selected_workbench_help_action = ChatScreen._show_console_workbench_help
+_selected_workbench_help_helpers = tuple(
+    (name, getattr(ChatScreen, name), getattr(ChatScreen, name).__code__)
+    for name in (
+        "action_show_workbench_help",
+        "_console_decision_blocking",
+        "_build_console_control_state",
+        "_build_console_workbench_state",
+        "_active_console_provider_model_display",
+        "_active_console_provider_model_display_uncached",
+        "_active_console_settings_readiness",
+        "_active_console_settings_readiness_uncached",
+        "_ensure_console_chat_controller",
+    )
+)
+
+
+_selected_parent_settings_action_codes = (
+    (
+        ChatScreen._show_console_workbench_help,
+        ChatScreen._show_console_workbench_help.__code__,
+    ),
+    (
+        ChatScreen._sync_compact_shell_controls,
+        ChatScreen._sync_compact_shell_controls.__code__,
+    ),
+    (
+        ChatScreen._console_side_chat_requested,
+        ChatScreen._console_side_chat_requested.__code__,
+    ),
+)
+
+
+_selected_due_core_definitions = tuple(
+    (name, getattr(ChatScreen, name), getattr(ChatScreen, name).__code__)
+    for name in (
+        "_sync_native_console_chat_ui",
+        "_sync_console_chat_core_state",
+        "_build_console_provider_selection",
+        "_build_console_provider_selection_uncached",
+        "_provider_readiness_app_config",
+        "_console_derivation_scope",
+    )
+)
+
+
+_selected_attachment_completion_helpers = tuple(
+    (name, getattr(ChatScreen, name), getattr(ChatScreen, name).__code__)
+    for name in (
+        "_finish_console_clipboard_attachment",
+        "_finish_console_attachment",
+        "_prepare_console_attachment_target",
+        "_console_composer_or_none",
+    )
+)
+
+
+_selected_prefill_settings_action = ChatScreen._run_console_prefill_command
+_selected_prefill_settings_helpers = tuple(
+    (name, getattr(ChatScreen, name), getattr(ChatScreen, name).__code__)
+    for name in (
+        "_console_command_prefill",
+        "_run_console_prefill_command",
+        "_clear_console_composer_draft",
+        "_console_composer_or_none",
+        "_append_native_console_system_message",
+        "_sync_console_settings_summary",
+    )
+)
+
+_selected_settings_read_actions = {
+    name: getattr(ChatScreen, name)
+    for name in (
+        "_prepare_console_provider_recovery",
+        "_prepare_console_settings_open",
+        "_console_settings_context_current",
+        "_prepare_console_settings_display",
+        "_prepare_console_settings_modal",
+        "_prepare_console_tabs_settings",
+    )
+}
+_selected_settings_read_helpers = tuple(
+    (
+        name,
+        ChatScreen.__dict__[name],
+        getattr(ChatScreen, name),
+        getattr(ChatScreen, name).__code__,
+    )
+    for name in (
+        *_selected_settings_read_actions,
+        "_open_console_provider_recovery",
+        "_open_console_settings",
+        "_console_provider_recovery_action",
+        "_console_provider_recovery_field",
+        "_active_console_settings_readiness",
+        "_active_console_settings_readiness_uncached",
+        "_active_console_provider_model_display",
+        "_active_console_provider_model_display_uncached",
+        "_ensure_console_chat_controller",
+        "_ensure_console_chat_store",
+        "_sync_console_chat_core_state",
+        "_console_settings_initial_draft",
+    )
+)
+
+_selected_prompt_post_helpers = tuple(
+    (name, getattr(ChatScreen, name), getattr(ChatScreen, name).__code__)
+    for name in (
+        "_console_composer_or_none",
+        "_sync_console_chat_core_state",
+        "_sync_console_rail_system_line",
+        "_sync_console_settings_summary",
+        "_sync_console_control_bar",
+    )
+)
+
+_selected_visible_send_helpers = tuple(
+    (name, getattr(ChatScreen, name), getattr(ChatScreen, name).__code__)
+    for name in (
+        "_console_visible_send_session_id",
+        "_console_composer_or_none",
+        "_send_console_message_from_visible_action_observed",
+        "handle_console_send_message",
+    )
+)
+
+
+# ACTUAL SOURCE RECORDS + PARENT ENTRY PLACEMENTS. NOT an executable module.
+# chat_screen.py pinned e542ae4b6c439824223a1a299067057d5e4d17eb6e047132d2ccbfec772bba36.
+# Add after final actual ChatScreen class/bindings, alongside existing records.
+
+_CONSOLE_DISPLAY_PARENT_READERS = tuple(
+    (name, vars(ChatScreen)[name], vars(ChatScreen)[name].__code__)
+    for name in ("_sync_native_console_chat_ui", "_console_run_active")
+)
+_CONSOLE_DISPLAY_PARENT_DEFINITIONS = tuple(
+    (
+        ChatScreen,
+        name,
+        function,
+        function,
+        function.__code__,
+        function.__globals__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        tuple((function.__kwdefaults__ or {}).items()),
+        function.__closure__,
+        tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+        globals().get("__file__"),
+        globals().get("__spec__"),
+        getattr(globals().get("__spec__"), "origin", None),
+    )
+    for name, function, _ in _CONSOLE_DISPLAY_PARENT_READERS
+)
+
+
+# Initial Compose is synchronous through generator exhaustion; Textual mounts
+# children only afterward. These exact dispatch definitions qualify that seam.
+from textual import widget as _compose_widget_module
+from textual.screen import Screen as _ComposeScreen
+from textual.message_pump import MessagePump as _ComposeMessagePump
+from textual.widget import Widget as _ComposeWidget
+
+_selected_compose_definitions = tuple(
+    (name, getattr(ChatScreen, name), getattr(ChatScreen, name).__code__)
+    for name in (
+        "_compose",
+        "compose_content",
+        "_compose_console_content",
+        "_consume_pending_console_launch",
+        "_build_console_control_state",
+        "_build_console_inspector_state",
+        "_console_derivation_scope",
+        "_console_runtime",
+        "_start_messages",
+    )
+)
+_selected_compose_framework = tuple(
+    (owner, name, getattr(owner, name), getattr(owner, name).__code__)
+    for owner, name in (
+        (_ComposeMessagePump, "_start_messages"),
+        (_ComposeScreen, "_compose"),
+        (_ComposeWidget, "_compose"),
+        (_ComposeWidget, "_on_compose"),
+        (_compose_widget_module, "compose"),
+        (BaseAppScreen, "compose"),
+        (BaseAppScreen, "_compose_content_or_failure"),
+    )
+)

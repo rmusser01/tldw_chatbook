@@ -8,8 +8,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable, Mapping, Sequence, cast
 
 from tldw_chatbook.Backup_Recovery import chat_source_participants as _chat_sources
-from loguru import logger
-
 from tldw_chatbook.Chat.console_appearance import (
     ConsoleConversationAppearance,
     merge_console_conversation_appearance,
@@ -693,15 +691,14 @@ class ChatConversationService:
         decorates every Console browser row at once instead of one read per
         row; unknown, deleted, or malformed entries are simply absent or
         unset.
+
+        Raises:
+            CharactersRAGDBError: If the local conversation metadata read fails.
         """
         get_metadata = getattr(self.db, "get_conversations_metadata_by_ids", None)
         if not callable(get_metadata):
             return {}
-        try:
-            raw_map = get_metadata(conversation_ids)
-        except Exception:
-            logger.debug("Unable to batch-read Console conversation appearances")
-            return {}
+        raw_map = get_metadata(conversation_ids)
         return {
             str(conversation_id): parse_console_conversation_appearance(metadata)
             for conversation_id, metadata in raw_map.items()

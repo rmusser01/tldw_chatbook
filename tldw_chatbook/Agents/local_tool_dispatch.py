@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from . import local_tool_provider as native_host
+from .activation import callable_source_current, capture_callable_source
 
 
 def _invoke_detailed(
@@ -101,7 +102,16 @@ def _invoke_detailed(
             dispatch_started=False,
             provider_terminal=native_host.LocalProviderTerminal.NOT_STARTED,
         )
-    if self._kill_switch_engaged():
+    policy, checked_specs = _console_policy_for(
+        self, name, args, clean_args, authority, spec
+    )
+    observed = policy.read() if policy is not None else None
+    engaged, payload = (
+        observed if observed is not None else (self._kill_switch_engaged(), None)
+    )
+    observed = None
+    if engaged:
+        payload = None
         # task-32280 fix round: the switch refused, not the user.
         self._record_decision_safe(
             self.hub_tool_for(name), native_host.KILL_SWITCH_DENIED_DECISION
@@ -129,8 +139,19 @@ def _invoke_detailed(
         # TASK-34351: only a retired agent worktree reaches this branch
         # (static Console roots are never retired), so the refusal names
         # the released worktree, not private scratch.
-        authority_specs = self._path_specs_by_alias.get(authority.alias)
-        if authority_specs is None or name not in authority_specs:
+        by_alias = self._path_specs_by_alias
+        authority_specs = (
+            by_alias.get(authority.alias)
+            if payload is None or type(by_alias) is dict
+            else False
+        )
+        if (
+            payload is not None
+            and authority_specs is not None
+            and type(authority_specs) is not dict
+        ):
+            payload = False
+        elif authority_specs is None or name not in authority_specs:
             return native_host.LocalToolInvocationResult(
                 result=native_host.ToolResult.blocked(
                     native_host.LOCAL_RUN_WORKTREE_RELEASED_REFUSAL
@@ -141,19 +162,24 @@ def _invoke_detailed(
                 dispatch_started=False,
                 provider_terminal=native_host.LocalProviderTerminal.NOT_STARTED,
             )
-        selected_spec = authority_specs[name]
+        else:
+            selected_spec = authority_specs[name]
     else:
         selected_spec = spec
-    from tldw_chatbook.Tools.workspace_tool_executor import bind_model_ssh
+    promotion_invocation = None
+    # In a selected Console file decision these exact branches are no-ops:
+    # no SSH caller is bound and the name cannot request a promotion.
+    if payload is None:
+        from tldw_chatbook.Tools.workspace_tool_executor import bind_model_ssh
 
-    bind_model_ssh(self, authority, selected_spec)
-    promotion_invocation = self._invoke_promotion(
-        name,
-        args,
-        clean_args=dict(clean_args),
-        spec=selected_spec,
-        authority=authority,
-    )
+        bind_model_ssh(self, authority, selected_spec)
+        promotion_invocation = self._invoke_promotion(
+            name,
+            args,
+            clean_args=dict(clean_args),
+            spec=selected_spec,
+            authority=authority,
+        )
     if promotion_invocation is not None:
         promotion_result, approval_consumed = promotion_invocation
         if promotion_result.ok:
@@ -178,10 +204,41 @@ def _invoke_detailed(
     # id rides `run_context` (bound by `AgentService` around each
     # invocation); `""` outside any run matches no stamp a review hook
     # writes, so such a call resolves through the fresh gate below.
-    gate = self._verdict_for(name, args, native_host.current_run_id())
+    initial_state = payload
+    if payload is not None and payload is not False:
+        initial_state = False
+        if (
+            type(self._specs) is dict
+            and self._specs.get(name) is spec
+            and not spec.gate_exempt
+            and (
+                authority is None
+                or checked_specs is authority_specs
+                and type(selected_spec) is native_host.LocalToolSpec
+            )
+        ):
+            from tldw_chatbook.Chat import console_provider_composition
+
+            if console_provider_composition._local_policy_methods_current(policy):
+                initial_state = policy.project(name, payload)
+    payload = None
+    if initial_state is None:
+        gate = self._verdict_for(name, args, native_host.current_run_id())
+    elif initial_state is False:
+        gate = native_host._LocalGateDecision(
+            verdict="gate_error",
+            approval_consumed=False,
+            refusal_reason=native_host.LocalToolInvocationReason.PERMISSION_UNRESOLVED,
+        )
+        native_host.logger.warning("Local tool state resolution failed")
+    else:
+        gate = _CONSOLE_LOCAL_VERDICT[0](
+            self, name, args, native_host.current_run_id(), initial_state=initial_state
+        )
     if gate.verdict == "allow":
         dispatch_started = False
         provider_terminal = native_host.LocalProviderTerminal.NOT_STARTED
+        control_dispatch = None
 
         def _invoke_allowed() -> native_host.LocalToolInvocationResult:
             nonlocal dispatch_started, provider_terminal
@@ -405,6 +462,8 @@ def _invoke_detailed(
                     provider_terminal=native_host.LocalProviderTerminal.NOT_STARTED,
                 )
             try:
+                if control_dispatch is not None:
+                    control_dispatch.local_handoff(self)
                 raw_output = handler_spec.handler(dispatch_args)
                 result = native_host.ToolResult(
                     ok=True,
@@ -550,6 +609,21 @@ def _invoke_detailed(
                     provider_terminal=provider_terminal,
                 )
 
+        from tldw_chatbook.Chat.console_control_tools import begin_tool_dispatch
+
+        try:
+            control_dispatch = begin_tool_dispatch(self)
+        except RuntimeError:
+            return native_host.LocalToolInvocationResult(
+                result=native_host.ToolResult.blocked(
+                    native_host.LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL
+                ),
+                final_gate=gate.verdict,
+                approval_consumed=gate.approval_consumed,
+                reason_code=native_host.LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
+                dispatch_started=False,
+                provider_terminal=provider_terminal,
+            )
         authority_scope = (
             authority.authority_scope
             if authority is not None
@@ -559,9 +633,12 @@ def _invoke_detailed(
             authority_scope is not None
             and name in native_host._PATH_AUTHORITY_LOCAL_NAMES
         ):
+            retired = False
             try:
                 with authority_scope():
-                    return _invoke_allowed()
+                    result = _invoke_allowed()
+                retired = True
+                return result
             except Exception:  # noqa: BLE001 - lease failure is fail-closed
                 return native_host.LocalToolInvocationResult(
                     result=native_host.ToolResult.blocked(
@@ -573,7 +650,17 @@ def _invoke_detailed(
                     dispatch_started=dispatch_started,
                     provider_terminal=provider_terminal,
                 )
-        return _invoke_allowed()
+            finally:
+                if control_dispatch is not None:
+                    control_dispatch.returned_without_handoff(retired=retired)
+        retired = False
+        try:
+            result = _invoke_allowed()
+            retired = True
+            return result
+        finally:
+            if control_dispatch is not None:
+                control_dispatch.returned_without_handoff(retired=retired)
     if gate.verdict == "timeout":
         self._record_decision_safe(self.hub_tool_for(name), "denied-timeout")
         result = native_host.ToolResult.blocked(native_host.LOCAL_TIMEOUT_REFUSAL)
@@ -635,3 +722,89 @@ def _invoke_detailed(
         dispatch_started=False,
         provider_terminal=native_host.LocalProviderTerminal.NOT_STARTED,
     )
+
+
+_CONSOLE_LOCAL_DISPATCH = capture_callable_source(_invoke_detailed)
+_CONSOLE_LOCAL_VERDICT = capture_callable_source(
+    native_host.LocalToolProvider._verdict_for
+)
+_LOCAL_GATE_FUNCTIONS = tuple(
+    (name, capture_callable_source(vars(native_host)[name]))
+    for name in ("_promotion_call_kind", "current_run_id")
+)
+_LOCAL_GATE_MEMBERS = tuple(
+    (name, record)
+    for name, method in native_host._ORDINARY_NATIVE_PROVIDER_METHODS
+    if name
+    in (
+        "invoke_detailed",
+        "_kill_switch_engaged",
+        "_invoke_promotion",
+        "_effective_local_state",
+        "hub_tool_for",
+        "_verdict_for",
+    )
+    for record in native_host._ORDINARY_NATIVE_FUNCTIONS
+    if record[0] is method
+)
+
+
+def _console_local_dispatch_current(provider):
+    owner = type(provider)
+    return (
+        _invoke_detailed is _CONSOLE_LOCAL_DISPATCH[0]
+        and callable_source_current(_CONSOLE_LOCAL_DISPATCH)
+        and _CONSOLE_LOCAL_VERDICT[0] is vars(owner).get("_verdict_for")
+        and callable_source_current(_CONSOLE_LOCAL_VERDICT)
+        and all(
+            name not in vars(provider)
+            and vars(owner).get(name) is record[0]
+            and callable_source_current(record)
+            for name, record in _LOCAL_GATE_MEMBERS
+        )
+        and all(
+            vars(native_host).get(name) is record[0] and callable_source_current(record)
+            for name, record in _LOCAL_GATE_FUNCTIONS
+        )
+    )
+
+
+def _console_policy_for(provider, name, args, clean_args, authority, spec):
+    if type(provider) is not native_host.LocalToolProvider:
+        return None, None
+    policy = vars(provider).get("_console_local_policy")
+    if (
+        policy is None
+        or type(name) is not str
+        or name not in {"fs_list", "fs_read", "fs_edit", "git_diff"}
+        or type(spec) is not native_host.LocalToolSpec
+        or spec.gate_exempt
+        or type(provider._specs) is not dict
+        or any(
+            type(value) is not dict or any(type(key) is not str for key in value)
+            for value in (args, clean_args)
+        )
+    ):
+        return None, None
+    specs = None
+    if authority is not None:
+        by_alias = provider._path_specs_by_alias
+        if (
+            type(by_alias) is not dict
+            or type(authority) is not native_host.RunAdmittedWorkspaceRoot
+            or type(authority.alias) is not str
+            or isinstance(authority.root, native_host.RemoteRoot)
+        ):
+            return None, None
+        specs = by_alias.get(authority.alias)
+        if specs is not None and type(specs) is not dict:
+            return None, None
+
+    from tldw_chatbook.Chat import console_provider_composition
+
+    if (
+        not console_provider_composition._local_policy_methods_current(policy)
+        or policy.provider is not provider
+    ):
+        return None, None
+    return policy, specs

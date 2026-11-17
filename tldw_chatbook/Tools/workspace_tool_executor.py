@@ -24,6 +24,7 @@ from tldw_chatbook.STT.executor_process_tree import (
     ProcessContainmentError,
     WorkerContainmentIdentity,
 )
+from tldw_chatbook.Agents.activation import capture_callable_source
 from tldw_chatbook.Tools.local_tool_impls import (
     _is_relative_sensitive_path,
     resolve_workspace_path,
@@ -79,6 +80,12 @@ def bind_model_ssh(provider, authority, spec):
     call = _current.get()
     if call is not None:
         call.bind(provider, authority, spec)
+
+
+_CONSOLE_LOCAL_SSH_FUNCTIONS = tuple(
+    (globals(), function.__name__, capture_callable_source(function))
+    for function in (current_ssh_call, bind_model_ssh)
+)
 
 
 class WorkspaceToolExecutionError(RuntimeError):

@@ -14,6 +14,7 @@ from typing import Iterable, Mapping
 from loguru import logger
 
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from .activation import capture_callable_source
 
 
 @dataclass(frozen=True)
@@ -158,3 +159,9 @@ def persona_floor_state(
     if verdict.requires_confirmation and state.state == "allow":
         return EffectiveToolState(state="ask", origin="persona_policy")
     return state
+
+
+_CONSOLE_LOCAL_PERSONA_FUNCTIONS = tuple(
+    (globals(), function.__name__, capture_callable_source(function))
+    for function in (persona_floor_state, evaluate_tool_policy, _matches)
+)

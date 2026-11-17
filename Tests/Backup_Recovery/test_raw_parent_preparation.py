@@ -2,6 +2,7 @@
 
 import copy
 import errno
+import inspect
 import stat
 import sys
 import threading
@@ -19,6 +20,161 @@ from tldw_chatbook.Utils import private_paths as private
 
 configured_source = retirement_cases.configured_source
 local_root = retirement_cases.local_root
+
+
+_WINDOWS_FINITE_DIRECTORY = pytest.mark.skipif(
+    sys.platform != "win32", reason="Checks the Windows finite directory route"
+)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        pytest.param("selection", marks=_WINDOWS_FINITE_DIRECTORY),
+        pytest.param("pin", marks=_WINDOWS_FINITE_DIRECTORY),
+        pytest.param("missing", marks=_WINDOWS_FINITE_DIRECTORY),
+        "unsafe_ancestor",
+    ],
+)
+def test_secure_directory_rechecks_held_source_before_effect_or_success(
+    default_directory_source, monkeypatch, change,
+):
+    source = default_directory_source
+    selected = source._get_effective_config_path()
+    directory = selected.parent
+    replacement = directory.parent / "replacement"
+    replacement.mkdir(mode=0o700)
+    alternate = directory / "alternate.toml"
+    alternate.write_bytes(selected.read_bytes())
+    alternate.chmod(0o600)
+    component = private._open_directory_component.__code__
+    close_code = raw.close_descriptor.__code__
+    effect = getattr(private.os.fchmod, "__code__", None)
+    mkdir = private._native_mkdir.__code__
+    touched, effects, closes = [], [], []
+
+    with raw.scope(source, "config", writing=True) as operation:
+        state = raw._states[operation]
+        assert directory in state.pins
+        baseline = state.descriptors.copy()
+        original_pin = state.pins[directory]
+        substitute = private.os.open(replacement, private._DIRECTORY_OPEN_FLAGS | private._NOFOLLOW)
+        previous = sys.getprofile()
+
+        def observe(frame, event, result):
+            if previous is not None:
+                previous(frame, event, result)
+            if event == "call" and frame.f_code in (effect, mkdir):
+                effects.append(frame.f_code.co_name)
+            if event == "c_call" and result is private.os.fchmod:
+                effects.append("fchmod")
+            if event == "call" and frame.f_code is close_code:
+                closes.append(frame.f_locals["fd"])
+            if event != "return" or frame.f_code is not component or type(result) is not int:
+                return
+            if change in {"missing", "unsafe_ancestor"}:
+                trigger = frame.f_locals["component"] == directory.parent.name
+            else:
+                trigger = frame.f_locals["component"] == directory.name
+            if not trigger or touched:
+                return
+            touched.append(result)
+            if change == "selection":
+                monkeypatch.setenv("TLDW_CONFIG_PATH", str(alternate))
+            elif change == "pin":
+                state.pins[directory] = substitute
+            elif change == "missing":
+                directory.rename(replacement / directory.name)
+
+        try:
+            with monkeypatch.context() as patch:
+                # A hardening branch must be reached if the final proof is lost.
+                original_fstat = private.os.fstat
+                watched = inspect.unwrap(private.secure_private_directory).__code__
+                if change in {"pin", "unsafe_ancestor"}:
+                    def unsafe_final_mode(fd):
+                        info = original_fstat(fd)
+                        if touched and fd == touched[0] and _ancestor(sys._getframe(1), watched):
+                            return SimpleNamespace(
+                                st_mode=stat.S_IFDIR | (0o750 if change == "pin" else 0o777),
+                                st_ino=info.st_ino, st_dev=info.st_dev, st_uid=info.st_uid,
+                                st_gid=info.st_gid,
+                            )
+                        return info
+                    patch.setattr(private.os, "fstat", unsafe_final_mode)
+                sys.setprofile(observe)
+                try:
+                    refusal = (
+                        (bootstrap.RecoveryRequired, private.PrivatePathError)
+                        if change == "missing"
+                        else private.PrivatePathError
+                        if change == "unsafe_ancestor"
+                        else bootstrap.RecoveryRequired
+                    )
+                    with pytest.raises(refusal):
+                        private.secure_private_directory(directory, create=True, application_owned=True)
+                finally:
+                    sys.setprofile(previous)
+                    if change == "selection":
+                        monkeypatch.delenv("TLDW_CONFIG_PATH", raising=False)
+                    elif change == "pin":
+                        state.pins[directory] = original_pin
+                    elif (replacement / directory.name).exists():
+                        if directory.exists():
+                            directory.rmdir()
+                        (replacement / directory.name).rename(directory)
+        finally:
+            private.os.close(substitute)
+        assert touched and touched[0] in closes
+        assert effects == []
+        assert state.descriptors == baseline
+
+
+def test_secure_directory_custom_open_retains_per_component_checks(default_directory_source):
+    source = default_directory_source
+    directory = source._get_effective_config_path().parent
+    checks, opens = [], []
+    check_code = raw._check_parent_pins.__code__
+    previous = sys.getprofile()
+
+    def explicit_open(path, flags, **kwargs):
+        opens.append((path, kwargs.get("dir_fd")))
+        return private._native_open(path, flags, **kwargs)
+
+    def observe(frame, event, result):
+        if previous is not None:
+            previous(frame, event, result)
+        if event == "call" and frame.f_code is check_code:
+            if _ancestor(frame.f_back, explicit_open.__code__) is not None:
+                checks.append(frame.f_locals["state"])
+
+    with raw.scope(source, "config", writing=True) as operation:
+        state = raw._states[operation]
+        baseline = state.descriptors.copy()
+        sys.setprofile(observe)
+        try:
+            result = private.secure_private_directory(
+                directory, create=True, application_owned=True, _open=explicit_open,
+            )
+        finally:
+            sys.setprofile(previous)
+        assert result.status is private.PrivatePathStatus.ALREADY_PRIVATE
+        assert len(opens) == len(checks) == len(directory.parts)
+        assert all(check is state for check in checks)
+        assert state.descriptors == baseline
+
+
+@pytest.fixture
+def default_directory_source(request):
+    from Tests.Backup_Recovery.test_raw_lock_stream_preparation import default_config_source
+
+    source = default_config_source.__wrapped__(
+        request.getfixturevalue("tmp_path"), request.getfixturevalue("monkeypatch"),
+        request.getfixturevalue("local_root"),
+    )
+    with source.locked_hooks_config_snapshot():
+        pass
+    return source
 
 
 def _ancestor(frame, code):

@@ -616,7 +616,9 @@ def test_async_child_cannot_inherit_parent_operation_authority(tmp_path, local_r
     repository.close()
 
 
-@pytest.mark.parametrize("forgery", ["object", "overridden_method"])
+@pytest.mark.parametrize(
+    "forgery", ["object", "overridden_method", "unissued", "foreign_participant"]
+)
 def test_thread_local_discovery_cannot_supply_a_validation_callback(
     tmp_path, local_root, forgery
 ):
@@ -632,7 +634,16 @@ def test_thread_local_discovery_cannot_supply_a_validation_callback(
             def check(self, path=None):
                 pass
 
+        class ForeignParticipant:
+            def repository(self):
+                pytest.fail("foreign participant repository callback was invoked")
+
+        participant = token.participant
         selected = ForgedOperation() if forgery == "object" else token
+        if forgery == "unissued":
+            selected = object.__new__(storage._Operation)
+        if forgery == "foreign_participant":
+            token.participant = ForeignParticipant()
         if forgery == "overridden_method":
             token.check = lambda *args: None
         storage._operation_local.operation = selected
@@ -647,6 +658,7 @@ def test_thread_local_discovery_cannot_supply_a_validation_callback(
                 storage.acquire_storage(path).close()
         finally:
             storage._operation_local.operation = token
+            token.participant = participant
             pause.resume()
     repository.close()
 

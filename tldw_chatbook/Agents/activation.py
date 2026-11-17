@@ -86,12 +86,17 @@ def _permission_sources(consumer):
     )
 
 
+def _owners(owner):
+    return "config", owner
+
+
 _guard = RecoveryAdmissionGuard(
     "agent",
     error=AgentActivationRequired,
     sources=_sources,
     # Agent runs admit both the selected profile and each source owner.
-    owners=lambda owner: ("config", owner),
+    owners=_owners,
+    ordinary_batch=lambda: _stock_ordinary_guard(),
 )
 
 
@@ -164,6 +169,29 @@ def callable_source_current(record):
         )
         and function.__closure__ is closure
         and all(cell.cell_contents is value for cell, value in cells)
+    )
+
+
+_STOCK_ORDINARY_GUARD = _guard
+_STOCK_ORDINARY_SOURCES = tuple(
+    (name, capture_callable_source(globals()[name]))
+    for name in ("_sources", "_permission_sources", "_owners", "execution")
+)
+_STOCK_ACTIVATION_ERROR = AgentActivationRequired
+_STOCK_ACTIVATION_INIT = capture_callable_source(AgentActivationRequired.__init__)
+_STOCK_BATCH_CALLBACK = _guard.ordinary_batch
+
+
+def _stock_ordinary_guard():
+    return (
+        _guard is _STOCK_ORDINARY_GUARD and type(_guard) is RecoveryAdmissionGuard
+        and _guard.error is AgentActivationRequired is _STOCK_ACTIVATION_ERROR
+        and _STOCK_ACTIVATION_ERROR.__init__ is _STOCK_ACTIVATION_INIT[0]
+        and callable_source_current(_STOCK_ACTIVATION_INIT)
+        and _guard.sources is _sources and _guard.owners is _owners
+        and _guard.ordinary_batch is _STOCK_BATCH_CALLBACK and not _guard.check_states
+        and all(globals().get(name) is record[0] and callable_source_current(record)
+                for name, record in _STOCK_ORDINARY_SOURCES)
     )
 
 

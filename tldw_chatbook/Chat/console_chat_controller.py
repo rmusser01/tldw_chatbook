@@ -2892,6 +2892,7 @@ class _OrdinaryNativeCommitOwner:
     caller_cancelled: bool = False
     explicit_stop: bool = False
     commit_error: BaseException | None = field(default=None, repr=False)
+    _issuer: object | None = field(default=None, repr=False)
 
 
 class _OrdinaryNativeCommitOwnerChanged(RuntimeError):
@@ -3580,6 +3581,7 @@ class ConsoleChatController:
         *,
         store: ConsoleChatStore,
         provider_gateway: ConsoleProviderGatewayProtocol,
+        domain_services: Any | None = None,
         provider: str = "llama_cpp",
         model: str | None = None,
         configured_model: str | None = None,
@@ -3764,7 +3766,9 @@ class ConsoleChatController:
         self._capture_policy_hydrated: set[str] = set()
         self._capture_policy_hydration_errors: dict[str, str] = {}
         self._visual_identity_repository = (
-            VisualIdentityRepository(persistence_db)
+            domain_services.sources.visual_repository
+            if domain_services is not None
+            else VisualIdentityRepository(persistence_db)
             if persistence_db is not None
             else None
         )
@@ -3905,10 +3909,12 @@ class ConsoleChatController:
 
         from tldw_chatbook.Chat.console_interrupt_rounds import InterruptRoundHost
 
+        self.domain_services = domain_services
         self._approval_feedback: ApprovalFeedbackStore | None = None
         self._approval_feedback_lock = threading.Lock()
         self.approval_feedback_changed = None
         self._interrupt_host = InterruptRoundHost(
+            domain_services=domain_services,
             read_controller__active_assistant_message_ids=lambda: (
                 self._active_assistant_message_ids
             ),
@@ -4182,10 +4188,12 @@ class ConsoleChatController:
             read_global_uuid4=lambda: uuid4,
             read_hook_review_owner=lambda: (
                 self._hook_permissions_accessor()
-                if self._hook_permissions_accessor is not None else None
+                if self._hook_permissions_accessor is not None
+                else None
             ),
             read_hook_review_shutdown=lambda session_id: (
-                self._disposed or self._shutdown_requested.is_set()
+                self._disposed
+                or self._shutdown_requested.is_set()
                 or session_id in self._session_close_generations
             ),
         )
@@ -11911,9 +11919,25 @@ class ConsoleChatController:
         reconcile already recovers.
         """
 
+        domain = getattr(self, "domain_services", None)
+        if (
+            domain is not None
+            and domain.runtime._execution_service._local_controls is not None
+        ):
+            from .console_native_commit import run_selected_postcommit_db_call
+
+            return await run_selected_postcommit_db_call(self, call, *args)
         if self._durable_db_call_offloadable():
-            return await asyncio.to_thread(
-                self._run_owned_chat_db_operation, call, *args
+            from tldw_chatbook.DB.base_db import run_owned_db_call
+
+            # This callback is a finite local phase. Own admission across all of
+            # its transactions while retaining their individual commit/rollback
+            # boundaries and the connection's separate native lifetime.
+            return await run_owned_db_call(
+                getattr(self.store.persistence, "db", None),
+                self._run_owned_chat_db_operation,
+                call,
+                *args,
             )
         return call(*args)
 
@@ -21172,17 +21196,22 @@ class ConsoleChatController:
         from .console_prompt_mixin_service import ConsolePromptMixinService
 
         store = self.store
-        app = self.app
-        try:
-            prompt_scope_service = app.prompt_scope_service
-        except AttributeError:
-            prompt_scope_service = None
+        domain = self.domain_services
+        if domain is not None:
+            domain.require_current()
+            prompt_scope_service = domain.sources.prompt_scope
+            settings_durability_owner = domain.sources.settings_durability_owner
+        else:
+            app = self.app
+            try:
+                prompt_scope_service = app.prompt_scope_service
+            except AttributeError:
+                prompt_scope_service = None
+            try:
+                settings_durability_owner = app.console_settings_durability_owner
+            except AttributeError:
+                settings_durability_owner = None
         persistence = self.store.persistence
-        app = self.app
-        try:
-            settings_durability_owner = app.console_settings_durability_owner
-        except AttributeError:
-            settings_durability_owner = None
         return ConsolePromptMixinService(
             store=store,
             prompt_scope_service=prompt_scope_service,
@@ -28634,6 +28663,14 @@ _CONSOLE_TOOL_COMPOSITION_METHODS = tuple(
 )
 
 
+# Pin the controller entry points before project-index preparation loads lazily.
+_CONSOLE_PROJECT_INDEX_PREPARATION_METHODS = tuple(
+    (name, method, method.__code__)
+    for name in ("_prepare_project_index_scopes", "_lifecycle_revision_for")
+    for method in (vars(ConsoleChatController)[name],)
+)
+
+
 _CONTEXT_DISPLAY_CALLBACKS = tuple(
     (name, function, function.__code__, function.__defaults__, function.__kwdefaults__,
      isinstance(vars(ConsoleChatController)[name], staticmethod))
@@ -28694,11 +28731,16 @@ def _stock_console_tool_composition_current(controller):
 
     if not providers.controller_factory_current(MCPToolProvider):
         return False
-    app = controller.app
-    try:
-        service = app.unified_mcp_service
-    except AttributeError:
-        service = None
+    domain = getattr(controller, "domain_services", None)
+    if domain is not None:
+        domain.require_current()
+        service = domain.sources.control_plane
+    else:
+        app = controller.app
+        try:
+            service = app.unified_mcp_service
+        except AttributeError:
+            service = None
     if not standard_console_catalog_sources(service):
         return False
     for name, original, code, namespace, defaults, keyword_defaults, keyword_items, closure in _CONSOLE_TOOL_COMPOSITION_METHODS:

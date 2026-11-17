@@ -154,6 +154,17 @@ async def _drain_app_unmount_services(
         # Cancel any pending workers and wait for them, bounded.
         await self._cancel_and_settle_workers("unmount")
 
+        # An explicitly created permission helper need not belong to an MCP service.
+        import sys
+        import time
+
+        permission_process = sys.modules.get("tldw_chatbook.MCP.permission_process")
+        if permission_process is not None:
+            lifetime = permission_process.participant
+            lifetime._maintenance_close_admission()
+            if not await lifetime._maintenance_drain(time.monotonic() + 30):
+                raise RuntimeError("permission_process_shutdown_unsettled")
+
         # SSH ControlMaster cleanup (Phase 2a): `ssh -O exit` for every
         # master this process started, only after in-flight calls have
         # settled above so closing a master cannot cut a live call.

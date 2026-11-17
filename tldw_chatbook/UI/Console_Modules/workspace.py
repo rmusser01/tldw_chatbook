@@ -639,8 +639,22 @@ def _availability_methods_current(owner, originals):
     )
 
 
+def _workspace_availability_readers_current(controller, registry) -> bool:
+    return _availability_methods_current(controller, _WORKSPACE_AVAILABILITY_METHODS) and (
+        _availability_methods_current(registry, _WORKSPACE_AVAILABILITY_REGISTRY_METHODS)
+    )
+
+
 class _WorkspaceAvailabilityObsolete(RuntimeError):
     """A finite display read lost its original publisher."""
+
+
+@dataclass(frozen=True)
+class _RegistryDisplayRequest:
+    view: _ConsoleRegistryDisplayReads
+    database: WorkspaceDB
+    generation: int
+    calls: Mapping[tuple, tuple[str, tuple]]
 
 
 class ConsoleWorkspaceController:
@@ -882,6 +896,12 @@ class ConsoleWorkspaceController:
         self._workspace_files_availability_generation = 0
         self._workspace_files_availability_refresh_in_flight = False
         self._workspace_files_availability_cached_at = 0.0
+        self._workspace_files_availability_cached_generation: int | None = None
+        self._workspace_files_availability_pending = False
+        self._workspace_files_availability_active_generation: int | None = None
+        self._workspace_files_availability_source: tuple[object, object] = (None, None)
+        self._registry_display_pending: _RegistryDisplayRequest | None = None
+        self._registry_display_active: _RegistryDisplayRequest | None = None
         self._preparation_reads = set()
         self._workspace_files_availability_task = None
 
@@ -920,8 +940,6 @@ class ConsoleWorkspaceController:
         # recurring merge calls do not re-query per sync; cleared on write.
         self._console_appearance_map_cache: dict[str, tuple[str, str]] | None = None
         self._console_appearance_map_cached_at: float = 0.0
-        #: TASK-33620.15.4: (map, ids an off-loop re-read of it found absent).
-        self._console_appearance_map_absent: tuple[dict, frozenset[str]] | None = None
         self._console_appearance_map_service: Any = None
         self._console_appearance_map_queried_ids: set[str] = set()
         self._character_conversation_activation_coordinator = None
@@ -3170,8 +3188,8 @@ class ConsoleWorkspaceController:
         several times per state build), so the full map is cached under a
         short TTL rather than re-queried per merge; a successful appearance
         write clears the cache (see `_write_console_conversation_appearance_
-        off_loop`) alongside the persisted-rows cache. Unknown ids simply
-        miss the cached map, exactly like a failed read.
+        off_loop`) alongside the persisted-rows cache. Unknown IDs count as
+        observed, while failed reads leave the previous evidence unchanged.
         """
         service = getattr(self.app_instance, "local_chat_conversation_service", None)
         get_appearances = getattr(service, "get_conversation_appearances", None)
@@ -3193,18 +3211,7 @@ class ConsoleWorkspaceController:
         if current and wanted <= queried_ids:
             return cached_map
         if same_service and cached_map is not None and self._stale_display_reads_on:
-            # An id the last re-read found absent (unknown or soft-deleted)
-            # is not re-requested while the map is fresh, or every tick's
-            # build would start another read (TASK-33620.15.4 review).
-            absent = getattr(self, "_console_appearance_map_absent", None)
-            known = set(cached_map)
-            if absent is not None and absent[0] is cached_map:
-                known |= absent[1]
-            if not (
-                now - cache_at < CONSOLE_APPEARANCE_MAP_CACHE_TTL_SECONDS
-                and wanted <= known
-            ):
-                self._request_appearance_refresh(get_appearances, wanted)
+            self._request_appearance_refresh(get_appearances, wanted)
             return cached_map  # Until the off-loop re-read lands (TASK-33620.15.4).
         try:
             appearances = get_appearances(sorted(wanted))
@@ -3226,11 +3233,17 @@ class ConsoleWorkspaceController:
             }
         )
         self._console_appearance_map_cache = merged_map
-        self._console_appearance_map_cached_at = now
         self._console_appearance_map_service = service
         # Unknown/deleted conversations are omitted by the service. Remember
         # their display read too, without inventing an appearance for the row.
-        self._console_appearance_map_queried_ids = wanted
+        if (
+            current
+            and time.monotonic() - cache_at < CONSOLE_APPEARANCE_MAP_CACHE_TTL_SECONDS
+        ):
+            self._console_appearance_map_queried_ids = queried_ids | wanted
+        else:
+            self._console_appearance_map_cached_at = now
+            self._console_appearance_map_queried_ids = wanted
         return merged_map
 
     @staticmethod
@@ -7052,50 +7065,41 @@ class ConsoleWorkspaceController:
             if view is not None:
                 view.stale_reader = None
 
-    def _request_registry_display_refresh(self, view: Any, generation: int) -> None:
-        """Start one off-loop re-read of ``view``'s reads for ``generation``."""
-        if getattr(self, "_registry_display_refresh", None) == (view, generation):
+    def _request_registry_display_refresh(
+        self, view: _ConsoleRegistryDisplayReads, generation: int
+    ) -> None:
+        """Queue the stale registry reads for the Workspace display worker."""
+        runtime = self._workspace_availability_runtime()
+        if not self._screen_running_accessor() or (runtime is not None and runtime._disposed):
             return
-        if not self._screen_running_accessor():
+        database = getattr(view.service, "db", None)
+        if (
+            type(view.service) is not LocalWorkspaceRegistryService
+            or type(database) is not WorkspaceDB or database.is_memory_db
+        ):
             return
-        self._registry_display_refresh = (view, generation)
+        calls = view.stale_calls()
+        active = self._registry_display_active
+        if (
+            active is not None and active.view is view
+            and active.database is database and active.generation == generation
+        ):
+            calls = {key: call for key, call in calls.items() if key not in active.calls}
+        if calls:
+            self._registry_display_pending = _RegistryDisplayRequest(
+                view, database, generation, calls
+            )
+            self._start_workspace_display_refresh()
+
+    def _start_workspace_display_refresh(self) -> None:
+        if self._workspace_files_availability_refresh_in_flight:
+            return
+        self._workspace_files_availability_refresh_in_flight = True
         self.run_worker(
-            self._refresh_registry_display_reads(view, generation, view.stale_calls()),
+            self._refresh_workspace_files_availability_snapshot(),
             group="console-workspace-display-reads",
             exclusive=False,
         )
-
-    async def _refresh_registry_display_reads(
-        self, view: Any, generation: int, calls: Mapping[tuple, tuple[str, tuple]]
-    ) -> None:
-        """Re-read the registry's display reads on a worker, then publish them."""
-        from .view_workers import owned_display_read
-
-        service = view.service
-
-        def read() -> dict[tuple, Any]:
-            values: dict[tuple, Any] = {}
-            for key, (name, args) in calls.items():
-                try:
-                    values[key] = getattr(service, name)(*args)
-                except Exception:  # noqa: BLE001 - a raised read is never cached.
-                    continue
-            return values
-
-        try:
-            values = await owned_display_read(getattr(service, "db", None), read)
-        except Exception:  # noqa: BLE001 - the next build reads live or retries.
-            return
-        finally:
-            if getattr(self, "_registry_display_refresh", None) == (view, generation):
-                self._registry_display_refresh = None
-        if (
-            values
-            and self._screen_running_accessor()
-            and self._console_registry_reads_view() is view
-            and view.install(generation, values)
-        ):
-            self._publish_display_reads()
 
     def _request_appearance_refresh(
         self, get_appearances: Callable, wanted: set[str]
@@ -7114,6 +7118,17 @@ class ConsoleWorkspaceController:
             or database.is_memory_db
         ):
             return
+        owner = vars(self).get("_console_domain_display_owner")
+        if owner is not None:
+            from .config_sync import replay_whole_console_sync
+
+            owner.require_current()
+            view = owner.domain.presentation._require_display_owner(owner)
+            if view is not self._screen or view._workspace is not self:
+                from ...Chat.console_display_phases import ConsoleDisplayPhaseRefused
+                raise ConsoleDisplayPhaseRefused("Appearance demand attachment changed")
+            replay_whole_console_sync(view)
+            return
         self._appearance_refresh_for = captured
         self.run_worker(
             self._refresh_appearances(
@@ -7123,16 +7138,74 @@ class ConsoleWorkspaceController:
             exclusive=False,
         )
 
+    def appearance_presentation_work(self, display_read):
+        """Capture only an already requested, due stock appearance section."""
+        from ...Chat.chat_conversation_service import ChatConversationService
+        from ...Chat.console_received_dispatch import stock_native_methods
+
+        service = getattr(self.app_instance, "local_chat_conversation_service", None)
+        database = display_read.database
+        captured = self._console_appearance_map_cache
+        wanted = getattr(self, "_console_appearance_map_queried_ids", set())
+        if (
+            type(service) is not ChatConversationService
+            or not stock_native_methods(service, _APPEARANCE_DISPLAY_READERS)
+            or not stock_native_methods(self, _APPEARANCE_DISPLAY_PUBLISHERS)
+            or getattr(service, "db", None) is not database
+            or not stock_native_methods(database, _APPEARANCE_DB_READERS)
+            or self._console_appearance_map_service is not service
+            or captured is None or not wanted
+            or getattr(self, "_appearance_refresh_for", None) is captured
+            or not self._screen_running_accessor()
+            or time.monotonic() - self._console_appearance_map_cached_at
+            < CONSOLE_APPEARANCE_MAP_CACHE_TTL_SECONDS
+        ):
+            return None
+        self._appearance_refresh_for = captured
+        return self._refresh_appearances(
+            database, service.get_conversation_appearances,
+            tuple(sorted(wanted)), captured, _display_read=display_read,
+        )
+
     async def _refresh_appearances(
-        self, database: Any, get_appearances: Callable, wanted: tuple, captured: Any
+        self, database: Any, get_appearances: Callable, wanted: tuple, captured: Any,
+        *, _display_read: Any = None,
     ) -> None:
         """Merge an off-loop appearance read into the map it was made for."""
         from .view_workers import owned_display_read
 
+        service = self._console_appearance_map_service
+        cache_at = self._console_appearance_map_cached_at
+
+        def current():
+            if _display_read is None:
+                return
+            from ...Chat.console_received_dispatch import stock_native_methods
+
+            if (service is not getattr(get_appearances, "__self__", None)
+                or service is not getattr(
+                    self.app_instance, "local_chat_conversation_service", None
+                )
+                or getattr(service, "db", None) is not database
+                or self._console_appearance_map_service is not service
+                or self._console_appearance_map_cache is not captured
+                or self._console_appearance_map_cached_at != cache_at
+                or not stock_native_methods(service, _APPEARANCE_DISPLAY_READERS)
+                or not stock_native_methods(database, _APPEARANCE_DB_READERS)):
+                raise RuntimeError("Console appearance display owner changed.")
+
         try:
-            appearances = await owned_display_read(
-                database, get_appearances, list(wanted)
+            shared = (
+                _display_read.capture(
+                    "appearance", database, lambda: get_appearances(list(wanted)),
+                    require_current=current, reads=self._preparation_reads,
+                )
+                if _display_read is not None else None
             )
+            appearances = (await shared if shared is not None else await owned_display_read(
+                database, get_appearances, list(wanted)
+            ))
+            current()
         except Exception:  # noqa: BLE001 - as the live read: the next one retries.
             return
         finally:
@@ -7141,9 +7214,17 @@ class ConsoleWorkspaceController:
         # A write cleared (or a live read replaced) the map meanwhile: drop it.
         if not self._screen_running_accessor() or (
             self._console_appearance_map_cache is not captured
+            or self._console_appearance_map_service is not service
+            or service is not getattr(
+                self.app_instance, "local_chat_conversation_service", None
+            )
+            or getattr(service, "db", None) is not database
+            or self._console_appearance_map_cached_at != cache_at
         ):
             return
         merged_map = dict(captured)
+        for conversation_id in wanted:
+            merged_map.pop(conversation_id, None)
         merged_map.update(
             {
                 str(conversation_id): (
@@ -7156,13 +7237,13 @@ class ConsoleWorkspaceController:
         # Only a changed map is published: a publication forces the next
         # tick's projection, whose build would re-request (review 2026-10-25).
         changed = merged_map != captured
-        current = merged_map if changed else captured
-        self._console_appearance_map_cache = current
-        self._console_appearance_map_cached_at = time.monotonic()
-        self._console_appearance_map_absent = (
-            current,
-            frozenset(wanted).difference(current),
-        )
+        self._console_appearance_map_cache = merged_map if changed else captured
+        now = time.monotonic()
+        if now - cache_at < CONSOLE_APPEARANCE_MAP_CACHE_TTL_SECONDS:
+            self._console_appearance_map_queried_ids.update(wanted)
+        else:
+            self._console_appearance_map_cached_at = now
+            self._console_appearance_map_queried_ids = set(wanted)
         if changed:
             self._publish_display_reads()
 
@@ -7183,16 +7264,41 @@ class ConsoleWorkspaceController:
         return value if isinstance(value, ConsoleRuntime) else None
 
 
-    async def _read_owned_workspace_availability(self, registry, database, workspace_ids):
-        """Retain the original callback's exact finite DB scopes through cancel."""
+    async def _read_owned_workspace_availability(
+        self, registry, database, workspace_ids, registry_request=None,
+    ):
+        """Read both stock display sections in one finite WorkspaceDB interval."""
+        import threading
+
         from ...Backup_Recovery.participants import core_operation
         from ...Chat.console_preparation_reads import run_preparation_read
+        from ...Chat.console_runtime import ConsoleRuntime
         from ...DB.base_db import operation_owned_connection
 
         app = self.app_instance
         runtime = self._workspace_availability_runtime()
         reader = self._read_workspace_files_availability
         database_path = database.db_path
+
+        def availability_current():
+            return _workspace_availability_readers_current(self, registry)
+
+        scheduled = (
+            type(runtime) is ConsoleRuntime
+            and type(database) is WorkspaceDB and not database.is_memory_db
+            and type(registry) is LocalWorkspaceRegistryService
+            and availability_current()
+            and (
+                registry_request is None
+                or (
+                    registry_request.view.service is registry
+                    and registry_request.database is database
+                )
+            )
+        )
+        screen = self._screen
+        issuing_thread = threading.current_thread()
+        lifecycle = self._screen_lifecycle_token() if scheduled else None
 
         def current():
             if (
@@ -7201,29 +7307,77 @@ class ConsoleWorkspaceController:
                 or self._workspace_availability_runtime() is not runtime
                 or getattr(registry, "db", None) is not database
                 or database.db_path != database_path
-                or not _availability_methods_current(self, _WORKSPACE_AVAILABILITY_METHODS)
-                or not _availability_methods_current(registry, _WORKSPACE_AVAILABILITY_REGISTRY_METHODS)
+                or (registry_request is None and not availability_current())
                 or (runtime is not None and runtime._disposed)
+                or (
+                    scheduled and (
+                        self._screen is not screen
+                        or not availability_current()
+                        or getattr(screen, "_closing", False)
+                        or getattr(screen, "_console_chat_tearing_down", False)
+                        or (
+                            registry_request is not None
+                            and (
+                                registry_request.view.service is not registry
+                                or registry_request.database is not database
+                            )
+                        )
+                        or (
+                            threading.current_thread() is issuing_thread
+                            and (
+                                not self._screen_running_accessor()
+                                or self._screen_lifecycle_token() is not lifecycle
+                            )
+                        )
+                    )
+                )
             ):
                 raise _WorkspaceAvailabilityObsolete(
                     "workspace_availability_source_changed"
                 )
 
         def read_captured_availability():
-            # Same complete repository interval and newly-created-handle custody
-            # as run_owned_db_call; its global/custom API remains unchanged.
             with operation_owned_connection(database), core_operation(database):
                 current()
-                return reader(registry, database, workspace_ids)
+                values = {}
+                runtime_bindings = {}
+                if registry_request is not None:
+                    for key, (name, args) in registry_request.calls.items():
+                        try:
+                            value = getattr(registry, name)(*args)
+                        except Exception:  # noqa: BLE001 - a raised read is never cached.
+                            continue
+                        values[key] = value
+                        if name == "list_runtime_bindings":
+                            runtime_bindings[args[0]] = value
+                availability = None
+                if workspace_ids and availability_current():
+                    # A newer local generation may have changed the bindings
+                    # while the registry section was running. Keep availability
+                    # on its original fresh SQL path in that case.
+                    if (
+                        registry_request is not None
+                        and registry.mutation_generation != registry_request.generation
+                    ):
+                        runtime_bindings.clear()
+                    failures = set()
+                    snapshots = reader(
+                        registry, database, workspace_ids,
+                        runtime_bindings=runtime_bindings, failures=failures,
+                    )
+                    availability = (*snapshots, not failures)
+                return values, availability
 
-        return await run_preparation_read(
+        values, availability = await run_preparation_read(
             read_captured_availability,
             creator=self,
             session_id=None,
             reads=self._preparation_reads,
             observers=() if runtime is None else (runtime._preparation_reads,),
             require_current=current,
+            submission_slot=runtime._display_submission_slot if scheduled else None,
         )
+        return values, availability if availability_current() else None
 
 
     def _request_workspace_files_availability_refresh(
@@ -7248,25 +7402,34 @@ class ConsoleWorkspaceController:
                 }
             )
         )
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        database = getattr(registry, "db", None)
+        previous_registry, previous_database = self._workspace_files_availability_source
         now = time.monotonic()
-        if requested_ids == self._workspace_files_availability_requested_ids and (
-            self._workspace_files_availability_refresh_in_flight
-            or now - self._workspace_files_availability_cached_at
-            < WORKSPACE_FILES_AVAILABILITY_CACHE_TTL_SECONDS
+        if (
+            requested_ids == self._workspace_files_availability_requested_ids
+            and registry is previous_registry and database is previous_database
+            and (
+                self._workspace_files_availability_pending
+                or self._workspace_files_availability_active_generation
+                == self._workspace_files_availability_generation
+                or (
+                    self._workspace_files_availability_cached_generation
+                    == self._workspace_files_availability_generation
+                    and now - self._workspace_files_availability_cached_at
+                    < WORKSPACE_FILES_AVAILABILITY_CACHE_TTL_SECONDS
+                )
+            )
         ):
             return
         self._workspace_files_availability_requested_ids = requested_ids
+        self._workspace_files_availability_source = (registry, database)
         self._workspace_files_availability_generation += 1
-        if self._workspace_files_availability_refresh_in_flight:
-            return
-        if not requested_ids or not self._screen_running_accessor():
-            return
-        self._workspace_files_availability_refresh_in_flight = True
-        self.run_worker(
-            self._refresh_workspace_files_availability_snapshot(),
-            group="console-workspace-files-availability",
-            exclusive=False,
+        self._workspace_files_availability_pending = bool(
+            requested_ids and self._screen_running_accessor()
         )
+        if self._workspace_files_availability_pending:
+            self._start_workspace_display_refresh()
 
     def _capture_workspace_files_availability(
         self, workspace_ids: Sequence[str]
@@ -7290,7 +7453,9 @@ class ConsoleWorkspaceController:
 
 
     def _read_workspace_files_availability(
-        self, registry: Any, database: object, workspace_ids: Sequence[str]
+        self, registry: Any, database: object, workspace_ids: Sequence[str],
+        *, runtime_bindings: Mapping[str, tuple[WorkspaceRuntimeBinding, ...]] | None = None,
+        failures: set[str] | None = None,
     ) -> tuple[dict[str, bool], dict[str, tuple[WorkspaceRuntimeBinding, ...]]]:
         """Read the captured registry owner within its caller's finite lifetime."""
         availability: dict[str, bool] = {}
@@ -7310,13 +7475,16 @@ class ConsoleWorkspaceController:
                     # Its folder lister reads the complete runtime set too.
                     # Reuse one read and the display layer's same disk checks
                     # within this finite operation, including Default cleanup.
-                    runtime_bindings = tuple(
+                    stored = (runtime_bindings or {}).get(workspace_id)
+                    if stored is None:
+                        stored = registry.list_runtime_bindings(workspace_id)
+                    checked_bindings = tuple(
                         _recompute_filesystem_binding_status(binding)
-                        for binding in registry.list_runtime_bindings(workspace_id)
+                        for binding in stored
                     )
                     folder_bindings = tuple(
                         binding
-                        for binding in runtime_bindings
+                        for binding in checked_bindings
                         if binding.binding_kind is RuntimeBindingKind.LOCAL_FILESYSTEM
                     )
                 else:
@@ -7335,57 +7503,93 @@ class ConsoleWorkspaceController:
                         str(getattr(binding, "binding_id", "")): binding
                         for binding in folder_bindings
                     }
-                    runtime_bindings = tuple(
+                    checked_bindings = tuple(
                         refreshed_by_binding_id.get(
                             str(getattr(binding, "binding_id", "")), binding
                         )
                         for binding in stored_bindings
                     )
-                bindings_by_id[workspace_id] = runtime_bindings
+                bindings_by_id[workspace_id] = checked_bindings
                 availability[workspace_id] = any(
                     binding.binding_kind is RuntimeBindingKind.LOCAL_FILESYSTEM
                     and binding.status is RuntimeBindingStatus.READY
                     for binding in folder_bindings
                 )
             except Exception:  # noqa: BLE001 - preserve original optional browser or availability failure results.
+                if failures is not None:
+                    failures.add(workspace_id)
                 availability[workspace_id] = False
                 bindings_by_id[workspace_id] = ()
         return availability, bindings_by_id
 
 
     async def _refresh_workspace_files_availability_snapshot(self) -> None:
-        """Publish only the latest completed folder-availability generation."""
+        """Drain coalesced display requests and publish after physical retirement."""
         owner_task = asyncio.current_task()
         self._workspace_files_availability_task = owner_task
         try:
+            # Textual starts workers eagerly. Let both requests from the same
+            # synchronous render reach this owner before submitting its read.
+            await asyncio.sleep(0)
             while self._screen_running_accessor():
                 runtime = self._workspace_availability_runtime()
                 if runtime is not None and runtime._disposed:
                     return
-                generation = self._workspace_files_availability_generation
-                workspace_ids = self._workspace_files_availability_requested_ids
+                lifecycle = self._screen_lifecycle_token()
+                registry_request = self._registry_display_pending
+                self._registry_display_pending = None
+                refresh_availability = self._workspace_files_availability_pending
+                self._workspace_files_availability_pending = False
+                if registry_request is None and not refresh_availability:
+                    return
                 registry = getattr(self.app_instance, "workspace_registry_service", None)
                 database = getattr(registry, "db", None)
+                if registry_request is not None and (
+                    registry_request.view.service is not registry
+                    or registry_request.database is not database
+                ):
+                    registry_request = None
+                self._registry_display_active = registry_request
+                self._workspace_files_availability_active_generation = None
+                generation = self._workspace_files_availability_generation
+                workspace_ids = ()
+                requested_registry, requested_database = self._workspace_files_availability_source
+                if (
+                    refresh_availability and registry is requested_registry
+                    and database is requested_database
+                ):
+                    workspace_ids = self._workspace_files_availability_requested_ids
+                    self._workspace_files_availability_active_generation = generation
                 stock_read = (
                     type(database) is WorkspaceDB and not database.is_memory_db
                     and type(registry) is LocalWorkspaceRegistryService
-                    and _availability_methods_current(self, _WORKSPACE_AVAILABILITY_METHODS)
-                    and _availability_methods_current(registry, _WORKSPACE_AVAILABILITY_REGISTRY_METHODS)
+                    and _workspace_availability_readers_current(self, registry)
                 )
                 default_only = (
                     stock_read and workspace_ids == (DEFAULT_WORKSPACE_ID,)
                     and _default_display_bindings_are_empty(registry, DEFAULT_WORKSPACE_ID)
                 )
-                if default_only:
-                    availability_snapshot = {DEFAULT_WORKSPACE_ID: False}
-                    bindings_snapshot = {DEFAULT_WORKSPACE_ID: ()}
-                elif stock_read:
-                    availability_snapshot, bindings_snapshot = (
-                        await self._read_owned_workspace_availability(
-                            registry, database, workspace_ids
+                values, availability = {}, None
+                stock_ids = workspace_ids if stock_read and not default_only else ()
+                if registry_request is not None or stock_ids:
+                    try:
+                        values, availability = await _WORKSPACE_DISPLAY_READ(
+                            self, registry, database, stock_ids, registry_request,
                         )
-                    )
-                else:
+                    except _WorkspaceAvailabilityObsolete:
+                        continue
+                    except Exception:  # noqa: BLE001 - an optional registry-only read retries on demand.
+                        if stock_ids:
+                            raise
+                if default_only:
+                    if (
+                        _workspace_availability_readers_current(self, registry)
+                        and _default_display_bindings_are_empty(registry, DEFAULT_WORKSPACE_ID)
+                    ):
+                        availability = ({DEFAULT_WORKSPACE_ID: False}, {DEFAULT_WORKSPACE_ID: ()}, True)
+                    elif generation == self._workspace_files_availability_generation:
+                        self._workspace_files_availability_pending = True
+                elif workspace_ids and not stock_read:
                     # Preserve the original custom/in-memory read route and its
                     # worker affinity while retaining physical completion.
                     from ...Chat.console_preparation_reads import run_preparation_read
@@ -7396,48 +7600,67 @@ class ConsoleWorkspaceController:
                         observers=() if runtime is None else (runtime._preparation_reads,),
                         require_current=lambda: None,
                     )
-                runtime = self._workspace_availability_runtime()
+                    availability = (availability_snapshot, bindings_snapshot, True)
+                current_runtime = self._workspace_availability_runtime()
                 if not self._screen_running_accessor() or (
-                    runtime is not None and runtime._disposed
+                    current_runtime is not None and current_runtime._disposed
                 ):
                     return
-                if default_only and not _default_display_bindings_are_empty(
-                    registry, DEFAULT_WORKSPACE_ID
-                ):
-                    continue
+                current_registry = getattr(self.app_instance, "workspace_registry_service", None)
+                source_current = (
+                    registry is current_registry and database is getattr(registry, "db", None)
+                    and lifecycle is self._screen_lifecycle_token()
+                )
+                registry_changed = (
+                    bool(values) and source_current and registry_request is not None
+                    and self._console_registry_reads_view() is registry_request.view
+                    and registry_request.view.install(registry_request.generation, values)
+                )
+                availability_changed = False
+                availability_landed = False
                 if (
-                    generation == self._workspace_files_availability_generation
-                    and registry is getattr(self.app_instance, "workspace_registry_service", None)
-                    and database is getattr(registry, "db", None)
+                    availability is not None and source_current
+                    and generation == self._workspace_files_availability_generation
+                    and workspace_ids == self._workspace_files_availability_requested_ids
                 ):
-                    self._workspace_files_availability_by_id = MappingProxyType(
-                        {
-                            workspace_id: bool(
-                                availability_snapshot.get(workspace_id, False)
-                            )
-                            for workspace_id in workspace_ids
-                        }
+                    availability_snapshot, bindings_snapshot, succeeded = availability
+                    next_availability = {
+                        workspace_id: bool(availability_snapshot.get(workspace_id, False))
+                        for workspace_id in workspace_ids
+                    }
+                    next_bindings = {
+                        workspace_id: tuple(bindings_snapshot.get(workspace_id, ()))
+                        for workspace_id in workspace_ids
+                    }
+                    availability_changed = (
+                        next_availability != self._workspace_files_availability_by_id
+                        or next_bindings != self._workspace_files_runtime_bindings_by_id
                     )
-                    self._workspace_files_runtime_bindings_by_id = MappingProxyType(
-                        {
-                            workspace_id: tuple(bindings_snapshot.get(workspace_id, ()))
-                            for workspace_id in workspace_ids
-                        }
-                    )
-                    self._workspace_files_availability_cached_at = time.monotonic()
-                    self._workspace_files_availability_refresh_in_flight = False
+                    if availability_changed:
+                        self._workspace_files_availability_by_id = MappingProxyType(next_availability)
+                        self._workspace_files_runtime_bindings_by_id = MappingProxyType(next_bindings)
+                    if succeeded:
+                        self._workspace_files_availability_cached_at = time.monotonic()
+                        self._workspace_files_availability_cached_generation = generation
+                    availability_landed = True
+                self._registry_display_active = None
+                cadence_active = (
+                    getattr(self._screen, "_console_transcript_sync_timer", None) is not None
+                )
+                if registry_changed or (stock_read and cadence_active and availability_changed):
+                    self._publish_display_reads()
+                if availability_landed and (not stock_read or (not cadence_active and not registry_changed)):
                     self._sync_console_workspace_context()
-                    return
-        except _WorkspaceAvailabilityObsolete:
-            return
-        except asyncio.CancelledError:
-            raise
         finally:
             # A screen-owned worker is cancelled during teardown.  Do not
             # retain an in-flight claim that would make a resumed screen think
             # a non-existent worker still owns its snapshot.
             if self._workspace_files_availability_task is owner_task:
                 self._workspace_files_availability_refresh_in_flight = False
+                self._workspace_files_availability_pending = False
+                self._workspace_files_availability_active_generation = None
+                self._registry_display_pending = None
+                self._registry_display_active = None
                 self._workspace_files_availability_task = None
 
     def _build_console_workspace_context_state(self) -> ConsoleWorkspaceContextState:
@@ -7572,6 +7795,8 @@ class ConsoleWorkspaceController:
             return (
                 id(registry_service),
                 generation,
+                id(self._workspace_files_availability_by_id),
+                id(self._workspace_files_runtime_bindings_by_id),
                 self._current_console_conversation_id(),
                 active_session_id,
                 sessions_token,
@@ -8856,6 +9081,108 @@ class ConsoleWorkspaceController:
                 )
         return str(workspace_id)
 
+    # PROPOSED HUNKS in ConsoleWorkspaceController, pinned workspace.py SHA in manifest.
+    # Keep all five original field names and all original read/write algorithms.
+    # Explicit getter/setter forwarding: no second map, service, clock or coverage.
+
+    def _display_appearance_state(self):
+        owner = vars(self).get("_console_domain_display_owner")
+        if owner is None:
+            return None  # genuine legacy receiver storage
+        owner.require_current()
+        view = owner.domain.presentation._require_display_owner(owner)
+        if view is not self._screen or view._workspace is not self:
+            from ...Chat.console_display_phases import ConsoleDisplayPhaseRefused
+
+            raise ConsoleDisplayPhaseRefused(
+                "Appearance receiver is not the actual attachment"
+            )
+        return owner.appearance
+
+    @property
+    def _console_appearance_map_cache(self):
+        state = self._display_appearance_state()
+        return (
+            vars(self).get("_console_appearance_map_cache")
+            if state is None
+            else state.cache
+        )
+
+    @_console_appearance_map_cache.setter
+    def _console_appearance_map_cache(self, value):
+        state = self._display_appearance_state()
+        if state is None:
+            vars(self)["_console_appearance_map_cache"] = value
+        else:
+            state.cache = value
+
+    @property
+    def _console_appearance_map_cached_at(self):
+        state = self._display_appearance_state()
+        return (
+            vars(self).get("_console_appearance_map_cached_at", 0.0)
+            if state is None
+            else state.cached_at
+        )
+
+    @_console_appearance_map_cached_at.setter
+    def _console_appearance_map_cached_at(self, value):
+        state = self._display_appearance_state()
+        if state is None:
+            vars(self)["_console_appearance_map_cached_at"] = value
+        else:
+            state.cached_at = value
+
+    @property
+    def _console_appearance_map_service(self):
+        state = self._display_appearance_state()
+        return (
+            vars(self).get("_console_appearance_map_service")
+            if state is None
+            else state.service
+        )
+
+    @_console_appearance_map_service.setter
+    def _console_appearance_map_service(self, value):
+        state = self._display_appearance_state()
+        if state is None:
+            vars(self)["_console_appearance_map_service"] = value
+        else:
+            state.service = value
+
+    @property
+    def _console_appearance_map_queried_ids(self):
+        state = self._display_appearance_state()
+        if state is None:
+            return vars(self).setdefault("_console_appearance_map_queried_ids", set())
+        return state.queried_ids
+
+    @_console_appearance_map_queried_ids.setter
+    def _console_appearance_map_queried_ids(self, value):
+        state = self._display_appearance_state()
+        if state is None:
+            vars(self)["_console_appearance_map_queried_ids"] = value
+        else:
+            state.queried_ids = value
+
+    @property
+    def _appearance_refresh_for(self):
+        state = self._display_appearance_state()
+        return (
+            vars(self).get("_appearance_refresh_for")
+            if state is None
+            else state.refresh_for
+        )
+
+    @_appearance_refresh_for.setter
+    def _appearance_refresh_for(self, value):
+        state = self._display_appearance_state()
+        if state is None:
+            vars(self)["_appearance_refresh_for"] = value
+        else:
+            state.refresh_for = value
+
+
 
 _WORKSPACE_RECONCILIATION_METHODS = tuple(
     (name, function, function.__code__, function.__defaults__, function.__kwdefaults__)
@@ -8891,6 +9218,7 @@ _WORKSPACE_AVAILABILITY_METHODS = tuple(
     )
     for function in (getattr(ConsoleWorkspaceController, name),)
 )
+_WORKSPACE_DISPLAY_READ = ConsoleWorkspaceController._read_owned_workspace_availability
 _WORKSPACE_AVAILABILITY_REGISTRY_METHODS = tuple(
     (name, function, function.__code__, function.__defaults__, function.__kwdefaults__)
     for name in ("list_folder_bindings", "list_runtime_bindings")
@@ -8951,3 +9279,22 @@ def _capture_stock_browser_read(controller, service, local_service, scope_servic
         controller_source=_CONSOLE_BROWSER_CONTROLLER_SOURCE,
         factory_is_current=current,
     )
+
+
+from ...Chat.chat_conversation_service import ChatConversationService as _AppearanceService
+from ...DB.ChaChaNotes_DB import CharactersRAGDB as _AppearanceDB
+
+_APPEARANCE_DISPLAY_READERS = (
+    ("get_conversation_appearances", _AppearanceService.get_conversation_appearances,
+     _AppearanceService.get_conversation_appearances.__code__),
+)
+_APPEARANCE_DB_READERS = (
+    ("get_conversations_metadata_by_ids", _AppearanceDB.get_conversations_metadata_by_ids,
+     _AppearanceDB.get_conversations_metadata_by_ids.__code__),
+)
+_APPEARANCE_DISPLAY_PUBLISHERS = (
+    ("appearance_presentation_work", ConsoleWorkspaceController.appearance_presentation_work,
+     ConsoleWorkspaceController.appearance_presentation_work.__code__),
+    ("_refresh_appearances", ConsoleWorkspaceController._refresh_appearances,
+     ConsoleWorkspaceController._refresh_appearances.__code__),
+)

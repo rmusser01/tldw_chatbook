@@ -16,7 +16,9 @@ from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 
-from .activation import execution_scope
+from . import activation
+from .activation import _OrdinaryActivation, execution_scope
+from . import storage_admission
 from .storage_admission import acquire_storage
 
 
@@ -93,6 +95,7 @@ class RecoveryAdmissionGuard:
         admit_source: Callable[..., bool] | None = None,
         finalize: Callable[..., bool] | None = None,
         check_states: bool = False,
+        ordinary_batch: Callable[[], bool] | None = None,
     ) -> None:
         """Build one family's admission guard.
 
@@ -110,6 +113,7 @@ class RecoveryAdmissionGuard:
             check_states: Verify the full ancestor chain (live/PID) when
                 reusing accepted states, for families that transfer scopes
                 into awaited workers.
+            ordinary_batch: Select the exact stock family for finite review.
         """
         self.context = ContextVar(name + "_execution", default=None)
         self.error = error
@@ -118,6 +122,7 @@ class RecoveryAdmissionGuard:
         self.admit_source = admit_source
         self.finalize = finalize
         self.check_states = check_states
+        self.ordinary_batch = ordinary_batch
 
     def captured_sources(self, service: object) -> tuple:
         """Reuse this task's accepted observation, or observe afresh.
@@ -162,10 +167,11 @@ class RecoveryAdmissionGuard:
                 failed admission, or a storage failure during admission.
         """
         active = transfer if transfer is not None else self.context.get()
+        identity = execution_identity()
         if active is not None:
             if self.check_states:
                 active.check(self.error)
-            if transfer is None and active.identity != execution_identity():
+            if transfer is None and active.identity != identity:
                 raise self.error()
         leases = dict(active.leases) if active else {}
         observe = resolve or (lambda service: tuple(sources) + self.sources(service))
@@ -174,6 +180,40 @@ class RecoveryAdmissionGuard:
         )
         with ExitStack() as stack:
             try:
+                qualify = self.ordinary_batch
+                batchable = (
+                    qualify is not None and transfer is None and resolve is None
+                    and self.admit_source is None and self.finalize is None
+                    and _ordinary_gate_current() and qualify()
+                )
+                batch = None
+                checked = []
+
+                def original(owners, path, lease):
+                    if not stack.enter_context(execution_scope(owners, path, retained=lease)):
+                        raise self.error()
+
+                vector_selected = False
+                if batchable and active is None and os.name == "nt" and _vector_gate_current():
+                    rows = tuple((self.owners(owner), path) for owner, path in observed)
+
+                    def require_current():
+                        if (
+                            not _ordinary_gate_current() or not _vector_gate_current()
+                            or self.ordinary_batch is not qualify
+                            or not qualify() or execution_identity() != identity
+                            or self.context.get() is not active
+                        ):
+                            raise self.error()
+
+                    vector = storage_admission._admit_agents_vector(rows, stack, require_current)
+                    if vector is not None:
+                        new_leases, batch = vector
+                        vector_selected = True
+                        leases.update(new_leases)
+                        if not all(path in leases for _, path in observed):
+                            raise self.error()
+
                 for owner, path in observed:
                     if path not in leases:
                         leases[path] = acquire_storage(path)
@@ -182,12 +222,53 @@ class RecoveryAdmissionGuard:
                         stack, owner, path, leases[path]
                     ):
                         continue
-                    if not stack.enter_context(
-                        execution_scope(
-                            self.owners(owner), path, retained=leases[path]
-                        )
+                    row = self.owners(owner), path, leases[path]
+                    if batchable and batch is None:
+                        if _ordinary_gate_current() and qualify():
+                            batch = _OrdinaryActivation.begin(path, leases[path])
+                        batchable = batch is not None
+                    if batch is not None:
+                        if not _ordinary_gate_current() or not qualify():
+                            raise self.error()
+                        allowed = batch.admits(*row)
+                        if allowed is True:
+                            checked.append(row)
+                            continue
+                        if allowed is False:
+                            raise self.error()
+                        if vector_selected:
+                            raise self.error()
+                        # A cold/later scope starts using the original gate at
+                        # this row. Refresh the earlier rows under that gate too.
+                        if not batch.still_ordinary() or not _ordinary_gate_current() or not qualify():
+                            raise self.error()
+                        original(*row)
+                        for admitted in checked:
+                            original(*admitted)
+                        batchable, batch = False, None
+                        checked.clear()
+                    else:
+                        original(*row)
+                if vector_selected:
+                    require_current()
+                    if not storage_admission._agents_vector_definitions_current():
+                        raise self.error()
+                if batch is not None and (
+                    not batch.finish(checked) or not _ordinary_gate_current()
+                    or not qualify() or execution_identity() != identity
+                    or self.context.get() is not active or (active is not None and not active.live)
+                ):
+                    raise self.error()
+                if vector_selected:
+                    require_current()
+                    if (
+                        not storage_admission._agents_vector_definitions_current()
+                        or not all(batch.admits(*row) is True for row in checked)
                     ):
                         raise self.error()
+                    vector = None
+                batch = None  # No observation survives publication or nesting.
+                checked.clear()
                 if self.finalize is not None and not self.finalize(observed, leases):
                     raise self.error()
             except (OSError, ValueError, TypeError, RuntimeError, AttributeError):
@@ -214,3 +295,21 @@ class RecoveryAdmissionGuard:
             yield
         finally:
             self.context.reset(token)
+
+
+def _ordinary_gate_current():
+    return (
+        execution_scope is activation.execution_scope
+        and acquire_storage is storage_admission.acquire_storage is _ORIGINAL_ACQUIRE_STORAGE
+        and acquire_storage.__code__ is _ORIGINAL_ACQUIRE_CODE
+        and activation._ordinary_activation_sources_current()
+    )
+
+
+def _vector_gate_current():
+    return _OrdinaryActivation is activation._OrdinaryActivation is _ORIGINAL_ORDINARY_ACTIVATION
+
+
+_ORIGINAL_ACQUIRE_STORAGE = acquire_storage
+_ORIGINAL_ACQUIRE_CODE = acquire_storage.__code__
+_ORIGINAL_ORDINARY_ACTIVATION = _OrdinaryActivation

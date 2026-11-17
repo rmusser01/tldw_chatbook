@@ -99,7 +99,7 @@ def _register_runtime_database_owners(monkeypatch, owned_console_apps):  # noqa:
     return owned_console_apps
 
 
-#: Constructor calls that must exist in exactly one place: the runtime.
+#: Constructor calls that must exist in the runtime's one composition owner.
 #: `ConsoleProviderGateway(` is deliberately NOT here -- the Personas
 #: preview controller builds its own, unrelated to the Console runtime
 #: (`UI/Persona_Modules/personas_preview_controller.py`).
@@ -120,6 +120,7 @@ _SANCTIONED_FOREIGN_SITES: dict[str, tuple[str, ...]] = {
 
 _PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "tldw_chatbook"
 _RUNTIME_MODULE = "tldw_chatbook/Chat/console_runtime.py"
+_COMPOSITION_MODULE = "tldw_chatbook/Chat/console_execution_service.py"
 
 _VIEW_HOOK_OWNERSHIP = {
     "response_rules_changed": "view-projection",
@@ -631,7 +632,10 @@ def _construction_sites(class_name: str) -> list[str]:
 
 @pytest.mark.unit
 def test_console_runtime_is_the_single_construction_site():
-    """PIN (characterization): only the runtime builds the store/controller.
+    """PIN: only the runtime's composition owner builds the store/controller.
+
+    TASK-40608 extracts the same runtime graph under ADR126/230/353; the
+    exact allowed construction file moves with those unchanged bodies.
 
     ADR-234 sanctions exactly one foreign construction site per token --
     the served MobileChatService parent-process engine -- registered in
@@ -645,11 +649,11 @@ def test_console_runtime_is_the_single_construction_site():
         foreign = [
             site
             for site in sites
-            if not site.startswith(_RUNTIME_MODULE)
+            if not site.startswith(_COMPOSITION_MODULE)
             and not site.startswith(sanctioned)
         ]
         assert not foreign, (
-            f"{token} is constructed outside {_RUNTIME_MODULE}; the app is no "
+            f"{token} is constructed outside {_COMPOSITION_MODULE}; the app is no "
             "longer the Console runtime's owner:\n  " + "\n  ".join(foreign)
         )
 

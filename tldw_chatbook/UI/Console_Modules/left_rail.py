@@ -517,6 +517,7 @@ class ConsoleLeftRail(Vertical):
         self._agent_progress_state = agent_progress_state
         self._refresh_progress_navigation = refresh_progress_navigation
         self._progress_counts: dict[str, int] = {}
+        self._progress_button: Button | None = None
         self._progress_timer = None
         self._agent_full_log_available = agent_full_log_available
         self._agent_steering_state = agent_steering_state
@@ -2842,6 +2843,12 @@ class ConsoleLeftRail(Vertical):
             )
             if not self._agent_full_log_available:
                 full_log_button.styles.display = "none"
+            progress_button = (
+                Button("Progress: 0 queued", id="console-agent-progress", compact=True)
+                if self._open_agent_progress is not None
+                else None
+            )
+            self._progress_button = progress_button
             agent_body = self._section_body(
                 "agent",
                 rail_state.agent_open,
@@ -2851,17 +2858,7 @@ class ConsoleLeftRail(Vertical):
                 steering_bar,
                 back_button,
                 full_log_button,
-                *(
-                    [
-                        Button(
-                            "Progress: 0 queued",
-                            id="console-agent-progress",
-                            compact=True,
-                        )
-                    ]
-                    if self._open_agent_progress is not None
-                    else []
-                ),
+                *((progress_button,) if progress_button is not None else ()),
                 classes="console-agent-section",
             )
             yield _ContextBoundedSection(
@@ -2907,6 +2904,7 @@ class ConsoleLeftRail(Vertical):
         yield outer_hint
 
     def on_unmount(self) -> None:
+        self._progress_button = None
         if self._progress_timer is not None:
             self._progress_timer.stop()
 
@@ -2914,7 +2912,8 @@ class ConsoleLeftRail(Vertical):
         count, counts = (
             self._agent_progress_state() if self._agent_progress_state else (0, {})
         )
-        for progress in self.query("#console-agent-progress").results(Button):
+        progress = self._progress_button
+        if progress is not None and progress.is_attached:
             progress.label = f"Progress: {count} queued"
         if counts != self._progress_counts:
             if self._refresh_progress_navigation is not None:

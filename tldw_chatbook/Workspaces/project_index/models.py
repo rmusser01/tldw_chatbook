@@ -10,6 +10,7 @@ import os
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, ContextManager
 
+from tldw_chatbook.Utils.definition_records import capture_definitions
 from tldw_chatbook.Tools.remote_root_types import LocalRoot
 
 if TYPE_CHECKING:
@@ -411,3 +412,20 @@ class ScanRunResult:
     def __post_init__(self):
         if self.status not in {"complete", "partial", "paused", "interrupted", "error"}:
             raise ValueError("invalid_scan_status")
+
+
+# Definition-time originals for the fixed complete key command.
+_KEY_PROCESS_DEFINITIONS = capture_definitions(
+    (
+        (ProjectIndexKey, "__init__", ProjectIndexKey.__init__),
+        (ProjectIndexKey, "__post_init__", ProjectIndexKey.__post_init__),
+        (ProjectIndexAuthority, "__init__", ProjectIndexAuthority.__init__),
+        (ProjectIndexAuthority, "__post_init__", ProjectIndexAuthority.__post_init__),
+    )
+)
+
+_KEY_PROCESS_GLOBALS = globals()
+_KEY_PROCESS_DEFINITIONS += (
+    (globals(), "ProjectIndexKey", ProjectIndexKey, ()),
+    (globals(), "ProjectIndexAuthority", ProjectIndexAuthority, ()),
+)

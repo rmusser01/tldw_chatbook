@@ -422,6 +422,8 @@ class ConsoleContextRepository:
 
     def __init__(self, db: CharactersRAGDB) -> None:
         self.db = db
+        # Presentation invalidation only; never a database/permission verdict.
+        self._memory_publication_revision = object()
 
     def load_policy(self, conversation_id: str) -> ContextPolicyReadResult:
         if not isinstance(conversation_id, str) or not conversation_id:
@@ -659,6 +661,7 @@ class ConsoleContextRepository:
             raise TypeError("record must be ConsoleMemoryRecord")
         with self.db.transaction() as cursor:
             _insert_memory(cursor, record)
+        self._memory_publication_revision = object()
 
     def insert_memory_if_current(
         self,
@@ -697,6 +700,7 @@ class ConsoleContextRepository:
                 ):
                     return False
             _insert_memory(cursor, record)
+        self._memory_publication_revision = object()
         return True
 
     def commit_memory_selection_if_current(self, commit: BranchMemoryCommit) -> bool:
@@ -779,6 +783,7 @@ class ConsoleContextRepository:
             _insert_memory(cursor, commit.memory)
             _insert_memory_scope(cursor, commit.scope)
             _insert_memory_selection(cursor, selection)
+        self._memory_publication_revision = object()
         return True
 
     def append_current_branch_reset_if_current(
@@ -825,6 +830,7 @@ class ConsoleContextRepository:
             if effective != expected_effective:
                 return None
             _insert_memory_selection(cursor, reset)
+        self._memory_publication_revision = object()
         return reset.selection_id, reset.revision
 
     def undo_current_branch_reset_if_current(
@@ -865,6 +871,8 @@ class ConsoleContextRepository:
                 """,
                 (conversation_id, selection_id, expected_revision),
             )
+        if updated.rowcount == 1:
+            self._memory_publication_revision = object()
         return updated.rowcount == 1
 
     def list_active_memories(
@@ -916,6 +924,7 @@ class ConsoleContextRepository:
             raise TypeError("record must be ConsoleMemoryScopeRecord")
         with self.db.transaction() as cursor:
             _insert_memory_scope(cursor, record)
+        self._memory_publication_revision = object()
 
     def load_memory_scope(self, memory_id: str) -> ConsoleMemoryScopeRecord | None:
         """Read one scope; corrupt derived metadata is ineligible."""
@@ -940,6 +949,7 @@ class ConsoleContextRepository:
             raise TypeError("record must be ConsoleMemorySelectionRecord")
         with self.db.transaction() as cursor:
             sequence = _insert_memory_selection(cursor, record)
+        self._memory_publication_revision = object()
         return ConsoleMemorySelectionRecord(
             sequence=sequence,
             selection_id=record.selection_id,
@@ -1099,6 +1109,8 @@ class ConsoleContextRepository:
                 """,
                 (reset_at, memory_id, expected_revision),
             )
+        if result.rowcount == 1:
+            self._memory_publication_revision = object()
         return result.rowcount == 1
 
     def deactivate_all_memories(
@@ -1136,6 +1148,7 @@ class ConsoleContextRepository:
                 """,
                 (reset_at, conversation_id),
             )
+        self._memory_publication_revision = object()
         return result.rowcount
 
     def reactivate_memory(
@@ -1157,6 +1170,8 @@ class ConsoleContextRepository:
                 """,
                 (memory_id, expected_revision),
             )
+        if result.rowcount == 1:
+            self._memory_publication_revision = object()
         return result.rowcount == 1
 
     def start_auxiliary_attempt(self, attempt: AuxiliaryAttemptStart) -> None:
@@ -1305,9 +1320,18 @@ class ConsoleContextRepository:
 PRESENTATION_GLOBAL_POLICY_UNSET = object()
 
 
+class _MemoryAbsentPresentationInputs(tuple):
+    """Detached display tuple proving absence, rather than an inapplicable memory.
+
+    A RAW effective result alone does not prove absence: a different lineage may
+    select an existing memory. Only the presence probe may issue this marker.
+    """
+
+
 async def read_context_presentation_inputs(
     controller: Any, session_id: str, *,
     global_overrides: Any = PRESENTATION_GLOBAL_POLICY_UNSET,
+    _display_read: Any = None,
 ) -> tuple:
     """Read a detached display with the current no-memory fast path.
 
@@ -1402,10 +1426,23 @@ async def read_context_presentation_inputs(
 
     async def finite(read):
         if not worker_eligible:
+            if _display_read is not None:
+                raise RuntimeError("Console context display no longer has a stock finite reader.")
             current()
             result = read()
             current()
             return result
+        if _display_read is not None and len(databases) == 1:
+            shared = _display_read.capture(
+                "context", databases[0], read, require_current=current,
+                reads=controller._preparation_reads,
+            )
+            if shared is not None:
+                result = await shared
+                current()
+                return result
+        if _display_read is not None:
+            raise RuntimeError("Console context display was not captured by this batch.")
         def native():
             with ExitStack() as stack:
                 for database in databases:
@@ -1426,10 +1463,24 @@ async def read_context_presentation_inputs(
                 policy = None
         return policy, may_hold_branch_memory(captured, session_id, conversation_id)
 
-    policy, possible_memory = await finite(probe)
+    if (
+        global_overrides is not PRESENTATION_GLOBAL_POLICY_UNSET
+        and (conversation_id is None or repository is None)
+    ):
+        current()
+        policy, possible_memory = global_overrides, False
+    else:
+        policy, possible_memory = await finite(probe)
     effective = EffectiveMemoryResult(EffectiveMemoryKind.RAW)
     if not possible_memory:
-        return overrides, policy, effective
+        values = overrides, policy, effective
+        if repository is None or type(repository) is ConsoleContextRepository:
+            return _MemoryAbsentPresentationInputs(values)
+        return values
+    if _display_read is not None:
+        # The presence probe retired with the sealed batch. Its positive result
+        # leaves lineage preparation to the original scheduled display reader.
+        raise RuntimeError("Console context memory needs its scheduled lineage read.")
     active_ids = tuple(store.active_path_message_ids(session_id))
     messages = {message.id: copy.deepcopy(message)
                 for message in store.messages_for_session(session_id)}
@@ -1463,6 +1514,12 @@ async def read_context_presentation_inputs(
         return overrides, policy, effective
 
     return await finite(read)
+
+
+_CONTEXT_PRESENTATION_READ_SOURCE = (
+    read_context_presentation_inputs, read_context_presentation_inputs.__code__,
+    read_context_presentation_inputs.__defaults__, read_context_presentation_inputs.__kwdefaults__,
+)
 
 
 def may_hold_branch_memory(

@@ -166,6 +166,13 @@ async def retry_console_connection(screen: Any) -> None:
     Args:
         screen: The Console ``ChatScreen``.
     """
+    focus_model = _prepare_retry_console_connection(screen)
+    if focus_model is not None:
+        await screen._open_console_settings(focus_model=focus_model)
+
+
+def _prepare_retry_console_connection(screen: Any) -> bool | None:
+    """Run original synchronous retry dispatch; return only Settings intent."""
     settings, readiness = screen._active_console_settings_readiness()
     identity = readiness.connection
     if identity is None or (
@@ -186,8 +193,7 @@ async def retry_console_connection(screen: Any) -> None:
                 f"Press t to test {readiness.provider_display_name or 'it'} again."
             )
             return
-        await screen._open_console_settings(focus_model=False)
-        return
+        return False
     screen.run_worker(
         _retry(
             screen.app,
@@ -373,3 +379,9 @@ def switcher_connection_prober(
         await asyncio.gather(*(one(identity, due[identity]) for identity in due))
 
     return probe
+
+
+_selected_settings_read_helpers = tuple(
+    (name, globals()[name], globals()[name].__code__)
+    for name in ("retry_console_connection", "_prepare_retry_console_connection")
+)

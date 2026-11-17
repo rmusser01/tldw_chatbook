@@ -32,14 +32,22 @@ def build_persona_agent_system_prompt(record: Mapping[str, Any]) -> str:
 
 
 def resolve_new_console_assistant(
-    app: Any, workspace_id: str, settings: ConsoleSessionSettings | None
+    app: Any,
+    workspace_id: str,
+    settings: ConsoleSessionSettings | None,
+    *,
+    domain_services=None,
 ) -> ConsoleAssistantStartup:
     """Resolve the explicit target workspace once; absence never blocks a chat.
 
     Explicit assistant identities bypass this helper at the store's creation
     boundary. Supplied custom prompts retain their existing precedence.
     """
-    config = getattr(app, "app_config", {})
+    config = (
+        domain_services.sources.configuration
+        if domain_services is not None
+        else getattr(app, "app_config", {})
+    )
     settings = settings or blank_console_session_settings(
         config if isinstance(config, Mapping) else {}
     )
@@ -52,7 +60,11 @@ def resolve_new_console_assistant(
     ):
         return plain
     try:
-        registry = getattr(app, "workspace_registry_service", None)
+        registry = (
+            domain_services.sources.workspace_registry
+            if domain_services is not None
+            else getattr(app, "workspace_registry_service", None)
+        )
         workspace = registry.get_workspace(workspace_id) if registry else None
         if (
             workspace is None
@@ -60,7 +72,11 @@ def resolve_new_console_assistant(
             or workspace.assistant_defaults is None
         ):
             return plain
-        personas = getattr(app, "local_character_persona_service", None)
+        personas = (
+            domain_services.sources.persona_service
+            if domain_services is not None
+            else getattr(app, "local_character_persona_service", None)
+        )
         record = None
 
         def lookup(persona_id: str) -> Mapping | None:
@@ -99,3 +115,12 @@ def resolve_new_console_assistant(
             plain,
             notice="Workspace default Persona unavailable (persona_unavailable). Started with None.",
         )
+
+
+# Exact selected-domain helper definitions; legacy qualifications remain separate.
+from tldw_chatbook.Chat.console_domain_services import _definition as _domain_definition
+
+_DOMAIN_SOURCE_DEFINITIONS = tuple(
+    (name, _domain_definition(globals()[name]))
+    for name in ("resolve_new_console_assistant",)
+)

@@ -54,6 +54,7 @@ from types import CodeType as _CharacterViewCodeType
 from types import MethodType
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
+from weakref import WeakKeyDictionary, ref
 
 from loguru import logger
 from textual.css.query import QueryError
@@ -1963,74 +1964,144 @@ def build_console_controllers(
                 )
         return result
 
-    screen._character_context = ConsoleCharacterContextController(
-        progress_counts=_character_progress_counts,
-        database_accessor=(
-            lambda: getattr(screen.app_instance, "chachanotes_db", None)
-        ),
-        current_character_accessor=(
-            lambda: (
-                (
-                    character_id,
-                    screen._character._current_console_rail_character_name()
-                    or "Current character",
+    from tldw_chatbook.app_services import read_console_runtime
+
+    display_runtime = read_console_runtime(screen.app_instance)
+    if getattr(display_runtime, "domain_services", None) is None:
+        screen._character_context = ConsoleCharacterContextController(
+            progress_counts=_character_progress_counts,
+            database_accessor=(
+                lambda: getattr(screen.app_instance, "chachanotes_db", None)
+            ),
+            current_character_accessor=(
+                lambda: (
+                    (
+                        character_id,
+                        screen._character._current_console_rail_character_name()
+                        or "Current character",
+                    )
+                    if (
+                        character_id
+                        := screen._character._current_console_rail_character_id()
+                    )
+                    is not None
+                    else None
                 )
-                if (
-                    character_id
-                    := screen._character._current_console_rail_character_id()
+            ),
+            open_conversation_accessor=(
+                lambda: screen._session._current_console_conversation_id()
+            ),
+            activate_target=(
+                lambda request, cancellation: (
+                    screen._workspace.activate_character_conversation(
+                        request, cancellation
+                    )
                 )
-                is not None
-                else None
-            )
-        ),
-        open_conversation_accessor=(
-            lambda: screen._session._current_console_conversation_id()
-        ),
-        activate_target=(
-            lambda request, cancellation: (
+            ),
+            navigate_roleplay=(
+                lambda link: _navigate_character_context(
+                    screen, ROLEPLAY_NAV_CONTEXT_CHARACTER_CONVERSATION, link
+                )
+            ),
+            navigate_repair=(
+                lambda context: _navigate_character_context(
+                    screen, LIBRARY_NAV_CONTEXT_CHARACTER_REPAIR, context
+                )
+            ),
+            navigate_inspection=(
+                lambda link: _navigate_character_context(
+                    screen, LIBRARY_NAV_CONTEXT_CHARACTER_INSPECTION, link
+                )
+            ),
+            navigate_unavailable_browse=(
+                lambda link: _navigate_character_context(
+                    screen, LIBRARY_NAV_CONTEXT_CHARACTER_BROWSE, link
+                )
+            ),
+            navigate_roleplay_home=(
+                lambda: screen.post_message(NavigateToScreen(TAB_PERSONAS))
+            ),
+            navigate_library_home=(
+                lambda: screen.post_message(NavigateToScreen(TAB_LIBRARY))
+            ),
+            start_console=(
+                lambda key, database, name, is_current: _start_character_context_chat(
+                    screen, key, database, name, is_current
+                )
+            ),
+            state_changed=lambda state: _sync_character_context_presentation(
+                screen, state
+            ),
+            query_handoff_capability=ConsoleCharacterQueryHandoffCapability(
+                available=screen.console_character_switcher_available()
+            ),
+            query_handoff=(
+                lambda handoff: screen.open_console_character_switcher_query(
+                    handoff.query
+                )
+            ),
+            run_active=lambda: screen._console_run_active(),  # TASK-33620.15.1
+        )
+
+    else:
+        owner = display_runtime._execution_service.prepare_display_owner()
+        screen._console_domain_display_owner = owner
+        screen._character_context = owner.character
+        screen._console_character_view_bindings = {
+            "_progress_counts": _character_progress_counts,
+            "_activate_target": lambda request, cancellation: (
                 screen._workspace.activate_character_conversation(request, cancellation)
-            )
-        ),
-        navigate_roleplay=(
-            lambda link: _navigate_character_context(
+            ),
+            "_navigate_roleplay": lambda link: _navigate_character_context(
                 screen, ROLEPLAY_NAV_CONTEXT_CHARACTER_CONVERSATION, link
-            )
-        ),
-        navigate_repair=(
-            lambda context: _navigate_character_context(
+            ),
+            "_navigate_repair": lambda context: _navigate_character_context(
                 screen, LIBRARY_NAV_CONTEXT_CHARACTER_REPAIR, context
-            )
-        ),
-        navigate_inspection=(
-            lambda link: _navigate_character_context(
+            ),
+            "_navigate_inspection": lambda link: _navigate_character_context(
                 screen, LIBRARY_NAV_CONTEXT_CHARACTER_INSPECTION, link
-            )
-        ),
-        navigate_unavailable_browse=(
-            lambda link: _navigate_character_context(
+            ),
+            "_navigate_unavailable_browse": lambda link: _navigate_character_context(
                 screen, LIBRARY_NAV_CONTEXT_CHARACTER_BROWSE, link
-            )
-        ),
-        navigate_roleplay_home=(
-            lambda: screen.post_message(NavigateToScreen(TAB_PERSONAS))
-        ),
-        navigate_library_home=(
-            lambda: screen.post_message(NavigateToScreen(TAB_LIBRARY))
-        ),
-        start_console=(
-            lambda key, database, name, is_current: _start_character_context_chat(
+            ),
+            "_navigate_roleplay_home": lambda: screen.post_message(
+                NavigateToScreen(TAB_PERSONAS)
+            ),
+            "_navigate_library_home": lambda: screen.post_message(
+                NavigateToScreen(TAB_LIBRARY)
+            ),
+            "_start_console": lambda key,
+            database,
+            name,
+            is_current: _start_character_context_chat(
                 screen, key, database, name, is_current
-            )
-        ),
-        state_changed=lambda state: _sync_character_context_presentation(screen, state),
-        query_handoff_capability=ConsoleCharacterQueryHandoffCapability(
-            available=screen.console_character_switcher_available()
-        ),
-        query_handoff=(
-            lambda handoff: screen.open_console_character_switcher_query(handoff.query)
-        ),
-        run_active=lambda: screen._console_run_active(),  # TASK-33620.15.1
-    )
+            ),
+            "_query_handoff_capability": ConsoleCharacterQueryHandoffCapability(
+                available=screen.console_character_switcher_available()
+            ),
+            "_query_handoff": lambda handoff: screen.open_console_character_switcher_query(
+                handoff.query
+            ),
+        }
+        state = owner.appearance
+        workspace = screen._workspace
+        fields = (
+            ("_console_appearance_map_cache", "cache", None),
+            ("_console_appearance_map_cached_at", "cached_at", 0.0),
+            ("_console_appearance_map_service", "service", None),
+            ("_console_appearance_map_queried_ids", "queried_ids", None),
+            ("_appearance_refresh_for", "refresh_for", None),
+        )
+        if not state._view_fields_installed:
+            for original, owned, default in fields:
+                value = vars(workspace).get(original, default)
+                if original == "_console_appearance_map_queried_ids" and value is None:
+                    raise RuntimeError("Original appearance coverage absent")
+                setattr(state, owned, value)
+            state._view_fields_installed = True
+        workspace._console_domain_display_owner = owner
+        for original, _, _ in fields:
+            vars(workspace).pop(original, None)
 
     def _schedule_console_fleet_history_seed() -> bool:
         from functools import partial
@@ -2681,6 +2752,13 @@ def build_console_controllers(
         repaint_chip=lambda: screen._repaint_console_realtime_chip(),
         restore_voice_chip=lambda: screen._restore_console_voice_chip(),
     )
+    _selected_realtime_bindings[screen._realtime] = (
+        ref(screen),
+        tuple(
+            (name, ref(getattr(screen._realtime, name)))
+            for name, _codes in _selected_realtime_accessor_codes
+        ),
+    )
     #: The native message-transcript cluster -- serialize/restore,
     #: resume-tree flattening, screen-state rehydration, per-message
     #: save-as/edit/retry/continue/regenerate/variant navigation, and
@@ -2952,6 +3030,23 @@ def build_console_controllers(
         ),
         sync_console_system_prompt_surfaces=_sync_console_system_prompt_surfaces,
         sync_console_command_popup=lambda: screen._sync_console_command_popup(),
+    )
+    _selected_guarded_prompt_bindings[screen._prompts] = (
+        ref(screen),
+        tuple(
+            (name, ref(getattr(screen._prompts, name)))
+            for name, _codes in _selected_guarded_prompt_accessor_codes
+        ),
+        ref(screen._session),
+        tuple(
+            (name, ref(getattr(screen._session, name)))
+            for name, _codes in _selected_guarded_creation_accessor_codes
+        ),
+        ref(screen._message),
+        tuple(
+            (name, ref(getattr(screen._message, name)))
+            for name, _codes in _selected_prefill_message_accessor_codes
+        ),
     )
 
     #: The agent runtime's screen-side cluster -- the lazily-built
@@ -3250,6 +3345,15 @@ def build_console_controllers(
             ) if screen.is_mounted else None
         ),
     )
+    for owner, name in (
+        (screen._hooks, "_session"),
+        (screen._session, "_painted_session_accessor"),
+    ):
+        _selected_visible_check_bindings[owner] = (
+            ref(screen),
+            name,
+            ref(getattr(owner, name)),
+        )
     screen._response_rules_ui = ConsoleResponseRulesUI(
         runtime_accessor=lambda: screen._console_runtime().ensure_response_rules(),
         session_accessor=lambda: screen._ensure_console_chat_store().active_session_id,
@@ -3941,3 +4045,126 @@ def _refresh_approval_feedback(screen, session_id: str, run_id: str) -> None:
             refresh_status=lambda: screen._sync_console_mode_bar(),
         )
     screen._approval_feedback.refresh(session_id, run_id)
+
+
+_selected_prompt_wiring_definition = (
+    build_console_controllers,
+    build_console_controllers.__code__,
+)
+_selected_prompt_surfaces_code = next(
+    item
+    for item in build_console_controllers.__code__.co_consts
+    if getattr(item, "co_name", None) == "_sync_console_system_prompt_surfaces"
+)
+
+
+# Weak references preserve construction identity without extending Screen or
+# controller lifetime. Only the original factory registers selected edges.
+_selected_realtime_bindings = WeakKeyDictionary()
+_selected_realtime_wiring_definition = (
+    build_console_controllers,
+    build_console_controllers.__code__,
+)
+_selected_realtime_accessor_codes = tuple(
+    (
+        name,
+        tuple(
+            code
+            for code in build_console_controllers.__code__.co_consts
+            if type(code) is _CharacterViewCodeType
+            and code.co_name == "<lambda>"
+            and marker in code.co_names
+        ),
+    )
+    for name, marker in (
+        ("_ensure_session_settings", "_ensure_active_console_session_settings"),
+        ("_runtime_accessor", "_console_runtime"),
+        ("_chat_store_accessor", "_ensure_console_chat_store"),
+    )
+)
+
+_selected_guarded_prompt_bindings = WeakKeyDictionary()
+_selected_guarded_prompt_accessor_codes = tuple(
+    (
+        name,
+        tuple(
+            code
+            for code in build_console_controllers.__code__.co_consts
+            if type(code) is _CharacterViewCodeType
+            and (
+                (code.co_name == "<lambda>" and marker in code.co_names)
+                or (
+                    name == "_sync_console_system_prompt_surfaces_fn"
+                    and code.co_name == "_sync_console_system_prompt_surfaces"
+                )
+            )
+        ),
+    )
+    for name, marker in (
+        ("_composer_accessor", "_console_composer_or_none"),
+        ("_chat_store_accessor", "_ensure_console_chat_store"),
+        ("_sync_console_session_draft_fn", "_sync_console_session_draft"),
+        (
+            "_ensure_active_console_session_settings_fn",
+            "_ensure_active_console_session_settings",
+        ),
+        ("_console_setup_blocked_reason_fn", "_console_setup_blocked_reason"),
+        ("_focus_console_composer_if_needed_fn", "_focus_console_composer_if_needed"),
+        ("_sync_console_command_popup_fn", "_sync_console_command_popup"),
+        ("_sync_console_system_prompt_surfaces_fn", ""),
+    )
+)
+
+_selected_guarded_creation_accessor_codes = tuple(
+    (
+        name,
+        tuple(
+            code
+            for code in build_console_controllers.__code__.co_consts
+            if type(code) is _CharacterViewCodeType
+            and code.co_name == "<lambda>"
+            and marker in code.co_names
+        ),
+    )
+    for name, marker in (
+        ("_chat_store_accessor", "_ensure_console_chat_store"),
+        (
+            "_workspace_initial_session_title_fn",
+            "_console_initial_session_title_for_workspace",
+        ),
+        ("_provider_readiness_app_config_fn", "_provider_readiness_app_config"),
+    )
+)
+
+
+_selected_prefill_message_accessor_codes = tuple(
+    (
+        name,
+        tuple(
+            code
+            for code in build_console_controllers.__code__.co_consts
+            if type(code) is _CharacterViewCodeType
+            and (
+                (code.co_name == "<lambda>" and marker in code.co_names)
+                or (
+                    name == "_sync_native_console_chat_ui_fn"
+                    and code.co_name == "sync_native_console_chat_ui"
+                )
+            )
+        ),
+    )
+    for name, marker in (
+        ("_chat_store_accessor", "_ensure_console_chat_store"),
+        ("_sync_native_console_chat_ui_fn", ""),
+    )
+)
+
+
+_selected_visible_check_bindings = WeakKeyDictionary()
+_selected_visible_check_codes = tuple(
+    code
+    for code in build_console_controllers.__code__.co_consts
+    if type(code) is _CharacterViewCodeType
+    and code.co_name == "<lambda>"
+    and "_console_visible_send_session_id" in code.co_names
+)

@@ -1073,3 +1073,9 @@ def open_model_picker(
         ),
         callback=on_pick,
     )
+
+
+_selected_settings_read_helpers = tuple(
+    (name, globals()[name], globals()[name].__code__)
+    for name in ("open_card_recovery_switcher", "_open_switcher", "open_provider_setup")
+)

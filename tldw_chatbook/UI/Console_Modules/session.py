@@ -396,6 +396,26 @@ def _has_selected_text(value: Any) -> bool:
     return not _is_empty_select_value(value) and bool(str(value).strip())
 
 
+@dataclass(frozen=True)
+class ConsoleDefaultConvergence:
+    """The actual parent's prepared automatic replacement, never authority."""
+
+    owner: Any
+    store: ConsoleChatStore
+    session: ConsoleChatSession
+    incarnation: str
+    binding_revision: int
+    settings_before: ConsoleSessionSettings | None
+    settings: ConsoleSessionSettings
+    revision_before: int
+    default_generation: int
+    config: Mapping | None
+    checked: Any
+    track_span: bool
+    previous_provider_key: str | None = None
+    next_provider_key: str | None = None
+
+
 def follows_saved_defaults(
     store: ConsoleChatStore,
     session: ConsoleChatSession,
@@ -3135,6 +3155,7 @@ class ConsoleSessionController:
     async def _acknowledge_manual_read_visit(
         self, visit: ConsoleManualReadVisit
     ) -> bool:
+        pending_before = self._pending_manual_read_visit
         store = self._ensure_console_chat_store()
         active = next(
             (item for item in store.sessions() if item.id == store.active_session_id),
@@ -3152,7 +3173,44 @@ class ConsoleSessionController:
             if self._pending_manual_read_visit is visit:
                 self._pending_manual_read_visit = None
             return False
-        if self._painted_session_accessor() != visit.session_id:
+        from tldw_chatbook.Chat.console_parent_settings import (
+            prepare_parent_visible_target_check,
+        )
+
+        selected, painted = await prepare_parent_visible_target_check(
+            self, visit.session_id
+        )
+        if selected:
+            # The getter can wait for its own settings phase. None of the
+            # original navigation/profile/marks/target facts may drift then.
+            store = self._ensure_console_chat_store()
+            active = next(
+                (
+                    item
+                    for item in store.sessions()
+                    if item.id == store.active_session_id
+                ),
+                None,
+            )
+            if (
+                visit.navigation_generation != self._manual_navigation_generation
+                or visit.profile_key != self._manual_profile_key()
+                or visit.marks
+                is not getattr(
+                    self.app_instance, "conversation_local_marks_service", None
+                )
+                or active is None
+                or active.id != visit.session_id
+                or active.persisted_conversation_id != visit.conversation_id
+            ):
+                if self._pending_manual_read_visit is visit:
+                    self._pending_manual_read_visit = None
+                return False
+            if self._pending_manual_read_visit is not pending_before:
+                return False
+        elif self._painted_session_accessor() != visit.session_id:
+            return False
+        if selected and painted != visit.session_id:
             return False
         self._pending_manual_read_visit = None
         if visit.token is None:
@@ -4606,6 +4664,11 @@ class ConsoleSessionController:
         entry, exactly as before -- later entries in the same pass would have
         found the state already converged and returned the same object.
         """
+        from ...Chat.console_control_settings import require_settings_settled
+
+        store = getattr(self._screen, "_console_chat_store", None)
+        if store is not None:
+            require_settings_settled(store, store.active_session_id)
         memo = getattr(self._screen, "_console_derivation_memo", None)
         if memo is not None and "active_session_settings" in memo:
             return memo["active_session_settings"]
@@ -4619,6 +4682,9 @@ class ConsoleSessionController:
     ) -> ConsoleSessionSettings:
         """Ensure the active session owns a settings snapshot, with no memo."""
         store = self._ensure_console_chat_store()
+        from ...Chat.console_control_settings import require_settings_settled
+
+        require_settings_settled(store, store.active_session_id)
         creating_blank_session = store.active_session_id is None
         # `ensure_session` reads `settings`, like `title` below, only when it
         # CREATES a session; this runs on every display rebuild, so derive
@@ -4662,7 +4728,34 @@ class ConsoleSessionController:
             session.new_chat_default_generation = (
                 self._console_new_chat_default_generation()
             )
-        resolved = self._maybe_refresh_stale_default_console_settings(store, session)
+        from ...Chat.console_parent_settings import consume_due_settings_result
+
+        consumed, resolved = consume_due_settings_result(self, store, session)
+        if not consumed:
+            from ...Chat.console_control_settings import (
+                ConsoleDefaultConvergenceRequired,
+            )
+
+            try:
+                resolved = self._maybe_refresh_stale_default_console_settings(
+                    store, session
+                )
+            except ConsoleDefaultConvergenceRequired as due:
+                if creating_blank_session:
+                    # Only the actual original creation/ensure frame supplies
+                    # this result. Its caller must still validate current graph,
+                    # source, visit and exact session before admitting work.
+                    due.created_session = (
+                        self,
+                        store,
+                        session,
+                        session.incarnation_id,
+                        session.settings,
+                        session.settings_revision,
+                        session.conversation_binding_revision,
+                        asyncio.current_task(),
+                    )
+                raise
         if resolved is None:
             raise RuntimeError(
                 "Console session predates the published defaults without "
@@ -4690,6 +4783,46 @@ class ConsoleSessionController:
         with work, source-owned sessions (no baseline) and sessions created
         before a Console "Make default for new chats" are never touched.
         """
+        prior_checked = self._pristine_defaults_checked
+        prepared = self._prepare_stale_default_console_settings(
+            store,
+            session,
+            checked_config=checked_config,
+        )
+        if type(prepared) is not ConsoleDefaultConvergence:
+            return prepared
+        runtime = getattr(self.app_instance, "console_runtime", None)
+        controls = getattr(
+            getattr(runtime, "_execution_service", None), "_local_controls", None
+        )
+        if controls is not None:
+            from ...Chat.console_control_settings import (
+                ConsoleDefaultConvergenceRequired,
+            )
+
+            # This synchronous attempt cannot consume the original memo and
+            # then abandon its write. Restore the prior marker; the named
+            # admitted parent phase reruns preparation under its exact owner.
+            self._pristine_defaults_checked = prior_checked
+            raise ConsoleDefaultConvergenceRequired(
+                "Console defaults need their owned continuation"
+            )
+        store.replace_session_settings(
+            session.id,
+            prepared.settings,
+            mark_user_work=False,
+            canonical_settings_baseline=prepared.settings,
+        )
+        self._finish_stale_default_console_settings(prepared)
+        return prepared.settings
+
+    def _prepare_stale_default_console_settings(
+        self, store, session, *, checked_config=None
+    ):
+        """Keep original parent eligibility/memo work before automatic replacement."""
+        from ...Chat.console_control_settings import require_settings_settled
+
+        require_settings_settled(store, session.id)
         settings = session.settings
         projection = getattr(self._screen, "_console_readiness_projection_active", None)
         if projection is not None and projection[0] == threading.get_ident():
@@ -4703,20 +4836,58 @@ class ConsoleSessionController:
         if settings is None:
             settings = (blank_console_session_settings(checked_config)
                 if checked_config is not None else self._blank_console_session_settings())
-            store.replace_session_settings(
-                session.id,
+            return ConsoleDefaultConvergence(
+                self,
+                store,
+                session,
+                session.incarnation_id,
+                session.conversation_binding_revision,
+                session.settings,
                 settings,
-                mark_user_work=False,
-                canonical_settings_baseline=settings,
+                store.session_settings_revision(session.id),
+                self._console_new_chat_default_generation(),
+                checked_config,
+                self._pristine_defaults_checked,
+                False,
             )
-            return settings
         # Creation reads the app-owned published snapshot so an in-flight
         # Make Default cannot leak into a new chat before runtime publication.
         # This path is different: full Settings may have updated the config
         # cache without replacing ``app.app_config``, so read the fresh
         # mapping and converge without an app restart (task-177).
-        app_config = (checked_config if checked_config is not None
-            else self._provider_readiness_app_config())
+        runtime = getattr(self.app_instance, "console_runtime", None)
+        controls = getattr(
+            getattr(runtime, "_execution_service", None), "_local_controls", None
+        )
+        if checked_config is None and controls is not None:
+            from contextlib import ExitStack
+            from tldw_chatbook import config
+            from .console_spend_projection import live_config_read_is_cold
+            from ...Chat.console_control_settings import (
+                ConsoleDefaultConvergenceRequired,
+            )
+
+            with ExitStack() as held:
+                for lock in (
+                    config._settings_rebuild_lock(),
+                    config._config_file_lock(),
+                ):
+                    if not lock.acquire(blocking=False):
+                        raise ConsoleDefaultConvergenceRequired(
+                            "Console defaults config is busy"
+                        )
+                    held.callback(lock.release)
+                if live_config_read_is_cold(self._screen):
+                    raise ConsoleDefaultConvergenceRequired(
+                        "Console defaults config is cold"
+                    )
+                app_config = self._provider_readiness_app_config()
+        else:
+            app_config = (
+                checked_config
+                if checked_config is not None
+                else self._provider_readiness_app_config()
+            )
         # This runs on every provider/model display rebuild and composer
         # keystroke. A published config write replaces the mapping, so one
         # derivation per (session, mapping) is exact between two saves.
@@ -4743,12 +4914,33 @@ class ConsoleSessionController:
         previous_provider_key = provider_config_key(settings.provider)
         next_provider_key = provider_config_key(fresh_defaults.provider)
         before = store.session_settings_revision(session.id)
-        store.replace_session_settings(
-            session.id,
+        return ConsoleDefaultConvergence(
+            self,
+            store,
+            session,
+            session.incarnation_id,
+            session.conversation_binding_revision,
+            settings,
             fresh_defaults,
-            mark_user_work=False,
-            canonical_settings_baseline=fresh_defaults,
+            before,
+            self._console_new_chat_default_generation(),
+            app_config,
+            self._pristine_defaults_checked,
+            True,
+            previous_provider_key,
+            next_provider_key,
         )
+
+    def _finish_stale_default_console_settings(self, prepared):
+        """Keep original revision-span and notice publication after replacement."""
+        if not prepared.track_span:
+            return
+        store, session = prepared.store, prepared.session
+        settings, fresh_defaults = prepared.settings_before, prepared.settings
+        app_config = prepared.config
+        before = prepared.revision_before
+        previous_provider_key = prepared.previous_provider_key
+        next_provider_key = prepared.next_provider_key
         span = self._default_convergences.get(session.id)
         self._default_convergences[session.id] = (
             span[0] if span is not None and span[1] == before else before,
@@ -4768,7 +4960,6 @@ class ConsoleSessionController:
                 provider_display_name(fresh_defaults.provider, app_config)
                 or "not selected",
             )
-        return fresh_defaults
 
     def _notify_stale_default_provider_swap(
         self,
@@ -4803,6 +4994,12 @@ class ConsoleSessionController:
         settings: ConsoleSessionSettings,
     ) -> None:
         """Replace settings for only the active native Console session."""
+        store, session = self._prepare_active_console_session_replacement()
+        store.replace_session_settings(session.id, settings)
+        self._finish_active_console_session_replacement()
+
+    def _prepare_active_console_session_replacement(self):
+        """Keep original default/title/session qualification before replacement."""
         store = self._ensure_console_chat_store()
         workspace_id = store.workspace_context.active_workspace_id
         # task-32804.6: title is discarded unless ensure_session CREATES the
@@ -4817,7 +5014,10 @@ class ConsoleSessionController:
             workspace_id=workspace_id,
             settings=self._default_console_session_settings(),
         )
-        store.replace_session_settings(session.id, settings)
+        return store, session
+
+    def _finish_active_console_session_replacement(self):
+        """Publish the original core and summary after replacement."""
         self._sync_console_chat_core_state()
         self._sync_console_settings_summary()
 
@@ -4845,21 +5045,36 @@ class ConsoleSessionController:
         not survive a reload; it is surfaced here as an honest warning
         rather than silently swallowed or crashing this callback.
         """
+        store, session_id = self._prepare_console_session_system_prompt()
+        if session_id is None:
+            return
+        _session, persisted = store.set_session_system_prompt(session_id, system_prompt)
+        self._finish_console_session_system_prompt(persisted)
+
+    def _prepare_console_session_system_prompt(self):
+        """Keep the original ensure and exact active target before its mutation."""
         self._ensure_active_console_session_settings()
         store = self._ensure_console_chat_store()
         session_id = store.active_session_id
         if session_id is None:
-            return
-        _session, persisted = store.set_session_system_prompt(session_id, system_prompt)
+            return store, None
+        return store, session_id
+
+    def _finish_console_session_system_prompt(self, persisted):
+        """Publish the original warning and surfaces after the honest write result."""
+        self._warn_console_system_prompt_persistence(persisted)
+        self._sync_console_chat_core_state()
+        self._sync_console_settings_summary()
+        self._sync_console_control_bar()
+
+    def _warn_console_system_prompt_persistence(self, persisted):
+        """Emit the original live-only warning once before display continuation."""
         if not persisted:
             self.app_instance.notify(
                 "System prompt applied for this session, but the change "
                 "could not be saved -- it may not survive a reload.",
                 severity="warning",
             )
-        self._sync_console_chat_core_state()
-        self._sync_console_settings_summary()
-        self._sync_console_control_bar()
 
     # -- Temporary-session promotion ------------------------------------------
 
@@ -7000,4 +7215,92 @@ _CONSOLE_PREPARING_SESSION_READERS = tuple(
      tuple((method.__kwdefaults__ or {}).items()))
     for name in ('_build_console_turn_execution_context', '_build_console_turn_capture_selection')
     for method in (getattr(ConsoleSessionController, name),)
+)
+
+
+from ...Chat.console_domain_services import _definition as _convergence_definition
+
+_CONSOLE_DEFAULT_CONVERGENCE_READERS = tuple(
+    (name, _convergence_definition(getattr(ConsoleSessionController, name)))
+    for name in (
+        "_prepare_stale_default_console_settings",
+        "_finish_stale_default_console_settings",
+        "_console_new_chat_default_generation",
+        "_notify_stale_default_provider_swap",
+    )
+)
+_CONSOLE_DEFAULT_CONVERGENCE_SOURCES = tuple(
+    (name, _convergence_definition(globals()[name]))
+    for name in (
+        "follows_saved_defaults",
+        "blank_console_session_settings",
+        "provider_config_key",
+        "provider_display_name",
+    )
+)
+
+
+_selected_parent_settings_helpers = (
+    (
+        "_warn_console_system_prompt_persistence",
+        ConsoleSessionController._warn_console_system_prompt_persistence,
+        ConsoleSessionController._warn_console_system_prompt_persistence.__code__,
+    ),
+    (
+        "_prepare_console_session_system_prompt",
+        ConsoleSessionController._prepare_console_session_system_prompt,
+        ConsoleSessionController._prepare_console_session_system_prompt.__code__,
+    ),
+    (
+        "_finish_console_session_system_prompt",
+        ConsoleSessionController._finish_console_session_system_prompt,
+        ConsoleSessionController._finish_console_session_system_prompt.__code__,
+    ),
+    (
+        "_prepare_active_console_session_replacement",
+        ConsoleSessionController._prepare_active_console_session_replacement,
+        ConsoleSessionController._prepare_active_console_session_replacement.__code__,
+    ),
+    (
+        "_finish_active_console_session_replacement",
+        ConsoleSessionController._finish_active_console_session_replacement,
+        ConsoleSessionController._finish_active_console_session_replacement.__code__,
+    ),
+)
+
+
+_selected_due_ensure_definitions = tuple(
+    (
+        name,
+        getattr(ConsoleSessionController, name),
+        getattr(ConsoleSessionController, name).__code__,
+    )
+    for name in (
+        "_ensure_active_console_session_settings",
+        "_ensure_active_console_session_settings_uncached",
+        "_maybe_refresh_stale_default_console_settings",
+    )
+)
+
+_selected_visible_send_helpers = tuple(
+    (
+        name,
+        getattr(ConsoleSessionController, name),
+        getattr(ConsoleSessionController, name).__code__,
+    )
+    for name in (
+        "refuse_send_from_unbound_composer",
+        "_composer_chat_left_the_screen",
+        "_sync_console_session_draft",
+    )
+)
+
+
+_selected_visible_check_helpers = tuple(
+    (
+        name,
+        getattr(ConsoleSessionController, name),
+        getattr(ConsoleSessionController, name).__code__,
+    )
+    for name in ("_acknowledge_manual_read_visit",)
 )

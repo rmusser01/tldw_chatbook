@@ -3,6 +3,7 @@
 import copy
 import inspect
 import io
+import json
 import secrets
 import stat
 import sys
@@ -11,6 +12,7 @@ import time
 import weakref
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from dataclasses import replace as replace_dataclass
 from functools import wraps
 from pathlib import Path
 from types import ModuleType
@@ -79,6 +81,166 @@ class _TaskLocal(threading.local):
 
 
 _local = _TaskLocal()
+_mcp_preparation_local = _TaskLocal()
+
+
+@dataclass(frozen=True)
+class _MCPPreparation:
+    source: object
+    binding: object
+    canonical: Path
+    attempt: object
+    lease: object
+
+
+_mcp_preparations = {}
+
+
+@dataclass(frozen=True)
+class _MCPOrdinarySelection:
+    preparation: _MCPPreparation
+    root: Path
+    selector: Path
+    names: tuple[str, ...] | None
+    warm: tuple
+    observation: tuple
+
+
+_mcp_ordinary_selections = {}
+
+
+def _begin_mcp_ordinary_selection(preparation):
+    """Observe ordinary generation absence for this pre-lock selection only."""
+    from . import activation, generation_witnesses
+
+    lease = preparation.lease
+    kind = mcp_sources._kind(preparation.source)
+    if (
+        os.name != "nt" or kind is None
+        or kind[1] not in {"mcp.local", "mcp.permissions", "mcp.context"}
+        or preparation.canonical != preparation.binding.selected
+        or lease._warm_execution is None
+        or not generation_witnesses._witness_metadata_current()
+        or not activation._ordinary_activation_sources_current()
+    ):
+        return
+    selector = bootstrap.effective_config_path()
+    root, names = lease.execution_context(preparation.canonical)
+    warm = lease._warm_execution
+    if not activation._warm_activation_current(lease, warm, root, selector):
+        return
+    observation = activation._ordinary_activation_observation(root, selector)
+    if observation is None:
+        return
+    proof = _MCPOrdinarySelection(preparation, root, selector, names, warm, observation)
+    _require_mcp_ordinary_selection(proof)
+    _mcp_ordinary_selections[preparation.attempt] = proof
+
+
+def _require_mcp_ordinary_selection(proof):
+    from . import activation, generation_witnesses
+
+    preparation = proof.preparation
+    if (
+        _mcp_preparations.get(preparation.attempt) is not preparation
+        or _mcp_preparation_local.operation is not preparation.attempt
+        or not generation_witnesses._witness_metadata_current()
+        or not activation._ordinary_activation_sources_current()
+        or bootstrap.effective_config_path() != proof.selector
+        or preparation.lease.execution_context(preparation.canonical)
+        != (proof.root, proof.names)
+        or not activation._warm_activation_current(
+            preparation.lease, proof.warm, proof.root, proof.selector
+        )
+        or _prepared_mcp_observation(preparation.source, preparation.canonical)
+        != {preparation.canonical: preparation.lease}
+    ):
+        raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+
+
+def _prepared_mcp_witnesses(path, lease):
+    """Derive empty witnesses only for the exact issued pre-lock preparation."""
+    attempt = _mcp_preparation_local.operation
+    proof = _mcp_ordinary_selections.get(attempt)
+    if proof is None:
+        return False
+    preparation = proof.preparation
+    if path != preparation.canonical or lease is not preparation.lease:
+        return False
+    _require_mcp_ordinary_selection(proof)
+    return True
+
+
+def _finish_mcp_ordinary_selection(preparation):
+    from . import activation
+
+    # Retire discovery before the native final observation and any lock wait.
+    proof = _mcp_ordinary_selections.pop(preparation.attempt, None)
+    if proof is None:
+        return None
+    _require_mcp_ordinary_selection(proof)
+    if proof.observation != activation._ordinary_activation_observation(
+        proof.root, proof.selector
+    ):
+        raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+    _require_mcp_ordinary_selection(proof)
+    # Export only a memory receipt. Its pre-lock filesystem observation is
+    # discarded before the wait and cannot prove the post-lock phase.
+    return proof.root, proof.selector, proof.names, proof.warm
+
+
+def _prepare_mcp_observation(source, attempt):
+    """Retain canonical admission while the original source proofs prepare IO."""
+    binding = mcp_sources._BINDINGS.get(source)
+    if binding is None:
+        return None
+    canonical = mcp_sources.canonical_path(source)
+    if getattr(source, "_recovery_original_path", None) != canonical:
+        return None
+    lease = storage.acquire_storage(canonical)
+    preparation = _MCPPreparation(source, binding, canonical, attempt, lease)
+    with storage._lock:
+        _mcp_preparations[attempt] = preparation
+        _mcp_preparation_local.operation = attempt
+    return preparation
+
+
+def _prepared_mcp_observation(source, canonical):
+    attempt = _mcp_preparation_local.operation
+    if attempt is None:
+        return None
+
+    def check():
+        with storage._lock:
+            preparation = _mcp_preparations.get(attempt)
+            if preparation is None or _mcp_preparation_local.operation is not attempt:
+                raise bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
+            if preparation.source is not source:
+                return None
+            storage._Acquisition.check_provenance(attempt)
+            storage._Acquisition.check(attempt, canonical)
+            if (
+                preparation.canonical != lexical_path(canonical)
+                or mcp_sources._BINDINGS.get(source) is not preparation.binding
+                or type(source) is not preparation.binding.source_type
+                or lexical_path(source.path) != preparation.binding.selected
+                or type(preparation.lease) is not storage.StorageLease
+                or preparation.lease not in storage._live_leases
+            ):
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        # Current config/selection proof remains outside the coordinator.
+        if mcp_sources.canonical_path(source) != preparation.canonical:
+            raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        return preparation
+
+    preparation = check()
+    if preparation is None:
+        return None
+    # Only this lease's exact primary selection can witness recovery mappings.
+    storage.StorageLease.execution_context(preparation.lease, canonical)
+    if check() is not preparation:
+        raise bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
+    return {lexical_path(canonical): preparation.lease}
 
 
 class _RawParticipant:
@@ -410,6 +572,8 @@ class _State:
     config_anchor: Path | None = None
     mcp_canonical: Path | None = None
     mcp_observation_lease: object | None = None
+    permission_read_token: object | None = None
+    permission_read_stage: str | None = None
 
 
 _states = {}
@@ -423,9 +587,15 @@ def live_state(operation, path, writing):
     if type(operation) is not _RawOperation or operation not in _states:
         raise bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
     state = _states[operation]
+    if not state.active:
+        raise bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
+    _require_raw_custody(operation, state, path, writing)
+    return state
+
+
+def _require_raw_custody(operation, state, path, writing):
     if (
-        not state.active
-        or operation not in storage._raw_operations
+        operation not in storage._raw_operations
         or state.pid != os.getpid()
         or state.thread is not threading.current_thread()
         or state.task is not storage._task_identity()
@@ -438,7 +608,7 @@ def live_state(operation, path, writing):
         raise bootstrap.RecoveryRequired("raw_path_outside_scope")
     if path is not None and lexical_path(path) not in state.paths + state.directories:
         raise bootstrap.RecoveryRequired("raw_path_outside_scope")
-    for lease, hold in zip(state.leases, state.holds):
+    for lease, hold in zip(state.leases, state.holds, strict=True):
         if (
             lease not in storage._live_leases
             or storage._holds.get(lease._key) is not hold
@@ -448,14 +618,195 @@ def live_state(operation, path, writing):
             raise bootstrap.RecoveryRequired("raw_native_scope_changed")
         if storage._pause is not None and hold is None:
             raise bootstrap.RecoveryRequired("raw_native_scope_unqualified")
+
+
+@dataclass(frozen=True)
+class _PermissionReadPhase:
+    token: object
+    captured: object
+    participant: object
+    root: Path
+    selector: Path
+    names: tuple[str, ...]
+    leases: tuple
+    warm: tuple
+    attempt: object
+    observation: tuple | None = None
+
+
+def _permission_read_live(operation, phase, attempt):
+    from . import activation, generation_witnesses
+
+    with storage._lock:
+        state = _states.get(operation)
+        if (
+            type(phase) is not _PermissionReadPhase
+            or type(operation) is not _RawOperation
+            or state is None
+            or state.permission_read_token is not phase.token
+        ):
+            raise bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
+        if attempt is None:
+            if _local.operation is not operation:
+                raise bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
+            live_state(operation, state.selected, False)
+        else:
+            # The scope itself owns this still-inactive preflight.
+            if attempt is not phase.attempt or state.active or state.permission_read_stage != "setup":
+                raise bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
+            attempt.check_provenance()
+            attempt.check(state.selected)
+            _require_raw_custody(operation, state, state.selected, False)
+        lease = state.mcp_observation_lease
+        if (
+            state.route != mcp_sources.ROUTE
+            or not state.pinned
+            or state.selected != state.mcp_canonical
+            or tuple(state.leases) != phase.leases
+            or len(state.holds) != len(state.leases)
+            or not generation_witnesses._ordinary_lease_reader_current(lease)
+            or lease not in phase.leases
+            or lease.execution_scope() != (phase.root, phase.names)
+            or participant_identity(state.participant) is not phase.participant
+            or phase.participant.owner != "mcp.permissions"
+            or phase.participant.source() is not state.source
+            or phase.participant.selected != state.selected
+            or phase.participant.closed
+            or not activation._warm_activation_current(
+                lease, phase.warm, phase.root, phase.selector
+            )
+        ):
+            raise bootstrap.RecoveryRequired("raw_source_selection_changed")
     return state
+
+
+def _permission_read_custody(operation, phase, *, attempt=None, _site="permission_read_custody"):
+    """Borrow only the registered command and its exact still-live source."""
+    from ..MCP import permission_store
+    from . import activation, generation_witnesses
+
+    if (
+        not generation_witnesses._witness_metadata_current()
+        or not activation._ordinary_activation_sources_current()
+    ):
+        raise bootstrap.RecoveryRequired("mcp_source_selection_changed")
+    state = _permission_read_live(operation, phase, attempt)
+    process = sys.modules.get("tldw_chatbook.MCP.permission_process")
+    if process is not None:
+        process._boundary(state.source, _site)
+    if (
+        not permission_store._permission_read_current(state.source, phase.captured)
+        or bootstrap.effective_config_path() != phase.selector
+        or mcp_sources.canonical_path(state.source) != state.selected
+    ):
+        raise bootstrap.RecoveryRequired("mcp_source_selection_changed")
+    if (
+        not generation_witnesses._witness_metadata_current()
+        or not activation._ordinary_activation_sources_current()
+        or _permission_read_live(operation, phase, attempt) is not state
+    ):
+        raise bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
+    return state
+
+
+def _permission_read_boundary(operation, phase, *, attempt=None, destination=False):
+    from . import activation
+
+    state = _permission_read_custody(operation, phase, attempt=attempt,
+        _site="protected_open" if destination else "permission_read_custody")
+    lease = state.mcp_observation_lease
+    process = sys.modules.get("tldw_chatbook.MCP.permission_process")
+    passes = 2 if process is not None and process._active() is not None else 1
+    observation = None
+    for proof_pass in range(passes):
+        if lease.execution_context(state.selected) != (phase.root, phase.names):
+            raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        observed = activation._ordinary_activation_observation(phase.root, phase.selector)
+        if observed is None:
+            raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        profiles, registry, lock, fingerprint = observed
+        current = (json.dumps((profiles, registry), sort_keys=True), lock, fingerprint)
+        if (phase.observation is not None and phase.observation != current
+                or observation is not None and observation != current):
+            raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        observation = current
+        _check_parent_pins(state)
+        if destination:
+            mcp_sources.check_destination(state, state.selected)
+        if proof_pass == 0:
+            _permission_read_custody(operation, phase, attempt=attempt)
+        else:
+            # The registered command's rendezvous can wait. Its second native
+            # proof is fresh after that wait; ordinary callers retain one proof.
+            _permission_read_live(operation, phase, attempt)
+    return observation
+
+
+def _begin_permission_read(operation, captured, attempt, selection):
+    state = _states[operation]
+    root, selector, names, warm = selection
+    participant = participant_identity(state.participant)
+    state.permission_read_token = object()
+    state.permission_read_stage = "setup"
+    phase = _PermissionReadPhase(
+        state.permission_read_token,
+        captured,
+        participant,
+        root,
+        selector,
+        names,
+        tuple(state.leases),
+        warm,
+        attempt,
+    )
+    return replace_dataclass(
+        phase, observation=_permission_read_boundary(operation, phase, attempt=attempt)
+    )
+
+
+def _end_permission_read_payload(operation, phase):
+    state = _permission_read_custody(operation, phase)
+    if state.permission_read_stage != "payload" or state.files or state.descriptors:
+        raise bootstrap.RecoveryRequired("raw_resources_not_retired")
+    state.permission_read_token = None
+    state.permission_read_stage = "repair"
+
+
+def _finish_permission_read(operation, phase):
+    state = _states.get(operation)
+    repaired = state is not None and state.permission_read_stage == "repair"
+    if repaired:
+        with storage._lock:
+            live_state(operation, state.selected, False)
+            if state.permission_read_token is not None:
+                raise bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
+    else:
+        state = _permission_read_custody(operation, phase)
+    if state.permission_read_stage not in {"metadata", "payload", "repair"}:
+        raise bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
+    if state.files or state.descriptors:
+        raise bootstrap.RecoveryRequired("raw_resources_not_retired")
+    # Retire the read phase before issuing a fresh publication-only proof.
+    state.permission_read_token = object()
+    final = replace_dataclass(
+        phase,
+        token=state.permission_read_token,
+        observation=None if repaired else phase.observation,
+    )
+    state.permission_read_stage = "final"
+    try:
+        _permission_read_boundary(operation, final, destination=True)
+        return phase.captured.receipt
+    finally:
+        state.permission_read_token = None
+        state.permission_read_stage = None
 
 
 def mcp_observation(source, canonical):
     """Supply only this installed source's currently issued canonical lease."""
     operation = getattr(_local, "operation", None)
     if operation is None:
-        return None
+        return _prepared_mcp_observation(source, canonical)
     with storage._lock:
         state = live_state(operation, None, False)
         if (
@@ -494,6 +845,9 @@ def _source_custody_check(operation, path=None, *, writing=False):
         state = live_state(operation, path, writing)
         participant = state.participant
         source = state.source
+    process = sys.modules.get("tldw_chatbook.MCP.permission_process")
+    if process is not None:
+        process._boundary(source, "source_custody_entry")
     # Binding validation may read native recovery records. It must not
     # monopolize the coordinator while unrelated admitted workers use it.
     participant_state = (
@@ -515,6 +869,12 @@ def _source_custody_check(operation, path=None, *, writing=False):
         if state.source._CONFIG_GENERATION != state.config_generation:
             raise bootstrap.RecoveryRequired("config_directory_generation_changed")
     yield state
+    if process is not None:
+        process._boundary(source, "source_custody_exit")
+        if process._active() is not None:
+            if participant is not None and _participant_state(participant) is not participant_state:
+                raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+            _check_parent_pins(state)
     # Revocation/retirement can interleave with either source or parent proof.
     # A valid earlier observation cannot substitute for current issued custody.
     with storage._lock:
@@ -583,6 +943,9 @@ def owned_descriptor_retirement_state(fd: int) -> _State | None:
 
 def close_descriptor(state, fd):
     state.descriptors.add(fd)
+    process = sys.modules.get("tldw_chatbook.MCP.permission_process")
+    if process is not None:
+        process._enroll("descriptor", (state, fd))
     if state.uncertain:
         raise bootstrap.RecoveryRequired("raw_resources_not_retired")
     try:
@@ -773,7 +1136,10 @@ def scope(
     template=None,
     user_template=True,
     selected_read=None,
+    _permission_read=None,
 ):
+    if _permission_read is not None and route != mcp_sources.ROUTE:
+        raise bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
     thread, task = threading.current_thread(), storage._task_identity()
     if route not in config_files.ROUTES:
         # Source locks are reentrant on a thread, so nothing can make this task
@@ -822,7 +1188,7 @@ def scope(
             ) != lexical_path(selected):
                 raise bootstrap.RecoveryRequired("raw_source_selection_changed")
             check(previous, selected, writing=writing)
-            yield previous
+            yield previous if _permission_read is None else (previous, None)
             return
     # Core and raw scopes are independent. Keep outer registration/lease live,
     # suspend discovery, and refuse a new scope when either gate has closed.
@@ -836,9 +1202,17 @@ def scope(
     source_lock = None
     locked = False
     body_completed = False
+    preparation = None
+    preparation_adopted = False
+    ordinary_permission_read = None
+    previous_preparation = _mcp_preparation_local.operation
     try:
         attempt = storage._Acquisition()  # before selectors, authority or path IO
         pinned = _pinned_io_available()
+        if route == mcp_sources.ROUTE and pinned:
+            preparation = _prepare_mcp_observation(source, attempt)
+            if preparation is not None:
+                _begin_mcp_ordinary_selection(preparation)
         selected, installed, directory_only = _selection(
             source, route, template, user_template, selected_read
         )
@@ -988,6 +1362,10 @@ def scope(
                 if source_lock is None:
                     source_lock = threading.RLock()
                     _path_locks[source_key] = source_lock
+        if preparation is not None:
+            ordinary = _finish_mcp_ordinary_selection(preparation)
+            if _permission_read is not None:
+                ordinary_permission_read = ordinary
         if source_lock is not None:
             while not source_lock.acquire(timeout=0.05):
                 attempt.check()
@@ -1037,7 +1415,16 @@ def scope(
         )
         with storage._changed:
             _states[operation] = state
+            process = sys.modules.get("tldw_chatbook.MCP.permission_process")
+            if process is not None:
+                process._enroll("raw", (operation, state))
             storage._raw_operations.add(operation)
+            if preparation is not None:
+                state.mcp_canonical = preparation.canonical
+                state.mcp_observation_lease = preparation.lease
+                state.leases.append(preparation.lease)
+                state.holds.append(storage._holds.get(preparation.lease._key))
+                preparation_adopted = True
         # Every publication/creation target is admitted before any side effect.
         admission_paths = (
             ((parent,) if route in {"pet", "theme_directory"} else ())
@@ -1059,10 +1446,10 @@ def scope(
                 ))
                 state.holds.append(storage._holds.get(state.leases[-1]._key))
             attempt.check()
-        elif route in config_files.ROUTES:
-            # All config members use the selected profile's same native group.
+        elif route in config_files.ROUTES or (route == mcp_sources.ROUTE and installed):
+            # All declared members must pass the same ordinary scope checks.
             # Check every member together rather than reopening its control tree
-            # once per lock, backup and temporary file on each cached config read.
+            # once per lock, backup and temporary file on each guarded read.
             attempt.check()
             state.leases.append(storage.acquire_storage(
                 admission_paths[0], related_paths=admission_paths[1:]
@@ -1100,8 +1487,15 @@ def scope(
             # Ordinary path IO cannot prove a pinned recovery/source boundary.
             # Keep the actual admission result, even if native exclusion exists.
             state.identities[anchor] = anchor_identity
+        phase = None
         if route == mcp_sources.ROUTE:
-            mcp_sources.preflight(state)
+            if ordinary_permission_read is not None:
+                phase = _begin_permission_read(
+                    operation, _permission_read, attempt, ordinary_permission_read
+                )
+                mcp_sources.preflight(state, permission_read=(operation, phase, attempt))
+            else:
+                mcp_sources.preflight(state)
         if route == dictionary_files.ROUTE:
             dictionary_files.pin_inputs(state)
         if route == "theme_directory" or (route == "pet" and writing):
@@ -1110,7 +1504,11 @@ def scope(
             settings_files.check_export_parent(state)
         if _raw_holds_pause_requested(state.holds):
             raise bootstrap.RecoveryRequired("storage_locally_paused")
-        gate = _participant_state(participant) if participant is not None else None
+        if phase is not None:
+            _permission_read_custody(operation, phase, attempt=attempt)
+            gate = phase.participant
+        else:
+            gate = _participant_state(participant) if participant is not None else None
         with storage._changed:
             attempt.check()
             if participant is not None:
@@ -1120,10 +1518,15 @@ def scope(
                     raise bootstrap.RecoveryRequired("storage_locally_paused")
             state.active = True
             _local.operation = operation
-        check(operation)
+        _mcp_preparation_local.operation = previous_preparation
+        if phase is None:
+            check(operation)
+        else:
+            state.permission_read_stage = "metadata"
+            _permission_read_custody(operation, phase)
         settings_files.check_members(state)
         try:
-            yield operation
+            yield operation if _permission_read is None else (operation, phase)
             body_completed = True
         except BaseException:
             if state.created_files:
@@ -1133,10 +1536,14 @@ def scope(
             raise
     finally:
         _local.operation = None
+        _mcp_preparation_local.operation = previous_preparation
+        _mcp_ordinary_selections.pop(attempt, None)
         try:
             if operation is not None:
                 state = _states[operation]
                 state.active = False
+                state.permission_read_token = None
+                state.permission_read_stage = None
                 if _retire(state):
                     if state.route == mcp_sources.ROUTE and body_completed:
                         mcp_sources.complete(state)
@@ -1145,20 +1552,27 @@ def scope(
                         storage._raw_operations.discard(operation)
                         storage._changed.notify_all()
         finally:
-            if locked:
-                source_lock.release()
-            if attempt is not None:
-                attempt.close()
-            if core is not None:
-                storage._check_operation(core, core.path)
-            storage._operation_local.operation = core
-            _local.operation = previous
             try:
-                if previous is not None:
-                    check(previous)
-            except BaseException:
-                _local.operation = None
-                raise
+                if preparation is not None:
+                    if not preparation_adopted:
+                        preparation.lease.close()
+                    with storage._lock:
+                        _mcp_preparations.pop(attempt, None)
+            finally:
+                if locked:
+                    source_lock.release()
+                if attempt is not None:
+                    attempt.close()
+                if core is not None:
+                    storage._check_operation(core, core.path)
+                storage._operation_local.operation = core
+                _local.operation = previous
+                try:
+                    if previous is not None:
+                        check(previous)
+                except BaseException:
+                    _local.operation = None
+                    raise
 
 
 def selected_target(operation):
@@ -1201,6 +1615,13 @@ def file(operation, path, mode):
         raise ValueError("raw_file_mode_invalid")
     state = check(operation, path, writing=mode in {"w", "a"})
     path = lexical_path(path)
+    with _file_in_state(state, path, mode) as handle:
+        yield handle
+
+
+@contextmanager
+def _file_in_state(state, path, mode):
+    """Own and positively retire the descriptor for an already checked file."""
     parent = state.pins.get(path.parent)
     if (state.pinned and parent is None) or (
         not state.pinned and not path.parent.is_dir()
@@ -1243,6 +1664,9 @@ def file(operation, path, mode):
         native = io.FileIO(fd, mode, closefd=False)
         text = io.TextIOWrapper(native, encoding="utf-8")
         state.files.append(text)
+        process = sys.modules.get("tldw_chatbook.MCP.permission_process")
+        if process is not None:
+            process._enroll("file", (text, native))
         try:
             yield text
         finally:
@@ -1737,6 +2161,57 @@ _CONSOLE_PERMISSION_LOAD_GUARDS = tuple(
         ("check", check, (check,)),
     )
 )
+
+
+_PERMISSION_READ_DEFINITIONS = tuple(
+    (
+        name,
+        callback,
+        function,
+        function.__code__,
+        function.__defaults__,
+        tuple((function.__kwdefaults__ or {}).items()),
+        function.__globals__,
+        tuple(cell.cell_contents for cell in function.__closure__ or ()),
+    )
+    for name in (
+        "_require_raw_custody",
+        "live_state",
+        "_source_custody_check",
+        "_participant_state",
+        "participant_identity",
+        "_check_parent_pins",
+        "_begin_permission_read",
+        "_permission_read_custody",
+        "_permission_read_live",
+        "_permission_read_boundary",
+        "_end_permission_read_payload",
+        "_finish_permission_read",
+        "_file_in_state",
+        "file",
+        "mkdirs",
+        "replace",
+        "remove_temporary",
+        "check_temporary_identity",
+        "close_descriptor",
+        "_retire",
+    )
+    for callback in (globals()[name],)
+    for function in ((callback, callback.__wrapped__) if hasattr(callback, "__wrapped__") else (callback,))
+)
+
+
+def _permission_read_definitions_current():
+    return all(
+        globals().get(name) is callback
+        and (callback is function or getattr(callback, "__wrapped__", None) is function)
+        and function.__code__ is code
+        and function.__defaults__ is defaults
+        and tuple((function.__kwdefaults__ or {}).items()) == keywords
+        and function.__globals__ is namespace
+        and tuple(cell.cell_contents for cell in function.__closure__ or ()) == cells
+        for name, callback, function, code, defaults, keywords, namespace, cells in _PERMISSION_READ_DEFINITIONS
+    )
 
 
 # Private aliases for importers not yet migrated (TASK-36948.2). Remove once none remain.

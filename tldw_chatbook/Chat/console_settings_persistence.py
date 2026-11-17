@@ -240,12 +240,21 @@ async def _run_console_settings_persistence_drain(
     drain: host._ConsoleSettingsPersistenceDrain,
     lifecycle: host._ConsoleSettingsPersistenceLifecycle,
 ) -> host.ConsoleSettingsPersistenceOutcome:
-    async with lifecycle.lock:
-        return await self._persist_console_settings_components_locked(
-            session_id=session_id,
-            drain=drain,
-            lifecycle=lifecycle,
-        )
+    while True:
+        # A submitted full snapshot precedes later component reconciliation.
+        # Wait without the lifecycle/preparation locks so its post phase can
+        # finish, then recheck under the existing serializer before capturing.
+        pending = tuple(lifecycle.pending_live)
+        if pending:
+            await host.asyncio.shield(host.asyncio.gather(*pending))
+        async with lifecycle.lock:
+            if lifecycle.pending_live:
+                continue
+            return await self._persist_console_settings_components_locked(
+                session_id=session_id,
+                drain=drain,
+                lifecycle=lifecycle,
+            )
 
 
 async def _persist_console_settings_components_locked(

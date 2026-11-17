@@ -92,12 +92,19 @@ def capture_execution_roots(
             project_selection, project_authority_guard
         )
 
+    domain = getattr(controller, "domain_services", None)
+    if domain is not None:
+        domain.require_current()
     run_admitted_roots = capture_run_admitted_workspace_roots(
         session=next(
             (item for item in controller.store.sessions() if item.id == session_id),
             None,
         ),
-        registry=getattr(controller.app, "workspace_registry_service", None),
+        registry=(
+            domain.sources.workspace_registry
+            if domain is not None
+            else getattr(controller.app, "workspace_registry_service", None)
+        ),
         project_selection=project_selection,
         project_authority_guard=project_authority_guard,
         remote_session_key=remote_session_key,

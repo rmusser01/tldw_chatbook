@@ -381,9 +381,9 @@ class MCPTools:
             List of character profiles
         """
         try:
-            characters = await asyncio.to_thread(
-                self.chachanotes_db.list_character_cards
-            )
+            from tldw_chatbook.Chat.console_control_mcp import selected_character_list
+
+            characters = await selected_character_list(self)
             return [
                 {
                     "id": char["id"],

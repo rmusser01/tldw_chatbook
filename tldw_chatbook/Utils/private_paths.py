@@ -713,31 +713,6 @@ def _native_close(fd):
         raw.close_descriptor(raw._states[operation], fd)
 
 
-# Capture definitions once; optional module metadata cannot restamp this witness.
-_PARENT_WALK_SOURCE = tuple(
-    (
-        name, function, getattr(function, "__code__", None),
-        getattr(function, "__defaults__", None),
-        None if getattr(function, "__kwdefaults__", None) is None else tuple(function.__kwdefaults__.items()),
-        getattr(function, "__globals__", None),
-        None if getattr(function, "__closure__", None) is None else tuple(cell.cell_contents for cell in function.__closure__),
-    )
-    for name, function in (
-        ("_walk_verified_parent", _walk_verified_parent),
-        ("_open_directory_component", _open_directory_component),
-        ("_follow_trusted_symlink", _follow_trusted_symlink),
-        ("_native_open", _native_open),
-        ("_native_close", _native_close),
-        ("_allocate_native_descriptor", _allocate_native_descriptor),
-        ("_runtime_operation", _runtime_operation),
-        ("_visual_native_scope", _visual_native_scope),
-        ("_voice_operation", _voice_operation),
-        ("_posix_guards_available", _posix_guards_available),
-        ("os.open", _ORIGINAL_NATIVE_OPEN),
-    )
-)
-
-
 def _bind_parent_walk(definition):
     namespace = globals()
     native_os = os
@@ -749,7 +724,12 @@ def _bind_parent_walk(definition):
         if _DIRECTORY_OPEN_FLAGS | _NOFOLLOW != directory_flags:
             return False
         for name, function, code, defaults, keywords, defining_globals, closure in definition:
-            actual = native_os.open if name == "os.open" else namespace.get(name)
+            if name == "os.open":
+                actual = native_os.open
+            elif name == "secure_private_directory.__wrapped__":
+                actual = getattr(namespace.get("secure_private_directory"), "__wrapped__", None)
+            else:
+                actual = namespace.get(name)
             if (
                 actual is not function or getattr(function, "__code__", None) is not code
                 or getattr(function, "__defaults__", None) is not defaults
@@ -863,23 +843,24 @@ def _bind_parent_walk(definition):
                 raise raw.bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
             raw.close_descriptor(state, fd)
 
-        def finish(parent):
+        def finish(parent=None):
             current()
             checked = raw.check(operation, writing=True)
             if checked is not state or state.source is not source or state.participant is not participant:
                 raise raw.bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
             if type(state.pins.get(selected.parent)) is not int or state.pins[selected.parent] != pin:
                 raise raw.bootstrap.RecoveryRequired("raw_parent_identity_changed")
-            if type(parent) is not int or parent not in state.descriptors:
-                raise raw.bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
-            opened, pinned = os.fstat(parent), os.fstat(pin)
-            if (opened.st_dev, opened.st_ino) != (pinned.st_dev, pinned.st_ino):
-                raise raw.bootstrap.RecoveryRequired("raw_parent_identity_changed")
+            if parent is not None:
+                if type(parent) is not int or parent not in state.descriptors:
+                    raise raw.bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
+                opened, pinned = os.fstat(parent), os.fstat(pin)
+                if (opened.st_dev, opened.st_ino) != (pinned.st_dev, pinned.st_ino):
+                    raise raw.bootstrap.RecoveryRequired("raw_parent_identity_changed")
             allocation_check(operation, state, source, participant)
             current()
             if type(state.pins.get(selected.parent)) is not int or state.pins[selected.parent] != pin:
                 raise raw.bootstrap.RecoveryRequired("raw_parent_identity_changed")
-            if type(parent) is not int or parent not in state.descriptors:
+            if parent is not None and (type(parent) is not int or parent not in state.descriptors):
                 raise raw.bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
 
         try:
@@ -887,6 +868,15 @@ def _bind_parent_walk(definition):
             yield directory_open, owned_close, finish
         finally:
             active = False
+
+    def preparation_current():
+        return namespace.get("_prepared_parent_walk") is _prepared_parent_walk and all(
+            function.__code__ is code and function.__defaults__ is defaults
+            and function.__kwdefaults__ is keywords and function.__globals__ is defining_globals
+            and function.__closure__ is cells
+            and all(cell.cell_contents is value for cell, value in values)
+            for function, code, defaults, keywords, defining_globals, cells, values in preparation
+        )
 
     def _open_verified_parent(
         selected: Path,
@@ -897,13 +887,7 @@ def _bind_parent_walk(definition):
     ) -> tuple[int, str]:
         # Invalid input and changed preparation retain the original error route.
         parts = selected.parts
-        if len(parts) < 2 or parts[0] != selected.anchor or any(
-            function.__code__ is not code or function.__defaults__ is not defaults
-            or function.__kwdefaults__ is not keywords or function.__globals__ is not defining_globals
-            or function.__closure__ is not cells
-            or any(cell.cell_contents is not value for cell, value in values)
-            for function, code, defaults, keywords, defining_globals, cells, values in preparation
-        ) or namespace.get("_prepared_parent_walk") is not _prepared_parent_walk:
+        if len(parts) < 2 or parts[0] != selected.anchor or not preparation_current():
             return _walk_verified_parent(selected, missing_leaf_allowed=missing_leaf_allowed, _close=_close, _open=_open)
         with _prepared_parent_walk(selected, _open, _close) as (open, close, finish):
             parent, leaf = _walk_verified_parent(
@@ -917,6 +901,14 @@ def _bind_parent_walk(definition):
                 (close or _native_close)(parent)
                 raise
 
+    def _prepare_secure_directory(selected, create, open, close):
+        if not _WINDOWS_PLATFORM or not preparation_current():
+            return _walk_secure_private_directory(selected, create, open, close, None)
+        # The existing selector keys its exact live pin by the leaf's parent.
+        # This synthetic leaf is never opened or admitted as a file.
+        with _prepared_parent_walk(selected / ".raw-pin", open, close) as (open, close, finish):
+            return _walk_secure_private_directory(selected, create, open, close, finish)
+
     current_code = source_current.__code__
     current_cells = source_current.__closure__
     current_values = tuple((cell, cell.cell_contents) for cell in current_cells or ())
@@ -926,11 +918,7 @@ def _bind_parent_walk(definition):
          tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()))
         for function in (_prepared_parent_walk, _prepared_parent_walk.__wrapped__)
     )
-    return _open_verified_parent, _prepared_parent_walk
-
-
-_open_verified_parent, _prepared_parent_walk = _bind_parent_walk(_PARENT_WALK_SOURCE)
-del _bind_parent_walk
+    return _open_verified_parent, _prepared_parent_walk, _prepare_secure_directory
 
 
 def _close_runtime_stream(operation, stream):
@@ -2348,11 +2336,6 @@ def secure_private_directory(
 ) -> PrivatePathResult:
     """Create or harden an application-owned directory."""
 
-    close = _close or _native_close
-    open_options = {} if _open is None else {"_open": _open}
-    observer_options = dict(open_options)
-    if _close is not None:
-        observer_options["_close"] = _close
     selected = lexical_path(path)
     if not application_owned:
         raise ValueError("Only application-owned directories may be changed")
@@ -2375,6 +2358,15 @@ def secure_private_directory(
             )
         )
 
+    return _prepare_secure_directory(selected, create, _open, _close)
+
+
+def _walk_secure_private_directory(selected, create, _open, _close, finish):
+    close = _close or _native_close
+    open_options = {} if _open is None else {"_open": _open}
+    observer_options = dict(open_options)
+    if _close is not None:
+        observer_options["_close"] = _close
     euid = os.geteuid()
     parts = selected.parts
     current_fd = (_open or _native_open)(
@@ -2435,6 +2427,8 @@ def secure_private_directory(
                             offender_mode=_offender_mode(current_stat),
                         )
                     ) from None
+                if finish is not None:
+                    finish()
                 try:
                     _native_mkdir(
                         component,
@@ -2513,6 +2507,8 @@ def secure_private_directory(
                 if created_component or is_final:
                     before = stat.S_IMODE(next_stat.st_mode)
                     if before != _PRIVATE_DIRECTORY_MODE:
+                        if finish is not None:
+                            finish(next_fd if is_final else None)
                         os.fchmod(next_fd, _PRIVATE_DIRECTORY_MODE)
                         if is_final:
                             hardened_final = True
@@ -2551,6 +2547,8 @@ def secure_private_directory(
                 else PrivatePathStatus.ALREADY_PRIVATE
             )
         )
+        if finish is not None:
+            finish(current_fd)
         return PrivatePathResult(selected, status)
     except PrivatePathError:
         raise
@@ -2558,6 +2556,38 @@ def secure_private_directory(
         raise _private_path_error_from_oserror(selected, exc) from None
     finally:
         close(current_fd)
+
+
+# Capture definitions once; optional module metadata cannot restamp this witness.
+_PARENT_WALK_SOURCE = tuple(
+    (
+        name, function, getattr(function, "__code__", None),
+        getattr(function, "__defaults__", None),
+        None if getattr(function, "__kwdefaults__", None) is None else tuple(function.__kwdefaults__.items()),
+        getattr(function, "__globals__", None),
+        None if getattr(function, "__closure__", None) is None else tuple(cell.cell_contents for cell in function.__closure__),
+    )
+    for name, function in (
+        ("_walk_verified_parent", _walk_verified_parent),
+        ("_walk_secure_private_directory", _walk_secure_private_directory),
+        ("secure_private_directory", secure_private_directory),
+        ("secure_private_directory.__wrapped__", secure_private_directory.__wrapped__),
+        ("_native_mkdir", _native_mkdir),
+        ("_private_directory_postcondition_holds", _private_directory_postcondition_holds),
+        ("_open_directory_component", _open_directory_component),
+        ("_follow_trusted_symlink", _follow_trusted_symlink),
+        ("_native_open", _native_open),
+        ("_native_close", _native_close),
+        ("_allocate_native_descriptor", _allocate_native_descriptor),
+        ("_runtime_operation", _runtime_operation),
+        ("_visual_native_scope", _visual_native_scope),
+        ("_voice_operation", _voice_operation),
+        ("_posix_guards_available", _posix_guards_available),
+        ("os.open", _ORIGINAL_NATIVE_OPEN),
+    )
+)
+_open_verified_parent, _prepared_parent_walk, _prepare_secure_directory = _bind_parent_walk(_PARENT_WALK_SOURCE)
+del _bind_parent_walk
 
 
 def verify_trusted_directory(

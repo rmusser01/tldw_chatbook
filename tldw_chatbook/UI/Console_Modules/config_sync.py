@@ -3,10 +3,11 @@
 Also decides how often the 0.2 s poll pays for it (TASK-33620.15.1).
 """
 
+import asyncio
 import sys
 import time
 from collections.abc import Awaitable, Callable
-from contextlib import ExitStack, nullcontext
+from contextlib import ExitStack, contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
@@ -297,6 +298,11 @@ async def prepare_console_presentation_sync(screen: Any) -> bool:
         _screen_readiness_config,
         _standard_readiness_projections,
     )
+    from ...Chat.console_control_settings import wait_settings_settled
+
+    store = getattr(screen, "_console_chat_store", None)
+    if store is not None:
+        await wait_settings_settled(store, store.active_session_id)
 
     if getattr(screen, "_console_sync_maintenance_paused", False) or getattr(
         screen, "_closing", False
@@ -362,7 +368,10 @@ async def rewarm_console_presentation(screen: Any) -> None:
     ):
         projection.run(lambda: None, life=projection.max_age)  # Expired only.
         if projection.pending:
-            await projection._settled.wait()
+            from ...Chat.console_parent_settings import await_readiness_settings
+
+            async with await_readiness_settings(projection):
+                await projection._settled.wait()
 
 
 def full_sync_replay_delay(screen: Any) -> bool | float:
@@ -435,32 +444,40 @@ def request_control_bar_sync(screen: Any, delayed: bool | float) -> None:
 
 def run_console_presentation_sync(screen, sync: Callable[[], None]) -> bool:
     """Select the existing screen's checked display, retaining live fallback."""
-    from .console_spend_projection import (
-        ConsoleReadinessConfigProjection,
-        _screen_readiness_config,
-    )
+    from ...Chat.console_parent_settings import parent_settings_render
 
-    def render(projection=None):
-        return run_console_config_sync(
-            sync,
-            maintenance_paused=getattr(
-                screen, "_console_sync_maintenance_paused", False
-            ),
-            defer=lambda: screen._request_console_control_bar_sync(delayed=True),
-            checked_projection=projection,
+    with parent_settings_render(screen):
+        from ...Chat.console_parent_settings import defer_parent_settings_render
+
+        if defer_parent_settings_render(screen):
+            return False
+        from .console_spend_projection import (
+            ConsoleReadinessConfigProjection,
+            _screen_readiness_config,
         )
 
-    sync_config_unreadable_notice(screen)
-    if getattr(screen, "_console_sync_maintenance_paused", False) or getattr(
-        screen, "_closing", False
-    ):
-        screen._request_console_control_bar_sync(delayed=True)
-        return False
-    value = _screen_readiness_config(screen)
-    if not value or not screen._console_config_snapshot_is_disk_loaded(value):
-        return render()
-    projection = ConsoleReadinessConfigProjection.for_screen(screen)
-    return projection.run(lambda: render(projection))
+        def render(projection=None):
+            return run_console_config_sync(
+                sync,
+                maintenance_paused=getattr(
+                    screen, "_console_sync_maintenance_paused", False
+                ),
+                defer=lambda: screen._request_console_control_bar_sync(delayed=True),
+                checked_projection=projection,
+            )
+
+        sync_config_unreadable_notice(screen)
+        if getattr(screen, "_console_sync_maintenance_paused", False) or getattr(
+            screen, "_closing", False
+        ):
+            screen._request_console_control_bar_sync(delayed=True)
+            return False
+        value = _screen_readiness_config(screen)
+        if not value or not screen._console_config_snapshot_is_disk_loaded(value):
+            return render()
+        projection = ConsoleReadinessConfigProjection.for_screen(screen)
+        return projection.run(lambda: render(projection))
+    return False
 
 
 def replay_whole_console_sync(screen) -> bool:
@@ -530,10 +547,21 @@ def sync_console_core_state(screen) -> None:
     unreadable file (owner decision 2026-11-09); then the status strip says so
     until the next good load. A parseable file never stops replaying.
     """
-    from tldw_chatbook import config
+    with _console_core_gate(screen) as due:
+        if due:
+            _push_console_core_state(screen)
 
+
+@contextmanager
+def _console_core_gate(screen):
+    """Keep the original notice, lock/defer-once and refusal episode order."""
+    from tldw_chatbook import config
+    from ...Chat.console_parent_settings import defer_parent_settings_render
     from .console_spend_projection import defer_cold_live_read
 
+    if defer_parent_settings_render(screen):
+        yield False
+        return
     sync_config_unreadable_notice(screen)
     with ExitStack() as held:
         for lock in (config._settings_rebuild_lock(), config._config_file_lock()):
@@ -542,25 +570,74 @@ def sync_console_core_state(screen) -> None:
             held.callback(lock.release)
         else:
             if not defer_cold_live_read(screen, "sync_console_core_state"):
-                screen._console_core_refused_since = None  # The episode ends.
-                request = getattr(screen, "_console_config_handoffs", {}).get("core")
-                try:
-                    screen._sync_console_chat_core_state()
-                finally:
-                    if request is not None:
-                        request.retire()
+                yield True
                 return
+    _refuse_console_core_state(screen)
+    yield False
+
+
+def _push_console_core_state(screen, *, selected=False):
+    from ...Chat.console_control_settings import ConsoleDefaultConvergenceRequired
+
+    if not selected:
+        screen._console_core_refused_since = None
+    request = getattr(screen, "_console_config_handoffs", {}).get("core")
+    deferred = False
+    try:
+        screen._sync_console_chat_core_state()
+        if selected:
+            screen._console_core_refused_since = None
+    except ConsoleDefaultConvergenceRequired:
+        if selected:
+            deferred = True
+            raise
+        replay_whole_console_sync(screen)
+    finally:
+        if request is not None and not deferred:
+            request.retire()
+
+
+def _refuse_console_core_state(screen):
     if not _refusal_owes_replay(screen):
-        # No replay owes it: a dropped replay retires the handoff and its
-        # Canvas poll token (ADR-121 staged handoff; r12p-rev4).
         request = getattr(screen, "_console_config_handoffs", {}).get("core")
         if request is not None:
             request.retire()
         return
     request = _owe_console_config_sync(screen, "core")
     if request is not None and request.token is not None:
-        request.retire(owed=True)  # One guarded attempt; whole replay still owns it.
+        request.retire(owed=True)
     replay_whole_console_sync(screen)
+
+
+async def sync_selected_console_core_state(screen, source):
+    """Retain the complete due core phase under its exact selected Task."""
+    from ...Chat.console_control_settings import ConsoleDefaultConvergenceRequired
+    from ...Chat.console_parent_settings import (
+        ParentSettingsDeferred,
+        ParentSettingsOriginChanged,
+        due_settings_phase,
+        settle_parent_action_defaults,
+    )
+    from .console_spend_projection import live_config_read_is_cold
+
+    try:
+        with _console_core_gate(screen) as due:
+            if not due:
+                return
+            # A warm original push remains under both original locks. Only
+            # the original due cold/default boundary needs an awaited read.
+            if live_config_read_is_cold(screen):
+                raise ConsoleDefaultConvergenceRequired("Console core live read is due")
+            _push_console_core_state(screen, selected=True)
+            return
+    except ConsoleDefaultConvergenceRequired:
+        pass  # Both config locks retire before the actual read waits.
+    try:
+        request = await settle_parent_action_defaults(source, retry_expired=False)
+        with due_settings_phase(request):
+            _push_console_core_state(screen, selected=True)
+    except (ParentSettingsDeferred, ParentSettingsOriginChanged):
+        _refuse_console_core_state(screen)
 
 
 def _refusal_owes_replay(screen) -> bool:
@@ -685,6 +762,223 @@ def _cadence(screen: Any) -> _Cadence:
         cadence = _Cadence()
         screen._console_config_cadence = cadence
     return cadence
+
+
+class _MainDbDisplayRead:
+    """One FULL's fixed display sections, captured before its physical wait.
+
+    This object cannot accept work once sealed. Late/cold follow-up reads use
+    their original finite owner; no queue, timer, or connection survives FULL.
+    """
+
+    def __init__(self, screen: Any, database: Any) -> None:
+        self.screen = screen
+        self.app = screen.app_instance
+        self.database = database
+        self.collecting = True
+        self.sections: dict[str, tuple] = {}
+
+    def capture(
+        self, section: str, database: Any, read: Callable, *,
+        reads: set, require_current: Callable[[], None] | None = None,
+    ) -> asyncio.Future | None:
+        if (not self.collecting or database is not self.database
+            or section not in {"character", "context", "appearance"}
+            or section in self.sections):
+            return None
+        future = asyncio.get_running_loop().create_future()
+        self.sections[section] = read, require_current, reads, future
+        return future
+
+    async def run(self, work: list[Awaitable]) -> None:
+        from ...Backup_Recovery.participants import core_operation
+        from ...Chat.console_preparation_reads import run_preparation_read
+        from ...Chat.console_runtime import ConsoleRuntime
+        from ...DB.base_db import operation_owned_connection
+        from .console_spend_projection import _readiness_runtime
+
+        runtime = _readiness_runtime(self.screen)
+        tasks = [asyncio.create_task(item) for item in work]
+
+        def current() -> None:
+            if (getattr(self.screen, "_console_chat_tearing_down", False)
+                or getattr(self.screen, "_closing", False)
+                or self.screen.app_instance is not self.app
+                or getattr(self.app, "chachanotes_db", None) is not self.database
+                or _readiness_runtime(self.screen) is not runtime
+                or getattr(runtime, "_disposed", False)):
+                raise RuntimeError("Console shared display owner changed.")
+
+        try:
+            # Let each existing producer capture its own inputs up to its first
+            # wait. A busy producer's lock/config wait never delays this batch.
+            await asyncio.sleep(0)
+            self.collecting = False
+            sections = tuple(self.sections.values())
+            if sections:
+                def read_sections():
+                    results = []
+                    with operation_owned_connection(self.database), core_operation(self.database):
+                        for read, validate, _reads, _future in sections:
+                            try:
+                                if validate is not None:
+                                    validate()
+                                value = read()
+                                if validate is not None:
+                                    validate()
+                            except Exception as error:  # Each original publisher owns its failure.
+                                results.append((False, error))
+                            else:
+                                results.append((True, value))
+                    return results
+
+                observers = []
+                for _read, _validate, reads, _future in sections:
+                    if not any(reads is observer for observer in observers):
+                        observers.append(reads)
+                if type(runtime) is ConsoleRuntime:
+                    observers.append(runtime._preparation_reads)
+                try:
+                    results = await run_preparation_read(
+                        read_sections, creator=_cadence(self.screen), session_id=None,
+                        reads=observers[0], observers=tuple(observers[1:]),
+                        require_current=current,
+                        submission_slot=(
+                            runtime._display_submission_slot
+                            if type(runtime) is ConsoleRuntime else None
+                        ),
+                    )
+                except Exception as error:
+                    # Admission/retirement refusal renews no section. Each
+                    # original producer still owns its normal failure policy.
+                    results = [(False, error) for _section in sections]
+                # Nothing reaches a section's original publisher until the
+                # shared physical connection AND operation have retired.
+                for (_read, _validate, _reads, future), (ok, value) in zip(sections, results, strict=True):
+                    if not future.done():
+                        if ok:
+                            future.set_result(value)
+                        else:
+                            future.set_exception(value)
+            outcomes = await asyncio.gather(*tasks, return_exceptions=True)
+            for outcome in outcomes:
+                if isinstance(outcome, BaseException):
+                    raise outcome
+        finally:
+            self.collecting = False
+            for _read, _validate, _reads, future in self.sections.values():
+                if not future.done():
+                    future.cancel()
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            # Repeated cancellation cannot leave a producer's native fallback
+            # behind the completed FULL (the shared read already drained).
+            settled = asyncio.gather(*tasks, return_exceptions=True)
+            cancelled = None
+            while not settled.done():
+                try:
+                    await asyncio.shield(settled)
+                except asyncio.CancelledError as error:
+                    cancelled = error
+            if cancelled is not None:
+                raise cancelled
+
+
+def _stock_main_context_read(controller: Any) -> bool:
+    """A customized context refresh keeps its original scheduled route."""
+    from inspect import getattr_static
+    from ...Chat.console_chat_controller import (
+        ConsoleChatController, _CONSOLE_CONTEXT_PRESENTATION_READERS,
+        _CONTEXT_DISPLAY_CALLBACKS,
+    )
+    from ...Chat.console_received_dispatch import stock_native_methods
+    from ...Chat import console_context_repository as context_source
+    from ...Chat.chat_persistence_service import ChatPersistenceService
+    from ...DB.ChaChaNotes_DB import CharactersRAGDB
+    from .console_spend_projection import _TRANSCRIPT_CONTEXT_READER
+
+    if type(controller) is not ConsoleChatController or not stock_native_methods(
+        controller, _CONSOLE_CONTEXT_PRESENTATION_READERS
+    ):
+        return False
+    repository = controller._context_repository
+    persistence = getattr(controller.store, "persistence", None)
+    if ((repository is not None and type(repository) is not context_source.ConsoleContextRepository)
+        or (persistence is not None and type(persistence) is not ChatPersistenceService)):
+        return False
+    if any(
+        database is not None
+        and (type(database) is not CharactersRAGDB or database.is_memory_db)
+        for database in (getattr(repository, "db", None), getattr(persistence, "db", None))
+    ):
+        return False
+    function, code, defaults, kwdefaults = _TRANSCRIPT_CONTEXT_READER
+    if (getattr_static(controller, "context_control_presentation_inputs", None) is not function
+        or function.__code__ is not code or function.__defaults__ is not defaults
+        or function.__kwdefaults__ is not kwdefaults):
+        return False
+    original, code, defaults, kwdefaults = context_source._CONTEXT_PRESENTATION_READ_SOURCE
+    if (context_source.read_context_presentation_inputs is not original
+        or original.__code__ is not code or original.__defaults__ is not defaults
+        or original.__kwdefaults__ is not kwdefaults):
+        return False
+    for name, function, code, defaults, kwdefaults, static in _CONTEXT_DISPLAY_CALLBACKS:
+        descriptor = getattr_static(controller, name, None)
+        if static and type(descriptor) is staticmethod:
+            descriptor = descriptor.__func__
+        if (descriptor is not function or function.__code__ is not code
+            or function.__defaults__ is not defaults
+            or function.__kwdefaults__ is not kwdefaults):
+            return False
+    return True
+
+
+async def prepare_main_db_display(screen: Any) -> None:
+    """Reconcile stock main-DB display sections within the existing FULL owner."""
+    from ...DB.ChaChaNotes_DB import CharactersRAGDB
+    from ...Chat.console_received_dispatch import stock_native_methods
+    from .character_context import character_presentation_work, _stock_character_presentation
+    from .console_spend_projection import ConsoleContextReadSnapshot, _CONTEXT_SNAPSHOT_WARM_READERS
+    from .workspace import ConsoleWorkspaceController, _APPEARANCE_DISPLAY_PUBLISHERS
+    from ...Chat.console_control_settings import wait_settings_settled
+
+    store = getattr(screen, "_console_chat_store", None)
+    if store is not None:
+        await wait_settings_settled(store, store.active_session_id)
+
+    owner = getattr(screen, "_console_domain_display_owner", None)
+    if owner is not None:
+        owner.require_current()
+        controller = getattr(screen, "_console_chat_controller", None)
+        session_id = getattr(store, "active_session_id", None)
+        if session_id is not None and _stock_main_context_read(controller):
+            ConsoleContextReadSnapshot.for_screen(screen, max_age=1.0)
+        await owner.read()
+        return
+
+    database = getattr(screen.app_instance, "chachanotes_db", None)
+    if (type(database) is not CharactersRAGDB or database.is_memory_db
+        or not _stock_character_presentation(screen._character_context)):
+        await character_presentation_work(screen._character_context, screen)
+        return
+    batch = _MainDbDisplayRead(screen, database)
+    work = [character_presentation_work(screen._character_context, screen, _display_read=batch)]
+    controller = getattr(screen, "_console_chat_controller", None)
+    store = getattr(screen, "_console_chat_store", None)
+    session_id = getattr(store, "active_session_id", None)
+    if session_id is not None and _stock_main_context_read(controller):
+        snapshot = ConsoleContextReadSnapshot.for_screen(screen, max_age=1.0)
+        if (type(snapshot) is ConsoleContextReadSnapshot
+            and stock_native_methods(snapshot, _CONTEXT_SNAPSHOT_WARM_READERS)):
+            work.append(snapshot.warm(controller, session_id, _display_read=batch))
+    workspace = getattr(screen, "_workspace", None)
+    if (type(workspace) is ConsoleWorkspaceController
+        and stock_native_methods(workspace, _APPEARANCE_DISPLAY_PUBLISHERS)):
+        appearances = workspace.appearance_presentation_work(batch)
+        if appearances is not None:
+            work.append(appearances)
+    await batch.run(work)
 
 
 async def run_periodic_console_sync(
@@ -1184,4 +1478,21 @@ def settle_stopped_poll(screen: Any, torn_down: Callable[[Any], bool]) -> None:
     workspace = getattr(screen, "_workspace", None)
     scope = getattr(workspace, "tick_workspace_build_scope", nullcontext)
     with scope():  # One workspace-context build, as on a tick.
-        project_console_tick(screen, force=True)  # Defers as a tick does.
+        if project_console_tick(screen, force=True) and not torn_down(screen):
+            # A Workspace snapshot can land after the last tick's tray paint.
+            sync_workspace = getattr(screen, "_sync_console_workspace_context", None)
+            if callable(sync_workspace):
+                sync_workspace()
+
+
+_selected_core_phase_definitions = tuple(
+    (name, globals()[name], globals()[name].__code__)
+    for name in (
+        "sync_selected_console_core_state",
+        "_console_core_gate",
+        "_push_console_core_state",
+        "_refuse_console_core_state",
+        "_refusal_owes_replay",
+        "sync_config_unreadable_notice",
+    )
+)

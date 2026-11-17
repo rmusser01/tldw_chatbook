@@ -21,15 +21,17 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import sqlite3
 import sys
 import threading
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from types import SimpleNamespace
 
 import pytest
 
 from Tests.UI.test_console_workspace_controller import (
     _AsyncWorkerScreen,
+    _appearance_row,
     _workspace_controller,
 )
 from tldw_chatbook.DB import base_db
@@ -108,6 +110,267 @@ async def _settle(screen) -> None:
         if not pending:
             return
         await asyncio.gather(*pending)
+
+
+@contextmanager
+def _appearance_selects():
+    """Count the actual appearance SELECT and capture its bound IDs."""
+    selects = []
+    code = base_db._QuiescentSQLiteCursor.execute.__code__
+    previous, previous_main = threading.getprofile(), sys.getprofile()
+
+    def observe(frame, event, _argument):
+        if (
+            event == "call"
+            and frame.f_code is code
+            and frame.f_locals["sql"].startswith(
+                "SELECT id, metadata FROM conversations "
+            )
+        ):
+            selects.append(frozenset(frame.f_locals["parameters"]))
+
+    threading.setprofile_all_threads(observe)
+    try:
+        yield selects
+    finally:
+        threading.setprofile_all_threads(previous)
+        sys.setprofile(previous_main)
+
+
+@pytest.fixture
+def appearance_consumers(tmp_path, monkeypatch, registry):
+    from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+    from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.UI.Console_Modules import workspace as module
+
+    database = CharactersRAGDB(tmp_path / "appearance.sqlite", "display-reads")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(database))
+        store.create_session(session_id="native")
+        store.append_message(
+            "native", role=ConsoleMessageRole.USER, content="seed", persist=True
+        )
+        native_id = store.sessions()[0].persisted_conversation_id
+        assert native_id
+        app = SimpleNamespace(
+            local_chat_conversation_service=ChatConversationService(database),
+            workspace_registry_service=registry,
+            notify=lambda _message: None,
+        )
+        screen = _RunScreen()
+        controller = _workspace_controller(
+            screen=screen, app_instance=app, current_chat_store_accessor=lambda: store
+        )
+        clock = [100.0]
+        monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+        yield database, native_id, controller, screen, app, clock
+    finally:
+        database.close()
+
+
+@pytest.mark.parametrize("with_deleted", [False, True])
+def test_alternating_switcher_and_browser_read_each_appearance_set_once(
+    appearance_consumers, with_deleted
+):
+    from tldw_chatbook.Chat.console_appearance import ConsoleConversationAppearance
+
+    database, native_id, controller, _screen, app, _clock = appearance_consumers
+    browser_id = database.add_conversation({"title": "Browser"})
+    for conversation_id, icon, color in (
+        (native_id, "🧪", "#f87171"),
+        (browser_id, "⭐", "#aabbcc"),
+    ):
+        assert app.local_chat_conversation_service.set_conversation_appearance(
+            conversation_id=conversation_id,
+            appearance=ConsoleConversationAppearance(icon=icon, color=color),
+        )
+    rows = [_appearance_row(browser_id)]
+    if with_deleted:
+        deleted_id = database.add_conversation({"title": "Deleted"})
+        assert database.soft_delete_conversation(
+            deleted_id, database.get_conversation_by_id(deleted_id)["version"]
+        )
+        rows.append(_appearance_row(deleted_id))
+    with _appearance_selects() as selects:
+        for _ in range(3):
+            (active,) = controller.console_session_switcher_active_entries()
+            assert active.conversation_id == native_id
+            browser, *absent = controller._merge_console_browser_rows(rows)
+            assert (browser.conversation_id, browser.icon, browser.color) == (
+                browser_id,
+                "⭐",
+                "#aabbcc",
+            )
+            if with_deleted:
+                (deleted,) = absent
+                assert deleted.conversation_id == deleted_id
+                assert (deleted.icon, deleted.color) == ("", "")
+    assert controller._console_appearance_map_cache[native_id] == ("🧪", "#f87171")
+    assert selects == [{native_id}, {row.conversation_id for row in rows}]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("background", [False, True])
+async def test_appearance_expansion_keeps_original_expiry(
+    appearance_consumers, background
+):
+    from tldw_chatbook.Chat.console_appearance import ConsoleConversationAppearance
+    from tldw_chatbook.UI.Console_Modules.workspace import (
+        CONSOLE_APPEARANCE_MAP_CACHE_TTL_SECONDS as ttl,
+    )
+
+    database, native_id, controller, screen, app, clock = appearance_consumers
+    browser_id = database.add_conversation({"title": "Browser"})
+    service = app.local_chat_conversation_service
+    assert service.set_conversation_appearance(
+        conversation_id=native_id,
+        appearance=ConsoleConversationAppearance(icon="🧪", color="#f87171"),
+    )
+    with _appearance_selects() as selects:
+        controller.console_session_switcher_active_entries()
+        assert controller._console_appearance_map_cache[native_id] == ("🧪", "#f87171")
+        clock[0] += ttl / 2
+        with _stale_reads(controller) if background else nullcontext():
+            controller._merge_console_browser_rows([_appearance_row(browser_id)])
+        await _settle(screen)
+
+        # Delete A after both observations. While A's original epoch is fresh
+        # it still decorates the open shell. At expiry A loses its decoration,
+        # even though B was read halfway into that epoch.
+        assert database.soft_delete_conversation(
+            native_id, database.get_conversation_by_id(native_id)["version"]
+        )
+        controller.console_session_switcher_active_entries()
+        assert controller._console_appearance_map_cache[native_id] == ("🧪", "#f87171")
+        clock[0] += ttl / 2
+        with _stale_reads(controller) if background else nullcontext():
+            controller.console_session_switcher_active_entries()
+        await _settle(screen)
+        controller.console_session_switcher_active_entries()
+        assert native_id not in controller._console_appearance_map_cache
+        # B was not refreshed along with A; it cannot borrow A's new age.
+        with _stale_reads(controller) if background else nullcontext():
+            controller._merge_console_browser_rows([_appearance_row(browser_id)])
+        await _settle(screen)
+    assert selects == [{native_id}, {browser_id}, {native_id}, {browser_id}]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("background", [False, True])
+async def test_appearance_expansion_that_finishes_after_expiry_rebases_coverage(
+    appearance_consumers, monkeypatch, background
+):
+    from tldw_chatbook.UI.Console_Modules.workspace import (
+        CONSOLE_APPEARANCE_MAP_CACHE_TTL_SECONDS as ttl,
+    )
+
+    database, native_id, controller, screen, _app, clock = appearance_consumers
+    browser_id = database.add_conversation({"title": "Browser"})
+    controller.console_session_switcher_active_entries()
+    clock[0] += ttl / 2
+    read_started_at = clock[0]
+    execute = database.execute_query
+
+    def slow_appearance_query(sql, parameters=()):
+        if sql.startswith("SELECT id, metadata FROM conversations "):
+            clock[0] += ttl / 2
+        return execute(sql, parameters)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(database, "execute_query", slow_appearance_query)
+        with _stale_reads(controller) if background else nullcontext():
+            controller._merge_console_browser_rows([_appearance_row(browser_id)])
+        await _settle(screen)
+    assert controller._console_appearance_map_cached_at == (
+        clock[0] if background else read_started_at
+    )
+    with _appearance_selects() as selects:
+        controller.console_session_switcher_active_entries()
+    assert selects == [{native_id}]
+
+
+@pytest.mark.asyncio
+async def test_appearance_coverage_restarts_on_source_and_local_write(
+    tmp_path, appearance_consumers
+):
+    from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+    from tldw_chatbook.Chat.console_appearance import ConsoleConversationAppearance
+
+    database, native_id, controller, _screen, app, _clock = appearance_consumers
+    row = _appearance_row(database.add_conversation({"title": "Browser"}))
+    service = app.local_chat_conversation_service
+    assert service.set_conversation_appearance(
+        conversation_id=native_id,
+        appearance=ConsoleConversationAppearance(icon="🧪", color="#f87171"),
+    )
+    controller.console_session_switcher_active_entries()
+    controller._merge_console_browser_rows([row])
+    await controller._write_console_conversation_appearance_off_loop(
+        service.set_conversation_appearance,
+        native_id,
+        ConsoleConversationAppearance(icon="⭐", color="#aabbcc"),
+        "Native",
+    )
+    with _appearance_selects() as selects:
+        controller.console_session_switcher_active_entries()
+        assert controller._console_appearance_map_cache[native_id] == ("⭐", "#aabbcc")
+        controller._merge_console_browser_rows([row])
+    assert selects == [{native_id}, {row.conversation_id}]
+
+    replacement = CharactersRAGDB(tmp_path / "replacement.sqlite", "display-reads")
+    try:
+        app.local_chat_conversation_service = ChatConversationService(replacement)
+        with _appearance_selects() as selects:
+            controller.console_session_switcher_active_entries()
+            assert native_id not in controller._console_appearance_map_cache
+            controller._merge_console_browser_rows([row])
+        assert selects == [{native_id}, {row.conversation_id}]
+    finally:
+        replacement.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("background", [False, True])
+async def test_failed_appearance_sql_does_not_cover_requested_ids(
+    appearance_consumers, monkeypatch, background
+):
+    from tldw_chatbook.Chat.console_appearance import ConsoleConversationAppearance
+
+    database, native_id, controller, screen, app, _clock = appearance_consumers
+    browser_id = database.add_conversation({"title": "Browser"})
+    assert app.local_chat_conversation_service.set_conversation_appearance(
+        conversation_id=browser_id,
+        appearance=ConsoleConversationAppearance(icon="⭐", color="#aabbcc"),
+    )
+    row = _appearance_row(browser_id)
+    assert (
+        controller.console_session_switcher_active_entries()[0].conversation_id
+        == native_id
+    )
+    execute = database.execute_query
+    failures = []
+
+    def fail_appearance_query(sql, parameters=()):
+        if sql.startswith("SELECT id, metadata FROM conversations "):
+            failures.append(tuple(parameters))
+            raise sqlite3.OperationalError("injected appearance SELECT failure")
+        return execute(sql, parameters)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(database, "execute_query", fail_appearance_query)
+        with _stale_reads(controller) if background else nullcontext():
+            assert controller._merge_console_browser_rows([row])[0].icon == ""
+        await _settle(screen)
+    assert failures == [(browser_id,)]
+    with _appearance_selects() as selects:
+        with _stale_reads(controller) if background else nullcontext():
+            controller._merge_console_browser_rows([row])
+        await _settle(screen)
+        assert selects == [{browser_id}]
+        assert controller._merge_console_browser_rows([row])[0].icon == "⭐"
+    assert selects == [{browser_id}]
 
 
 @pytest.fixture

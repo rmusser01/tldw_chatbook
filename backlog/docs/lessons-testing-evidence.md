@@ -1,10 +1,28 @@
 # Lessons: what counts as evidence a change works
 
+## A private test child needs the original pytest context, not just a canonical node (TASK-40608, 2026-11-15)
+
+**Incident.** The complete key-preparation diagnostic lived under `.superpowers/sdd/`, outside `Tests/`. Its canonical node address and inert launcher checks passed, but the first actual-user Windows run failed during collection before recording any samples: pytest did not discover `Tests/conftest.py`. Explicitly loading `Tests.conftest` through `PYTEST_PLUGINS`, preserved in both the parent and private child's sanitized environment, allowed the original fixture and guards to run. The later complete-call measurements rejected the optimization; fixing collection was not evidence of a speedup.
+
+**What to do.** Check node addressing, plugin discovery and child source selection independently. For a diagnostic outside the original test tree, explicitly retain its required conftest plugin through each process boundary. Do not weaken native bootstrap guards to compensate for missing test context. Preserve the failed collection and count it as zero measured samples.
+
+## Admission counts alone overstate a Windows storage speedup (TASK-40608, 2026-11-13)
+
+**Native follow-up.** A larger C metadata prototype preserved the Windows checks but regressed complete-command CPU and elapsed time. It initially repeated descriptor decoding that the original Python route already memoized. A command-owned memo restored that reuse (330 hits across343 fresh security observations), passed direct and integration controls, and still lost: idle stock reads took0.189–0.199s versus0.799–0.800s for the cached prototype. Added Python selection/currentness work and remaining interpreter handoffs must be included in the comparison. Correct native work counts and a faster inner loop do not establish a faster complete operation; preserve the original caching behavior and time setup, guards and retirement too.
+
+**Follow-up incident.** A two-thread probe reduced two admissions from 18.0 s to 0.28 s by shortening the interpreter interval. In the actual app, the same change worsened unchanged README/edit journeys from 109.2/174.0 s to 268.0/347.5 s. It was reverted. The first display follow-up also mistakenly applied physical folder availability's one-second interval to registry metadata that previously used local generation invalidation. Stack samples found those new expiries reopening storage on the UI thread from availability completion. Compare the actual prior contract before adding a refresh, and qualify scheduling changes against the full concurrent workload. Independent TTL memos are not a shared physical DB batch.
+
+**Incident.** Initial Windows evidence reuse eliminated 29,476 full scope derivations in matched Console journeys, but the approved-edit median improved only 7.53%. The follow-up measured entire native permission reads: retaining canonical preparation and grouping members reduced admissions from 12 to 2, while native opens fell only from 3,594 to 2,664. Fresh source and path checks outside admission remained substantial. A separate Console check aged its one-second observation from the start of a native read; slow reads expired themselves before publication and immediately triggered another check. Completion-based age with the existing owner/revision fences removed that repetition. The combined candidate subsequently passed all six workflow runs and exceeded 30% median improvement on both journeys.
+
+**What to do.** Count work through the complete logical operation, including preparation, nested guards and retirement. Retain native-open counts alongside wrapper counts, then measure the unchanged end-to-end journey. A display reconciliation interval should age a successfully completed observation, with immediate local invalidation and bounded external reconciliation preserved. Do not infer the latency contribution of one optimization by subtracting percentages from separate benchmark series.
+
 ## A process-wide `os.close` spy also counts another thread's closes, so a profile change moved a "pin count" (TASK-39114, 2026-11-10)
 
 **Incident.** `test_migration_immutable_failure_retains_complete_destination[True]` monkeypatched `os.close` and expected 6 closes after a failed view close, "Admission also owns two directory pins for a file-backed view." It failed `assert 4 == 6` on dev. A first-parent bisect over 905 commits (a `git archive` tree per step, one 4 s node) named 5a915a43e5, a test-only commit that moved `Tests/DB` to the bootstrap profile. Stacks recorded in the spy showed the two missing closes came from the `chatbook-storage-admission` hold thread (`admission._lock` and `native_files.pinned_directory`), which a per-test profile's admission happened to run in that window. The cleanup under test closed the same 4 descriptors under both profiles.
 
-**What to do.** When a test spies on a process-wide function (`os.close`, `os.open`, `sqlite3.connect`), filter the calls to the thread that runs the code under test (`threading.get_ident()`), and run it under both profiles before trusting a count. When a count changes with no product change, record the spy's stacks first; a bisect that lands on a test-infrastructure commit means the extra calls were never the product's.
+**Follow-up incident (TASK-40608, 2026-11-15).** The real Console fixture starts an independent preparation read with `session_id=None`. New domain/commit-boundary tests asserted globally empty read observers or a database connection count of baseline plus one; they failed on that startup work, before reaching their intended cancellation checks. The corrected tests captured the operation's exact nonempty read/future/connection identities, verified the original outcome and physical retirement/removal, and drained startup through its separate owner. A successful callback's return flag also differs from one that deliberately raises a source-refusal exception. An empty process census alone did not prove any of those native resources closed.
+
+**What to do.** When a test spies on a process-wide function (`os.close`, `os.open`, `sqlite3.connect`), filter the calls to the thread that runs the code under test (`threading.get_ident()`), and run it under both profiles before trusting a count. For retained work, positively capture the exact operation and native owners before checking their retirement; unrelated startup or borrowed resources may legitimately remain. When a count changes with no product change, record the spy's stacks first; a bisect that lands on a test-infrastructure commit means the extra calls were never the product's.
 
 ## A watchdog timer started with a config hold measures the test's speed, not a blocked UI thread (TASK-39166, 2026-11-10)
 
@@ -25243,6 +25261,91 @@ limit rather than treating focused passing cases as whole-module qualification.
 
 During TASK-39147's PR #3480 integration, the first immutable-source test runner left subprocesses on the preserved checkout. A restored child later opened a candidate schema86 database with the checkout's schema81 code. Virtual modules parented directly to the session also missed directory-scoped fixtures; a virtual root lookup misclassified the real hook working directory. Those results did not qualify the candidate. Keep directory collectors in the pytest parent chain, provide the same immutable source to every relevant child, and make filesystem-only checks run in real CI. Keep mixed-source, bootstrap and bare-interpreter claims separate.
 
+## Exercise live prerequisites and isolated child imports (TASK-40608, 2026-11-13)
+
+The first shared-display fixture had no config projection. It proved the native
+read batch but missed the live context producer waiting for config before joining
+that batch; FULL then awaited a separate read. The original journey regressed to
+157.9/263.9 seconds despite the focused controls passing. Real config-projection
+cases exposed the dependency and now verify opportunistic capture without a
+config wait or an independent read under the shared FULL owner.
+
+Later disposable native diagnostics put frozen source on the app's import path
+but launched isolated `python -I` tool workers with the worktree interpreter.
+Its `.pth` selected different source in those children. Those three timings were
+discarded as candidate comparisons. Give every frozen tree its own interpreter
+environment and verify package origin with `-I` before running it; a parent
+`sys.path` assertion alone does not prove subprocess isolation. The original
+paired-journey runner already used this per-tree environment and was unaffected.
+
+A later focused run also mixed source inside one process: another implementer
+changed a lazily imported permission module after its caller had loaded. Setup
+failed on a helper missing from the older loaded module. Freeze the source for
+the entire test process, either with an immutable copy or an explicit edit hold
+and checked source hashes; isolated child imports alone do not prevent this.
+
+The later TASK-40608 Gate9 timing started with no competing pytest process but
+still ran on a saturated host: a mid-run audit found 100% CPU and a processor
+queue of 31. Another UI test started only after the README completed. The
+candidate had fewer measured native calls but a much slower journey; those facts
+did not isolate a code regression. Record host CPU/queue as well as concurrent
+test identities before and during long timing runs. Stop a clearly failed,
+contended screening attempt when further whole-journey timing cannot answer the
+question; retain it as interrupted evidence, never a passed pair.
+
+The saved `main-cpu.prof` also showed impossible CSS/native caller edges. On this
+installed CPython3.12.10, a standard-library-only reproduction enabled cProfile
+on the main thread and still recorded a function called exclusively by a new
+worker. The [matching CPython implementation](https://github.com/python/cpython/blob/v3.12.10/Modules/_lsprof.c)
+uses interpreter-wide monitoring with one profiler context stack. Do not treat
+that file's per-function durations or caller edges as main-thread attribution.
+Its separately captured main `thread_time` delta and original journey timings
+are separate observations. Use explicit thread/frame identities and separate
+wall/thread-CPU clocks for concurrent stage attribution; verify the profiler's
+thread scope with a small reproduction first.
+
+The expanded stage tracer then failed before app construction because its smoke
+test manually initialized a flag that the real harness only sets after startup.
+Exercise observer callbacks before their first lifecycle hook as well as in the
+active-turn state. That failed diagnostic supplied no journey measurement.
+
+TASK-40608's Gate12 follow-up also found that `Pilot.pause(0.05)` is active work:
+it posts a callback to every mounted widget and forces a screen update. A bounded
+Windows thread-clock sample measured 17.55 seconds of UI-thread CPU and 13.89
+seconds across executor workers in thirty seconds after Send. A separate copy
+changed only the two condition-poll waits to `asyncio.sleep(0.05)`, retaining
+action barriers and every README assertion. UI-thread CPU fell to 11.98 seconds;
+the sampled Pilot frames disappeared. Raw README completion was 228.11 versus
+77.14 seconds, but the runs reached different phases and had different host
+loads, so that single comparison does not isolate the driver's latency cost.
+The original benchmark remained unchanged and both timings still failed the
+five-second goal. Account for work introduced by the measurement driver before
+attributing all contention to application rendering. Subtracting human wait
+durations does not remove that CPU interference. The diagnostic used native
+per-thread clocks independently of stack samples; process/thread CPU totals
+reconciled within 0.125 seconds and every sampler handle closed.
+
+The later Task22 regression run passed 72 cases but failed 38 workspace source
+controls and 8 cancellation controls. A two-case run on the exact pre-Task22
+product bytes reproduced both failure mechanisms. The source controls counted
+`HelperLease.start`, although Windows opens SQLite directly; zero helpers did
+not prove the native read was skipped. Observe the original admitted connection
+return for the exact database, retain platform-specific helper assertions, and
+verify connection retirement. The cancellation probe compared a worker frame
+with the re-exporting module's globals after the helper had moved modules. Pin
+the original function's defining globals as well as its code and owner. A probe
+that never reaches its intended callback cannot establish cancellation safety
+or a regression in the implementation being tested.
+
+The Gate13 scheduling control initially launched the previously successful
+runner through `powershell.exe` instead of the verified `pwsh` runtime. Windows
+PowerShell treated the redirected pytest deprecation warning as a terminating
+`NativeCommandError` under `ErrorActionPreference=Stop`, before either journey
+started. The wrapper restored all 84 candidate inputs and the process audit was
+empty. Keep the verified shell executable when nesting a Windows test runner;
+a matching script and Python interpreter alone do not reproduce its launch
+semantics. Retain this as a launcher failure, not a performance sample.
+
 ## A real replace-restore test needs a narrow group, its own config folder and no stray reads (TASK-40132, 2026-11-10)
 
 The plugin backup round-trip test first reused the persona replace harness on a
@@ -25268,6 +25371,21 @@ minutes:
   inputs from the preview inventory, and give a keyring stand-in a plain-file
   backend (`KeyringPluginMarkerStore` with a test backend) rather than an admitted
   private-file path.
+
+## Retire exception frames in bounded monitoring traces (TASK-40608, 2026-11-14)
+
+The Gate15 critical-path diagnostic tracked `PY_START` and `PY_RETURN`, but
+expected missing-file exceptions never produced a return event. It retained
+2,058 native-open frames, exhausted its 2,048-frame cap, evicted live foreground
+roots, and then crashed a tool thread when its observer assumed a root existed.
+This was an instrumentation failure, not a product regression. The corrected
+probe handles `PY_UNWIND` (global-only in Python 3.12, filtered to tracked code),
+counts failed observations separately, and declines unrooted handoff attribution.
+A pure regression with 2,050 exceptions reproduced the leak before the fix;
+the next real diagnostic completed README assertions with zero displaced or
+outstanding frames. Verify observer retirement and attribution health before
+using a trace, and never turn exception observations into successful native-call
+counts or add overlapping parent/child durations.
 - **Opening stores in the backup/restore child does the same.** In review round
   r13g-rev1, `_populate_required_dependencies` (and importing a test module whose
   imports load config before the config file existed) in the same child as
@@ -25275,3 +25393,53 @@ minutes:
   default `~/.local/share/tldw_cli/default_user` that previewed as `unknown`.
   Build stores in a separate setup child, or copy store files plainly with
   `shutil.copytree`, and write the config (and its data folder) before any import.
+
+## Serialize Windows paths in TOML fixtures (TASK-40608, 2026-11-14)
+
+The existing ordinary idle MCP retirement test failed at
+`config_directory_selection_unavailable` before reaching its MCP assertions.
+Its full child log showed the earlier cause: the fixture concatenated
+`str(base / 'data')` into a TOML double-quoted string, so `C:\Users\...` was
+parsed as an invalid Unicode escape. Evaluating the exact fixture expression
+with `PureWindowsPath` reproduced the same line4,column15 parse error; its
+POSIX form parsed. All five relevant fixture/configuration files matched HEAD.
+Read the full child log before attributing a tail-only guard failure to a new
+storage change. Serialize configuration strings properly; a setup failure is
+neither a failed behavior assertion nor evidence that the behavior passed.
+
+## Compare native ABI, not generated pointer provenance (TASK-40608, 2026-11-14)
+
+The resident admission observer's `t37nativec` control captured matching parent
+and child executable, SID, runtime and native layouts, but ten export signatures
+differed because generated ctypes pointer classes belonged to `ctypes.wintypes`
+in the mounted parent and `windows_files` in the fresh child. Their module is
+determined by import order. Compare pointer width/alignment and recursively
+qualified target layout, including array lengths and structure field offsets;
+retain exact in-process function/signature bindings separately. Two causal
+controls caught both false rejection of equivalent pointers and false equality
+of different same-sized structures. The corrected real-pipe `t37natived` passed.
+
+## Freeze only inputs the fixed command consumes (TASK-40608, 2026-11-14)
+
+In `t37configb`, an actor-pack file read completed all original native checks
+while another thread published a settings cache. A new recursive snapshot of
+the entire cache classified that unrelated update as changed source and
+permanently closed the observer. Exact captured operands showed only the cache
+changed; implementation, ambient state and source identities remained current.
+The fixed command reads selected files and registry, not global config/cache
+values. ADR126/230 and the spec were narrowed before removing that added
+comparison; original source/path/native/provenance checks remain. `t37configc`
+then passed real settings publication and subsequent admission using the same
+process, with positive shutdown. Dependency analysis must distinguish mutable
+application data from implementation identity; extra snapshots can add both
+linear work and incorrect refusals without preserving an additional check.
+
+## Forwarded pytest IDs must resolve in the child (TASK-40608, 2026-11-14)
+
+Task50 caught a mounted timing driver outside pytest's run-local `-c` root: actual inert collection emitted `::test_handoff[idle]`, although AST inspection found the expected function and parameters. `Tests/private_profile.py` forwards `request.node.nodeid` verbatim to a fresh pytest child whose cwd is the worktree, so the bare ID could not address that driver. No timing was launched on the broken package. Moving the generated driver into the worktree and setting the parent's explicit worktree root produced matching worktree-relative IDs; two fresh collection-only children each resolved its exact parameter. The subsequent six mounted arms all reached both real test bodies and passed. For a new private-profile launcher, verify actual parent/child collection addresses with an inert probe before an expensive app run. This verifies addressing only; preserve the explicit fixture/plugin setup separately, since `--rootdir` does not load an outside test's missing conftest.
+
+Task52's first fresh-import control also exposed a PowerShell argument-shape trap: a single switch-selected node was a scalar string when splatted into pytest, which reported `file or directory not found: T` and collected zero tests. Two explicit node entries repaired that launch; the subsequent RED run reached both intended assertions and the final handoff run passed21 cases. Materialize a launcher node list as an explicit array, including one-node groups, before splatting it. A launcher exit with zero collected tests is fixture evidence, not a causal RED result.
+
+## Expected teardown must not mask body assertions (TASK-40608, 2026-11-15)
+
+Task53 fix1's first pipe-close control wrapped `managed_index` and all body assertions inside `pytest.raises(key_outcome_unresolved)`. The failed owner's expected teardown raised that error while unwinding an earlier assertion, so pytest reported a pass. Preserving the body exception separately and re-raising it after the expected teardown exposed the real causal RED: the child was still alive after stdin close failed. The same repair was required for four uncertain-reply cases and the outdated-schema case before their earlier pass counts could establish the body assertions. Keep the assertion outcome outside an expected cleanup-error scope; an expected teardown error must never satisfy a test whose body already failed. Preserve the original exception object and physically settle only the test-owned resources.

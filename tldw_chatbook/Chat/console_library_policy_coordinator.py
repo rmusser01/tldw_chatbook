@@ -89,14 +89,16 @@ class ConsoleLibraryPolicyCoordinator:
         )
 
     async def load(
-        self, session_id: str, conversation_id: str
+        self, session_id: str, conversation_id: str, *, _run_native=None
     ) -> ConsoleLibraryPolicyReadResult:
         """Read durable policy off-loop and publish its effective result."""
         registered = self._require_session(session_id)
         registered.conversation_id = conversation_id
         self._next_generation += 1
         registered.generation = self._next_generation
-        return await self._read_current_binding(session_id)
+        if _run_native is None:
+            return await self._read_current_binding(session_id)
+        return await self._read_current_binding(session_id, _run_native=_run_native)
 
     async def save(
         self,

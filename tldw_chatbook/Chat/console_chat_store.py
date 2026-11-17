@@ -56,6 +56,10 @@ UNSPECIFIED_ASSISTANT = object()
 _HYDRATION_NOT_PREPARED = object()
 
 if TYPE_CHECKING:
+    from .console_durable_commit_plan import (
+        _ConsoleDurableCommitPlan,
+        DurablePlanSource,
+    )
     from tldw_chatbook.Chat.response_rules.models import RuleEvidence
     from tldw_chatbook.Chat.response_rules.store import ResponseRuleStore
     from tldw_chatbook.Agents.fleet_messages import MessageStore
@@ -1422,6 +1426,7 @@ class _ConsoleSettingsPersistenceLifecycle:
     """Serializer and store-owned CAS lineage surviving one live incarnation."""
 
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    pending_live: set[asyncio.Future] = field(default_factory=set)
     drain: _ConsoleSettingsPersistenceDrain | None = None
     tasks: set[asyncio.Task[ConsoleSettingsPersistenceOutcome]] = field(
         default_factory=set
@@ -1827,6 +1832,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             tuple[asyncio.AbstractEventLoop, asyncio.Event]
         ] = set()
         self._provider_trace_settlement_worker_active = False
+        self._provider_trace_settlement_worker_future = None
         self._provider_trace_settlement_executor_closed = False
         self._provider_trace_settlement_executor_close_complete = threading.Event()
         # task-33081: the 0.2s Console tick folds stream buffers on the UI
@@ -1992,6 +1998,8 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         self._durable_effects_in_flight: set[tuple[str, str]] = set()
         self._durable_commit_in_flight: dict[str, _ConsoleDurableCommitReservation] = {}
         self._native_commit_owners_by_preparation: dict[str, object] = {}
+        self._durable_commit_plans: dict[str, object] = {}
+        self._durable_plan_executing: dict[str, object] = {}
         self._durable_fingerprint_by_preparation: dict[
             str, ConsoleDurableAcceptanceFingerprint
         ] = {}
@@ -2710,6 +2718,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             lifecycle is not None
             and session_id not in self._sessions
             and not lifecycle.tasks
+            and not lifecycle.pending_live
         ):
             self._settings_persistence_lifecycles.pop(session_id, None)
 
@@ -5911,7 +5920,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         self._library_policy_defaults = defaults
 
     async def hydrate_session_library_policy(
-        self, session_id: str
+        self, session_id: str, *, _read_owner=None
     ) -> ConsoleLibraryPolicySnapshot:
         """Hydrate one restored holder off-loop without publishing stale work."""
         session = self._session_or_raise(session_id)
@@ -5920,7 +5929,15 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         if coordinator is None or conversation_id is None:
             session.library_policy_hydrated = True
             return session.library_policy_holder.snapshot
-        result = await coordinator.load(session_id, conversation_id)
+        if _read_owner is None:
+            result = await coordinator.load(session_id, conversation_id)
+        else:
+            _read_owner.current()
+            if coordinator.repository.db is not _read_owner.sources.chat_database:
+                raise RuntimeError("Saved-open Library database changed")
+            result = await coordinator.load(
+                session_id, conversation_id, _run_native=_read_owner.run
+            )
         current = self._sessions.get(session_id)
         if current is session and current.persisted_conversation_id == conversation_id:
             current.library_policy_hydrated = True
@@ -5953,8 +5970,18 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             self._pending_workspace_projections.pop(session_id, None)
         return True
 
-    async def reconcile_pending_workspace_projection(self, session_id: str) -> bool:
+    async def reconcile_pending_workspace_projection(
+        self,
+        session_id: str,
+        *,
+        _read_owner=None,
+    ) -> bool:
         """Run a pending registry projection away from the event loop."""
+        if _read_owner is not None:
+            return await _read_owner.run(
+                lambda: self.retry_pending_workspace_projection(session_id),
+                observe=False,
+            )
         return await asyncio.to_thread(
             self.retry_pending_workspace_projection,
             session_id,
@@ -6445,10 +6472,38 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
 
         return _store_pause_unreserved_failed_commit(self, preparation_id, attempt_id)
 
-    def commit_durable_turn(
-        self, acceptance: ConsoleDurableTurnAcceptance
-    ) -> ConsoleDurableTurnCommit:
-        """Commit one durable turn without publishing any live owner state."""
+    def reserve_durable_commit_plan(
+        self,
+        acceptance: ConsoleDurableTurnAcceptance,
+        captured_persistence=None,
+        captured_database=None,
+        *,
+        source: DurablePlanSource | None = None,
+    ) -> _ConsoleDurableCommitPlan | ConsoleDurableTurnCommit:
+        """Seal one exact plan; reservation performs no native admission."""
+        from .console_durable_commit_plan import (
+            _ConsoleDurableCommitPlan,
+            recovery_projection,
+            seal,
+            session_inputs,
+            require_plan_methods,
+            current_legacy_commit_call,
+            require_reservation_source,
+            require_plan_contributions,
+        )
+        from .console_preparation_reads import preparation_read_for
+
+        legacy_call = current_legacy_commit_call(self, acceptance)
+        if legacy_call is None and (
+            source is None or preparation_read_for(source.runtime) is None
+        ):
+            raise RuntimeError(
+                "Separated durable reservation requires preparation-read custody."
+            )
+        if legacy_call is None:
+            require_reservation_source(source, preparation_read_for(source.runtime))
+        received_acceptance = acceptance
+        existing_commit = None
 
         if not isinstance(acceptance, ConsoleDurableTurnAcceptance):
             raise TypeError("acceptance must be ConsoleDurableTurnAcceptance")
@@ -6468,6 +6523,14 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         else:
             persistence = self.persistence
             database = getattr(persistence, "db", None)
+        if captured_persistence is not None and persistence is not captured_persistence:
+            raise RuntimeError("Durable Console persistence owner changed.")
+        if captured_database is not None and database is not captured_database:
+            raise RuntimeError("Durable Console database owner changed.")
+        if source is not None:
+            require_plan_methods(self, persistence)
+            require_plan_contributions(acceptance)
+        persistence_commit = getattr(persistence, "commit_durable_turn", None)
         reservation: _ConsoleDurableCommitReservation | None = None
         fingerprint: ConsoleDurableAcceptanceFingerprint | None = None
         try:
@@ -6476,6 +6539,8 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                 if preparation is None or preparation.session_id not in self._sessions:
                     raise RuntimeError("Durable preparation is unavailable.")
                 session = self._sessions[preparation.session_id]
+                captured_inputs = session_inputs(session) if source is not None else ()
+                settings_owner = session.settings
                 from tldw_chatbook.Chat import console_legacy_flat_roots as flat_roots
 
                 acceptance = flat_roots.durable_acceptance(
@@ -6630,6 +6695,15 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                     self._durable_commit_in_flight[acceptance.preparation_id] = (
                         reservation
                     )
+            if source is not None:
+                source.require_current(preparation)
+            if legacy_call is None:
+                acceptance = seal(acceptance)
+            else:
+                acceptance = replace(
+                    acceptance, attachments=seal(acceptance.attachments)
+                )
+            conversation_kwargs = seal(conversation_kwargs)
             fingerprint = self._durable_acceptance_fingerprint(
                 acceptance,
                 preparation,
@@ -6699,7 +6773,210 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                 self._durable_fingerprint_by_preparation[acceptance.preparation_id] = (
                     fingerprint
                 )
-            durable_commit = getattr(persistence, "commit_durable_turn", None)
+            project_json = encode_project_context_json(project_state)
+            plan = _ConsoleDurableCommitPlan(
+                self,
+                persistence,
+                persistence_commit,
+                database,
+                received_acceptance,
+                acceptance,
+                source,
+                legacy_call,
+                preparation,
+                session,
+                captured_inputs,
+                settings_owner,
+                identity,
+                owners,
+                reservation,
+                fingerprint,
+                policy_candidate,
+                conversation_kwargs,
+                context_policy_overrides,
+                project_state,
+                project_json,
+                first_persist,
+                generation_snapshot,
+                generation_revision,
+                context_policy_revision,
+                policy_failure_label,
+                roleplay_identity_revision,
+                recovery_projection(
+                    acceptance,
+                    fingerprint,
+                    project_json,
+                    first_persist,
+                    generation_revision,
+                    context_policy_revision,
+                    roleplay_identity_revision,
+                    context_policy_overrides,
+                ),
+            )
+            if source is not None and plan.recovery is None:
+                raise RuntimeError("Durable recovery projection exceeds its bound.")
+            with self._preparation_lock:
+                if (
+                    self._durable_commit_in_flight.get(acceptance.preparation_id)
+                    is not reservation
+                ):
+                    raise RuntimeError("Durable commit reservation changed.")
+                self._durable_commit_plans[acceptance.preparation_id] = plan
+            return plan
+        except Exception:
+            if reservation is None:
+                raise
+            with self._preparation_lock:
+                owner_paused = self._pause_failed_durable_commit_locked(
+                    reservation=reservation,
+                )
+            if not owner_paused:
+                raise
+            logger.bind(
+                session_id=session.id,
+                preparation_id=preparation.preparation_id,
+            ).warning("console_durable_turn_commit_failed")
+            raise
+
+    def commit_durable_turn(
+        self, acceptance: ConsoleDurableTurnAcceptance
+    ) -> ConsoleDurableTurnCommit:
+        """Preserve the synchronous legacy save without a separated wait."""
+        from .console_durable_commit_plan import legacy_commit_call
+
+        with legacy_commit_call(self, acceptance):
+            plan = self.reserve_durable_commit_plan(acceptance)
+            if isinstance(plan, ConsoleDurableTurnCommit):
+                return plan
+            return self.commit_reserved_durable_turn(plan)
+
+    def abandon_reserved_durable_commit(self, plan, reason: str) -> bool:
+        """Pause only this pending plan; an executing owner must be joined."""
+        from .console_durable_commit_plan import _ConsoleDurableCommitPlan
+
+        if type(plan) is not _ConsoleDurableCommitPlan or plan.store is not self:
+            return False
+        key = plan.acceptance.preparation_id
+        with self._preparation_lock:
+            if (
+                self._durable_commit_plans.get(key) is not plan
+                or key in self._durable_plan_executing
+                or key in self._native_commit_owners_by_preparation
+            ):
+                return False
+            self._pause_failed_durable_commit_locked(reservation=plan.reservation)
+            if self._durable_commit_in_flight.get(key) is plan.reservation:
+                self._durable_commit_in_flight.pop(key)
+            self._durable_commit_plans.pop(key)
+            return True
+
+    def commit_reserved_durable_turn(
+        self, plan: _ConsoleDurableCommitPlan
+    ) -> ConsoleDurableTurnCommit:
+        """Consume the exact sealed plan after fresh source and native checks."""
+        from .console_durable_commit_plan import (
+            _ConsoleDurableCommitPlan,
+            session_inputs,
+            require_plan_methods,
+            current_legacy_commit_call,
+            require_plan_contributions,
+        )
+        from .console_native_commit import _native_commit_binding
+
+        if type(plan) is not _ConsoleDurableCommitPlan or plan.store is not self:
+            raise RuntimeError("Durable commit plan owner changed.")
+        if plan.source is None and (
+            plan.legacy_call is None
+            or current_legacy_commit_call(self, plan.received_acceptance)
+            is not plan.legacy_call
+        ):
+            raise RuntimeError(
+                "Legacy durable plan requires its original synchronous call."
+            )
+        acceptance, preparation, session = (
+            plan.acceptance,
+            plan.preparation,
+            plan.session,
+        )
+        persistence, database = plan.persistence, plan.database
+        reservation, fingerprint, identity, owners = (
+            plan.reservation,
+            plan.fingerprint,
+            plan.identity,
+            plan.owners,
+        )
+        policy_candidate, conversation_kwargs = (
+            plan.policy_candidate,
+            plan.conversation_kwargs,
+        )
+        context_policy_overrides, project_state = (
+            plan.context_policy_overrides,
+            plan.project_state,
+        )
+        first_persist, generation_snapshot = (
+            plan.first_persist,
+            plan.generation_snapshot,
+        )
+        generation_revision, context_policy_revision = (
+            plan.generation_revision,
+            plan.context_policy_revision,
+        )
+        policy_failure_label, roleplay_identity_revision = (
+            plan.policy_failure_label,
+            plan.roleplay_identity_revision,
+        )
+        entered = False
+        try:
+            binding = _native_commit_binding.get()
+            if binding is not None and (
+                binding.store is not self
+                or binding.turn_owner is not plan.received_acceptance
+                or binding.persistence is not persistence
+                or binding.database is not database
+                or (plan.source is not None and binding.plan is not plan)
+            ):
+                raise RuntimeError("Durable Console acceptance owner changed.")
+            if plan.source is not None:
+                if binding is None or binding.plan is not plan:
+                    raise RuntimeError(
+                        "Separated plan requires its owned native callback."
+                    )
+                plan.source.require_current(preparation)
+                require_plan_methods(self, persistence)
+                require_plan_contributions(acceptance)
+            with self._preparation_lock:
+                key = acceptance.preparation_id
+                if (
+                    self.persistence is not persistence
+                    or getattr(persistence, "db", None) is not database
+                    or self._durable_commit_plans.get(key) is not plan
+                    or key in self._durable_plan_executing
+                    or self._durable_commit_in_flight.get(key) is not reservation
+                    or self._sessions.get(session.id) is not session
+                    or self._preparations_by_id.get(key) is not preparation
+                    or self._preparations_by_session.get(session.id) is not preparation
+                    or preparation.state is not ConsoleTurnPreparationState.COMMITTING
+                    or preparation.attempt_id != acceptance.attempt_id
+                    or preparation.origin != acceptance.origin
+                    or preparation.queue_entry_id != acceptance.queue_entry_id
+                    or self._durable_identity_by_preparation.get(key) is not identity
+                    or self._durable_owner_ids_by_preparation.get(key) is not owners
+                    or self._durable_fingerprint_by_preparation.get(key) != fingerprint
+                    or key in self._durable_tombstones
+                    or key in self._durable_commit_by_preparation
+                    or (
+                        plan.source is not None
+                        and session_inputs(session) != plan.inputs
+                    )
+                    or (
+                        plan.source is not None
+                        and session.settings is not plan.settings_owner
+                    )
+                ):
+                    raise RuntimeError("Durable commit plan is no longer current.")
+                self._durable_plan_executing[key] = plan
+                entered = True
+            durable_commit = plan.persistence_commit
             if not callable(durable_commit):
                 raise RuntimeError("Durable Console persistence is unavailable.")
             context_kwarg_supported = self._persistence_accepts_kwarg(
@@ -6713,7 +6990,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             project_stored = first_persist and self._persistence_accepts_kwarg(
                 durable_commit, "project_context_json"
             )
-            project_json = encode_project_context_json(project_state)
+            project_json = plan.project_json
             if (
                 self.persistence is not persistence
                 or getattr(persistence, "db", None) is not database
@@ -6801,9 +7078,16 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             if reservation is None:
                 raise
             with self._preparation_lock:
+                key = acceptance.preparation_id
+                if self._durable_commit_plans.get(key) is not plan or (
+                    key in self._durable_plan_executing and not entered
+                ):
+                    raise
                 owner_paused = self._pause_failed_durable_commit_locked(
                     reservation=reservation,
                 )
+                if owner_paused:
+                    self._durable_commit_plans.pop(key, None)
             if not owner_paused:
                 raise
             logger.bind(
@@ -6811,6 +7095,14 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                 preparation_id=preparation.preparation_id,
             ).warning("console_durable_turn_commit_failed")
             raise
+
+        finally:
+            with self._preparation_lock:
+                key = acceptance.preparation_id
+                if entered and self._durable_plan_executing.get(key) is plan:
+                    self._durable_plan_executing.pop(key)
+                    if self._durable_commit_plans.get(key) is plan:
+                        self._durable_commit_plans.pop(key)
 
     def begin_durable_postcommit_effects(
         self,
@@ -8879,8 +9171,25 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         submission: ConsoleSettingsSubmission,
     ) -> ConsoleSettingsLiveCommit:
         """Commit both settings components to their exact live origin only."""
+        session, current_settings, settings = self._prepare_console_settings_live(
+            submission
+        )
+        with self._preparation_lock:
+            self._validate_console_settings_live(submission, session)
+            with self._fork_source_transition(session.id):
+                session.applied_settings_submission_ids.append(submission.submission_id)
+                self.replace_session_settings(session.id, settings)
+                return self._finish_console_settings_live(
+                    submission, session, current_settings, settings
+                )
+
+    def _prepare_console_settings_live(self, submission):
+        """Validate and normalize the original exact-origin submission."""
         if not isinstance(submission, ConsoleSettingsSubmission):
             raise TypeError("submission must be ConsoleSettingsSubmission")
+        from .console_control_settings import require_settings_settled
+
+        require_settings_settled(self, submission.origin.session_id)
         session = self._sessions.get(submission.origin.session_id)
         if session is None or not validate_console_settings_origin(
             submission.origin,
@@ -8918,48 +9227,49 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                 else None
             ),
         )
-        with self._preparation_lock:
-            current = self._sessions.get(submission.origin.session_id)
-            if current is not session or not validate_console_settings_origin(
-                submission.origin,
-                live_session_id=session.id,
-                live_persisted_conversation_id=session.persisted_conversation_id,
-                live_conversation_binding_revision=(
-                    session.conversation_binding_revision
-                ),
-            ):
-                raise ValueError("Chat closed; nothing applied.")
-            if submission.submission_id in session.applied_settings_submission_ids:
-                raise ValueError("Console settings submission was already applied.")
-            with self._fork_source_transition(session.id):
-                session.applied_settings_submission_ids.append(submission.submission_id)
-                self.replace_session_settings(session.id, settings)
-                if current_settings is None or (
-                    current_settings.provider,
-                    current_settings.model,
-                ) != (settings.provider, settings.model):
-                    session.updated_at = _utc_now_iso()  # a new pair is a use (RECENT)
-                self._replace_session_context_policy_live(
-                    session,
-                    submission.draft.context_policy_overrides,
-                )
-                session.staged_context_policy_failure_label = (
-                    self._console_settings_policy_failure_label(submission.surface)
-                )
-                session.staged_context_policy_failure_revision = (
-                    session.context_policy_revision
-                )
-                return ConsoleSettingsLiveCommit(
-                    submission_id=submission.submission_id,
-                    session_id=session.id,
-                    persisted_conversation_id=session.persisted_conversation_id,
-                    conversation_binding_revision=session.conversation_binding_revision,
-                    generation_revision=session.generation_settings_revision,
-                    context_policy_revision=session.context_policy_revision,
-                    settings=settings,
-                    context_policy_overrides=session.context_policy_overrides,
-                    accepted_submission=submission,
-                )
+        return session, current_settings, settings
+
+    def _validate_console_settings_live(self, submission, session):
+        """Repeat the original origin and duplicate checks under preparation."""
+        current = self._sessions.get(submission.origin.session_id)
+        if current is not session or not validate_console_settings_origin(
+            submission.origin,
+            live_session_id=session.id,
+            live_persisted_conversation_id=session.persisted_conversation_id,
+            live_conversation_binding_revision=session.conversation_binding_revision,
+        ):
+            raise ValueError("Chat closed; nothing applied.")
+        if submission.submission_id in session.applied_settings_submission_ids:
+            raise ValueError("Console settings submission was already applied.")
+
+    def _finish_console_settings_live(
+        self, submission, session, current_settings, settings
+    ):
+        """Publish the original context/recent-use phase after the full writer."""
+        if current_settings is None or (
+            current_settings.provider,
+            current_settings.model,
+        ) != (settings.provider, settings.model):
+            session.updated_at = _utc_now_iso()  # a new pair is a use (RECENT)
+        self._replace_session_context_policy_live(
+            session,
+            submission.draft.context_policy_overrides,
+        )
+        session.staged_context_policy_failure_label = (
+            self._console_settings_policy_failure_label(submission.surface)
+        )
+        session.staged_context_policy_failure_revision = session.context_policy_revision
+        return ConsoleSettingsLiveCommit(
+            submission_id=submission.submission_id,
+            session_id=session.id,
+            persisted_conversation_id=session.persisted_conversation_id,
+            conversation_binding_revision=session.conversation_binding_revision,
+            generation_revision=session.generation_settings_revision,
+            context_policy_revision=session.context_policy_revision,
+            settings=settings,
+            context_policy_overrides=session.context_policy_overrides,
+            accepted_submission=submission,
+        )
 
     def _replace_session_context_policy_live(
         self,
@@ -9492,6 +9802,9 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         canonical_settings_baseline: ConsoleSessionSettings | None = None,
     ) -> ConsoleChatSession:
         """Replace settings inside one atomic fork source transition."""
+        from .console_control_settings import require_settings_settled
+
+        require_settings_settled(self, session_id)
 
         with self._fork_source_transition(session_id):
             return self._replace_session_settings(
@@ -9510,6 +9823,30 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         canonical_settings_baseline: ConsoleSessionSettings | None = None,
     ) -> ConsoleChatSession:
         """Replace settings and refresh an existing durable resume snapshot."""
+        session, changed = self._replace_session_settings_before_snapshot(
+            session_id,
+            settings,
+            mark_user_work=mark_user_work,
+            canonical_settings_baseline=canonical_settings_baseline,
+        )
+        write = self._capture_session_settings_snapshot_write(
+            session, settings, changed
+        )
+        if write is not None:
+            self._write_session_settings_snapshot(*write)
+        if changed:
+            self._bump_settings_revision(session_id)
+        return session
+
+    def _replace_session_settings_before_snapshot(
+        self,
+        session_id,
+        settings,
+        *,
+        mark_user_work=True,
+        canonical_settings_baseline=None,
+    ):
+        """Apply only the original memory phase preceding the full snapshot."""
         session = self._session_or_raise(session_id)
         changed = (
             session.settings != settings
@@ -9535,6 +9872,10 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             None,
         )
         self._bump_payload_revision(session_id)
+        return session, changed
+
+    def _capture_session_settings_snapshot_write(self, session, settings, changed):
+        """Retain the writer and arguments at the original pre-write boundary."""
         if (
             changed
             and session.persisted_conversation_id is not None
@@ -9546,22 +9887,27 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                 None,
             )
             if callable(update_settings):
-                try:
-                    update_settings(
-                        conversation_id=session.persisted_conversation_id,
-                        settings=settings,
-                    )
-                except Exception:
-                    logger.bind(
-                        session_id=session_id,
-                        conversation_id=session.persisted_conversation_id,
-                    ).exception(
-                        "Failed to persist Console settings snapshot; "
-                        "in-memory session keeps the applied settings."
-                    )
-        if changed:
-            self._bump_settings_revision(session_id)
-        return session
+                return (
+                    update_settings,
+                    session.id,
+                    session.persisted_conversation_id,
+                    settings,
+                )
+        return None
+
+    def _write_session_settings_snapshot(
+        self, update_settings, session_id, conversation_id, settings
+    ):
+        """Attempt the original full write; failure preserves applied live state."""
+        try:
+            update_settings(conversation_id=conversation_id, settings=settings)
+        except Exception:
+            logger.bind(
+                session_id=session_id, conversation_id=conversation_id
+            ).exception(
+                "Failed to persist Console settings snapshot; "
+                "in-memory session keeps the applied settings."
+            )
 
     def adopt_session_ephemeral_endpoint(
         self,
@@ -19123,6 +19469,14 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             and ``False`` when the session has no settings snapshot — the
             update was skipped entirely (task-402 honest-contract guard).
         """
+        from .console_control_settings import require_settings_settled
+
+        require_settings_settled(self, session_id)
+        prepared = self._prepare_session_system_prompt(session_id, system_prompt)
+        return prepared[0], self._write_session_system_prompt(*prepared)
+
+    def _prepare_session_system_prompt(self, session_id, system_prompt):
+        """Apply the original prompt/template/revision phase before persistence."""
         session = self._session_or_raise(session_id)
         if session.settings is None:
             # task-402: without a settings snapshot the update cannot take
@@ -19132,7 +19486,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             logger.bind(session_id=session_id).warning(
                 "set_session_system_prompt skipped: session has no settings."
             )
-            return session, False
+            return session, None, False, False
         normalized = (
             system_prompt
             if isinstance(system_prompt, str) and system_prompt.strip()
@@ -19153,6 +19507,14 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             self._bump_payload_revision(session_id)
         if settings_changed:
             self._bump_settings_revision(session_id)
+        return session, normalized, cleared_character_template, True
+
+    def _write_session_system_prompt(
+        self, session, normalized, cleared_character_template, applicable
+    ):
+        """Attempt the original ordered roleplay and prompt writes honestly."""
+        if not applicable:
+            return False
         persisted = True
         if (
             session.persisted_conversation_id is not None
@@ -19183,7 +19545,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                         "in-memory session keeps the applied value.",
                         type(exc).__name__,
                     )
-        return session, persisted
+        return persisted
 
     @_fork_session_transition
     def set_session_pinned_prefill(
@@ -19210,6 +19572,11 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             snapshot; ``True`` otherwise (including when no durable write
             was needed).
         """
+        prepared = self._prepare_session_pinned_prefill(session_id, prefill)
+        return prepared[0], self._write_session_pinned_prefill(*prepared)
+
+    def _prepare_session_pinned_prefill(self, session_id, prefill):
+        """Apply the original live prefill mutation before its optional write."""
         session = self._session_or_raise(session_id)
         if session.settings is None:
             # task-402: mirror set_session_system_prompt -- no settings
@@ -19218,7 +19585,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             logger.bind(session_id=session_id).warning(
                 "set_session_pinned_prefill skipped: session has no settings."
             )
-            return session, False
+            return session, None, False
         normalized = prefill if isinstance(prefill, str) and prefill.strip() else None
         settings_changed = session.settings.pinned_prefill != normalized
         if session.settings.pinned_prefill != normalized:
@@ -19227,6 +19594,12 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         if settings_changed:
             self._bump_settings_revision(session_id)
         self._bump_payload_revision(session_id)
+        return session, normalized, True
+
+    def _write_session_pinned_prefill(self, session, normalized, applicable):
+        """Keep the original optional-writer result and exception contract."""
+        if not applicable:
+            return False
         persisted = True
         if (
             session.persisted_conversation_id is not None
@@ -19244,13 +19617,13 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                 except Exception:
                     persisted = False
                     logger.bind(
-                        session_id=session_id,
+                        session_id=session.id,
                         conversation_id=session.persisted_conversation_id,
                     ).exception(
                         "Failed to persist Console pinned prefill; "
                         "in-memory session keeps the applied value."
                     )
-        return session, persisted
+        return persisted
 
     def _persist_new_message_or_defer(
         self,
@@ -19582,7 +19955,9 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                 return
             self._provider_trace_settlement_worker_active = True
             try:
-                executor.submit(self._drain_provider_trace_settlement_work)
+                self._provider_trace_settlement_worker_future = executor.submit(
+                    self._drain_provider_trace_settlement_work
+                )
             except Exception:
                 self._provider_trace_settlement_worker_active = False
                 self._provider_trace_settlement_work.pop(call_id, None)

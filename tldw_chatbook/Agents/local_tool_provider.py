@@ -3136,7 +3136,10 @@ class LocalToolProvider:
 
         return kill_switch_engaged(self)
 
-    def _verdict_for(self, name: str, args: dict, run_id: str) -> _LocalGateDecision:
+    def _verdict_for(
+        self, name: str, args: dict, run_id: str, *,
+        initial_state: EffectiveToolState | None = None,
+    ) -> _LocalGateDecision:
         """Resolve this call's gate decision: only "allow" executes.
 
         Never raises: every injected callable is guarded, and a guard trip
@@ -3153,7 +3156,10 @@ class LocalToolProvider:
             return _LocalGateDecision(verdict="allow", approval_consumed=False)
         hub = self.hub_tool_for(name)
         try:
-            state, index_read_floor = self._effective_local_state(hub)
+            if initial_state is None:
+                state, index_read_floor = self._effective_local_state(hub)
+            else:
+                state, index_read_floor = initial_state, False
         except Exception:  # noqa: BLE001 — fail closed on a resolution failure
             logger.warning("Local tool state resolution failed")
             # Fix Round H, Item 1: a distinct verdict from "deny" -- the

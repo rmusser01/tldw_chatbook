@@ -414,6 +414,9 @@ class LocalMCPRuntimeDelegate:
         handler = getattr(self, f"_tool_{normalized_name}", None)
         if handler is None:
             raise KeyError(f"Unsupported local MCP tool: {normalized_name}")
+        from tldw_chatbook.Chat.console_control_tools import mcp_builtin_handoff
+
+        mcp_builtin_handoff(self, normalized_name, handler=handler)
         return await handler(payload)
 
     @request_guard

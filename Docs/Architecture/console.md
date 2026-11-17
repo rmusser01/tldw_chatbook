@@ -38,11 +38,83 @@ including when source capture had PII redaction off.
 | Transcript grouping | `Chat/console_turn_grouping.py` | `group_console_transcript_messages()`, `ConsoleAssistantTurn` |
 | Compaction | `Chat/console_context_compaction.py`, `console_context_policy.py`, `console_context_repository.py` | `CompactionPlan`, `ResolvedConsoleContextPolicy`, memory records |
 
+`Chat/console_execution_service.py::ConsoleExecutionService` is the in-process
+construction owner behind the runtime's three public store/bridge/controller
+factories (TASK-40608, ADR126/230/353). It retains the same real runtime and
+populates that runtime's authoritative fields, using the original App/source
+objects and runtime-bound callbacks in the same lazy order. Runtime disposal,
+view attachment, custom and memory routes stay on their original owners; this
+composition extraction introduces no detached route or performance claim.
+
+Explicit in-process construction may additionally supply `ConsoleDomainServices`
+with a frozen `ConsoleDomainSources` record. Its finite config/database callbacks,
+lazy plugin/trust factories, received/configuration source records and singleton
+control-plane reader use the supplied real collaborators. Legacy construction
+continues to use its original App and source qualification. The concrete
+`ConsolePresentationPort` separately owns the actual App, view hooks and attachment
+visit checks for notices and interrupt projection; the original host keeps its
+locks, Events, FIFO, parked payloads and resolution. Selected source checks retain
+original definition records and revalidate actual source identity after native
+waits. This optional boundary has no process transport or production-selection
+flip; detached write ownership and the latency gate remain unimplemented.
+
+The optional `ConsoleExecutionService.ensure_permission_operations()` surface
+retains the explicit domain's actual unified control plane and permission store.
+Its finite asynchronous methods use original service bodies and retained native
+producer handles; decision resolution calls the exact existing interrupt host on
+its owner loop. Selected native calls suppress only nested permission transport.
+An exact-resource observer checks the original raw owner's retirement before its
+original publication stamps, and keeps unresolved resources with their original
+owners. Original escaping errors and separate retirement diagnostics are retained.
+No UI route or process dispatcher is enabled.
+
+Tool Pack operations retain the actual `ToolPackService.compose` collaborators,
+shared lifecycle coordinator and activated binding guard. Import inspection,
+receipt-backed activation and removal remain complete original actions. First-bind
+confirmation returns the original single-use guard token; it does not execute the
+workspace setter. Strict inventory and compatibility snapshot reads remain
+separate. Complete permission render capture keeps inventory, downgrade audit and
+recapture in one original mutation fence; parent selector/adoption behavior stays
+in the workbench. Settings workspace assistant's compatibility `list_profiles`
+consumer remains on its existing route for later explicit integration.
+The local durable boundary now exposes `reserve_durable_commit_plan`,
+`commit_reserved_durable_turn` and `abandon_reserved_durable_commit` on the
+original store. Legacy Send composes reservation and execution synchronously.
+An explicitly selected separated plan retains the actual received Task/source,
+promoted preparation, immutable inputs and unchanged full fingerprint. Its
+preparation read holds no native admission. Execution rechecks those owners and
+opens fresh native custody; copied child context and stale or abandoned plans
+cannot execute. Only the original immutable Library preparation and prompt mix-in
+attempt contributions qualify; custom callbacks and mutable continuation gates
+retain their legacy route. No ACK, transport or production routing is added.
+
+The selected native helper distinguishes wrapper completion from exact native
+retirement. Uncertain close leaves the original DB/core participant responsible
+for the registered handle/lease and returns `ConsoleNativeRetirementUncertain`,
+with any known commit retained separately. A completed wrapper is not a drained
+DB owner. `ConsoleDispatchRepository.read_exact_commit_outcome` reads the exact
+pair/checkpoint or valid active continuation in one admitted read transaction,
+using the plan's bounded body-free projection. Absence is only an observation;
+row-only recovery cannot verify the full in-memory fingerprint, authorize an
+inactive continuation, or replay a turn.
+
 Supporting modules: `console_chat_fork.py` (fork/branch), `console_prompt_queue_coordinator.py` (bounded prompt queue, ADR-098), `console_fleet_wake.py`, `console_interrupt_rounds.py`, `console_dispatch_checkpoint.py` (crash recovery).
 
 Frozen automatic Library preparation is delegated to `Chat/console_library_preparation.py` through the controller's unchanged entry point. Controller and runtime retain ownership of preparation transitions, timeout configuration and recovery.
 
 Character presentation uses `UI/Console_Modules/character_context.py`. Stock active displays carry the original current-owner closure through the one-second run scope check into the same finite inner batch as idle display; direct/custom actions retain fresh no-argument dispatch. A stock display whose previous exact scope fingerprint names a different open conversation can skip the preliminary change-detection read: the existing stock reader selector must qualify first, and the unchanged refresh still validates fresh pair/groups/pair metadata and current ownership before publication. Otherwise a stock display check (active or idle) decides and reloads in that one finite inner batch (`_check_recent_batch`, TASK-33620.15.6): the batch ends after its first fresh pair when that still matches the displayed fingerprint, and otherwise loads and fence-reads as a refresh does, so a changed check opens one handle (one ADR-125 helper process) instead of two. Nothing publishes until the callback retires; a reload (or its load error) then advances the generation as `_begin` would and publishes once, with no intermediate Refreshing state. As in the original batch, an owner that moved on or a qualified body that changed during the read gets no publication, and a scope that moved during the load is reloaded by the original refresh. An unchanged check makes no more UI-loop handoffs than the original probe: one on-loop midpoint inside its pair, then the ambient scope confirmed on the loop after retirement, with no reader owner check. A check whose display shows a settled fingerprint (TASK-35961) qualifies on the loop only what runs there: the display entry's own checks, the two identity readers its selection calls (`_settled_character_refresh_readers`), `_await_database_work`, which then receives its finite callback on the loop, and, in the midpoint of each pair of its first scope read (every attempt), the readers that midpoint calls (`require_loop_readers`); the worker qualifies every reader before and after each read, as before, and a reader changed after the selection is refused there before anything is read (no handle opens) and the check takes the original route. Its UI-loop CPU is then no more than the original probe route's. For a display owner that is still current, a first read that did not settle, or a callback that failed (in that read or after it), is handed to the caller as the probe's outcome (`_CharacterScopeProbed`): the caller takes the original route's branch for it without probing the scope again on a handle of its own (TASK-35961). An unchanged read whose ambient scope or displayed fingerprint changed by its retirement, or a refresh dispatch customized during it, takes the original probe-then-refresh route; an owner that moved on gets nothing, as after the original probe. Every outcome that neither finds the scope unchanged nor publishes a reload drops the last-successful-refresh marker, a cancellation or a raised error included, as the original route's `refresh()` did on entry, so the idle two-second memo never serves a list the check did not reload. Forced/direct and custom routes keep their original change detection. The existing two-second display memo, invalidation, source checks and physical callback retirement remain separate contracts (ADR126/230).
+
+TASK-40608 makes active stock Character display requests share the existing
+presentation lock and the completed observation's owner key. The key includes
+the in-memory Console payload revision, so added or settled rows request fresh
+reconciliation without waiting for the run cadence. Unchanged polls reuse the
+published display; the one-second external-change interval starts when its
+native callback completes, preventing a slow Windows read from expiring itself.
+Active display checks retire any pre-run idle memo, so the final idle refresh is
+still owed. The idle two-second memo, direct/forced/custom routes, native source
+checks, owner fences and physical retirement remain unchanged.
+
+`config_sync.prepare_main_db_display` captures due stock Character, context-presence and previously requested appearance reads in one finite main-DB callback. Each section retains its original publication checks; results arrive only after the shared connection and operation retire. Context joins opportunistically with already-current stock config data and a free snapshot lock. Cold, busy, late or positive-memory follow-up work stays with the original scheduled refresh, so this batch never starts config preparation before archive recovery or adds an independent awaited context read. Missing appearance rows are removed from the refreshed requested set. No display result grants action authority (ADR-126/231).
 
 Living character portraits reuse the disposable `CharacterExpressionAvatar` in the
 Character rail. `UI/Console_Modules/character.py` resolves local performance
@@ -73,14 +145,28 @@ Console/Canvas configuration scheduling follows [ADR-121's staged handoff](../..
 
 Finite preparation callbacks temporarily use at most1ms interpreter thread handoffs to reduce scheduling convoys across fresh native reads (TASK-34406.11, ADR230). The existing bookkeeping lock counts overlapping physical callbacks; last exit restores the prior value if still owned. Lower prior or later different external settings remain. This affects interpreter scheduling only: original source, permission, native ownership and cancellation checks are unchanged.
 
+`ConsoleRuntime._display_submission_slot` bounds three stock display callbacks to one submitted job: readiness configuration, the fixed main-DB display batch, and workspace availability. `run_preparation_read` registers the read before asynchronously waiting for this optional permit, then rechecks ownership before executor submission. Waiting holds no worker or storage lease. Queued cancellation retires without submission; submitted cancellation retains the permit through the original shielded physical drain. Source-specific uncertainty latches still govern failed native retirement. The permit ends before result publication and section continuations. Foreground preparation, tokenizer work, custom owners and other display readers retain their existing scheduling; reconciliation intervals and action checks are unchanged (TASK-40608 Task22, ADR-231).
+
+An initially closed Inspector keeps its state owner mounted but defers its group
+descendants. `ChatScreen.compose_content` seeds the existing collapsed-rail
+marker before composition; `ConsoleRunInspector` consumes it through
+`hidden_by_console_rail`. Opening uses the existing deferred rebuild and paint
+hold, including an opening or state update between Compose and Mount. After the
+first opening, descendants remain retained for normal focus, scroll and in-place
+updates. Data reconciliation and action checks are unchanged (TASK-40608,
+ADR-231).
+
 Console presentation avoids an unused leading inspector/rail build before the
 control pass (TASK-35610). Controls supply their freshly built inspector to the
 existing rail projection; hidden inspector updates and the fresh post-await FULL
-projection remain. Conversation appearance display caching records the last
-successfully queried IDs, including absent rows, under its existing short TTL
-and service identity. New IDs, expiry and writes require another original read;
-failed reads do not renew the cache. Deleted appearances are removed on successful
-refresh. These are disposable icon/color values, never storage or action authority.
+projection remain. Conversation appearance display caching records all IDs
+successfully queried within the same still-fresh cache epoch, including absent
+rows, under its existing short TTL and service identity. Expanding coverage does
+not renew older observations. Expiry resets coverage to the refreshed IDs; writes
+and service changes invalidate it. The conversation service propagates DB read
+failures to the display's existing fallback, so failed reads neither gain coverage
+nor renew the cache. Deleted appearances are removed on successful refresh.
+These are disposable icon/color values, never storage or action authority.
 
 An inspector build shares provider/config derivation through the existing synchronous
 memo, discarded when that build ends (TASK-35612). A subsequent build, including
@@ -501,6 +587,17 @@ command APIs. Full qualification receipts retain their source and platform scope
 
 Approval requests surface as `ChatApprovalCard` widgets in the session surface's task-card region. Card decisions (`approve_once`, `approve_session`, `always_allow`, deny, timeout) resolve the pending round; permission persistence itself flows through the MCP permission store (see [mcp-hub.md](./mcp-hub.md)). Approval waits are indefinite by default (`[mcp] approval_timeout_seconds = 0`, ADR-314); headless runs return all keys unresolved-deny without a card.
 
+On Windows, the stock local `fs_list`, `fs_read`, `fs_edit` and `git_diff`
+invocation may use one freshly checked permission payload for its kill switch
+and initial effective state. `console_provider_composition._ConsoleLocalPolicy`
+binds the original source, profile, persona and callbacks; `local_tool_dispatch`
+keeps switch-before-alias ordering and drops the payload before approval or
+handler work. Custom, SSH, promotion and exempt routes keep their original
+getters. Review before an approval and invocation after it remain separate
+reads. A failed switch read retains the original independent state read;
+proven source drift or uncertain retirement refuses. See
+[ADR-126](../../backlog/decisions/126-complete-local-backup-and-recovery.md#one-payload-for-a-finite-local-tool-decision-task-40608-task-19).
+
 ## Saved archive recovery (ADR166)
 
 `Chat/archive_recovery/runtime.py` owns bounded session-partitioned result references, search handles and the shared restoration coordinator. `Agents/archive_recovery_tool_provider.py` authenticates app-issued capabilities separately from Library tools. The real visible Send producer issues an opaque user-origin proof; received intent, checked configuration and exact current runtime admission retain it without granting authority to generic or unattended callers. Direct and RAG-only runs still require Library Allowed, destination, Persona, kill-switch and primary-run gates.
@@ -893,3 +990,5 @@ Existing optional omissions and manual/automatic busy/input restoration remain.
 ADR285 records the native source and retirement contract. Source-specific
 qualification and historical adverse outcomes remain in the
 [workflow evidence index](../superpowers/qa/2026-11-01-native-phased-agent-workflows/README.md).
+
+Task59 Windows capability qualification (root ruling after task59-b2): the complete profile methods are conditional on a legitimately composed and installed original ToolPackService. Actual SID1002 Windows composition currently fails in original receipt_store._fsync_directory, whose POSIX directory-open durability requirement is unchanged (ADR107 requires separate Windows publication verification). Original app wiring reports composition_unavailable and leaves its deferred binding guard fail-closed. Selected profile calls with no original owner refuse before effects; ordinary Console permission operations remain available. No Windows lifecycle success/support is claimed, no receipt durability is mocked, and the preserved failed full-lifecycle test is not counted as passing coverage. It remains a full-body test for an environment supporting that original receipt implementation.

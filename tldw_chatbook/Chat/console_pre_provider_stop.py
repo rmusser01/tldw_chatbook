@@ -336,6 +336,7 @@ class PreProviderSetupStop:
             persistence=authority.persistence,
             database=authority.database,
             expected_accepted_prefill=self._accepted_content,
+            _controller=controller,
         )
         settled = (
             completion.settled and completion.error is None

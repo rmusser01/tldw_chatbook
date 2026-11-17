@@ -27,6 +27,7 @@ from ...Chat.console_chat_controller import (
     _is_empty_transcript_row,
 )
 from ...Chat.console_received_dispatch import stock_native_methods
+from ...Chat.console_display_phases import ConsoleDisplayPhaseRefused
 from ...Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleDispatchRecoveryKind,
@@ -421,6 +422,18 @@ class ConsoleReadinessConfigProjection:
         ``life`` re-reads a display younger than ``max_age`` (``warm()``).
         """
         screen = self.screen
+        from ...Chat.console_control_settings import settings_pending
+
+        pending_store = getattr(screen, "_console_chat_store", None)
+        if (
+            pending_store is not None
+            and settings_pending(pending_store, pending_store.active_session_id)
+            is not None
+        ):
+            from ...Chat.console_parent_settings import defer_parent_settings_render
+
+            defer_parent_settings_render(screen)
+            return False
         runtime = _readiness_runtime(screen)
         if getattr(screen, "_closing", False) or getattr(runtime, "_disposed", False):
             return False
@@ -432,7 +445,10 @@ class ConsoleReadinessConfigProjection:
         )
         if life is None:
             life = self.max_age
-            if getattr(screen, "_console_transcript_sync_timer", None) is not None:
+            if (
+                getattr(screen, "_console_transcript_sync_timer", None) is not None
+                and not getattr(screen, "_console_sync_in_progress", False)
+            ):
                 life *= REFRESH_AHEAD_SHARE
         now = time.monotonic()
         tokenizer_due = any(
@@ -515,6 +531,11 @@ class ConsoleReadinessConfigProjection:
 
     async def warm(self) -> bool:
         """Wait for the same checked owner when a modal needs cold display data."""
+        from ...Chat.console_control_settings import wait_settings_settled
+
+        store = getattr(self.screen, "_console_chat_store", None)
+        if store is not None:
+            await wait_settings_settled(store, store.active_session_id)
         if getattr(self.screen, "_closing", False) or getattr(
             _readiness_runtime(self.screen), "_disposed", False
         ):
@@ -524,10 +545,20 @@ class ConsoleReadinessConfigProjection:
         # FULL render that followed, which refused it and replayed the whole
         # sync 0.2 s later; re-read one past the run poll's refresh-ahead share.
         # Not while reads fail: each failure arms a retry sync of its own.
-        ahead = None if self._retry_delay else self.max_age * REFRESH_AHEAD_SHARE
+        # FULL already owns preparation and the final expiry recheck. Starting
+        # refresh-ahead work inside it repeats a still-valid section read before
+        # the cadence can skip its render. Its actual publication still checks
+        # the original one-second proof; standalone callers keep refresh-ahead.
+        ahead = None if self._retry_delay else self.max_age * (
+            1.0 if getattr(self.screen, "_console_sync_in_progress", False)
+            else REFRESH_AHEAD_SHARE
+        )
         self.run(lambda: None, life=ahead)
         if self.pending:
-            await self._settled.wait()
+            from ...Chat.console_parent_settings import await_readiness_settings
+
+            async with await_readiness_settings(self):
+                await self._settled.wait()
         return (
             _same_readiness_key(key, self._key())
             and _same_readiness_key(key, self.key)
@@ -585,13 +616,53 @@ class ConsoleReadinessConfigProjection:
                 runtime, "_disposed", False
             ):
                 return
+            from tldw_chatbook import config
+            from ..Screens import chat_screen
+
+            scheduled = (
+                type(runtime) is ConsoleRuntime
+                and _handoff_projection_is_stock(self)
+                and chat_screen.load_settings is config.load_settings
+            )
+            screen, app = self.screen, getattr(self.screen, "app_instance", None)
+            issuing_thread = threading.current_thread()
+            view = runtime.view if scheduled else None
+            generation = runtime._attached_generation if scheduled else None
+
+            def current():
+                if not scheduled:
+                    return
+                from ...Chat.console_control_settings import settings_pending
+
+                if (
+                    self.screen is not screen
+                    or getattr(screen, "app_instance", None) is not app
+                    or getattr(screen, "_console_readiness_config_projection", None) is not self
+                    or getattr(screen, "_closing", False)
+                    or getattr(screen, "_console_chat_tearing_down", False)
+                    or _readiness_runtime(screen) is not runtime
+                    or runtime._disposed
+                    or runtime.view is not view
+                    or runtime._attached_generation != generation
+                    or self.read_current is not reader
+                    or not _handoff_projection_is_stock(self)
+                    or chat_screen.load_settings is not config.load_settings
+                    or settings_pending(store, key[5]) is not None
+                    or (
+                        threading.current_thread() is issuing_thread
+                        and not _same_readiness_key(key, self._key())
+                    )
+                ):
+                    raise RuntimeError("Console readiness display owner changed.")
+
             result = await run_preparation_read(
                 reader,
                 creator=self,
                 session_id=key[5],
                 reads=self._reads,
                 observers=observers,
-                require_current=lambda: None,
+                require_current=current,
+                submission_slot=runtime._display_submission_slot if scheduled else None,
             )
             read_at = time.monotonic()
             for slot_key, slot in tokenizers:
@@ -639,9 +710,25 @@ class ConsoleReadinessConfigProjection:
                 else None
             )
             if controller is not None and owner is not None:
-                controller._maybe_refresh_stale_default_console_settings(
-                    store, owner, checked_config=value
+                controls = getattr(
+                    getattr(runtime, "_execution_service", None),
+                    "_local_controls",
+                    None,
                 )
+                if controls is None:
+                    controller._maybe_refresh_stale_default_console_settings(
+                        store, owner, checked_config=value
+                    )
+                else:
+                    from ...Chat.console_parent_settings import (
+                        prepare_parent_default_settings,
+                    )
+
+                    await prepare_parent_default_settings(
+                        self.screen,
+                        purpose="readiness-defaults",
+                        checked_config=value,
+                    )
             # Convergence may change this same owner's settings revision. It
             # cannot authorize publishing to a different profile or owner.
             current_key = self._key()
@@ -689,6 +776,9 @@ class ConsoleReadinessConfigProjection:
                 self.at = proof.at
                 _checked_display_proofs.add(published)
                 self._display_proof = published
+            from ...Chat.console_parent_settings import complete_due_settings_read
+
+            complete_due_settings_read(self, handoff_read, result, current_key)
             self._retry_delay = 0.0
             installed = True
             retry = False
@@ -862,6 +952,32 @@ def _checked_display_status(projection: Any) -> bool | None:
         or _readiness_runtime(projection.screen) is not projection._runtime_owner
         or getattr(projection._runtime_owner, "_disposed", False)):
         return False
+    if not _checked_config_proof_definitions_current(proof):
+        return False
+    if not _checked_pricing_current(projection, proof):
+        return None
+    if (
+        not _same_readiness_key(projection._key(), projection.key)
+        or not _same_readiness_key(projection.key, proof.owner)
+        or projection.key[0] != proof.source
+    ):
+        return False
+    if not _checked_config_proof_participant_current(proof):
+        return False
+    if not _same_readiness_key(projection._key(), projection.key):
+        return False
+    if projection.at != proof.at:
+        return None
+    if time.monotonic() - proof.at >= min(1.0, projection.max_age):
+        # run() already requested the existing finite checked refresh. Direct
+        # presentation must also wait for it instead of entering native work
+        # on the event loop; refusal retains the existing coalesced retry.
+        return False
+    return True
+
+
+def _checked_config_proof_definitions_current(proof):
+    """Reuse the original checked source/participant checks without granting work."""
     from ..Screens import chat_screen
 
     config, participants, raw, storage = (
@@ -894,16 +1010,16 @@ def _checked_display_status(projection: Any) -> bool | None:
         or chat_screen.load_settings is not config.load_settings
     ):
         return False
-    if not _checked_pricing_current(projection, proof):
-        return None
-    # These lexical checks include the current generation and raw selected path.
-    # A different owner/source may never enter a body around an old mapping.
-    if (
-        not _same_readiness_key(projection._key(), projection.key)
-        or not _same_readiness_key(projection.key, proof.owner)
-        or projection.key[0] != proof.source
-    ):
-        return False
+    return True
+
+
+def _checked_config_proof_participant_current(proof):
+    config, participants, raw, storage = (
+        proof.config,
+        proof.participants,
+        proof.raw,
+        proof.storage,
+    )
     bound = participants.binding(config)
     if bound is None or str(bound[1]) != proof.source[1]:
         return False
@@ -929,16 +1045,16 @@ def _checked_display_status(projection: Any) -> bool | None:
             return False
     finally:
         storage._lock.release()
-    if not _same_readiness_key(projection._key(), projection.key):
-        return False
-    if projection.at != proof.at:
-        return None
-    if time.monotonic() - proof.at >= min(1.0, projection.max_age):
-        # run() already requested the existing finite checked refresh. Direct
-        # presentation must also wait for it instead of entering native work
-        # on the event loop; refusal retains the existing coalesced retry.
-        return False
     return True
+
+
+_selected_due_read_source_checks = tuple(
+    (name, globals()[name], globals()[name].__code__)
+    for name in (
+        "_checked_config_proof_definitions_current",
+        "_checked_config_proof_participant_current",
+    )
+)
 
 
 class _CheckedDisplayRefused(Exception):
@@ -1287,7 +1403,18 @@ def _retry_after_config_rebuild(function: Callable, *, identity: bool) -> Callab
     @wraps(function)
     def wrapped(screen, *args, **kwargs):
         from .config_sync import _owe_console_config_sync
+        from ...Chat.console_control_settings import (
+            ConsoleDefaultConvergenceRequired,
+            ConsoleSettingsPending,
+        )
+        from ...Chat.console_parent_settings import (
+            ParentSettingsDeferred,
+            ParentSettingsOriginChanged,
+            capture_parent_identity_origin,
+            defer_parent_identity,
+        )
 
+        due_origin = due_error = callback_token = None
         request = _owe_console_config_sync(screen, "identity") if identity else None
         ready_token = None
         if request is not None and request.eligible():
@@ -1318,26 +1445,61 @@ def _retry_after_config_rebuild(function: Callable, *, identity: bool) -> Callab
                             callback_token = (
                                 request.token if request is not None else None
                             )
+                            origin = (
+                                capture_parent_identity_origin(screen)
+                                if identity
+                                else None
+                            )
                             try:
                                 return function(screen, *args, **kwargs)
+                            except (
+                                ConsoleDefaultConvergenceRequired,
+                                ConsoleSettingsPending,
+                            ) as error:
+                                if origin is None:
+                                    raise  # Exact enclosing command/parent keeps ownership.
+                                due_origin, due_error = origin, error
                             finally:
                                 if (
-                                    request is not None
+                                    due_error is None
+                                    and request is not None
                                     and request.token is callback_token
                                 ):
                                     request.retire()
-                        projection = ConsoleReadinessConfigProjection.for_screen(screen)
-                        if request is not None:
-                            if ready_token is not None and request.token is ready_token:
-                                request.retire(owed=True)
-                            request.begin(projection)
-                        projection.run(lambda: None)
-                        if (
-                            request is not None
-                            and not projection.pending
-                            and request.receipt is None
-                        ):
-                            request.retire()  # No issued read, or scheduling refused.
+                        if due_error is None:
+                            projection = ConsoleReadinessConfigProjection.for_screen(
+                                screen
+                            )
+                            if request is not None:
+                                if (
+                                    ready_token is not None
+                                    and request.token is ready_token
+                                ):
+                                    request.retire(owed=True)
+                                request.begin(projection)
+                            projection.run(lambda: None)
+                            if (
+                                request is not None
+                                and not projection.pending
+                                and request.receipt is None
+                            ):
+                                request.retire()  # No issued read, or scheduling refused.
+        if due_error is not None:
+            # The original native locks have both exited before custody/queue.
+            try:
+                defer_parent_identity(due_origin, request, callback_token, due_error)
+            except ParentSettingsDeferred:
+                pass  # Original timer policy below; no unadmitted source survives.
+            except ParentSettingsOriginChanged:
+                if request is not None and request.token is callback_token:
+                    request.retire()
+                return None
+            except BaseException:
+                if request is not None and request.token is callback_token:
+                    request.retire()
+                raise
+            else:
+                return None
         if (
             request is not None
             and ready_token is not None
@@ -1448,6 +1610,46 @@ class ConsoleContextReadSnapshot:
     @classmethod
     def for_screen(cls, screen: Any, *, max_age: float) -> ConsoleContextReadSnapshot:
         """Reuse one screen-owned disposable presentation reader."""
+        owner = getattr(screen, "_console_domain_display_owner", None)
+        if owner is not None:
+            from ...Chat.console_domain_display import ConsoleDisplayUnsupported
+            from ...Chat.console_display_phases import ConsoleDisplayPhaseRefused
+
+            owner.require_current()
+            port = owner.domain.presentation
+            if port._require_display_owner(owner) is not screen:
+                raise ConsoleDisplayPhaseRefused("Context attachment changed")
+            snapshot = owner.context
+            if snapshot.screen is screen and port._current_visit(
+                snapshot._display_view_stamp
+            ):
+                # Same original association: do not refresh projection/age/TTL.
+                return snapshot
+            if owner._full is not None or snapshot.pending_key is not None:
+                raise ConsoleDisplayUnsupported("context-association-still-owned")
+            from .config_sync import publish_console_presentation
+
+            # Same original for_screen point, same ready-only config predicate.
+            # This is association of the original snapshot, not a warm/read.
+            snapshot.screen = screen
+            snapshot._display_view_stamp = port._stamp()
+            snapshot.max_age = max_age
+            snapshot.schedule = screen.run_worker
+            snapshot.refresh = screen._sync_native_console_chat_ui
+            snapshot.publish = partial(
+                publish_console_presentation, screen, "console-context-publication"
+            )
+            snapshot.config_projection = (
+                ConsoleReadinessConfigProjection.for_screen(screen)
+                if _screen_readiness_config(screen)
+                and screen._console_config_snapshot_is_disk_loaded(
+                    _screen_readiness_config(screen)
+                )
+                else None
+            )
+            screen._console_context_read_snapshot = snapshot
+            return snapshot
+
         snapshot = getattr(screen, "_console_context_read_snapshot", None)
         if snapshot is None:
             from .config_sync import publish_console_presentation
@@ -1484,6 +1686,13 @@ class ConsoleContextReadSnapshot:
 
     def _closed(self, controller: Any) -> bool:
         screen = self.screen
+        owner = getattr(self, "_domain_display_owner", None)
+        if owner is not None and screen is not None:
+            port = owner.domain.presentation
+            if port._require_display_owner(
+                owner
+            ) is not screen or not port._current_visit(self._display_view_stamp):
+                return True
         return bool(
             getattr(controller, "_disposed", False)
             or (screen is not None and (
@@ -1494,6 +1703,10 @@ class ConsoleContextReadSnapshot:
 
     def _key(self, controller: Any, session_id: str) -> tuple | None:
         if self._closed(controller):
+            return None
+        from ...Chat.console_control_settings import settings_pending
+
+        if settings_pending(controller.store, session_id) is not None:
             return None
         try:
             store = controller.store
@@ -1533,12 +1746,27 @@ class ConsoleContextReadSnapshot:
                 store.session_context_summary(session_id),
                 self.config_projection._key() if self.config_projection else None,
                 _context_presentation_source_key(controller),
+                getattr(
+                    getattr(controller, "_context_repository", None),
+                    "_memory_publication_revision", None,
+                ),
             )
         except (AttributeError, KeyError, StopIteration):
             return None
 
     def _cache_key(self, controller: Any, session_id: str) -> tuple | None:
+        from ...Chat.console_context_repository import _MemoryAbsentPresentationInputs
+
         owner = self._key(controller, session_id)
+        if (
+            owner is not None
+            and owner[13][0] == "stock-echo"
+            and type(self.value) is _MemoryAbsentPresentationInputs
+        ):
+            # No branch can select a memory that does not exist. Keep the
+            # repository/publication, legacy summary, policy and owner fences;
+            # only positive memory depends on the live transcript lineage.
+            owner = (*owner[:13], None, owner[14], None, None, None, *owner[18:])
         projection = self.config_projection
         if owner is None or projection is None:
             return owner
@@ -1552,14 +1780,50 @@ class ConsoleContextReadSnapshot:
             return None
         return (*owner, projection.context_policy)
 
-    async def warm(self, controller: Any, session_id: str) -> bool:
+    async def warm(
+        self, controller: Any, session_id: str, *, _display_read: Any = None
+    ) -> bool:
         """Publish only a result whose captured owner survived the await."""
-        async with self.lock:
-            return await self._warm(controller, session_id)
+        from ...Chat.console_control_settings import wait_settings_settled
 
-    async def _warm(self, controller: Any, session_id: str) -> bool:
+        await wait_settings_settled(controller.store, session_id)
+        if _display_read is not None and (
+            not _display_read.collecting or self.lock.locked()
+        ):
+            return False
+        owner = getattr(self, "_domain_display_owner", None)
+        if owner is not None and _display_read is None:
+            return await self._warm_selected(controller, session_id)
+        async with self.lock:
+            return await self._warm(controller, session_id, _display_read=_display_read)
+
+    async def _warm(
+        self, controller: Any, session_id: str, *, _display_read: Any = None
+    ) -> bool:
         projection = self.config_projection
-        if projection is not None and not await projection.warm():
+        shared_config = None
+        if _display_read is not None:
+            from .config_sync import _stock_main_context_read
+
+            if not _display_read.collecting or not _stock_main_context_read(controller):
+                return False  # A changed/custom source keeps its scheduled refresh.
+            if projection is not None:
+                # FULL owns config preparation after archive recovery. Only an
+                # already ready projection may join this earlier DB capture.
+                # Calling warm/run here can start config/tokenizer work or wait
+                # past sealing, adding an independent context read to FULL.
+                if (
+                    not _handoff_projection_is_stock(projection)
+                    or projection.screen is not self.screen
+                    or projection.pending or projection.value is None
+                    or self._closed(controller)
+                    or projection._runtime_owner is not _readiness_runtime(projection.screen)
+                    or not _same_readiness_key(projection.key, projection._key())
+                    or time.monotonic() - projection.at >= projection.max_age
+                ):
+                    return False
+                shared_config = projection.value, projection.context_policy, projection._runtime_owner
+        elif projection is not None and not await projection.warm():
             return False
         key = self._cache_key(controller, session_id)
         if key is None:
@@ -1573,21 +1837,67 @@ class ConsoleContextReadSnapshot:
             return True
         if key != self.key:
             self.key = self.value = None
+            key = self._cache_key(controller, session_id)
+        read_owner = self._key(controller, session_id)
         read = getattr(controller, "context_control_presentation_inputs", None)
         if not callable(read):
             return False
+        from ...Chat import console_context_repository as context_source
+
+        original, code, defaults, kwdefaults = context_source._CONTEXT_PRESENTATION_READ_SOURCE
+        share = (
+            _display_read is not None
+            and type(controller) is ConsoleChatController
+            and stock_native_methods(controller, _CONSOLE_CONTEXT_PRESENTATION_READERS)
+            and context_source.read_context_presentation_inputs is original
+            and original.__code__ is code and original.__defaults__ is defaults
+            and original.__kwdefaults__ is kwdefaults
+        )
+        if _display_read is not None and not share:
+            return False
         try:
-            if projection is not None:
+            if share:
+                from ...Chat.console_context_repository import (
+                    PRESENTATION_GLOBAL_POLICY_UNSET,
+                    read_context_presentation_inputs,
+                )
+
+                value = await read_context_presentation_inputs(
+                    controller, session_id,
+                    global_overrides=(projection.context_policy if projection is not None
+                                      else PRESENTATION_GLOBAL_POLICY_UNSET),
+                    _display_read=_display_read,
+                )
+            elif projection is not None:
                 value = await read(
                     session_id, _presentation_global_overrides=projection.context_policy
                 )
             else:
                 value = await read(session_id)
+        except ConsoleDisplayPhaseRefused:
+            raise
         except Exception:  # noqa: BLE001 - the existing live reader owns error policy.
             return False
-        if key is None or key != self._cache_key(controller, session_id):
+        if _display_read is not None:
+            from ...Chat.console_domain_display import ConsoleDisplayFull
+
+            if type(_display_read) is ConsoleDisplayFull:
+                await _display_read.publication_ready("context")
+        if shared_config is not None and (
+            self.config_projection is not projection
+            or not _handoff_projection_is_stock(projection)
+            or projection.value is not shared_config[0]
+            or projection.context_policy is not shared_config[1]
+            or _readiness_runtime(projection.screen) is not shared_config[2]
+        ):
             return False
-        self.key, self.value = key, value
+        if (
+            key is None or key != self._cache_key(controller, session_id)
+            or read_owner != self._key(controller, session_id)
+        ):
+            return False
+        self.value = value
+        self.key = self._cache_key(controller, session_id)
         self.at = time.monotonic()
         return True
 
@@ -1624,10 +1934,15 @@ class ConsoleContextReadSnapshot:
     async def _refresh(self, controller: Any, session_id: str, key: tuple) -> None:
         previous = self.key, self.value
         try:
-            async with self.lock:
+            if getattr(self, "_domain_display_owner", None) is not None:
                 published = key == self._cache_key(
                     controller, session_id
-                ) and await self._warm(controller, session_id)
+                ) and await self._warm_selected(controller, session_id)
+            else:
+                async with self.lock:
+                    published = key == self._cache_key(
+                        controller, session_id
+                    ) and await self._warm(controller, session_id)
         finally:
             if self.pending_key == key:
                 self.pending_key = None
@@ -1641,6 +1956,42 @@ class ConsoleContextReadSnapshot:
             self.schedule(
                 self.refresh, exclusive=False, group="console-context-publication"
             )
+
+    async def _warm_selected(self, controller: Any, session_id: str) -> bool:
+        """Keep standalone readiness preparation, then join original FULL custody."""
+        owner = self._domain_display_owner
+        owner.require_current()
+        if controller is not owner.controller or owner.context is not self:
+            raise ConsoleDisplayPhaseRefused("Standalone context owner changed")
+        port = owner.domain.presentation
+        if port._require_display_owner(owner) is not self.screen:
+            return False
+        stamp = self._display_view_stamp
+        if not port._current_visit(stamp):
+            return False
+        projection = self.config_projection
+        if projection is not None and not await projection.warm():
+            return False
+        key = self._cache_key(controller, session_id)
+        if key is None or not port._current_visit(stamp):
+            return False
+        if (
+            key == self.key
+            and self.value is not None
+            and time.monotonic() - self.at < self.max_age
+        ):
+            return True
+        if not await port.warm_display_context(owner, self, session_id, key, stamp):
+            return False
+        return bool(
+            port._current_visit(stamp)
+            and self.config_projection is projection
+            and key == self._cache_key(controller, session_id)
+            and self.key == key
+            and self.value is not None
+            and time.monotonic() - self.at < self.max_age
+        )
+
 
 
 def console_transcript_context_inputs(
@@ -1697,7 +2048,7 @@ def console_transcript_context_inputs(
 async def prepare_console_settings_context(
     screen: Any, controller: Any, store: Any, session_id: str, origin: Any,
     *, max_age: float,
-) -> tuple[Any, Callable[[], bool]] | None:
+) -> tuple[Any, tuple[Any, ...]] | None:
     """Warm explicit settings presentation for the exact captured chat owner."""
     reader = (
         ConsoleContextReadSnapshot.for_screen(screen, max_age=max_age)
@@ -1706,34 +2057,37 @@ async def prepare_console_settings_context(
     )
     key = reader._key(controller, session_id) if reader is not None else None
 
-    def current() -> bool:
-        if (
-            getattr(screen, "_closing", False)
-            or getattr(controller, "_disposed", False)
-            or getattr(_readiness_runtime(screen), "_disposed", False)
-            or screen._ensure_console_chat_controller() is not controller
-            or screen._ensure_console_chat_store() is not store
-            or (reader is not None and (key is None or reader._key(controller, session_id) != key))
-        ):
-            return False
-        try:
-            return store.capture_console_settings_origin(session_id) == origin
-        except KeyError:
-            return False
+    facts = (controller, store, session_id, origin, reader, key)
 
-    if not current():
+    async def current() -> bool:
+        from ...Chat.console_parent_settings import (
+            ParentSettingsOriginChanged,
+            run_parent_async_settings_action,
+        )
+
+        try:
+            selected, value = await run_parent_async_settings_action(
+                screen, "settings-context-current", facts
+            )
+        except ParentSettingsOriginChanged:
+            return False
+        return value if selected else screen._console_settings_context_current(*facts)
+
+    if not await current():
         return None
     try:
         policy = await controller.effective_thinking_history_policy_for_session(session_id)
     except KeyError:
-        if not current():
+        if not await current():
             return None
         raise
-    if not current():
+    if not await current():
         return None
-    if (reader is not None) and (not await reader.warm(controller, session_id) or not current()):
+    if (reader is not None) and (
+        not await reader.warm(controller, session_id) or not await current()
+    ):
         return None
-    return policy, current
+    return policy, facts
 
 
 def fold_system_prompt(system_prompt: str | None, greeting: str) -> str:
@@ -2107,3 +2461,15 @@ class ConsoleDraftSpendRefresh:
         self.timer = None
         self.sync_settings_summary()
         self.sync_cost_chip()
+
+
+_CONTEXT_SNAPSHOT_WARM_READERS = tuple(
+    (name, function, function.__code__)
+    for name in ("warm", "_warm", "_warm_selected", "_key", "_cache_key", "_closed")
+    for function in (getattr(ConsoleContextReadSnapshot, name),)
+)
+
+_selected_settings_read_helpers = tuple(
+    (name, globals()[name], globals()[name].__code__)
+    for name in ("prepare_console_settings_context",)
+)

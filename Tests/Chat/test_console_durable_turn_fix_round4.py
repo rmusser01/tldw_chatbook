@@ -158,13 +158,15 @@ def test_failed_owner_does_not_overwrite_legitimate_session_close(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Owner cleanup must not recreate or pause state removed by close."""
+    """Close refuses the owned callback, then removes state after retirement."""
 
     _db, service, store, preparation, acceptance = _ready_store(tmp_path)
     entered = Event()
     release = Event()
+    creator_ids = []
 
     def blocked_failure(**_kwargs: Any):
+        creator_ids.append(get_ident())
         entered.set()
         assert release.wait(timeout=5)
         raise RuntimeError("persistence failed after close")
@@ -172,11 +174,29 @@ def test_failed_owner_does_not_overwrite_legitimate_session_close(
     monkeypatch.setattr(service, "commit_durable_turn", blocked_failure)
     with ThreadPoolExecutor(max_workers=1) as executor:
         owner = executor.submit(store.commit_durable_turn, acceptance)
-        assert entered.wait(timeout=5)
-        store.close_session(preparation.session_id)
-        release.set()
+        try:
+            assert entered.wait(timeout=5)
+            reservation = store._durable_commit_in_flight[preparation.preparation_id]
+            assert reservation.session_id == preparation.session_id
+            assert creator_ids == [reservation.owner_thread_id]
+            assert reservation.owner_thread_id != get_ident()
+            with pytest.raises(
+                RuntimeError, match="Durable acceptance commit is still owned"
+            ):
+                store.close_session(preparation.session_id)
+            assert (
+                store._durable_commit_in_flight[preparation.preparation_id]
+                is reservation
+            )
+            assert not owner.done()
+        finally:
+            release.set()
         outcome = _result_or_exception(owner)
 
     assert isinstance(outcome, RuntimeError)
+    assert str(outcome) == "persistence failed after close"
+    assert owner.done()
+    assert preparation.preparation_id not in store._durable_commit_in_flight
+    store.close_session(preparation.session_id)
     assert store.preparation_by_id(preparation.preparation_id) is None
     assert store.preparation_for_session(preparation.session_id) is None

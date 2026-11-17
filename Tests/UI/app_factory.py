@@ -26,6 +26,8 @@ from types import SimpleNamespace
 from typing import Any, Mapping
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from Tests.app_module_patches import patch_app_global
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.config import load_settings, save_setting_to_cli_config
@@ -44,6 +46,11 @@ _created_databases: list[Any] = []
 
 # Exact constructor apps and lock handles; replacements remain caller-owned.
 _created_apps: list[TldwCli] = []
+
+# Only fault tests that proved creator-thread cleanup may register this outcome.
+EXPECTED_RUNTIME_DISPOSAL_ERRORS = pytest.StashKey[
+    dict[Any, tuple[Any, BaseException]]
+]()
 _created_instance_locks: list[Any] = []
 
 # Every still-running `get_subscriptions_db_path` patch started by
@@ -221,12 +228,50 @@ def attach_chachanotes_db(
     return db
 
 
-async def drain_created_runtimes() -> None:
-    """Retire factory-app Console workers before their owned DBs and locks."""
-    from tldw_chatbook.Chat.console_runtime import dispose_console_runtime
+async def drain_created_runtimes(
+    expected_errors: Mapping[Any, tuple[Any, BaseException]] | None = None,
+) -> tuple[BaseException, ...]:
+    """Dispose every app, retaining explicitly expected logical fault outcomes.
 
+    Args:
+        expected_errors: Exact app/runtime/error triples registered only after
+            the fault test has proved physical cleanup on the creator thread.
+
+    Returns:
+        Expected failures observed from original disposal, not retirement success.
+
+    Raises:
+        AssertionError: An expected outcome is unused, replaced, or succeeds.
+    """
+    from tldw_chatbook.Chat.console_native_commit import (
+        ConsoleNativeRetirementUncertain,
+    )
+    from tldw_chatbook.Chat.console_runtime import (
+        CONSOLE_RUNTIME_ATTR,
+        dispose_console_runtime,
+    )
+
+    remaining = dict(expected_errors or {})
+    observed = []
     for app in _created_apps:
-        await dispose_console_runtime(app)
+        expected = remaining.pop(app, None)
+        if expected is not None:
+            runtime, error = expected
+            assert getattr(app, CONSOLE_RUNTIME_ATTR, None) is runtime
+            assert type(error) is ConsoleNativeRetirementUncertain
+        try:
+            await dispose_console_runtime(app)
+        except ConsoleNativeRetirementUncertain as error:
+            if expected is None or error is not expected[1]:
+                raise
+            assert getattr(app, CONSOLE_RUNTIME_ATTR, None) is expected[0]
+            observed.append(error)
+        else:
+            assert (
+                expected is None
+            ), "Expected retained disposal failure unexpectedly succeeded"
+    assert not remaining, "Expected disposal outcome did not belong to a factory app"
+    return tuple(observed)
 
 
 def drain_created_dirs() -> int:

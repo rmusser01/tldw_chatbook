@@ -23,6 +23,7 @@ import time
 import pytest
 from textual.app import ComposeResult
 from textual.containers import Vertical
+from textual.message_pump import MessagePump
 from textual.screen import Screen
 from textual.widget import Widget
 from textual.widgets import Button, Static
@@ -42,6 +43,7 @@ from tldw_chatbook.Widgets.Console.console_bounded_section import (
     ConsoleBoundedSection,
 )
 from tldw_chatbook.Widgets.Console.console_inspector_section import (
+    CONSOLE_RAIL_COLLAPSED,
     ConsoleInspectorSection,
     ConsoleInspectorSectionRow,
     ConsoleInspectorSectionState,
@@ -92,13 +94,18 @@ def _section_state(*, summary: str, detail: str) -> ConsoleInspectorSectionState
 class _RailHost(ConsolidatedCSSApp):
     """A rail holding one production widget, as the Inspector rail holds it."""
 
-    def __init__(self, widget: Widget) -> None:
+    def __init__(self, widget: Widget, *, initially_closed: bool = False) -> None:
         super().__init__()
         self.app_config = {}
         self.widget = widget
+        self.initially_closed = initially_closed
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="rail"):
+        rail = Vertical(id="rail")
+        if self.initially_closed:
+            setattr(rail, CONSOLE_RAIL_COLLAPSED, True)
+            rail.display = False
+        with rail:
             yield self.widget
 
 
@@ -161,6 +168,133 @@ async def _never_hidden(widget: Widget) -> list[tuple]:
     host = _RailHost(widget)
     async with host.run_test(size=(40, 30)) as pilot:
         return await _settled_witness(pilot, host.query_one("#rail"))
+
+
+async def test_initially_closed_console_leaves_pilot_no_inspector_descendants_to_visit(
+    monkeypatch, record_property
+) -> None:
+    """Measure the actual Pilot callback fanout on the production ChatScreen."""
+    from Tests.UI.test_console_right_rail import make_console_pilot
+
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        rail = screen.query_one("#console-right-rail")
+        inspector = screen.query_one(
+            "#console-run-inspector-state", ConsoleRunInspector
+        )
+        assert not rail.display and inspector.is_mounted and inspector.state.rows
+        recipients = []
+        original = MessagePump.call_later
+
+        def record(node, callback, *args, **kwargs):
+            posted = original(node, callback, *args, **kwargs)
+            if (
+                posted
+                and getattr(callback, "__qualname__", "")
+                == "Pilot._wait_for_screen.<locals>.decrement_counter"
+                and (node is inspector or inspector in node.ancestors)
+            ):
+                recipients.append(node)
+            return posted
+
+        async def fanout(label):
+            recipients.clear()
+            descendants = list(inspector.walk_children())
+            with monkeypatch.context() as patch:
+                patch.setattr(MessagePump, "call_later", record)
+                await pilot.pause(0.05)
+            assert recipients == [inspector, *descendants]
+            record_property(f"{label}_descendants", len(descendants))
+            record_property(f"{label}_callbacks", len(recipients))
+            return len(descendants)
+
+        assert await fanout("initially_closed") == 0
+        await screen.action_toggle_console_inspector_rail()
+        await _settled_witness(pilot, rail)
+        assert screen.focused.id == "console-send-authority-summary"
+        assert await fanout("opened") > 0
+
+
+async def test_initially_closed_inspector_first_paint_uses_all_latest_facts(
+    monkeypatch,
+) -> None:
+    inspector = ConsoleRunInspector(_inspector_state(provider="Initial", chat=False))
+    host = _RailHost(inspector, initially_closed=True)
+    changed = _inspector_state(provider="Structural change", chat=True)
+    latest = _inspector_state(provider="Latest", chat=True)
+    selector = "#console-inspector-dictionaries-attach"
+    async with host.run_test(size=(40, 30)) as pilot:
+        rail = host.query_one("#rail")
+        for state in (changed, latest):
+            inspector.sync_state(state)
+            await pilot.pause()
+            assert inspector.state is state
+            assert not inspector.children
+
+        paint = Screen._compositor_refresh
+        frames = []
+
+        def painted(screen):
+            frames.append(tuple(button.disabled for button in screen.query(selector)))
+            return paint(screen)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(Screen, "_compositor_refresh", painted)
+            asyncio.get_running_loop().call_soon(host.screen._on_timer_update)
+            rail.display = True
+            ChatScreen._sync_console_rail_descendant_visibility(rail, True)
+            host.screen.refresh(layout=True)
+            opened = await _settled_witness(pilot, rail)
+        assert frames and set(frames) == {(False,)}
+
+        attach = rail.query_one(selector, Button)
+        ChatScreen._sync_console_rail_descendant_visibility(rail, False)
+        ChatScreen._sync_console_rail_descendant_visibility(rail, True)
+        await pilot.pause()
+        assert rail.query_one(selector, Button) is attach
+
+    assert opened == await _never_hidden(ConsoleRunInspector(latest))
+
+
+async def test_inspector_open_between_compose_and_mount_lands_before_first_paint(
+    monkeypatch,
+) -> None:
+    inspector = ConsoleRunInspector(_inspector_state(provider="Initial", chat=False))
+    host = _RailHost(inspector, initially_closed=True)
+    selector = "#console-inspector-dictionaries-attach"
+    original_mount = inspector.mount_composed_widgets
+    paint = Screen._compositor_refresh
+    updated = _inspector_state(provider="Before Mount", chat=True)
+    frames = []
+    opened = False
+
+    def painted(screen):
+        if opened:
+            frames.append(tuple(button.disabled for button in screen.query(selector)))
+        return paint(screen)
+
+    async def open_while_composing(widgets):
+        nonlocal opened
+        assert not inspector.is_mounted
+        rail = host.query_one("#rail")
+        assert not widgets
+        inspector.sync_state(updated)
+        assert inspector.state is updated
+        assert not inspector._recompose_required
+        asyncio.get_running_loop().call_soon(host.screen._on_timer_update)
+        rail.display = True
+        ChatScreen._sync_console_rail_descendant_visibility(rail, True)
+        opened = True
+        await original_mount(widgets)
+
+    monkeypatch.setattr(inspector, "mount_composed_widgets", open_while_composing)
+    with monkeypatch.context() as patch:
+        patch.setattr(Screen, "_compositor_refresh", painted)
+        async with host.run_test(size=(40, 30)) as pilot:
+            rail = host.query_one("#rail")
+            await _settled_witness(pilot, rail)
+            assert not rail.query_one(selector, Button).disabled
+            assert frames and set(frames) == {(False,)}
 
 
 async def _changed_while_hidden(monkeypatch, widget: Widget, change) -> tuple:

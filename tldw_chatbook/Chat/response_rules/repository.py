@@ -420,3 +420,26 @@ class ResponseRuleRepository:
                 (conversation_id,),
             )
         self._garbage_collect(cursor)
+
+
+# Definition-time readers eligible for the optional finite resolution batch.
+_RULE_DICT = vars(ResponseRuleRepository)["__dict__"]
+_RULE_READERS = tuple(
+    (
+        name,
+        function,
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        ),
+    )
+    for name in ("list_bindings", "get_revision")
+    for function in (vars(ResponseRuleRepository)[name],)
+)

@@ -40,6 +40,7 @@ class _OriginalAvailabilityRead(_OriginalConfigurationWorkspaceRead):
         self.operation = self.participant = None
         self.invocations = 0
         self.read = None
+        self.generation = None
         publisher = ConsoleWorkspaceController._refresh_workspace_files_availability_snapshot
         self.publisher_code = publisher.__code__
         lines, first = inspect.getsourcelines(publisher)
@@ -68,7 +69,9 @@ class _OriginalAvailabilityRead(_OriginalConfigurationWorkspaceRead):
             frame = sys._getframe(1)
             if _line in self.publication_lines and frame.f_locals.get("self") is self.workspace:
                 if len(self.publications) < 64:
-                    self.publications.append((asyncio.current_task(), _line))
+                    self.publications.append((
+                        asyncio.current_task(), frame.f_locals["generation"], _line,
+                    ))
                 else:
                     self.publication_overflow = True
             return
@@ -88,6 +91,7 @@ class _OriginalAvailabilityRead(_OriginalConfigurationWorkspaceRead):
         binding = _source_binding.get()
         assert binding is not None and binding.active
         self.read = binding.read
+        self.generation = self.workspace._workspace_files_availability_active_generation
         self.connection = frame.f_locals["conn"]
         self.thread = threading.current_thread()
         self.participant = self.registry.db._maintenance_participant
@@ -272,7 +276,10 @@ def _assert_obsolete_read_did_not_publish(probe, read, producer):
     assert type(error) is _WorkspaceAvailabilityObsolete
     assert error.args == ("workspace_availability_source_changed",)
     assert not probe.publication_overflow
-    assert all(task is not read.task for task, _line in probe.publications)
+    assert all(
+        (task, generation) != (read.task, probe.generation)
+        for task, generation, _line in probe.publications
+    )
     with storage._lock:
         assert probe.operation not in storage._operations
         assert probe.connection not in probe.participant.connections
@@ -347,7 +354,7 @@ async def test_fresh_custom_availability_can_publish_after_source_refusal(
             assert workspace._workspace_files_availability_by_id == {"fresh": True}
             assert workspace._workspace_files_runtime_bindings_by_id == {"fresh": ()}
             assert {
-                line for task, line in probe.publications if task is fresh_task
+                line for task, _generation, line in probe.publications if task is fresh_task
             } == probe.publication_lines
             _assert_obsolete_read_did_not_publish(probe, read, producer)
             assert workspace._workspace_files_availability_cached_at > before

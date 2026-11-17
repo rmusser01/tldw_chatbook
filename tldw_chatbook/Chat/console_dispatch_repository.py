@@ -3,9 +3,18 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 import sqlite3
 from collections.abc import Mapping
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .console_durable_commit_plan import (
+        ConsoleDurableRecoveryProjection,
+        ConsoleExactCommitOutcome,
+        _ConsoleDurableCommitPlan,
+    )
 
 from loguru import logger
 
@@ -575,6 +584,280 @@ class ConsoleDispatchRepository:
             ConsoleDispatchResultStatus.COMMITTED,
             checkpoint,
         )
+
+    def read_exact_commit_outcome(
+        self, expected: ConsoleDurableRecoveryProjection | _ConsoleDurableCommitPlan
+    ) -> ConsoleExactCommitOutcome:
+        """Observe exact durable rows without replay or active-branch authority.
+
+        Call only after the prior execution's physical ownership has settled.
+        Absence cannot prove that a transaction never committed. A projection
+        alone cannot prove its full in-memory fingerprint from SQLite columns.
+        """
+        from .console_durable_commit_plan import (
+            ConsoleDurableRecoveryProjection,
+            ConsoleExactCommitOutcome,
+            _ConsoleDurableCommitPlan,
+        )
+
+        verified = False
+        if type(expected) is _ConsoleDurableCommitPlan:
+            plan = expected
+            if plan.database is not self.db:
+                return ConsoleExactCommitOutcome(
+                    "conflict_or_unknown", detail="database_owner_changed"
+                )
+            with plan.store.durable_preparation_lock:
+                if (
+                    plan.acceptance.preparation_id in plan.store._durable_plan_executing
+                    or plan.acceptance.preparation_id
+                    in plan.store._native_commit_owners_by_preparation
+                ):
+                    return ConsoleExactCommitOutcome(
+                        "conflict_or_unknown", detail="execution_not_settled"
+                    )
+                if (
+                    plan.store.durable_acceptance_fingerprint_for(
+                        plan.acceptance.preparation_id
+                    )
+                    != plan.fingerprint
+                ):
+                    return ConsoleExactCommitOutcome(
+                        "conflict_or_unknown", detail="fingerprint_changed"
+                    )
+            expected, verified = plan.recovery, True
+        if type(expected) is not ConsoleDurableRecoveryProjection:
+            raise TypeError("expected must be a retained durable recovery projection")
+
+        def outcome(status, checkpoint=None, detail=None):
+            return ConsoleExactCommitOutcome(status, checkpoint, detail, verified)
+
+        owner = expected.fingerprint
+        try:
+            with self.db.transaction(immediate=False) as cursor:
+                # Include conflicting owners even when the current branch moved.
+                owners = cursor.execute(
+                    "SELECT * FROM console_dispatch_checkpoints WHERE preparation_id = ? "
+                    "OR user_message_id = ? OR assistant_message_id = ?",
+                    (
+                        owner.preparation_id,
+                        owner.user_message_id,
+                        owner.assistant_message_id,
+                    ),
+                ).fetchall()
+                users = cursor.execute(
+                    "SELECT * FROM messages WHERE id = ?", (owner.user_message_id,)
+                ).fetchall()
+                assistants = cursor.execute(
+                    "SELECT * FROM messages WHERE id = ?", (owner.assistant_message_id,)
+                ).fetchall()
+                if not owners and not users and not assistants:
+                    return outcome("no_matching_durable_rows_observed")
+                conversation = cursor.execute(
+                    "SELECT deleted FROM conversations WHERE id = ?",
+                    (owner.conversation_id,),
+                ).fetchone()
+                if (
+                    len(owners) > 1
+                    or len(users) != 1
+                    or len(assistants) != 1
+                    or conversation is None
+                    or conversation["deleted"] != 0
+                ):
+                    return outcome(
+                        "conflict_or_unknown", detail="missing_or_duplicate_pair"
+                    )
+                user, assistant = users[0], assistants[0]
+                receipt = expected.checkpoint
+                if (
+                    user["conversation_id"] != owner.conversation_id
+                    or assistant["conversation_id"] != owner.conversation_id
+                    or user["role"] != "user"
+                    or assistant["role"] != "assistant"
+                    or user["deleted"] != 0
+                    or assistant["deleted"] != 0
+                    or user["parent_message_id"] != expected.parent_message_id
+                    or assistant["parent_message_id"] != owner.user_message_id
+                    or hashlib.sha256(
+                        (user["content"] or "").encode("utf-8")
+                    ).hexdigest()
+                    != expected.user_content_sha256
+                    or not self._positive_versions(
+                        user["version"], assistant["version"]
+                    )
+                    or user["version"]
+                    != (
+                        receipt.user_message_version
+                        if receipt
+                        else expected.initial_user_version
+                    )
+                    or assistant["version"]
+                    < (
+                        receipt.assistant_message_version
+                        if receipt
+                        else expected.initial_assistant_version
+                    )
+                ):
+                    return outcome(
+                        "conflict_or_unknown", detail="immutable_pair_changed"
+                    )
+                attachments = []
+                if user["image_data"] is not None:
+                    attachments.append(
+                        (
+                            0,
+                            hashlib.sha256(user["image_data"]).hexdigest(),
+                            user["image_mime_type"],
+                            "",
+                        )
+                    )
+                elif user["image_mime_type"] is not None:
+                    return outcome("conflict_or_unknown", detail="invalid_attachment")
+                for row in cursor.execute(
+                    "SELECT position, data, mime_type, display_name FROM message_attachments WHERE message_id = ? ORDER BY position",
+                    (owner.user_message_id,),
+                ):
+                    if (
+                        type(row["position"]) is not int
+                        or row["position"] < 1
+                        or type(row["data"]) is not bytes
+                    ):
+                        return outcome(
+                            "conflict_or_unknown", detail="invalid_attachment"
+                        )
+                    attachments.append(
+                        (
+                            row["position"],
+                            hashlib.sha256(row["data"]).hexdigest(),
+                            row["mime_type"],
+                            row["display_name"],
+                        )
+                    )
+                if tuple(attachments) != expected.attachments:
+                    return outcome("conflict_or_unknown", detail="attachments_changed")
+                metadata = MessageMetadata.from_json(user["metadata_json"])
+                if bool(metadata and metadata.root_fork) != expected.user_root_fork or (
+                    expected.agent_chat_start is not None
+                    and (
+                        metadata is None
+                        or metadata.origin != "agent_chat_start"
+                        or metadata.agent_chat_start != expected.agent_chat_start
+                    )
+                ):
+                    return outcome("conflict_or_unknown", detail="provenance_changed")
+                if owners:
+                    row = cursor.execute(
+                        _OWNER_SELECT + " WHERE checkpoint.assistant_message_id = ?",
+                        (owner.assistant_message_id,),
+                    ).fetchone()
+                    if row is None or not self._valid_reconcile_pair(row):
+                        return outcome(
+                            "conflict_or_unknown", detail="invalid_checkpoint_pair"
+                        )
+                    checkpoint, error = self._checkpoint_from_row(row)
+                    if checkpoint is None:
+                        return outcome("conflict_or_unknown", detail=error)
+                    if any(
+                        getattr(checkpoint, name) != getattr(owner, name)
+                        for name in (
+                            "preparation_id",
+                            "attempt_id",
+                            "conversation_id",
+                            "user_message_id",
+                            "assistant_message_id",
+                            "origin",
+                            "queue_entry_id",
+                        )
+                    ) or (
+                        dump_console_turn_library_authority_json(
+                            checkpoint.frozen_authority
+                        )
+                        != expected.frozen_authority_json
+                        or dump_console_resolved_destination_json(
+                            checkpoint.resolved_destination
+                        )
+                        != expected.resolved_destination_json
+                        or dump_console_dispatch_reconstructability_json(
+                            checkpoint.reconstructability
+                        )
+                        != expected.reconstructability_json
+                        or (
+                            receipt is not None
+                            and checkpoint.checkpoint_revision
+                            < receipt.checkpoint_revision
+                        )
+                        or checkpoint.checkpoint_revision
+                        < expected.initial_checkpoint_revision
+                    ):
+                        return outcome(
+                            "conflict_or_unknown", detail="checkpoint_identity_changed"
+                        )
+                    return outcome("matching_durable_acceptance_observed", checkpoint)
+                # Both original checkpoint-clearing writers increment this exact
+                # assistant version before deleting the checkpoint.
+                if assistant["version"] <= (
+                    receipt.assistant_message_version
+                    if receipt is not None
+                    else expected.initial_assistant_version
+                ):
+                    return outcome(
+                        "conflict_or_unknown", detail="checkpoint_not_advanced"
+                    )
+                continuation = read_provider_continuation_json(
+                    assistant["provider_continuation_json"]
+                )
+                thinking = read_thinking_blocks_json(assistant["thinking_blocks_json"])
+                if (
+                    thinking.warning is not None
+                    or not thinking.generation_actions_enabled
+                ):
+                    return outcome("conflict_or_unknown", detail="invalid_thinking")
+                if assistant["provider_continuation_json"] is not None:
+                    if (
+                        continuation.checkpoint is None
+                        or not self._continuation_matches_destination(
+                            {
+                                "resolved_destination_json": expected.resolved_destination_json
+                            },
+                            continuation.checkpoint,
+                        )
+                    ):
+                        return outcome(
+                            "conflict_or_unknown", detail="invalid_continuation"
+                        )
+                    if continuation.checkpoint.state == "active":
+                        snapshot = self._provider_continuation_owner_snapshot(
+                            cursor, owner.conversation_id, owner.assistant_message_id
+                        )
+                        if (
+                            snapshot is None
+                            or snapshot["version"] != assistant["version"]
+                            or snapshot["state"] != "continuation_active"
+                        ):
+                            return outcome(
+                                "conflict_or_unknown",
+                                detail="inactive_or_invalid_continuation",
+                            )
+                        return outcome("matching_pair_continuation_observed")
+                    if (
+                        continuation.checkpoint.state != "complete"
+                        or assistant["assistant_generation_state"] != "complete"
+                        or continuation.checkpoint.rounds[-1].assistant_content
+                        != assistant["content"]
+                    ):
+                        return outcome(
+                            "conflict_or_unknown", detail="invalid_continuation_state"
+                        )
+                if assistant["assistant_generation_state"] in {
+                    "complete",
+                    "failed",
+                    "stopped",
+                    "discarded",
+                }:
+                    return outcome("matching_pair_terminal_observed")
+                return outcome("conflict_or_unknown", detail="unresolved_pair")
+        except Exception:  # noqa: BLE001 - any failed admitted read leaves outcome unknown.
+            return outcome("conflict_or_unknown", detail="exact_read_error")
 
     def reconcile_for_session(
         self, conversation_id: str
@@ -1620,45 +1903,49 @@ class ConsoleDispatchRepository:
         """Freshly read one valid active-path ADR-063 owner for CAS recovery."""
         try:
             with self.db.transaction() as cursor:
-                if assistant_message_id not in self._active_path_ids(
-                    cursor, conversation_id
-                ):
-                    return None
-                row = cursor.execute(
-                    """
-                    SELECT id, conversation_id, role, deleted, version,
-                           assistant_generation_state, provider_continuation_json,
-                           content
-                      FROM messages
-                     WHERE id = ?
-                    """,
-                    (assistant_message_id,),
-                ).fetchone()
-                if (
-                    row is None
-                    or row["conversation_id"] != conversation_id
-                    or row["role"] != "assistant"
-                    or row["deleted"] != 0
-                    or type(row["version"]) is not int
-                ):
-                    return None
-                safe = read_provider_continuation_json(
-                    row["provider_continuation_json"]
+                return self._provider_continuation_owner_snapshot(
+                    cursor, conversation_id, assistant_message_id
                 )
-                if safe.checkpoint is None or safe.checkpoint.state != "active":
-                    return None
-                canonical = dump_provider_continuation_json(safe.checkpoint)
-                if canonical is None:
-                    return None
-                return {
-                    "checkpoint": safe.checkpoint,
-                    "canonical": canonical,
-                    "state": row["assistant_generation_state"],
-                    "version": int(row["version"]),
-                    "content": str(row["content"] or ""),
-                }
         except sqlite3.Error:
             return None
+
+    def _provider_continuation_owner_snapshot(
+        self, cursor, conversation_id: str, assistant_message_id: str
+    ) -> Mapping[str, object] | None:
+        """Reuse the original owner validation within one admitted read."""
+        if assistant_message_id not in self._active_path_ids(cursor, conversation_id):
+            return None
+        row = cursor.execute(
+            """
+            SELECT id, conversation_id, role, deleted, version,
+                   assistant_generation_state, provider_continuation_json,
+                   content
+              FROM messages
+             WHERE id = ?
+            """,
+            (assistant_message_id,),
+        ).fetchone()
+        if (
+            row is None
+            or row["conversation_id"] != conversation_id
+            or row["role"] != "assistant"
+            or row["deleted"] != 0
+            or type(row["version"]) is not int
+        ):
+            return None
+        safe = read_provider_continuation_json(row["provider_continuation_json"])
+        if safe.checkpoint is None or safe.checkpoint.state != "active":
+            return None
+        canonical = dump_provider_continuation_json(safe.checkpoint)
+        if canonical is None:
+            return None
+        return {
+            "checkpoint": safe.checkpoint,
+            "canonical": canonical,
+            "state": row["assistant_generation_state"],
+            "version": int(row["version"]),
+            "content": str(row["content"] or ""),
+        }
 
     @staticmethod
     def _continuation_matches_destination(

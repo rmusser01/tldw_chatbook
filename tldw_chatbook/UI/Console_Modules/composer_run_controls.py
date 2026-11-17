@@ -936,11 +936,39 @@ def _publish_console_authored_draft(self, draft: str, token: tuple[int, int]) ->
         # The explicit switch owns these edits. Its normal draft sync
         # transfers the typed suffix without publishing it to the old chat.
         return False
+    runtime = getattr(self.app_instance, "console_runtime", None)
+    controls = getattr(
+        getattr(runtime, "_execution_service", None), "_local_controls", None
+    )
     try:
-        store.set_session_draft(session_id, draft, authored_token=token)
-        self._session._console_visible_draft_revision = store.session_input_snapshot(
-            session_id
-        ).draft_revision
+        if controls is not None:
+            from ...Chat.console_guarded_prompt import (
+                begin_guarded_draft_write,
+                finish_guarded_draft_write,
+            )
+
+            if controls._store is not store:
+                raise RuntimeError("Console authored draft store changed")
+            record = begin_guarded_draft_write(self, store, session_id, draft, token)
+            returned = None
+            try:
+                returned = store.set_session_draft(
+                    session_id, draft, authored_token=token
+                )
+            finally:
+                finish_guarded_draft_write(record, returned)
+            # The original setter publishes handoff callbacks outside its lock.
+            # This consumer needs only current draft identity, never settings.
+            with store._preparation_lock:
+                session = store._session_or_raise(session_id)
+                if session is not returned:
+                    raise RuntimeError("Console authored draft session changed")
+                self._session._console_visible_draft_revision = session.draft_revision
+        else:
+            store.set_session_draft(session_id, draft, authored_token=token)
+            self._session._console_visible_draft_revision = (
+                store.session_input_snapshot(session_id).draft_revision
+            )
     except KeyError:
         return False
     return True
@@ -1027,7 +1055,34 @@ async def _dispatch_console_draft_send(
         "ui_dispatch", self._ui_responsiveness_monitor()
     ) as diagnostic:
         if session_id is None:
-            session_id = self._console_visible_send_session_id()
+            from ...Chat.console_parent_settings import (
+                ParentSettingsOriginChanged,
+                prepare_parent_visible_send_target,
+            )
+
+            try:
+                selected, prepared = await prepare_parent_visible_send_target(
+                    self, capture_supplied=stash is not None, supplied_stash=stash
+                )
+            except ParentSettingsOriginChanged:
+                self.app_instance.notify(
+                    "Draft or chat changed; Send again.", severity="warning"
+                )
+                return False
+            if selected:
+                if prepared is None:
+                    return False
+                session_id, pressed_stash, pressed_inputs = prepared
+                if (pressed_stash.text if pressed_stash is not None else "") != draft:
+                    self.app_instance.notify(
+                        "Draft or chat changed; Send again.", severity="warning"
+                    )
+                    return False
+                stash = pressed_stash
+                if _captured_inputs is None:
+                    _captured_inputs = pressed_inputs
+            else:
+                session_id = self._console_visible_send_session_id()
         if stash is None and draft:  # An image-only send has no draft.
             composer = self._console_composer_or_none()
             stash = composer.capture_draft_for_send() if composer else None

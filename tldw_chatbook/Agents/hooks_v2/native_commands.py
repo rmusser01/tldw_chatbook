@@ -94,6 +94,10 @@ class _CommandEvent:
         self.issuer, self.event, self.teardown = issuer, event, teardown
         self.future = future
         runtime, engine = issuer.runtime, issuer.engine
+        from tldw_chatbook.Chat.console_control_dispatch import require_control_source
+
+        self._control_source = require_control_source(runtime)
+        self._control_effect = self._control_custody = None
         self.store, self.controller = runtime._chat_store, runtime._chat_controller
         self.session = (
             self.store._sessions.get(issuer.session_id) if self.store else None
@@ -402,6 +406,12 @@ class _CommandEvent:
                     raise RuntimeError("Command event admission unavailable.")
                 return
             self.admitted = True
+        if self._control_source is not None:
+            controls = self._control_source.controls
+            self._control_effect = (
+                controls,
+                controls._begin_effect("hook", self, self._control_source),
+            )
         issuer = self.issuer
         with issuer._condition:
             issuer._admissions += 1
@@ -527,6 +537,10 @@ class _CommandEvent:
             raise
         finally:
             self.ready = True
+            if self._control_effect is not None and self.custody is None:
+                controls, effect = self._control_effect
+                self._control_effect = None
+                controls._finish_effect(effect, retired=not self.admission_failed)
             with issuer._condition:
                 issuer._admissions -= 1
                 issuer._condition.notify_all()

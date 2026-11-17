@@ -556,6 +556,13 @@ def request_visible_send(
     """
     if screen._session.refuse_send_from_unbound_composer():  # TASK-33622.7
         return
+    from ...Chat.console_parent_settings import retain_parent_visible_send
+
+    selected, capture = retain_parent_visible_send(screen, guard=guard, schedule=True)
+    if selected:
+        if capture is None:
+            screen.app_instance.notify("Console send is unavailable.", severity="error")
+        return
     session_id = screen._console_visible_send_session_id()
     if session_id is None:
         screen.app_instance.notify("Console send is unavailable.", severity="error")
@@ -574,20 +581,143 @@ def request_visible_send(
         screen._raw_cli.request_arm()
         return
     stash = composer.capture_draft_for_send() if composer is not None else None
+    _schedule_visible_send_capture(screen, session_id, stash, guard)
+
+
+def _schedule_visible_send_capture(screen, session_id, stash, guard, *, mirror=True):
+    """Run original coherent input capture and scheduling with the pressed stash."""
     request = _Request(
-        session_id, stash, guard,
-        received_inputs=capture_visible_send_inputs(screen, session_id, stash),
+        session_id,
+        stash,
+        guard,
+        received_inputs=capture_visible_send_inputs(screen, session_id, stash)
+        if mirror
+        else None,
     )
     flight = _flight(screen)
     if screen._console_pending_send is not None or flight.tasks or flight.deferred:
         _defer(screen, flight, request)
-    elif _record_draft(screen, request):
-        if request.received_inputs is None:
+    elif not mirror or _record_draft(screen, request):
+        if mirror and request.received_inputs is None:
             request = replace(
                 request,
                 received_inputs=capture_visible_send_inputs(screen, session_id, stash),
             )
         _schedule(screen, flight, request)
+
+
+@dataclass(frozen=True)
+class _VisibleSettingsPress:
+    session_id: str
+    bound: str | None
+    composer: Any
+    stash: Any
+    guard: Any
+    schedule: bool
+    raw_authority: str | None
+    draft_snapshot: Any
+    draft_text: str
+    backend_draft: tuple
+    check_only: bool = False
+
+
+def _capture_settings_press(
+    screen,
+    session_id,
+    guard,
+    schedule,
+    capture_supplied=False,
+    supplied_stash=None,
+    check_only=False,
+):
+    """Freeze only original press facts before the introduced settings wait."""
+    composer = screen._console_composer_or_none()
+    raw = composer.raw_cli_draft_authority() if composer is not None else None
+    snapshot = composer.capture_draft_snapshot() if composer is not None else None
+    text = composer.draft_text() if composer is not None else ""
+    stash = (
+        None
+        if check_only
+        else supplied_stash
+        if capture_supplied
+        else (
+            composer.capture_draft_for_send()
+            if composer is not None and (not schedule or raw != "unarmed")
+            else None
+        )
+    )
+    store = screen._console_chat_store
+    with store._preparation_lock:
+        session = store._sessions[session_id]
+        backend_draft = (
+            session.draft,
+            session.draft_revision,
+            session._draft_authored_token,
+        )
+    return _VisibleSettingsPress(
+        session_id,
+        screen._console_visible_draft_session_id,
+        composer,
+        stash,
+        guard,
+        schedule,
+        raw,
+        snapshot,
+        text,
+        backend_draft,
+        check_only,
+    )
+
+
+def _finish_settings_press(screen, press):
+    """Finish the original fixed press checkpoint without reading newer text."""
+    if press.schedule and screen._session.refuse_send_from_unbound_composer():
+        return None
+    session_id = screen._console_visible_send_session_id()
+    if press.check_only:
+        return session_id
+    if session_id != press.session_id:
+        screen.app_instance.notify(CHAT_CHANGED_COPY, severity="warning")
+        return None
+    if press.schedule and press.raw_authority == "unarmed":
+        composer = screen._console_composer_or_none()
+        if (
+            composer is not press.composer
+            or composer.capture_draft_snapshot() != press.draft_snapshot
+            or composer.draft_text() != press.draft_text
+            or composer.raw_cli_draft_authority() != press.raw_authority
+        ):
+            screen.app_instance.notify(CHAT_CHANGED_COPY, severity="warning")
+            return None
+        if press.guard is not None and not press.guard():
+            screen.app_instance.notify(
+                "Send is not available in this chat yet; your draft was kept.",
+                severity="warning",
+                markup=False,
+            )
+            return None
+        screen._raw_cli.request_arm()
+        return None
+    store = screen._console_chat_store
+    with store._preparation_lock:
+        session = store._sessions[session_id]
+        unchanged = press.backend_draft == (
+            session.draft,
+            session.draft_revision,
+            session._draft_authored_token,
+        )
+    if press.schedule:
+        _schedule_visible_send_capture(
+            screen, session_id, press.stash, press.guard, mirror=unchanged
+        )
+        return None
+    return (
+        session_id,
+        press.stash,
+        capture_visible_send_inputs(screen, session_id, press.stash)
+        if unchanged
+        else None,
+    )
 
 
 @dataclass(frozen=True)
@@ -766,7 +896,40 @@ def _replay(screen: Any, flight: _SendFlight) -> None:
     flight.deferred = None
     if _torn_down(screen):
         return
-    if screen._console_visible_send_session_id() != request.session_id:
+    from ...Chat.console_parent_settings import begin_parent_visible_target_check
+
+    selected, target, capture = begin_parent_visible_target_check(
+        screen, request.session_id
+    )
+    if capture is not None:
+        _start_send(screen, partial(_resume_replay, screen, flight, request, capture))
+        return
+    if not selected:
+        target = screen._console_visible_send_session_id()
+    _finish_replay(screen, flight, request, target)
+
+
+async def _resume_replay(screen, flight, request, capture):
+    from ...Chat.console_guarded_prompt import join_guarded_prompt
+    from ...Chat.console_parent_settings import ParentSettingsOriginChanged
+
+    try:
+        target = await join_guarded_prompt(capture)
+    except ParentSettingsOriginChanged:
+        target = None
+    if (
+        _torn_down(screen)
+        or _flight(screen) is not flight
+        or screen._console_pending_send is not None
+        or any(task is not asyncio.current_task() for task in flight.tasks)
+    ):
+        return False
+    _finish_replay(screen, flight, request, target)
+    return False
+
+
+def _finish_replay(screen, flight, request, target):
+    if target != request.session_id:
         # Never send in the chat now on screen; the press's chat keeps its
         # draft. A repeat press only re-sends what its chat's send left.
         if not request.repeat:
@@ -1068,3 +1231,21 @@ def _session_message_ids(screen: Any, session_id: str) -> tuple[str, ...]:
         return tuple(message.id for message in store.messages_for_session(session_id))
     except KeyError:
         return ()
+
+
+_selected_settings_send_helpers = tuple(
+    (name, globals()[name], globals()[name].__code__)
+    for name in (
+        "request_visible_send",
+        "_capture_settings_press",
+        "_finish_settings_press",
+        "_schedule_visible_send_capture",
+        "capture_visible_send_inputs",
+        "_schedule",
+        "_defer",
+        "_record_draft",
+        "_replay",
+        "_resume_replay",
+        "_finish_replay",
+    )
+)

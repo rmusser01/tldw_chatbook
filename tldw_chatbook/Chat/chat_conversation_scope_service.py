@@ -376,7 +376,12 @@ class ChatConversationScopeService:
         return metadata_updated
 
     async def get_conversation_tree(
-        self, conversation_id: str, *, mode: str = "local", **kwargs: Any
+        self,
+        conversation_id: str,
+        *,
+        mode: str = "local",
+        _read_owner: Any = None,
+        **kwargs: Any,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id("detail", normalized_mode))
@@ -404,10 +409,25 @@ class ChatConversationScopeService:
                         getattr(service, "db", None), "close_connection", None
                     )
                     if callable(close):
+                        if _read_owner is not None:
+                            from .console_control_sessions import (
+                                capture_saved_read_close,
+                            )
+
+                            capture_saved_read_close(service.db)
                         close()
 
-            result = await asyncio.to_thread(read_local_tree)
+            result = (
+                await asyncio.to_thread(read_local_tree)
+                if _read_owner is None
+                else await _read_owner.run(read_local_tree)
+            )
             self._enforce_policy(self._action_id("detail", normalized_mode))
+            return await self._maybe_await(result)
+        if _read_owner is not None:
+            result = await _read_owner.run(
+                lambda: reader(conversation_id, **service_kwargs), threaded=False
+            )
             return await self._maybe_await(result)
         return await self._maybe_await(reader(conversation_id, **service_kwargs))
 

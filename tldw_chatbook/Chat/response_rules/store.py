@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import sqlite3
 from collections.abc import Callable, Mapping
 from contextlib import ExitStack, contextmanager, nullcontext
@@ -25,12 +26,153 @@ from .models import (
     canonical_json,
 )
 from .repository import (
+    _RULE_DICT,
+    _RULE_READERS,
     ResponseRuleRepository,
     RuleBindingConflict,
     body_free_validation,
     validate_activation,
 )
 from .resolution import resolve_effective_rules
+
+
+def _reader_current(record):
+    function, code, defining, defaults, keywords, items, closure, cells, wrapped = (
+        record
+    )
+    return (
+        function.__code__ is code
+        and function.__globals__ is defining
+        and function.__defaults__ is defaults
+        and function.__kwdefaults__ is keywords
+        and tuple((keywords or {}).items()) == items
+        and function.__closure__ is closure
+        and all(cell.cell_contents is value for cell, value in cells)
+        and vars(function).get("__wrapped__") is wrapped
+    )
+
+
+def _capture_rule_batch(store):
+    """Qualify only the readers whose lifetime this optional batch changes."""
+    missing = object()
+    dictionaries = {ResponseRuleStore: _STORE_DICT, ResponseRuleRepository: _RULE_DICT}
+
+    def plain(receiver, owner, fields):
+        return (
+            type(receiver) is owner
+            and inspect.getattr_static(owner, "__getattribute__")
+            is object.__getattribute__
+            and inspect.getattr_static(owner, "__getattr__", missing) is missing
+            and inspect.getattr_static(owner, "__dict__", missing)
+            is dictionaries[owner]
+            and all(
+                inspect.getattr_static(owner, name, missing) is missing
+                for name in fields
+            )
+        )
+
+    if not plain(store, ResponseRuleStore, ("repository",)):
+        return None
+    repository = object.__getattribute__(store, "__dict__").get("repository")
+    if not plain(repository, ResponseRuleRepository, ("db",)):
+        return None
+    database = object.__getattribute__(repository, "__dict__").get("db")
+    from tldw_chatbook.DB.ChaChaNotes_DB import (
+        CharactersRAGDB,
+        TransactionContextManager,
+        _CONSOLE_BROWSER_NOTES_SOURCE,
+    )
+
+    fields = (
+        "is_memory_db",
+        "db_path",
+        "db_path_str",
+        "_local",
+        "_connection_quiescence",
+    )
+    bindings = tuple(
+        (name, value)
+        for name, value in _CONSOLE_BROWSER_NOTES_SOURCE[5]
+        if name in {"CharactersRAGDB", "TransactionContextManager"}
+    )
+    if any(
+        _CONSOLE_BROWSER_NOTES_SOURCE[0].get(name) is not value
+        for name, value in bindings
+    ):
+        return None
+    dictionaries[CharactersRAGDB] = next(
+        descriptor
+        for owner, name, descriptor in _CONSOLE_BROWSER_NOTES_SOURCE[4]
+        if owner is CharactersRAGDB and name == "__dict__"
+    )
+    if not plain(database, CharactersRAGDB, fields):
+        return None
+    values = object.__getattribute__(database, "__dict__")
+    if values.get("is_memory_db") is not False or any(
+        name not in values for name in fields
+    ):
+        return None
+    snapshots = (
+        (store, "repository", repository),
+        (repository, "db", database),
+    ) + tuple((database, name, values[name]) for name in fields)
+    db_names = {
+        "transaction",
+        "get_connection",
+        "_get_thread_connection",
+        "close_connection",
+        "_close_connection_handle",
+    }
+    descriptors = tuple(
+        (database if owner is CharactersRAGDB else owner, name, descriptor)
+        for owner, name, descriptor in _CONSOLE_BROWSER_NOTES_SOURCE[4]
+        if (owner is CharactersRAGDB and name in db_names)
+        or owner is TransactionContextManager
+    ) + tuple(
+        (receiver, name, descriptor)
+        for receiver, readers in ((store, _STORE_READERS), (repository, _RULE_READERS))
+        for name, descriptor, _record in readers
+    )
+    functions = {
+        descriptor.__func__ if type(descriptor) is staticmethod else descriptor
+        for _receiver, _name, descriptor in descriptors
+    }
+    records = tuple(
+        record for record in _CONSOLE_BROWSER_NOTES_SOURCE[6] if record[0] in functions
+    )
+    # The connection getter is decorated; retain its body/link without unwrapping execution.
+    wrapped = {record[8] for record in records if record[8] is not None}
+    records += tuple(
+        record for record in _CONSOLE_BROWSER_NOTES_SOURCE[6] if record[0] in wrapped
+    )
+    records += tuple(
+        record
+        for readers in (_STORE_READERS, _RULE_READERS)
+        for _, _, record in readers
+    )
+
+    def current():
+        return (
+            plain(store, ResponseRuleStore, ("repository",))
+            and plain(repository, ResponseRuleRepository, ("db",))
+            and plain(database, CharactersRAGDB, fields)
+            and all(
+                _CONSOLE_BROWSER_NOTES_SOURCE[0].get(name) is value
+                for name, value in bindings
+            )
+            and all(
+                object.__getattribute__(receiver, "__dict__").get(name, missing)
+                is value
+                for receiver, name, value in snapshots
+            )
+            and all(
+                inspect.getattr_static(receiver, name, missing) is descriptor
+                for receiver, name, descriptor in descriptors
+            )
+            and all(_reader_current(record) for record in records)
+        )
+
+    return (database, current) if current() else None
 
 
 @dataclass
@@ -210,8 +352,20 @@ class ResponseRuleStore:
         self, chat: RuleScope, workspace: RuleScope | None, global_scope: RuleScope
     ) -> tuple[RuleRevision, ...]:
         """Resolve exact revisions with Chat exclusions and scope precedence."""
-        with self._lock:
+        with self._lock, ExitStack() as operation:
             self.register_context(chat, workspace, global_scope)
+            batch = _capture_rule_batch(self)
+            if batch is not None:
+                database, current = batch
+                from tldw_chatbook.DB.base_db import operation_owned_connection
+                from tldw_chatbook.Backup_Recovery.participants import core_operation
+
+                # One finite read owns admission; the original scope and
+                # revision transactions below still commit independently.
+                operation.enter_context(operation_owned_connection(database))
+                operation.enter_context(core_operation(database))
+                if not current():
+                    raise RuleBindingConflict("rule_source_changed")
             bindings = tuple(
                 b
                 for scope in (chat, workspace, global_scope)
@@ -227,13 +381,16 @@ class ResponseRuleStore:
                         )
                     except KeyError:
                         pass
-            return resolve_effective_rules(
+            result = resolve_effective_rules(
                 bindings,
                 tuple(revisions),
                 chat=chat,
                 workspace=workspace,
                 global_scope=global_scope,
             )
+            if batch is not None and not current():
+                raise RuleBindingConflict("rule_source_changed")
+            return result
 
     @contextmanager
     def _write_cursor(self, fence: ExitStack, admission_lock=None, *, durable=True):
@@ -705,3 +862,26 @@ def json_source_conversation(encoded: str) -> str | None:
     import json
 
     return json.loads(encoded)["conversation_id"]
+
+
+# Definition-time readers eligible for the optional finite resolution batch.
+_STORE_DICT = vars(ResponseRuleStore)["__dict__"]
+_STORE_READERS = tuple(
+    (
+        name,
+        function,
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        ),
+    )
+    for name in ("list_bindings", "get_revision", "_memory")
+    for function in (vars(ResponseRuleStore)[name],)
+)

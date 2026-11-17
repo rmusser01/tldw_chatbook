@@ -23283,7 +23283,7 @@ _CONSOLE_BROWSER_NOTES_SOURCE = (
                     "transaction",
                 ),
             ),
-            (TransactionContextManager, ("__init__", "__enter__", "__exit__")),
+            (TransactionContextManager, ("__init__", "__enter__", "__exit__", "_enter_transaction", "_exit_transaction")),
         )
         for name in (*names, "__getattribute__", "__dict__")
     ),
@@ -23340,7 +23340,7 @@ _CONSOLE_BROWSER_NOTES_SOURCE = (
                         "transaction",
                     ),
                 ),
-                (TransactionContextManager, ("__init__", "__enter__", "__exit__")),
+                (TransactionContextManager, ("__init__", "__enter__", "__exit__", "_enter_transaction", "_exit_transaction")),
             )
             for name in names
             for descriptor in (vars(owner)[name],)

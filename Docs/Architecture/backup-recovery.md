@@ -62,6 +62,22 @@ Same-process initialization followers wait on the existing `_changed` condition 
 
 Creation-intent ancestry validation uses the internal visitor of `native_files.pinned_directory` to inspect every existing parent in a single nofollow traversal (ADR-126, TASK-35595). Each descriptor reaches the visitor only after its original owner/mode check and is borrowed only for that call. Missing descendants do not hide existing ancestor intents; visitor errors and native close errors propagate. No settled verdict or directory handle is cached between acquisitions.
 
+Ordinary Windows storage admission can reuse an allowed derivation on the same
+live hold after two full derivations agree. Each use counts a lease, then
+checks the current NTFS path metadata and authority content under the native
+registry gate. A changed or unavailable proof goes through full derivation.
+Path proofs belong to the selector evidence that established their scope. See
+the [TASK-40608 amendment to ADR-126](../../backlog/decisions/126-complete-local-backup-and-recovery.md#task-40608--ordinary-windows-admission-reuse).
+
+Within one Windows metadata-tree observation, each drive root receives fresh
+local-NTFS qualification. A child opened relative to an exact live parent birth
+from that same observation may use its structurally established volume proof.
+The child still receives fresh identity, disk-type and reparse checks, volume
+consistency, security descriptors and ChangeTime. Bottom-up named-path checks
+and exact native retirement remain. The proof ends with the observation;
+ordinary opens and borrowed descriptors retain full volume qualification.
+See [ADR-126 Task32](../../backlog/decisions/126-complete-local-backup-and-recovery.md#finite-metadata-tree-volume-proof-task-40608-task32).
+
 ## Failure behaviors and boundaries
 
 | Case | Behavior |
@@ -123,6 +139,48 @@ owner policy inside the private attempt home. After committed profile validation
 both fresh selection and launch derive portable home/roaming selectors from that
 attempt, ignoring inherited APPDATA. A subsequent move acquires those pet files
 again. Other files under the pet directory remain unsupported durable content.
+
+## Bounded MCP operation admission (TASK-40608)
+
+An installed MCP raw operation admits its exact ordered member set through the existing related-path acquisition. A recovery-selected source retains one freshly admitted canonical lease during preparation, validates its original binding, process/thread/task and live custody on each observation, then transfers it into the operation's existing retirement handling. Custom/uninstalled sources retain separate ordinary member admissions. No permission payload is cached, and preparation grants no raw-effect authority. Source changes, maintenance pauses and uncertain closes retain their original refusal/custody behavior.
+
+Warm stock Windows Agents guard entries share one finite ordinary activation observation across their ordered source rows. Existing native readers must prove absence of pending/restored state, and a full fresh final observation must match before the body begins. Each unique path keeps an independent lease; every row keeps its owner and namespace check. Cold, restored and custom routes retain their original gates. A new nested entry makes a new observation. A failed native proof is a refusal, never a reason to retry through fallback.
+
+For a qualified top-level entry, `storage_admission._admit_agents_vector` also gathers the common authority inputs and union of all confirmed path metadata once. The first ordinary proof runs under a counted pending attempt before later leases are issued. Every path lease is counted independently before the native union observation, and the existing final ordinary proof precedes execution-state publication. The original once-captured source tuple stays authoritative; this route does not repeatedly invoke service getters. Exact source definitions, path selections, live hold/evidence and lease custody are checked before acceptance. Native metadata handles retire before the result transfers to the guard's existing reverse-order cleanup. Nested-active, cold, mixed and customized entries use the sequential route. The original journey trace's scalar admission counters do not include vector tokens; complete-entry native tests count actual inputs, metadata observations and resources separately.
+
+Warm repository path proofs use a local `_OperationPath` receipt. The coordinator captures exact operation/resource ownership, releases its lock for the original parent `stat` and path resolution, then rechecks ownership, source and dynamic selection under the lock before allowing access. The adjacent same-owner nested entry shares one named proof; different-participant selection/restoration, connection setup, getter/access and admission-wait checks retain their separate proofs. Unregistered operations or participants refuse before repository callbacks. This removes native path waits from those coordinator sections without retaining evidence between commands or changing SQLite resource retirement. Cold scope and startup derivation retain their existing path.
+
+The same ordinary input reader may serve an exact MCP canonical preparation's generation selection before its source lock. All original source/binding/custody checks still run; final fresh validation precedes lock acquisition and discards the shared observation. No observation crosses a lock wait or survives into a later operation. Within one ordinary generation checkpoint, one complete control scan and registry read supply the existing source-coverage, startup and pairing predicates. Pending, restored and custom readers retain their original route; a selected native failure never becomes a retry.
+
+Within each stock Windows observation, `bootstrap._pinned_ordinary_inputs` owns a checked bootstrap directory and opens admission/control records relative to it. It shares the original parsers and retains each newly opened handle's native checks. The original shared registry lock still brackets the registry read and releases before selector fingerprinting. Before returning, the reader checks current named root/admission ancestry, control names and contents, enrollment marker, registry contents/lock and selector fingerprint. Standalone control writers are not serialized by the registry lock, so the final content checks remain necessary. This owner ends with the observation; it does not combine separate permission-command phases or grant atomic-snapshot semantics against arbitrary external writes.
+
+Stock Windows permission load and kill-switch commands select one explicit read operation before generic nested helper setup. The existing raw scope owns admission, the exact source/mutation lock, member and canonical leases, parent pins and physical retirement. Three fresh post-lock proofs cover entry, the protected payload open, and publication after the payload descriptor has positively retired. Metadata-only helpers consume explicit phase inputs and check current source/live custody on each borrow. The original parser and normalization body are shared; corruption repair ends the read phase and uses the original checked write/backup/fsync route before a new final proof.
+
+Each command reads fresh policy. Public load/getter commands retain their publication observer; the captured Console reader consumes the checked receipt without adding that observer effect and retains its inside-lock/current-source checks. Missing-file defaults still require a fresh final absence proof. Customized generation readers, load methods or observers retain the original route. Approval/provider waits and later dispatch commands start new evidence lifetimes. These contracts and work-count controls do not establish the absolute journey target; TASK-40608 remains open until the original paired journeys qualify.
+
+Console display checks use detached presentation data under owner/revision fences between bounded reconciliations; they never carry storage or dispatch authority. See [Console](console.md) and the TASK-40608 follow-up in ADR-126.
+
+The complete ordinary Windows permission persistence surface now selects the
+contained permission process before parent raw admission. Its synchronous
+checkpoints run the issuing parent's exact source/config/callback predicates,
+then refresh the child's original native proof after the wait. Parent reservation
+and publication identity remain shared with external `mutation_fence()` composites;
+session grants and Tool Packs registry writes remain local. Every command settles
+its native resources before returning; startup enrollment remains until the
+explicit `Shutdown/Drained` handshake. The runtime maintenance census includes
+direct-store helpers, closes intake after upstream producers settle, and resumes
+with lazy fresh processes. Weak receiver associations permit healthy idle teardown;
+unresolved commands retain their exact source/capture and refuse replacement.
+
+Native predicates retain their original scope: permission parent ACL/ancestry
+posture is checked at admission, while protected-open/final parent checks refresh
+the named/pinned identity (the stricter mode predicate there applies to config
+companions). The process boundary does not add a new continuous parent-ACL policy.
+Control/registry, nofollow, leaf identity, missing-destination and retirement
+checks retain their fresh original boundaries. See the
+[accepted permission-owner contract](../superpowers/specs/2026-11-14-task-40608-isolated-permission-design.md).
+
+The stock Windows manual primary run groups its initial AgentRunsDB row creation and lifecycle sequence reads in one finite core operation. The clock, step constructor and its observers run after that operation retires; the lifecycle insert retains its own transaction and admission. Both original history reads and independently visible commits remain. Exact database selection, wrapped reader definitions and allocator checks guard this route. Custom, memory, child, resumed and workflow paths retain the scalar route. Later events separated by provider, tool, disclosure or approval effects start their own operations.
 
 ## Prompt mix-in operational content (ADR-286)
 

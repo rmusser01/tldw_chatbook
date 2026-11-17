@@ -5,38 +5,71 @@ from pathlib import Path
 
 from . import activation as _activation
 from . import bootstrap
+from . import raw_participants as _raw
+from . import storage_admission as _storage
 from .activation import ActivationStore, _private, _source_scope_admitted
 
 
 def _witnesses(path, lease):
     """Check paired local generations against this actual admitted storage group."""
-    from . import storage_admission as storage
-
     root, names = lease.execution_context(path)
     selected = bootstrap.effective_config_path()
-    hold = storage._ordinary_hold(lease=lease)
+    if _witness_metadata_current() and _raw._prepared_mcp_witnesses(path, lease):
+        return []
+    hold = _storage._ordinary_hold(lease=lease)
     key = ("witness", str(selected), str(path))
-    before = storage._derived_before(hold, key)
+    before = _storage._derived_before(hold, key)
     stock = _witness_metadata_current()
     reused, value = (
-        storage._derived_reuse(hold, key, before) if stock else (False, None)
+        _storage._derived_reuse(hold, key, before) if stock else (False, None)
     )
     stock = stock and _witness_metadata_current()
     if not stock:
         reused = False
-        storage._note_derived(hold, key, None, None, before)
+        _storage._note_derived(hold, key, None, None, before)
     if reused:
         return value
+    if stock and path is not None and _ordinary_lease_reader_current(lease):
+        warm = lease._warm_execution
+        if warm is not None and _activation._warm_activation_current(lease, warm, root, selected):
+            controls = bootstrap._control_records(root, ordinary_only=True)
+            _require_ordinary_witness_selection(path, lease, root, names, selected, warm)
+            if controls is not None:
+                _, profiles, _ = controls
+                _, allowed, _ = bootstrap._ordinary_registry(root, profiles)
+                if not allowed:
+                    raise ValueError("projection_generation_unavailable")
+                _require_ordinary_witness_selection(path, lease, root, names, selected, warm)
+                # No restored namespace can be uncovered and there is no
+                # activation record to pair, so both gates have empty inputs.
+                return []
     if path is not None and not _source_scope_admitted(root, names or (), path):
         raise ValueError("projection_source_scope_unavailable")
     result = _paired_witnesses(path, root, names, selected)
-    evidence = storage._metadata_evidence(hold, (() if path is None else (path,)))
-    storage._note_derived(
+    evidence = _storage._metadata_evidence(hold, (() if path is None else (path,)))
+    _storage._note_derived(
         hold, key,
         evidence if stock and _witness_metadata_current() else None,
         result, before,
     )
     return result
+
+
+def _require_ordinary_witness_selection(path, lease, root, names, selector, warm):
+    if (
+        not _witness_metadata_current()
+        or not _ordinary_lease_reader_current(lease)
+        or bootstrap.effective_config_path() != selector
+        or lease.execution_context(path) != (root, names)
+        or not _activation._warm_activation_current(lease, warm, root, selector)
+    ):
+        raise bootstrap.RecoveryRequired("projection_generation_unavailable")
+
+
+def _ordinary_lease_reader_current(lease):
+    return type(lease) is _storage.StorageLease and vars(lease).keys().isdisjoint(
+        ("execution_context", "execution_scope")
+    )
 
 
 def _paired_witnesses(path, root, names, selected):
@@ -132,6 +165,10 @@ _WITNESS_METADATA_BINDINGS = (
     (vars(_activation), "ActivationStore", ActivationStore),
     (vars(_activation), "_Requirement", _activation._Requirement),
     (vars(_activation), "bootstrap", bootstrap),
+    (globals(), "_raw", _raw),
+    (globals(), "_storage", _storage),
+    (vars(_storage), "StorageLease", _storage.StorageLease),
+    (vars(_raw), "_MCPOrdinarySelection", _raw._MCPOrdinarySelection),
 )
 _WITNESS_METADATA_CLASSES = tuple(
     (cls, vars(cls).get("__getattribute__"), vars(cls).get("__dict__"))
@@ -142,8 +179,12 @@ _WITNESS_METADATA_READERS = tuple(
      function.__defaults__, function.__kwdefaults__, tuple((function.__kwdefaults__ or {}).items()),
      function.__closure__, tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()))
     for owner, names in (
-        (globals(), ("_witnesses", "_paired_witnesses", "_source_scope_admitted", "_private", "_witness_metadata_current")),
+        (globals(), ("_witnesses", "_paired_witnesses", "_source_scope_admitted", "_private", "_witness_metadata_current", "_require_ordinary_witness_selection", "_ordinary_lease_reader_current")),
         (vars(_activation), ("_source_scope_admitted", "_private", "_key", "_identifier", "_read", "lexical_path", "pinned_directory")),
+        (vars(_activation), ("_ordinary_activation_observation", "_ordinary_activation_sources_current", "_warm_activation_current")),
+        (vars(_storage.StorageLease), ("execution_context", "execution_scope")),
+        (vars(_storage), ("_execution_selection_for", "_hold_serving", "_windows_initializing")),
+        (vars(_raw), ("_begin_mcp_ordinary_selection", "_require_mcp_ordinary_selection", "_prepared_mcp_witnesses", "_finish_mcp_ordinary_selection", "_prepared_mcp_observation")),
         (vars(ActivationStore), ("__init__", "_generation", "_required")),
         (vars(bootstrap), (
             "_records", "_control_records", "_registry", "_registry_read_lock",
@@ -152,6 +193,8 @@ _WITNESS_METADATA_READERS = tuple(
             "_open_verified_parent", "_native_close",
             "startup_permission", "lexical_path", "_overlap", "identity_view",
             "inode_token", "inode_token_for", "_same_activation_generation",
+            "effective_config_path", "_ordinary_registry", "_ordinary_startup_permission",
+            "_ordinary_close_uncertain", "_read_record_bytes",
         )),
     )
     for name in names

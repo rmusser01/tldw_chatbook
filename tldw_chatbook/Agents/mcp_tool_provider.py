@@ -832,7 +832,8 @@ class MCPToolProvider:
                 service, hub_tools, _captured_sources=captured, **profile_kwargs
             )
         else:
-            effective = service.effective_tool_states(hub_tools, **profile_kwargs)
+            with self._console_permission_operation():
+                effective = service.effective_tool_states(hub_tools, **profile_kwargs)
         require_current()
         self._install_console_catalog(hub_tools, effective, require_current)
 
@@ -1325,9 +1326,10 @@ class MCPToolProvider:
             # default must surface its ask here, not fall through to a silent
             # default-profile execution at invoke.
             captured_profile_kwargs = self._profile_kwargs()
-            state = self._persona_floor(
-                self._service.gate_tool_test(tool, **captured_profile_kwargs), tool
-            )
+            with self._console_permission_operation():
+                state = self._persona_floor(
+                    self._service.gate_tool_test(tool, **captured_profile_kwargs), tool
+                )
         except Exception as exc:  # noqa: BLE001 -- fail closed to "let invoke handle it"
             logger.warning(
                 f"MCPToolProvider: gate_tool_test failed for {tool.server_key}/{tool.name}: {exc}"
@@ -1570,9 +1572,10 @@ class MCPToolProvider:
             # default-profile "allow" here too (an approval round, never a
             # silent execution).
             captured_profile_kwargs = self._profile_kwargs()
-            state = self._persona_floor(
-                self._service.gate_tool_test(tool, **captured_profile_kwargs), tool
-            )
+            with self._console_permission_operation():
+                state = self._persona_floor(
+                    self._service.gate_tool_test(tool, **captured_profile_kwargs), tool
+                )
         except Exception as exc:  # noqa: BLE001 -- invoke() must never raise
             return ToolResult(
                 ok=False,
@@ -1716,6 +1719,11 @@ class MCPToolProvider:
         profile_id = self._profile_id()
         return {} if profile_id == "default" else {"profile_id": profile_id}
 
+    def _console_permission_operation(self):
+        from tldw_chatbook.Chat.console_control_tools import tool_permission_scope
+
+        return tool_permission_scope(self)
+
     def _kill_switch_engaged(self) -> bool:
         """Best-effort, never-raise read of the service's kill switch.
 
@@ -1728,7 +1736,8 @@ class MCPToolProvider:
         if not callable(getter):
             return False
         try:
-            return bool(getter())
+            with self._console_permission_operation():
+                return bool(getter())
         except Exception as exc:  # noqa: BLE001 -- a read failure must not block execution
             logger.warning(
                 f"MCPToolProvider: get_kill_switch failed during invoke: {exc}"
@@ -1748,7 +1757,8 @@ class MCPToolProvider:
         if not callable(checker):
             return False
         try:
-            return bool(checker(tool, dict(args or {}), **self._profile_kwargs()))
+            with self._console_permission_operation():
+                return bool(checker(tool, dict(args or {}), **self._profile_kwargs()))
         except Exception as exc:  # noqa: BLE001 -- a broken rule read never allows
             logger.warning(
                 f"MCPToolProvider: arg_rule_allows_call failed for {tool.server_key}/{tool.name}: {exc}"
@@ -1757,11 +1767,12 @@ class MCPToolProvider:
 
     def _is_session_approved_safe(self, tool: HubTool) -> bool:
         try:
-            return bool(
-                self._service.is_session_approved(
-                    tool.server_key, tool.name, **self._profile_kwargs()
+            with self._console_permission_operation():
+                return bool(
+                    self._service.is_session_approved(
+                        tool.server_key, tool.name, **self._profile_kwargs()
+                    )
                 )
-            )
         except Exception as exc:  # noqa: BLE001 -- a read failure must not deny silently-wrongly
             logger.warning(
                 f"MCPToolProvider: is_session_approved failed for {tool.server_key}/{tool.name}: {exc}"
@@ -1909,7 +1920,8 @@ class MCPToolProvider:
                         "not_applied", error_code="writer_unavailable"
                     )
                 else:
-                    fn()
+                    with self._console_permission_operation():
+                        fn()
         except Exception as exc:  # noqa: BLE001 -- preserve best-effort side effects
             if grant_writer:
                 with approval_contexts_scope(contexts):
@@ -1922,13 +1934,14 @@ class MCPToolProvider:
         self, tool: HubTool, *, decision: str, error: str | None = None
     ) -> None:
         try:
-            self._service.record_tool_decision(
-                tool.server_key,
-                tool.name,
-                decision=decision,
-                initiator="agent",
-                error=error,
-            )
+            with self._console_permission_operation():
+                self._service.record_tool_decision(
+                    tool.server_key,
+                    tool.name,
+                    decision=decision,
+                    initiator="agent",
+                    error=error,
+                )
         except Exception as exc:  # noqa: BLE001 -- best-effort audit trail only
             logger.warning(
                 f"MCPToolProvider: record_tool_decision failed for {tool.server_key}/{tool.name}: {exc}"
@@ -1946,9 +1959,10 @@ class MCPToolProvider:
 
         # Result acceptance requires a positive read; the ordinary display
         # path's best-effort fallback cannot mint native effects on failure.
-        if self._service.get_kill_switch():
-            raise PermissionError("hook_mcp_permission_changed")
-        state = self._service.gate_tool_test(tool, **self._profile_kwargs())
+        with self._console_permission_operation():
+            if self._service.get_kill_switch():
+                raise PermissionError("hook_mcp_permission_changed")
+            state = self._service.gate_tool_test(tool, **self._profile_kwargs())
         if self._persona_policy_provider is not None:
             policy = self._persona_policy_provider()
             if policy is not None:
@@ -2043,6 +2057,7 @@ class MCPToolProvider:
         task_effect_started = False
         observation = MCPDispatchObservation()
         execution_completed = threading.Event()
+        control_dispatch = None
         result_currentness = None
         started = time.monotonic()
         typed_entry = getattr(self._service, "execute_hub_tool_result", None)
@@ -2050,6 +2065,12 @@ class MCPToolProvider:
             typed_entry if callable(typed_entry) else self._service.execute_hub_tool
         )
         try:
+            from tldw_chatbook.Chat.console_control_tools import (
+                begin_mcp_dispatch,
+                mcp_invocation_scope,
+            )
+
+            control_dispatch = begin_mcp_dispatch(self, tool, observation)
             from .automatic_work_runtime import current_automatic_work
             from .execution_capacity import current_execution_owner
             from .run_context import current_run_actor, use_run_actor
@@ -2180,13 +2201,16 @@ class MCPToolProvider:
                 invocation_factory = execute_authorized
             else:
                 invocation_factory = execution_factory
-            if policies or automatic_work is not None:
+            if policies or automatic_work is not None or control_dispatch is not None:
 
                 async def execute_completed():
                     # Publish actual return only after all receiving guards and
                     # scopes unwind, including admission-before-callback refusal.
                     try:
-                        return await invocation_factory()
+                        if control_dispatch is None:
+                            return await invocation_factory()
+                        with mcp_invocation_scope(control_dispatch):
+                            return await invocation_factory()
                     finally:
                         execution_completed.set()
 
@@ -2194,10 +2218,19 @@ class MCPToolProvider:
             else:
                 execution_coroutine = invocation_factory()
             with observe_dispatch(observation):
-                future = asyncio.run_coroutine_threadsafe(
-                    execution_coroutine,
-                    self._main_loop,
-                )
+                if control_dispatch is None:
+                    future = asyncio.run_coroutine_threadsafe(
+                        execution_coroutine,
+                        self._main_loop,
+                    )
+                else:
+                    from tldw_chatbook.Chat.console_control_mcp import (
+                        MCPBridgeSubmission,
+                    )
+
+                    future = MCPBridgeSubmission(
+                        control_dispatch, execution_coroutine, self._main_loop
+                    ).submit()
             if policies and policies[-1].on_bridge is not None:
                 policies[-1].on_bridge(
                     MCPBridgeObservation(future, observation, execution_completed)
@@ -2205,6 +2238,10 @@ class MCPToolProvider:
             raw_result = future.result(timeout=timeout)
             check_mcp_invocation_policies()
         except Exception as exc:  # noqa: BLE001 -- the never-raise/never-hang contract
+            if control_dispatch is not None and control_dispatch.bridge is None:
+                # No coroutine was transferred. Earlier policy/native preflight
+                # may have started; absence of a Task is no retirement proof.
+                control_dispatch.returned_without_handoff(retired=False)
             if future is None and execution_coroutine is not None:
                 try:
                     execution_coroutine.close()

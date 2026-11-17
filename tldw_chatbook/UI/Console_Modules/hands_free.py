@@ -1417,6 +1417,14 @@ class ConsoleHandsFreeController:
                 is already open and should be adopted as the loop's first
                 turn; forwarded verbatim to whichever engine is selected.
         """
+        from tldw_chatbook.Chat.console_parent_settings import (
+            defer_parent_settings_action,
+        )
+
+        if defer_parent_settings_action(
+            self._screen, "handsfree-entry", (capture_live,)
+        ):
+            return
         _load_console_voice_input()  # TASK-22504: bind the names this body uses
         if self._qualified_voice_startup_generation is not None:
             return
@@ -2521,3 +2529,16 @@ class ConsoleHandsFreeController:
         if hands_free is not None and hands_free.tick_timer is not None:
             hands_free.tick_timer.stop()
         self._console_hands_free = None
+
+
+_selected_handsfree_settings_action = (
+    ConsoleHandsFreeController._enter_console_hands_free_loop
+)
+
+
+_selected_parent_settings_action_codes = (
+    (
+        ConsoleHandsFreeController._enter_console_hands_free_loop,
+        ConsoleHandsFreeController._enter_console_hands_free_loop.__code__,
+    ),
+)

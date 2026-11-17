@@ -83,9 +83,16 @@ def preparation_native_runner(
     """Capture one finite operation's sources before creating its native worker."""
     from tldw_chatbook import config
 
-    app, store = controller.app, controller.store
+    domain = getattr(controller, "domain_services", None)
+    sources = domain.sources if domain is not None else None
+    association = domain.presentation.association if domain is not None else None
+    app, store = (None if domain is not None else controller.app), controller.store
     runtime = getattr(controller, "_hooks_v2_runtime", None)
-    app_config = getattr(app, "app_config", None)
+    app_config = (
+        sources.configuration
+        if sources is not None
+        else getattr(app, "app_config", None)
+    )
     identity = config.current_config_identity()
     session = next((row for row in store.sessions() if row.id == session_id), None)
     incarnation = getattr(session, "incarnation_id", None)
@@ -96,11 +103,23 @@ def preparation_native_runner(
 
         if require_current is not None:
             require_current()
+        if domain is not None:
+            domain.require_current(sources)
+            domain.presentation.require_association(association)
         if (
             sys.modules.get("tldw_chatbook.config") is not config
-            or controller.app is not app
+            or (
+                controller.domain_services is not domain
+                if domain is not None
+                else controller.app is not app
+            )
             or controller.store is not store
-            or getattr(app, "app_config", None) is not app_config
+            or (
+                domain.sources.configuration
+                if domain is not None
+                else getattr(app, "app_config", None)
+            )
+            is not app_config
             or config.current_config_identity() != identity
             or controller._disposed
             or controller._shutdown_requested.is_set()
@@ -159,6 +178,112 @@ class ReceivedPreparationSource:
     prompt_sources: tuple = field(default=(), repr=False)
 
 
+@dataclass(slots=True)
+class DomainReceivedPreparationSource:
+    """Actual backend sources plus the separately checked parent association."""
+
+    runtime: Any = field(repr=False)
+    controller: Any = field(repr=False)
+    store: Any = field(repr=False)
+    domain_services: Any = field(repr=False)
+    sources: Any = field(repr=False)
+    configuration: Any = field(repr=False)
+    config: Any = field(repr=False)
+    config_identity: Any = field(repr=False)
+    permissions: Any = field(repr=False)
+    association: Any = field(repr=False)
+    configuration_preparation: Any = field(default=None, repr=False)
+    prompt_scope: Any = field(default=None, repr=False)
+    prompt_sources: tuple = field(default=(), repr=False)
+
+
+def _domain_received_preparation_source(runtime, configuration_preparation):
+    from tldw_chatbook import config
+
+    domain = runtime.domain_services
+    domain.require_current()
+    domain.presentation.require_association(domain.presentation.association)
+    return DomainReceivedPreparationSource(
+        runtime,
+        runtime._chat_controller,
+        runtime._chat_store,
+        domain,
+        domain.sources,
+        domain.sources.configuration,
+        config,
+        config.current_config_identity(),
+        runtime._hook_permissions,
+        domain.presentation.association,
+        configuration_preparation,
+        domain.sources.prompt_scope,
+    )
+
+
+def _require_domain_received_source(
+    runtime, record, source, *, inputs=True, promoted_preparation=None, source_task=None
+):
+    import sys
+
+    runtime._raise_if_disposed_or_session_fenced(record.session_id)
+    domain = source.domain_services
+    domain.require_current(source.sources)
+    domain.presentation.require_association(source.association)
+    for backend, identity in source.prompt_sources:
+        try:
+            now = source.prompt_scope.mixin_source_identity(mode=backend)
+        except Exception:  # noqa: BLE001 - source uncertainty refuses admission.
+            raise RecoveryRequired("console_snapshot_owner_changed") from None
+        if now[0] != identity[0] or any(
+            a is not b for a, b in zip(now[1:], identity[1:], strict=False)
+        ):
+            raise RecoveryRequired("console_snapshot_owner_changed")
+    if (
+        runtime is not source.runtime
+        or runtime.domain_services is not domain
+        or domain.runtime is not runtime
+        or domain.sources.prompt_scope is not source.prompt_scope
+        or domain.sources.configuration is not source.configuration
+        or runtime._chat_store is not source.store
+        or runtime._chat_controller is not source.controller
+        or source.controller.domain_services is not domain
+        or getattr(source.controller, "store", source.store) is not source.store
+        or getattr(source.controller, "_disposed", False)
+        or (
+            getattr(source.controller, "_shutdown_requested", None) is not None
+            and source.controller._shutdown_requested.is_set()
+        )
+        or sys.modules.get("tldw_chatbook.config") is not source.config
+        or source.config.current_config_identity() != source.config_identity
+        or (
+            source.permissions is not None
+            and runtime._hook_permissions is not source.permissions
+        )
+        or (
+            record.received_claim is not None
+            and not _received_or_promoted_current(
+                record, source, promoted_preparation, source_task
+            )
+        )
+        or (
+            inputs
+            and not source.store.session_inputs_are_current(
+                record.received_intent.inputs,
+                include_draft=record.received_intent._pressed_inputs is None,
+            )
+        )
+        or (
+            inputs
+            and (
+                runtime.snapshot_console_staged_evidence(record.session_id)[0]
+                is not record.received_intent.staged_evidence_launch
+                or runtime.snapshot_console_staged_evidence(record.session_id)[1]
+                != record.received_intent.staged_evidence_revision
+            )
+        )
+    ):
+        raise RecoveryRequired("console_snapshot_owner_changed")
+
+
 def _prompt_scope_service(app):
     """Read the optional source at the caller's exact capture/fence position."""
     try:
@@ -168,6 +293,8 @@ def _prompt_scope_service(app):
 
 
 def received_preparation_source(runtime, *, configuration_preparation=None):
+    if getattr(runtime, "domain_services", None) is not None:
+        return _domain_received_preparation_source(runtime, configuration_preparation)
     from tldw_chatbook import config
 
     return ReceivedPreparationSource(
@@ -184,7 +311,18 @@ def received_preparation_source(runtime, *, configuration_preparation=None):
     )
 
 
-def require_received_source(runtime, record, source, *, inputs=True):
+def require_received_source(
+    runtime, record, source, *, inputs=True, promoted_preparation=None, source_task=None
+):
+    if type(source) is DomainReceivedPreparationSource:
+        return _require_domain_received_source(
+            runtime,
+            record,
+            source,
+            inputs=inputs,
+            promoted_preparation=promoted_preparation,
+            source_task=source_task,
+        )
     import sys
 
     runtime._raise_if_disposed_or_session_fenced(record.session_id)
@@ -216,7 +354,9 @@ def require_received_source(runtime, record, source, *, inputs=True):
         )
         or (
             record.received_claim is not None
-            and not source.store.received_turn_is_current(record.received_claim)
+            and not _received_or_promoted_current(
+                record, source, promoted_preparation, source_task
+            )
         )
         or (
             inputs
@@ -238,6 +378,28 @@ def require_received_source(runtime, record, source, *, inputs=True):
         raise RecoveryRequired("console_snapshot_owner_changed")
 
 
+def _received_or_promoted_current(record, source, preparation, source_task):
+    if preparation is None:
+        return source.store.received_turn_is_current(record.received_claim)
+    from .console_turn_preparation import ConsoleTurnPreparationState
+
+    controller, store = source.controller, source.store
+    with controller._active_submit_tasks_lock, store.durable_preparation_lock:
+        return bool(
+            source_task is not None
+            and not source_task.done()
+            and controller._active_submit_tasks.get(source_task) == record.session_id
+            and controller._active_submit_preparations.get(source_task)
+            == preparation.preparation_id
+            and store._preparations_by_id.get(preparation.preparation_id) is preparation
+            and store._preparations_by_session.get(record.session_id) is preparation
+            and preparation.session_id == record.session_id
+            and preparation.state is ConsoleTurnPreparationState.COMMITTING
+            and not record.received_claim.sealed
+            and store.received_turn_matches_session(record.received_claim)
+        )
+
+
 async def run_received_intent(runtime, record, source):
     """Keep normal receipt identity bound throughout its preparation driver."""
     from contextlib import nullcontext
@@ -249,7 +411,14 @@ async def run_received_intent(runtime, record, source):
         if record.received_claim is not None
         else nullcontext()
     )
-    with scope:
+    from .console_durable_commit_plan import bind_durable_plan_source
+    from .console_control_dispatch import bind_received_control
+
+    with (
+        scope,
+        bind_durable_plan_source(runtime, record, source),
+        bind_received_control(runtime, record),
+    ):
         return await _run_received_intent_bound(runtime, record, source)
 
 
@@ -347,7 +516,7 @@ async def _run_received_intent_bound(runtime, record, source):
 
         reads, observers = controller._preparation_reads, (runtime._preparation_reads,)
         catalog = await capture_console_skill_catalog_owned(
-            source.app,
+            None if type(source) is DomainReceivedPreparationSource else source.app,
             store,
             controller,
             session_id=record.session_id,
@@ -453,6 +622,9 @@ async def _run_received_intent_bound(runtime, record, source):
                 "Console session already has a received or prepared turn."
             )
         record.received_claim = claim
+        from .console_durable_commit_plan import record_rerouted_durable_claim
+
+        record_rerouted_durable_claim(runtime, record, source, claim)
         runtime._note_received_admission_changed(store, record.session_id)
 
     require_received_source(runtime, record, source)
@@ -478,7 +650,9 @@ async def _run_received_intent_bound(runtime, record, source):
         hook_read=hook_read,
         first_send_source=(
             source.config_identity,
-            source.app_config,
+            source.configuration
+            if type(source) is DomainReceivedPreparationSource
+            else source.app_config,
             source.controller,
             source.store,
         ),
@@ -507,7 +681,7 @@ def accept_received_intent(
 
         require_received_configuration_preparation(
             _configuration_preparation,
-            self._app,
+            None if getattr(self, "domain_services", None) is not None else self._app,
             store,
             self._chat_controller,
             session_id=intent.session_id,
@@ -760,9 +934,16 @@ async def _run_custodied_turn(
             conversation_send_refusal,
         )
 
-        refusal = await conversation_send_refusal(
-            self._app, record.archive_conversation_id
-        )
+        if self._execution_service._local_controls is not None:
+            from .console_control_sessions import selected_conversation_send_refusal
+
+            refusal = await selected_conversation_send_refusal(
+                self, record, require_received
+            )
+        else:
+            refusal = await conversation_send_refusal(
+                self._app, record.archive_conversation_id
+            )
         if refusal:
             notify = getattr(self._app, "notify", None)
             if callable(notify):
@@ -1121,3 +1302,20 @@ async def capture_received_library_policy(controller, coordinator, session_id):
             controller, session_id, require_current=current_library
         )
     return await coordinator.capture_for_execution(session_id, **kwargs)
+
+
+# Exact selected-domain helper definitions; legacy qualifications remain separate.
+from tldw_chatbook.Chat.console_domain_services import _definition as _domain_definition
+
+_DOMAIN_SOURCE_DEFINITIONS = tuple(
+    (name, _domain_definition(globals()[name]))
+    for name in (
+        "received_preparation_source",
+        "_domain_received_preparation_source",
+        "require_received_source",
+        "_received_or_promoted_current",
+        "run_received_intent",
+        "_require_domain_received_source",
+        "preparation_native_runner",
+    )
+)

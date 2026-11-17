@@ -42,6 +42,12 @@ async def run_legacy_trace_maintenance(
     parked = False
     seen_work = trace_maintenance_work_generation()
     while not self._disposed:
+        # The worker repeats this check for races. Avoid entering its owned DB
+        # operation merely to return the already-known busy result each second.
+        if runtime_provider_active(self):
+            last_provider_activity = _source.time.monotonic()
+            await _source.asyncio.sleep(1.0)
+            continue
         if parked:
             await _source.asyncio.sleep(
                 _source.LEGACY_TRACE_MAINTENANCE_PARK_POLL_SECONDS

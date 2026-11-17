@@ -42,6 +42,24 @@ profiles:
 
 ### Decision semantics (`resolve_effective_state`)
 
+On installed ordinary Windows sources, the complete stock persistence API routes
+through `permission_process.py` and the contained `permission_worker.py` before
+the parent acquires a permission raw scope (ADR-126/230). The child executes the
+original store bodies and native admission checks. The parent keeps the exact
+receiver, resolved-path reservation and publication object. Captured Console
+loads retain `publish=False`; callbacks and pure resolution remain in the parent.
+Each request checks its own receiver, including when several stores share a path.
+Custom arguments/sources, uninstalled stores and recovery/non-Windows selections
+retain their checked compatibility path. A selected failure never retries there.
+
+Mutations invalidate the parent before effects, changed observations revoke old
+tokens before continuation, and successful retirement precedes caller stamping
+and result adoption. Snapshots remain frozen and profile mutations keep their CAS
+and typed results. Idle helpers retain startup enrollment only; last-receiver
+teardown, configuration changes, maintenance and application shutdown retire
+them. Unknown outcomes retain ownership and prohibit replacement. This routing
+does not establish TASK-40608's end-to-end latency target.
+
 1. Lifecycle block (imported/tombstone profiles) → deny.
 2. Precedence per profile in the chain: tool override > server default > global default; absent = inherit.
 3. **Rug-pull guard**: a tool-level `allow` is downgraded to `ask` (flagged `config_changed`) when the stored `definition_hash` no longer matches the live tool's description+schema hash. A fresh explicit `set_tool_state` clears the flag.

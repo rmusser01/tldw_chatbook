@@ -265,6 +265,9 @@ class ConsoleTraceCallBoundary:
         init=False,
         repr=False,
     )
+    _control_write_owner: object | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
     _started: TraceCallRecord | None = field(default=None, init=False, repr=False)
     _unknown: TraceCallRecord | None = field(default=None, init=False, repr=False)
     _response_started_at: str | None = field(default=None, init=False, repr=False)
@@ -441,6 +444,7 @@ class ConsoleTraceCallBoundary:
                 self.database,
                 call_id=self._started.call_id,
                 occurred_at=occurred_at,
+                _control_owner=self._control_write_owner,
             )
         except Exception:
             return False
@@ -491,6 +495,7 @@ class ConsoleTraceCallBoundary:
                 canonical_message_id=canonical_message_id,
                 prior_integrity_state=self._started.integrity_state,
                 prior_omission_reason_code=self._started.omission_reason_code,
+                _control_owner=self._control_write_owner,
             )
         except Exception:
             return False
@@ -525,6 +530,7 @@ class ConsoleTraceCallBoundary:
                 settled_at=self.occurred_at_factory(),
                 prior_integrity_state=self._started.integrity_state,
                 prior_omission_reason_code=self._started.omission_reason_code,
+                _control_owner=self._control_write_owner,
             )
         except Exception:
             return None
@@ -1240,6 +1246,7 @@ class ConsoleTraceService:
         *,
         call_id: str,
         occurred_at: str,
+        _control_owner: object | None = None,
     ) -> TraceCallRecord:
         """Record provider-response evidence through the shared coordinator."""
 
@@ -1247,6 +1254,7 @@ class ConsoleTraceService:
             database,
             call_id=call_id,
             occurred_at=occurred_at,
+            _control_owner=_control_owner,
         )
 
     def submit_settlement(
@@ -1262,6 +1270,7 @@ class ConsoleTraceService:
         canonical_message_id: str | None = None,
         prior_integrity_state: str = "pending",
         prior_omission_reason_code: str | None = None,
+        _control_owner: object | None = None,
     ) -> bool:
         """Submit a sanitized post-dispatch seal without masking the result."""
 
@@ -1280,6 +1289,7 @@ class ConsoleTraceService:
                 prior_integrity_state=prior_integrity_state,
                 prior_omission_reason_code=prior_omission_reason_code,
             ),
+            _control_owner=_control_owner,
         )
 
     def settlement_fingerprint(
@@ -1325,6 +1335,7 @@ class ConsoleTraceService:
         settled_at: str,
         prior_integrity_state: str = "pending",
         prior_omission_reason_code: str | None = None,
+        _control_owner: object | None = None,
     ) -> object:
         """Sanitize a terminal result before canonical persistence handoff."""
 
@@ -1342,6 +1353,7 @@ class ConsoleTraceService:
                 prior_integrity_state=prior_integrity_state,
                 prior_omission_reason_code=prior_omission_reason_code,
             ),
+            _control_owner=_control_owner,
         )
 
     def retry_pending_settlements(self) -> int:

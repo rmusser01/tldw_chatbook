@@ -1183,7 +1183,7 @@ def _install_open_settings_dependencies(screen: ChatScreen) -> None:
     async def effective_thinking_history_policy_for_session(_session_id):
         return "auto"
 
-    screen._ensure_console_chat_controller = lambda: SimpleNamespace(
+    controller = SimpleNamespace(
         run_state_for=lambda _session_id: SimpleNamespace(is_send_allowed=True),
         effective_thinking_history_policy_for_session=(
             effective_thinking_history_policy_for_session
@@ -1194,6 +1194,7 @@ def _install_open_settings_dependencies(screen: ChatScreen) -> None:
         compact_context_now=lambda _session_id: None,
         rebase_console_settings_draft=lambda draft, **_kwargs: draft,
     )
+    screen._ensure_console_chat_controller = lambda: controller
     context_spend_for_test(screen)._console_settings_context_estimate_for_session = (
         lambda *_args, **_kwargs: ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
     )
@@ -1251,7 +1252,7 @@ async def test_covered_cancelled_source_reopen_transfers_exact_draft_to_modal(
     async def effective_thinking_history_policy_for_session(_session_id):
         return "auto"
 
-    screen._ensure_console_chat_controller = lambda: SimpleNamespace(
+    controller = SimpleNamespace(
         run_state_for=lambda _session_id: SimpleNamespace(is_send_allowed=True),
         effective_thinking_history_policy_for_session=(
             effective_thinking_history_policy_for_session
@@ -1262,6 +1263,7 @@ async def test_covered_cancelled_source_reopen_transfers_exact_draft_to_modal(
         compact_context_now=lambda _session_id: None,
         rebase_console_settings_draft=lambda *args, **kwargs: args[0],
     )
+    screen._ensure_console_chat_controller = lambda: controller
     context_spend_for_test(screen)._console_settings_context_estimate_for_session = lambda *args, **kwargs: (
         ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
     )
@@ -10484,6 +10486,7 @@ async def test_system_prompt_editor_clears_character_template_source() -> None:
         assert session.character_system_template is None
 
 
+@pytest.mark.bootstrap_profile
 def test_system_prompt_command_clears_character_template_through_store(
     monkeypatch,
 ) -> None:
@@ -11527,6 +11530,7 @@ async def test_console_model_switch_inherits_selected_model_default_profile() ->
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_model_switch_preserves_explicit_session_overrides() -> None:
     app = _build_test_app()
     app.chat_api_provider_value = "openai"

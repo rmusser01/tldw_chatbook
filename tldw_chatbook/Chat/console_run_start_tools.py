@@ -122,14 +122,26 @@ def capture_run_tool_read(controller, session_id, turn_context, project_guard, *
         return True
 
     app = controller.app
-    service = getattr(app, "unified_mcp_service", None)
+    domain = getattr(controller, "domain_services", None)
+    sources = domain.sources if domain is not None else None
+    if domain is not None:
+        domain.require_current(sources)
+    service = (
+        sources.control_plane
+        if domain is not None
+        else getattr(app, "unified_mcp_service", None)
+    )
     if (
         not original_methods()
         or not providers.controller_factory_current(owner.MCPToolProvider)
         or not snapshot.standard_console_catalog_sources(service)
     ):
         return result
-    app_config = getattr(app, "app_config", None)
+    app_config = (
+        sources.configuration
+        if domain is not None
+        else getattr(app, "app_config", None)
+    )
     store = controller.store
     session = next((item for item in store.sessions() if item.id == session_id), None)
     revision = store.session_settings_revision(session_id) if session is not None else None
@@ -137,14 +149,21 @@ def capture_run_tool_read(controller, session_id, turn_context, project_guard, *
     identity = config.current_config_identity()
 
     def current():
+        if domain is not None:
+            domain.require_current(sources)
+            if controller.domain_services is not domain:
+                raise RecoveryRequired("console_snapshot_owner_changed")
         if (
             not original_methods()
             or not providers.controller_factory_current(owner.MCPToolProvider)
             or controller.app is not app
-            or getattr(app, "app_config", None) is not app_config
+            or (domain is None and getattr(app, "app_config", None) is not app_config)
             or controller.store is not store
             or controller._scratch_spaces is not scratch
-            or getattr(app, "unified_mcp_service", None) is not service
+            or (
+                domain is None
+                and getattr(app, "unified_mcp_service", None) is not service
+            )
             or sys.modules.get("tldw_chatbook.config") is not config
             or config.current_config_identity() != identity
             or next((item for item in store.sessions() if item.id == session_id), None) is not session

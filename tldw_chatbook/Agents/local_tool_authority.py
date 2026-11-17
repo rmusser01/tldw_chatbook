@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from .activation import capture_callable_source
+
 if TYPE_CHECKING:
     from .local_tool_provider import RunAdmittedWorkspaceRoot
 
@@ -84,3 +86,8 @@ def kill_switch_engaged(self) -> bool:
     except Exception as exc:  # noqa: BLE001 — invoke() must never raise
         provider.logger.warning(f"LocalToolProvider: kill_switch read failed: {exc}")
         return True
+
+
+_CONSOLE_LOCAL_SWITCH_FUNCTIONS = (
+    (globals(), "kill_switch_engaged", capture_callable_source(kill_switch_engaged)),
+)

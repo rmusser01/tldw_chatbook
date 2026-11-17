@@ -502,7 +502,14 @@ class _TraceAcceptedPreparation:
 class _ProviderAdapterAdmission:
     """Single-use proof that this gateway admitted one adapter entry."""
 
-    __slots__ = ("_consumed", "_issuer", "_lock", "capture_mode", "route")
+    __slots__ = (
+        "_consumed",
+        "_issuer",
+        "_lock",
+        "capture_mode",
+        "route",
+        "_control_dispatch",
+    )
 
     def __init__(
         self,
@@ -514,6 +521,7 @@ class _ProviderAdapterAdmission:
         self.route = route
         self._issuer = issuer
         self._consumed = False
+        self._control_dispatch = None
         self._lock = threading.Lock()
 
     def consume(self, issuer: object) -> None:
@@ -3330,6 +3338,8 @@ class ConsoleProviderGateway:
             )
             record_send_stage("provider_entry")
             self._note_provider_dispatch(trace_signals)
+            if admission._control_dispatch is not None:
+                admission._control_dispatch.handoff(self, admission)
             return adapter(*args, **kwargs)
         # Consumption is owned by the gateway, not dynamically dispatched to
         # the presented object's method.  Otherwise a subclass can override
@@ -3343,6 +3353,8 @@ class ConsoleProviderGateway:
             admission._consumed = True
         record_send_stage("provider_entry")
         self._note_provider_dispatch(trace_signals)
+        if admission._control_dispatch is not None:
+            admission._control_dispatch.handoff(self, admission)
         return adapter(*args, **kwargs)
 
     def _bind_trace_preparation(
@@ -6007,6 +6019,7 @@ class ConsoleProviderGateway:
         answer_noted = False
         trace_call_boundary: object | None = None
         response_accumulator = _TraceResponseAccumulator()
+        control_dispatch = None
 
         def observe_response(
             item: ProviderStreamItem, *, synthetic: bool = False
@@ -6029,6 +6042,9 @@ class ConsoleProviderGateway:
         try:
             if not resolution.ready or not resolution.model:
                 return
+            from .console_control_provider import begin_provider_dispatch
+
+            control_dispatch = begin_provider_dispatch(self)
             prepared = (
                 messages
                 if isinstance(messages, PreparedProviderRequest)
@@ -6151,7 +6167,8 @@ class ConsoleProviderGateway:
             def reserve_stream_fallback_call() -> (
                 tuple[object, ProviderRequestProvenance] | None
             ):
-                nonlocal trace_call_boundary
+                nonlocal trace_call_boundary, control_dispatch
+                control_dispatch = begin_provider_dispatch(self)
                 if capture_mode is ConsoleTraceCaptureMode.CAPTURE_OFF:
                     return None
                 fallback_resolution = replace(effective_resolution, streaming=False)
@@ -6303,6 +6320,7 @@ class ConsoleProviderGateway:
                         prepared.provenance,
                         route=route,
                         capture_off_admission=capture_off_admission,
+                        _control_dispatch=control_dispatch,
                     )
                     if before_provider_dispatch is not None:
                         try:
@@ -6509,9 +6527,12 @@ class ConsoleProviderGateway:
                 ) -> _ProviderAdapterAdmission:
                     reserved = reserve_stream_fallback_call()
                     if reserved is None:
-                        return self._capture_off_admission(
+                        admission = self._capture_off_admission(
                             ConsoleRequestRoute.LLAMA_FALLBACK
                         )
+                        if control_dispatch is not None:
+                            control_dispatch.bind(self, admission)
+                        return admission
                     fallback_boundary, fallback_provenance = reserved
                     fallback_resolution = replace(
                         effective_resolution,
@@ -6540,6 +6561,7 @@ class ConsoleProviderGateway:
                         fallback_bundle,
                         fallback_provenance,
                         route=ConsoleRequestRoute.LLAMA_FALLBACK,
+                        _control_dispatch=control_dispatch,
                     )
 
                 try:
@@ -6628,6 +6650,7 @@ class ConsoleProviderGateway:
                             dispatch_purpose=dispatch_purpose,
                             stream_fallback=retries_refused_stream(effective_resolution),
                             fallback_retry=resuming_stream_fallback,
+                            _control_dispatch=control_dispatch,
                         ):
                             observe_response(emission.item, synthetic=emission.synthetic)
                             observe_emission(emission.synthetic)
@@ -6661,6 +6684,7 @@ class ConsoleProviderGateway:
                             route=ConsoleRequestRoute.LLAMA_FALLBACK,
                             dispatch_purpose=dispatch_purpose,
                             fallback_retry=True,
+                            _control_dispatch=control_dispatch,
                         ):
                             observe_response(emission.item, synthetic=emission.synthetic)
                             observe_emission(emission.synthetic)
@@ -6683,6 +6707,8 @@ class ConsoleProviderGateway:
             )
             raise
         finally:
+            if control_dispatch is not None:
+                control_dispatch.finish_unsubmitted()
             if not provider_failed:
                 await _settle_trace_response(
                     trace_call_boundary,
@@ -6724,6 +6750,7 @@ class ConsoleProviderGateway:
         dispatch_purpose: ConsoleProviderCallPurpose = ConsoleProviderCallPurpose.CONVERSATION,
         stream_fallback: bool = False,
         fallback_retry: bool = False,
+        _control_dispatch=None,
     ) -> AsyncIterator[_ProviderStreamEmission]:
         """Bridge synchronous chat_api_call responses into async Console chunks.
 
@@ -6995,6 +7022,7 @@ class ConsoleProviderGateway:
                     provenance,
                     route=route,
                     capture_off_admission=capture_off_admission,
+                    _control_dispatch=_control_dispatch,
                 )
                 if before_provider_dispatch is not None:
 
@@ -7302,6 +7330,18 @@ class ConsoleProviderGateway:
                         planning._planning_provider_failure = True
                         raise
 
+        if _control_dispatch is not None:
+            original_worker = worker
+
+            def worker() -> None:
+                retired = False
+                try:
+                    original_worker()
+                    retired = True
+                finally:
+                    _control_dispatch.worker_returned(retired=retired)
+
+            _control_dispatch.worker_owned = True
         worker_task = asyncio.create_task(asyncio.to_thread(worker))
         provider_work_owned = bool(
             signals is not None
@@ -7684,23 +7724,33 @@ class ConsoleProviderGateway:
         *,
         route: ConsoleRequestRoute | None,
         capture_off_admission: _ProviderAdapterAdmission | None = None,
+        _control_dispatch=None,
     ) -> _ProviderAdapterAdmission:
         """Return a token only after Capture On commits or Capture Off admits."""
 
         if trace_call_boundary is None:
             if capture_off_admission is None:
                 raise TraceCallPersistenceError()
+            if _control_dispatch is not None:
+                _control_dispatch.bind(self, capture_off_admission)
             return capture_off_admission
         self._commit_trace_dispatch_started(
             trace_call_boundary,
             bundle,
             provenance,
         )
-        return _ProviderAdapterAdmission(
+        if _control_dispatch is not None:
+            from .console_control_trace import bind_trace_call
+
+            bind_trace_call(_control_dispatch, trace_call_boundary)
+        admission = _ProviderAdapterAdmission(
             self._adapter_admission_issuer,
             ConsoleTraceCaptureMode.CAPTURE_ON,
             route,
         )
+        if _control_dispatch is not None:
+            _control_dispatch.bind(self, admission)
+        return admission
 
     @staticmethod
     def _commit_trace_dispatch_unknown(trace_call_boundary: object | None) -> None:

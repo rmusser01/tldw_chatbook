@@ -431,6 +431,12 @@ def test_metadata_validation_failure_retires_or_retains_the_acquired_birth(
     native, win = windows_files._native(), WindowsOS()
     selected = tmp_path / "opener-validation.bin"
     selected.write_bytes(b"metadata")
+    # Full volume qualification belongs to each root; children use the finite
+    # parent proof, whose failure/retirement controls live beside this module.
+    failure_path = type(selected)(selected.anchor) if phase == "ntfs" else selected
+    failure_name = (
+        "\\??\\" + selected.drive + "\\" if phase == "ntfs" else selected.name
+    )
     original_create = native.nt.NtCreateFile
     original_info, original_ntfs = native.info, native.ntfs
     original_ntcheck = native.ntcheck
@@ -457,7 +463,7 @@ def test_metadata_validation_failure_retires_or_retains_the_acquired_birth(
             assert handle not in current or not current[handle]["live"]
             births.append(birth)
             current[handle] = birth
-            if text == selected.name:
+            if text == failure_name:
                 selected_births.append(birth)
         return result
 
@@ -513,7 +519,7 @@ def test_metadata_validation_failure_retires_or_retains_the_acquired_birth(
             assert len(caught.value.failed_handles) == 1
             retained = caught.value.failed_handles[0]
             assert retained.native is native and retained.handle == birth["handle"]
-            assert retained.path == selected and retained.close_error == 5
+            assert retained.path == failure_path and retained.close_error == 5
             assert retained.identity == (
                 None if phase in {"status", "info"} else birth["identity"]
             )
@@ -567,3 +573,189 @@ def test_scalar_borrowed_descriptor_stays_open_without_owned_native_closes(
         assert win.read(fd, 8) == b"borrowed"
     finally:
         win.close(fd)
+@pytest.mark.parametrize("bound", [True, False])
+def test_warm_windows_admission_reuses_the_counted_hold(
+    native_scope, monkeypatch, request, bound
+):
+    root, selector, data, startup = native_scope
+    if not bound:
+        # The Console's normal profile has a native hold and no recovery profile.
+        startup.close()
+        selector = selector.with_name("unbound-config")
+        monkeypatch.setenv("TLDW_CONFIG_PATH", str(selector))
+        startup = storage.acquire_storage()
+        request.addfinalizer(startup.close)
+    target = data / "new.sqlite"
+    for _ in range(2):
+        with storage.acquire_storage(target):
+            pass
+
+    hold = storage._holds[startup._key]
+    original_count = hold.count
+
+    def unexpected_scope(*args, **kwargs):
+        pytest.fail("warm admission repeated scope derivation")
+
+    monkeypatch.setattr(storage, "_scope", unexpected_scope)
+    with storage.acquire_storage(target) as lease:
+        assert hold.count == original_count + 1
+        names = ("profile",) if bound else (storage.UNBOUND_NAMESPACE,)
+        assert lease.execution_scope() == (root, names)
+    assert hold.count == original_count
+
+
+def _admission_verdict(target):
+    try:
+        with storage.acquire_storage(target) as lease:
+            return ("allowed", None if lease._key is None else lease.execution_scope()[1])
+    except bootstrap.RecoveryRequired as error:
+        return ("refused", str(error))
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["registry-intent", "creation-intent", "profile-bytes", "profile-link",
+     "unknown-record", "root-replaced", "path-replaced", "epoch", "qualification"],
+)
+def test_windows_admission_mutations_match_full_derivation(
+    native_scope, monkeypatch, mutation
+):
+    root, selector, data, startup = native_scope
+    win = WindowsOS()
+    target = data / "child"
+    win.mkdir(target, 0o700)
+    expected = ("allowed", ("profile",))
+    assert _admission_verdict(target) == expected
+    assert _admission_verdict(target) == expected
+    hold = storage._holds[startup._key]
+    assert hold.evidence[str(selector)].confirmed
+    assert hold.path_evidence[str(selector), str(target)].confirmed
+
+    original = storage._scope
+    derived = []
+
+    def scope(*args, **kwargs):
+        derived.append(None)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(storage, "_scope", scope)
+    assert _admission_verdict(target) == expected
+    assert not derived
+    profile = next(root.glob("profile-*.json"))
+
+    if mutation == "registry-intent":
+        (root / "admission" / "registry.pending.json").write_bytes(b"{}")
+    elif mutation == "creation-intent":
+        (root.parent / storage.control_records._DIRECTORY_CREATION_INTENT).write_bytes(b"pending")
+    elif mutation == "profile-bytes":
+        # Deliberately restore all file times. Native ChangeTime is mutable on
+        # NTFS, so the live read must still detect different authority bytes.
+        native = windows_files._native()
+        fd = win.open(profile, win.O_RDWR)
+        try:
+            handle = native.handle(fd)
+            basic = windows_files._BasicInfo()
+            native.check(native.kernel.GetFileInformationByHandleEx(
+                handle, 0, C.byref(basic), C.sizeof(basic)
+            ))
+            basic.attributes = 0
+            assert win.write(fd, b"!") == 1
+            native.check(native.kernel.SetFileInformationByHandle(
+                handle, 0, C.byref(basic), C.sizeof(basic)
+            ))
+        finally:
+            win.close(fd)
+    elif mutation == "profile-link":
+        os.link(profile, root.parent / "extra-link")
+    elif mutation == "unknown-record":
+        (root / "unexpected.json").write_bytes(b"{}")
+    elif mutation == "root-replaced":
+        win.rename(data, data.with_name("previous-data"))
+        win.mkdir(data, 0o700)
+    elif mutation == "path-replaced":
+        win.rename(target, target.with_name("previous-child"))
+        win.mkdir(target, 0o700)
+    elif mutation == "epoch":
+        bootstrap.advance_admission_epoch()
+    elif mutation == "qualification":
+        monkeypatch.setattr(storage, "qualified_for", lambda *_: (False, "unqualified"))
+        monkeypatch.setattr(
+            storage, "_qualified_identity", lambda *_: (False, "unqualified")
+        )
+
+    count = hold.count
+    cached_verdict = _admission_verdict(target)
+    with monkeypatch.context() as full:
+        full.setattr(storage, "_EVIDENCE_REUSE", False)
+        assert _admission_verdict(target) == cached_verdict
+    assert hold.count == count
+    if mutation in {"root-replaced", "path-replaced", "epoch", "qualification"}:
+        assert derived
+
+
+def test_windows_admission_retires_counted_lease_on_uncertain_metadata_close(
+    native_scope, monkeypatch
+):
+    _, _, data, startup = native_scope
+    target = data / "child"
+    for _ in range(2):
+        assert _admission_verdict(target) == ("allowed", ("profile",))
+    hold = storage._holds[startup._key]
+    count = hold.count
+    uncertain = windows_files._AdmissionMetadataCloseError((object(),))
+
+    def snapshot(paths):
+        assert hold.count == count + 1
+        raise uncertain
+
+    def unexpected_scope(*args, **kwargs):
+        pytest.fail("uncertain native retirement fell through to full derivation")
+
+    monkeypatch.setattr(storage.os, "stat_many_for_admission", snapshot)
+    monkeypatch.setattr(storage, "_scope", unexpected_scope)
+    with pytest.raises(windows_files._AdmissionMetadataCloseError) as caught:
+        storage.acquire_storage(target)
+    assert caught.value is uncertain
+    assert hold.count == count
+
+
+def test_windows_path_evidence_expires_when_selector_proof_changes(
+    native_scope, monkeypatch
+):
+    root, selector, data, startup = native_scope
+    win = WindowsOS()
+    replacement = data.with_name("replacement")
+    win.mkdir(replacement, 0o700)
+    old_target = data / "old"
+    new_target = replacement / "new"
+    expected = ("allowed", ("profile",))
+    for _ in range(2):
+        assert _admission_verdict(old_target) == expected
+    hold = storage._holds[startup._key]
+    old_proof = hold.evidence[str(selector)]
+    assert old_proof.confirmed
+
+    # Write through the native facade without the cooperating in-process epoch.
+    registry = root / "admission" / "registry.json"
+    profile = next(root.glob("profile-*.json"))
+    for path in (registry, profile):
+        raw = json.loads(path.read_bytes())
+        row = raw["entries"]["profile"] if path == registry else raw
+        row["roots"] = sorted([str(selector), str(replacement)])
+        fd = win.open(path, win.O_WRONLY | win.O_TRUNC)
+        try:
+            body = json.dumps(raw).encode()
+            assert win.write(fd, body) == len(body)
+        finally:
+            win.close(fd)
+    assert bootstrap._admission_epoch == old_proof.epoch
+
+    for _ in range(2):
+        assert _admission_verdict(new_target) == expected
+    assert hold.evidence[str(selector)] is not old_proof
+    assert hold.evidence[str(selector)].confirmed
+    with monkeypatch.context() as full:
+        full.setattr(storage, "_EVIDENCE_REUSE", False)
+        oracle = _admission_verdict(old_target)
+    assert oracle == ("refused", "storage_scope_not_enrolled")
+    assert _admission_verdict(old_target) == oracle

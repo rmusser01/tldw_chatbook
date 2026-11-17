@@ -18,8 +18,40 @@ from Tests.Backup_Recovery.test_participant_lifetimes import (
     local_root as local_root,  # noqa: PLC0414
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.usefixtures("local_root")]
+
+
+@pytest.mark.asyncio
+async def test_streaming_payload_does_not_restart_character_native_reconciliation(tmp_path):
+    database = CharactersRAGDB(tmp_path / "stream-display.sqlite", "stream-display")
+    controller, screen, *_ = _character(database)
+    controller._run_active = lambda: True
+    try:
+        await _display(controller, screen)
+        store = screen._console_chat_store
+        store.append_message("session", role=ConsoleMessageRole.ASSISTANT, content="stream", persist=False)
+        with _original_calls(database) as streaming:
+            await _display(controller, screen)
+        assert streaming["callbacks"] == 0 and streaming["pairs"] == 0
+        controller.invalidate_scope()
+        with _original_calls(database) as invalidated:
+            await _display(controller, screen)
+        assert invalidated["callbacks"] > 0
+        _retired(database, invalidated)
+        controller._run_active = lambda: False
+        with _original_calls(database) as terminal:
+            await _display(controller, screen)
+        assert terminal["callbacks"] > 0
+        _retired(database, terminal)
+        store.append_message("session", role=ConsoleMessageRole.USER, content="idle edit", persist=False)
+        with _original_calls(database) as idle:
+            await _display(controller, screen)
+        assert idle["callbacks"] > 0
+        _retired(database, idle)
+    finally:
+        database.close()
 
 
 @pytest.mark.asyncio

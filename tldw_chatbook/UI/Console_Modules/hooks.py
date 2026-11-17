@@ -431,10 +431,21 @@ class ConsoleHooksController:
         # chat's send gate next. The draft only after a review: keys flow
         # during the snapshot read, and text typed after the capture belongs
         # to the next draft (TASK-340), not a reason to refuse this send.
+        current_session = None
+        if snapshot.ready and generation == self._generation:
+            from tldw_chatbook.Chat.console_parent_settings import (
+                prepare_parent_visible_target_check,
+            )
+
+            selected, current_session = await prepare_parent_visible_target_check(
+                self, session_id
+            )
+            if not selected:
+                current_session = self._session()
         if (
             not snapshot.ready
             or generation != self._generation
-            or self._session() != session_id
+            or current_session != session_id
             or (reviewed and not same_captured_draft(self._stash(), stash))
         ):
             return self._refused(
@@ -457,3 +468,13 @@ class ConsoleHooksController:
         return ConsolePromptDispatchResult(
             ConsolePromptDispatchStatus.REFUSED, session_id, detail
         )
+
+
+_selected_visible_check_helpers = tuple(
+    (
+        name,
+        getattr(ConsoleHooksController, name),
+        getattr(ConsoleHooksController, name).__code__,
+    )
+    for name in ("_continue",)
+)

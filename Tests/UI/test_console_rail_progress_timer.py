@@ -105,3 +105,47 @@ async def test_progress_tick_survives_the_button_leaving_the_tree(
         await pilot.pause(0.6)
         assert str(app.navigation.content) == "Pending: 5"
         assert app._exception is None
+
+
+@pytest.mark.ui
+@pytest.mark.asyncio
+@private_profile_test
+async def test_progress_ticks_update_the_composed_button_without_walking_the_rail(
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _ProgressRailHost()
+    async with app.run_test(size=(80, 40)):
+        rail = app.query_one(ConsoleLeftRail)
+        first = rail.query_one("#console-agent-progress", Button)
+        assert str(first.label) == "Progress: 3 queued"
+
+        walks = []
+        walk_children = rail.walk_children
+
+        def record_walk(*args, **kwargs):
+            walks.append(True)
+            return walk_children(*args, **kwargs)
+
+        def tick() -> None:
+            with monkeypatch.context() as patch:
+                patch.setattr(rail, "walk_children", record_walk)
+                rail._sync_progress_count()
+
+        app.progress_counts = {"current": 5}
+        tick()
+        assert str(first.label) == "Progress: 5 queued"
+        assert str(app.navigation.content) == "Pending: 5"
+
+        await rail.recompose()
+        current = rail.query_one("#console-agent-progress", Button)
+        assert current is not first
+        tick()
+        assert str(current.label) == "Progress: 5 queued"
+
+        await current.remove()
+        app.progress_counts = {"current": 8}
+        tick()
+        assert str(first.label) == str(current.label) == "Progress: 5 queued"
+        assert str(app.navigation.content) == "Pending: 8"
+        assert not walks, f"Progress ticks walked the rail {len(walks)} times"

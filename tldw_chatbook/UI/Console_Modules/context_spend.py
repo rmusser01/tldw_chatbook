@@ -820,9 +820,18 @@ class ConsoleContextSpendController:
 
     def _refresh_settings_summary(self) -> None:
         """Refresh the mounted Console settings summary surfaces if present."""
-        self._apply_console_settings_summary_state(
-            self._build_console_settings_summary_state()
-        )
+        from tldw_chatbook.Chat.console_parent_settings import parent_settings_render
+
+        with parent_settings_render(self._screen):
+            from tldw_chatbook.Chat.console_parent_settings import (
+                defer_parent_settings_render,
+            )
+
+            if defer_parent_settings_render(self._screen):
+                return
+            self._apply_console_settings_summary_state(
+                self._build_console_settings_summary_state()
+            )
 
     def _apply_console_settings_summary_state(
         self,
@@ -860,6 +869,16 @@ class ConsoleContextSpendController:
         never was one) rather than raising into the sync path -- a stale or
         missing chip is fine, a broken send is not.
         """
+        from ...Chat.console_control_settings import (
+            ConsoleDefaultConvergenceRequired,
+            ConsoleSettingsPending,
+        )
+        from ...Chat.console_parent_settings import (
+            ParentSettingsDeferred,
+            ParentSettingsOriginChanged,
+            ParentSettingsSourceChanged,
+        )
+
         try:
             session = self._active_native_session()
             store = self._current_chat_store()
@@ -937,6 +956,14 @@ class ConsoleContextSpendController:
                 ) = previous_display
                 return self._last_console_cost_state
             return cost_state
+        except (
+            ConsoleDefaultConvergenceRequired,
+            ConsoleSettingsPending,
+            ParentSettingsDeferred,
+            ParentSettingsOriginChanged,
+            ParentSettingsSourceChanged,
+        ):
+            raise
         except Exception:  # noqa: BLE001 - Preserve last valid optional cost presentation.
             logger.opt(exception=True).warning("cost_chip_state_failed")
             return self._last_console_cost_state
@@ -1237,21 +1264,30 @@ class ConsoleContextSpendController:
         from the 10s TTL repaint timer below so a WARM cache that goes
         EXPIRED with no other sync call in between still repaints.
         """
-        cost_state = self._build_console_cost_state()
-        if cost_state != self._last_console_cost_state:
-            self._last_console_cost_state = cost_state
-            try:
-                status_chips = self.query_one(
-                    "#console-status-chips", ConsoleStatusChips
-                )
-            except QueryError:
-                status_chips = None
-            if status_chips is not None:
-                status_chips.sync_cost_state(cost_state)
-        if self._console_cost_cache_state == ConsoleCacheState.WARM:
-            self._start_console_cost_ttl_timer()
-        else:
-            self._stop_console_cost_ttl_timer()
+        from tldw_chatbook.Chat.console_parent_settings import parent_settings_render
+
+        with parent_settings_render(self._screen):
+            from tldw_chatbook.Chat.console_parent_settings import (
+                defer_parent_settings_render,
+            )
+
+            if defer_parent_settings_render(self._screen):
+                return
+            cost_state = self._build_console_cost_state()
+            if cost_state != self._last_console_cost_state:
+                self._last_console_cost_state = cost_state
+                try:
+                    status_chips = self.query_one(
+                        "#console-status-chips", ConsoleStatusChips
+                    )
+                except QueryError:
+                    status_chips = None
+                if status_chips is not None:
+                    status_chips.sync_cost_state(cost_state)
+            if self._console_cost_cache_state == ConsoleCacheState.WARM:
+                self._start_console_cost_ttl_timer()
+            else:
+                self._stop_console_cost_ttl_timer()
 
     def _start_console_cost_ttl_timer(self) -> None:
         """Start the 10s WARM->EXPIRED cost-chip repaint timer (task-5).

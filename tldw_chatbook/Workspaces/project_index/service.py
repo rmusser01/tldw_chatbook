@@ -14,6 +14,7 @@ from pathlib import Path
 import threading
 from uuid import uuid4
 
+from tldw_chatbook.Utils.definition_records import capture_definitions
 from tldw_chatbook.DB.Workspace_Project_Index_DB import (
     prepare_scan_unit,
     WorkspaceProjectIndexDB,
@@ -50,6 +51,10 @@ class _Run:
     pin: object | None = None
     lease: BindingLifetime | None = None
     read_admission: ExitStack | None = None
+    control_source: object | None = None
+    control_store: object | None = None
+    control_connections: list = field(default_factory=list)
+    control_retire_thread: object | None = None
 
 
 @dataclass(eq=False)
@@ -122,6 +127,7 @@ class ProjectIndexService:
         self._operation_local = threading.local()
         self._searches: set[_SearchRun] = set()
         self._read_slots = threading.BoundedSemaphore(2)
+        self._console_control_owner = None
 
     @contextmanager
     def registry_connection_scope(self):
@@ -143,7 +149,14 @@ class ProjectIndexService:
             operation = _Operation(threading.Event())
             self._operations.add(operation)
             self._operation_local.operation = operation
+        from tldw_chatbook.Chat.console_control_index import (
+            begin_index_operation,
+            finish_index_operation,
+        )
+
+        effect = None
         try:
+            effect = begin_index_operation(self, operation)
             with self._registry_connections():
                 yield
         except ProjectIndexRetirementUnproven:
@@ -155,6 +168,7 @@ class ProjectIndexService:
                 if not operation.retirement_unproven:
                     self._operations.discard(operation)
             operation.done.set()
+            finish_index_operation(effect, operation)
 
     def _admission_closed(self):
         return (
@@ -162,20 +176,26 @@ class ProjectIndexService:
         )
 
     @contextmanager
-    def _store(self, key, *, cleanup_only=False):
-        with self.registry_connection_scope(), self._store_owned(
-            key, cleanup_only=cleanup_only
-        ) as store:
+    def _store(self, key, *, cleanup_only=False, missing_base=None):
+        with (
+            self.registry_connection_scope(),
+            self._store_owned(
+                key, cleanup_only=cleanup_only, missing_base=missing_base
+            ) as store,
+        ):
             yield store
 
     @contextmanager
-    def _store_owned(self, key, *, cleanup_only=False):
+    def _store_owned(self, key, *, cleanup_only=False, missing_base=None):
         pin = self._retain(key)
         retired = True
         try:
             with self._bind(pin):
-                with self._opened_store(key, cleanup_only=cleanup_only) as store:
-                    yield store
+                if missing_base is not None and missing_base(pin):
+                    yield None
+                else:
+                    with self._opened_store(key, cleanup_only=cleanup_only) as store:
+                        yield store
         except ProjectIndexRetirementUnproven:
             retired = False
             self._operation_local.operation.retained.append(pin)
@@ -246,6 +266,11 @@ class ProjectIndexService:
     def status(self, key: ProjectIndexKey) -> ProjectIndexStatus:
         with self._store(key) as store:
             return self._status_from_store(store, key)
+
+    def _console_status(self, key, missing_base):
+        """Withhold optional coverage without creating a proven absent cache."""
+        with self._store(key, missing_base=missing_base) as store:
+            return None if store is None else self._status_from_store(store, key)
 
     def building_coverage(self, scope: ProjectIndexScope, exclusions=()) -> bool:
         """Check committed compatibility without granting a search authority."""
@@ -1015,6 +1040,10 @@ class ProjectIndexService:
                     lease=lease,
                     read_admission=read_admission.pop_all(),
                 )
+                from tldw_chatbook.Chat.console_control_index import index_source
+
+                run.control_source = index_source(self)
+                run.control_store = store
                 self._runs[claim.job_id] = run
                 self._scanner.lifetime = lease
                 run.writer = threading.Thread(
@@ -1051,6 +1080,11 @@ class ProjectIndexService:
                     if pin is not None:
                         self._close_capability(pin)
                     run.read_admission.close()
+                    from tldw_chatbook.Chat.console_control_index import (
+                        require_run_native_retirement,
+                    )
+
+                    require_run_native_retirement(run)
                     run.native_retired = True
             raise
 
@@ -1066,6 +1100,7 @@ class ProjectIndexService:
     def _write_bound(self, run, store, authority, policy):
         from tldw_chatbook.Backup_Recovery.activation import execution_scope
         from .models import OWNER_ID
+        from tldw_chatbook.Chat.console_control_index import index_writer_stage
 
         claim = run.claim
 
@@ -1075,7 +1110,10 @@ class ProjectIndexService:
         def admit(directory):
             if run.stop.is_set():
                 return None
-            with self._admitted(store, claim.scope.key) as current:
+            with (
+                index_writer_stage(self, run, store, "admit"),
+                self._admitted(store, claim.scope.key) as current,
+            ):
                 if (
                     run.stop.is_set()
                     or current is None
@@ -1088,29 +1126,31 @@ class ProjectIndexService:
 
         def emit(page):
             prepared = prepare_scan_unit(page)
-            store.publication_cache_bytes = binding_bytes(self._binding_root(store))
-            # Reserve rollback headroom for this namespace after all obsolete
-            # namespaces and the stable capability have been counted.
-            with store.connection() as conn:
-                page_size = conn.execute("PRAGMA page_size").fetchone()[0]
-                other = max(0, store.publication_cache_bytes - store._cache_bytes())
-                pages = max(1, (MAX_CACHE_BYTES - other - 1024**2) // (2 * page_size))
-                conn.execute(f"PRAGMA max_page_count={pages}")
-            with self._admitted(store, claim.scope.key) as live:
-                if (
-                    run.stop.is_set()
-                    or live is None
-                    or live.authority_revision != claim.authority_revision
-                    or live.exclusions != authority.exclusions
-                ):
-                    return False
-                return store.commit_scan_unit(
-                    claim.scope,
-                    claim.job_id,
-                    prepared,
-                    expected_job_revision=claim.job_revision,
-                    authority_revision=live.authority_revision,
-                )
+            with index_writer_stage(self, run, store, "emit"):
+                store.publication_cache_bytes = binding_bytes(self._binding_root(store))
+                # Keep the original cache reservation and publication together.
+                with store.connection() as conn:
+                    page_size = conn.execute("PRAGMA page_size").fetchone()[0]
+                    other = max(0, store.publication_cache_bytes - store._cache_bytes())
+                    pages = max(
+                        1, (MAX_CACHE_BYTES - other - 1024**2) // (2 * page_size)
+                    )
+                    conn.execute(f"PRAGMA max_page_count={pages}")
+                with self._admitted(store, claim.scope.key) as live:
+                    if (
+                        run.stop.is_set()
+                        or live is None
+                        or live.authority_revision != claim.authority_revision
+                        or live.exclusions != authority.exclusions
+                    ):
+                        return False
+                    return store.commit_scan_unit(
+                        claim.scope,
+                        claim.job_id,
+                        prepared,
+                        expected_job_revision=claim.job_revision,
+                        authority_revision=live.authority_revision,
+                    )
 
         try:
             with execution_scope((OWNER_ID,), store.db_path) as allowed:
@@ -1153,6 +1193,8 @@ class ProjectIndexService:
                 run.error = error
 
     def _retire(self, run, store, lease, pin):
+        if run.control_source is not None:
+            run.control_retire_thread = threading.current_thread()
         try:
             with self._bind(pin):
                 with self._registry_connections():
@@ -1165,6 +1207,11 @@ class ProjectIndexService:
                     if pin is not None:
                         pin.close()
                     run.read_admission.close()
+                    from tldw_chatbook.Chat.console_control_index import (
+                        require_run_native_retirement,
+                    )
+
+                    require_run_native_retirement(run)
                     run.native_retired = True
                     # Keep a small diagnostic tail, never traceback-owned stores
                     # or an unbounded collection of completed Refresh/Resume runs.
@@ -1185,6 +1232,8 @@ class ProjectIndexService:
             run.error = error
 
     def _retire_bound(self, run, store, lease, pin):
+        from tldw_chatbook.Chat.console_control_index import index_writer_stage
+
         run.writer.join()  # actual thread exit, separately from coroutine return
         try:
             if (
@@ -1193,7 +1242,10 @@ class ProjectIndexService:
                 or not self._scanner.retired
             ):
                 raise RuntimeError("index_retirement_unproven") from run.error
-            with self._admitted(store, run.claim.scope.key) as authority:
+            with (
+                index_writer_stage(self, run, store, "final"),
+                self._admitted(store, run.claim.scope.key) as authority,
+            ):
                 current = store.read_claim(run.claim.scope)
                 if authority is not None and current == run.claim:
                     if run.state == "Ready":
@@ -1220,6 +1272,17 @@ class ProjectIndexService:
                 run.stop.set()
         if self._detached_fence is None:
             return
+        from tldw_chatbook.Chat.console_control_index import (
+            index_source,
+            index_thread_source,
+        )
+
+        try:
+            control_source = index_source(self)
+        except RuntimeError:
+            # This postcommit hint grants no new source. Durable cleanup stays
+            # pending until an original admitted management operation retries it.
+            return
         with self._lock:
             if self._closed or (
                 self._cleanup_thread is not None and self._cleanup_thread.is_alive()
@@ -1228,7 +1291,8 @@ class ProjectIndexService:
 
             def attempt():
                 try:
-                    self.retry_detached_cleanup()
+                    with index_thread_source(self, control_source):
+                        self.retry_detached_cleanup()
                 except Exception:
                     # Durable receipt permits explicit retry; unknown native
                     # ownership is also retained by the operation record.
@@ -1285,3 +1349,55 @@ class ProjectIndexService:
         task.result()
         if cancelled:
             raise asyncio.CancelledError
+
+
+# Definition-owned references for the runtime's narrow optional Console path.
+# Public/custom status remains the fallback; this is no authority result.
+_CONSOLE_STATUS_READERS = tuple(
+    (
+        name,
+        method,
+        body,
+        tuple(
+            (
+                function,
+                function.__code__,
+                function.__defaults__,
+                function.__kwdefaults__,
+                tuple((function.__kwdefaults__ or {}).items()),
+            )
+            for function in ((method, body) if method is not body else (body,))
+        ),
+    )
+    for name in (
+        "status",
+        "_store",
+        "_store_owned",
+        "_opened_store",
+        "_status_from_store",
+        "_admitted",
+        "_retain",
+        "_bind",
+        "_console_status",
+    )
+    for method in (getattr(ProjectIndexService, name),)
+    for body in (getattr(method, "__wrapped__", method),)
+)
+
+
+# Definition-time originals for the fixed complete key command.
+_KEY_PROCESS_DEFINITIONS = capture_definitions(
+    (
+        (ProjectIndexService, "__init__", ProjectIndexService.__init__),
+        (
+            ProjectIndexService,
+            "registry_connection_scope",
+            ProjectIndexService.registry_connection_scope,
+        ),
+    )
+)
+
+_KEY_PROCESS_GLOBALS = globals()
+_KEY_PROCESS_DEFINITIONS += (
+    (globals(), "ProjectIndexService", ProjectIndexService, ()),
+)

@@ -83,3 +83,26 @@ def test_a_status_transition_without_revision_rebuilds(monkeypatch):
     state["status"] = "expired"  # time-based expiry: no revision bump
     screen._poll_console_credential_readiness()
     assert len(builds) == 2, "expiry must rebuild even without a revision bump"
+
+
+def test_idle_tick_does_not_admit_a_settings_replay(monkeypatch):
+    """The original cheap no-work gate precedes selected replay admission."""
+    from tldw_chatbook.Chat import console_parent_settings as parent
+
+    screen, builds, _syncs, _state, revision = _screen(monkeypatch)
+    screen._poll_console_credential_readiness()
+    assert len(builds) == 1
+    admissions = []
+
+    def defer(candidate):
+        assert candidate is screen
+        admissions.append(candidate)
+        return True
+
+    monkeypatch.setattr(parent, "defer_parent_settings_render", defer)
+    screen._poll_console_credential_readiness()
+    assert admissions == [], "An unchanged credential tick owes no settings replay"
+    revision[0] += 1
+    screen._poll_console_credential_readiness()
+    assert admissions == [screen]
+    assert len(builds) == 1

@@ -489,8 +489,26 @@ class ConsoleRealtimeController:
         re-handed on every reconnect, or the model silently loses its
         persona the moment the transport blips.
         """
+        from ...Chat.console_control_settings import (
+            ConsoleDefaultConvergenceRequired,
+            ConsoleSettingsPending,
+        )
+        from ...Chat.console_parent_settings import (
+            ParentSettingsDeferred,
+            ParentSettingsOriginChanged,
+            ParentSettingsSourceChanged,
+        )
+
         try:
             settings = self._ensure_session_settings()
+        except (
+            ConsoleDefaultConvergenceRequired,
+            ConsoleSettingsPending,
+            ParentSettingsDeferred,
+            ParentSettingsOriginChanged,
+            ParentSettingsSourceChanged,
+        ):
+            raise
         except Exception:  # noqa: BLE001 - a settings failure must not block voice
             logger.opt(exception=True).debug(
                 "Console realtime: could not read the session system prompt"
@@ -751,6 +769,16 @@ class ConsoleRealtimeController:
         state it will actually land in.
         """
 
+        from ...Chat.console_control_settings import (
+            ConsoleDefaultConvergenceRequired,
+            ConsoleSettingsPending,
+        )
+        from ...Chat.console_parent_settings import (
+            ParentSettingsDeferred,
+            ParentSettingsOriginChanged,
+            ParentSettingsSourceChanged,
+        )
+
         def _run() -> None:
             if self.session is not session:
                 return
@@ -758,6 +786,14 @@ class ConsoleRealtimeController:
                 return
             try:
                 handler(session, *args)
+            except (
+                ConsoleDefaultConvergenceRequired,
+                ConsoleSettingsPending,
+                ParentSettingsDeferred,
+                ParentSettingsOriginChanged,
+                ParentSettingsSourceChanged,
+            ):
+                raise
             except Exception:  # noqa: BLE001 - a wiring fault must not kill the loop
                 logger.opt(exception=True).warning(
                     "Console realtime: callback handler failed; dropping it"
@@ -814,18 +850,58 @@ class ConsoleRealtimeController:
         self, session: ConsoleRealtimeSession, *, attempt: int
     ) -> None:
         """Build and connect one provider session, bounded by a timeout."""
+        from ...Chat.console_parent_settings import (
+            realtime_settings_runtime,
+            wait_parent_settings,
+        )
+
+        runtime = realtime_settings_runtime(self)
+        if (
+            getattr(
+                getattr(runtime, "_execution_service", None), "_local_controls", None
+            )
+            is not None
+        ):
+            if runtime.view is None:
+                return
+            from tldw_chatbook.Chat.console_parent_settings import (
+                ParentSettingsOriginChanged,
+            )
+
+            try:
+                await wait_parent_settings(runtime.view)
+            except ParentSettingsOriginChanged:
+                return
+            if self.session is not session or session.connect_attempt != attempt:
+                return
         _load_console_voice_input()  # TASK-22504: bind the names this body uses
+        api_key = self._console_realtime_api_key()
+        model = realtime_model()
+        voice = realtime_voice() or None
+        from ...Chat.console_parent_settings import (
+            ParentSettingsOriginChanged,
+            read_parent_realtime_instructions,
+        )
+
+        try:
+            instructions = await read_parent_realtime_instructions(
+                self, session, attempt
+            )
+        except ParentSettingsOriginChanged:
+            return
+        if self.session is not session or session.connect_attempt != attempt:
+            return
         config = RealtimeSessionConfig(
-            api_key=self._console_realtime_api_key(),
-            model=realtime_model(),
+            api_key=api_key,
+            model=model,
             # `or None` rather than the raw value: an empty configured
             # voice means "use the provider default", which is what None
             # means on the wire -- sending `""` would ask for a voice named
             # nothing.
-            voice=realtime_voice() or None,
+            voice=voice,
             input_sample_rate=CONSOLE_REALTIME_SAMPLE_RATE,
             output_sample_rate=CONSOLE_REALTIME_SAMPLE_RATE,
-            instructions=self._console_realtime_instructions(),
+            instructions=instructions,
             turn_detection=realtime_turn_detection(),
             vad_threshold=realtime_vad_threshold(),
             vad_silence_ms=realtime_vad_silence_ms(),
@@ -1014,6 +1090,34 @@ class ConsoleRealtimeController:
         to `listening` either way, and the user is left unsure whether to
         keep talking.
         """
+        from ...Chat.console_parent_settings import (
+            defer_parent_settings_action,
+            realtime_settings_runtime,
+        )
+
+        runtime = realtime_settings_runtime(self)
+        if (
+            getattr(
+                getattr(runtime, "_execution_service", None), "_local_controls", None
+            )
+            is not None
+        ):
+            if runtime.view is None or defer_parent_settings_action(
+                runtime.view,
+                "realtime-ready",
+                (session, session.connect_attempt),
+            ):
+                return
+        from ...Chat.console_control_settings import (
+            ConsoleDefaultConvergenceRequired,
+            ConsoleSettingsPending,
+        )
+        from ...Chat.console_parent_settings import (
+            ParentSettingsDeferred,
+            ParentSettingsOriginChanged,
+            ParentSettingsSourceChanged,
+        )
+
         reconnected = session.controller.state == "reconnecting"
         provider_session = session.session
         if provider_session is not None:
@@ -1022,6 +1126,14 @@ class ConsoleRealtimeController:
                     self._console_realtime_seed_items(session.console_session_id),
                     self._console_realtime_instructions(),
                 )
+            except (
+                ConsoleDefaultConvergenceRequired,
+                ConsoleSettingsPending,
+                ParentSettingsDeferred,
+                ParentSettingsOriginChanged,
+                ParentSettingsSourceChanged,
+            ):
+                raise
             except Exception:  # noqa: BLE001 - a seed failure is not fatal
                 logger.opt(exception=True).warning(
                     "Console realtime: seeding the session failed"
@@ -2416,3 +2528,26 @@ class ConsoleRealtimeController:
                 logger.opt(exception=True).debug(
                     "Console realtime: waiting for the release worker failed"
                 )
+
+
+_selected_realtime_settings_action = (
+    ConsoleRealtimeController._on_console_realtime_ready
+)
+
+
+_selected_parent_settings_helpers = tuple(
+    (
+        name,
+        getattr(ConsoleRealtimeController, name),
+        getattr(ConsoleRealtimeController, name).__code__,
+    )
+    for name in (
+        "_console_realtime_instructions",
+        "_console_realtime_seed_items",
+        "_on_console_realtime_ready",
+        "_console_realtime_marshal",
+    )
+)
+_selected_parent_settings_action_codes = tuple(
+    (function, code) for _name, function, code in _selected_parent_settings_helpers
+)

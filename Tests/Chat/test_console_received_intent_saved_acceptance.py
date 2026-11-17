@@ -54,10 +54,15 @@ async def test_received_draft_publication_obeys_original_save_outcome(
         monkeypatch, store, after_commit=True
     )
     publications = []
+
+    def observe_committed_projection(record, *, draft_committed=False):
+        assert draft_committed
+        publications.append(record.turn_id)
+
     monkeypatch.setattr(
         runtime,
         "_project_received_input",
-        lambda record: publications.append(record.turn_id),
+        observe_committed_projection,
     )
     successor = None
     task = None

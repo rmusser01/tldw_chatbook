@@ -2,7 +2,27 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from . import console_chat_controller as native_host
+
+
+def _composition_control_plane(controller):
+    domain = getattr(controller, "domain_services", None)
+    if domain is None:
+        return getattr(controller.app, "unified_mcp_service", None), None
+    sources = domain.sources
+    domain.require_current(sources)
+    return sources.control_plane, sources
+
+
+def _current_control_plane(controller, sources, service):
+    if sources is not None:
+        domain = controller.domain_services
+        if domain is None or sources.control_plane is not service:
+            raise PermissionError("mcp_catalog_source_changed")
+        domain.require_current(sources)
+    return service
 
 
 async def _compose_mcp_provider(
@@ -80,6 +100,7 @@ async def _compose_mcp_provider(
     """
 
     def publish(tool_count: int | None, not_connected: int | None) -> None:
+        _current_control_plane(self, control_sources, service)
         if local_kill_switch is not None and local_kill_switch._current is not None:
             local_kill_switch._current()
         if publish_counts:
@@ -97,7 +118,7 @@ async def _compose_mcp_provider(
                 tool_count, not_connected, session_id, composed_switch=composed_switch
             )
 
-    service = getattr(self.app, "unified_mcp_service", None)
+    service, control_sources = _composition_control_plane(self)
     if service is None:
         if _freeze_definition_maximum_on_compose:
             raise PermissionError("mcp_catalog_source_changed")
@@ -132,6 +153,9 @@ async def _compose_mcp_provider(
             else {}
         ),
     )
+    from .console_control_tools import bind_control_provider
+
+    bind_control_provider(self, uncomposed)
     # TASK-33620.15.1: composed here, on the loop, or reused while nothing
     # it read has changed; ``None`` = switched off or a read failed.
     from .console_ordinary_tree import bind_ordinary_tree, current_ordinary_tree
@@ -175,6 +199,9 @@ async def _compose_mcp_provider(
     if provider is None:
         publish(None, None)
         return None
+    from .console_control_tools import bind_control_provider
+
+    bind_control_provider(self, provider)
     providers = [provider]
     if plugin_maximum is not None:
         from tldw_chatbook.MCP.connection_ownership import ConnectionOwnership
@@ -338,20 +365,34 @@ async def _compose_agent_request_providers(
         **({"_freeze_definition_maximum_on_compose": True} if deferred else {}),
     )
     builtin_gate = native_host.build_builtin_gate(
-        getattr(self.app, "unified_mcp_service", None), profile_id=profile_id
+        _composition_control_plane(self)[0], profile_id=profile_id
     )
     if admitted_roots is None:
         session = next(
             (item for item in self.store.sessions() if item.id == session_id), None
         )
+        domain = getattr(self, "domain_services", None)
+        if domain is not None:
+            domain.require_current()
         admitted_roots = native_host.capture_run_admitted_workspace_roots(
             session=session,
-            registry=getattr(self.app, "workspace_registry_service", None),
+            registry=(
+                domain.sources.workspace_registry
+                if domain is not None
+                else getattr(self.app, "workspace_registry_service", None)
+            ),
             project_selection=project_selection,
             project_authority_guard=project_authority_guard,
         )
-    index_service, index_scopes = await native_host.asyncio.to_thread(
-        self._prepare_project_index_scopes, tuple(admitted_roots)
+    from .console_project_index_preparation import prepare_project_index_for_composition
+
+    index_service, index_scopes = await prepare_project_index_for_composition(
+        self,
+        session_id,
+        tuple(admitted_roots),
+        turn_context,
+        project_selection,
+        project_authority_guard,
     )
     index_kwargs = (
         {
@@ -474,7 +515,7 @@ def _compose_local_provider(
         local_tools_enabled, native_host.LOCAL_TOOLS_DEFAULT_ENABLED
     ):
         return None, None
-    service = getattr(self.app, "unified_mcp_service", None)
+    service, control_sources = _composition_control_plane(self)
     if service is None:
         return None, None
     from .console_run_start_tools import local_tools_kill_switch
@@ -492,12 +533,19 @@ def _compose_local_provider(
         self.request_mcp_approvals, session_id=session_id
     )
 
+    from .console_control_tools import tool_permission_scope
+
     def _kill_switch() -> bool:
         # invoke()-time read, mirroring MCPToolProvider._kill_switch_
         # engaged: never raises, and a read failure must not block
         # execution (compose-time read above already failed closed).
         try:
-            return bool(service.get_kill_switch())
+            with tool_permission_scope(provider):
+                return bool(
+                    _current_control_plane(
+                        self, control_sources, service
+                    ).get_kill_switch()
+                )
         except Exception as exc:  # noqa: BLE001 -- invoke must never raise
             native_host.logger.warning(
                 f"ConsoleChatController: get_kill_switch failed during local invoke: {exc}"
@@ -505,28 +553,31 @@ def _compose_local_provider(
             return False
 
     def _persist_approval(hub: "native_host.HubTool", decision: str) -> None:
-        if decision == "approve_session":
-            service.approve_for_session(hub.server_key, hub.name, **profile_kwargs)
-        elif decision == "always_allow":
-            # set_tool_state computes definition_hash(hub.description,
-            # hub.input_schema) itself -- required for the rug-pull guard.
-            service.set_tool_state(
-                hub.server_key,
-                hub.name,
-                "allow",
-                tool=hub,
-                **profile_kwargs,
-            )
+        with tool_permission_scope(provider):
+            if decision == "approve_session":
+                _current_control_plane(
+                    self, control_sources, service
+                ).approve_for_session(hub.server_key, hub.name, **profile_kwargs)
+            elif decision == "always_allow":
+                # The original writer computes the reviewed definition hash.
+                _current_control_plane(self, control_sources, service).set_tool_state(
+                    hub.server_key,
+                    hub.name,
+                    "allow",
+                    tool=hub,
+                    **profile_kwargs,
+                )
 
     def _record_decision(hub: "native_host.HubTool", decision: str) -> None:
         # Same audit path MCPToolProvider._record_decision_safe uses;
         # the provider guards the call (never-raise seam).
-        service.record_tool_decision(
-            hub.server_key,
-            hub.name,
-            decision=decision,
-            initiator="agent",
-        )
+        with tool_permission_scope(provider):
+            _current_control_plane(self, control_sources, service).record_tool_decision(
+                hub.server_key,
+                hub.name,
+                decision=decision,
+                initiator="agent",
+            )
 
     if project_root is None or native_host.is_remote(project_root):
         # Phase 4a: a REMOTE working-folder selection contributes its
@@ -631,10 +682,15 @@ def _compose_local_provider(
     )
 
     def _resolve_state(hub: "native_host.HubTool") -> native_host.Any:
-        if profile_id == "default":
-            state = service.gate_tool_test(hub)
-        else:
-            state = service.gate_tool_test_for_profile(hub, profile_id)
+        with tool_permission_scope(provider):
+            if profile_id == "default":
+                state = _current_control_plane(
+                    self, control_sources, service
+                ).gate_tool_test(hub)
+            else:
+                state = _current_control_plane(
+                    self, control_sources, service
+                ).gate_tool_test_for_profile(hub, profile_id)
         return persona_floor_state(state, persona_policy, hub.name)
 
     from tldw_chatbook.Chat.approval_presentation import profile_authority
@@ -661,9 +717,9 @@ def _compose_local_provider(
         resolve_state=_resolve_state,
         kill_switch=_kill_switch,
         approval_callback=bound_request_approvals,
-        is_session_approved=lambda hub: service.is_session_approved(
-            hub.server_key, hub.name, **profile_kwargs
-        ),
+        is_session_approved=lambda hub: _current_control_plane(
+            self, control_sources, service
+        ).is_session_approved(hub.server_key, hub.name, **profile_kwargs),
         persist_approval=_persist_approval,
         record_decision=_record_decision,
         watchlists_service=watchlists_service,
@@ -675,6 +731,22 @@ def _compose_local_provider(
         **({} if planning is not None else self._ask_user_wiring(session_id)),
         **({} if planning is not None else self._character_wiring(session_id)),
     )
+    if planning is None:
+        policy = _capture_local_policy(
+            provider,
+            service,
+            profile_id,
+            persona_policy,
+            _kill_switch,
+            _resolve_state,
+            controller=self,
+            control_sources=control_sources,
+        )
+        if policy is not None:
+            provider._console_local_policy = policy
+    from .console_control_tools import bind_control_provider
+
+    bind_control_provider(self, provider)
     return provider, native_host.build_local_review_hook(
         provider, bound_request_approvals
     )
@@ -709,11 +781,11 @@ def _compose_virtual_cli_provider(
         return None, None
     if admitted_roots is not None and not admitted_roots:
         return None, None
-    service = getattr(self.app, "unified_mcp_service", None)
+    service, control_sources = _composition_control_plane(self)
     if service is None:
         return None, None
     try:
-        if service.get_kill_switch():
+        if _current_control_plane(self, control_sources, service).get_kill_switch():
             return None, None
     except Exception:  # noqa: BLE001 -- unreadable security state fails closed
         return None, None
@@ -725,8 +797,12 @@ def _compose_virtual_cli_provider(
 
     def resolve_state(hub: "native_host.HubTool") -> native_host.Any:
         if profile_id == "default":
-            return service.gate_tool_test(hub)
-        return service.gate_tool_test_for_profile(hub, profile_id)
+            return _current_control_plane(
+                self, control_sources, service
+            ).gate_tool_test(hub)
+        return _current_control_plane(
+            self, control_sources, service
+        ).gate_tool_test_for_profile(hub, profile_id)
 
     if project_root is None or native_host.is_remote(project_root):
         # Phase 4a: a REMOTE working-folder selection contributes its
@@ -763,9 +839,11 @@ def _compose_virtual_cli_provider(
 
     def persist(hub: "native_host.HubTool", decision: str) -> None:
         if decision == "approve_session":
-            service.approve_for_session(hub.server_key, hub.name, **profile_kwargs)
+            _current_control_plane(self, control_sources, service).approve_for_session(
+                hub.server_key, hub.name, **profile_kwargs
+            )
         elif decision == "always_allow":
-            service.set_tool_state(
+            _current_control_plane(self, control_sources, service).set_tool_state(
                 hub.server_key,
                 hub.name,
                 "allow",
@@ -774,7 +852,7 @@ def _compose_virtual_cli_provider(
             )
 
     def record(hub: "native_host.HubTool", decision: str) -> None:
-        service.record_tool_decision(
+        _current_control_plane(self, control_sources, service).record_tool_decision(
             hub.server_key,
             hub.name,
             decision=decision,
@@ -787,7 +865,7 @@ def _compose_virtual_cli_provider(
         # task-32281: same shape as `MCPToolProvider._apply_verdict()`'s
         # own "allow_matching" handling -- persist scoped to EXACTLY
         # the displayed arguments, never a whole-tool allow.
-        service.add_tool_arg_rule(
+        _current_control_plane(self, control_sources, service).add_tool_arg_rule(
             hub.server_key,
             hub.name,
             args=dict(args),
@@ -798,7 +876,9 @@ def _compose_virtual_cli_provider(
     def arg_rule_allows(
         hub: "native_host.HubTool", args: native_host.Mapping[str, native_host.Any]
     ) -> bool:
-        return service.arg_rule_allows_call(hub, dict(args), **profile_kwargs)
+        return _current_control_plane(
+            self, control_sources, service
+        ).arg_rule_allows_call(hub, dict(args), **profile_kwargs)
 
     from tldw_chatbook.Agents.virtual_cli_provider import VirtualCliProvider
 
@@ -811,11 +891,13 @@ def _compose_virtual_cli_provider(
         local_tools_enabled=lambda: native_host.coerce_bool_setting(
             configured, native_host.LOCAL_TOOLS_DEFAULT_ENABLED
         ),
-        kill_switch=lambda: bool(service.get_kill_switch()),
-        approval_callback=bound_request,
-        is_session_approved=lambda hub: service.is_session_approved(
-            hub.server_key, hub.name, **profile_kwargs
+        kill_switch=lambda: bool(
+            _current_control_plane(self, control_sources, service).get_kill_switch()
         ),
+        approval_callback=bound_request,
+        is_session_approved=lambda hub: _current_control_plane(
+            self, control_sources, service
+        ).is_session_approved(hub.server_key, hub.name, **profile_kwargs),
         persist_approval=persist,
         persist_arg_rule=persist_arg_rule,
         arg_rule_allows=arg_rule_allows,
@@ -853,7 +935,7 @@ def _compose_raw_shell_provider(
     )
     if not local_enabled or not session_id:
         return None, None
-    service = getattr(self.app, "unified_mcp_service", None)
+    service, control_sources = _composition_control_plane(self)
     runtime = getattr(self.app, "raw_cli_runtime", None)
     if service is None or runtime is None:
         return None, None
@@ -861,7 +943,7 @@ def _compose_raw_shell_provider(
         if (
             runtime.permitted is not True
             or runtime.armed is not True
-            or service.get_kill_switch()
+            or _current_control_plane(self, control_sources, service).get_kill_switch()
         ):
             return None, None
     except Exception:
@@ -873,8 +955,12 @@ def _compose_raw_shell_provider(
 
     def resolve_state(hub: "native_host.HubTool") -> native_host.Any:
         if profile_id == "default":
-            return service.gate_tool_test(hub)
-        return service.gate_tool_test_for_profile(hub, profile_id)
+            return _current_control_plane(
+                self, control_sources, service
+            ).gate_tool_test(hub)
+        return _current_control_plane(
+            self, control_sources, service
+        ).gate_tool_test_for_profile(hub, profile_id)
 
     if project_root is not None and not native_host.is_remote(project_root):
         initial_directory = project_root
@@ -890,7 +976,9 @@ def _compose_raw_shell_provider(
 
     def kill_switch() -> bool:
         try:
-            return bool(service.get_kill_switch())
+            return bool(
+                _current_control_plane(self, control_sources, service).get_kill_switch()
+            )
         except Exception:
             return True
 
@@ -922,3 +1010,243 @@ def _compose_raw_shell_provider(
     if not provider.catalog_enabled():
         return None, None
     return provider, native_host.build_raw_shell_review_hook(provider, bound_request)
+
+
+@dataclass(frozen=True, slots=True)
+class _ConsoleLocalPolicy:
+    """Exact stock inputs retained by the Console-composed local provider."""
+
+    provider: native_host.Any
+    service: native_host.Any
+    source: native_host.Any
+    profile_id: str
+    persona: native_host.Any
+    callbacks: tuple
+    controller: native_host.Any = None
+    control_sources: native_host.Any = None
+
+    def current(self):
+        from tldw_chatbook.Agents import (
+            local_tool_authority,
+            local_tool_dispatch as dispatch,
+            local_tool_provider,
+            persona_policy,
+        )
+        from tldw_chatbook.Agents.activation import callable_source_current
+        from tldw_chatbook.MCP import console_snapshot as snapshot
+        from tldw_chatbook.MCP import console_tool_preparation
+        from tldw_chatbook.MCP import unified_control_plane_service as control
+        from tldw_chatbook.Tools import workspace_tool_executor
+
+        provider, service = self.provider, self.service
+        try:
+            _current_control_plane(self.controller, self.control_sources, service)
+        except Exception:
+            return False
+        stock_provider = local_tool_provider._ORDINARY_NATIVE_PROVIDER
+        resolver, *_, cells = self.callbacks[1]
+        resolve_inputs = {
+            name: captured
+            for name, (_cell, captured) in zip(
+                resolver.__code__.co_freevars, cells, strict=True
+            )
+        }
+        return (
+            vars(provider).get("_console_local_policy") is self
+            and type(provider) is stock_provider
+            and stock_provider.__getattribute__ is object.__getattribute__
+            and type(service) is snapshot.UnifiedMCPControlPlaneService
+            and type(service).__getattribute__ is object.__getattribute__
+            and vars(service).get("_permission_store") is self.source
+            and resolve_inputs["service"] is service
+            and resolve_inputs["profile_id"] is self.profile_id
+            and resolve_inputs["persona_policy"] is self.persona
+            and all(
+                vars(provider).get(name) is record[0]
+                and callable_source_current(record)
+                for name, record in zip(
+                    ("_kill_switch", "_resolve_state"), self.callbacks, strict=True
+                )
+            )
+            and dispatch._console_local_dispatch_current(provider)
+            and all(
+                namespace.get(name) is record[0] and callable_source_current(record)
+                for namespace, name, record in (
+                    *local_tool_authority._CONSOLE_LOCAL_SWITCH_FUNCTIONS,
+                    *workspace_tool_executor._CONSOLE_LOCAL_SSH_FUNCTIONS,
+                    *persona_policy._CONSOLE_LOCAL_PERSONA_FUNCTIONS,
+                )
+            )
+            and workspace_tool_executor.current_ssh_call() is None
+            and snapshot._controller_switch_callbacks_current()
+            and snapshot._owned_permission_load_helpers_current()
+            and console_tool_preparation._resolver_current()
+            and "get_kill_switch" not in vars(service)
+            and all(
+                name not in vars(service)
+                and vars(type(service)).get(name) is method
+                and method.__code__ is code
+                and snapshot._controller_inputs_current(method, inputs)
+                for name, method, code, inputs in control._CONSOLE_LOCAL_GATE_METHODS
+            )
+        )
+
+    def read(self):
+        from tldw_chatbook.Backup_Recovery import raw_participants as raw
+        from tldw_chatbook.Backup_Recovery.bootstrap import (
+            RecoveryRequired,
+            _ordinary_close_uncertain,
+        )
+        from tldw_chatbook.MCP import permission_store
+
+        source = self.source
+        try:
+            if not _local_policy_methods_current(self) or not self.current():
+                return None
+            entry = permission_store._capture_permission_read_entry(
+                source, "load", publish=True
+            )
+        except Exception:  # Optional preselection keeps the stock getters.
+            return None
+        if entry is None:
+            return None
+        changed = False
+
+        def require_current():
+            nonlocal changed
+            if not _local_policy_methods_current(self) or not self.current():
+                changed = True
+                raise RecoveryRequired("local_permission_source_changed")
+
+        try:
+            from .console_control_tools import tool_permission_scope
+
+            with tool_permission_scope(self.provider):
+                payload, receipt = permission_store._run_permission_read(
+                    source, entry, require_current=require_current
+                )
+                require_current()
+        except Exception as exc:  # Original invoke-time switch failure policy.
+            native_host.logger.warning(
+                f"ConsoleChatController: get_kill_switch failed during local invoke: {exc}"
+            )
+            with raw.storage._lock:
+                uncertain = any(
+                    state.selected == entry.load[2] and state.uncertain
+                    for state in raw._states.values()
+                )
+            if (
+                changed
+                or uncertain
+                or _ordinary_close_uncertain(exc)
+                or source._mcp_persistence_error is not None
+            ):
+                return False, False
+            try:
+                require_current()
+                if not permission_store._permission_read_current(source, entry):
+                    return False, False
+            except Exception:  # Failed currentness cannot qualify a second read.
+                return False, False
+            return False, None
+        return bool(payload.get("kill_switch", False)), (
+            (payload, entry) if receipt is not None else None
+        )
+
+    def project(self, name, selection):
+        from tldw_chatbook.Agents.persona_policy import persona_floor_state
+        from tldw_chatbook.MCP import permission_store
+        from tldw_chatbook.MCP import unified_control_plane_service as control
+
+        payload, entry = selection
+
+        def current():
+            return (
+                _local_policy_methods_current(self)
+                and self.current()
+                and permission_store._permission_read_current(self.source, entry)
+            )
+
+        try:
+            if not current():
+                return False
+            hub = self.provider.hub_tool_for(name)
+            state = control.resolve_effective_state(
+                payload, hub, profile_id=self.profile_id
+            )
+            state = persona_floor_state(state, self.persona, hub.name)
+            return state if current() else False
+        except Exception:  # Retain the original unresolved state branch.
+            return False
+
+
+def _capture_local_policy(
+    provider,
+    service,
+    profile_id,
+    persona,
+    kill_switch,
+    resolve_state,
+    *,
+    controller=None,
+    control_sources=None,
+):
+    """Bind only the already initialized stock permission source."""
+    from os import name as platform
+
+    if platform != "nt" or type(profile_id) is not str:
+        return None
+    from tldw_chatbook.Agents.activation import capture_callable_source
+    from tldw_chatbook.MCP import console_snapshot as snapshot
+    from tldw_chatbook.MCP.permission_store import MCPPermissionStore
+
+    if type(service) is not snapshot.UnifiedMCPControlPlaneService:
+        return None
+    source = vars(service).get("_permission_store")
+    if type(source) is not MCPPermissionStore:
+        return None
+    return _ConsoleLocalPolicy(
+        provider,
+        service,
+        source,
+        profile_id,
+        persona,
+        tuple(map(capture_callable_source, (kill_switch, resolve_state))),
+        controller,
+        control_sources,
+    )
+
+
+def _local_policy_methods_current(policy):
+    from tldw_chatbook.Agents.activation import callable_source_current
+
+    return type(policy) is _STOCK_LOCAL_POLICY and all(
+        vars(_STOCK_LOCAL_POLICY).get(name) is record[0]
+        and callable_source_current(record)
+        for name, record in _LOCAL_POLICY_METHODS
+    )
+
+
+_STOCK_LOCAL_POLICY = _ConsoleLocalPolicy
+_LOCAL_POLICY_METHODS = tuple(
+    (name, (method, method.__code__, None, None, (), None, ()))
+    for name in ("read", "project", "current")
+    for method in (vars(_STOCK_LOCAL_POLICY)[name],)
+)
+
+
+from .console_domain_services import _definition as _domain_definition
+
+_DOMAIN_SOURCE_DEFINITIONS = tuple(
+    (name, _domain_definition(globals()[name]))
+    for name in (
+        "_composition_control_plane",
+        "_current_control_plane",
+        "_compose_mcp_provider",
+        "_compose_local_provider",
+        "_compose_virtual_cli_provider",
+        "_compose_raw_shell_provider",
+        "_capture_local_policy",
+        "_compose_agent_request_providers",
+    )
+)

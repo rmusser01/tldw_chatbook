@@ -305,7 +305,7 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
             if structural_change
             else None
         )
-        hidden = self.is_mounted and hidden_by_console_rail(self)
+        hidden = self.is_attached and hidden_by_console_rail(self)
         if (
             not self.is_mounted
             or structural_change
@@ -345,9 +345,11 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
         """
         if not self._rail_rebuild_deferred:
             return False
-        self._rail_rebuild_deferred = False
-        if not self.is_mounted:
+        # Opening can arrive after an empty Compose but before Mount. The
+        # attached owner can queue a rebuild on its existing message pump.
+        if not self.is_attached:
             return False
+        self._rail_rebuild_deferred = False
         self.recompose_count += 1
         self.refresh(recompose=True)
         return True
@@ -785,6 +787,9 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
             The current Inspector group widgets in visual order.
         """
 
+        if not self.is_mounted and hidden_by_console_rail(self):
+            self._rail_rebuild_deferred = True
+            return
         promoted, more = self._group_projection(self._ownership)
         for owner, _heading_id, _labels in _ROW_GROUPS:
             if owner in _CONDITIONAL_OWNERS:

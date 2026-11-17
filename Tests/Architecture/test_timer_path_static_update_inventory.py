@@ -454,8 +454,8 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "py:204), not a Static."
     ),
     (
-        "tldw_chatbook/Chat/console_runtime.py",
-        "ConsoleRuntime.ensure_chat_controller",
+        "tldw_chatbook/Chat/console_execution_service.py",
+        "ConsoleExecutionService.ensure_chat_controller",
         "kwargs",
     ): (
         "NOT-A-WIDGET: `kwargs` is the method's own mapping parameter; "

@@ -9,6 +9,10 @@ from pathlib import Path
 import re
 from typing import Literal
 
+from tldw_chatbook.Utils.definition_records import (
+    capture_definitions as _capture_local_definitions,
+)
+
 from tldw_chatbook.MCP.permission_store import (
     PermissionStoreSnapshot,
     profile_lifecycle_disposition,
@@ -185,7 +189,7 @@ class ToolPackService:
             reference_checker=references,
             lifecycle=lifecycle,
         )
-        return cls(
+        service = cls(
             permission_store=permission_store,
             inventory=inventory,
             workspace_registry=workspace_registry,
@@ -199,6 +203,22 @@ class ToolPackService:
             lifecycle=lifecycle,
             references=references,
         )
+        service._console_composition = tuple(
+            (name, getattr(service, name)) for name in _CONSOLE_COMPOSITION_FIELDS
+        )
+        service._console_callbacks = _capture_local_definitions(
+            (
+                (actor, name, getattr(actor, name))
+                for actor, name in (
+                    (service, "_now"),
+                    (importer, "_now"),
+                    (activation, "_now"),
+                    (guard, "_now"),
+                    (guard, "_workspace_defaults_reader"),
+                )
+            )
+        )
+        return service
 
     @property
     def binding_guard(self) -> object:
@@ -602,3 +622,44 @@ __all__ = [
     "ToolProfileListing",
     "ToolProfilePresentation",
 ]
+
+# Original owner/body identities, not an operation dispatch registry.
+_CONSOLE_COMPOSITION_FIELDS = (
+    "_permission_store",
+    "_inventory",
+    "_workspace_registry",
+    "_receipt_store",
+    "_exporter",
+    "_importer",
+    "_activation",
+    "_binding_guard",
+    "_removal",
+    "_publisher",
+    "_lifecycle",
+    "_references",
+    "_now",
+)
+
+_CONSOLE_TOOL_PACK_DEFINITIONS = tuple(
+    (owner, name, member, _capture_local_definitions(((owner, name, function),))[0][3])
+    for owner in (
+        ToolPackService,
+        ToolPackActivationService,
+        ToolPackImportService,
+        ToolProfileRemovalService,
+        ToolProfileBindingGuard,
+        ToolProfileLifecycleCoordinator,
+        ToolPackReceiptStore,
+        _WorkspaceReferences,
+    )
+    for name, member in vars(owner).items()
+    if hasattr(member, "__code__")
+    or isinstance(member, (staticmethod, classmethod, property))
+    for function in (
+        member.__func__
+        if isinstance(member, (staticmethod, classmethod))
+        else member.fget
+        if isinstance(member, property)
+        else member,
+    )
+)

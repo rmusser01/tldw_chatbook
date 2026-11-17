@@ -474,7 +474,12 @@ async def retire_test_app_owners(isolate_test_environment, request) -> None:
     if owns_apps:
         request.node._test_app_native_workers_uncertain = True
     if factory is not None:
-        await factory.drain_created_runtimes()
+        expected = request.node.stash.get(factory.EXPECTED_RUNTIME_DISPOSAL_ERRORS, {})
+        observed = await factory.drain_created_runtimes(expected)
+        if observed:
+            request.node.user_properties.append(
+                ("expected_runtime_disposal_failures", len(observed))
+            )
     if attached is not None:
         await attached.drain_attached_real_runtimes()
     if owns_apps:

@@ -154,7 +154,9 @@ def resolve_session_workspace_roots(
         controller.app, controller.store, session_id
     )
     return roots
-def capture_change_review_metadata(app: Any, workspace_id: str | None):
+def capture_change_review_metadata(
+    app: Any, workspace_id: str | None, *, domain_services=None
+):
     """Capture stock readiness without starting a future turn's initializer."""
     from inspect import getattr_static
 
@@ -162,7 +164,11 @@ def capture_change_review_metadata(app: Any, workspace_id: str | None):
         _ordinary_metadata_sources,
     )
 
-    service = getattr_static(app, "change_review_consent_service", None)
+    service = (
+        domain_services.sources.consent_service
+        if domain_services is not None
+        else getattr_static(app, "change_review_consent_service", None)
+    )
     _sources, native = _ordinary_metadata_sources(service)
     if not native:
         return (), (), ()
@@ -170,10 +176,16 @@ def capture_change_review_metadata(app: Any, workspace_id: str | None):
     return admission.ready_roots, admission.ready_aliases, admission.skipped_roots
 
 
-def resolve_turn_tool_policy_profile_id(app: Any, workspace_id: str | None) -> str:
+def resolve_turn_tool_policy_profile_id(
+    app: Any, workspace_id: str | None, *, domain_services=None
+) -> str:
     """Read the owning workspace's named profile, preserving legacy defaults."""
     try:
-        registry = getattr(app, "workspace_registry_service", None)
+        registry = (
+            domain_services.sources.workspace_registry
+            if domain_services is not None
+            else getattr(app, "workspace_registry_service", None)
+        )
         if not workspace_id or registry is None:
             return "default"
         record = registry.get_workspace(workspace_id)
@@ -191,14 +203,18 @@ def resolve_turn_tool_policy_profile_id(app: Any, workspace_id: str | None) -> s
 
 
 def resolve_turn_persona_policy_rules(
-    app: Any, session: Any
+    app: Any, session: Any, *, domain_services=None
 ) -> tuple[Mapping[str, Any], ...]:
     """Read rules from the owning session's durable persona identity."""
     try:
         if session is None or session.assistant_kind != "persona":
             return ()
         assistant_id = str(session.assistant_id or "").strip()
-        service = getattr(app, "local_character_persona_service", None)
+        service = (
+            domain_services.sources.persona_service
+            if domain_services is not None
+            else getattr(app, "local_character_persona_service", None)
+        )
         if not assistant_id or service is None:
             return ()
         profile = service.get_persona_profile(assistant_id)
@@ -891,3 +907,16 @@ def commit_fence_configuration(
         return configuration
     stable = {key: value for key, value in maximum.items() if key != "plugin_run_id"}
     return replace(configuration, skill_context_maximum=MappingProxyType(stable))
+
+
+# Exact selected-domain helper definitions; legacy qualifications remain separate.
+from tldw_chatbook.Chat.console_domain_services import _definition as _domain_definition
+
+_DOMAIN_SOURCE_DEFINITIONS = tuple(
+    (name, _domain_definition(globals()[name]))
+    for name in (
+        "capture_change_review_metadata",
+        "resolve_turn_tool_policy_profile_id",
+        "resolve_turn_persona_policy_rules",
+    )
+)

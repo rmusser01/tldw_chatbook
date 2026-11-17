@@ -799,6 +799,219 @@ def _default_session_settings_for_app(app: Any) -> Any:
     return default_console_session_settings(_provider_config_for_app(app))
 
 
+def _library_policy_defaults_for_domain(config: Any) -> ConsoleLibraryPolicyDefaults:
+    """Read fresh future-session defaults from the app's current config."""
+    if not isinstance(config, Mapping):
+        config = {}
+    console = config.get("console", {})
+    if not isinstance(console, Mapping):
+        console = {}
+    chat_defaults = config.get("chat_defaults", {})
+    if not isinstance(chat_defaults, Mapping):
+        chat_defaults = {}
+    return ConsoleLibraryPolicyDefaults(
+        auto_retrieve=(
+            ConsoleAutoRetrieve.AUTOMATIC
+            if coerce_bool_setting(
+                chat_defaults.get("rag_auto_retrieve_on_send", False), False
+            )
+            else ConsoleAutoRetrieve.NEVER
+        ),
+        assistant_access=(
+            ConsoleAssistantLibraryAccess.ALLOWED
+            if coerce_bool_setting(
+                console.get("assistant_library_access_default", False), False
+            )
+            else ConsoleAssistantLibraryAccess.BLOCKED
+        ),
+    )
+
+
+def _thinking_history_policy_default_for_domain(config: Any) -> str:
+    """Read the optional replay default copied into the next new session."""
+
+    console = config.get("console", {}) if isinstance(config, Mapping) else {}
+    if not isinstance(console, Mapping):
+        console = {}
+    return normalize_thinking_history_policy(
+        console.get("thinking_history_policy_default")
+    )
+
+
+def _provider_config_for_domain(config: Any) -> Mapping[str, Any]:
+    """Return fresh provider configuration without retaining a Console view."""
+    snapshot = config if isinstance(config, Mapping) else {}
+    if not all(section in snapshot for section in ("general", "logging")):
+        return snapshot
+    try:
+        from tldw_chatbook.config import load_settings
+
+        fresh = load_settings()
+    except Exception:
+        return snapshot
+    return fresh if isinstance(fresh, Mapping) and fresh else snapshot
+
+
+def _native_tools_enabled_for_domain(config: Any) -> bool:
+    """Read the native-tools gate from app-owned configuration."""
+    console = _provider_config_for_domain(config).get("console", {})
+    value = (
+        console.get("native_tool_calls", True) if isinstance(console, Mapping) else True
+    )
+    return coerce_bool_setting(value, True)
+
+
+def _global_user_display_name_for_domain(config: Any) -> str:
+    """Return the global chat identity without retaining a Console view."""
+    from tldw_chatbook.Chat.console_roleplay_identity import (
+        ChatDisplayNameError,
+        normalize_chat_display_name,
+    )
+
+    defaults = _provider_config_for_domain(config).get("chat_defaults", {})
+    raw = (
+        defaults.get("user_display_name", "User")
+        if isinstance(defaults, Mapping)
+        else "User"
+    )
+    try:
+        return normalize_chat_display_name(raw, blank_means_none=False) or "User"
+    except ChatDisplayNameError:
+        return "User"
+
+
+def _apply_chat_dictionaries_for_domain(
+    database: Any,
+    conversation_id: str | None,
+    text: str,
+    frozen_inputs: Mapping[str, Any] | None = None,
+) -> str:
+    """Apply conversation dictionaries through app-owned database state."""
+    if frozen_inputs is not None:
+        if not isinstance(text, str):
+            return text
+        try:
+            from tldw_chatbook.Character_Chat import Chat_Dictionary_Lib as cdl
+
+            entries = tuple(frozen_inputs.get("dictionary_entries") or ())
+            if not entries:
+                return text
+            return cdl.process_user_input(
+                text,
+                list(entries),
+                max_tokens=500,
+                strategy="sorted_evenly",
+            )
+        except Exception:  # noqa: BLE001 -- optional context never blocks send
+            return text
+    db = database
+    if db is None or not conversation_id or not isinstance(text, str):
+        return text
+    from tldw_chatbook.Character_Chat import Chat_Dictionary_Lib as cdl
+
+    return cdl.apply_active_chatdicts_to_text(
+        db,
+        conversation_id,
+        None,
+        text,
+        max_tokens=500,
+        strategy="sorted_evenly",
+    )
+
+
+def _apply_world_info_for_domain(
+    database: Any,
+    conversation_id: str | None,
+    text: str,
+    history: list[Any],
+    frozen_inputs: Mapping[str, Any] | None = None,
+) -> str:
+    """Apply conversation world-info through app-owned database state."""
+    if frozen_inputs is not None:
+        if not isinstance(text, str) or not frozen_inputs.get("world_enabled"):
+            return text
+        try:
+            from tldw_chatbook.Character_Chat.world_info_processor import (
+                WorldInfoProcessor,
+            )
+
+            def thaw(value: Any) -> Any:
+                if isinstance(value, Mapping):
+                    return {key: thaw(item) for key, item in value.items()}
+                if isinstance(value, tuple):
+                    return [thaw(item) for item in value]
+                return value
+
+            world_books = thaw(tuple(frozen_inputs.get("world_books") or ()))
+            if not world_books:
+                return text
+            processor = WorldInfoProcessor(world_books=world_books)
+            result = processor.process_messages(text, history or [])
+            matched = result.get("matched_entries") or []
+            if not matched:
+                return text
+            formatted = processor.format_injections(result.get("injections", {}))
+            parts = [
+                formatted[key]
+                for key in ("at_start", "before_char")
+                if formatted.get(key)
+            ]
+            parts.append(text)
+            parts.extend(
+                formatted[key] for key in ("after_char", "at_end") if formatted.get(key)
+            )
+            return "\n\n".join(parts)
+        except Exception:  # noqa: BLE001 -- optional context never blocks send
+            return text
+    db = database
+    if db is None or not conversation_id or not isinstance(text, str):
+        return text
+    from tldw_chatbook.config import get_cli_setting
+
+    if not get_cli_setting("character_chat", "enable_world_info", True):
+        return text
+    from tldw_chatbook.Character_Chat.world_info_resolver import (
+        apply_world_info_to_message,
+    )
+
+    return apply_world_info_to_message(db, conversation_id, None, text, history or [])
+
+
+def _default_session_settings_for_domain(config: Any) -> Any:
+    """Build new-session defaults from app-owned inputs."""
+    from tldw_chatbook.Chat.console_session_settings import (
+        default_console_session_settings,
+    )
+
+    return default_console_session_settings(_provider_config_for_domain(config))
+
+
+def _domain_callback_definitions_current():
+    from .console_domain_services import _definition_current
+
+    return all(
+        globals().get(name) is record[0] and _definition_current(record)
+        for name, record in _DOMAIN_CALLBACK_DEFINITIONS
+    )
+
+
+from .console_domain_services import _definition as _domain_definition
+
+_DOMAIN_CALLBACK_DEFINITIONS = tuple(
+    (name, _domain_definition(globals()[name]))
+    for name in (
+        "_library_policy_defaults_for_domain",
+        "_thinking_history_policy_default_for_domain",
+        "_provider_config_for_domain",
+        "_native_tools_enabled_for_domain",
+        "_global_user_display_name_for_domain",
+        "_apply_chat_dictionaries_for_domain",
+        "_apply_world_info_for_domain",
+        "_default_session_settings_for_domain",
+    )
+)
+
+
 __all__ = [
     "CONSOLE_RUNTIME_ATTR",
     "CONSOLE_VIEW_HOOK_SLOTS",
@@ -1111,6 +1324,7 @@ class ConsoleRuntime:
         app: Any,
         *,
         canvas_enabled_reader: Callable[[], bool] | None = None,
+        domain_services: Any | None = None,
     ) -> None:
         """Bind the holder to one app object.
 
@@ -1137,8 +1351,28 @@ class ConsoleRuntime:
         self._first_send_wakeup = None
         self._first_send_loop = None
         self._app = app
+        self.domain_services = domain_services
+        if domain_services is not None:
+            domain_services.require_current()
+            if domain_services.runtime is not None:
+                raise ValueError("Domain services already belong to a runtime")
+            domain_services.runtime = self
+            domain_services.presentation.bind_runtime(self)
+        from .console_execution_service import ConsoleExecutionService
+
+        # The existing definition-time module anchor also retains composition's
+        # original helper globals if an import/package module is later replaced.
+        self._execution_service = ConsoleExecutionService(
+            self,
+            runtime_source=_RUNTIME_MAINTENANCE_SOURCE,
+            domain_services=domain_services,
+        )
         self._library_provider_factory = _NativeLibraryProviderFactory(self)
-        self._canvas_profile_snapshot = getattr(app, "_canvas_profile_snapshot", None)
+        self._canvas_profile_snapshot = (
+            domain_services.sources.canvas_profile_snapshot
+            if domain_services is not None
+            else getattr(app, "_canvas_profile_snapshot", None)
+        )
         # -- setters, for the screen handles that now READ THROUGH here ----
         # `ChatScreen._console_chat_store`/`_console_provider_gateway`/
         # `_console_chat_controller` (and `ConsoleAgentController.
@@ -1190,7 +1424,12 @@ class ConsoleRuntime:
         # sequences to interleave.
         self.character_conversation_activation_lock = asyncio.Lock()
         self.trace_compatibility_metrics = _LazyTraceCompatibilityMetrics()
-        self._scratch_spaces = ConsoleScratchSpaceManager()
+        self._scratch_spaces = (
+            domain_services.sources.scratch
+            if domain_services is not None
+            and domain_services.sources.scratch is not None
+            else ConsoleScratchSpaceManager()
+        )
         self._raw_cli_refusal_stash_bank: dict[str, list[Any]] = {}
         self._raw_cli_source = None
         self._change_revert_native = None
@@ -1202,7 +1441,9 @@ class ConsoleRuntime:
             str, VoicePromotionSessionCloseToken | None
         ] = {}
         self._persona_buddy_sink = PersonaBuddyConsoleAdapter(
-            getattr(app, "persona_buddy_controller", None)
+            domain_services.sources.persona_buddy
+            if domain_services is not None
+            else getattr(app, "persona_buddy_controller", None)
         )
         #: The app-owned run-hooks engine, `_UNSET` until one is BUILT --
         #: and then latched for the app lifetime (spec section 4
@@ -1214,6 +1455,8 @@ class ConsoleRuntime:
         self._legacy_hooks_source = None
         self._hook_permissions: HookPermissions | None = None
         self._preparation_reads: set[Any] = set()
+        # Only the three shared stock display callbacks queue here, before I/O.
+        self._display_submission_slot = asyncio.Semaphore(1)
         from .console_preparation_reads import NativePluginHookPreparation
         from tldw_chatbook.Utils.platform_files import supports_native_process_groups
 
@@ -1251,7 +1494,11 @@ class ConsoleRuntime:
         self._archive_recovery = None
         self._start_canvas_policy_watcher()
         self.authority_token = str(uuid4())
-        database = getattr(app, "chachanotes_db", None)
+        database = (
+            domain_services.sources.chat_database
+            if domain_services is not None
+            else getattr(app, "chachanotes_db", None)
+        )
         database_path = getattr(database, "db_path", None)
         self.profile_authority = (
             str(Path(database_path).expanduser().resolve(strict=False))
@@ -1447,7 +1694,9 @@ class ConsoleRuntime:
     def persona_buddy_sink(self) -> PersonaBuddyConsoleAdapter:
         """The app-owned, screen-free sink for trusted Console state."""
         self._persona_buddy_sink.bind_controller(
-            getattr(self._app, "persona_buddy_controller", None)
+            self.domain_services.sources.persona_buddy
+            if self.domain_services is not None
+            else getattr(self._app, "persona_buddy_controller", None)
         )
         return self._persona_buddy_sink
 
@@ -2412,7 +2661,17 @@ class ConsoleRuntime:
     def ensure_prompt_history(self) -> Any:
         """Return the app-owned prompt-history sink shared by every view."""
         if self._prompt_history is None:
-            factory = getattr(self._app, "console_prompt_history_factory", None)
+            if (
+                self.domain_services is not None
+                and self.domain_services.sources.prompt_history is not None
+            ):
+                self._prompt_history = self.domain_services.sources.prompt_history
+                return self._prompt_history
+            factory = (
+                None
+                if self.domain_services is not None
+                else getattr(self._app, "console_prompt_history_factory", None)
+            )
             if callable(factory):
                 self._prompt_history = factory()
             else:
@@ -3613,6 +3872,15 @@ class ConsoleRuntime:
             ):
                 self._record_turn_recovery(record)
         except BaseException as exc:
+            # Capture locations before custody cleanup or another observer
+            # retrieves the same exception. Never log text, locals or paths.
+            failure_frames = []
+            failure_trace = exc.__traceback__
+            while failure_trace is not None:
+                failure_frames.append(
+                    f"{failure_trace.tb_frame.f_code.co_name}:{failure_trace.tb_lineno}"
+                )
+                failure_trace = failure_trace.tb_next
             if (
                 record is not None
                 and recover_before_acceptance
@@ -3626,8 +3894,9 @@ class ConsoleRuntime:
                     card_held=refused and exc.card_held,
                 )
             logger.warning(
-                "Console runtime turn ended with exception_type={}",
+                "Console runtime turn ended with exception_type={}; frames={}",
                 type(exc).__name__,
+                " <- ".join(failure_frames[-16:]),
             )
         finally:
             accepted = accepted or bool(
@@ -4326,163 +4595,11 @@ class ConsoleRuntime:
         workspace_context: Any | None = None,
         on_scope_flushed: Callable[..., Any] | None = None,
     ) -> "ConsoleChatStore":
-        """Return the Console chat store, creating it lazily.
-
-        Moved verbatim from `ChatScreen._ensure_console_chat_store`: the
-        durable `ChatPersistenceService` is attached only when the app has
-        a ChaChaNotes DB, and the citation repository is dropped when it
-        belongs to a different DB than the one being persisted to.
-
-        Args:
-            workspace_context: The view's current
-                `ConsoleWorkspaceContext`. Read at construction only.
-            on_scope_flushed: The view's session-scope-flushed callback.
-                Read at construction only.
-
-        Returns:
-            ConsoleChatStore: The runtime's store.
-        """
-        if self._chat_store is not None or self._disposed:
-            return self._chat_store
-        from tldw_chatbook.Chat.chat_persistence_service import (
-            ChatPersistenceService,
-        )
-        from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-        from tldw_chatbook.Chat.console_library_policy_coordinator import (
-            ConsoleLibraryPolicyCoordinator,
-        )
-        from tldw_chatbook.Chat.console_trace_projection import ConsoleTraceProjection
-
-        persistence = None
-        db = getattr(self._app, "chachanotes_db", None)
-        if db is not None:
-            try:
-                recover_console_trace_calls(db)
-            except Exception as exc:
-                logger.warning("console_trace_recovery_failed: {}", type(exc).__name__)
-            citation_repository = getattr(
-                self._app,
-                "citation_trace_repository",
-                None,
-            )
-            if (
-                citation_repository is not None
-                and getattr(citation_repository, "db", None) is not db
-            ):
-                citation_repository = None
-            persistence = ChatPersistenceService(
-                db,
-                workspace_registry=getattr(
-                    self._app,
-                    "workspace_registry_service",
-                    None,
-                ),
-                citation_repository=citation_repository,
-            )
-            persistence.retry_recovered_media_references()
-            legacy_normalization_enabled = callable(getattr(db, "transaction", None))
-            legacy_normalizer: Any | None = None
-            native_reader: Any | None = None
-
-            def get_legacy_normalizer() -> Any:
-                """Build the legacy adapter only after first paint or first use."""
-
-                nonlocal legacy_normalizer
-                if legacy_normalizer is None:
-                    from tldw_chatbook.Chat.console_trace_legacy import (
-                        LegacyTraceNormalizer,
-                    )
-
-                    legacy_normalizer = LegacyTraceNormalizer(db)
-                return legacy_normalizer
-
-            def get_native_reader() -> Any:
-                """Build the native ledger reader only on first trace inspection."""
-
-                nonlocal native_reader
-                if native_reader is None:
-                    from tldw_chatbook.Chat.console_trace_native_reader import (
-                        ConsoleTraceNativeReader,
-                    )
-
-                    native_reader = ConsoleTraceNativeReader(
-                        db,
-                        repository=persistence.console_trace_repository,
-                    )
-                return native_reader
-
-            def read_normalized_calls(message_id: str) -> Any:
-                """Read native calls first, followed by migrated legacy snapshots."""
-
-                return (
-                    *get_native_reader().read_calls(message_id),
-                    *get_legacy_normalizer().read_calls(message_id),
-                )
-        else:
-            legacy_normalization_enabled = False
-        from tldw_chatbook.Chat.console_canvas_controller import (
-            ConsoleCanvasController,
-        )
-
-        snapshot = self._ensure_canvas_profile_snapshot()
-        durable_canvas_service = None
-        if db is not None:
-            from tldw_chatbook.Canvas.service import CanvasService
-            from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-
-            if isinstance(db, CharactersRAGDB):
-                durable_canvas_service = CanvasService(db, profile_snapshot=snapshot)
-        self._canvas_controller = ConsoleCanvasController(
-            durable_service=durable_canvas_service, profile_snapshot=snapshot
-        )
-        self.set_chat_store(ConsoleChatStore(
-            persistence=persistence,
-            assistant_defaults_provider=self._resolve_new_console_assistant,
-            on_assistant_default_notice=lambda notice: self._app.notify(
-                notice, severity="warning"
-            ),
-            settle_provider_traces_off_thread=True,
-            trace_projection=(
-                ConsoleTraceProjection(
-                    legacy_reader=db.get_message_exchanges,
-                    normalized_reader=(
-                        read_normalized_calls if legacy_normalization_enabled else None
-                    ),
-                    normalized_reads_enabled=lambda: (
-                        runtime_capture_policy().normalized_reads_enabled
-                    ),
-                    normalized_writes_enabled=lambda: (
-                        runtime_capture_policy().normalized_writes_enabled
-                    ),
-                    compatibility_metrics=self.trace_compatibility_metrics,
-                )
-                if db is not None
-                else None
-            ),
+        """Return the store from this runtime's in-process composition owner."""
+        return self._execution_service.ensure_chat_store(
             workspace_context=workspace_context,
             on_scope_flushed=on_scope_flushed,
-            library_policy_coordinator=(
-                ConsoleLibraryPolicyCoordinator(
-                    persistence.console_library_policy_repository
-                )
-                if persistence is not None
-                else None
-            ),
-            library_policy_defaults_provider=lambda: _current_library_policy_defaults(
-                self._app
-            ),
-            thinking_history_policy_default_provider=lambda: (
-                _current_thinking_history_policy_default(self._app)
-            ),
-            canvas_promotion_participant=self._canvas_controller,
-            canvas_turn_controller=self._canvas_controller,
-            on_canvas_context_changed=self._sync_canvas_native_context,
         )
-        )
-        if db is not None and legacy_normalization_enabled:
-            self._schedule_legacy_trace_maintenance(db, get_legacy_normalizer)
-        self._bind_view_hooks()
-        return self._chat_store
 
     def _resolve_new_console_assistant(self, workspace_id: str, settings: Any) -> Any:
         """Resolve new-chat identity without requiring a mounted Console view."""
@@ -4498,7 +4615,11 @@ class ConsoleRuntime:
         # Default/global scopes never inherit a Persona (ADR-325). Keep their
         # ordinary boot path free of workspace Persona resolution.
         if workspace_id in (CONSOLE_GLOBAL_WORKSPACE_ID, DEFAULT_WORKSPACE_ID, ""):
-            config = getattr(self._app, "app_config", {})
+            config = (
+                self.domain_services.sources.configuration
+                if self.domain_services is not None
+                else getattr(self._app, "app_config", {})
+            )
             return ConsoleAssistantStartup(
                 settings
                 or blank_console_session_settings(
@@ -4507,6 +4628,10 @@ class ConsoleRuntime:
             )
         from .console_assistant_defaults import resolve_new_console_assistant
 
+        if self.domain_services is not None:
+            return resolve_new_console_assistant(
+                None, workspace_id, settings, domain_services=self.domain_services
+            )
         return resolve_new_console_assistant(self._app, workspace_id, settings)
 
     def _schedule_legacy_trace_maintenance(
@@ -4564,7 +4689,14 @@ class ConsoleRuntime:
         """
         if self._provider_gateway is not None or self._disposed:
             return self._provider_gateway
-        factory = getattr(self._app, "console_provider_gateway_factory", None)
+        domain = self.domain_services
+        if domain is not None:
+            domain.require_current()
+        factory = (
+            getattr(self._app, "console_provider_gateway_factory", None)
+            if domain is None
+            else None
+        )
         if callable(factory):
             self._provider_gateway = factory()
         else:
@@ -4573,7 +4705,11 @@ class ConsoleRuntime:
             )
 
             if trace_call_boundary_factory is None:
-                database = getattr(self._app, "chachanotes_db", None)
+                database = (
+                    domain.sources.chat_database
+                    if domain is not None
+                    else getattr(self._app, "chachanotes_db", None)
+                )
                 if database is not None and callable(
                     getattr(database, "transaction", None)
                 ):
@@ -4590,9 +4726,9 @@ class ConsoleRuntime:
                     )
 
             self._provider_gateway = ConsoleProviderGateway(
-                config_provider=functools.partial(
-                    _provider_config_for_app, self._app
-                ),
+                config_provider=domain.provider_config
+                if domain is not None
+                else functools.partial(_provider_config_for_app, self._app),
                 trace_call_boundary_factory=trace_call_boundary_factory,
                 normalized_writes_enabled=lambda: (
                     runtime_capture_policy().normalized_writes_enabled
@@ -4617,7 +4753,11 @@ class ConsoleRuntime:
                 return None
             if self._activity_receipts is not None:
                 return self._activity_receipts
-            db = getattr(self._app, "chachanotes_db", None)
+            db = (
+                self.domain_services.sources.chat_database
+                if self.domain_services is not None
+                else getattr(self._app, "chachanotes_db", None)
+            )
             db_path = getattr(db, "db_path", None) if db is not None else None
             if not db_path or str(db_path) == ":memory:":
                 return None
@@ -4627,7 +4767,9 @@ class ConsoleRuntime:
             try:
                 service = _LazyConsoleActivityReceiptService(
                     runs_db,
-                    getattr(self._app, "conversation_local_marks_service", None),
+                    self.domain_services.sources.conversation_marks
+                    if self.domain_services is not None
+                    else getattr(self._app, "conversation_local_marks_service", None),
                 )
                 # Dispose writes its lifetime latch under this same lock. Never
                 # publish an owner between that latch and its resource snapshot.
@@ -4651,137 +4793,13 @@ class ConsoleRuntime:
         skills_service: Any | None = None,
         native_tools_enabled_factory: Callable[[], Any] | None = None,
     ) -> Any:
-        """Return the Console agent bridge, creating it lazily.
-
-        Moved verbatim from
-        `ConsoleAgentController._ensure_console_agent_bridge`, ordering
-        included: the durable-DB probe runs FIRST and returns `None` (no
-        agent runtime) before the store or the gateway is touched, so an
-        in-memory harness still builds neither.
-
-        Factories remain in this compatibility signature to preserve the
-        durable-DB probe ordering. The bridge's stored native-tools gate is
-        always app-owned and never retains a view callback.
-
-        Args:
-            store_factory: Returns the chat store the bridge should use.
-                Called only past the durable-DB probe.
-            provider_gateway_factory: Returns the provider gateway. Same.
-            skills_service: The app's skills scope service, or `None`. A
-                plain value: it is a `getattr` on the APP, which the probe
-                has already touched.
-            native_tools_enabled_factory: Compatibility-only legacy seam;
-                the bridge stores the app-owned native-tools gate.
-
-        Returns:
-            Any: The `ConsoleAgentBridge`, or `None` when there is no
-            durable ChaChaNotes DB to key the sibling `AgentRunsDB` off.
-        """
-        if self._agent_bridge is not None or self._disposed:
-            return self._agent_bridge
-        if self.ensure_activity_receipt_service() is None or self._disposed:
-            return None
-        from tldw_chatbook.Agents.plain_chat_tool_surface import (
-            AppToolKillSwitch,
-            light_surface_configured,
-        )
-        from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
-
-        runs_db = self._agent_runs_db
-        # TASK-1971 (Agent Change Review): the tracker is None when git is
-        # absent -- the bridge then skips tracking entirely, and runs behave
-        # exactly as before the feature existed (spec gating decision).
-        from tldw_chatbook.Workspaces.change_turn_tracker import ChangeTurnTracker
-
-        change_tracker = ChangeTurnTracker()
-        change_coordinator = None
-        change_native = None
-        if change_tracker.available:
-            from tldw_chatbook.Workspaces.change_review_finalization import (
-                ChangeReviewFinalizationCoordinator,
-            )
-            from tldw_chatbook.Workspaces.change_tracking import (
-                NativeUndoIssuer,
-                _NativeSnapshotIssuer,
-            )
-
-            from tldw_chatbook.Utils.platform_files import supports_native_process_groups
-
-            if supports_native_process_groups():
-                change_native = _NativeSnapshotIssuer(self)
-                self._change_revert_native = NativeUndoIssuer(self)
-
-            def _publish_change_review(item: Any) -> None:
-                from tldw_chatbook.Workspaces.change_review_ownership import (
-                    native_snapshot_ticket,
-                )
-
-                ticket = native_snapshot_ticket()
-                wave = (
-                    getattr(ticket.source, "workflow_wave", None)
-                    if ticket is not None
-                    else None
-                )
-                if wave is not None:
-                    wave.publish(item)
-                    return
-                runs_db.record_change_snapshots_batch(
-                    run_id=item.run_id,
-                    records=[record.__dict__ for record in item.records],
-                    kind=item.kind,
-                )
-
-            change_coordinator = ChangeReviewFinalizationCoordinator(
-                tracker=change_tracker,
-                publish=_publish_change_review,
-                close_publisher=runs_db.close,
-                native_owner=change_native,
-            )
-            self._change_review_coordinator = change_coordinator
-        self._agent_bridge = ConsoleAgentBridge(
-            agent_runs_db=runs_db,
-            runtime_capacity_factory=self._get_execution_capacity,
-            store=store_factory(),
-            provider_gateway=provider_gateway_factory(),
+        """Return the bridge from this runtime's in-process composition owner."""
+        return self._execution_service.ensure_agent_bridge(
+            store_factory=store_factory,
+            provider_gateway_factory=provider_gateway_factory,
             skills_service=skills_service,
-            native_tools_enabled=(
-                functools.partial(_native_tools_enabled_for_app, self._app)
-            ),
-            change_tracker=change_tracker if change_tracker.available else None,
-            buddy_sink=self.persona_buddy_sink,
-            change_finalization_coordinator=change_coordinator,
-            change_review_native=change_native,
-            change_revert_native=self._change_revert_native,
-            # run-hooks (Task 5): hand the bridge this runtime's engine
-            # accessor so per-turn fire sites (PostToolUse today; PreToolUse
-            # and the settle events in later tasks) resolve the app-owned
-            # singleton through the same runtime a mounted Console uses --
-            # never a view, so headless wake runs reach it identically.
-            ensure_run_hooks=self.ensure_run_hooks,
-            get_hooks_v2=self.get_hooks_v2,
-            # TASK-34100.5.3: plain chat's light tool surface unless the user
-            # turned on Full agent tools; read per send, so a switch flipped
-            # in setup or the MCP hub applies on the next send.
-            light_tool_surface=light_surface_configured,
-            tool_kill_switch=AppToolKillSwitch(self._app),
-            storage_provider=lambda: self._app.services.storage,  # ADR-250 s6
+            native_tools_enabled_factory=native_tools_enabled_factory,
         )
-        # PR3a-2 Task 4: the survivor-completion attention consumer (durable
-        # unseen mark + app-wide toast + deep link), registered NEXT TO
-        # bridge construction per `FleetDrainFanout.register`'s contract.
-        # Captures the APP object only -- never a screen -- because the
-        # bridge (and its registered consumers) outlives the screen whenever
-        # a survivor is still running at teardown.
-        from tldw_chatbook.Chat.console_fleet_attention import (
-            register_fleet_attention,
-        )
-
-        register_fleet_attention(
-            self._agent_bridge,
-            self._app,
-            receipt_service=self._activity_receipts,
-        )
-        return self._agent_bridge
 
     def ensure_activity_hydration(self) -> asyncio.Task[int] | None:
         """Start or reuse the one off-loop receipt hydration for this runtime."""
@@ -4877,117 +4895,8 @@ class ConsoleRuntime:
         return self._archive_recovery
 
     def ensure_chat_controller(self, **kwargs: Any) -> "ConsoleChatController":
-        """Return the Console chat controller, creating it lazily.
-
-        Selection values are passed through from the custody-producing view.
-        Every callable needed after custody is replaced here by an app-owned
-        service or runtime-owned frozen-input accessor; only disposable UI
-        projections are rebound on attach.
-
-        Returns:
-            ConsoleChatController: The runtime's controller.
-        """
-        if self._chat_controller is not None or self._disposed:
-            return self._chat_controller
-        from tldw_chatbook.Chat.console_chat_controller import (
-            ConsoleChatController,
-        )
-
-        # Run hooks (spec 2026-09-11, Task 7): hand the controller this
-        # runtime's engine accessor exactly as `ensure_agent_bridge` hands
-        # it to the bridge (Task 5) -- the production path always wires it,
-        # while the optional param's `None` default keeps every direct
-        # (controller-only) construction, tests included, unchanged.
-        kwargs.setdefault("ensure_run_hooks", self.ensure_run_hooks)
-        kwargs.setdefault("hook_permissions_accessor", self.ensure_hook_permissions)
-        runtime_owned = {
-            "chat_dictionary_applier": functools.partial(
-                _apply_chat_dictionaries_for_app, self._app
-            ),
-            "world_info_applier": functools.partial(
-                _apply_world_info_for_app, self._app
-            ),
-            # The LIVE seam (two arguments). Every turn this runtime admits
-            # carries its frozen capture and release explicitly
-            # (``staged_evidence_capture`` / ``staged_evidence_release``);
-            # the controller no longer looks for them by name (TASK-34352).
-            "rag_capture_provider": self._capture_console_staged_rag,
-            # TASK-33620.8 (AC#2): Automatic evidence, captured the same way.
-            "automatic_evidence_capture": self._capture_console_prepared_rag,
-            "staged_evidence_provider": self._has_staged_evidence,
-            "default_session_settings": functools.partial(
-                _default_session_settings_for_app,
-                self._app,
-            ),
-            "library_provider_factory": self._library_provider_factory,
-            "global_user_display_name": functools.partial(
-                _global_user_display_name_for_app, self._app
-            ),
-            "turn_context_provider": None,
-            "provider_config": functools.partial(_provider_config_for_app, self._app),
-            "confirm_project_instruction_dispatch": (
-                self._confirm_project_instruction_dispatch
-            ),
-            "select_project_instruction_binding": (
-                self._select_project_instruction_binding
-            ),
-        }
-        # TASK-34667: everything in ``runtime_owned`` overwrites whatever a
-        # caller passed. Surface that at debug level instead of swallowing
-        # it -- an always-overwritten caller copy is the
-        # ``_library_provider_for_app`` drift precedent, where a stale copy
-        # silently shadowed (and differed from) the live binding and cost
-        # 24 Library tools behind one swallowed warning.
-        ignored = runtime_owned.keys() & kwargs.keys()
-        if ignored:
-            logger.debug(
-                "ensure_chat_controller: ignoring runtime-owned kwargs "
-                f"supplied by caller: {sorted(ignored)}"
-            )
-        kwargs.update(runtime_owned)
-        kwargs.setdefault("buddy_sink", self.persona_buddy_sink)
-        kwargs.setdefault("scratch_spaces", self._scratch_spaces)
-        kwargs.setdefault("activity_receipts", self._activity_receipts)
-        if "canvas_enabled_reader" not in kwargs:
-            kwargs["canvas_enabled_reader"] = self._canvas_enabled
-            kwargs.setdefault("canvas_disabled_reader", self.canvas_disabled)
-        raw_cli_runtime = getattr(self._app, "raw_cli_runtime", None)
-        kwargs.setdefault(
-            "cancel_raw_cli_session",
-            getattr(raw_cli_runtime, "cancel_session", None),
-        )
-        self.set_chat_controller(ConsoleChatController(**kwargs))
-        self._chat_controller._archive_recovery_runtime = self._archive_recovery
-        self._chat_controller.prompt_history = self.ensure_prompt_history()
-        if self.view is None:
-            # task-15860 Task 4: a runtime can be VIEWLESS FROM BIRTH, not
-            # only after a detach — nothing about the caller that supplies
-            # these constructor parameters makes it an attached view, and
-            # the wake-at-launch case (Console never opened) has no view at
-            # all. Without this the fresh controller would keep the
-            # constructor's own `None`s, and `wake_conversation_in_view`'s
-            # read site reads that as IN VIEW: the ◈ mark cleared for a
-            # delivery nobody could have seen. `only="controller"` because
-            # the STORE's one slot (`on_scope_flushed`) is a constructor
-            # parameter its own caller just supplied, and nulling it in the
-            # restore-before-attach window would drop scope flushes.
-            # Production attaches one line later
-            # (`ChatScreen._ensure_console_chat_controller`), so this costs
-            # a mounted Console nothing.
-            self._clear_view_hooks(only="controller")
-            self._clear_view_hooks(only="wake")
-        else:
-            self._bind_view_hooks()
-        # ADR-135: the native controller's birth owns recovery. View remounts
-        # and repeated ensure/read calls return above without auditing owners.
-        wake = self._chat_controller.fleet_wake
-        wake.wire(
-            app=self._app,
-            startup_ready=lambda: bool(getattr(self._app, "_ui_ready", True)),
-        )
-        wake._recovery_projection = self._project_workflow_recovery
-        wake.start_recovery()
-        return self._chat_controller
+        """Return the controller from this runtime's in-process composition owner."""
+        return self._execution_service.ensure_chat_controller(**kwargs)
 
     async def request_initial_hook_review(
         self,
@@ -5518,6 +5427,9 @@ class ConsoleRuntime:
         `_restore_native_console_state` reaches `ensure_chat_store` long
         before anything asks for a controller.
         """
+        if self.domain_services is not None:
+            self.domain_services.presentation.bind_view_hooks()
+            return
         view = self.view
         if view is None:
             return
@@ -5539,6 +5451,9 @@ class ConsoleRuntime:
                 without touching the store, whose `on_scope_flushed` is a
                 CONSTRUCTOR parameter the caller just supplied.
         """
+        if self.domain_services is not None:
+            self.domain_services.presentation.clear_view_hooks(only=only)
+            return
         for slot in CONSOLE_VIEW_HOOK_SLOTS:
             if only is not None and slot.target != only:
                 continue

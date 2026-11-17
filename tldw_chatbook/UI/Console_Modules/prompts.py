@@ -222,6 +222,23 @@ def _provider_resolution_identity(resolution: Any) -> tuple[str, str, str, str, 
     )
 
 
+@dataclass(slots=True)
+class _ConsolePromptApplicationTransaction:
+    application: Any
+    captured_snapshot: Any
+    store: Any
+    session_id: str
+    composer: Any
+    settings: Any
+    checkpoint: Any
+    stale_copy: str
+    original_draft: str
+    composer_changed: bool = False
+    composer_result: Any = None
+    draft_expected: Any = None
+    witness_error: Exception | None = None
+
+
 class _ConsolePromptSource:
     """The Prompt Library modal's data adapter over one prompt scope service.
 
@@ -599,7 +616,67 @@ class _ConsolePromptImprovementFlow:
 
     async def activate_improvement_context(self) -> Any:
         """Pin and disclose the exact target before any model path can run."""
+        from ...Chat.console_parent_settings import (
+            ParentSettingsDeferred,
+            ParentSettingsOriginChanged,
+            ParentSettingsSourceChanged,
+            wait_prompt_flow_settings,
+            capture_prompt_resolution_origin,
+            complete_parent_prompt_resolution,
+        )
+        from ...Chat.console_control_settings import (
+            ConsoleDefaultConvergenceRequired,
+            ConsoleSettingsPending,
+        )
 
+        if not await wait_prompt_flow_settings(self):
+            raise ValueError("The active Console session changed.")
+
+        origin = capture_prompt_resolution_origin(self)
+        selected, prepared = await complete_parent_prompt_resolution(
+            self, origin, "prepare-activation", ()
+        )
+        if selected:
+            projection, projection_blocker, selection = prepared
+        else:
+            projection, projection_blocker = self._prepare_improvement_activation()
+        try:
+            resolution = await self._gateway.resolve_for_send(
+                selection if selected else self._build_provider_selection()
+            )
+        except (
+            ConsoleDefaultConvergenceRequired,
+            ConsoleSettingsPending,
+            ParentSettingsDeferred,
+            ParentSettingsOriginChanged,
+            ParentSettingsSourceChanged,
+        ):
+            raise
+        except Exception:
+            selected, completed = await complete_parent_prompt_resolution(
+                self,
+                origin,
+                "activation",
+                (None, projection, projection_blocker, True),
+            )
+            if selected:
+                return completed
+            return self._finish_improvement_activation(
+                None, projection, projection_blocker, True
+            )
+        selected, completed = await complete_parent_prompt_resolution(
+            self,
+            origin,
+            "activation",
+            (resolution, projection, projection_blocker, False),
+        )
+        if selected:
+            return completed
+        return self._finish_improvement_activation(
+            resolution, projection, projection_blocker, False
+        )
+
+    def _prepare_improvement_activation(self):
         stale = self._stale_reason()
         if stale:
             raise ValueError(stale)
@@ -616,11 +693,13 @@ class _ConsolePromptImprovementFlow:
                 "reserved protected-placeholder text. Remove or rename that "
                 "literal token, then reopen Improve."
             )
-        try:
-            resolution = await self._gateway.resolve_for_send(
-                self._build_provider_selection()
-            )
-        except Exception:
+        return projection, projection_blocker
+
+    def _finish_improvement_activation(
+        self, resolution, projection, projection_blocker, failed
+    ):
+        """Publish the original resolution disclosure after its owning phase."""
+        if failed:
             self._pinned_resolution = None
             return replace(
                 self._improvement_context,
@@ -686,15 +765,76 @@ class _ConsolePromptImprovementFlow:
 
     async def capture_manual_resolution(self) -> Any:
         """Capture the effective target once for a later model-free Apply."""
+        from ...Chat.console_parent_settings import (
+            wait_prompt_flow_settings,
+            capture_prompt_resolution_origin,
+            complete_parent_prompt_resolution,
+        )
 
-        if self._pinned_resolution is None:
-            self._pinned_resolution = await self._gateway.resolve_for_send(
-                self._build_provider_selection()
+        if not await wait_prompt_flow_settings(self):
+            raise ValueError("The active Console session changed.")
+
+        origin = capture_prompt_resolution_origin(self)
+        selected, prepared = await complete_parent_prompt_resolution(
+            self, origin, "prepare-manual", ()
+        )
+        if selected:
+            pinned, selection = prepared
+            if pinned is not None:
+                return pinned
+        if self._pinned_resolution is None or selected:
+            resolution = await self._gateway.resolve_for_send(
+                selection if selected else self._build_provider_selection()
             )
+            selected, completed = await complete_parent_prompt_resolution(
+                self,
+                origin,
+                "manual",
+                (resolution,),
+            )
+            if selected:
+                return completed
+            return self._finish_manual_resolution(resolution)
         return self._pinned_resolution
+
+    def _finish_manual_resolution(self, resolution):
+        self._pinned_resolution = resolution
+        return resolution
 
     async def build_improvement_snapshot(self, **values: Any) -> Any:
         """Build the request snapshot, against the pinned target only."""
+        from ...Chat.console_parent_settings import (
+            wait_prompt_flow_settings,
+            capture_prompt_resolution_origin,
+            complete_parent_prompt_resolution,
+        )
+
+        if not await wait_prompt_flow_settings(self):
+            raise ValueError("The active Console session changed.")
+        origin = capture_prompt_resolution_origin(self)
+        selected, prepared = await complete_parent_prompt_resolution(
+            self, origin, "prepare-snapshot", (values,)
+        )
+        if selected:
+            projection, pinned_resolution, selection = prepared
+        else:
+            projection, pinned_resolution = self._prepare_improvement_snapshot(values)
+        live_resolution = await self._gateway.resolve_for_send(
+            selection if selected else self._build_provider_selection()
+        )
+        selected, completed = await complete_parent_prompt_resolution(
+            self,
+            origin,
+            "snapshot",
+            (live_resolution, pinned_resolution, projection, values),
+        )
+        if selected:
+            return completed
+        return self._finish_improvement_snapshot(
+            live_resolution, pinned_resolution, projection, values
+        )
+
+    def _prepare_improvement_snapshot(self, values):
         stale = self._stale_reason()
         if stale:
             raise ValueError(stale)
@@ -709,9 +849,12 @@ class _ConsolePromptImprovementFlow:
             raise ValueError(
                 "The provider target is no longer pinned. Reopen Improve to refresh disclosure."
             )
-        live_resolution = await self._gateway.resolve_for_send(
-            self._build_provider_selection()
-        )
+        return projection, pinned_resolution
+
+    def _finish_improvement_snapshot(
+        self, live_resolution, pinned_resolution, projection, values
+    ):
+        request_id = str(values["request_id"])
         if _provider_resolution_identity(
             live_resolution
         ) != _provider_resolution_identity(pinned_resolution):
@@ -859,18 +1002,58 @@ class _ConsolePromptImprovementFlow:
         self, result: ConsolePromptsResult, captured: Any
     ) -> ConsolePromptsApplyOutcome:
         """Apply a reviewed result to the live session, or refuse as stale."""
+        from ...Chat.console_parent_settings import (
+            ParentSettingsDeferred,
+            ParentSettingsOriginChanged,
+            ParentSettingsSourceChanged,
+            wait_prompt_flow_settings,
+        )
+        from ...Chat.console_control_settings import (
+            ConsoleDefaultConvergenceRequired,
+            ConsoleSettingsPending,
+        )
+
+        if not await wait_prompt_flow_settings(self):
+            from ...Widgets.Console.console_prompts_modal import (
+                ConsolePromptsApplyOutcome,
+            )
+
+            return ConsolePromptsApplyOutcome(
+                "stale", "The active Console session changed."
+            )
         from ...Widgets.Console.console_prompts_modal import (
             ConsolePromptsApplyOutcome,
             ConsoleRecipeApplyGuard,
             ConsoleSavedPromptApplyGuard,
         )
 
-        stale = self._stale_reason()
-        if stale:
-            return ConsolePromptsApplyOutcome("stale", stale)
+        from ...Chat.console_parent_settings import (
+            capture_prompt_resolution_origin,
+            complete_parent_prompt_resolution,
+        )
+
+        try:
+            origin = capture_prompt_resolution_origin(self)
+            selection_needed = isinstance(
+                captured, PromptImprovementRequestSnapshot
+            ) or (
+                isinstance(
+                    captured, (ConsoleRecipeApplyGuard, ConsoleSavedPromptApplyGuard)
+                )
+                and captured.provider_resolution is not None
+            )
+            selected, selection = await complete_parent_prompt_resolution(
+                self, origin, "prepare-apply", (selection_needed,)
+            )
+        except (ValueError, ParentSettingsOriginChanged) as error:
+            return ConsolePromptsApplyOutcome("stale", str(error))
+        if not selected:
+            stale = self._stale_reason()
+            if stale:
+                return ConsolePromptsApplyOutcome("stale", stale)
         if isinstance(captured, PromptImprovementRequestSnapshot):
             live_resolution = await self._gateway.resolve_for_send(
-                self._build_provider_selection()
+                selection if selected else self._build_provider_selection()
             )
             if _provider_resolution_identity(
                 live_resolution
@@ -888,7 +1071,7 @@ class _ConsolePromptImprovementFlow:
                     "The provider target was not captured. Reopen the Prompt and retry.",
                 )
             live_resolution = await self._gateway.resolve_for_send(
-                self._build_provider_selection()
+                selection if selected else self._build_provider_selection()
             )
             if _provider_resolution_identity(
                 live_resolution
@@ -907,48 +1090,134 @@ class _ConsolePromptImprovementFlow:
                 )
             elif self._composer.capture_draft_snapshot() != result.composer_snapshot:
                 raise ValueError("The Console draft changed.")
+        except (
+            ConsoleDefaultConvergenceRequired,
+            ConsoleSettingsPending,
+            ParentSettingsDeferred,
+            ParentSettingsOriginChanged,
+            ParentSettingsSourceChanged,
+        ):
+            raise
         except Exception:
             return ConsolePromptsApplyOutcome(
                 "stale",
                 "The draft or Recipe changed. Review the working copy and retry.",
             )
 
-        if result.apply_user and result.user_text is not None:
-            self._composer.apply_improvement(
-                result.composer_snapshot,
-                result.user_text,
+        if not await wait_prompt_flow_settings(self):
+            return ConsolePromptsApplyOutcome(
+                "stale", "The active Console session changed."
             )
-            self._store.set_session_draft(self._session_id, self._composer.draft_text())
+        if not selected:
+            stale = self._stale_reason()
+            if stale:
+                return ConsolePromptsApplyOutcome("stale", stale)
         persisted = True
         if result.apply_system:
-            _session, persisted = self._store.set_session_system_prompt(
-                self._session_id, result.system_text
+            from ...Chat.console_parent_settings import (
+                ParentSettingsOriginChanged,
+                apply_parent_prompt_component,
             )
-            self._sync_system_prompt_surfaces()
+
+            try:
+                persisted = await apply_parent_prompt_component(
+                    self, result.system_text, reviewed=result
+                )
+            except ParentSettingsOriginChanged as error:
+                return ConsolePromptsApplyOutcome("stale", str(error))
+            if persisted is None:
+                self._apply_reviewed_user_prompt(result)
+                _session, persisted = self._store.set_session_system_prompt(
+                    self._session_id, result.system_text
+                )
+                self._sync_system_prompt_surfaces()
+        else:
+            try:
+                completed, _ = await complete_parent_prompt_resolution(
+                    self, origin, "apply-user", (result,)
+                )
+            except (ValueError, ParentSettingsOriginChanged) as error:
+                return ConsolePromptsApplyOutcome("stale", str(error))
+            if not completed:
+                self._apply_reviewed_user_prompt(result)
         await self._record_applied_usage(captured)
         if not persisted:
             return ConsolePromptsApplyOutcome("persistence_failed")
         return ConsolePromptsApplyOutcome("applied")
 
+    def _apply_reviewed_user_prompt(self, result, *, revalidate=False):
+        """Keep original draft validation/application adjacent to the settings write."""
+        if revalidate:
+            if result.apply_user:
+                if result.user_text is None:
+                    raise ValueError("The reviewed User prompt is missing.")
+                self._composer.validate_improvement(
+                    result.composer_snapshot, result.user_text
+                )
+            elif self._composer.capture_draft_snapshot() != result.composer_snapshot:
+                raise ValueError("The Console draft changed.")
+        if result.apply_user and result.user_text is not None:
+            self._composer.apply_improvement(result.composer_snapshot, result.user_text)
+            self._store.set_session_draft(self._session_id, self._composer.draft_text())
+
     async def retry_improvement_persistence(
         self, result: ConsolePromptsResult
     ) -> ConsolePromptsApplyOutcome:
         """Re-attempt a System-prompt persist that failed, and only that."""
+        from ...Chat.console_parent_settings import wait_prompt_flow_settings
+
+        if not await wait_prompt_flow_settings(self):
+            from ...Widgets.Console.console_prompts_modal import (
+                ConsolePromptsApplyOutcome,
+            )
+
+            return ConsolePromptsApplyOutcome(
+                "stale", "The active Console session changed."
+            )
         from ...Widgets.Console.console_prompts_modal import ConsolePromptsApplyOutcome
 
         if self._store.active_session_id != self._session_id or not result.apply_system:
             return ConsolePromptsApplyOutcome(
                 "stale", "The active Console session changed."
             )
-        live_settings = self._active_session_settings()
-        if str(live_settings.system_prompt or "") != str(result.system_text or ""):
+        from ...Chat.console_parent_settings import (
+            capture_prompt_resolution_origin,
+            complete_parent_prompt_resolution,
+            ParentSettingsOriginChanged,
+        )
+
+        try:
+            origin = capture_prompt_resolution_origin(self)
+            selected, current = await complete_parent_prompt_resolution(
+                self, origin, "prepare-retry", (result.system_text,)
+            )
+        except (ValueError, ParentSettingsOriginChanged) as error:
+            return ConsolePromptsApplyOutcome("stale", str(error))
+        if not selected:
+            live_settings = self._active_session_settings()
+            current = str(live_settings.system_prompt or "") == str(
+                result.system_text or ""
+            )
+        if not current:
             return ConsolePromptsApplyOutcome(
                 "stale", "The live System prompt changed."
             )
-        _session, persisted = self._store.set_session_system_prompt(
-            self._session_id, result.system_text
+        from ...Chat.console_parent_settings import (
+            ParentSettingsOriginChanged,
+            apply_parent_prompt_component,
         )
-        self._sync_system_prompt_surfaces()
+
+        try:
+            persisted = await apply_parent_prompt_component(
+                self, result.system_text, retry=True
+            )
+        except ParentSettingsOriginChanged as error:
+            return ConsolePromptsApplyOutcome("stale", str(error))
+        if persisted is None:
+            _session, persisted = self._store.set_session_system_prompt(
+                self._session_id, result.system_text
+            )
+            self._sync_system_prompt_surfaces()
         return ConsolePromptsApplyOutcome(
             "applied" if persisted else "persistence_failed"
         )
@@ -1715,167 +1984,182 @@ class ConsolePromptsController:
         this method's scope; see each class's docstring for why they split
         where they do.
         """
-        from ...Widgets.Console.console_prompt_improve_view import (
-            ConsolePromptImprovementContext,
+        from tldw_chatbook.Chat.console_parent_settings import (
+            defer_parent_settings_action,
         )
-        from ...Widgets.Console.console_prompts_modal import ConsolePromptsModal
 
-        source = _ConsolePromptSource(
-            getattr(self.app_instance, "prompt_scope_service", None)
-        )
-        composer = self._console_composer_or_none()
-        if composer is None:
+        if defer_parent_settings_action(
+            self._screen, "prompt-modal", (initial_mode, initial_source)
+        ):
             return
-        settings = self._ensure_active_console_session_settings()
-        store = self._ensure_console_chat_store()
-        session_id = store.active_session_id
-        if session_id is None:
-            return
-        composer_snapshot = composer.capture_draft_snapshot()
-        current_system = str(settings.system_prompt or "")
-        current_system_fingerprint = fingerprint_text(current_system)
-        provider_display, model_display, _settings = (
-            self._active_console_provider_model_display()
-        )
-        opening_selection = self._build_console_provider_selection()
-        gateway = self._ensure_console_provider_gateway()
-        improvement_service = PromptImprovementService(gateway=gateway)
-        opening_projection = None
-        projection_blocker = ""
-        try:
-            opening_projection = composer.project_snapshot_for_model(
-                composer_snapshot,
-                request_nonce=f"prompt-preview-{uuid.uuid4().hex}",
-            )
-        except ValueError:
-            projection_blocker = (
-                "Model improvement is unavailable because the draft contains "
-                "reserved protected-placeholder text. Remove or rename that "
-                "literal token, then reopen Improve."
-            )
-        # task-32345: Improve dispatches to the provider gateway independently
-        # of the main turn, so it stays unavailable while a run is active --
-        # checked directly here (not inferred from `console_provider_blocker_
-        # copy`, which no longer covers a merely-active, otherwise-healthy
-        # provider). Same "provider" recovery bucket a blocked provider used
-        # -- unchanged from before this task, when an active run's non-empty
-        # blocker copy already fell into that bucket by default.
-        run_active_blocker = (
-            "Model improvement is unavailable while a run is in progress."
-            if self._console_run_active()
-            else ""
-        )
-        provider_blocker = self._console_provider_blocker_copy()
-        unavailable_reason = (
-            projection_blocker or run_active_blocker or provider_blocker
-        )
-        improvement_context = ConsolePromptImprovementContext(
-            session_id=session_id,
-            composer_snapshot=composer_snapshot,
-            current_user_projection=opening_projection,
-            current_system_prompt=current_system,
-            current_system_fingerprint=current_system_fingerprint,
-            provider_label=str(provider_display or "Not configured"),
-            model_label=str(model_display or "Not configured"),
-            endpoint_label=(
-                safe_endpoint_display(opening_selection.base_url)
-                or "Resolve on Improve"
-            ),
-            model_unavailable_reason=unavailable_reason,
-            unavailable_recovery=("draft" if projection_blocker else "provider"),
-        )
+        from ...Chat.console_parent_settings import initial_parent_settings_action
 
-        flow = _ConsolePromptImprovementFlow(
-            source=source,
-            store=store,
-            session_id=session_id,
-            composer=composer,
-            composer_snapshot=composer_snapshot,
-            current_system=current_system,
-            current_system_fingerprint=current_system_fingerprint,
-            gateway=gateway,
-            improvement_context=improvement_context,
-            opening_provider_selection=opening_selection,
-            app_instance=self.app_instance,
-            active_session_settings=self._ensure_active_console_session_settings,
-            build_provider_selection=self._build_console_provider_selection,
-            sync_system_prompt_surfaces=self._sync_console_system_prompt_surfaces,
-        )
+        with initial_parent_settings_action(
+            self._screen, "prompt-modal", (initial_mode, initial_source)
+        ):
+            from ...Widgets.Console.console_prompt_improve_view import (
+                ConsolePromptImprovementContext,
+            )
+            from ...Widgets.Console.console_prompts_modal import ConsolePromptsModal
 
-        def insert_draft(content: str) -> bool:
-            return self._insert_prompt_draft_at_caret(
-                content=content,
-                composer=composer,
+            source = _ConsolePromptSource(
+                getattr(self.app_instance, "prompt_scope_service", None)
+            )
+            composer = self._console_composer_or_none()
+            if composer is None:
+                return
+            settings = self._ensure_active_console_session_settings()
+            store = self._ensure_console_chat_store()
+            session_id = store.active_session_id
+            if session_id is None:
+                return
+            composer_snapshot = composer.capture_draft_snapshot()
+            current_system = str(settings.system_prompt or "")
+            current_system_fingerprint = fingerprint_text(current_system)
+            provider_display, model_display, _settings = (
+                self._active_console_provider_model_display()
+            )
+            opening_selection = self._build_console_provider_selection()
+            gateway = self._ensure_console_provider_gateway()
+            improvement_service = PromptImprovementService(gateway=gateway)
+            opening_projection = None
+            projection_blocker = ""
+            try:
+                opening_projection = composer.project_snapshot_for_model(
+                    composer_snapshot,
+                    request_nonce=f"prompt-preview-{uuid.uuid4().hex}",
+                )
+            except ValueError:
+                projection_blocker = (
+                    "Model improvement is unavailable because the draft contains "
+                    "reserved protected-placeholder text. Remove or rename that "
+                    "literal token, then reopen Improve."
+                )
+            # task-32345: Improve dispatches to the provider gateway independently
+            # of the main turn, so it stays unavailable while a run is active --
+            # checked directly here (not inferred from `console_provider_blocker_
+            # copy`, which no longer covers a merely-active, otherwise-healthy
+            # provider). Same "provider" recovery bucket a blocked provider used
+            # -- unchanged from before this task, when an active run's non-empty
+            # blocker copy already fell into that bucket by default.
+            run_active_blocker = (
+                "Model improvement is unavailable while a run is in progress."
+                if self._console_run_active()
+                else ""
+            )
+            provider_blocker = self._console_provider_blocker_copy()
+            unavailable_reason = (
+                projection_blocker or run_active_blocker or provider_blocker
+            )
+            improvement_context = ConsolePromptImprovementContext(
+                session_id=session_id,
+                composer_snapshot=composer_snapshot,
+                current_user_projection=opening_projection,
+                current_system_prompt=current_system,
+                current_system_fingerprint=current_system_fingerprint,
+                provider_label=str(provider_display or "Not configured"),
+                model_label=str(model_display or "Not configured"),
+                endpoint_label=(
+                    safe_endpoint_display(opening_selection.base_url)
+                    or "Resolve on Improve"
+                ),
+                model_unavailable_reason=unavailable_reason,
+                unavailable_recovery=("draft" if projection_blocker else "provider"),
+            )
+
+            flow = _ConsolePromptImprovementFlow(
+                source=source,
                 store=store,
                 session_id=session_id,
-            )
-
-        async def mixin_preview_payload():
-            from ...Chat.console_chat_models import MessageAttachment
-
-            service = self._mixin_service()
-            return await service.preparation_owner.build_context_snapshot(
-                draft=composer.draft_text(),
-                session_id=session_id,
-                attachments=tuple(
-                    MessageAttachment(
-                        data=item.data,
-                        mime_type=item.mime_type or "image/png",
-                        display_name=item.display_name,
-                        position=index,
-                    )
-                    for index, item in enumerate(store.pending_attachments(session_id))
-                ),
-                staged_sources=tuple(store.workspace_context.allowed_sources),
-            )
-
-        def mixin_source_current() -> bool:
-            if not (
-                store.active_session_id == session_id
-                and self._ensure_console_chat_store() is store
-            ):
-                return False
-            app = self.app_instance
-            try:
-                current_service = app.prompt_scope_service
-            except AttributeError:
-                current_service = None
-            return current_service is source._service
-
-        self.push_screen(
-            ConsolePromptsModal(
-                capabilities=source.capabilities,
-                list_page=source.list_page,
-                search=source.search,
-                detail=source.detail,
-                save=source.save,
-                improve_unavailable_reason=unavailable_reason,
-                configure_provider=self._open_console_provider_recovery,
+                composer=composer,
+                composer_snapshot=composer_snapshot,
+                current_system=current_system,
+                current_system_fingerprint=current_system_fingerprint,
+                gateway=gateway,
                 improvement_context=improvement_context,
-                activate_improvement_context=flow.activate_improvement_context,
-                capture_manual_resolution=flow.capture_manual_resolution,
-                build_improvement_snapshot=flow.build_improvement_snapshot,
-                improve=improvement_service.improve,
-                validate_improvement=flow.validate_improvement,
-                apply_improvement_result=flow.apply_improvement_result,
-                retry_improvement_persistence=flow.retry_improvement_persistence,
-                open_library_prompt=self._open_saved_console_recipe_in_library,
-                update_draft=source.update_draft,
-                delete_draft=source.delete_draft,
-                insert_draft=insert_draft,
-                list_draft_collections=source.list_draft_collections,
-                assign_draft_collection=source.assign_draft_collection,
-                initial_mode=initial_mode,
-                initial_source=initial_source,
-                mixin_flow=_ConsolePromptMixinsFlow(
-                    service=self._mixin_service(),
+                opening_provider_selection=opening_selection,
+                app_instance=self.app_instance,
+                active_session_settings=self._ensure_active_console_session_settings,
+                build_provider_selection=self._build_console_provider_selection,
+                sync_system_prompt_surfaces=self._sync_console_system_prompt_surfaces,
+            )
+
+            def insert_draft(content: str) -> bool:
+                return self._insert_prompt_draft_at_caret(
+                    content=content,
+                    composer=composer,
+                    store=store,
                     session_id=session_id,
-                    next_send_preview=mixin_preview_payload,
-                    is_current=mixin_source_current,
+                )
+
+            async def mixin_preview_payload():
+                from ...Chat.console_chat_models import MessageAttachment
+
+                service = self._mixin_service()
+                return await service.preparation_owner.build_context_snapshot(
+                    draft=composer.draft_text(),
+                    session_id=session_id,
+                    attachments=tuple(
+                        MessageAttachment(
+                            data=item.data,
+                            mime_type=item.mime_type or "image/png",
+                            display_name=item.display_name,
+                            position=index,
+                        )
+                        for index, item in enumerate(
+                            store.pending_attachments(session_id)
+                        )
+                    ),
+                    staged_sources=tuple(store.workspace_context.allowed_sources),
+                )
+
+            def mixin_source_current() -> bool:
+                if not (
+                    store.active_session_id == session_id
+                    and self._ensure_console_chat_store() is store
+                ):
+                    return False
+                app = self.app_instance
+                try:
+                    current_service = app.prompt_scope_service
+                except AttributeError:
+                    current_service = None
+                return current_service is source._service
+
+            self.push_screen(
+                ConsolePromptsModal(
+                    capabilities=source.capabilities,
+                    list_page=source.list_page,
+                    search=source.search,
+                    detail=source.detail,
+                    save=source.save,
+                    improve_unavailable_reason=unavailable_reason,
+                    configure_provider=self._open_console_provider_recovery,
+                    improvement_context=improvement_context,
+                    activate_improvement_context=flow.activate_improvement_context,
+                    capture_manual_resolution=flow.capture_manual_resolution,
+                    build_improvement_snapshot=flow.build_improvement_snapshot,
+                    improve=improvement_service.improve,
+                    validate_improvement=flow.validate_improvement,
+                    apply_improvement_result=flow.apply_improvement_result,
+                    retry_improvement_persistence=flow.retry_improvement_persistence,
+                    open_library_prompt=self._open_saved_console_recipe_in_library,
+                    update_draft=source.update_draft,
+                    delete_draft=source.delete_draft,
+                    insert_draft=insert_draft,
+                    list_draft_collections=source.list_draft_collections,
+                    assign_draft_collection=source.assign_draft_collection,
+                    initial_mode=initial_mode,
+                    initial_source=initial_source,
+                    mixin_flow=_ConsolePromptMixinsFlow(
+                        service=self._mixin_service(),
+                        session_id=session_id,
+                        next_send_preview=mixin_preview_payload,
+                        is_current=mixin_source_current,
+                    ),
                 ),
-            ),
-            callback=self._restore_console_composer_focus,
-        )
+                callback=self._restore_console_composer_focus,
+            )
 
     def _open_saved_console_recipe_in_library(
         self,
@@ -2051,7 +2335,28 @@ class ConsolePromptsController:
         *,
         captured_snapshot: ComposerDraftSnapshot | None,
     ) -> bool:
-        """Guard, mutate, roll back, and report either Prompt destination."""
+        """Keep the original synchronous Boolean transaction for legacy callers."""
+        transaction = self._prepare_guarded_prompt_application(
+            application, captured_snapshot
+        )
+        if transaction is None:
+            return False
+        persisted = True
+        try:
+            self._mutate_guarded_prompt_draft(transaction)
+            if application.apply_system:
+                _session, persisted = transaction.store.set_session_system_prompt(
+                    transaction.session_id,
+                    application.system_text,
+                )
+            if not transaction.composer_changed:
+                transaction.composer.invalidate_improvement_undo()
+        except Exception as exc:
+            return self._rollback_guarded_prompt_application(transaction, exc)
+        return self._finish_guarded_prompt_application(transaction, persisted)
+
+    def _prepare_guarded_prompt_application(self, application, captured_snapshot):
+        """Keep the original guards and checkpoint before any mutation."""
         destination = application.destination
         stale_copy = (
             self._PROMPT_APPEND_STALE_COPY
@@ -2060,27 +2365,27 @@ class ConsolePromptsController:
         )
         if destination not in ("replace_snapshot", "append_active"):
             self._warn_prompt_application(stale_copy)
-            return False
+            return None
         if application.is_expired():
             self._warn_prompt_application(self._PROMPT_APPLICATION_EXPIRED_COPY)
-            return False
+            return None
 
         store = self._ensure_console_chat_store()
         session_id = store.active_session_id
         composer = self._console_composer_or_none()
         if session_id != application.target_session_id or composer is None:
             self._warn_prompt_application(stale_copy)
-            return False
+            return None
         settings = store.session_settings(session_id)
         if settings is None:
             self._warn_prompt_application(stale_copy)
-            return False
+            return None
         if application.apply_system and (
             fingerprint_system_text(str(settings.system_prompt or ""))
             != application.system_fingerprint
         ):
             self._warn_prompt_application(stale_copy)
-            return False
+            return None
 
         if destination == "replace_snapshot":
             if (
@@ -2089,11 +2394,32 @@ class ConsolePromptsController:
                 or composer.capture_draft_snapshot() != captured_snapshot
             ):
                 self._warn_prompt_application(stale_copy)
-                return False
+                return None
 
-        checkpoint = composer.capture_transaction_checkpoint()
+        return _ConsolePromptApplicationTransaction(
+            application,
+            captured_snapshot,
+            store,
+            session_id,
+            composer,
+            settings,
+            composer.capture_transaction_checkpoint(),
+            stale_copy,
+            composer.draft_text(),
+        )
+
+    def _mutate_guarded_prompt_draft(self, transaction, *, record_owned=False):
+        application, captured_snapshot = (
+            transaction.application,
+            transaction.captured_snapshot,
+        )
+        destination = application.destination
+        composer, store, session_id = (
+            transaction.composer,
+            transaction.store,
+            transaction.session_id,
+        )
         composer_changed = False
-        persisted = True
         try:
             if destination == "replace_snapshot":
                 replacement_text = (
@@ -2116,50 +2442,92 @@ class ConsolePromptsController:
                     composer.insert_text_as_paste(application.user_text)
                 composer_changed = True
 
-            store.set_session_draft(session_id, composer.draft_text())
-            if application.apply_system:
-                _session, persisted = store.set_session_system_prompt(
-                    session_id,
-                    application.system_text,
+            draft = composer.draft_text()
+            if record_owned:
+                from ...Chat.console_guarded_prompt import (
+                    begin_guarded_draft_write,
+                    finish_guarded_draft_write,
                 )
-            if not composer_changed:
-                composer.invalidate_improvement_undo()
-        except Exception as exc:
-            try:
-                composer.rollback_transaction(checkpoint)
-            except Exception:
-                pass
-            try:
-                store.set_session_draft(session_id, composer.draft_text())
-            except Exception:
-                pass
-            if application.apply_system:
-                try:
-                    store.replace_session_settings(session_id, settings)
-                    self._sync_console_system_prompt_surfaces()
-                except Exception:
-                    pass
-            try:
-                self._sync_console_command_popup()
-            except Exception:
-                pass
-            self._warn_prompt_application(
-                stale_copy
-                if isinstance(exc, ComposerTransactionValidationError)
-                else self._PROMPT_APPLICATION_FAILED_COPY
-            )
-            return False
 
+                record = begin_guarded_draft_write(
+                    self._screen, store, session_id, draft, None
+                )
+                returned = None
+                try:
+                    returned = store.set_session_draft(session_id, draft)
+                finally:
+                    finish_guarded_draft_write(record, returned)
+            else:
+                store.set_session_draft(session_id, draft)
+        finally:
+            transaction.composer_changed = composer_changed
+            if record_owned:
+                try:
+                    transaction.composer_result = (
+                        composer.capture_transaction_checkpoint()
+                    )
+                except Exception as error:
+                    transaction.witness_error = error
+
+    def _rollback_guarded_prompt_application(self, transaction, exc):
+        application, settings = transaction.application, transaction.settings
+        composer, checkpoint = transaction.composer, transaction.checkpoint
+        store, session_id = transaction.store, transaction.session_id
+        try:
+            composer.rollback_transaction(checkpoint)
+        except Exception:
+            pass
+        try:
+            store.set_session_draft(session_id, composer.draft_text())
+        except Exception:
+            pass
+        if application.apply_system:
+            try:
+                store.replace_session_settings(session_id, settings)
+                self._sync_console_system_prompt_surfaces()
+            except Exception:
+                pass
+        return self._report_guarded_prompt_failure(transaction, exc)
+
+    def _report_guarded_prompt_failure(
+        self, transaction, exc, *, restored=True, selected=False
+    ):
+        try:
+            self._sync_console_command_popup()
+        except Exception as error:
+            if selected:
+                from ...Chat.console_guarded_prompt import raise_selected_refusal
+
+                raise_selected_refusal(error)
+        self._warn_prompt_application(
+            transaction.stale_copy
+            if not restored or isinstance(exc, ComposerTransactionValidationError)
+            else self._PROMPT_APPLICATION_FAILED_COPY
+        )
+        return False
+
+    def _finish_guarded_prompt_application(
+        self, transaction, persisted, *, selected=False
+    ):
+        application = transaction.application
         display_sync_failed = False
         if application.apply_system:
             try:
                 self._sync_console_system_prompt_surfaces()
-            except Exception:
+            except Exception as error:
+                if selected:
+                    from ...Chat.console_guarded_prompt import raise_selected_refusal
+
+                    raise_selected_refusal(error)
                 display_sync_failed = True
 
         try:
             self._sync_console_command_popup()
-        except Exception:
+        except Exception as error:
+            if selected:
+                from ...Chat.console_guarded_prompt import raise_selected_refusal
+
+                raise_selected_refusal(error)
             display_sync_failed = True
         if display_sync_failed:
             self._warn_prompt_application(self._PROMPT_DISPLAY_SYNC_FAILED_COPY)
@@ -2203,10 +2571,16 @@ class ConsolePromptsController:
                 composer_fingerprint=target.composer_snapshot.fingerprint,
                 system_fingerprint=None,
             )
-            self._apply_prompt_application(
-                application,
-                captured_snapshot=target.composer_snapshot,
-            )
+            from ...Chat.console_guarded_prompt import queue_guarded_prompt
+
+            if (
+                queue_guarded_prompt(self, application, target.composer_snapshot)
+                is None
+            ):
+                self._apply_prompt_application(
+                    application,
+                    captured_snapshot=target.composer_snapshot,
+                )
             return
 
         from ...Widgets.Console.prompt_variables_dialog import (
@@ -2229,10 +2603,16 @@ class ConsolePromptsController:
             application: PromptVariableApplication | None,
         ) -> None:
             if application is not None:
-                self._apply_prompt_application(
-                    application,
-                    captured_snapshot=target.composer_snapshot,
-                )
+                from ...Chat.console_guarded_prompt import queue_guarded_prompt
+
+                if (
+                    queue_guarded_prompt(self, application, target.composer_snapshot)
+                    is None
+                ):
+                    self._apply_prompt_application(
+                        application,
+                        captured_snapshot=target.composer_snapshot,
+                    )
             else:
                 self._focus_console_composer_if_needed(force=True)
 
@@ -2253,7 +2633,28 @@ class ConsolePromptsController:
         its result) via paste semantics, so an oversized body still
         collapses to a token exactly like a real paste would.
         """
-        target = self._capture_prompt_replace_target()
+        from tldw_chatbook.Chat.console_parent_settings import wait_parent_settings
+
+        from tldw_chatbook.Chat.console_parent_settings import (
+            ParentSettingsOriginChanged,
+        )
+
+        try:
+            await wait_parent_settings(self._screen)
+        except ParentSettingsOriginChanged:
+            from .command_handoff import refuse_if_chat_changed
+
+            refuse_if_chat_changed(PROMPT_COMMAND_NAME)
+            return
+        from ...Chat.console_guarded_prompt import capture_prompt_target
+
+        try:
+            target = await capture_prompt_target(self)
+        except ParentSettingsOriginChanged:
+            from .command_handoff import refuse_if_chat_changed
+
+            refuse_if_chat_changed(PROMPT_COMMAND_NAME)
+            return
         if target is None:
             return
         query = parse.args.strip()
@@ -2281,11 +2682,26 @@ class ConsolePromptsController:
         target: _ConsolePromptReplaceTarget | None = None,
     ) -> None:
         """Open the prompt picker for `/prompt`, inserting whatever is chosen."""
+        from tldw_chatbook.Chat.console_parent_settings import wait_parent_settings
+
+        from tldw_chatbook.Chat.console_parent_settings import (
+            ParentSettingsOriginChanged,
+        )
+
+        try:
+            await wait_parent_settings(self._screen)
+        except ParentSettingsOriginChanged:
+            return
         from ...Widgets.Console.console_prompt_picker_modal import (
             ConsolePromptPickerModal,
         )
 
-        captured_target = target or self._capture_prompt_replace_target()
+        from ...Chat.console_guarded_prompt import capture_prompt_target
+
+        try:
+            captured_target = target or await capture_prompt_target(self)
+        except ParentSettingsOriginChanged:
+            return
         if captured_target is None:
             return
 
@@ -2378,6 +2794,15 @@ class ConsolePromptsController:
             handoffs.acknowledge(claim)
             self._warn_prompt_application(self._PROMPT_APPEND_EMPTY_COPY)
             return
+        from ...Chat.console_guarded_prompt import (
+            queue_guarded_prompt,
+            join_guarded_prompt,
+        )
+
+        capture = queue_guarded_prompt(self, application, None, claim=(handoffs, claim))
+        if capture is not None:
+            await join_guarded_prompt(capture)
+            return
         if self._console_setup_blocked_reason():
             handoffs.acknowledge(claim)
             self.app_instance.notify(
@@ -2463,6 +2888,19 @@ class ConsolePromptsController:
         matches at either stage fall back to the apply-system picker mode
         (Task 11), prefilled with the typed args.
         """
+        from tldw_chatbook.Chat.console_parent_settings import wait_parent_settings
+
+        from tldw_chatbook.Chat.console_parent_settings import (
+            ParentSettingsOriginChanged,
+        )
+
+        try:
+            await wait_parent_settings(self._screen)
+        except ParentSettingsOriginChanged:
+            from .command_handoff import refuse_if_chat_changed
+
+            refuse_if_chat_changed(SYSTEM_COMMAND_NAME)
+            return
         args = parse.args.strip()
         if not args:
             await self._open_console_system_prompt_editor()
@@ -2473,6 +2911,17 @@ class ConsolePromptsController:
 
         # The search let the user switch chats, and "the active session"
         # below would then be the other chat (TASK-33622.16).
+        from tldw_chatbook.Chat.console_parent_settings import (
+            ParentSettingsOriginChanged,
+        )
+
+        try:
+            await wait_parent_settings(self._screen)
+        except ParentSettingsOriginChanged:
+            from .command_handoff import refuse_if_chat_changed
+
+            refuse_if_chat_changed(SYSTEM_COMMAND_NAME)
+            return
         if refuse_if_chat_changed(SYSTEM_COMMAND_NAME):
             return
         if resolved is not None:
@@ -2494,7 +2943,10 @@ class ConsolePromptsController:
                     CONSOLE_SYSTEM_PROMPT_NO_SYSTEM_PART_TEMPLATE.format(name=name)
                 )
                 return
-            self._apply_console_session_system_prompt(system_prompt)
+            from ...Chat.console_parent_settings import apply_parent_system_prompt
+
+            if not await apply_parent_system_prompt(self._screen, system_prompt):
+                self._apply_console_session_system_prompt(system_prompt)
             # Only the draft the send captured: text typed during the search
             # stays (TASK-33622.16).
             from .command_draft import take_command_draft
@@ -2522,25 +2974,6 @@ class ConsolePromptsController:
             ConsolePromptPickerModal,
         )
 
-        def _apply_picker_choice(record: Optional[Mapping[str, Any]]) -> None:
-            self._focus_console_composer_if_needed(force=True)
-            if record is None:
-                return
-            if self._is_recipe_prompt_record(record):
-                self.app_instance.notify(
-                    self._RECIPE_EXECUTION_BLOCKED_COPY,
-                    severity="warning",
-                )
-                return
-            # Blank check only via strip(); the applied value is the raw
-            # prompt text so formatting survives verbatim.
-            raw_system_prompt = record.get("system_prompt")
-            system_prompt = (
-                raw_system_prompt if isinstance(raw_system_prompt, str) else ""
-            )
-            if not system_prompt.strip():
-                return
-            self._apply_console_session_system_prompt(system_prompt)
 
         self.push_screen(
             ConsolePromptPickerModal(
@@ -2548,18 +2981,47 @@ class ConsolePromptsController:
                 initial_query=initial_query,
                 prompt_search=self._console_prompt_search,
             ),
-            callback=_apply_picker_choice,
+            callback=self._apply_console_system_prompt_picker_result,
         )
 
     async def _open_console_system_prompt_editor(self) -> None:
-        """Open the system prompt editor modal for the active Console session."""
-        settings = self._ensure_active_console_session_settings()
+        """Retain the complete selected editor opener on its original visit."""
+        from ...Chat.console_parent_settings import (
+            ParentSettingsOriginChanged,
+            run_parent_async_settings_action,
+        )
 
-        def _apply_modal_result(result: Optional[str]) -> None:
-            self._focus_console_composer_if_needed(force=True)
-            if result is None:
+        try:
+            if await run_parent_async_settings_action(
+                self._screen, "prompt-editor-open", ()
+            ):
                 return
-            self._apply_console_session_system_prompt(result)
+            await self._run_console_system_prompt_editor()
+        except ParentSettingsOriginChanged:
+            return
+
+    async def _run_console_system_prompt_editor(self) -> None:
+        """Open the system prompt editor modal for the active Console session."""
+        from tldw_chatbook.Chat.console_parent_settings import wait_parent_settings
+
+        from tldw_chatbook.Chat.console_parent_settings import (
+            ParentSettingsOriginChanged,
+        )
+
+        try:
+            await wait_parent_settings(self._screen)
+        except ParentSettingsOriginChanged:
+            return
+        from ...Chat.console_parent_settings import (
+            _async_settings_action,
+            ensure_parent_async_action_settings,
+        )
+
+        settings = (
+            self._ensure_active_console_session_settings()
+            if _async_settings_action(self._screen) is None
+            else await ensure_parent_async_action_settings(self._screen)
+        )
 
         # TASK-34720: status-line and rail-line opens run as workers, so a
         # burst queues several; only the one that finds the Console on top
@@ -2575,7 +3037,7 @@ class ConsolePromptsController:
                 system_prompt=settings.system_prompt,
                 save_to_library=self._save_console_system_prompt_to_library,
             ),
-            callback=_apply_modal_result,
+            callback=self._apply_console_system_prompt_editor_result,
         )
 
     async def _save_console_system_prompt_to_library(self, name: str, text: str) -> str:
@@ -2647,3 +3109,190 @@ class ConsolePromptsController:
         return CONSOLE_SYSTEM_PROMPT_SAVE_STATUS_COPY.get(
             outcome, CONSOLE_SYSTEM_PROMPT_SAVE_STATUS_COPY["error"]
         )
+
+    def _apply_console_system_prompt_picker_result(
+        self, record: Optional[Mapping[str, Any]]
+    ) -> None:
+        from tldw_chatbook.Chat.console_parent_settings import (
+            defer_parent_settings_action,
+        )
+
+        if defer_parent_settings_action(
+            self._screen,
+            "prompt-picker-result",
+            (dict(record) if record is not None else None,),
+        ):
+            return
+        applies, value = self._prepare_console_system_prompt_picker_result(record)
+        if applies:
+            self._apply_console_session_system_prompt(value)
+
+    def _prepare_console_system_prompt_picker_result(self, record):
+        self._focus_console_composer_if_needed(force=True)
+        if record is None:
+            return False, None
+        if self._is_recipe_prompt_record(record):
+            self.app_instance.notify(
+                self._RECIPE_EXECUTION_BLOCKED_COPY,
+                severity="warning",
+            )
+            return False, None
+        # Blank check only via strip(); the applied value is the raw
+        # prompt text so formatting survives verbatim.
+        raw_system_prompt = record.get("system_prompt")
+        system_prompt = raw_system_prompt if isinstance(raw_system_prompt, str) else ""
+        if not system_prompt.strip():
+            return False, None
+        return True, system_prompt
+
+    def _apply_console_system_prompt_editor_result(self, result: Optional[str]) -> None:
+        from tldw_chatbook.Chat.console_parent_settings import (
+            defer_parent_settings_action,
+        )
+
+        if defer_parent_settings_action(
+            self._screen, "prompt-editor-result", (result,)
+        ):
+            return
+        applies, value = self._prepare_console_system_prompt_editor_result(result)
+        if applies:
+            self._apply_console_session_system_prompt(value)
+
+    def _prepare_console_system_prompt_editor_result(self, result):
+        self._focus_console_composer_if_needed(force=True)
+        if result is None:
+            return False, None
+        return True, result
+
+
+_selected_prompt_settings_actions = {
+    "_run_console_system_prompt_editor": ConsolePromptsController._run_console_system_prompt_editor,
+    "_open_console_prompts_modal": ConsolePromptsController._open_console_prompts_modal,
+    "_apply_console_system_prompt_picker_result": ConsolePromptsController._apply_console_system_prompt_picker_result,
+    "_apply_console_system_prompt_editor_result": ConsolePromptsController._apply_console_system_prompt_editor_result,
+}
+
+
+_selected_parent_settings_helpers = (
+    (
+        "_prepare_console_system_prompt_picker_result",
+        ConsolePromptsController._prepare_console_system_prompt_picker_result,
+        ConsolePromptsController._prepare_console_system_prompt_picker_result.__code__,
+    ),
+    (
+        "_prepare_console_system_prompt_editor_result",
+        ConsolePromptsController._prepare_console_system_prompt_editor_result,
+        ConsolePromptsController._prepare_console_system_prompt_editor_result.__code__,
+    ),
+)
+
+
+_selected_parent_settings_action_codes = (
+    (
+        ConsolePromptsController._run_console_system_prompt_editor,
+        ConsolePromptsController._run_console_system_prompt_editor.__code__,
+    ),
+    (
+        ConsolePromptsController._open_console_system_prompt_editor,
+        ConsolePromptsController._open_console_system_prompt_editor.__code__,
+    ),
+    (
+        ConsolePromptsController._open_console_prompts_modal,
+        ConsolePromptsController._open_console_prompts_modal.__code__,
+    ),
+    (
+        ConsolePromptsController._apply_console_system_prompt_picker_result,
+        ConsolePromptsController._apply_console_system_prompt_picker_result.__code__,
+    ),
+    (
+        ConsolePromptsController._apply_console_system_prompt_editor_result,
+        ConsolePromptsController._apply_console_system_prompt_editor_result.__code__,
+    ),
+)
+
+
+_selected_prompt_flow_definitions = (
+    (
+        "_prepare_improvement_activation",
+        _ConsolePromptImprovementFlow._prepare_improvement_activation,
+        _ConsolePromptImprovementFlow._prepare_improvement_activation.__code__,
+    ),
+    (
+        "_prepare_improvement_snapshot",
+        _ConsolePromptImprovementFlow._prepare_improvement_snapshot,
+        _ConsolePromptImprovementFlow._prepare_improvement_snapshot.__code__,
+    ),
+    (
+        "_finish_improvement_activation",
+        _ConsolePromptImprovementFlow._finish_improvement_activation,
+        _ConsolePromptImprovementFlow._finish_improvement_activation.__code__,
+    ),
+    (
+        "_finish_manual_resolution",
+        _ConsolePromptImprovementFlow._finish_manual_resolution,
+        _ConsolePromptImprovementFlow._finish_manual_resolution.__code__,
+    ),
+    (
+        "_finish_improvement_snapshot",
+        _ConsolePromptImprovementFlow._finish_improvement_snapshot,
+        _ConsolePromptImprovementFlow._finish_improvement_snapshot.__code__,
+    ),
+    (
+        "_apply_reviewed_user_prompt",
+        _ConsolePromptImprovementFlow._apply_reviewed_user_prompt,
+        _ConsolePromptImprovementFlow._apply_reviewed_user_prompt.__code__,
+    ),
+    (
+        "_active_system_fingerprint",
+        _ConsolePromptImprovementFlow._active_system_fingerprint,
+        _ConsolePromptImprovementFlow._active_system_fingerprint.__code__,
+    ),
+    (
+        "_stale_reason",
+        _ConsolePromptImprovementFlow._stale_reason,
+        _ConsolePromptImprovementFlow._stale_reason.__code__,
+    ),
+    (
+        "activate_improvement_context",
+        _ConsolePromptImprovementFlow.activate_improvement_context,
+        _ConsolePromptImprovementFlow.activate_improvement_context.__code__,
+    ),
+    (
+        "apply_improvement_result",
+        _ConsolePromptImprovementFlow.apply_improvement_result,
+        _ConsolePromptImprovementFlow.apply_improvement_result.__code__,
+    ),
+    (
+        "build_improvement_snapshot",
+        _ConsolePromptImprovementFlow.build_improvement_snapshot,
+        _ConsolePromptImprovementFlow.build_improvement_snapshot.__code__,
+    ),
+    (
+        "capture_manual_resolution",
+        _ConsolePromptImprovementFlow.capture_manual_resolution,
+        _ConsolePromptImprovementFlow.capture_manual_resolution.__code__,
+    ),
+    (
+        "retry_improvement_persistence",
+        _ConsolePromptImprovementFlow.retry_improvement_persistence,
+        _ConsolePromptImprovementFlow.retry_improvement_persistence.__code__,
+    ),
+)
+
+
+_selected_guarded_prompt_helpers = tuple(
+    (
+        name,
+        getattr(ConsolePromptsController, name),
+        getattr(ConsolePromptsController, name).__code__,
+    )
+    for name in (
+        "_capture_prompt_replace_target",
+        "_prepare_guarded_prompt_application",
+        "_mutate_guarded_prompt_draft",
+        "_rollback_guarded_prompt_application",
+        "_report_guarded_prompt_failure",
+        "_finish_guarded_prompt_application",
+        "_warn_prompt_application",
+    )
+)

@@ -272,7 +272,7 @@ def main():
             and frame.f_locals.get('operation_owned_connection') is base_db.operation_owned_connection
             and type(current) is FunctionType and current.__code__ is current_code
             and producer.f_code is producer_code
-            and producer.f_globals is preparation.__dict__
+            and producer.f_globals is preparation.run_preparation_read.__globals__
             and type(read) is preparation.ConsolePreparationRead
             and read.creator is controller and read.session_id is None
             and type(read.callback) is FunctionType and read.callback.__code__ is invoke_code

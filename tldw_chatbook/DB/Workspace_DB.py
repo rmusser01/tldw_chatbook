@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Union
 
+from tldw_chatbook.Utils.definition_records import capture_definitions
 from . import store_kernel as _store_kernel
 from .base_db import BaseDB
 from .store_kernel import SQLiteStoreKernel
@@ -344,11 +345,22 @@ COMMIT;
     #: stays db.base, so no per-store policy entry is minted.
     _kernel_sqlite_owner = "db.base"
 
-    def __init__(self, db_path: Union[str, Path], client_id: str = "default") -> None:
+    def __init__(
+        self,
+        db_path: Union[str, Path],
+        client_id: str = "default",
+        *,
+        initialize_schema: bool = True,
+        must_exist: bool = False,
+    ) -> None:
+        self._must_exist = must_exist
         self._init_store_kernel()
         self._join_connection_registry(db_path)  # quit's idle close (TASK-39117)
         try:
-            super().__init__(db_path, client_id)
+            if initialize_schema:
+                super().__init__(db_path, client_id)
+            else:
+                super().__init__(db_path, client_id, initialize_schema=False)
         except BaseException:
             self.close()
             raise
@@ -358,7 +370,10 @@ COMMIT;
     ) -> sqlite3.Connection:
         """Open through BaseDB's db.base path (ADR-353 provenance section)."""
         return BaseDB._get_connection(
-            self, operation_deadline=operation_deadline, check_same_thread=False
+            self,
+            operation_deadline=operation_deadline,
+            check_same_thread=False,
+            **({"must_exist": True} if self._must_exist else {}),
         )
 
     def _configure_connection(
@@ -921,3 +936,17 @@ _RUN_LOG_PROBE_SOURCE = (
         )
     ),
 )
+
+
+# Definition-time anchors for the fixed key command; never a lazy-import baseline.
+_KEY_PROCESS_DEFINITIONS = capture_definitions(
+    (
+        (WorkspaceDB, "__init__", WorkspaceDB.__init__),
+        (WorkspaceDB, "_open_connection", WorkspaceDB._open_connection),
+        (WorkspaceDB, "_configure_connection", WorkspaceDB._configure_connection),
+        (WorkspaceDB, "get_schema_version", WorkspaceDB.get_schema_version),
+    )
+)
+
+_KEY_PROCESS_GLOBALS = globals()
+_KEY_PROCESS_DEFINITIONS += ((globals(), "WorkspaceDB", WorkspaceDB, ()),)

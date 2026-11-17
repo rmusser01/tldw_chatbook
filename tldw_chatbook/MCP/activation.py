@@ -2,6 +2,7 @@
 
 import asyncio
 import sys
+from contextlib import contextmanager, nullcontext
 from collections.abc import Mapping
 from functools import wraps
 from pathlib import Path
@@ -78,13 +79,28 @@ _guard = RecoveryAdmissionGuard(
 )
 
 
+@contextmanager
 def execution(service, *, sources=()):
     """Hold real leases in this task/thread/PID through the accepted effect.
 
     Sources are observations, not permissions. Worker threads reacquire them;
     copied contexts cannot borrow another execution's accepted leases.
     """
-    return _guard.execution(service, sources=sources)
+    from tldw_chatbook.Chat.console_control_mcp import (
+        observe_activation,
+        failed_activation_entry,
+    )
+
+    entered = False
+    try:
+        with _guard.execution(service, sources=sources):
+            entered = True
+            observe_activation(_guard.context.get())
+            yield
+    except BaseException:
+        if not entered:
+            failed_activation_entry()
+        raise
 
 
 def guarded(function):
@@ -116,13 +132,23 @@ def server_branch_guard(function):
 async def in_worker(service, function, *args):
     """Worker admission survives cancellation of its asyncio waiter."""
     sources = _guard.captured_sources(service)
+    from tldw_chatbook.Chat.console_control_mcp import capture_worker, await_worker
+
+    worker = capture_worker(service, function, args)
 
     def run():
-        with _guard.worker_isolation():
-            with execution(service, sources=sources):
-                return function(*args)
+        with worker.observe() if worker is not None else nullcontext():
+            with _guard.worker_isolation():
+                with execution(service, sources=sources):
+                    if worker is not None:
+                        worker.library_handoff()
+                    return function(*args) if worker is None else worker.invoke()
 
-    return await asyncio.to_thread(run)
+    return (
+        await asyncio.to_thread(run)
+        if worker is None
+        else await await_worker(worker, run)
+    )
 
 
 # These protocol calls only inspect saved local descriptors/status. Resource and

@@ -27,6 +27,7 @@ from weakref import WeakValueDictionary
 
 from loguru import logger
 
+from tldw_chatbook.Utils.definition_records import capture_definitions
 from tldw_chatbook.Utils.private_paths import lexical_path
 
 from .private_sqlite import connect_private_sqlite
@@ -1266,3 +1267,26 @@ _CHARACTER_REFRESH_READERS = tuple(
         descriptor.__func__ if isinstance(descriptor, staticmethod) else descriptor,
     )
 )
+
+
+# Definition-time anchors for the fixed key command; never a lazy-import baseline.
+_KEY_PROCESS_DEFINITIONS = capture_definitions(
+    (
+        (BaseDB, "__init__", BaseDB.__init__),
+        (BaseDB, "_get_connection", BaseDB._get_connection),
+        (
+            globals(),
+            "operation_owned_connection",
+            globals().get("operation_owned_connection"),
+        ),
+        (
+            globals(),
+            "_operation_owned_connection",
+            globals().get("_operation_owned_connection"),
+        ),
+        (globals(), "connect_private_sqlite", globals().get("connect_private_sqlite")),
+    )
+)
+
+_KEY_PROCESS_GLOBALS = globals()
+_KEY_PROCESS_DEFINITIONS += ((globals(), "BaseDB", BaseDB, ()),)

@@ -15,9 +15,87 @@ from tldw_chatbook.Agents import hook_permissions
 from tldw_chatbook.Backup_Recovery import raw_participants as raw
 from tldw_chatbook.Backup_Recovery import storage_admission as storage
 from tldw_chatbook.Utils import private_paths
+from tldw_chatbook.Utils import windows_files
 
 configured_source = retirement_cases.configured_source
 local_root = retirement_cases.local_root
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Counts native Windows opens and ACL checks")
+def test_warm_hook_directory_full_parent_checks_are_constant_with_depth(
+    configured_source, monkeypatch, request,
+):
+    config = configured_source
+    selector = config._get_effective_config_path()
+    original_config = selector.read_text(encoding="utf-8")
+    original_data = config.get_user_data_dir().parent
+    secure = inspect.unwrap(private_paths.secure_private_directory).__code__
+    counted = {
+        raw._check_parent_pins.__code__: "parent_checks",
+        windows_files._Native.open_handle.__code__: "native_opens",
+        windows_files._Native.security.__code__: "security_reads",
+        private_paths._open_directory_component.__code__: "components",
+    }
+    close_code = raw.close_descriptor.__code__
+    observations = []
+    for depth in (0, 4):
+        data = original_data.joinpath(*(f"depth-{index}" for index in range(depth)))
+        data.mkdir(mode=0o700, parents=True, exist_ok=True)
+        selected = selector.with_name(f"config-depth-{depth}.toml")
+        selected.write_text(
+            original_config.replace(original_data.as_posix(), data.as_posix()),
+            encoding="utf-8",
+        )
+        selected.chmod(0o600)
+        monkeypatch.setenv("TLDW_CONFIG_PATH", str(selected))
+        config = install_config_source(monkeypatch)
+        monkeypatch.setattr(hook_permissions, "config", config)
+        owner = hook_permissions.HookPermissions()
+        try:
+            warm = owner.snapshot()
+            assert warm.ready and warm.store_path.parent == data / "retirement"
+            directory = warm.store_path.parent
+            counts = dict.fromkeys((*counted.values(), "walks", "positive_closes"), 0)
+            previous = sys.getprofile()
+
+            def observe(frame, event, value, *, previous=previous, directory=directory, counts=counts, owner=owner):
+                if previous is not None:
+                    previous(frame, event, value)
+                if event == "call" and frame.f_code is secure and frame.f_locals.get("path") == directory:
+                    counts["walks"] += 1
+                label = counted.get(frame.f_code)
+                if frame.f_code is close_code and event == "return":
+                    fd, state = frame.f_locals["fd"], frame.f_locals["state"]
+                    if state.source is owner and fd not in state.descriptors:
+                        with pytest.raises(OSError):
+                            raw.os.fstat(fd)
+                        counts["positive_closes"] += 1
+                if label is None or event != "call":
+                    return
+                caller = frame.f_back
+                while caller is not None and caller.f_code is not secure:
+                    caller = caller.f_back
+                if caller is not None and caller.f_locals.get("path") == directory:
+                    counts[label] += 1
+
+            sys.setprofile(observe)
+            try:
+                current = owner.snapshot()
+            finally:
+                sys.setprofile(previous)
+            assert current.ready and current.rows == warm.rows and current.store_path == warm.store_path
+            assert counts["positive_closes"] > 0
+            observations.append(counts)
+            request.node.user_properties.append((f"depth_{depth}", json.dumps(counts)))
+        finally:
+            owner.close()
+
+    shallow, deep = observations
+    assert shallow["walks"] == deep["walks"] == 1
+    assert deep["components"] - shallow["components"] == 4
+    assert deep["native_opens"] > shallow["native_opens"] > 0
+    assert deep["security_reads"] > shallow["security_reads"] > 0
+    assert shallow["parent_checks"] == deep["parent_checks"] == 2, observations
 
 
 @pytest.fixture

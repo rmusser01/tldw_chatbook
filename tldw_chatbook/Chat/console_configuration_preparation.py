@@ -131,6 +131,44 @@ class ConsoleTurnCaptureSelection:
             object.__setattr__(self, name, None if value is None else _freeze(value))
 
 
+def _configuration_app(creator):
+    return (
+        None if getattr(creator, "domain_services", None) is not None else creator.app
+    )
+
+
+def _configuration_receiver_current(creator, app):
+    domain = getattr(creator, "domain_services", None)
+    if domain is not None:
+        domain.require_current()
+        return app is None
+    return getattr(creator, "app", app) is app
+
+
+def _domain_trust_source(source):
+    from .console_domain_skill_trust import DomainSkillTrustSource
+
+    return type(source) is DomainSkillTrustSource
+
+
+def _resident_trust(source):
+    return (
+        source.domain_services._trust
+        if _domain_trust_source(source)
+        else vars(source.app).get("_local_skill_trust_service")
+    )
+
+
+def _same_trust_owner(left, right):
+    if _domain_trust_source(left) or _domain_trust_source(right):
+        return (
+            _domain_trust_source(left)
+            and _domain_trust_source(right)
+            and left.domain_services is right.domain_services
+        )
+    return left.app is right.app
+
+
 def _ready_attribute(owner, name, backing=None, factory=None):
     """Inspect existing slots without invoking a native lazy service getter."""
     if owner is None:
@@ -214,6 +252,11 @@ def _ready_published_plugin(local, app):
 
 
 def _source_references(app, store, creator, session, *, _unused_trust=None):
+    domain = getattr(creator, "domain_services", None)
+    if domain is not None:
+        return domain.configuration_sources(
+            store, creator, session, unused_trust=_unused_trust
+        )
     registry = _ready_attribute(
         app, "workspace_registry_service", "_workspace_registry_service"
     )
@@ -298,13 +341,15 @@ def standard_console_configuration_sources(
         if session is None:
             return False
         return _standard_configuration_references(
-            app, _source_references(app, store, creator, session)
+            app,
+            _source_references(app, store, creator, session),
+            domain_services=getattr(creator, "domain_services", None),
         )
     except (AttributeError, TypeError, ValueError, RecoveryRequired):
         return False
 
 
-def _standard_configuration_references(app, refs) -> bool:
+def _standard_configuration_references(app, refs, *, domain_services=None) -> bool:
     """Share structural checks; source readiness stays with each owning route."""
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
     from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
@@ -343,7 +388,15 @@ def _standard_configuration_references(app, refs) -> bool:
         if local is not None and type(local) is not LocalSkillsService:
             return False
         loader = getattr(local, "_builtin_disabled_loader", None)
-        if loader is not None:
+        if loader is not None and domain_services is not None:
+            domain_services.require_current()
+            if (
+                type(loader) is not MethodType
+                or loader.__self__ is not domain_services
+                or loader.__func__ is not type(domain_services).disabled_builtin_skills
+            ):
+                return False
+        elif loader is not None:
             # The app wiring module is already loaded by a stock app. Do not
             # import its boot/UI dependency graph merely to check this reader.
             wiring = sys.modules.get("tldw_chatbook.app_service_wiring")
@@ -421,6 +474,8 @@ class ConsoleReceivedConfigurationPreparation:
     trust_source: Any = field(default=None, repr=False)
     trust_initial: tuple = field(default=(), repr=False)
     trust_functions: tuple = field(default=(), repr=False)
+    domain_services: Any = field(default=None, repr=False)
+    domain_sources: Any = field(default=None, repr=False)
 
 
 def _configuration_session_identity(session):
@@ -492,10 +547,11 @@ def _supported_published_skill_trust(source):
         or (
             expected is not None
             and type(value) is expected
-            and "current_fingerprint_digest" not in vars(value)  # original exact winner contract
+            and "current_fingerprint_digest"
+            not in vars(value)  # original exact winner contract
         )
         for value in (
-            vars(source.app).get("_local_skill_trust_service"),
+            _resident_trust(source),
             vars(source.local).get("_trust_service"),
         )
     )
@@ -998,7 +1054,7 @@ def _same_trust_slots(source, expected):
     return (
         type(expected) is tuple
         and len(expected) == 2
-        and vars(source.app).get("_local_skill_trust_service") is expected[0]
+        and _resident_trust(source) is expected[0]
         and vars(source.local).get("_trust_service") is expected[1]
     )
 
@@ -1022,6 +1078,10 @@ def _trust_source_records_current(source, records):
 def _skill_publisher_guard(preparation):
     """Prepare exact plain identities before the publication fence."""
     source = preparation.trust_source
+    if _domain_trust_source(source):
+        from .console_domain_skill_trust import domain_skill_publisher_guard
+
+        return domain_skill_publisher_guard(source)
     app, local = source.app, source.local
     bindings = []
     functions = []
@@ -1107,6 +1167,10 @@ def _skill_publisher_guard(preparation):
 
 
 def _skill_publisher_guard_current(source, guard):
+    if _domain_trust_source(source):
+        from .console_domain_skill_trust import domain_skill_publisher_guard_current
+
+        return domain_skill_publisher_guard_current(source, guard)
     (
         bindings,
         fields,
@@ -1217,9 +1281,13 @@ def finish_native_skill_trust_publication(marker, winner):
     # Only plain native identity checks and assignment occur under this fence.
     with runtime._execution_capacity_lock:
         if (
-            runtime._app is not source.app
+            (
+                runtime.domain_services is not source.domain_services
+                if _domain_trust_source(source)
+                else runtime._app is not source.app
+            )
             or runtime._disposed
-            or vars(source.app).get("_local_skill_trust_service") is not expected
+            or _resident_trust(source) is not expected
             or vars(source.local).get("_trust_service") is not winner
             or not _skill_publisher_guard_current(source, marker.guard)
             or not _trust_source_functions_current(preparation)
@@ -1239,7 +1307,7 @@ def _original_skill_trust_slots_current(preparation, initial):
     receipt = vars(source.local).get("_console_native_skill_trust_publication")
     return bool(
         type(receipt) is _NativeSkillTrustPublication
-        and receipt.source.app is source.app
+        and _same_trust_owner(receipt.source, source)
         and receipt.source.local is source.local
         and receipt.source.scope is source.scope
         and receipt.initial_app is initial[0]
@@ -1275,16 +1343,26 @@ def capture_console_received_configuration_preparation(
             if checked is None:
                 return None
             wiring, _metadata = checked
-            trust_source = wiring._capture_console_skill_trust_source(
-                app, vars(app).get("_skills_scope_service")
-            )
+            domain = getattr(creator, "domain_services", None)
+            if domain is not None:
+                from .console_domain_skill_trust import (
+                    capture_domain_skill_trust_source,
+                )
+
+                trust_source = capture_domain_skill_trust_source(
+                    domain, domain.sources.skills_scope
+                )
+            else:
+                trust_source = wiring._capture_console_skill_trust_source(
+                    app, vars(app).get("_skills_scope_service")
+                )
             if (
                 trust_source is None
                 or vars(trust_source.local).get("_trust_service") is not None
             ):
                 return None
             trust_initial = (
-                vars(trust_source.app).get("_local_skill_trust_service"),
+                _resident_trust(trust_source),
                 vars(trust_source.local).get("_trust_service"),
             )
             if (
@@ -1299,7 +1377,9 @@ def capture_console_received_configuration_preparation(
         refs = _source_references(
             app, store, creator, session, _unused_trust=trust_source
         )
-        if not _standard_configuration_references(app, refs):
+        if not _standard_configuration_references(
+            app, refs, domain_services=getattr(creator, "domain_services", None)
+        ):
             return None
         preparation = ConsoleReceivedConfigurationPreparation(
             app,
@@ -1313,6 +1393,12 @@ def capture_console_received_configuration_preparation(
             trust_source,
             trust_initial,
             trust_functions,
+            getattr(creator, "domain_services", None),
+            (
+                creator.domain_services.sources
+                if getattr(creator, "domain_services", None) is not None
+                else None
+            ),
         )
         if trust_source is not None and (
             not _trust_source_functions_current(preparation)
@@ -1343,6 +1429,11 @@ def require_received_configuration_preparation(
         or preparation.config.current_config_identity() != preparation.config_identity
     ):
         raise RecoveryRequired("console_snapshot_owner_changed")
+    domain = preparation.domain_services
+    if getattr(creator, "domain_services", None) is not domain:
+        raise RecoveryRequired("console_snapshot_owner_changed")
+    if domain is not None:
+        domain.require_current(preparation.domain_sources)
     source = preparation.trust_source
     if source is not None and (
         not _trust_source_functions_current(preparation)
@@ -1354,7 +1445,7 @@ def require_received_configuration_preparation(
         app, store, creator, preparation.session, _unused_trust=source
     )
     if not _standard_configuration_references(
-        app, fresh
+        app, fresh, domain_services=getattr(creator, "domain_services", None)
     ) or not _same_configuration_references(fresh, preparation.refs):
         raise RecoveryRequired("console_snapshot_owner_changed")
 
@@ -1512,12 +1603,12 @@ async def finish_console_skill_catalog_owned(
         return ConsolePreparedSkillContext(catalog, catalog.maximum)
     preparation = catalog.preparation
     source = preparation.trust_source
-    initial_winner = vars(source.app).get("_local_skill_trust_service")
+    initial_winner = _resident_trust(source)
 
     def owner_current(expected=initial_winner):
         _require_skill_catalog_current(catalog)
         require_current()
-        return vars(source.app).get("_local_skill_trust_service") is expected
+        return _resident_trust(source) is expected
 
     def native_current():
         _require_skill_catalog_current(catalog, on_loop=False)
@@ -1525,17 +1616,21 @@ async def finish_console_skill_catalog_owned(
 
     with native_skill_trust_publication(preparation) as publication:
         # No await separates winner selection from original initializer entry.
-        winner = await source.app.ensure_local_skill_trust_service(
-            _source_current=native_current,
-            _owner_current=owner_current,
-            _read_observers=(reads, *observers),
-        )
+        if _domain_trust_source(source):
+            winner = await source.domain_services.ensure_skill_trust(
+                _source_current=native_current,
+                _owner_current=owner_current,
+                _read_observers=(reads, *observers),
+            )
+        else:
+            winner = await source.app.ensure_local_skill_trust_service(
+                _source_current=native_current,
+                _owner_current=owner_current,
+                _read_observers=(reads, *observers),
+            )
         _require_skill_catalog_current(catalog)
         require_current()
-        if (
-            winner is None
-            or vars(source.app).get("_local_skill_trust_service") is not winner
-        ):
+        if winner is None or _resident_trust(source) is not winner:
             raise RecoveryRequired("console_snapshot_owner_changed")
         # Both original getters are already proven; the ready app winner prevents
         # construction here. Preserve an independently installed local winner.
@@ -1850,7 +1945,7 @@ async def capture_console_turn_configuration_owned(
             actual is not session
             or getattr(creator, "_disposed", False)
             or getattr(creator, "store", store) is not store
-            or getattr(creator, "app", app) is not app
+            or not _configuration_receiver_current(creator, app)
             or config.current_config_identity() != config_identity
             or (
                 runtime is not None
@@ -1895,15 +1990,41 @@ async def capture_console_turn_configuration_owned(
     composition_mcp = stock_mcp and not session.ephemeral
     profile, rules = await run_native(
         lambda: (
-            resolve_turn_tool_policy_profile_id(app, session.workspace_id),
-            resolve_turn_persona_policy_rules(app, session),
+            resolve_turn_tool_policy_profile_id(
+                app,
+                session.workspace_id,
+                **(
+                    {}
+                    if getattr(creator, "domain_services", None) is None
+                    else {"domain_services": creator.domain_services}
+                ),
+            ),
+            resolve_turn_persona_policy_rules(
+                app,
+                session,
+                **(
+                    {}
+                    if getattr(creator, "domain_services", None) is None
+                    else {"domain_services": creator.domain_services}
+                ),
+            ),
         )
     )
     maximum, mcp_sources, mcp_complete, mcp_pending = {}, (), True, False
-    if planning is None and refs.mcp is not None:
+    mcp_capture_performed = planning is None and refs.mcp is not None
+    if mcp_capture_performed:
         managed = _has_managed_console_runtime(app, creator)
         metadata = (
-            _bounded_console_metadata(app, refs.mcp, runtime)
+            _bounded_console_metadata(
+                app,
+                refs.mcp,
+                runtime,
+                **(
+                    {}
+                    if getattr(creator, "domain_services", None) is None
+                    else {"domain_services": creator.domain_services}
+                ),
+            )
             if managed
             else nullcontext()
         )
@@ -1992,6 +2113,14 @@ async def capture_console_turn_configuration_owned(
                 _mcp_capture_pending=mcp_pending,
                 _skill_capture_pending=_deferred_skills is not None,
                 _require_current=current,
+                **(
+                    {}
+                    if getattr(creator, "domain_services", None) is None
+                    else {
+                        "_capture_creator": creator,
+                        "_domain_services": creator.domain_services,
+                    }
+                ),
                 _plugin_service=None if planning is not None else refs.plugin,
                 **(
                     {
@@ -2012,7 +2141,12 @@ async def capture_console_turn_configuration_owned(
                 ),
             )
             current()
-            if composition_mcp and bounded_mcp_sources is None:
+            if (
+                composition_mcp
+                and bounded_mcp_sources is None
+                and (not mcp_capture_performed or mcp_pending)
+                and not maximum
+            ):
                 result = replace(
                     result,
                     mcp_tool_maximum=None,
@@ -2028,7 +2162,9 @@ async def capture_console_turn_configuration_owned(
     if (
         _prepared_skills is not None
         or _deferred_skills is not None
-        or _standard_configuration_references(app, refs)
+        or _standard_configuration_references(
+            app, refs, domain_services=getattr(creator, "domain_services", None)
+        )
     ):
         _mcp_capture_witness.set(
             (
@@ -2211,7 +2347,7 @@ def original_mcp_capture_matches(
     ) = witness
     if (
         creator is not controller
-        or app is not controller.app
+        or not _configuration_receiver_current(controller, app)
         or store is not controller.store
         or captured_session is not session
         or identity != _configuration_session_identity(session)
@@ -2375,7 +2511,7 @@ def remember_pending_mcp_capture(controller, session, configuration):
         return
     from tldw_chatbook import config
 
-    app, store = controller.app, controller.store
+    app, store = _configuration_app(controller), controller.store
     refs = _source_references(app, store, controller, session)
     _mcp_capture_witness.set(
         (
@@ -2518,11 +2654,7 @@ def seal_pending_queue_capture(controller, session, configuration):
             )
         app_trust, local_trust = preparation.trust_initial
     else:
-        app_trust = (
-            vars(source.app).get("_local_skill_trust_service")
-            if source is not None
-            else None
-        )
+        app_trust = _resident_trust(source) if source is not None else None
         local_trust = (
             vars(source.local).get("_trust_service") if source is not None else None
         )
@@ -2602,7 +2734,7 @@ async def capture_runtime_configuration_owned(
             agent_runtime_enabled=controller._agent_runtime_enabled,
         )
     result = await capture_console_turn_configuration_owned(
-        controller.app,
+        _configuration_app(controller),
         store,
         session_id,
         selection=selection,
@@ -2627,7 +2759,7 @@ async def capture_mounted_configuration_owned(
     """Prepare a qualified mounted selection; custom producers retain fallback."""
     from tldw_chatbook.UI.Console_Modules import turn_admission
 
-    app, store = controller.app, controller.store
+    app, store = _configuration_app(controller), controller.store
     cold_preparation = None
     if not standard_console_configuration_sources(app, store, controller, session_id=session_id):
         cold_preparation = capture_console_received_configuration_preparation(
@@ -2700,29 +2832,47 @@ async def capture_received_configuration_owned(
         raise RecoveryRequired("console_snapshot_owner_changed")
     if not isinstance(selection, ConsoleTurnCaptureSelection):
         raise TypeError("selection must be ConsoleTurnCaptureSelection")
-    app, store = controller.app, controller.store
+    app, store = _configuration_app(controller), controller.store
     session = next((row for row in store.sessions() if row.id == session_id), None)
     if session is None:
         raise KeyError(session_id)
-    service = getattr(app, "unified_mcp_service", None)
+    service = (
+        controller.domain_services.sources.control_plane
+        if getattr(controller, "domain_services", None) is not None
+        else getattr(app, "unified_mcp_service", None)
+    )
     if service is not None and not standard_console_sources(service):
         raise RecoveryRequired("console_snapshot_owner_changed")
-    app_config = getattr(app, "app_config", None)
+    app_config = (
+        controller.domain_services.sources.configuration
+        if getattr(controller, "domain_services", None) is not None
+        else getattr(app, "app_config", None)
+    )
     scratch, provider_config = controller._scratch_spaces, controller._provider_config
     identity = _configuration_session_identity(session)
     config_identity = config.current_config_identity()
 
     def current():
         if (
-            controller.app is not app
+            not _configuration_receiver_current(controller, app)
             or controller.store is not store
             or next((row for row in store.sessions() if row.id == session_id), None)
             is not session
             or _configuration_session_identity(session) != identity
             or controller._scratch_spaces is not scratch
             or controller._provider_config is not provider_config
-            or getattr(app, "app_config", None) is not app_config
-            or getattr(app, "unified_mcp_service", None) is not service
+            or (
+                controller.domain_services.sources.configuration
+                if getattr(controller, "domain_services", None) is not None
+                else getattr(app, "app_config", None)
+            )
+            is not app_config
+            or (
+                controller.domain_services.sources.control_plane
+                if getattr(controller, "domain_services", None) is not None
+                else getattr(app, "unified_mcp_service", None)
+            )
+            is not service
             or sys.modules.get("tldw_chatbook.config") is not config
             or config.current_config_identity() != config_identity
         ):
@@ -2799,7 +2949,15 @@ async def _controller_capture_turn_configuration_snapshot(
         standard_screen = is_stock_session_provider(provider)
     if provider is not None and not standard_screen:
         return synchronous_capture()
-    app = self.app
+    if getattr(self, "domain_services", None) is not None:
+        from .console_configuration_preparation import (
+            capture_runtime_configuration_owned,
+        )
+
+        return await capture_runtime_configuration_owned(
+            self, session_id, require_current=self.domain_services.require_current
+        )
+    app = _configuration_app(self)
     attachment = _mcp_attachment_source(app, self)
     app_config = getattr(app, "app_config", None)
     service = getattr(app, "unified_mcp_service", None)
@@ -2852,11 +3010,16 @@ async def _controller_capture_turn_configuration_snapshot(
             self._disposed
             or self._shutdown_requested.is_set()
             or getattr(self, "_hooks_v2_runtime", None) is not runtime
-            or (runtime is not None and (runtime._disposed
-                or runtime._chat_controller is not self
-                or runtime._chat_store is not store
-                or session_id in runtime._admission_fenced_sessions))
-            or self.app is not app
+            or (
+                runtime is not None
+                and (
+                    runtime._disposed
+                    or runtime._chat_controller is not self
+                    or runtime._chat_store is not store
+                    or session_id in runtime._admission_fenced_sessions
+                )
+            )
+            or not _configuration_receiver_current(self, app)
             or self.store is not store
             or current_session is not session
             or self._turn_context_provider is not original_provider
@@ -2979,3 +3142,32 @@ async def _controller_capture_turn_configuration_snapshot(
             mcp_capture_pending=mcp_selection.pending,
         )
     return context
+
+
+# Exact selected-domain helper definitions; legacy qualifications remain separate.
+from tldw_chatbook.Chat.console_domain_services import _definition as _domain_definition
+
+_DOMAIN_SOURCE_DEFINITIONS = tuple(
+    (name, _domain_definition(globals()[name]))
+    for name in (
+        "_configuration_app",
+        "_configuration_receiver_current",
+        "_source_references",
+        "_standard_configuration_references",
+        "standard_console_configuration_sources",
+        "capture_console_received_configuration_preparation",
+        "require_received_configuration_preparation",
+        "capture_console_turn_configuration_owned",
+        "capture_received_configuration_owned",
+        "capture_runtime_configuration_owned",
+        "capture_console_skill_catalog_owned",
+        "finish_console_skill_catalog_owned",
+        "_skill_publisher_guard",
+        "_skill_publisher_guard_current",
+        "native_skill_trust_publication",
+        "finish_native_skill_trust_publication",
+        "_same_trust_slots",
+        "_resident_trust",
+        "_domain_trust_source",
+    )
+)

@@ -158,6 +158,9 @@ async def admit_ordinary_turn(
         with tree.runtime._execution_capacity_lock:
             admitted = tree in tree.runtime._ordinary_turns
         if admitted:
+            from .console_execution_retirement import retain_ordinary_tree
+
+            retain_ordinary_tree(controller, tree)
             if source is not None:
                 source.ordinary_tree = tree
             pending = getattr(controller, "_ordinary_submissions", None)

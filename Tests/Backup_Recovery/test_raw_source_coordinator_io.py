@@ -30,6 +30,142 @@ def permission(tmp_path, monkeypatch):
     return source
 
 
+@pytest.mark.usefixtures("local_root")
+def test_permission_read_owns_one_canonical_and_one_member_admission(
+    permission, request
+):
+    """Repeated source proofs must consume the same live canonical selection."""
+    acquire_code = storage.acquire_storage.__code__
+    requests, leases = [], []
+    previous = sys.getprofile()
+
+    def observe(frame, event, result):
+        if previous is not None:
+            previous(frame, event, result)
+        if frame.f_code is acquire_code:
+            if event == "call":
+                requests.append(
+                    (frame.f_locals["path"], frame.f_locals["related_paths"])
+                )
+            elif event == "return" and result is not None:
+                leases.append(result)
+
+    sys.setprofile(observe)
+    try:
+        assert permission.get_kill_switch() is False
+    finally:
+        sys.setprofile(previous)
+    request.node.user_properties.append(
+        ("whole_permission_read_admissions", len(requests))
+    )
+    assert requests == [
+        (permission.path, ()),
+        (
+            permission.path,
+            (
+                permission.path.with_suffix(".json.tmp"),
+                permission.path.with_suffix(".json.bak"),
+            ),
+        ),
+    ]
+    assert all(lease not in storage._live_leases for lease in leases)
+    assert not any(state.source is permission for state in raw._states.values())
+    assert not any(item.source is permission for item in raw._mcp_preparations.values())
+
+
+@pytest.mark.usefixtures("local_root")
+@pytest.mark.parametrize("change", ["pause", "retarget"])
+def test_canonical_preparation_refuses_changed_source_before_payload(
+    permission, change
+):
+    from tldw_chatbook.Backup_Recovery import mcp_source_participants
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+    permission.set_kill_switch(True)
+    selected = permission.path
+    original = selected.read_bytes()
+    selected_code = mcp_source_participants._selected.__code__
+    scope_code = raw.scope.__wrapped__.__code__
+    leases_before = set(storage._live_leases)
+    changed, pauses = [], []
+    previous = sys.getprofile()
+
+    def observe(frame, event, result):
+        if previous is not None:
+            previous(frame, event, result)
+        if event != "call" or frame.f_code is not selected_code or changed:
+            return
+        parent = frame.f_back
+        while parent is not None and parent.f_code is not scope_code:
+            parent = parent.f_back
+        if parent is None or getattr(raw._local, "operation", None) is not None:
+            return
+        changed.append(True)
+        if change == "pause":
+            pauses.append(storage._begin_local_pause())
+        else:
+            permission.path = selected.with_name("foreign.json")
+
+    sys.setprofile(observe)
+    try:
+        with pytest.raises(RecoveryRequired, match="paused|selection_changed"):
+            permission.set_kill_switch(False)
+    finally:
+        sys.setprofile(previous)
+        permission.path = selected
+        for pause in pauses:
+            pause.resume()
+    assert changed
+    assert selected.read_bytes() == original
+    assert not selected.with_name("foreign.json").exists()
+    assert storage._live_leases == leases_before
+    assert not any(state.source is permission for state in raw._states.values())
+    assert not any(item.source is permission for item in raw._mcp_preparations.values())
+
+
+@pytest.mark.usefixtures("local_root")
+def test_canonical_preparation_is_private_to_its_source_and_thread(permission):
+    from tldw_chatbook.Backup_Recovery import mcp_source_participants
+
+    other = MCPPermissionStore(permission.path)
+    selected_code = mcp_source_participants._selected.__code__
+    observed = []
+    previous = sys.getprofile()
+
+    def observe(frame, event, result):
+        if previous is not None:
+            previous(frame, event, result)
+        if (
+            event != "call"
+            or frame.f_code is not selected_code
+            or observed
+            or getattr(raw._local, "operation", None) is not None
+        ):
+            return
+        own = raw.mcp_observation(permission, permission.path)
+        if own is None:
+            return
+        observed.append(own)
+        assert raw.mcp_observation(other, permission.path) is None
+        foreign = []
+        worker = threading.Thread(
+            target=lambda: foreign.append(
+                raw.mcp_observation(permission, permission.path)
+            )
+        )
+        worker.start()
+        worker.join(5)
+        assert not worker.is_alive() and foreign == [None]
+
+    sys.setprofile(observe)
+    try:
+        assert permission.get_kill_switch() is False
+    finally:
+        sys.setprofile(previous)
+    assert len(observed) == 1, "the real canonical preparation lease was not exercised"
+    assert all(lease not in storage._live_leases for lease in observed[0].values())
+
+
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("local_root")
 async def test_actual_witness_disk_read_does_not_hold_storage_coordinator(permission):
@@ -226,6 +362,7 @@ async def test_maintenance_metadata_gates_do_not_reacquire_during_accepted_pause
         return acquire(*args, **kwargs)
 
     monkeypatch.setattr(recovery_activation, "acquire_storage", observed)
+    monkeypatch.setattr(storage, "acquire_storage", observed)
 
     def update():
         with raw.scope(permission, "mcp_store", writing=True) as operation:

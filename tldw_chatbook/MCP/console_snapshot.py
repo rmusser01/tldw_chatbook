@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from inspect import getattr_static
 from pathlib import Path
 from types import FunctionType, MappingProxyType, MethodType
-from typing import Any
+from typing import Any, NamedTuple
 
 from loguru import logger
 
@@ -132,22 +132,7 @@ def _original_catalog_body_current(owner: type, name: str) -> bool:
 
 def _source_identity(source: Any) -> tuple[Any, ...]:
     """Name exact installed metadata; the actual reader still proves it natively."""
-    bound = sources._BINDINGS.get(source)
-    if bound is None or type(source) is not bound.source_type:
-        raise RecoveryRequired("mcp_source_not_installed")
-    config = bound.config
-    return (
-        source,
-        type(source),
-        Path(source.path),
-        bound,
-        config,
-        sys.modules.get("tldw_chatbook.config"),
-        config.current_config_identity(),
-        config._CONFIG_CACHE_SOURCE,
-        bound.profile,
-        bound.selected,
-    )
+    return sources.source_receipt(source)
 
 
 def _original_method(callback: Any, receiver: Any, name: str, owner: type) -> bool:
@@ -599,45 +584,88 @@ class _CapturedSources:
 
     def read_permission_payload(self):
         """Load stock policy within the existing checked source operation."""
-        permission = self.permission_owner()
-        reader = self.permission_reader
-        helpers = {name: function for name, function, *_ in _permission_load_helpers}
-        captured = None
-        if _owned_permission_load_helpers_current():
-            captured = helpers["_capture_console_owned_load"](permission)
+        from tldw_chatbook.Chat.console_control_tools import service_permission_scope
 
-        def read():
+        with service_permission_scope(self.service):
+            permission = self.permission_owner()
+            reader = self.permission_reader
+            helpers = {
+                name: function for name, function, *_ in _permission_load_helpers
+            }
+            captured = None
+            if _owned_permission_load_helpers_current():
+                entry = helpers["_capture_permission_read_entry"](
+                    permission, "load", publish=False
+                )
+                if entry is not None:
+                    from . import permission_process
+
+                    broker = permission_process.select(permission)
+                    if broker is None:
+                        result, receipt = helpers["_run_permission_read"](
+                            permission, entry, require_current=self.require_current
+                        )
+                    else:
+                        result = broker.call(
+                            "load",
+                            publish=False,
+                            _source=permission,
+                            require_current=self.require_current,
+                        )
+                        receipt = entry.receipt
+                    self.require_current()
+                    if (
+                        receipt != self.permission_identity
+                        or not _owned_permission_load_helpers_current()
+                        or not helpers["_permission_read_current"](permission, entry)
+                    ):
+                        raise RecoveryRequired("mcp_source_selection_changed")
+                    return result
+                captured = helpers["_capture_console_owned_load"](permission)
+
+            def read():
+                self.require_current()
+                if captured is None:
+                    return reader()
+                if not _owned_permission_load_helpers_current() or not helpers[
+                    "_console_owned_load_current"
+                ](permission, captured):
+                    raise RecoveryRequired("mcp_source_selection_changed")
+                return helpers["_load_in_owned_scope"](
+                    permission, getattr(raw._local, "operation", None), captured
+                )
+
+            result, receipt = _checked_read(permission, read)
             self.require_current()
-            if captured is None:
-                return reader()
-            if not _owned_permission_load_helpers_current() or not helpers[
-                "_console_owned_load_current"
-            ](permission, captured):
+            if (
+                receipt != self.permission_identity
+                or captured is not None
+                and (
+                    not _owned_permission_load_helpers_current()
+                    or not helpers["_console_owned_load_current"](permission, captured)
+                )
+            ):
                 raise RecoveryRequired("mcp_source_selection_changed")
-            return helpers["_load_in_owned_scope"](
-                permission, getattr(raw._local, "operation", None), captured
-            )
+            return result
 
-        result, receipt = _checked_read(permission, read)
-        self.require_current()
-        if (
-            receipt != self.permission_identity
-            or captured is not None
-            and (
-                not _owned_permission_load_helpers_current()
-                or not helpers["_console_owned_load_current"](permission, captured)
-            )
-        ):
-            raise RecoveryRequired("mcp_source_selection_changed")
-        return result
 
     def permission_call(self, call):
-        permission = self.permission_owner()
-        result, receipt = _checked_read(permission, lambda: call(permission))
-        self.require_current()
-        if receipt != self.permission_identity:
-            raise RecoveryRequired("mcp_source_selection_changed")
-        return result
+        from . import permission_process
+        from tldw_chatbook.Chat.console_control_tools import service_permission_scope
+
+        with service_permission_scope(self.service):
+            permission = self.permission_owner()
+            broker = permission_process.select(permission)
+            if broker is None:
+                result, receipt = _checked_read(permission, lambda: call(permission))
+            else:
+                with permission_process.reservation(permission, self.require_current):
+                    result = call(permission)
+                    receipt = sources.source_receipt(permission)
+            self.require_current()
+            if receipt != self.permission_identity:
+                raise RecoveryRequired("mcp_source_selection_changed")
+            return result
 
     def log_owner(self):
         self.require_current()
@@ -749,6 +777,37 @@ def _mcp_metadata_is_closed(service):
     )
 
 
+class _DomainBoundedPolicy(NamedTuple):
+    domain_services: Any
+    policy: Any
+    runtime: Any
+    activity: Any
+
+
+def _domain_bounded_policy_source(domain, service):
+    from tldw_chatbook.runtime_policy.enforcement import _console_local_listing_source
+
+    domain.require_current()
+    local = getattr_static(service, "local_service", None)
+    if not (
+        _stock_manifest_is_loaded(service)
+        and domain.sources.control_plane is service
+        and getattr_static(local, "_require_allowed", None)
+        is _ORIGINAL_METHODS[(LocalMCPControlService, "_require_allowed")]
+        and _original_class_member(LocalMCPControlService, "_require_allowed")
+        and _original_catalog_body_current(LocalMCPControlService, "manifest_provider")
+        and LocalMCPControlService._require_allowed.__globals__.get(
+            "RuntimeSourceState"
+        )
+        is sys.modules["tldw_chatbook.runtime_policy.types"].RuntimeSourceState
+    ):
+        return None
+    enforcer = getattr_static(local, "policy_enforcer", None)
+    if enforcer is not domain.sources.policy_enforcer:
+        return None
+    return _console_local_listing_source(enforcer, _LISTING_ACTIONS)
+
+
 def _bounded_policy_source(app, service):
     from tldw_chatbook.runtime_policy.enforcement import _console_local_listing_source
 
@@ -771,6 +830,22 @@ def _bounded_policy_source(app, service):
 
 
 def _bounded_policy_current(service, bounded_policy):
+    if type(bounded_policy) is _DomainBoundedPolicy:
+        domain, original, runtime, activity = bounded_policy
+        current = _domain_bounded_policy_source(domain, service)
+        return (
+            domain.runtime is runtime
+            and runtime.domain_services is domain
+            and runtime._worktree_activity is activity
+            and current is not None
+            and current[0] is original[0]
+            and current[1] is original[1]
+            and current[2] is original[2]
+            and all(
+                now[0] is before[0] and now[1:] == before[1:]
+                for now, before in zip(current[3], original[3], strict=True)
+            )
+        )
     app, original, runtime, activity = bounded_policy
     current = _bounded_policy_source(app, service)
     return (
@@ -788,19 +863,30 @@ def _bounded_policy_current(service, bounded_policy):
 
 
 @asynccontextmanager
-async def _bounded_console_metadata(app, service, runtime):
+async def _bounded_console_metadata(app, service, runtime, *, domain_services=None):
     """Join only stock app metadata on the caller's finite preparation owner."""
     from threading import get_ident
 
     from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
     from tldw_chatbook.Workspaces.worktree_activity import WorktreeActivity
 
-    policy = _bounded_policy_source(app, service)
+    policy = (
+        _domain_bounded_policy_source(domain_services, service)
+        if domain_services is not None
+        else _bounded_policy_source(app, service)
+    )
     lock = getattr_static(service, "_console_metadata_lock", None)
     if (
         policy is None
         or type(runtime) is not ConsoleRuntime
-        or getattr_static(app, "console_runtime", None) is not runtime
+        or (
+            (
+                domain_services.runtime is not runtime
+                or runtime.domain_services is not domain_services
+            )
+            if domain_services is not None
+            else getattr_static(app, "console_runtime", None) is not runtime
+        )
         or runtime._receipt_owner_thread_id != get_ident()
         or type(lock) is not asyncio.Lock
         or not standard_console_catalog_sources(service)
@@ -817,7 +903,11 @@ async def _bounded_console_metadata(app, service, runtime):
     if type(activity) is not WorktreeActivity:
         yield None
         return
-    source = (app, policy, runtime, activity)
+    source = (
+        _DomainBoundedPolicy(domain_services, policy, runtime, activity)
+        if domain_services is not None
+        else (app, policy, runtime, activity)
+    )
     async with lock:
         if not (
             _bounded_policy_current(service, source)
@@ -972,14 +1062,19 @@ async def _capture_console_definition_selection(
                     return _DefinitionSelection(MappingProxyType({}), (), False, True)
 
                 def audit_changes():
-                    for tool in changed:
-                        captured.require_current()
-                        captured.audit_writer(
-                            captured.permission,
-                            tool,
-                            profile_id=profile_id,
-                            _captured_execution_log=captured.log_owner,
-                        )
+                    from tldw_chatbook.Chat.console_control_tools import (
+                        service_permission_scope,
+                    )
+
+                    with service_permission_scope(service):
+                        for tool in changed:
+                            captured.require_current()
+                            captured.audit_writer(
+                                captured.permission,
+                                tool,
+                                profile_id=profile_id,
+                                _captured_execution_log=captured.log_owner,
+                            )
 
                 await run_native(audit_changes)
             captured.require_current()
@@ -1332,4 +1427,17 @@ _CONTROLLER_PIPELINE_CHECK = (
     controller_precheck_pipeline_current.__code__,
     controller_precheck_pipeline_current.__globals__,
     _capture_controller_inputs(controller_precheck_pipeline_current),
+)
+
+
+# Exact selected-domain helper definitions; legacy qualifications remain separate.
+from tldw_chatbook.Chat.console_domain_services import _definition as _domain_definition
+
+_DOMAIN_SOURCE_DEFINITIONS = tuple(
+    (name, _domain_definition(globals()[name]))
+    for name in (
+        "_domain_bounded_policy_source",
+        "_bounded_policy_current",
+        "_bounded_console_metadata",
+    )
 )

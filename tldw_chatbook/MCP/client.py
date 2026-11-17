@@ -650,6 +650,10 @@ class _StdioJSONRPCConnection:
         if self._reader_unavailable or self._cleanup_complete:
             raise RuntimeError("Connection is closed")
 
+        from tldw_chatbook.Chat.console_control_tools import bind_mcp_transport
+
+        control_dispatch = bind_mcp_transport(self, method, params, _dispatch)
+
         request_id = next(self._request_ids)
         loop = asyncio.get_running_loop()
         future: asyncio.Future[Dict[str, Any]] = loop.create_future()
@@ -675,6 +679,11 @@ class _StdioJSONRPCConnection:
                     "params": self.profile.params(params or {}, self.client_name),
                 },
                 **({"_dispatch": _dispatch} if _dispatch is not None else {}),
+                **(
+                    {"_control_dispatch": control_dispatch}
+                    if control_dispatch is not None
+                    else {}
+                ),
             )
             sent = True
             return await asyncio.wait_for(
@@ -1000,6 +1009,7 @@ class _StdioJSONRPCConnection:
         payload: Dict[str, Any],
         *,
         _dispatch: MCPDispatchObservation | None = None,
+        _control_dispatch=None,
     ) -> None:
         stdin = getattr(self.process, "stdin", None)
         if stdin is None:
@@ -1015,6 +1025,8 @@ class _StdioJSONRPCConnection:
                 raise RuntimeError("MCP connection closed")
             if _dispatch is not None:
                 _dispatch.state = "uncertain"
+            if _control_dispatch is not None:
+                _control_dispatch.handoff(self, _dispatch)
             stdin.write(encoded)
             drain = getattr(stdin, "drain", None)
             if callable(drain):

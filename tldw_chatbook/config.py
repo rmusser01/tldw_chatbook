@@ -58,6 +58,7 @@ from loguru import logger
 # Local Imports
 from tldw_chatbook.Backup_Recovery import profile_paths
 from tldw_chatbook.Backup_Recovery import config_participants as _config_participants
+from tldw_chatbook.Utils.definition_records import capture_definitions
 from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 from tldw_chatbook.Constants import DEFAULT_SPLASH_DURATION_SECONDS
 
@@ -8779,6 +8780,66 @@ _COLLECTIONS_SETUP_SOURCE = _config_participants.record_config_sources(
     )
 )
 _FIRST_SEND_PERSISTENCE_SOURCE = _config_participants.record_first_send_sources(globals())
+
+
+# Reuse already-recorded selectors; only the default base reader lacked an anchor.
+_KEY_PROCESS_GLOBALS = globals()
+_KEY_PROCESS_DEFINITIONS = (
+    tuple(
+        (
+            owner,
+            name,
+            outer,
+            tuple(
+                (
+                    function,
+                    code,
+                    defaults,
+                    keywords,
+                    items,
+                    closure,
+                    tuple(value for _cell, value in cells),
+                )
+                for function, code, _defining, defaults, keywords, items, closure, cells, _wrapped in _RUN_LOG_PROBE_SOURCE[
+                    5
+                ]
+                if function
+                in (
+                    outer,
+                    getattr(outer, "__wrapped__", None),
+                    getattr(getattr(outer, "__wrapped__", None), "__wrapped__", None),
+                )
+            ),
+        )
+        for owner, name, outer in _RUN_LOG_PROBE_SOURCE[4]
+    )
+    + tuple(
+        (
+            owner,
+            name,
+            function,
+            (
+                (
+                    function,
+                    code,
+                    defaults,
+                    keywords,
+                    items,
+                    closure,
+                    tuple(value for _cell, value in cells),
+                ),
+            ),
+        )
+        for owner, name, function, code, _defining, defaults, keywords, items, closure, cells, _wrapped in _COMPACT_MODEL_CONFIG_SOURCE[
+            5
+        ]
+        if owner is globals()
+        and name in {"current_config_identity", "_get_effective_config_path"}
+    )
+    + capture_definitions(
+        ((globals(), "_default_base_data_dir", _default_base_data_dir),)
+    )
+)
 
 
 first_send_persistence_source_current = _config_participants.first_send_persistence_source_current

@@ -29,8 +29,21 @@ from tldw_chatbook.Chat.console_trace_maintenance import (
     LegacyTraceMaintenance,
     PhysicalTraceCompactor,
     TraceGarbageCollector,
+    call_owned_maintenance,
+    maintenance_error_must_propagate,
+    runtime_provider_active,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+
+def _fake_maintenance_module() -> ModuleType:
+    module = ModuleType("tldw_chatbook.Chat.console_trace_maintenance")
+    # The runtime loop now imports its physical-worker helpers from this module.
+    # Preserve those real owners while replacing only the normalization worker.
+    module.call_owned_maintenance = call_owned_maintenance
+    module.maintenance_error_must_propagate = maintenance_error_must_propagate
+    module.runtime_provider_active = runtime_provider_active
+    return module
 
 
 def _install_fake_maintenance(monkeypatch: pytest.MonkeyPatch, calls: list[str]) -> None:
@@ -44,7 +57,7 @@ def _install_fake_maintenance(monkeypatch: pytest.MonkeyPatch, calls: list[str])
             calls.append("batch")
             return SimpleNamespace(logical_complete=True, admitted=True)
 
-    module = ModuleType("tldw_chatbook.Chat.console_trace_maintenance")
+    module = _fake_maintenance_module()
     module.LegacyTraceMaintenance = _Maintenance  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, module.__name__, module)
 
@@ -131,7 +144,7 @@ async def test_a_signal_wake_tells_the_pass_it_has_work(
             self.expect_work = False
             return SimpleNamespace(logical_complete=True, admitted=True)
 
-    module = ModuleType("tldw_chatbook.Chat.console_trace_maintenance")
+    module = _fake_maintenance_module()
     module.LegacyTraceMaintenance = _Maintenance  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, module.__name__, module)
     runtime = _fast_runtime(monkeypatch)
@@ -171,7 +184,7 @@ async def test_work_written_during_an_unparked_pass_is_flagged_for_the_next(
                 chat_persistence_service.signal_trace_maintenance_work()
             return SimpleNamespace(logical_complete=True, admitted=True)
 
-    module = ModuleType("tldw_chatbook.Chat.console_trace_maintenance")
+    module = _fake_maintenance_module()
     module.LegacyTraceMaintenance = _Maintenance  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, module.__name__, module)
     runtime = _fast_runtime(monkeypatch)
@@ -204,7 +217,7 @@ async def test_one_signal_wakes_every_parked_runtime(
             calls.append(self._database)
             return SimpleNamespace(logical_complete=True, admitted=True)
 
-    module = ModuleType("tldw_chatbook.Chat.console_trace_maintenance")
+    module = _fake_maintenance_module()
     module.LegacyTraceMaintenance = _Maintenance  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, module.__name__, module)
     runtimes = [_fast_runtime(monkeypatch), _fast_runtime(monkeypatch)]
@@ -518,7 +531,7 @@ async def test_disposal_retains_original_maintenance_return_through_cancellation
             finally:
                 returned.set()
 
-    module = ModuleType("tldw_chatbook.Chat.console_trace_maintenance")
+    module = _fake_maintenance_module()
     module.LegacyTraceMaintenance = Maintenance
     monkeypatch.setitem(sys.modules, module.__name__, module)
     runtime = _fast_runtime(monkeypatch)

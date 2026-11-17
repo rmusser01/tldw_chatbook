@@ -29,10 +29,27 @@ class _EventCustodyRegistry:
         self._events = set()
 
     def returned(self, event):
+        control_retirement = None
         with self._condition:
             if event.retired:
                 self._events.discard(event)
+            if getattr(event, "_control_effect", None) is not None and (
+                event.retired
+                or event.returned
+                and all(
+                    target.released or not target.proven for target in event.targets
+                )
+                and (
+                    event.failed_write
+                    or any(not target.proven for target in event.targets)
+                )
+            ):
+                control_retirement = getattr(event, "_control_effect", None)
+                event._control_effect = None
             self._condition.notify_all()
+        if control_retirement is not None:
+            controls, effect = control_retirement
+            controls._finish_effect(effect, retired=event.retired)
 
     def wait_closed(self):
         """Join actual callbacks/handoffs, retaining any unproven physical custody."""
@@ -81,6 +98,7 @@ class _NativeLegacyHookSource(_EventCustodyRegistry):
 
     @contextmanager
     def capture(self, session_id):
+        source = None
         with self._condition:
             self._admissions += 1
         try:
@@ -90,10 +108,25 @@ class _NativeLegacyHookSource(_EventCustodyRegistry):
             if self.activity is None:
                 self.activity = self.runtime._worktree_activity
             source = _EventSource(self, session_id)
+            if source._control_source is not None:
+                controls = source._control_source.controls
+                source._control_effect = (
+                    controls,
+                    controls._begin_effect("hook", source, source._control_source),
+                )
             source.check()
             with execution(sources=source.sources):
                 yield source
         finally:
+            if (
+                source is not None
+                and source._control_effect is not None
+                and source._control_custody is None
+            ):
+                controls, effect = source._control_effect
+                controls._finish_effect(
+                    effect, retired=not source._control_admission_attempted
+                )
             with self._condition:
                 self._admissions -= 1
                 self._condition.notify_all()
@@ -106,6 +139,11 @@ class _EventSource:
     def __init__(self, issuer, session_id):
         self.issuer = issuer
         runtime = issuer.runtime
+        from tldw_chatbook.Chat.console_control_dispatch import require_control_source
+
+        self._control_source = require_control_source(runtime)
+        self._control_effect = self._control_custody = None
+        self._control_admission_attempted = False
         self.store, self.controller = runtime._chat_store, runtime._chat_controller
         self.session_id = session_id
         self.session = self.store._sessions.get(session_id) if self.store else None
@@ -206,6 +244,7 @@ class _EventSource:
             raise RuntimeError("native hook source changed")
 
     def admit(self, targets):
+        self._control_admission_attempted = True
         self.targets = targets
         self.check()
         issuer = self.issuer
@@ -267,6 +306,9 @@ class _EventCustody:
 
     def __init__(self, source, claim, owner, operations):
         self.source, self.claim, self.owner = source, claim, owner
+        self._control_effect = getattr(source, "_control_effect", None)
+        if self._control_effect is not None:
+            source._control_custody = self
         self.targets = tuple(_TargetCustody(self, op) for op in operations)
         self._lock = Lock()
         self.host_returned = False

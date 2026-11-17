@@ -83,6 +83,7 @@ from loguru import logger
 
 from tldw_chatbook.Backup_Recovery import mcp_source_participants as mcp_sources
 
+from tldw_chatbook.MCP import recovery_activation
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 
 SCHEMA_VERSION = 1
@@ -221,6 +222,15 @@ class _PermissionPathFence:
         observed = hashlib.sha256(
             json.dumps(payload, sort_keys=True, allow_nan=False).encode("utf-8")
         ).digest()
+        process = sys.modules.get("tldw_chatbook.MCP.permission_process")
+        command = None if process is None else process._active()
+        if command is not None:
+            if command.source._permission_publication is not self:
+                raise process.ProtocolError("foreign_publication")
+            command.exchange("Observe", {"digest": observed.hex()})
+            from ..Backup_Recovery import raw_participants as raw
+
+            raw.check(raw._local.operation, command.source.path)
         if observed != self.observed or self.token is None:
             self.observed = observed
             self.token = object()
@@ -863,21 +873,36 @@ class MCPPermissionStore:
             its ``servers`` key are dicts. Admission and uncertain native
             persistence failures propagate without resetting policy.
         """
+        payload = _read_permission_command(self)
+        if payload is not None:
+            return payload
         with self.mutation_fence():
             payload = self._load_locked()
             self._permission_publication.observe(payload)
             return payload
 
     @mcp_sources.guarded
-    def _load_locked(self) -> dict[str, Any]:
+    def _load_locked(self, *, _permission_read=None) -> dict[str, Any]:
         """Load with legacy recovery while the resolved-path fence is held."""
         from .recovery_activation import readable
 
-        if not readable(self, "mcp.permissions") or not self.path.exists():
-            return _fresh_payload()
+        if _permission_read is None:
+            if not readable(self, "mcp.permissions") or not self.path.exists():
+                return _fresh_payload()
+            reader = mcp_sources.reader(self)
+        else:
+            from tldw_chatbook.Backup_Recovery import raw_participants as raw
+
+            operation, phase = _permission_read
+            state = raw._permission_read_custody(operation, phase)
+            if state.source is not self or state.permission_read_stage != "metadata":
+                raise mcp_sources.bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
+            if state.mcp_identities[state.selected] is None:
+                return _fresh_payload()
+            reader = mcp_sources._permission_read_file(operation, phase)
 
         try:
-            with mcp_sources.reader(self) as handle:
+            with reader as handle:
                 raw_text = handle.read()
             # task-32805.5 + TASK-32806.3: reject a duplicate `global_default`
             # or a non-finite constant (a tamper vector on a security file) so an
@@ -902,6 +927,8 @@ class MCPPermissionStore:
                 f"MCP permission store at '{self.path}' is corrupt ({exc}); "
                 "backing it up and resetting to defaults."
             )
+            if _permission_read is not None:
+                raw._end_permission_read_payload(operation, phase)
             self._backup_corrupt_file()
             return _fresh_payload()
 
@@ -913,6 +940,8 @@ class MCPPermissionStore:
                 f"MCP permission store at '{self.path}' has an unrecognized shape or "
                 f"schema_version (expected {SCHEMA_VERSION}); backing it up and resetting to defaults."
             )
+            if _permission_read is not None:
+                raw._end_permission_read_payload(operation, phase)
             self._backup_corrupt_file()
             return _fresh_payload()
 
@@ -1532,7 +1561,10 @@ class MCPPermissionStore:
             any other setting; False otherwise (including when the store
             file is missing).
         """
-        return bool(self.load().get("kill_switch", False))
+        payload = _read_permission_command(self)
+        if payload is None:
+            payload = self.load()
+        return bool(payload.get("kill_switch", False))
 
     @mcp_sources.guarded
     def set_kill_switch(self, value: bool) -> None:
@@ -1560,6 +1592,13 @@ class MCPPermissionStore:
         Pure bookkeeping for the approval-history suggestion surface; never
         consulted by permission resolution.
         """
+        from . import permission_process
+
+        routed, result = permission_process.forward(
+            self, "list_suggestion_dismissals", (), {}
+        )
+        if routed:
+            return result
         dismissals = self.load().get(SUGGESTION_DISMISSALS_KEY)
         if not _is_dismissal_map(dismissals):
             return {}
@@ -2972,6 +3011,7 @@ _CONSOLE_OWNED_LOAD_MEMBERS = tuple(
         ),
     ),
     _capture_controller_permission_member("_backup_corrupt_file"),
+    _capture_controller_permission_member("get_kill_switch"),
 )
 
 
@@ -3159,6 +3199,194 @@ def _load_in_owned_scope(source, operation, captured) -> dict[str, Any]:
         raise
 
 
+_PERMISSION_COMMAND_PUBLICATION = (
+    _PermissionPathFence,
+    _PermissionPathFence.observe,
+    _PermissionPathFence.observe.__code__,
+    _PermissionPathFence.observe.__globals__,
+    vars(_PermissionPathFence).get("__getattribute__"),
+    vars(_PermissionPathFence).get("__dict__"),
+)
+
+
+@dataclass(frozen=True)
+class _PermissionReadEntry:
+    load: tuple
+    publication: _PermissionPathFence
+    method: str
+    publish: bool
+    receipt: tuple
+
+
+def _permission_publication_current(source, publication, lock):
+    cls, observe, code, namespace, lookup, dictionary = _PERMISSION_COMMAND_PUBLICATION
+    return (
+        _PermissionPathFence is cls
+        and type(publication) is cls
+        and vars(cls).get("__getattribute__") is lookup
+        and vars(cls).get("__dict__") is dictionary
+        and vars(cls).get("observe") is observe
+        and "observe" not in vars(publication)
+        and observe.__code__ is code
+        and observe.__globals__ is namespace
+        and observe.__defaults__ is None
+        and observe.__kwdefaults__ is None
+        and observe.__closure__ is None
+        and source._permission_publication is publication
+        and publication.lock is lock
+    )
+
+
+_PERMISSION_READ_SOURCE_READERS = tuple(
+    (owner, name, function, function.__code__, function.__globals__, _capture_controller_inputs(function))
+    for owner, names in (
+        (mcp_sources, ("binding", "canonical_path", "source_receipt", "_selected", "preflight", "check_destination", "_identity", "reader", "_permission_read_file")),
+        (recovery_activation, ("readable", "require_store_write", "_require_store_write", "selected_path", "observed")),
+    )
+    for name in names
+    for callback in (vars(owner)[name],)
+    for function in ((callback, callback.__wrapped__) if hasattr(callback, "__wrapped__") else (callback,))
+)
+
+
+def _permission_read_readers_current(raw):
+    if sys.modules.get(recovery_activation.__name__) is not recovery_activation:
+        return False
+    for owner, name, function, code, namespace, inputs in _PERMISSION_READ_SOURCE_READERS:
+        callback = vars(owner).get(name)
+        if (
+            (callback is not function and getattr(callback, "__wrapped__", None) is not function)
+            or function.__code__ is not code
+            or function.__globals__ is not namespace
+            or _capture_controller_inputs(function) != inputs
+        ):
+            return False
+    return raw._permission_read_definitions_current()
+
+
+def _permission_read_current(source, captured):
+    from tldw_chatbook.Backup_Recovery import raw_participants as raw
+
+    return (
+        type(captured) is _PermissionReadEntry
+        and _console_owned_load_current(source, captured.load)
+        and _permission_publication_current(source, captured.publication, captured.load[3])
+        and _permission_read_readers_current(raw)
+        and mcp_sources.source_receipt(source) == captured.receipt
+    )
+
+
+def _capture_permission_read_entry(source, method, *, publish):
+    """Select stock inputs before any optional native read work."""
+    from tldw_chatbook.Backup_Recovery import activation, generation_witnesses
+    from tldw_chatbook.Backup_Recovery import raw_participants as raw
+
+    if (
+        os.name != "nt"
+        or type(source) is not MCPPermissionStore
+        or not raw._pinned_io_available()
+        or not generation_witnesses._witness_metadata_current()
+        or not activation._ordinary_activation_sources_current()
+        or not _permission_read_readers_current(raw)
+    ):
+        return None
+    load = _capture_console_owned_load(source)
+    if load is None or vars(source).get("_recovery_original_path") != load[2]:
+        return None
+    publication = vars(source).get("_permission_publication")
+    if not _permission_publication_current(source, publication, load[3]):
+        return None
+    return _PermissionReadEntry(load, publication, method, publish, mcp_sources.source_receipt(source))
+
+
+def _run_permission_read(source, captured, *, require_current=None):
+    from tldw_chatbook.Backup_Recovery import raw_participants as raw
+
+    if not _permission_read_current(source, captured):
+        raise mcp_sources.bootstrap.RecoveryRequired("mcp_source_selection_changed")
+    state = None
+    try:
+        with raw.scope(source, mcp_sources.ROUTE, writing=True, _permission_read=captured) as (operation, phase):
+            state = raw._states[operation]
+            if require_current is not None:
+                require_current()
+            if phase is None:
+                if captured.publish:
+                    member = next(row for row in _CONSOLE_OWNED_LOAD_MEMBERS if row[0] == captured.method)
+                    return member[2][1][0](source), None
+                payload = _load_in_owned_scope(source, operation, captured.load)
+                raw.check(operation, state.selected)
+                receipt = mcp_sources.source_receipt(source)
+                if receipt != captured.receipt:
+                    raise mcp_sources.bootstrap.RecoveryRequired("mcp_source_selection_changed")
+                return payload, receipt
+
+            body = _CONSOLE_OWNED_LOAD_MEMBERS[1][2][1][0]
+            payload = body(source, _permission_read=(operation, phase))
+            receipt = raw._finish_permission_read(operation, phase)
+            # The original mutation fence is this exact already-held RLock.
+            if captured.publish:
+                _PERMISSION_COMMAND_PUBLICATION[1](captured.publication, payload)
+            result = bool(payload.get("kill_switch", False)) if captured.method == "get_kill_switch" else payload
+            return result, receipt
+    except BaseException:
+        if state is not None and (state.mcp_effects or state.uncertain):
+            source._mcp_persistence_error = "mcp_persistence_incomplete"
+            if captured.publish:
+                captured.publication.fail()
+        raise
+
+
+def _read_permission_command(source) -> dict[str, Any] | None:
+    """Read once inside this stock command; None keeps its original route.
+
+    No permission bytes or native proof survive the command. The caller's
+    guarded operation owns admission, repairs and actual resource retirement.
+    """
+    if os.name != "nt":
+        return None
+    from tldw_chatbook.Backup_Recovery import generation_witnesses
+    from tldw_chatbook.Backup_Recovery import raw_participants as raw
+
+    captured = _capture_console_owned_load(source)
+    if captured is None:
+        return None
+    publication = vars(source).get("_permission_publication")
+    observe = _PERMISSION_COMMAND_PUBLICATION[1]
+
+    def current():
+        return (
+            _console_owned_load_current(source, captured)
+            and generation_witnesses._witness_metadata_current()
+            and _permission_publication_current(source, publication, captured[3])
+        )
+
+    if not current():
+        return None
+    operation = getattr(raw._local, "operation", None)
+    state = raw._states.get(operation)
+    if state is None or state.source is not source or state.participant is None:
+        return None
+    bound = captured[1]
+    config = bound.config
+
+    def receipt():
+        return (
+            sys.modules.get("tldw_chatbook.config"), config.current_config_identity(),
+            config._CONFIG_CACHE_SOURCE, bound.profile, bound.selected,
+        )
+
+    before = receipt()
+    fence = _CONSOLE_OWNED_LOAD_MEMBERS[2][1]
+    with fence(source):
+        payload = _load_in_owned_scope(source, operation, captured)
+        raw.check(operation, captured[2])
+        if not current() or receipt() != before:
+            raise mcp_sources.bootstrap.RecoveryRequired("mcp_source_selection_changed")
+        observe(publication, payload)
+        return payload
+
+
 _CONSOLE_OWNED_LOAD_HELPERS = tuple(
     (
         name,
@@ -3171,6 +3399,116 @@ _CONSOLE_OWNED_LOAD_HELPERS = tuple(
         "_capture_console_owned_load",
         "_console_owned_load_current",
         "_load_in_owned_scope",
+        "_read_permission_command",
+        "_capture_permission_read_entry",
+        "_run_permission_read",
+        "_permission_read_current",
+        "_permission_publication_current",
+        "_permission_read_readers_current",
     )
     for function in (globals()[name],)
+)
+
+
+# Fixed public persistence surface; no wire-controlled attribute lookup.
+_PERMISSION_PROCESS_COMMANDS = {
+    "load": MCPPermissionStore.load,
+    "get_kill_switch": MCPPermissionStore.get_kill_switch,
+    "read_snapshot_strict": MCPPermissionStore.read_snapshot_strict,
+    "read_profile_inventory_snapshot": MCPPermissionStore.read_profile_inventory_snapshot,
+    "catalog_fingerprint": MCPPermissionStore.catalog_fingerprint,
+    "list_profiles": MCPPermissionStore.list_profiles,
+    "list_suggestion_dismissals": MCPPermissionStore.list_suggestion_dismissals,
+    "get_global_default": MCPPermissionStore.get_global_default,
+    "get_server_entry": MCPPermissionStore.get_server_entry,
+    "get_tool_entry": MCPPermissionStore.get_tool_entry,
+    "has_current_tool_arg_rule": MCPPermissionStore.has_current_tool_arg_rule,
+    "list_tool_arg_rules": MCPPermissionStore.list_tool_arg_rules,
+    "save": MCPPermissionStore.save,
+    "set_kill_switch": MCPPermissionStore.set_kill_switch,
+    "ensure_profile": MCPPermissionStore.ensure_profile,
+    "set_global_default": MCPPermissionStore.set_global_default,
+    "set_server_default": MCPPermissionStore.set_server_default,
+    "set_tool_state": MCPPermissionStore.set_tool_state,
+    "add_tool_arg_rule": MCPPermissionStore.add_tool_arg_rule,
+    "remove_tool_arg_rule": MCPPermissionStore.remove_tool_arg_rule,
+    "mark_config_changed": MCPPermissionStore.mark_config_changed,
+    "dismiss_suggestion": MCPPermissionStore.dismiss_suggestion,
+    "restore_suggestion": MCPPermissionStore.restore_suggestion,
+    "clear_suggestion_dismissals": MCPPermissionStore.clear_suggestion_dismissals,
+    "install_profile_if_absent": MCPPermissionStore.install_profile_if_absent,
+    "update_imported_profile": MCPPermissionStore.update_imported_profile,
+    "replace_profile_with_tombstone": MCPPermissionStore.replace_profile_with_tombstone,
+}
+
+
+# Mutation commands must qualify their actual bodies, not only the reader.
+_PERMISSION_PROCESS_MEMBERS = tuple(
+    (
+        name,
+        callback,
+        tuple(
+            (function, function.__code__, _capture_controller_inputs(function))
+            for function in (
+                (callback.__func__,)
+                if isinstance(callback, staticmethod)
+                else (callback, callback.__wrapped__)
+                if hasattr(callback, "__wrapped__")
+                else (callback,)
+            )
+        ),
+    )
+    for name, callback in vars(MCPPermissionStore).items()
+    if hasattr(callback, "__code__") or isinstance(callback, staticmethod)
+)
+_PERMISSION_PROCESS_SOURCE_HELPERS = tuple(
+    (owner, name, callback, callback.__code__, _capture_controller_inputs(callback))
+    for owner in (_CONSOLE_CONTROLLER_PERMISSION_MODULE, mcp_sources)
+    for name, callback in vars(owner).items()
+    if type(callback) is FunctionType
+)
+
+
+_PERMISSION_PROCESS_SOURCE_HELPERS += tuple(
+    (owner, name, callback, callback.__code__, _capture_controller_inputs(callback))
+    for owner, names in (
+        (mcp_sources.bootstrap, ("default_bootstrap_root", "effective_config_path")),
+        (mcp_sources.profile_paths, ("lexical_path", "user_data_dir")),
+    )
+    for name in names
+    for callback in (vars(owner)[name],)
+)
+
+
+def _permission_process_definitions_current(source):
+    for name, callback, bodies in _PERMISSION_PROCESS_MEMBERS:
+        if vars(MCPPermissionStore).get(name) is not callback or name in vars(source):
+            return False
+        if (
+            len(bodies) == 2
+            and getattr(callback, "__wrapped__", None) is not bodies[1][0]
+        ):
+            return False
+        for function, code, inputs in bodies:
+            if (
+                function.__code__ is not code
+                or _capture_controller_inputs(function) != inputs
+            ):
+                return False
+    return all(
+        vars(owner).get(name) is callback
+        and callback.__code__ is code
+        and _capture_controller_inputs(callback) == inputs
+        for owner, name, callback, code, inputs in _PERMISSION_PROCESS_SOURCE_HELPERS
+    )
+
+
+_CONSOLE_OWNED_LOAD_HELPERS += (
+    (
+        "_permission_process_definitions_current",
+        _permission_process_definitions_current,
+        _permission_process_definitions_current.__code__,
+        _permission_process_definitions_current.__globals__,
+        _capture_controller_inputs(_permission_process_definitions_current),
+    ),
 )

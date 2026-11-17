@@ -94,6 +94,71 @@ def test_runtime_composes_one_shared_canvas_owner_into_real_store(tmp_path) -> N
         db.close_connection()
 
 
+@pytest.mark.parametrize("db_path", [None, ":memory:"])
+@pytest.mark.asyncio
+async def test_bridge_refuses_nondurable_sources_before_graph_factories(db_path):
+    """Composition must retain the durable-source gate ahead of graph setup."""
+    database = SimpleNamespace(db_path=db_path) if db_path else None
+    runtime = ConsoleRuntime(SimpleNamespace(chachanotes_db=database))
+    calls = []
+
+    def forbidden_factory():
+        calls.append("constructed")
+        raise AssertionError("nondurable bridge touched a graph factory")
+
+    try:
+        for _ in range(2):
+            assert (
+                runtime.ensure_agent_bridge(
+                    store_factory=forbidden_factory,
+                    provider_gateway_factory=forbidden_factory,
+                    native_tools_enabled_factory=forbidden_factory,
+                )
+                is None
+            )
+        assert calls == []
+        assert runtime.chat_store is runtime.agent_bridge is None
+        assert runtime._agent_runs_db is runtime.activity_receipts is None
+    finally:
+        await runtime.dispose()
+
+
+@pytest.mark.asyncio
+async def test_composition_keeps_defining_source_and_live_helper_updates(monkeypatch):
+    """Module replacement cannot redirect the original runtime's callbacks."""
+    from tldw_chatbook import Chat
+    from tldw_chatbook.Chat import console_runtime as original_source
+
+    runtime = ConsoleRuntime(SimpleNamespace(chachanotes_db=None))
+    expected = [object(), object()]
+    observed = []
+
+    def defaults(app):
+        observed.append(app)
+        return expected[0]
+
+    def changed_defaults(app):
+        observed.append(app)
+        return expected[1]
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(Chat, "console_runtime", SimpleNamespace())
+            patch.setitem(sys.modules, original_source.__name__, SimpleNamespace())
+            patch.setattr(original_source, "_current_library_policy_defaults", defaults)
+            store = runtime.ensure_chat_store()
+            assert store._library_policy_defaults_provider() is expected[0]
+            patch.setattr(
+                original_source,
+                "_current_library_policy_defaults",
+                changed_defaults,
+            )
+            assert store._library_policy_defaults_provider() is expected[1]
+            assert observed == [runtime._app, runtime._app]
+    finally:
+        await runtime.dispose()
+
+
 def test_runtime_forwards_live_session_and_branch_transitions_to_canvas_authority():
     observed: list[str | None] = []
     runtime = ConsoleRuntime(SimpleNamespace(chachanotes_db=None))

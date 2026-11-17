@@ -80,6 +80,26 @@ def canonical_path(source):
     return profile_paths.lexical_path(profile_paths.user_data_dir(data) / kind[2])
 
 
+def source_receipt(source):
+    """Return detached source/config metadata for a checked source operation."""
+    bound = _BINDINGS.get(source)
+    if bound is None or type(source) is not bound.source_type:
+        raise bootstrap.RecoveryRequired("mcp_source_not_installed")
+    config = bound.config
+    return (
+        source,
+        type(source),
+        Path(source.path),
+        bound,
+        config,
+        sys.modules.get("tldw_chatbook.config"),
+        config.current_config_identity(),
+        config._CONFIG_CACHE_SOURCE,
+        bound.profile,
+        bound.selected,
+    )
+
+
 def _kind(source):
     for module, name, owner, leaf in _SOURCES:
         cls = getattr(sys.modules.get("tldw_chatbook.MCP." + module), name, None)
@@ -192,8 +212,15 @@ def _identity(state, path):
     return info.st_dev, info.st_ino
 
 
-def preflight(state):
-    owner = binding(state.source)[0]
+def preflight(state, *, permission_read=None):
+    if permission_read is None:
+        owner = binding(state.source)[0]
+    else:
+        from . import raw_participants as raw
+
+        operation, phase, attempt = permission_read
+        raw._permission_read_custody(operation, phase, attempt=attempt)
+        owner = "mcp.permissions"
     targets = (state.selected,)
     if owner == "mcp.permissions":
         targets += (state.selected.with_suffix(state.selected.suffix + ".bak"),)
@@ -242,6 +269,14 @@ def published(state, path):
 
 def complete(state):
     """Publish caller stamps after positive native close, under the source lock."""
+    process = sys.modules.get("tldw_chatbook.MCP.permission_process")
+    command = None if process is None else process._active()
+    if command is not None and command.source is state.source:
+        command.completions.append(state)
+        return
+    local = sys.modules.get("tldw_chatbook.MCP.local_permission_operation")
+    if local is not None:
+        local.before_complete(state)
     for payload, stamp in state.mcp_payload_updates:
         payload["updated_at"] = stamp
     publication = getattr(state, "permission_publication", None)
@@ -252,6 +287,13 @@ def complete(state):
 def permission_mutation(source):
     """Invalidate permission receipts until this original native write closes."""
     _, state = _operation(source)
+    process = sys.modules.get("tldw_chatbook.MCP.permission_process")
+    command = None if process is None else process._active(source)
+    if command is not None:
+        command.exchange("MutationBegin", {})
+        from . import raw_participants as raw
+
+        raw.check(raw._local.operation, state.selected, writing=True)
     state.permission_publication = source._permission_publication
     state.permission_publication.begin()
 
@@ -283,6 +325,25 @@ def guarded(function):
                 bind(source)
                 with raw.scope(source, ROUTE, writing=True):
                     return result
+        if function.__module__ == "tldw_chatbook.MCP.permission_store":
+            from ..MCP import permission_process
+
+            routed, result = permission_process.forward(source, function.__name__, args, kwargs)
+            if routed:
+                return result
+        if (
+            not args and not kwargs
+            and function.__module__ == "tldw_chatbook.MCP.permission_store"
+            and function.__name__ in {"load", "get_kill_switch"}
+        ):
+            from ..MCP import permission_store
+
+            captured = permission_store._capture_permission_read_entry(
+                source, function.__name__, publish=True
+            )
+            if captured is not None:
+                result, _ = permission_store._run_permission_read(source, captured)
+                return result
         operation = None
         state = None
         try:
@@ -322,6 +383,19 @@ def reader(source):
         return
     check_destination(state, state.selected)
     with raw.file(operation, state.selected, "r") as handle:
+        yield handle
+
+
+@contextmanager
+def _permission_read_file(operation, phase):
+    from . import raw_participants as raw
+
+    state = raw._permission_read_custody(operation, phase)
+    if state.permission_read_stage != "metadata":
+        raise bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
+    raw._permission_read_boundary(operation, phase, destination=True)
+    state.permission_read_stage = "payload"
+    with raw._file_in_state(state, state.selected, "r") as handle:
         yield handle
 
 

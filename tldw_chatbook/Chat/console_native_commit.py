@@ -6,12 +6,14 @@ import asyncio
 import contextlib
 import contextvars
 import threading
+import sqlite3
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from .console_durable_commit_plan import _ConsoleDurableCommitPlan
     from .console_chat_store import (
         ConsoleChatStore,
         ConsoleDurableAcceptanceFingerprint,
@@ -27,6 +29,25 @@ class ConsoleNativeCommitCompletion:
     commit: ConsoleDurableTurnCommit | None
     error: BaseException | None
     caller_cancelled: bool
+    native_retired: bool | None = None
+
+
+class ConsoleNativeRetirementUncertain(RuntimeError):
+    """The callback finished, but its original native owner has not retired."""
+
+
+@dataclass(slots=True)
+class _ConsolePlanNativeRetirement:
+    """Observation of existing owners, never a second resource registry."""
+
+    creator: threading.Thread | None = None
+    borrowed: object | None = None
+    connection: object | None = None
+    participant: object | None = None
+    operation: object | None = None
+    lease: object | None = None
+    holds: tuple = ()
+    confirmed: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,11 +69,165 @@ class _ConsoleNativeBinding:
     database: object
     settlement_helper: Callable[..., bool] | None = None
     expected_accepted_prefill: str = ""
+    received_acceptance: object | None = None
+    plan: object | None = None
+    retirement: _ConsolePlanNativeRetirement | None = None
+    control_phase: tuple | None = None
+
+
+def _capture_plan_native_connection(binding):
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
+    state = binding.retirement
+    connection = getattr(binding.database._local, "conn", None)
+    if connection is None:
+        return  # An original explicit close may already have been observed.
+    state.connection = connection
+    with storage._lock:
+        state.lease = state.participant.connections.get(connection)
+        if state.lease is not None:
+            hold = storage._holds.get(state.lease._key)
+            if hold is not None and hold not in state.holds:
+                state.holds += (hold,)
+
+
+def _invoke_plan_native(binding, callback):
+    """Observe this creator's exact new handle and original operation retirement."""
+    from tldw_chatbook.DB.base_db import operation_owned_connection
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+    from tldw_chatbook.Backup_Recovery.participants import (
+        core_operation,
+        repository_participant,
+    )
+
+    database, state = binding.database, binding.retirement
+    if type(database) is not CharactersRAGDB:
+        raise RuntimeError(
+            "Separated durable plan requires the original database owner."
+        )
+    state.creator = threading.current_thread()
+    registry = database._connection_quiescence
+    previous = getattr(database._local, "conn", None)
+    state.borrowed = (
+        previous if previous is not None and registry.is_registered(previous) else None
+    )
+    state.participant = repository_participant(database)
+    try:
+        with operation_owned_connection(database):
+            try:
+                with core_operation(database):
+                    state.operation = storage._operation_local.operation
+                    state.holds = (state.operation.hold,)
+                    return callback()
+            finally:
+                _capture_plan_native_connection(binding)
+    finally:
+        owns_connection = (
+            state.connection is not None and state.connection is not state.borrowed
+        )
+        closed = not owns_connection
+        if owns_connection:
+            try:
+                sqlite3.Connection.in_transaction.__get__(state.connection)
+            except sqlite3.ProgrammingError:
+                closed = True
+            registered = registry.is_registered(state.connection)
+        else:
+            registered = False
+        with storage._lock:
+            holds_retired_or_shared = all(
+                (
+                    hold.error is None
+                    and not hold.stop.is_set()
+                    and hold.ready.is_set()
+                    and hold.thread.is_alive()
+                    and hold.count
+                    == sum(lease._key == hold.key for lease in storage._live_leases)
+                )
+                if hold in storage._holds.values()
+                else (
+                    not hold.thread.is_alive()
+                    and hold not in storage._retiring_holds
+                    and hold.count == 0
+                    and (
+                        hold.error is None
+                        or isinstance(hold.error, storage.AdmissionCancelled)
+                    )
+                )
+                for hold in state.holds
+            )
+            state.confirmed = bool(
+                state.operation is not None
+                and state.operation not in storage._operations
+                and state.operation.lease not in storage._live_leases
+                and state.operation.lease._key is None
+                and holds_retired_or_shared
+                and closed
+                and not registered
+                and (
+                    not owns_connection
+                    or (
+                        state.connection not in state.participant.connections
+                        and state.lease not in storage._live_leases
+                    )
+                )
+            )
 
 
 _native_commit_binding: contextvars.ContextVar[_ConsoleNativeBinding | None] = (
     contextvars.ContextVar("console_native_commit_binding", default=None)
 )
+
+
+def _control_native_effect(binding):
+    if binding.control_phase is not None:
+        return binding.control_phase[0].controls.native_write_effect(binding)
+    if binding.plan is not None:
+        controls = binding.plan.source.runtime._execution_service._local_controls
+        if controls is not None:
+            return controls.native_commit_effect(binding.plan, binding.retirement)
+    return contextlib.nullcontext()
+
+
+def _selected_write_phase(controller, kind):
+    domain = getattr(controller, "domain_services", None)
+    if domain is None or domain.runtime._execution_service._local_controls is None:
+        return None
+    from .console_control_dispatch import require_control_source
+
+    source = require_control_source(domain.runtime)
+    if source.controls._controller is not controller:
+        raise RuntimeError("Console native write controller changed")
+    return source, kind
+
+
+async def run_selected_postcommit_db_call(controller, call, /, *args):
+    """Join the original fixed controller DB callback and prove its native retirement."""
+    phase = _selected_write_phase(controller, "postcommit")
+    if phase is None:
+        raise RuntimeError("Selected postcommit control owner is unavailable")
+    store = controller.store
+    binding = _ConsoleNativeBinding(
+        store,
+        controller,
+        store.persistence,
+        store.persistence.db,
+        retirement=_ConsolePlanNativeRetirement(),
+        control_phase=phase,
+    )
+    result, error, cancelled = await _run_owned_native_call(
+        binding, lambda: controller._run_owned_chat_db_operation(call, *args)
+    )
+    if not binding.retirement.confirmed:
+        raise ConsoleNativeRetirementUncertain(
+            "postcommit_native_retirement_uncertain"
+        ) from error
+    if error is not None:
+        raise error
+    if cancelled:
+        raise asyncio.CancelledError
+    return result
 
 
 async def _run_owned_native_call[Result](
@@ -84,7 +259,12 @@ async def _run_owned_native_call[Result](
         return None, error, False
     if memory_backed:
         try:
-            return invoke_bound(), None, False
+            with _control_native_effect(binding):
+                try:
+                    return invoke_bound(), None, False
+                finally:
+                    if binding.retirement is not None:
+                        binding.retirement.confirmed = True
         except BaseException as error:  # noqa: BLE001 - transport exact failure and cancellation after physical retirement.
             return None, error, False
 
@@ -105,6 +285,9 @@ async def _run_owned_native_call[Result](
         from tldw_chatbook.DB.base_db import operation_owned_connection
         from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
+        if binding.retirement is not None:
+            with _control_native_effect(binding):
+                return _invoke_plan_native(binding, invoke_bound)
         with operation_owned_connection(database):
             if type(database) is CharactersRAGDB and not database.is_memory_db:
                 from tldw_chatbook.Backup_Recovery.participants import core_operation
@@ -199,11 +382,144 @@ async def commit_durable_turn_owned(
         callback = store.commit_durable_turn
     except BaseException as error:  # noqa: BLE001 - transport exact failure and cancellation after physical retirement.
         return ConsoleNativeCommitCompletion(None, error, False)
-    binding = _ConsoleNativeBinding(store, acceptance, persistence, database)
+    binding = _ConsoleNativeBinding(
+        store, acceptance, persistence, database, received_acceptance=acceptance
+    )
     with durable_commit_window(store):
         return ConsoleNativeCommitCompletion(
             *await _run_owned_native_call(binding, lambda: callback(acceptance))
         )
+
+
+async def reserve_durable_commit_plan_owned(
+    store: ConsoleChatStore, acceptance: ConsoleDurableTurnAcceptance
+) -> _ConsoleDurableCommitPlan | ConsoleDurableTurnCommit:
+    """Seal on a retained preparation worker without opening native storage."""
+    from .console_durable_commit_plan import capture_durable_plan_source
+    from .console_preparation_reads import run_preparation_read
+
+    source = capture_durable_plan_source(store)
+    preparation = store.preparation_for_session(source.record.session_id)
+    source.require_current(preparation)
+    persistence, database = store.persistence, getattr(store.persistence, "db", None)
+    result = []
+
+    def reserve():
+        plan = store.reserve_durable_commit_plan(
+            acceptance, persistence, database, source=source
+        )
+        result.append(plan)
+        return plan
+
+    try:
+        return await run_preparation_read(
+            reserve,
+            creator=source.runtime,
+            session_id=source.record.session_id,
+            reads=source.runtime._preparation_reads,
+            observers=(source.source.controller._preparation_reads,),
+            require_current=lambda: source.require_current(preparation),
+            source=source,
+        )
+    except BaseException:
+        if result:
+            store.abandon_reserved_durable_commit(result[0], "reservation_cancelled")
+        raise
+
+
+async def commit_reserved_durable_turn_owned(
+    plan: _ConsoleDurableCommitPlan,
+    *,
+    _native_owner: object | None = None,
+) -> ConsoleNativeCommitCompletion:
+    """Join this plan's actual native future through cancellation and retirement."""
+    from .console_durable_commit_plan import _ConsoleDurableCommitPlan
+
+    if type(plan) is not _ConsoleDurableCommitPlan or plan.source is None:
+        return ConsoleNativeCommitCompletion(
+            None, RuntimeError("Separated plan source is unavailable."), False
+        )
+    store = plan.store
+    controller = plan.source.source.controller
+    owner = None
+    try:
+        plan.source.require_current(plan.preparation)
+        callback = store.commit_reserved_durable_turn
+        if _native_owner is None:
+            owner = controller._register_ordinary_native_commit(
+                plan.session, plan.received_acceptance
+            )
+        else:
+            from .console_chat_controller import _OrdinaryNativeCommitOwner
+
+            if (
+                type(_native_owner) is not _OrdinaryNativeCommitOwner
+                or _native_owner._issuer is not controller
+                or _native_owner.store is not store
+                or _native_owner.persistence is not plan.persistence
+                or _native_owner.database is not plan.database
+                or _native_owner.session is not plan.session
+                or _native_owner.acceptance is not plan.received_acceptance
+                or _native_owner.task is not asyncio.current_task()
+                or _native_owner.task is not plan.source.task
+                or _native_owner.retired.done()
+                or controller._ordinary_native_commits.get(
+                    plan.acceptance.preparation_id
+                )
+                is not _native_owner
+                or store._native_commit_owners_by_preparation.get(
+                    plan.acceptance.preparation_id
+                )
+                is not _native_owner
+                or not controller._ordinary_native_commit_current(_native_owner)
+            ):
+                raise RuntimeError("Separated plan native owner changed.")
+            owner = _native_owner
+    except BaseException as error:
+        store.abandon_reserved_durable_commit(plan, "source_changed")
+        return ConsoleNativeCommitCompletion(None, error, False)
+    binding = _ConsoleNativeBinding(
+        store,
+        plan.received_acceptance,
+        plan.persistence,
+        plan.database,
+        received_acceptance=plan.received_acceptance,
+        plan=plan,
+        retirement=_ConsolePlanNativeRetirement(),
+    )
+    try:
+        with durable_commit_window(store):
+            completion = ConsoleNativeCommitCompletion(
+                *await _run_owned_native_call(binding, lambda: callback(plan))
+            )
+        if not binding.retirement.confirmed:
+            known = store.durable_turn_commit_for(
+                plan.acceptance.preparation_id, fingerprint=plan.fingerprint
+            )
+            uncertain = ConsoleNativeRetirementUncertain(
+                "durable_native_retirement_uncertain"
+            )
+            uncertain.__cause__ = completion.error
+            completion = ConsoleNativeCommitCompletion(
+                known,
+                uncertain,
+                completion.caller_cancelled,
+                False,
+            )
+        else:
+            completion = ConsoleNativeCommitCompletion(
+                completion.commit, completion.error, completion.caller_cancelled, True
+            )
+        owner.commit_error = completion.error
+        owner.caller_cancelled = completion.caller_cancelled
+    finally:
+        # This Future signals wrapper completion. Native uncertainty remains
+        # on the original DB/core participant and is explicit in completion.
+        if _native_owner is None:
+            controller._release_ordinary_native_commit(owner)
+    if completion.error is not None:
+        store.abandon_reserved_durable_commit(plan, "native_refused")
+    return completion
 
 
 async def settle_accepted_durable_turn_owned(
@@ -217,6 +533,7 @@ async def settle_accepted_durable_turn_owned(
     database: object,
     metadata_json: str | None = None,
     expected_accepted_prefill: str = "",
+    _controller: object | None = None,
 ) -> ConsoleNativeSettlementCompletion:
     """Retire the exact accepted terminal write without blocking the owner loop.
 
@@ -259,6 +576,11 @@ async def settle_accepted_durable_turn_owned(
             metadata_json=metadata_json,
         )
 
+    phase = (
+        _selected_write_phase(_controller, "terminal")
+        if _controller is not None
+        else None
+    )
     binding = _ConsoleNativeBinding(
         store,
         fingerprint,
@@ -266,8 +588,16 @@ async def settle_accepted_durable_turn_owned(
         database,
         settlement_helper,
         expected_accepted_prefill,
+        retirement=_ConsolePlanNativeRetirement() if phase is not None else None,
+        control_phase=phase,
     )
     result, error, cancelled = await _run_owned_native_call(binding, settle)
+    if phase is not None and not binding.retirement.confirmed:
+        uncertain = ConsoleNativeRetirementUncertain(
+            "terminal_native_retirement_uncertain"
+        )
+        uncertain.__cause__ = error
+        error = uncertain
     return ConsoleNativeSettlementCompletion(bool(result), error, cancelled)
 
 
@@ -349,6 +679,7 @@ def _controller_register_ordinary_native_commit(self, session, acceptance):
         acceptance,
         task,
         _source_controller.asyncio.get_running_loop().create_future(),
+        _issuer=self,
     )
     with self._active_submit_tasks_lock:
         if acceptance.preparation_id in self._ordinary_native_commits:
@@ -502,6 +833,7 @@ async def _controller_settle_cancelled_native_commit(self, owner, continuation):
         content=content,
         persistence=owner.persistence,
         database=owner.database,
+        _controller=self,
     )
     owner.caller_cancelled |= completion.caller_cancelled
     settled = (completion.settled and completion.error is None) or accepted_terminal_state_matches(
@@ -802,9 +1134,20 @@ async def _controller_accept_durable_turn(
                     return self._retain_original_native_commit_recovery(
                         native_owner
                     )
-                completion = await commit_durable_turn_owned(
-                    native_owner.store, acceptance
+                domain = self.domain_services
+                controls = (
+                    domain.runtime._execution_service._local_controls
+                    if domain is not None
+                    else None
                 )
+                if controls is not None:
+                    completion = await controls.commit_received_turn(
+                        native_owner, acceptance
+                    )
+                else:
+                    completion = await commit_durable_turn_owned(
+                        native_owner.store, acceptance
+                    )
                 native_owner.caller_cancelled = (
                     completion.caller_cancelled or native_owner.explicit_stop
                 )

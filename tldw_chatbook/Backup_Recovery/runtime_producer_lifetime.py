@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 import threading
 import time
 from collections.abc import Callable, Coroutine
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar, copy_context
 from dataclasses import dataclass, field
 from functools import wraps
@@ -209,6 +210,7 @@ async def run_preparation_read[Result](
     observers: tuple[set[ConsolePreparationRead], ...] = (),
     require_current: Callable[[], None],
     source: object = None,
+    submission_slot: asyncio.Semaphore | None = None,
 ) -> Result:
     """Retire an original hook read before returning or delivering cancellation.
 
@@ -220,6 +222,8 @@ async def run_preparation_read[Result](
         observers: Additional sets observing this same exact handle.
         require_current: Pure source validator, called outside bookkeeping locks.
         source: Opaque captured source available only inside the worker scope.
+        submission_slot: Optional display permit held from submission through
+            physical return. Queued reads retain observers without a worker.
 
     Returns:
         Original callback result after its native scope has exited.
@@ -247,6 +251,9 @@ async def run_preparation_read[Result](
             _observe_locked(read, observer)
     submit_resolved = threading.Event()
     submitted = False
+    slot_acquired = False
+    retirement = sys.modules.get("tldw_chatbook.Chat.console_execution_retirement")
+    observation = None
 
     def invoke():
         # An enqueue-then-raise submission may leave a work item behind.
@@ -258,7 +265,10 @@ async def run_preparation_read[Result](
         )
         token = _source_binding.set(binding)
         try:
-            with _preparation_handoffs():
+            with (
+                observation.observe() if observation is not None else nullcontext(),
+                _preparation_handoffs(),
+            ):
                 require_current()
                 read.result = callback()
                 read.callback_returned = True
@@ -273,6 +283,12 @@ async def run_preparation_read[Result](
             _source_binding.reset(token)
 
     try:
+        if retirement is not None:
+            observation = retirement.register_preparation_read(read)
+        if submission_slot is not None:
+            await submission_slot.acquire()
+            slot_acquired = True
+            require_current()
         try:
             context = copy_context()
             read._producer = asyncio.get_running_loop().run_in_executor(
@@ -309,7 +325,13 @@ async def run_preparation_read[Result](
         require_current()
         return result
     finally:
-        _retire(read)
+        try:
+            _retire(read)
+            if retirement is not None:
+                retirement.finish_preparation_read(observation, sys.exc_info()[1])
+        finally:
+            if slot_acquired:
+                submission_slot.release()
 
 
 async def drain_preparation_reads(

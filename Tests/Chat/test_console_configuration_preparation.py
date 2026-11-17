@@ -200,10 +200,10 @@ async def test_ready_local_skill_capture_runs_original_body_on_worker_and_matche
     assert "capture-worker-fixture" in {
         row["name"] for row in actual_skill["available_skills"]
     }
-    # Legacy synchronous capture still reads MCP; stock temporary sessions
-    # intentionally capture an empty ceiling because they never compose MCP.
+    # This managed runtime's custom policy excludes synchronous MCP metadata;
+    # the temporary session's owned capture also keeps an empty MCP ceiling.
     assert case.store.session_is_ephemeral(case.session.id)
-    assert expected.mcp_definition_maximum
+    assert not expected.mcp_definition_maximum
     assert (
         actual.mcp_definition_capture == expected.mcp_definition_capture == "captured"
     )

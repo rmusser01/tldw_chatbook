@@ -47,7 +47,9 @@ def archive_failure_copy(reason: str) -> str:
     }.get(reason, reason)
 
 
-async def storage_call(service: Any, method: str, *args: Any, **kwargs: Any) -> Any:
+async def storage_call(
+    service: Any, method: str, *args: Any, _read_owner: Any = None, **kwargs: Any
+) -> Any:
     """Run storage off-loop, retaining thread-local memory database ownership.
 
     Args:
@@ -64,6 +66,9 @@ async def storage_call(service: Any, method: str, *args: Any, **kwargs: Any) -> 
             the storage method propagate to the caller's recovery boundary.
     """
     call = getattr(service, method)
+    if _read_owner is not None:
+        _read_owner.require_archive_reader(service, method, call)
+        return await _read_owner.run(lambda: call(*args, **kwargs))
     if getattr(getattr(service, "db", None), "is_memory_db", False):
         return call(*args, **kwargs)
     from tldw_chatbook.DB.base_db import run_owned_db_call
@@ -272,7 +277,11 @@ async def change_conversation_archive(
 
 
 async def conversation_send_refusal(
-    app: Any, conversation_id: str | None
+    app: Any,
+    conversation_id: str | None,
+    *,
+    _local_service: Any = None,
+    _read_owner: Any = None,
 ) -> str | None:
     """Reconcile durable state before accepting a send from an already open tab.
 
@@ -290,13 +299,45 @@ async def conversation_send_refusal(
     """
     if not conversation_id:
         return None
-    if conversation_id in getattr(app, "_conversation_archive_inflight", ()):
-        return "Wait for the archive change to finish; your draft is preserved."
-    service = local_conversation_service(app)
+    refusal = archive_send_inflight_refusal(app, conversation_id)
+    if refusal is not None:
+        return refusal
+    service = (
+        local_conversation_service(app) if _local_service is None else _local_service
+    )
+    if _read_owner is not None:
+        _read_owner.require_archive_reader(
+            service,
+            "get_conversation_archive_states",
+            service.get_conversation_archive_states,
+        )
     generation = getattr(app, "_conversation_archive_generation", 0)
     states = await storage_call(
-        service, "get_conversation_archive_states", [conversation_id]
+        service,
+        "get_conversation_archive_states",
+        [conversation_id],
+        **({"_read_owner": _read_owner} if _read_owner is not None else {}),
     )
+    if _read_owner is not None:
+        _read_owner.require_archive_reader(
+            service,
+            "get_conversation_archive_states",
+            service.get_conversation_archive_states,
+        )
+    return publish_archive_send_state(app, conversation_id, generation, states)
+
+
+def archive_send_inflight_refusal(app: Any, conversation_id: str) -> str | None:
+    """Check the actual parent's archive reservation before a send read."""
+    if conversation_id in getattr(app, "_conversation_archive_inflight", ()):
+        return "Wait for the archive change to finish; your draft is preserved."
+    return None
+
+
+def publish_archive_send_state(
+    app: Any, conversation_id: str, generation: int, states: Mapping[str, bool]
+) -> str | None:
+    """Recheck reservations and publish the complete retired archive read."""
     if conversation_id in getattr(app, "_conversation_archive_inflight", ()) or (
         generation != getattr(app, "_conversation_archive_generation", 0)
     ):

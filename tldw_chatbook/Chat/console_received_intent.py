@@ -222,6 +222,9 @@ class ConsoleReceivedIntentInputMixin:
             KeyError: If the session is unknown.
         """
         with self._preparation_lock:
+            from .console_control_settings import require_settings_settled
+
+            require_settings_settled(self, session_id)
             session = self._session_or_raise(session_id)
             attachments = tuple(session.pending_attachments)
             return ConsoleSessionInputSnapshot(
@@ -260,6 +263,10 @@ class ConsoleReceivedIntentInputMixin:
             Whether the original live source and every captured input still match.
         """
         with self._preparation_lock:
+            from .console_control_settings import settings_pending
+
+            if settings_pending(self, snapshot.session_id) is not None:
+                return False
             session = _input_session_locked(self, snapshot)
             if session is None:
                 return False

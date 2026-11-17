@@ -179,6 +179,9 @@ class StreamableHTTPConnection(_StdioJSONRPCConnection):
     ) -> dict:
         if self._closed:
             raise RuntimeError("mcp_connection_closed")
+        from tldw_chatbook.Chat.console_control_tools import bind_mcp_transport
+
+        control_dispatch = bind_mcp_transport(self, method, params, _dispatch)
         request_id = next(self._request_ids)
         params = self.profile.params(params or {}, self.client_name)
         body = self._encode(
@@ -205,6 +208,8 @@ class StreamableHTTPConnection(_StdioJSONRPCConnection):
                         and _dispatch is not None
                     ):
                         _dispatch.state = "uncertain"
+                        if control_dispatch is not None:
+                            control_dispatch.handoff(self, _dispatch)
 
                 exchange_started = True
                 result = await self._exchange(body, headers, request_id, method, trace)

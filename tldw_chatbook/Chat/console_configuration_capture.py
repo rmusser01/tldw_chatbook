@@ -129,11 +129,15 @@ def capture_character_authority(
 
 
 def capture_prompt_transform_inputs(
-    app: Any, session: ConsoleChatSession
+    app: Any, session: ConsoleChatSession, *, domain_services=None
 ) -> dict[str, Any]:
     """Capture bounded dictionary/world inputs without retaining a screen."""
     conversation_id = session.persisted_conversation_id
-    db = getattr(app, "chachanotes_db", None)
+    db = (
+        domain_services.sources.chat_database
+        if domain_services is not None
+        else getattr(app, "chachanotes_db", None)
+    )
     dictionary_entries: tuple[Any, ...] = ()
     world_books: tuple[Any, ...] = ()
     world_enabled = False
@@ -185,11 +189,18 @@ def capture_skill_context_maximum(
     workspace_id: str | None = None,
     *,
     _plugin_service: Any = _UNSET_PLUGIN_SERVICE,
+    domain_services=None,
 ) -> dict[str, Any]:
     """Capture the currently eligible local-skill catalog synchronously."""
-    scope = getattr(app, "skills_scope_service", None)
-    local = getattr(scope, "local_service", None) or getattr(
-        app, "local_skills_service", None
+    scope = (
+        domain_services.sources.skills_scope
+        if domain_services is not None
+        else getattr(app, "skills_scope_service", None)
+    )
+    local = getattr(scope, "local_service", None) or (
+        domain_services.sources.local_skills
+        if domain_services is not None
+        else getattr(app, "local_skills_service", None)
     )
     if local is None:
         return _empty_local_skill_context()
@@ -275,6 +286,22 @@ def capture_mcp_definition_maximum(app: Any) -> dict[str, str]:
 
 def _mcp_attachment_source(app, creator=None):
     """Read runtime attachment without invoking a property or constructing it."""
+    domain = getattr(creator, "domain_services", None)
+    if domain is not None:
+        from .console_domain_services import DomainMcpAttachment
+        from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+        domain.require_current()
+        runtime = getattr_static(creator, "_hooks_v2_runtime", None)
+        original = getattr_static(creator, "_original_mcp_capture_runtime", None)
+        if runtime is not domain.runtime or (
+            original is not None and runtime is not original
+        ):
+            raise RecoveryRequired("console_snapshot_owner_changed")
+        domain.presentation.require_association(domain.presentation.association)
+        return DomainMcpAttachment(
+            domain, domain.sources, runtime, original, domain.presentation.association
+        )
     source = (
         getattr_static(app, "console_runtime", None),
         getattr_static(creator, "_hooks_v2_runtime", None),
@@ -288,6 +315,26 @@ def _mcp_attachment_source(app, creator=None):
 
 
 def _require_mcp_attachment_source(app, creator, source):
+    from .console_domain_services import DomainMcpAttachment
+
+    if type(source) is DomainMcpAttachment:
+        from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+        source.domain_services.require_current(source.sources)
+        source.domain_services.presentation.require_association(source.association)
+        current = _mcp_attachment_source(app, creator)
+        if type(current) is not DomainMcpAttachment or any(
+            getattr(current, name) is not getattr(source, name)
+            for name in (
+                "domain_services",
+                "sources",
+                "runtime",
+                "original_runtime",
+                "association",
+            )
+        ):
+            raise RecoveryRequired("console_snapshot_owner_changed")
+        return
     if any(
         now is not before
         for now, before in zip(
@@ -300,7 +347,12 @@ def _require_mcp_attachment_source(app, creator, source):
 
 
 def _has_managed_console_runtime(app, creator=None):
-    return any(value is not None for value in _mcp_attachment_source(app, creator))
+    from .console_domain_services import DomainMcpAttachment
+
+    source = _mcp_attachment_source(app, creator)
+    return type(source) is DomainMcpAttachment or any(
+        value is not None for value in source
+    )
 
 
 def _capture_mcp_definition_selection(
@@ -386,6 +438,7 @@ def capture_console_turn_configuration(
     _captured_character_authority: Any = _UNSET_CAPTURED_DOMAIN,
     _captured_prompt_transform_inputs: Any = _UNSET_CAPTURED_DOMAIN,
     prompt_mixins=None,
+    _domain_services=None,
 ) -> ConsoleTurnConfigurationSnapshot:
     """Capture common domain state using the adapters' explicit selected values.
 
@@ -425,12 +478,25 @@ def capture_console_turn_configuration(
             _ordinary_metadata_sources,
         )
 
-        consent = getattr_static(app, "change_review_consent_service", None)
+        consent = (
+            _domain_services.sources.consent_service
+            if _domain_services is not None
+            else getattr_static(app, "change_review_consent_service", None)
+        )
         _change_review_capture_pending = (
             consent is not None and not _ordinary_metadata_sources(consent)[1]
         )
     roots, aliases, skipped = (
-        checked(capture_change_review_metadata, app, workspace_id)
+        checked(
+            capture_change_review_metadata,
+            app,
+            workspace_id,
+            **(
+                {}
+                if _domain_services is None
+                else {"domain_services": _domain_services}
+            ),
+        )
         if _captured_change_review is _UNSET_CAPTURED_DOMAIN
         else _captured_change_review
     )
@@ -488,7 +554,16 @@ def capture_console_turn_configuration(
         ),
         **({} if prompt_mixins is None else {"prompt_mixins": prompt_mixins}),
         prompt_transform_inputs=(
-            checked(capture_prompt_transform_inputs, app, session)
+            checked(
+                capture_prompt_transform_inputs,
+                app,
+                session,
+                **(
+                    {}
+                    if _domain_services is None
+                    else {"domain_services": _domain_services}
+                ),
+            )
             if _captured_prompt_transform_inputs is _UNSET_CAPTURED_DOMAIN
             else _captured_prompt_transform_inputs
         ),
@@ -497,6 +572,11 @@ def capture_console_turn_configuration(
                 capture_skill_context_maximum,
                 app,
                 skill_workspace_id,
+                **(
+                    {}
+                    if _domain_services is None
+                    else {"domain_services": _domain_services}
+                ),
                 **(
                     {}
                     if _plugin_service is _UNSET_PLUGIN_SERVICE
@@ -582,4 +662,20 @@ _CONSOLE_SKILL_CAPTURE_SOURCE = (
         )
         for name, function in _CONSOLE_SKILL_CAPTURE_FUNCTIONS.items()
     ),
+)
+
+
+# Exact selected-domain helper definitions; legacy qualifications remain separate.
+from tldw_chatbook.Chat.console_domain_services import _definition as _domain_definition
+
+_DOMAIN_SOURCE_DEFINITIONS = tuple(
+    (name, _domain_definition(globals()[name]))
+    for name in (
+        "_mcp_attachment_source",
+        "_require_mcp_attachment_source",
+        "_has_managed_console_runtime",
+        "capture_console_turn_configuration",
+        "capture_prompt_transform_inputs",
+        "capture_skill_context_maximum",
+    )
 )

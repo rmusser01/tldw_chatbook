@@ -21,7 +21,7 @@ async def test_index_settings_action_exists(request):
 )
 @private_profile_test
 async def test_console_status_binding_fence_and_safe_settings_route(
-    request, theme, size
+    request, tmp_path, theme, size
 ):
     import asyncio
     from dataclasses import replace
@@ -85,14 +85,8 @@ async def test_console_status_binding_fence_and_safe_settings_route(
             await pilot.pause()
             assert host.focused is button
             assert button.region.intersection(modal.region) == button.region
-            from pathlib import Path
-
-            qa = (
-                Path(__file__).resolve().parents[2]
-                / ".superpowers/sdd/2026-10-20-workspace-project-keyword-index"
-            )
             host.save_screenshot(
-                filename=f"k5-console-{theme}-{size[0]}.svg", path=str(qa)
+                filename=f"k5-console-{theme}-{size[0]}.svg", path=str(tmp_path)
             )
             await pilot.press("enter")
             for _ in range(50):

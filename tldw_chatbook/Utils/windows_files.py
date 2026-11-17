@@ -597,7 +597,40 @@ class _Native:
                     info.volume,
                     (info.index_high << 32) | info.index_low,
                 )
-            self.ntfs(handle)
+            if (
+                _metadata_record is not None
+                and type(_metadata_record) is not _AdmissionMetadataHandle
+            ):
+                raise OSError(errno.ESTALE, "windows_admission_volume_proof_invalid")
+            proof = None if _metadata_record is None else _metadata_record.parent
+            if proof is None:
+                self.ntfs(handle)
+            else:
+                # Only this finite observation's still-owned directory birth
+                # proves the relative child's filesystem, never a serial cache.
+                _component(name)
+                if (
+                    type(proof) is not _AdmissionMetadataHandle
+                    or proof.native is not self
+                    or proof.owner is not _metadata_record.owner
+                    or proof.owner is None
+                    or proof not in proof.owner
+                    or _metadata_record not in proof.owner
+                    or proof.handle != parent
+                    or proof.path != _metadata_record.path.parent
+                    or name != _metadata_record.path.name
+                    or proof.close_error is not None
+                    or not proof.qualified
+                    or not proof.directory
+                    or proof.identity is None
+                    or info.volume != proof.identity[0]
+                ):
+                    raise OSError(
+                        errno.ESTALE, "windows_admission_volume_proof_invalid"
+                    )
+            if _metadata_record is not None:
+                _metadata_record.directory = bool(info.attributes & _DIRECTORY)
+                _metadata_record.qualified = True
             return handle.value
         except BaseException:
             if _metadata_record is None:
@@ -682,8 +715,12 @@ class _AdmissionMetadataHandle:
     def __init__(self, native, path):
         self.native = native
         self.path = path
+        self.owner = None
+        self.parent = None
         self.handle = None
         self.identity = None
+        self.directory = False
+        self.qualified = False
         self.close_error = None
 
 
@@ -832,6 +869,8 @@ class WindowsOS:
 
         def named_handle(node):
             record = _AdmissionMetadataHandle(native, node)
+            record.owner = opened
+            record.parent = None if node.parent == node else handles[node.parent]
             opened.append(record)
             if node.parent == node:
                 native.open_handle(

@@ -2,6 +2,10 @@
 
 import asyncio
 import inspect
+import os
+import sqlite3
+import sys
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -20,6 +24,33 @@ from tldw_chatbook.Workspaces.models import (
 from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
+
+
+@contextmanager
+def _opened_workspace_connections(database):
+    """Observe original admitted SQLite returns on both native platform paths."""
+    code = inspect.unwrap(WorkspaceDB._open_connection).__code__
+    connections = []
+    monitor = sys.monitoring
+    tool = next(value for value in range(1, 6) if monitor.get_tool(value) is None)
+
+    def returned(_code, _offset, connection):
+        if sys._getframe(1).f_locals.get("self") is database:
+            assert isinstance(connection, sqlite3.Connection)
+            connections.append(connection)
+
+    monitor.use_tool_id(tool, "original-workspace-sqlite-returns")
+    try:
+        monitor.register_callback(tool, monitor.events.PY_RETURN, returned)
+        monitor.set_local_events(tool, code, monitor.events.PY_RETURN)
+        yield connections
+    finally:
+        monitor.set_local_events(tool, code, 0)
+        monitor.register_callback(tool, monitor.events.PY_RETURN, None)
+        monitor.free_tool_id(tool)
+        for connection in connections:
+            with pytest.raises(sqlite3.ProgrammingError):
+                sqlite3.Connection.in_transaction.__get__(connection)
 
 
 @pytest.mark.parametrize("custom", ["outer", "folder"])
@@ -90,45 +121,54 @@ async def test_stock_default_availability_opens_no_sqlite_helper(
         return real_start(*args, **kwargs)
 
     monkeypatch.setattr(HelperLease, "start", classmethod(counted_start))
-    try:
-        if route == "view":
-            from tldw_chatbook.UI.Console_Modules.workspace import (
-                _ConsoleRegistryDisplayReads,
-            )
-
-            assert (
-                _ConsoleRegistryDisplayReads(registry).list_runtime_bindings(
-                    DEFAULT_WORKSPACE_ID
+    with _opened_workspace_connections(database) as connections:
+        try:
+            if route == "view":
+                from tldw_chatbook.UI.Console_Modules.workspace import (
+                    _ConsoleRegistryDisplayReads,
                 )
-                == ()
-            )
-        else:
-            controller._request_workspace_files_availability_refresh(
-                (DEFAULT_WORKSPACE_ID,)
-            )
-            await screen.workers[0][0]
-            assert controller._workspace_files_availability_by_id == {
-                DEFAULT_WORKSPACE_ID: False
-            }
-            assert controller._workspace_files_runtime_bindings_by_id == {
-                DEFAULT_WORKSPACE_ID: ()
-            }
-        assert helper_spawns == 0, "Default-only display opened a private SQLite helper"
-        assert registry.list_runtime_bindings(DEFAULT_WORKSPACE_ID) == ()
-        assert helper_spawns == 1, "public Default cleanup did not reach real SQLite"
-        with database.connection() as connection:
+
+                assert (
+                    _ConsoleRegistryDisplayReads(registry).list_runtime_bindings(
+                        DEFAULT_WORKSPACE_ID
+                    )
+                    == ()
+                )
+            else:
+                controller._request_workspace_files_availability_refresh(
+                    (DEFAULT_WORKSPACE_ID,)
+                )
+                await screen.workers[0][0]
+                assert controller._workspace_files_availability_by_id == {
+                    DEFAULT_WORKSPACE_ID: False
+                }
+                assert controller._workspace_files_runtime_bindings_by_id == {
+                    DEFAULT_WORKSPACE_ID: ()
+                }
             assert (
-                connection.execute(
-                    "SELECT binding_id FROM workspace_runtime_bindings WHERE binding_id = ?",
-                    ("legacy-default",),
-                ).fetchone()
-                is None
+                helper_spawns == 0
+            ), "Default-only display opened a private SQLite helper"
+            assert (
+                not connections
+            ), "Default-only display opened a native SQLite connection"
+            assert registry.list_runtime_bindings(DEFAULT_WORKSPACE_ID) == ()
+            assert (
+                len(connections) == 1
+            ), "public Default cleanup did not reach real SQLite"
+            assert helper_spawns == (0 if os.name == "nt" else 1)
+            with database.connection() as connection:
+                assert (
+                    connection.execute(
+                        "SELECT binding_id FROM workspace_runtime_bindings WHERE binding_id = ?",
+                        ("legacy-default",),
+                    ).fetchone()
+                    is None
+                )
+        finally:
+            await asyncio.gather(
+                *(row[0] for row in screen.workers), return_exceptions=True
             )
-    finally:
-        await asyncio.gather(
-            *(row[0] for row in screen.workers), return_exceptions=True
-        )
-        database.close()
+            database.close()
 
 
 @pytest.mark.parametrize("route", ["view", "availability"])
@@ -265,33 +305,35 @@ async def test_changed_default_policy_reaches_original_native_read(
         return real_start(*args, **kwargs)
 
     monkeypatch.setattr(HelperLease, "start", classmethod(counted_start))
-    try:
-        if route == "view":
-            assert (
-                display._ConsoleRegistryDisplayReads(registry).list_runtime_bindings(
-                    DEFAULT_WORKSPACE_ID
+    with _opened_workspace_connections(database) as connections:
+        try:
+            if route == "view":
+                assert (
+                    display._ConsoleRegistryDisplayReads(
+                        registry
+                    ).list_runtime_bindings(DEFAULT_WORKSPACE_ID)
+                    == ()
                 )
-                == ()
+            else:
+                controller._request_workspace_files_availability_refresh(
+                    (DEFAULT_WORKSPACE_ID,)
+                )
+                await screen.workers[0][0]
+                assert controller._workspace_files_availability_by_id == {
+                    DEFAULT_WORKSPACE_ID: False
+                }
+                assert controller._workspace_files_runtime_bindings_by_id == {
+                    DEFAULT_WORKSPACE_ID: ()
+                }
+            assert (
+                len(connections) == 1
+            ), "declined policy bypassed the original native Default read"
+            assert helper_spawns == (0 if os.name == "nt" else 1)
+        finally:
+            await asyncio.gather(
+                *(row[0] for row in screen.workers), return_exceptions=True
             )
-        else:
-            controller._request_workspace_files_availability_refresh(
-                (DEFAULT_WORKSPACE_ID,)
-            )
-            await screen.workers[0][0]
-            assert controller._workspace_files_availability_by_id == {
-                DEFAULT_WORKSPACE_ID: False
-            }
-            assert controller._workspace_files_runtime_bindings_by_id == {
-                DEFAULT_WORKSPACE_ID: ()
-            }
-        assert helper_spawns == 1, (
-            "declined policy bypassed the original native Default read"
-        )
-    finally:
-        await asyncio.gather(
-            *(row[0] for row in screen.workers), return_exceptions=True
-        )
-        database.close()
+            database.close()
 
 
 @pytest.mark.parametrize("route", ["view", "availability"])
@@ -384,6 +426,7 @@ def main():
         raise AssertionError(drift)
     from tldw_chatbook.UI.Console_Modules.workspace import _ConsoleRegistryDisplayReads
     from Tests.UI.test_console_workspace_controller import _AsyncWorkerScreen, _workspace_controller
+    from Tests.UI.test_console_workspace_availability_sources import _opened_workspace_connections
     database = WorkspaceDB(root / 'preimport.sqlite', client_id='preimport-default')
     registry = source.LocalWorkspaceRegistryService(database)
     registry.ensure_default_workspace()
@@ -405,12 +448,14 @@ def main():
                 controller._request_workspace_files_availability_refresh((DEFAULT_WORKSPACE_ID,))
                 await screen.workers[0][0]
                 assert controller._workspace_files_availability_by_id == {DEFAULT_WORKSPACE_ID: False}
-            assert len(starts) == 1, 'pre-import mutation bypassed original native read'
+            assert len(connections) == 1, 'pre-import mutation bypassed original native read'
+            assert len(starts) == (0 if os.name == 'nt' else 1)
         finally:
             await asyncio.gather(*(row[0] for row in screen.workers), return_exceptions=True)
             database.close()
     try:
-        asyncio.run(exercise())
+        with _opened_workspace_connections(database) as connections:
+            asyncio.run(exercise())
     finally:
         HelperLease.start = classmethod(real_start.__func__)
         database.close()

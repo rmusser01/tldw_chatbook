@@ -2790,13 +2790,24 @@ class ChatPersistenceService:
 
     def project_workspace_membership(self, conversation_id: str) -> Any | None:
         """Project durable workspace authority into the registry idempotently."""
+        from .console_control_sessions import saved_projection_owner
+
+        selected = saved_projection_owner(self)
         database = self.db
-        with (
-            operation_owned_connection(database)
-            if type(database) is CharactersRAGDB and not database.is_memory_db
-            else nullcontext()
-        ):
-            conversation = database.get_conversation_by_id(conversation_id)
+
+        def read_conversation():
+            with (
+                operation_owned_connection(database)
+                if type(database) is CharactersRAGDB and not database.is_memory_db
+                else nullcontext()
+            ):
+                return database.get_conversation_by_id(conversation_id)
+
+        conversation = (
+            read_conversation()
+            if selected is None
+            else selected.invoke(read_conversation)
+        )
         if conversation is None:
             raise ValueError(f"Conversation {conversation_id} not found")
         safe_workspace_id = self._require_workspace_scope(
@@ -2818,7 +2829,16 @@ class ChatPersistenceService:
         conversation_id: str,
         title: str,
     ) -> Any:
-        with operation_owned_connection(getattr(self.workspace_registry, "db", None)):
+        from .console_control_sessions import (
+            saved_projection_owner,
+            saved_projection_registry,
+        )
+
+        selected = saved_projection_owner(self)
+        with (
+            saved_projection_registry(selected, self.workspace_registry),
+            operation_owned_connection(getattr(self.workspace_registry, "db", None)),
+        ):
             return self.workspace_registry.link_membership(
                 workspace_id,
                 item_type="conversation",

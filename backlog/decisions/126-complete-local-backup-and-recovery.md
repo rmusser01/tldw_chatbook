@@ -1731,3 +1731,374 @@ Restore still never overwrites a keyring entry (decision 8). The stored key refe
 This is the first non-server credential that restore writes back to the keyring. Link keys (the device wrapping key, staged integrity keys and dataset staging keys) are never captured, and a restored repository does not resume its link. Isolated restored profiles keep Personal Context locked.
 
 Design: [Personal Context backup and key custody](../../Docs/superpowers/specs/2026-11-10-personal-context-backup-key-custody-design.md). Implementation: TASK-40133 to TASK-40136, TASK-40138 and TASK-40139.
+
+### TASK-40608 — ordinary Windows admission reuse
+
+Approved by the owner on 2026-11-12. The PERF-07/PERF-08 protocol also applies
+to ordinary acquisitions on qualified local NTFS. Only a serving counted hold
+may reuse an allowed result confirmed by two full derivations with identical
+settled inputs. The lease is counted before the final observation. Recheck the
+live hold, epoch, selected path and operation gates before publishing the lease.
+
+Use fresh nofollow native snapshots of named objects and their complete chains.
+Compare current volume and file identities, attributes, link count, owner and
+security descriptor. Content stamps include native ChangeTime. On Windows
+FILE_WRITE_ATTRIBUTES can preserve or set timestamps, so stamps alone do not
+authorize reuse of parsed content. Reread the control records, and reread the
+registry under its native shared publication gate. Compare bounded content
+digests. Recheck the selector when its exact profile record exists. Keep
+qualification, creation-intent absences and ancestry evidence current. Reuse
+path evidence only for the selector proof that established it. Changed or
+unobservable inputs return to full derivation for the verdict.
+
+A native metadata close with uncertain retirement keeps its exact failed owners
+and exception. Retire the counted lease through its original owner and surface
+the error without another observation or a fallback. Startup, capture,
+maintenance and derived-metadata reuse keep their original routes.
+
+Qualification requires differential native controls with engaged reuse and
+three sequential matched Windows baseline/candidate pairs for the README and
+approved edit journeys. The target is at least 30% lower median adjusted
+Send-to-completed-reply time for each journey with the original workflow checks.
+
+### TASK-40608 follow-up — bounded operation admission and display refresh
+
+The owner approved reducing admission frequency after the first candidate missed the approved-edit latency target. An exact MCP storage operation may use the existing related-path acquisition for its ordered member set. Its canonical observation may remain in that finite operation's custody during preparation and nested selection. Reuse must validate the original issuer, source, selected/canonical path, process, thread/task and live lease; no foreign operation, descendant path or recovery destination inherits canonical authority. All existing source, generation, path, native qualification, maintenance, pin and uncertain-retirement checks remain. Preparation must retire its own leases on failure before any operation body runs.
+
+Console presentation may consume detached, checked display snapshots between bounded reconciliations using the existing owner and revision fences. A successful native check starts its reconciliation interval when it completes, so a slow check does not expire before publication. Owner or revision changes invalidate presentation; external changes still receive bounded native reconciliation. Custom/unqualified readers keep their checked route. These snapshots grant no permission, storage or dispatch authority. No operation lease remains held across provider or human waits.
+
+Qualification adds whole-operation admission/native-open counts and unchanged-refresh tests to the existing Windows oracle controls and three matched README/approved-edit pairs. The 30% median target still applies to both journeys.
+
+### TASK-40608 — absolute usability gate (2026-11-13)
+
+The owner rejected the remaining 84.5-second README and 162.0-second approved-edit medians as unusable. The percentage gate above is historical and insufficient for task completion. Both unchanged deterministic-loopback journeys must finish in under five seconds of application time, excluding only measured human disclosure/approval waits, in all three candidate runs of the sequential paired qualification. Keep the original authority, approval, grounded-answer and exact file assertions. TASK-40608 is reopened.
+
+The next architecture under investigation separates routine presentation from native reconciliation and groups finite local DB commands. This acceptance amendment does not authorize a permission TTL, detached-descriptor ancestry proof, removal of SQLite resource custody, or extending operation leases over provider/human waits. Any new ownership interface must be documented and qualified before implementation is accepted. The current candidate has not met the absolute gate.
+
+### TASK-40608 — shared display and finite DB implementation (2026-11-13)
+
+The owner authorized implementation of the [shared display and finite operation design](../../Docs/superpowers/specs/2026-11-13-task-40608-sub-five-design.md). Detached display sections may share existing cadence/publication ownership and use keys specific to the facts read, with existing external reconciliation bounds and immediate local invalidation. These sections cannot authorize effects; FULL's mutation/reconciliation/terminal work remains owned and owed.
+
+A complete synchronous local DB command may use existing operation-owned connections and counted repository contexts for its full callback. An already-issued live exact same-participant ancestor may be selected again across another nested participant, with all original source/path/process/thread/task/custody/pause checks and restoration of the previous dynamic scope. Independent participants remain independently admitted. SQLite connection/resource custody and current named-path validation remain separate from operation reuse. No new operation lifetime spans a provider or human wait. Tests must establish fewer complete-operation admissions/opens while preserving refusal, drain and uncertain-retirement behavior; the absolute journey gate remains mandatory.
+
+The Windows 100-microsecond handoff trial was withdrawn under ADR-230 after original journey timings regressed; original preparation/DB scheduling remains. No admission/native check was removed. The next concrete shared display batch groups registry rows and physical folder availability under one exact WorkspaceDB callback and independently validates each detached section before publication. Existing physical status checks, Default binding cleanup, source/generation/lifecycle guards and cancellation retirement remain. Actual five-second qualification remains open.
+
+The existing finite private-parent traversal may also serve `secure_private_directory` when its selected directory is the exact already-pinned installed source directory. The original component walk, nofollow/NTFS/owner/ACL/type/sticky checks and per-allocation source/custody checks remain. A full current named-source/pin check brackets the finite walk; the opened final directory must equal that exact live pin before hardening and successful return. Actual creation/hardening and postconditions keep their effect checks. Custom, unsupported and unpinned cases retain their original path. This replaces repeated absolute source-parent walks during intermediate read-only allocations, not current named-path proof at effect/publication. No handle or verdict is cached across calls, and all descriptors retain the original creator and uncertain-retirement fence.
+
+Stock Agents activation may evaluate one finite warm ordinary entry against shared fresh control/registry observations. The selected branch must positively establish no pending record, activation association or profile activation witness through the existing validated readers. It preserves source-order acquisition, every independent lease and exact execution-context, owner-identifier and namespace check. Before publishing the accepted execution state or entering its body, it repeats full native ordinary/control/registry validation and rechecks the current selector, execution identity and leases. Changed evidence refuses the attempt. Cold initialization, scope-changing enrollment, restored state, mixed roots and substituted/custom readers retain the original per-source route. No shared observation survives the entry or passes to a nested entry, worker, provider or human wait. This removes identical ordinary control-tree derivations within one admission boundary; it cannot reuse an earlier activation verdict or weaken restored-generation review. Native causal counts and refusal/retirement controls precede the unchanged journey qualification.
+
+The existing exact MCP canonical-preparation owner may use the same fresh ordinary input reader for a shorter generation-selection subphase. For an already-bound, stock, warm ordinary permission/local/context source, repeated pre-lock selection can derive the empty generation list from one checked ordinary snapshot while retaining each original source/binding/path/execution/lease check. A fresh full final ordinary observation must match before lock acquisition; the snapshot is discarded before any source-lock wait. Post-lock selection, preflight, actual IO, repair and final checks remain independently fresh. This is passive generation selection, not an Agents permission verdict. Restored/custom/cold/unqualified cases keep the original path; no Windows cross-operation metadata cache is authorized by this change.
+
+### TASK-40608 Task 9: shared main-database display custody (2026-11-13)
+
+The existing Console cadence/FULL owner may collect the stock Character, context-presence and requested appearance display reads before awaiting their native work. One finite synchronous callback may share operation_owned_connection/core_operation only for the exact same captured CharactersRAGDB object. Different instances, even at the same filename, and WorkspaceDB/AgentRunsDB/config sources retain independent ordinary admission. Existing transaction order and every native check remain; this does not introduce a cross-call connection pool or authority cache.
+
+The shared run_preparation_read is observed by all participating producer/runtime teardown sets. A result is delivered to its original producer only after physical retirement, and the original per-section source/owner/revision checks decide publication independently. Character's on-loop midpoint and source provenance checks remain inside its original finite callback. Failed, obsolete or cancelled reads never renew observations. A late request, custom/in-memory route or cold-positive-memory follow-up remains on its original finite path. No shared native lifetime crosses provider/human waits; no display result authorizes effects. See Task 9 of the linked sub-five implementation plan.
+
+Context enlistment is opportunistic: it may consume an already-current stock config display, but must not start or await config work, wait for a busy context lock, or execute a separate follow-up after capture seals. Cold, busy, late and positive-memory follow-up work remains with the original scheduled context refresh. The gate6 integration exposed that awaiting these prerequisites inside FULL could miss the batch and add independent native work before archive recovery; the isolated no-config fixture did not cover that dependency. Preserve the original archive-before-config preparation order, proof lifetime and publication checks.
+
+#### Fresh finite permission commands (TASK-40608)
+
+The existing qualified owned permission-load primitive may also serve a stock `MCPPermissionStore.load` or `get_kill_switch` body inside that command's already-issued exact source operation. Retain each command's outer native admission and original source/mutation lock; execute the unchanged payload reader and its guarded corruption-repair branches. Before observing permission publication or returning a result, repeat the final native source check and require unchanged exact source, binding, path, configuration receipt and stock reader/publication definitions. Keep the original publication observation under the mutation fence. No command reuses another command's bytes, verdict or generation observation: review, approval and dispatch retain independent fresh policy reads. Custom sources/callbacks follow their original route before fast-path IO; a selected attempt that changes or fails refuses, never retries through fallback. This removes redundant forwarding scopes within a finite command without extending its authority lifetime or changing native resource retirement.
+
+#### Fresh inputs within one generation checkpoint (TASK-40608 Task 11)
+
+A stock ordinary generation checkpoint may acquire its complete validated
+control-tree and registry inputs once and evaluate source coverage, startup
+permission and empty generation pairing from that same input set. Positive
+ordinary evidence requires no pending record, activation association or profile
+activation witness; it must retain the existing registry and unbound-owner
+requirements. The ordinary activation observation may use the same acquisition
+while retaining its registry-name identity and selector fingerprint checks.
+
+This is a refactoring of one check's input acquisition, with no observation
+surviving that check. Every original source-lock, preflight, pre-open, repair,
+post-read and publication checkpoint remains fresh. Native component, descriptor,
+ACL, device, ancestry and retirement checks remain in the original input readers.
+Pure local derivation must not introduce a later fallback after a selected native
+failure. Pending/restored/custom routes keep their original checked behavior;
+full-control validation cannot be replaced by startup's weaker projection.
+
+An initial/final snapshot around a whole permission command was rejected as the
+replacement: intervening identity IO, file reads and possible corruption repair
+need their own current checks. Shared observations are therefore explicit inputs
+to one checkpoint, never an ambient command-wide authority cache. See Task11 of
+the linked sub-five implementation plan for causal and refusal qualification.
+
+#### Vector admission within one stock Agents entry (TASK-40608 Task 14)
+
+A finite top-level stock Agents admission decision may gather fresh Windows evidence for its complete exact source set together. The existing captured-parent/local-source tuple and row order remain authoritative. Same-root/selector, confirmed warm ordinary evidence on one serving native hold may share one mutable control/registry input acquisition and one union metadata observation. Every unique path still receives an independently counted, exact-path lease before native validation; owner rows sharing a path retain every original owner/namespace predicate. The shared observation is confined to the current entry and never grants an existing parent lease to a child worker.
+
+The selected decision retains all native component, ACL, nofollow, volume/device, named association, control-byte and locked-registry checks over the union of dependencies. Recheck source/execution identity, evidence generation, current hold, pause and every issued lease before publishing the execution state, then retain the existing fresh final ordinary activation proof. There is no domain effect or provider/approval wait between the source rows being combined. Native lock waits occur inside the fresh decision and are followed by its original currentness proofs. A selected failure refuses without fallback, and uncertain resource retirement preserves its original fail-closed owner. Cold, restored, mixed, custom, unconfirmed and initially nested-active entries use the original sequential route. No persistent metadata cache, new TTL or native-query removal is authorized.
+
+Native work-count and refusal controls must demonstrate one common evidence acquisition and unchanged independent lease/retirement behavior. The original README/edit journeys and three sequential matched pairs remain the absolute performance oracle; local count savings alone cannot close TASK-40608. See Task14 of the [sub-five implementation plan](../../Docs/superpowers/plans/2026-11-13-task-40608-sub-five.md).
+
+The replacement direction is explicit operation ownership: gather authority inputs once for a complete decision, pass that evidence to its pure predicates, perform the protected operation with independently owned resources, and validate again at the next meaningful wait/effect/publication boundary. Rewriting individual Win32 calls cannot remove multiplication by helper depth, repeated source sets and concurrent refreshes. A broad storage-service rewrite could make that contract the only API, but would also need to reproduce existing restore, custom-source, cancellation and uncertain-retirement semantics. Introduce the operation contract at the existing guard rather than replace those independent owners at once. A separate native/helper-process backend remains unselected: the current diagnostics do not establish an end-to-end benefit sufficient to justify new build, IPC and authority-transfer contracts.
+
+#### Native operation proofs outside coordinator critical sections (TASK-40608 Task 15)
+
+The process-wide admission coordinator protects in-memory ownership and admission state. A warm operation's native parent/path observation must execute outside that critical section, so unrelated token retirement and pause registration cannot wait for its filesystem calls. Capture exact issued operation, participant, repository, selected/resolved path, parent identity, lease/hold and dynamic owner under the coordinator lock; perform the original named observation outside it; then require the captured authority and selection still current under the lock before publishing/restoring ownership or returning access. The proof grants nothing while observation is in flight. No manual release of an unknown outer reentrant lock is permitted.
+
+Two immediately adjacent same-owner nested-entry predicates may consume one fresh named proof for that entry decision. Checks after native connection setup, real lock waits, different-participant transitions, restoration, effects and publication remain independently fresh. This is not a retained path cache or authorization to omit a generic/custom accessor's checks. Native failure, pause, source/path drift, foreign ownership and uncertain retirement keep their original refusal/custody semantics. Causal concurrency and native refusal controls precede unchanged journey qualification; see Task15 of the [sub-five plan](../../Docs/superpowers/plans/2026-11-13-task-40608-sub-five.md).
+
+#### Explicit ordinary permission-read ownership (TASK-40608 Task 12)
+
+The stock ordinary permission-read command may own admission, lock, metadata
+gathering, protected read, final validation and publication explicitly. Preserve
+the same raw operation, independent resource leases, pins, owner identity and
+retirement machinery. Its internal helpers receive issued phase evidence rather
+than recursively rediscovering ownership and rereading complete recovery trees.
+Public/custom compatibility methods retain their checked route; inactive setup
+does not gain permission to perform payload IO.
+
+After the source lock and resource admission, one fresh proof governs metadata
+gathering and pure rules. A second fresh proof immediately precedes actual payload
+open, including current named-parent, destination identity and original native
+qualification. A third follows confirmed descriptor retirement and precedes
+publication/return. Each borrow still validates its exact source and live custody.
+No evidence passes through provider/approval waits, lock waits, protected effects
+or another operation. These logical boundaries replace redundant metadata-helper
+executions; they do not make an external filesystem transaction.
+
+Corruption repair ends the read phase before the original independently checked
+write/backup/replace/fsync path, and requires fresh final validation afterwards.
+Payload parsing remains shared with the compatibility path. Public load/getter
+retain their original publication observation; the captured Console reader must
+not acquire a new publication effect. Source changes and uncertain cleanup
+refuse without retry or releasing the original physical custody. The unchanged
+journeys and native work/refusal controls in Task12 qualify this replacement.
+
+#### Pinned ordinary input traversal (TASK-40608 Task 17)
+
+A qualified stock warm Windows ordinary observation may share one explicitly
+owned checked bootstrap/admission tree across its existing control and registry
+readers. Parsing and policy predicates retain their existing meanings. Relative
+child opens still receive their own native type, reparse, ACL, NTFS and device
+qualification; matching volume serials do not authorize inherited qualification.
+No descriptors or authority escape the observation.
+
+Preserve the genuine registry-lock boundary and freshness after waiting. The
+registry lock does not fence standalone control writers: current control names
+and contents, registry/lock identity, selector fingerprint and current checked
+named ancestry must agree before returning the detached result. Custom, cold or
+recovered inputs retain the original reader before optimized IO. Selected
+failure and uncertain retirement refuse without a fallback attempt. Existing
+independent lease owners and all Task12 inter-observation boundaries remain.
+Native causal work counts and refusal/retirement controls precede journey
+qualification; this change alone establishes no five-second result.
+
+#### Missing optional index during Console preparation (TASK-40608 Task 20)
+
+The [ADR-241 missing-index amendment](241-workspace-project-context-and-folder-bound-index.md#missing-index-base-during-console-preparation-task-40608) permits a checked negative capability observation without creating a derived cache. Reuse the original finite registry scope and retained data owner; successful metadata observations retire every native birth before returning. An uncertain metadata close retains its exact failed records and the data pin through the existing index operation and must reach its outer retirement handler. The result only omits an optional tool from the current run and carries no storage, execution or long-lived absence authority. Existing index/status and custom routes retain their original checks.
+
+#### One payload for a finite local tool decision (TASK-40608 Task 19)
+
+After the original workspace authority check, an eligible stock Console local
+file-tool invocation may load one fresh permission payload for its kill switch
+and initial tool-state projection. These are two predicates of the same finite
+decision. Keep every validation phase inside the existing permission-read
+command; this does not cache a storage verdict or reuse a display snapshot.
+
+Limit selection to the exact stock synchronous local path, with an initialized
+stock permission source, unchanged service/provider/projection definitions and
+no SSH binding, promotion, injected callback or effect between those predicates.
+Preserve kill-switch refusal before alias retirement, and resolve the tool state
+only at its existing site. Check captured source/profile/definition eligibility
+again there. Initially unsupported/custom routes keep the original getters;
+selected drift or uncertain custody refuses without replay. If the original
+switch read fails open, preserve the distinct subsequent state read and its
+original error policy rather than caching the failure or retrying the switch.
+That independent state read is not a replay of the failed switch predicate:
+it still performs every original native check. Do not relabel generic storage
+errors or strengthen their surrounding policy merely to implement this reuse.
+The new reader's proven definition/profile drift and existing typed or latched
+uncertain retirement invalidate its selected snapshot; a failed read never
+manufactures one through an internal retry.
+
+Discard the detached payload after the initial state projection, before session
+checks, stamp persistence, approval callbacks or the handler. Pre-card review,
+post-card invocation, hooks, later state checks and final workspace authority
+checks retain their separate freshness boundaries. Public compatibility getters
+remain unchanged. Causal real-Windows controls must show two successful payload
+loads become one with the same decision, handler, publication and retirement
+behavior, including permission changes while an approval card is waiting.
+
+#### TASK-40608 — contained stock permission persistence owner (2026-11-14)
+
+Select the [reviewed permission-process contract](../../Docs/superpowers/specs/2026-11-14-task-40608-isolated-permission-design.md) for scoped implementation. The latest native prototype has21 direct passing controls but no usable complete-command speed comparison; its stock arm exhausted the contender cap and the candidate took49.937s. It is not selected for distribution. Existing original journeys remain77.9434/109.2945s. Neither this decision nor source review qualifies the five-second target.
+
+One contained synchronous child may own the complete stock ordinary Windows permission persistence surface, including reads, strict snapshots, mutations and malformed-input repair. The parent retains the original installed receiver, exact source/config/callback receipts, resolved-path RLock and publication object. All parent broker requests use that existing reservation, preserving external mutation_fence composites. The child independently installs/admit-checks its stock source and executes the original bodies and native ACL/nofollow/NTFS/identity/control/registry predicates. This changes no file format, approval policy or multi-application serialization guarantee.
+
+The fixed private protocol carries detached data and exact request/creator/ordinal correlation, never native handles, leases, Python callbacks or publication tokens. Parent source checks execute at the original selected internal boundaries through synchronous rendezvous. Child native evidence must be fresh after those waits. No provider/human wait retains a command scope; existing physical future custody settles cancellation. Custom, unsupported and recovery-selected routes retain their checked compatibility path before selection. A selected failure or unknown outcome never replays locally or in a replacement worker.
+
+Parent mutation invalidation must be acknowledged before a child effect. A changed stock observation also invalidates the obsolete parent token at its original observation boundary before child continuation, including inside a no-op mutation. Preserve unchanged-token identity, publish=False and pending/uncertain suppression. A new usable parent token may be withheld until positive settlement; delayed terminal events cannot resurrect authority.
+
+Successful IPC settlement requires a command-local positive retirement receipt after the stock wrapper exits. Retain exact acquisition/raw/descriptor/pin/lease/hold identities before close removes discovery. Check non-raising retained native-hold failures as well as ordinary close errors. For this registered child route only, defer completion/stamps until that proof passes. Healthy startup enrollment is distinguished from command-owned resources. Unknown or failed retirement withholds success/stamps, poisons same-path mirrors and retains unresolved ownership without replacement/replay.
+
+The resident child retains normal startup enrollment while alive and no idle command scope/verdict. Include every installed broker, including direct-store creation, in maintenance intake closure and drain before local native pause. Graceful final shutdown proves all child acquisitions/raw operations/leases/holds/retiring holds empty, then retires the actual process and pipes. Exit code alone is not settlement evidence. Failed physical retirement refuses capture; resume may create a fresh worker only after positive closure and reopened admission.
+
+Implement the initial round-trip slice with production routing disabled. Qualify source/currentness, observation visibility, non-raising hold failure, actual cancellation/drain and cold/warm/contended command cost before widening the adapter; complete the entire persistence surface before enabling it. The unchanged README/edit journeys and all three sequential candidate pairs below five seconds remain mandatory. [Task23 plan](../../Docs/superpowers/plans/2026-11-13-task-40608-sub-five.md).
+
+#### Finite metadata-tree volume proof (TASK-40608 Task32)
+
+Within `WindowsOS.stat_many_for_admission` only, a child opened by one validated
+component relative to an exact still-owned directory birth may derive local
+NTFS qualification from that parent. The parent must have received fresh full
+volume qualification in this observation, or the same structurally rooted
+proof. Every drive-root open, including the bottom-up reopen, remains fully
+qualified. This explicitly selects the previously unimplemented finite-volume
+proposal; it does not select OPT74 or shorten full component validation.
+
+The proof is the exact relative-open lineage, not equality of volume serials.
+Fresh child information must still reject reparse and non-disk objects and
+match the parent's volume identity. A foreign, closed, failed, unqualified or
+different-observation parent cannot supply the proof. Capture each successful
+native birth before any validation can fail. Retain existing bottom-up named
+identity checks, fresh security descriptors and ChangeTime, missing-path
+behavior, full control/registry observations and exact uncertain-close custody.
+No handle, filesystem verdict or proof survives the metadata operation.
+
+All ordinary opens, borrowed `dir_fd` paths, bootstrap/control readers and
+custom callers retain full qualification. The Task17 requirement for those
+relative control-file opens is unchanged. No public `skip_ntfs` switch, volume
+cache, global closer or new worker is introduced. A synthetic error at a
+removed redundant child-volume query is replaced by explicit root-qualification
+and child-proof refusal coverage; real native identity, ACL, reparse, volume
+and retirement failures remain refusals.
+
+Qualify this change with actual Windows causal counts: fewer volume queries
+while retaining the same opens, security reads, named checks and retirement.
+Cover independent roots, invalid/stale/foreign parent custody, reparse and
+volume mismatch, name replacement, missing paths and native close failures.
+The unchanged original journeys remain the performance gate; this local saving
+alone makes no claim about the five-second target.
+
+#### TASK-40608 — private admission observation owner (2026-11-14)
+
+**Qualification outcome: rejected for production.** Task38 passed its correctness cohorts but all six measured warm acquisitions regressed with the resident observer, including IPC, parent guards and receipt retirement. The experiment remained disabled. Remove its product hooks and worker modules using the exact Task36/37 preimages; preserve the replayable Gate17 candidate, diagnostic sources and receipts outside production. The contract below records the evaluated alternative, not an installed architecture. This rejection does not remove the earlier admission reuse, shared displays, finite DB batches, permission worker or Task32 metadata-tree volume proof. It establishes no five-second result; TASK-40608 remains open.
+
+Select the [fixed observation-owner contract](../../Docs/superpowers/specs/2026-11-14-task-40608-admission-observation-owner-design.md) for scoped implementation, initially disabled for production routing. One serialized private process per live app/profile may execute the original warm Windows `_windows_inputs` context, input comparison and conditional `_observe_evidence` under the original read-write shared registry lock. Parent retains original acquisition, real counted token, source/hold/evidence selection and final checked provenance. Return detached observations only; no transferred authority, permission publication, persistent observation cache, child domain enrollment or recursive worker.
+
+Require exact command-local issuance/transfer/positive-close records for all reachable raw HANDLEs, CRT descriptors, registry-lock custody, metadata records, security allocations and qualification streams. Prepublish births before validation; retain identities/results after context exit. Selected-scope CloseHandle/LocalFree failures formerly ignored by scalar paths now withhold success; outside-scope behavior remains compatible. Unknown transfer/retirement is never retried or inferred from counts, empty maps or process exit. Completed ordinary negative evidence preserves original derivation; infrastructure/uncertainty escapes that fallback and retires the original parent token without replay.
+
+Preserve installed application source/custody/ambient-owner callbacks and custom routes. Fixed-source and exact hidden/active ambient-owner qualification precede selection; parent currentness runs after waits. Original Python native calls and audit events execute in the new child's interpreter, as an explicit owner boundary. Arbitrary parent audit hooks are not forwarded; no launch-wide audit inventory or capability subsystem is selected.
+
+Parent currentness covers installed app/config module and app-class identities, profile environment/cwd/epoch and exact selector/execution selection. It does not freeze `_CONFIG_GENERATION`, `_CONFIG_CACHE` or `app.app_config`, which the fixed observation never consumes. Original selected-path/source guards, fresh selector-file/registry observations and final provenance remain. Task37's `t37configb` control demonstrated that freezing unrelated cache contents falsely made ordinary settings publication a permanent observer failure. Removing that new recursive comparison preserves the original checks and avoids work proportional to unrelated config size; it authorizes neither replay nor ignoring real source/authority changes.
+
+This owner is independent of the permission process and has no permission mirror to poison. Its census covers startup, queue, command, receipt and process-resource custody. Maintenance closes intake and positively drains/shuts down before local pause; explicit profile/app shutdown retires exact process, pipes and containment resources. Tasks36–38 stage custody/fixed command, resident lifecycle/selection and complete-acquisition/original qualification. No implementation or performance result follows from this decision; AC5 remains open.
+
+#### TASK-40608 — finite native input groups (2026-11-14)
+
+**Qualification outcome: rejected for production.** Task46 passed 49 targeted native correctness cases and all 12 mounted cohort tests, with all 816 selected cold/designated resource births positively retired. The six sequential stock/candidate arms nevertheless regressed in five of six complete pairs: median public acquisition increased from 298.8869 to 454.5544 ms idle and from 301.4160 to 632.3560 ms active. Through-close and caller results likewise regressed. Independent evidence review found no missing or discarded sample, source mismatch or retirement defect. These finite measurements do not establish the cause of the regression, but do not justify integration or another original-journey screen. Retain the disabled lab sources, binary and receipts; no product native routing was installed. The following contract records the evaluated experiment. Original sub-five-second README/edit acceptance remains unmet.
+
+Select a disabled, in-process CPython extension experiment behind the existing
+Windows facade. Keep the Python input walkers, record readers, predicates and
+resource nesting. Group only adjacent native calls with no intervening audit,
+callback or Python-dependent decision: create/info/type, volume/device,
+root duplication/retirement, and metadata info/type. A C rewrite of the walkers
+would duplicate policy without improving these group boundaries and is not
+selected. Neither a resident service nor the rejected scalar adapter's repeated
+broad source-discovery wrappers is reintroduced.
+
+One finite context covers a selected warm `_windows_inputs` call after the
+original counted lease exists. Initial selection conservatively requires the
+stock zero-ambient route; custom, unknown, active-owner and unsupported ABI
+routes remain original before effects. Exact thread/task, used source/native
+bindings and custody remain checked at their existing boundaries and after
+callbacks or waits. The first callback-free selected entry action suppresses
+recursive discovery before any callback-capable validation; already-suppressed
+entries stay original, internal helpers receive context explicitly, and
+guaranteed exit cleanup restores the prior state. Native identity and cleanup
+validation follow the same rule. Suspend grouping during the original
+qualification callback and yielded metadata consumer. No context, handle or
+authority crosses an unrelated command, provider wait or human wait.
+
+Preserve the actual input-reader audit refusal sites, captured original CRT
+reads/closes, full input-open volume qualification, fresh qualification-file
+checks under their existing cache lock, the read-write registry lock and its
+real blocking wait, fresh post-wait named identity, pending markers and bounded
+record bytes. Keep optional selector semantics and original Python name order.
+Input mismatch still skips the union. The first complete-acquisition candidate
+uses the original metadata union, held under the original registry lock, and
+the unchanged final parent provenance check. This conservative audit choice
+does not establish identical incidental audit traces as a global invariant:
+Task32 removed redundant calls, while Tasks43/44's lab kernel did not qualify
+arbitrary audit-hook equivalence.
+
+Publish selected raw-handle, CRT-transfer and native-allocation receipts before
+returning to Python or processing interruption. Preserve the actual creator,
+original nested close order and exception context; never repeat an attempted
+or uncertain close. A narrow explicit security-allocation seam retains the
+decoder's standard `lru_cache(maxsize=128)` wrapper and existing key. Expose the
+seam only for the exact cached invocation, consume it at miss entry, pass
+creators explicitly thereafter, and mask/restore it across every audit or
+callback. Qualification and yielded union have no seam. It grants no cached
+filesystem authority. Ignored native close/free failures cannot count as
+positive retirement in the selected scope. Fully retired ordinary negative
+evidence retains original derivation behavior; audit refusal, source change,
+infrastructure error or uncertain retirement escapes ordinary fallback and
+retains its original cause. Cleanup remains with captured creators even when
+source selection is revoked.
+
+The diagnostic ABI is the already-installed release CPython 3.12.10 on Windows
+x64, using its own CRT helpers and exception machinery. Release the GIL for
+native IO groups and waits; retain the issuing thread state for Python work.
+No global GIL setting, new interpreter, dependency installation or shipping ABI
+promise is selected. Gate18 and prior experiments remain unchanged.
+
+Qualify the complete public acquisition, including original qualification and
+union, actual lease close, dispatch/currentness/receipt overhead and setup.
+Targeted audit/refusal, native fault, real lock-wait, custom/ambient, reentrancy,
+concurrency and retirement controls precede three sequential stock/candidate
+pairs in the existing idle and active mounted fixtures. Source work counts are
+not latency predictions. Only a reviewed complete-call benefit justifies the
+next unchanged journey screen; production integration and all three original
+candidate journey pairs below five seconds remain separate unmet gates.
+See the [sub-five design](../../Docs/superpowers/specs/2026-11-13-task-40608-sub-five-design.md#finite-native-input-groups)
+and [Task46 plan](../../Docs/superpowers/plans/2026-11-13-task-40608-sub-five.md#task46-qualify-direct-native-input-groups).
+
+#### TASK-40608 — complete project-index key owner (2026-11-14)
+
+Select the [complete key-command design](../../Docs/superpowers/specs/2026-11-14-task-40608-project-index-key-owner-design.md) as a disabled vertical slice after the native input-group experiment failed its complete-call timing gate. One app/profile child executes the original complete `project_index_key` body, including independent data admission, directory-chain proof, real Workspace SQLite binding fence, key construction and retirement. Parent keeps its original root guards, status/coverage and conditional publication guard. No filesystem authority, live connection or callable crosses IPC.
+
+Reuse the existing strict permission-process transport and storage-command recorder without its permission publication state machine. Add only the newly owned SQLite/core/pin and process-lifecycle proof. Preserve fresh checks after real lock waits, parent source/profile/session currentness, original custom-route fallback before effects and no replay after selection. Arbitrary parent Python audit hooks are not forwarded; child audit execution is the explicit process-local boundary. No native backend or runtime/dependency change is selected.
+
+Expose Workspace's existing schema-suppression and existing-file connector options with unchanged defaults. The child requires `initialize_schema=False, must_exist=True`, validates schema through the admitted connection and refuses absent/outdated stores without creating or migrating them. Status is not treated as read-only: its possible cache creation, reconciliation and claim suspension remain in the parent for this slice.
+
+The shared live/preview composition currently uses bare `to_thread`. Install one existing `run_preparation_read` owner around the entire callback, with controller/runtime observers registered before submission. It covers the parent continuation and outer connection close after child settlement, preserves owning-session rather than viewed-chat identity, and drains submitted work through repeated cancellation. Custom/unmanaged routes remain child-ineligible. Maintenance and profile/app teardown must account for initialization, queued/active work, uncertain outcomes and positive process/native retirement before local pause or replacement.
+
+Qualify the original checks and new ownership seams before measuring. Include first-use setup, IPC, key return, full enclosing scope callback, caller visibility and shutdown costs. Reject a moved-cost or regressing result. A successful component is only a prerequisite for the unchanged original README/edit screen; every candidate in the three original pairs must still be below five seconds.
+
+**Measured disposition (2026-11-15, Task54): reject production key-only routing.** Four sequential mounted parent/child arms, each with first use and two warm callbacks, passed all12 callback identity/parity/retirement checks. Complete caller seconds were parent1.006/0.729/0.718 versus child14.244/0.999/1.205 idle, and parent2.888/1.879/1.806 versus child13.373/1.668/1.731 active. Child startup7.39–10.97seconds remained inside first-use timing. Cold and idle warm regressions fail the selected benefit gate; the modest active warm gains do not justify enabling this route. Keep it disabled and preserve the frozen sources/results. This missing-cache component diagnostic does not qualify original journeys or justify another repetition for a favorable result. The [sub-five plan](../../Docs/superpowers/plans/2026-11-13-task-40608-sub-five.md) now requires an effective replacement boundary before further implementation; it does not automatically widen the unchanged adapter. Full callback custody and the existing security checks remain required regardless of the next design.
+
+#### TASK-40608 — complete Console service owner (2026-11-15)
+
+Select the [reviewed Console execution-service contract](../../Docs/superpowers/specs/2026-11-15-task-40608-console-execution-service-design.md) for staged implementation after rejecting key-only routing. Start by factoring the existing in-process composition with its actual receivers unchanged. The later qualified service owns the complete received-input, preparation, durable acceptance, provider/tool and terminal-retirement graph. UI code retains presentation and stamped human input. Independent storage participants, original native checks and transaction/effect ordering remain; no capability/callable transfer, generic RPC, selected replay or process-exit-as-rollback is permitted.
+
+Choose one actual stock permission/control-plane receiver, publication object and memory-only session-grant owner per selected app/profile. Affected Settings operations use the same complete-operation surface. Route selection precedes graph construction; unsupported live construction is declined/deferred without restarting or disturbing owners, grants, drafts, recoveries or attachments. Unrelated settings and supported live updates retain their behavior. Do not invent restart durability for navigation-only draft recovery.
+
+The sealed durable commit plan retains the complete original fingerprint and exact captured inputs before any transport wait. After the parent sends its ACK, missing confirmation is potentially committed. Fresh source/reservation checks precede the unchanged transaction; exact message/checkpoint/continuation evidence resolves only outcomes it proves, without replay. Always-serviced controls and finite-effect/source fencing may not await IPC while holding native fences. Maintenance requires positive native and process drain. Child audit sites remain process-local, explicitly; this is not a sandbox.
+
+Normal service initialization replaces the corresponding parent initialization. Send-caused startup stays in Send time. This design proves no new reduction from the measured3498 native-open entries/14leases and promises no speedup. Complete caller rejection screens, targeted original checks and the unchanged original three sequential pairs remain mandatory before production selection. Remove the unused key-specific process implementation only with its replacement, preserving complete preparation-read custody and historical evidence.
+
+Task62 makes that ownership boundary concrete. The parent's original profile setup retains one-time built-in seeding, Default workspace setup, legacy target setup and initial policy synchronization. The backend opens its own repositories through their original constructors, client identities, schema and integrity checks; it compares the actual inherited configuration paths and settled policy rather than overriding configuration or repeating setup. A mismatch refuses startup. The backend has one actual runtime/domain graph and one permission store; the parent consumes disposable presentation values without constructing a second Console store/controller. Failed partial acquisition retains its acquired owners for cleanup on their actual creator.
+
+The process protocol carries a finite set of validated commands, decisions and display values. Epoch, sequence, request, session, incarnation and source-revision checks remain local to each receiver; serialized data never substitutes for an original capability or guard. Received, Applied and Retired are distinct outcomes. Turn retirement retains the exact original invocation, admitted ordinary trees, preparation reads and native resource outcomes; an empty global census or completed Task is insufficient. Independently admitted display work keeps its own original effect and retirement owner, even when it inherits unrelated command context.
+
+Successful shutdown requires the original positive lifecycle receipts, actual normal process exit, and completed channel, monitor, pipe and containment cleanup. Forced cleanup can establish physical closure without establishing successful shutdown; the original failure and uncertain command outcomes remain visible. These are correctness constraints for the staged implementation, not evidence that the process route or either timing journey has passed. Production selection remains disabled until the complete-path checks and all three original baseline/candidate pairs satisfy the absolute five-second gate.
+
+### TASK-40608 Task61: retained local display and settings phases (2026-11-15)
+
+The selected execution-service extraction uses fresh physical display phases around every original parent-only character checkpoint. One logical FULL retains its sealed character → context → appearance section set and original observers across lease-free gaps. Each metadata-pair midpoint, scope-owner/error-classification check and post-groups check keeps its original order, branch, exception and three-attempt budget. Native connection/core/producer ownership must positively retire before a parent checkpoint wait; the next phase obtains fresh admission and source checks. No section publishes before all issued physical work settles; admission or retirement uncertainty renews none. The existing same-handle legacy composition and borrowed transactions remain unchanged. This explicitly qualifies the earlier one-callback batching permission; it is not a claim that the new phase boundary was already present.
+
+The backend owns actual domain sources and the existing authoritative display state; the actual attached view owns attachment/visit/teardown and presentation checks. No fake Screen/App, copied authority, second cache, generic callback transport, eager warm, longer reconciliation interval or skipped original midpoint is permitted. Parent archive admission retains its real App inflight/generation/cache owner, bracketing the complete original native archived-state read with fixed checkpoints after physical retirement.
+
+Selected session settings retain one exact pending operation through the original live pre-write → full metadata snapshot attempt → settings-revision/context post-write sequence. Short preparation-lock phases surround the original retained native writer. Same-session coherent capture waits asynchronously; Cancel, decisions and source fences remain dispatchable. Exact fork-transition and global voice admission ownership remains balanced, without thread-local admission across await. The existing session lifecycle orders full snapshots with component CAS drain. Writer exception/False preserves original applied live state and does not certify durable success. The source effect includes required post-publication and exact native settlement; legacy synchronous composition remains available on its existing route.
+
+See `.superpowers/sdd/2026-11-13-task-40608-sub-five/task-61-display-owner-plan.md` for the finite owner/phase inventory and the canonical execution-service design for the release contract. Local causal qualification is required; no process route, production selection or sub-five result follows from this amendment.
+Task61 bounded convergence clarification (root ruling 2026-11-15): readiness refresh's original post-native pristine-default convergence remains before readiness key recomputation/publication. Fixed parent prepare/finish checkpoints retain the actual session controller's pristine memo, convergence spans, explicit-default generation, projection guard and provider notification. The backend performs only the exact captured automatic settings replacement through the retained pending pre/native/post owner, revalidating original session/incarnation/settings revision/config/source. Preserve follows_saved_defaults, settings=None, persona preservation and all original short-circuits (ADR095 policy unchanged). Legacy composition remains synchronous. A convergence nested inside the current ReadProjection uses that command's actual source inline; it cannot enqueue behind itself. No native lease spans a checkpoint, no second memo/span map is created, and failed/stale phases cannot publish a success/span/notice.
+Task61 selected parent-settings continuation clarification (root ruling 2026-11-15): actual early FULL core-state sync and autonomous readiness refresh can reach original default convergence without a user command. They must acquire an explicitly registered ParentSettingsCapture from the same live controls/port/runtime graph, with exact real parent stamp, source revision/session/incarnation and a fixed named settings purpose. They do not invent ControlIdentity or alter external sequence/require_control_source. Only the settings resolver/effect path accepts this private registered owner; provider/tool/MCP/control authority remains unchanged. Reuse existing same-session capture tails, finite effects, task custody and settings pre/native/post operation. Register before exposure, revalidate after waits, and retire/unregister only on actual settlement, including no-entry/scheduling failure. Command-owned nested convergence remains inline. Preserve early core-state sync before later main-display/archive/readiness preparation; no early readiness warm.
+
+Selected synchronous prompt/provider actions must defer the complete owning action when settings are pending; async actions wait before coherent capture. Capture original arguments/origin/session/incarnation/attachment, preserve action order without action coalescing, and retain original stale/refusal/notice outcomes. Pure render work retains one owed replay under its original coalescing policy. No mixed-state reads, copied settings fallback, arbitrary callback dispatcher, native lease across wait, or success before completion. Legacy synchronous composition remains original. Exact entrance map is task61-settings-parent-entrances.md; normal production selector/process integration remains outside Task61.
+
+Guarded Prompt implementation checkpoint (approved fixed compensation ruling): factor the existing guard, composer/draft mutation, legacy rollback, and post-warning bodies so the synchronous compatibility methods retain literal Boolean results. The selected modal fast/dialog callback and Library consumer own a registered guarded-prompt continuation; Library acknowledgement follows its actual transaction/compensation. A fixed transaction record retains the original checkpoint/text and phase-result composer checkpoint, exact draft revision/authored token/text, and settings object/revisions. PendingSettingsApply records actual Task, whether native entry began, its original exception, and owned locked mutation state; these facts support only the same transaction's exception-only compensation, never generic rollback. The first operation must be conclusively no-entry or physically confirmed retired; source/currentness failure, uncertain retirement, or intervening draft/settings/composer state refuses compensation. Backend old-session compensation uses original setters and fresh counters after view switch; UI restore/publication separately requires the original visit/composer and unchanged transaction-result checkpoint. A known physically settled failure is recorded as failure, not fabricated commit; any fixed pending-operation handoff/retirement must balance the exact original owner. Writer False/converted False and display-only failure never compensate. Original prompt callback/store/composer defining edges are checked before selected invocation; unrelated legacy/custom callbacks keep their original route.

@@ -22,6 +22,8 @@ from collections.abc import Mapping
 from concurrent import futures as _futures
 from concurrent.futures import Future as Future
 from datetime import datetime, timezone
+from functools import partial
+from inspect import getattr_static
 from types import MappingProxyType as MappingProxyType
 from typing import TYPE_CHECKING, Any, Callable, Literal, Protocol, cast
 from uuid import uuid4
@@ -30,6 +32,8 @@ from loguru import logger
 
 from .activation import (
     AgentActivationRequired as AgentActivationRequired,
+    callable_source_current,
+    capture_callable_source,
     guarded,
     history_execution,
     standard_history_resolver,
@@ -2265,14 +2269,21 @@ def _call_with_timeout(
             bind_ordinary_tree(ordinary),
             owner.activate() if source_scope is not None else contextlib.nullcontext(),
         ):
-            if source_scope is not None:
+            if source_scope is not None or selected_worker is not None:
                 try:
-                    (ordinary or workflow_prepared).check_local_sources()
+                    if selected_worker is not None:
+                        selected_worker.require_current()
+                    if source_scope is not None:
+                        (ordinary or workflow_prepared).check_local_sources()
                 except (RuntimeError, PermissionError) as error:
                     # No original provider/source scope was attempted. Retire
                     # this unused operation under its captured worker storage.
                     box["result"] = ToolResult.blocked(str(error))
-                    if planning_prepared is None:
+                    if (
+                        source_scope is not None
+                        and planning_prepared is None
+                        and operation is not None
+                    ):
                         operation.finish()
                     return
             try:
@@ -2332,11 +2343,16 @@ def _call_with_timeout(
                     except BaseException:  # noqa: BLE001 - preserve unknown finish return
                         retain_unknown_return()
 
+    selected_worker = None
+
     def _runner() -> None:
         from .goal_storage_lifetime import owned_goal_storage
 
         try:
             with (
+                selected_worker.scope()
+                if selected_worker is not None
+                else contextlib.nullcontext(),
                 planning_prepared._planning_storage_return()
                 if planning_prepared is not None
                 else contextlib.nullcontext(),
@@ -2372,18 +2388,33 @@ def _call_with_timeout(
             if source_scope is not None and exc is not box.get("call_error"):
                 retain_unknown_return()
         finally:
-            if (
-                source_scope is None
-                and operation is not None
-                and (ssh_call is None or not ssh_call.finished)
-            ):
-                operation.finish()
-            if retained_source is not None:
-                retained_source.__exit__(None, None, None)
+            try:
+                if (
+                    source_scope is None
+                    and operation is not None
+                    and (ssh_call is None or not ssh_call.finished)
+                ):
+                    operation.finish()
+                if retained_source is not None:
+                    retained_source.__exit__(None, None, None)
+            finally:
+                if selected_worker is not None:
+                    selected_worker.runner_returned = True
 
     try:
+        from tldw_chatbook.Chat.console_control_tools import (
+            capture_selected_tool_thread,
+        )
+
+        selected_worker = capture_selected_tool_thread(_runner)
         worker = threading.Thread(target=_runner, name=f"tool-{tool_name}", daemon=True)
-        worker.start()
+        if selected_worker is not None:
+            selected_worker.bind_thread(worker)
+        try:
+            worker.start()
+        finally:
+            if selected_worker is not None:
+                selected_worker.resolve_start()
         if workflow_prepared is not None:
             workflow_prepared._tool_workers.append(worker)
     except BaseException as exc:  # noqa: BLE001 -- failed tool starts return a ToolResult
@@ -4136,10 +4167,32 @@ class AgentService:
         """Persist one lifecycle observation and return its actual durable cause."""
         index = _LIFECYCLE_INDEX[kind]
         event_id = f"agent-step:{run_id}:{index}"
+        sequence, existing = self._prepare_run_lifecycle(run_id, index, owner_seq)
+        if existing:
+            return sequence, event_id
+        return self._persist_run_lifecycle(
+            run_id,
+            kind,
+            status,
+            sequence,
+            parent_event_id=parent_event_id,
+            source_event_id=source_event_id,
+        )
+
+    def _prepare_run_lifecycle(
+        self, run_id: str, index: int, owner_seq: int | None, *, _selection=None
+    ) -> tuple[int, bool]:
+        """Read durable order and allocate a sequence for a new observation."""
+        found = None
         try:
             existing = self.db.get_run(run_id)["steps"]
             found = next((step for step in existing if step["index"] == index), None)
-            if found is not None:
+        except Exception:  # noqa: BLE001 — insertion below owns diagnostics
+            pass
+        if _selection is not None:
+            _require_initial_run_sources(self, _selection, run_id)
+        if found is not None:
+            try:
                 prior = found.get("owner_seq")
                 next_seq = (
                     int(prior) + 1
@@ -4147,10 +4200,23 @@ class AgentService:
                     else self._next_owner_seq(run_id)
                 )
                 self._ensure_owner_seq_at_least(run_id, next_seq)
-                return next_seq, event_id
-        except Exception:  # noqa: BLE001 — insertion below owns diagnostics
-            pass
-        sequence = self._allocate_owner_seq(run_id, owner_seq)
+                return next_seq, True
+            except Exception:  # noqa: BLE001 — insertion below owns diagnostics
+                pass
+        return self._allocate_owner_seq(run_id, owner_seq), False
+
+    def _persist_run_lifecycle(
+        self,
+        run_id: str,
+        kind: str,
+        status: str,
+        sequence: int,
+        *,
+        parent_event_id: str | None,
+        source_event_id: str | None,
+    ) -> tuple[int, str]:
+        index = _LIFECYCLE_INDEX[kind]
+        event_id = f"agent-step:{run_id}:{index}"
         step = AgentStep(
             index=index,
             kind=kind,
@@ -5220,9 +5286,30 @@ class AgentService:
         if precreated_run_id is None:
             requested_run_id = requested_run_id or uuid.uuid4().hex
             tree = getattr(self, "_ordinary_tree", None)
+            database = self.db
+            batch_initial = (
+                sys.platform == "win32"
+                and agent_kind == AGENT_KIND_PRIMARY
+                and parent_run_id is None
+                and resumed_from_run_id is None
+                and workflow_activity_claim is None
+                and self.work_origin is WorkOrigin.MANUAL
+                and task is None
+                and type(config) is AgentConfig
+                and type(config.budget) is RunBudget
+                and _initial_run_sources_current(self, database, requested_run_id)
+            )
+            if batch_initial:
+                from tldw_chatbook.Backup_Recovery.participants import core_operation
+
+                selection = database, database.db_path, database.db_path_str
+                initial_scope = core_operation(database)
+            else:
+                initial_scope = contextlib.nullcontext()
             if tree is not None:
                 tree.row_started(current_execution_owner(), requested_run_id)
-            run_id = self.db.create_run(
+            create_run = partial(
+                self.db.create_run,
                 conversation_id=conversation_id,
                 agent_kind=agent_kind,
                 task=_safe_agent_task_summary(task),
@@ -5242,6 +5329,17 @@ class AgentService:
                 fallback_targets_json=fallback_targets_json,
                 active_fallback_index=active_fallback_index,
             )
+            with initial_scope:
+                if batch_initial:
+                    _require_initial_run_sources(self, selection, requested_run_id)
+                run_id = create_run()
+                if batch_initial:
+                    _require_initial_run_sources(self, selection, run_id)
+                    index = _LIFECYCLE_INDEX[STEP_AGENT_RUN_CREATED]
+                    created_seq, existing = self._prepare_run_lifecycle(
+                        run_id, index, 0, _selection=selection
+                    )
+                    _require_initial_run_sources(self, selection, run_id, allocated=True)
             lifecycle_owner_seq = 0
             lifecycle_event_id = (
                 spawn_parent_event_id or spawn_event_id or f"agent-run:{run_id}"
@@ -5254,13 +5352,29 @@ class AgentService:
                     owner_seq=lifecycle_owner_seq,
                     parent_event_id=lifecycle_event_id,
                 )
-            lifecycle_owner_seq, lifecycle_event_id = self._append_run_lifecycle(
-                run_id,
-                STEP_AGENT_RUN_CREATED,
-                "created",
-                owner_seq=lifecycle_owner_seq,
-                parent_event_id=lifecycle_event_id,
-            )
+            if batch_initial:
+                _require_initial_run_sources(self, selection, run_id, allocated=True)
+                # The step constructor and its observers run after admission.
+                if existing:
+                    lifecycle_owner_seq = created_seq
+                    lifecycle_event_id = f"agent-step:{run_id}:{index}"
+                else:
+                    lifecycle_owner_seq, lifecycle_event_id = self._persist_run_lifecycle(
+                        run_id,
+                        STEP_AGENT_RUN_CREATED,
+                        "created",
+                        created_seq,
+                        parent_event_id=lifecycle_event_id,
+                        source_event_id=None,
+                    )
+            else:
+                lifecycle_owner_seq, lifecycle_event_id = self._append_run_lifecycle(
+                    run_id,
+                    STEP_AGENT_RUN_CREATED,
+                    "created",
+                    owner_seq=lifecycle_owner_seq,
+                    parent_event_id=lifecycle_event_id,
+                )
             if resumed_from_run_id:
                 lifecycle_owner_seq, lifecycle_event_id = self._append_run_lifecycle(
                     run_id,
@@ -9593,6 +9707,117 @@ class AgentService:
             return False
         self._cancel_fleet_handles([handle_id])
         return True
+
+
+def _initial_run_method(owner, name):
+    method = getattr(owner, name)
+    records = []
+    while method is not None:
+        records.append(capture_callable_source(method))
+        method = getattr(method, "__wrapped__", None)
+    return name, tuple(records)
+
+
+_INITIAL_RUN_DATABASE = AgentRunsDB
+_INITIAL_RUN_SERVICE = AgentService
+_INITIAL_RUN_METHODS = tuple(
+    (owner, tuple(_initial_run_method(owner, name) for name in names))
+    for owner, names in (
+        (
+            AgentService,
+            (
+                "_append_run_lifecycle",
+                "_prepare_run_lifecycle",
+                "_persist_run_lifecycle",
+                "_allocate_owner_seq",
+                "_owner_seq_allocator",
+                "_next_owner_seq",
+                "_ensure_owner_seq_at_least",
+            ),
+        ),
+        (
+            AgentRunsDB,
+            (
+                "create_run",
+                "get_run",
+                "insert_steps_at_indices",
+                "_row_to_dict",
+                "_rows_to_dicts",
+                "_batch_hydrate_steps",
+                "connection",
+                "transaction",
+                "_held_connection",
+                "_get_connection",
+                "_open_connection",
+                "_configure_connection",
+                "_on_connection_opened",
+                "_unregister_connection",
+            ),
+        ),
+    )
+)
+_INITIAL_ALLOCATOR = _OwnerSeqAllocator
+_INITIAL_ALLOCATOR_METHODS = tuple(
+    _initial_run_method(_OwnerSeqAllocator, name)
+    for name in ("__init__", "allocate", "ensure_at_least")
+)
+
+
+def _initial_run_methods_current(receiver, methods) -> bool:
+    for name, records in methods:
+        method = getattr_static(receiver, name, None)
+        for record in records:
+            if method is not record[0] or not callable_source_current(record):
+                return False
+            method = getattr(method, "__wrapped__", None)
+        if method is not None:
+            return False
+    return True
+
+
+def _initial_run_sources_current(service, database, run_id, *, allocated=False) -> bool:
+    allocators = getattr_static(service, "_owner_seq_allocators", None)
+    if type(allocators) is not dict or type(run_id) is not str:
+        return False
+    allocator = allocators.get(run_id)
+    return (
+        type(service) is _INITIAL_RUN_SERVICE is AgentService
+        and type(database) is _INITIAL_RUN_DATABASE is AgentRunsDB
+        and getattr_static(service, "db", None) is database
+        and getattr_static(database, "is_memory_db", True) is False
+        and getattr_static(service, "_ordinary_tree", None) is None
+        and getattr_static(service, "_work_chain_id", None) is None
+        and getattr_static(service, "_workflow_authorization", None) is None
+        and _OwnerSeqAllocator is _INITIAL_ALLOCATOR
+        and _initial_run_methods_current(_INITIAL_ALLOCATOR, _INITIAL_ALLOCATOR_METHODS)
+        and (
+            run_id not in allocators
+            if not allocated
+            else type(allocator) is _INITIAL_ALLOCATOR
+            and _initial_run_methods_current(allocator, _INITIAL_ALLOCATOR_METHODS)
+        )
+        and all(
+            getattr_static(owner, "__getattribute__") is object.__getattribute__
+            and _initial_run_methods_current(receiver, methods)
+            for receiver, (owner, methods) in zip(
+                (service, database), _INITIAL_RUN_METHODS, strict=True
+            )
+        )
+    )
+
+
+def _require_initial_run_sources(
+    service, selection, run_id, *, allocated=False
+) -> None:
+    database, path, path_string = selection
+    if (
+        not _initial_run_sources_current(service, database, run_id, allocated=allocated)
+        or getattr_static(database, "db_path", None) is not path
+        or getattr_static(database, "db_path_str", None) is not path_string
+    ):
+        from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+        raise RecoveryRequired("agent_initial_run_source_changed")
 
 
 # These are the existing task-scope records, captured before live dispatch.

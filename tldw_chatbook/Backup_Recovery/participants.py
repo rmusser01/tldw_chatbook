@@ -419,13 +419,20 @@ def core_access(repository):
         if operation is not None:
             if participant is None:
                 raise RecoveryRequired("repository_participant_not_installed")
-            storage._check_operation(operation, participant.path)
-            if operation.participant is not participant:
-                raise RecoveryRequired("operation_provenance_invalid")
+            proof = storage._capture_operation_path(operation, participant.path)
         elif (
             participant is not None and participant.closed
         ) or storage._pause is not None:
             raise RecoveryRequired("storage_locally_paused")
+    if operation is not None:
+        proof.observe()
+        with storage._lock:
+            proof.require_current()
+            _check_core_retirement(participant)
+            if operation.participant is not participant:
+                raise RecoveryRequired("operation_provenance_invalid")
+            if participant.path != proof.selected:
+                raise RecoveryRequired("operation_path_outside_scope")
 
 
 @contextmanager
@@ -579,6 +586,9 @@ def register_core_connection(repository, connection):
             raise RecoveryRequired("core_connection_provenance_invalid")
         participant.connections[connection] = lease
         lease.resource_participant = participant
+        retirement = sys.modules.get("tldw_chatbook.Chat.console_execution_retirement")
+        if retirement is not None:
+            retirement.observe_core_connection(repository, connection)
     return connection
 
 
@@ -594,6 +604,9 @@ def core_cached_connection(repository, connection):
     with storage._lock:
         if connection in retired_core_connections:
             return None
+        retirement = sys.modules.get("tldw_chatbook.Chat.console_execution_retirement")
+        if retirement is not None:
+            retirement.observe_core_connection(repository, connection)
     return connection
 
 
@@ -607,7 +620,10 @@ def core_getter(function):
         previous = getattr(storage._operation_local, "operation", None)
         if previous is not None and not repository.is_memory_db:
             with storage._lock:
-                storage._check_operation(previous, previous.path)
+                proof = storage._capture_operation_path(previous, previous.path)
+            proof.observe()
+            with storage._lock:
+                proof.require_current()
                 participant = repository_participant(repository)
                 independent = previous.participant is not participant
             if independent:

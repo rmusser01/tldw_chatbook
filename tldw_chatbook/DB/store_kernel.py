@@ -31,6 +31,7 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 
+from tldw_chatbook.Utils.definition_records import capture_definitions
 from tldw_chatbook.Backup_Recovery.participants import (
     core_access,
     core_cached_connection,
@@ -45,6 +46,11 @@ from tldw_chatbook.DB.base_db import (
 )
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 from tldw_chatbook.Utils.private_paths import lexical_path
+
+
+# A finite caller may retain exact births/close failures on its issuing thread.
+# The kernel owns this slot and has no knowledge of that caller's domain.
+_connection_retirement = threading.local()
 
 
 class SQLiteStoreKernel:
@@ -155,8 +161,11 @@ class SQLiteStoreKernel:
             if operation_deadline is None
             else self._open_connection(operation_deadline=operation_deadline)
         )
-        register_core_connection(self, conn)
         try:
+            recorder = getattr(_connection_retirement, "receiver", None)
+            if recorder is not None:
+                recorder.retain_connection(self, conn)
+            register_core_connection(self, conn)
             if operation_deadline is None:
                 return self._configure_connection(conn)
             return self._configure_connection(
@@ -322,7 +331,10 @@ class SQLiteStoreKernel:
                     return
                 try:
                     conn.close()
-                except Exception:  # noqa: BLE001 - preserve retryable native cache
+                except Exception as error:  # noqa: BLE001 - preserve retryable native cache
+                    recorder = getattr(_connection_retirement, "receiver", None)
+                    if recorder is not None:
+                        recorder.retain_close_failure(self, conn, error)
                     return
                 self._thread_local.conn = None
                 self._unregister_connection(conn)
@@ -344,3 +356,39 @@ class SQLiteStoreKernel:
         """
         registry = self._connection_quiescence
         return True if registry is None else registry.close_if_idle(self)
+
+
+# Definition-time anchors for the fixed key command; never a lazy-import baseline.
+_KEY_PROCESS_DEFINITIONS = capture_definitions(
+    (
+        (SQLiteStoreKernel, "_init_store_kernel", SQLiteStoreKernel._init_store_kernel),
+        (
+            SQLiteStoreKernel,
+            "_join_connection_registry",
+            SQLiteStoreKernel._join_connection_registry,
+        ),
+        (SQLiteStoreKernel, "_get_connection", SQLiteStoreKernel._get_connection),
+        (SQLiteStoreKernel, "_held_connection", SQLiteStoreKernel._held_connection),
+        (SQLiteStoreKernel, "connection", SQLiteStoreKernel.connection),
+        (SQLiteStoreKernel, "transaction", SQLiteStoreKernel.transaction),
+        (SQLiteStoreKernel, "close", SQLiteStoreKernel.close),
+        (
+            SQLiteStoreKernel,
+            "_unregister_connection",
+            SQLiteStoreKernel._unregister_connection,
+        ),
+        (
+            globals(),
+            "register_core_connection",
+            globals().get("register_core_connection"),
+        ),
+        (globals(), "core_closing", globals().get("core_closing")),
+        (globals(), "core_cached_connection", globals().get("core_cached_connection")),
+    )
+)
+
+_KEY_PROCESS_GLOBALS = globals()
+_KEY_PROCESS_DEFINITIONS += ((globals(), "SQLiteStoreKernel", SQLiteStoreKernel, ()),)
+_KEY_PROCESS_DEFINITIONS += (
+    (globals(), "_connection_retirement", _connection_retirement, ()),
+)

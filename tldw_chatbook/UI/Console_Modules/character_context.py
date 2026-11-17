@@ -25,6 +25,7 @@ from ...Character_Chat.character_conversation_navigation import (
     UnavailableCharacterReason,
     UnresolvedConversationKey,
 )
+from ...Chat.console_display_phases import ConsoleDisplayPhaseRefused
 from ...DB.base_db import run_owned_db_call
 from ...Utils.input_validation import validate_console_character_query
 
@@ -267,6 +268,9 @@ class _CharacterRefreshReaders:
 
     def require_current(self) -> None:
         controller = self.controller
+        domain_owner = getattr(controller, "_domain_display_owner", None)
+        if domain_owner is not None:
+            domain_owner.require_character_sources(controller)
         if (
             type(controller) is not ConsoleCharacterContextController
             or controller._service_factory is not CharacterConversationNavigationService
@@ -318,6 +322,9 @@ class _CharacterRefreshReaders:
         (``require_current``) before and after each of its reads, as before.
         """
         controller = self.controller
+        domain_owner = getattr(controller, "_domain_display_owner", None)
+        if domain_owner is not None:
+            domain_owner.require_character_sources(controller)
         if (
             type(controller) is not ConsoleCharacterContextController
             or any(
@@ -757,6 +764,7 @@ class ConsoleCharacterContextController:
         self._preparation_reads: set[Any] = set()
         self._presentation_scope_lock = asyncio.Lock()
         self._presentation_scope_key: tuple | None = None
+        self._run_presentation_scope_key: tuple | None = None
         self._presentation_scope_at = 0.0
         self._successful_refresh_generation: int | None = None
         self.return_reveal = False
@@ -888,6 +896,10 @@ class ConsoleCharacterContextController:
         """Retain an exact file callback until its existing native scopes retire."""
         from ...DB.ChaChaNotes_DB import CharactersRAGDB
 
+        if self._selected_display_full() is not None:
+            raise ConsoleDisplayPhaseRefused(
+                "Selected display reached an unextracted native route"
+            )
         if type(database) is not CharactersRAGDB or database.is_memory_db:
             return await run_owned_db_call(database, operation, *args, **kwargs)
         from ...Backup_Recovery.participants import core_operation
@@ -946,14 +958,23 @@ class ConsoleCharacterContextController:
             ):
                 ambient_error = None
                 try:
-                    pair = await self._await_database_work(
-                        database,
-                        self._read_database_scope_metadata_pair,
-                        database,
-                        current,
-                        open_conversation_id,
-                        asyncio.get_running_loop(),
+                    full = self._selected_display_full()
+                    pair = (
+                        await full.character_scope_pair(
+                            self, database, current, open_conversation_id
+                        )
+                        if full is not None
+                        else await self._await_database_work(
+                            database,
+                            self._read_database_scope_metadata_pair,
+                            database,
+                            current,
+                            open_conversation_id,
+                            asyncio.get_running_loop(),
+                        )
                     )
+                except ConsoleDisplayPhaseRefused:
+                    raise
                 except _ConsoleCharacterAmbientError as failure:
                     ambient_error = failure.error
                 except Exception:  # noqa: BLE001 - DB adapters have no shared error base.
@@ -1042,9 +1063,11 @@ class ConsoleCharacterContextController:
         self._publish(replace(self.state, scope_fingerprint=None))
 
     def _mark_checked(self, started: tuple, invalidations: int) -> None:
-        """Start the run recheck interval unless the scope was invalidated since."""
+        """Age a completed check unless the scope was invalidated during it."""
         if self._scope_invalidations == invalidations:
-            self._scope_checked = started
+            # A slow native read must not expire its own observation before the
+            # next poll. Its original ambient identity still fences every skip.
+            self._scope_checked = (time.monotonic(), *started[1:])
 
     def _checked_recently(self) -> bool:
         """Whether a run's sync may skip the database scope check (TASK-33620.15.1).
@@ -1065,8 +1088,38 @@ class ConsoleCharacterContextController:
             SCOPE_RECHECK_DURING_RUN_SECONDS
         ) and self._ambient_scope_matches(database, current, open_conversation_id)
 
+    def _selected_display_full(self):
+        owner = getattr(self, "_domain_display_owner", None)
+        if owner is None:
+            return None
+        from ...Chat.console_domain_display import ConsoleDomainDisplayOwner
+
+        if type(owner) is not ConsoleDomainDisplayOwner or owner.character is not self:
+            raise ConsoleDisplayPhaseRefused("Character domain receiver changed")
+        return owner.full_for_current_task("character")
+
+    async def _display_publication_ready(self):
+        full = self._selected_display_full()
+        if full is not None:
+            await full.publication_ready("character")
+
+    def _display_closed(self, screen):
+        owner = getattr(self, "_domain_display_owner", None)
+        if owner is not None:
+            owner.require_current()
+            owner.domain.presentation.capture_display(owner)
+            return False  # Domain liveness, never an attached-view witness.
+        from ..Screens.chat_screen import _console_screen_is_torn_down
+
+        return bool(
+            getattr(screen, "_console_chat_tearing_down", False)
+            or _console_screen_is_torn_down(screen)
+        )
     def _presentation_owner_key(self, screen: Any) -> tuple:
         """Name the local display owner without obtaining storage authority."""
+        display_owner = getattr(self, "_domain_display_owner", None)
+        if display_owner is not None:
+            return display_owner.character_key()
         from tldw_chatbook import config
 
         from ..Screens.chat_screen import _console_screen_is_torn_down
@@ -1079,6 +1132,8 @@ class ConsoleCharacterContextController:
             if store is not None
             else None
         )
+        payload_revision = getattr(store, "payload_revision", None)
+        run_active = self._run_active is not None and self._run_active()
         return (
             self._generation,
             config.current_config_identity(),
@@ -1097,16 +1152,25 @@ class ConsoleCharacterContextController:
             getattr(owner, "conversation_id", None),
             getattr(owner, "conversation_binding_revision", None),
             store.session_settings_revision(session_id) if owner is not None else None,
-            bool(getattr(screen, "_console_chat_tearing_down", False) or _console_screen_is_torn_down(screen)),
+            # Streaming payload is not a durable Character-row publication.
+            # Active work keeps its 1s reconciliation; idle writes invalidate
+            # immediately and the first idle FULL always rechecks after a run.
+            payload_revision(session_id)
+            if not run_active and owner is not None and callable(payload_revision)
+            else None,
+            bool(
+                getattr(screen, "_console_chat_tearing_down", False)
+                or _console_screen_is_torn_down(screen)
+            ),
         )
 
     async def refresh_presentation_if_scope_changed(
-        self, screen: Any, *, force_fresh: bool = False
+        self, screen: Any, *, force_fresh: bool = False, _display_read: Any = None
     ) -> bool:
         """Reuse only a current stock display observation; live actions stay fresh."""
-        from ..Screens.chat_screen import _console_screen_is_torn_down
+        from ..Screens.chat_screen import _console_screen_is_torn_down  # noqa: F401 - Retain the original source import and initialization order.
 
-        if getattr(screen, "_console_chat_tearing_down", False) or _console_screen_is_torn_down(screen):
+        if self._display_closed(screen):
             return False
         if not _stock_character_presentation(self):
             return await self.refresh_if_scope_changed()
@@ -1117,29 +1181,50 @@ class ConsoleCharacterContextController:
                 and key[1:] == self._presentation_owner_key(screen)[1:]
             )
 
-        if not force_fresh and self._run_active is not None and self._run_active():
-            if not _stock_character_presentation(self):
-                return await self.refresh_if_scope_changed()
-            key = self._presentation_owner_key(screen)
-            if not _stock_character_presentation(self):
-                return await self.refresh_if_scope_changed()
-            return await self.refresh_if_scope_changed(
-                _presentation_is_current=owner_is_current
-            )
         async with self._presentation_scope_lock:
-            if getattr(screen, "_console_chat_tearing_down", False) or _console_screen_is_torn_down(screen):
+            if self._display_closed(screen):
                 return False
             if not _stock_character_presentation(self):
                 return await self.refresh_if_scope_changed()
+            full = self._selected_display_full()
+            if full is not None and full.character_demand is not None:
+                key = self._presentation_owner_key(screen)
+                if full.character_demand == "refresh":
+                    return await self.refresh(_presentation_is_current=owner_is_current)
+                full.character_readers = _stock_character_refresh_readers(
+                    self, owner_is_current, self._generation
+                )
+                if full.character_readers is None:
+                    raise ConsoleDisplayPhaseRefused("Character demand reader changed")
+                return await self.refresh_if_scope_changed(
+                    force=full.character_demand == "forced-scope",
+                    _presentation_is_current=owner_is_current,
+                    _display_read=full,
+                )
             if not force_fresh and self._run_active is not None and self._run_active():
                 if not _stock_character_presentation(self):
                     return await self.refresh_if_scope_changed()
                 key = self._presentation_owner_key(screen)
                 if not _stock_character_presentation(self):
                     return await self.refresh_if_scope_changed()
-                return await self.refresh_if_scope_changed(
-                    _presentation_is_current=owner_is_current
+                # Run polls share one completed observation. Local publication
+                # revisions bypass the cadence; external changes still receive
+                # the original bounded native reconciliation. The final idle
+                # refresh remains owed even when the run did not reload rows.
+                self._presentation_scope_key = None
+                if key != self._run_presentation_scope_key:
+                    self._scope_checked = None
+                self._run_presentation_scope_key = None
+                changed = await self.refresh_if_scope_changed(
+                    _presentation_is_current=owner_is_current,
+                    _display_read=_display_read,
                 )
+                if owner_is_current() and self._scope_checked is not None:
+                    self._run_presentation_scope_key = self._presentation_owner_key(
+                        screen
+                    )
+                return changed
+            self._run_presentation_scope_key = None
             key = self._presentation_owner_key(screen)
             if (
                 not force_fresh
@@ -1162,6 +1247,7 @@ class ConsoleCharacterContextController:
                 checked = await self._check_recent_batch(
                     owner_is_current,
                     settled if type(settled) is ConsoleCharacterScopeFingerprint else None,
+                    _display_read=_display_read,
                 )
                 probed = None
                 if type(checked) is _CharacterScopeProbed:
@@ -1190,6 +1276,7 @@ class ConsoleCharacterContextController:
                         and self.state.phase is ConsoleCharacterOperationPhase.IDLE
                         and not self.state.error
                     ):
+                        await self._display_publication_ready()
                         self._presentation_scope_key = key
                         self._presentation_scope_at = time.monotonic()
                     return False
@@ -1215,6 +1302,7 @@ class ConsoleCharacterContextController:
         *,
         force: bool = False,
         _presentation_is_current: Callable[[], bool] | None = None,
+        _display_read: Any = None,
     ) -> bool:
         """Reload the projection when its scope changed.
 
@@ -1233,6 +1321,11 @@ class ConsoleCharacterContextController:
             # tick's synchronous stretch must not grow by the read's absence.
             await asyncio.sleep(0)
             return False
+        owner = getattr(self, "_domain_display_owner", None)
+        if owner is not None and self._selected_display_full() is None:
+            return await owner.domain.presentation.refresh_display_character(
+                owner, self, "forced-scope" if force else "scope"
+            )
         started = (
             time.monotonic(),
             self._database_accessor(),
@@ -1271,7 +1364,9 @@ class ConsoleCharacterContextController:
             )
         ):
             # TASK-33620.15.6: decide and reload on one handle (one helper).
-            checked = await self._check_recent_batch(_presentation_is_current, settled)
+            checked = await self._check_recent_batch(
+                _presentation_is_current, settled, _display_read=_display_read
+            )
             if type(checked) is _CharacterScopeProbed:
                 # TASK-35961: the merged read was this check's probe.
                 probed = checked.error
@@ -1529,6 +1624,8 @@ class ConsoleCharacterContextController:
         self,
         presentation: Callable[[], bool],
         settled: ConsoleCharacterScopeFingerprint | None,
+        *,
+        _display_read: Any = None,
     ) -> bool | _CharacterScopeProbed | None:
         """Check the stock display's scope and reload it in one finite callback.
 
@@ -1587,6 +1684,7 @@ class ConsoleCharacterContextController:
             BaseException: An original ambient accessor failure, unchanged,
                 or a cancellation; either drops the marker before it leaves.
         """
+        full = self._selected_display_full()
         if settled is None:
             readers = _stock_character_refresh_readers(
                 self, presentation, self._generation
@@ -1607,17 +1705,47 @@ class ConsoleCharacterContextController:
                 except _ConsoleCharacterReaderChanged:
                     # A reader changed after the loop selected this settled
                     # check: refused before any read, so no handle opened.
+                    if self._selected_display_full() is not None:
+                        raise ConsoleDisplayPhaseRefused(  # noqa: B904 - Preserve the tested original reader exception context.
+                            "Selected character defining reader changed"
+                        )
                     return None
             return readers.batch.__func__(readers.controller, readers)
 
         try:
             ambient_error = None
             try:
-                result = await self._await_database_work(readers.database, read_current)
+                shared = (
+                    full.capture_character(readers)
+                    if full is not None
+                    else (
+                        _display_read.capture(
+                            "character",
+                            readers.database,
+                            read_current,
+                            reads=self._preparation_reads,
+                        )
+                        if _display_read is not None
+                        else None
+                    )
+                )
+                result = (
+                    await shared
+                    if shared is not None
+                    else await full.character_fallback(readers)
+                    if full is not None
+                    else await self._await_database_work(readers.database, read_current)
+                )
+            except ConsoleDisplayPhaseRefused:
+                raise
             except _ConsoleCharacterReaderChanged:
                 # As in the original batch, a changed qualified reader authorizes
                 # no further read or publication. A no-argument refresh dispatch
                 # customized meanwhile is honored at once, as after the probe.
+                if self._selected_display_full() is not None:
+                    raise ConsoleDisplayPhaseRefused(  # noqa: B904 - Preserve the tested original reader exception context.
+                        "Selected character defining reader changed"
+                    )
                 customized = any(
                     inspect.getattr_static(self, name)
                     is not vars(ConsoleCharacterContextController)[name]
@@ -1642,6 +1770,10 @@ class ConsoleCharacterContextController:
                 try:
                     current = readers.ambient_current()
                 except _ConsoleCharacterReaderChanged:
+                    if self._selected_display_full() is not None:
+                        raise ConsoleDisplayPhaseRefused(  # noqa: B904 - Preserve the tested original reader exception context.
+                            "Selected character defining reader changed"
+                        )
                     current = False
                 if current:
                     if isinstance(error, _ConsoleCharacterScopeChanged):
@@ -1667,6 +1799,7 @@ class ConsoleCharacterContextController:
                 # selection.
                 return None
             if result.unchanged:
+                await self._display_publication_ready()
                 # As after the original probe: the ambient scope is confirmed on
                 # the loop, and a display invalidated meanwhile no longer shows
                 # ``settled``; either change takes the original route.
@@ -1681,7 +1814,13 @@ class ConsoleCharacterContextController:
             # the old list.
             try:
                 current = readers.ambient_current()
+            except ConsoleDisplayPhaseRefused:
+                raise
             except _ConsoleCharacterReaderChanged:
+                if self._selected_display_full() is not None:
+                    raise ConsoleDisplayPhaseRefused(  # noqa: B904 - Preserve the tested original reader exception context.
+                        "Selected character defining reader changed"
+                    )
                 current = False
             if not current:
                 # As the original batch: an owner or reader that changed during
@@ -1697,7 +1836,8 @@ class ConsoleCharacterContextController:
                 else:
                     await self.refresh()
                 return True
-            # Publish as the original batch does after its ``_begin``.
+            await self._display_publication_ready()
+            # Publish as the original batch does after its `_begin`.
             self._successful_refresh_generation = None
             self._generation += 1
             generation = self._generation
@@ -1719,7 +1859,13 @@ class ConsoleCharacterContextController:
                 readers.require_current()
                 if generation == self._generation:
                     self._successful_refresh_generation = generation
+            except ConsoleDisplayPhaseRefused:
+                raise
             except _ConsoleCharacterReaderChanged:
+                if self._selected_display_full() is not None:
+                    raise ConsoleDisplayPhaseRefused(  # noqa: B904 - Preserve the tested original reader exception context.
+                        "Selected character defining reader changed"
+                    )
                 pass
             return True
         except BaseException:
@@ -1743,13 +1889,28 @@ class ConsoleCharacterContextController:
             try:
                 if not readers.ambient_current():
                     return
+            except ConsoleDisplayPhaseRefused:
+                raise
             except _ConsoleCharacterReaderChanged:
+                if self._selected_display_full() is not None:
+                    raise ConsoleDisplayPhaseRefused(  # noqa: B904 - Preserve the tested original reader exception context.
+                        "Selected character defining reader changed"
+                    )
                 return
             try:
-                result = await self._await_database_work(
-                    readers.database, read_current
+                full = self._selected_display_full()
+                result = (
+                    await full.character_fallback(readers)
+                    if full is not None
+                    else await self._await_database_work(readers.database, read_current)
                 )
+            except ConsoleDisplayPhaseRefused:
+                raise
             except _ConsoleCharacterReaderChanged:
+                if self._selected_display_full() is not None:
+                    raise ConsoleDisplayPhaseRefused(  # noqa: B904 - Preserve the tested original reader exception context.
+                        "Selected character defining reader changed"
+                    )
                 return
             except _ConsoleCharacterScopeChanged:
                 continue
@@ -1760,7 +1921,12 @@ class ConsoleCharacterContextController:
                     if not readers.ambient_current():
                         return
                 except _ConsoleCharacterReaderChanged:
+                    if self._selected_display_full() is not None:
+                        raise ConsoleDisplayPhaseRefused(  # noqa: B904 - Preserve the tested original reader exception context.
+                            "Selected character defining reader changed"
+                        )
                     return
+                await self._display_publication_ready()
                 self._publish(
                     replace(
                         self.state,
@@ -1776,13 +1942,20 @@ class ConsoleCharacterContextController:
             try:
                 if not readers.ambient_current():
                     return
+            except ConsoleDisplayPhaseRefused:
+                raise
             except _ConsoleCharacterReaderChanged:
+                if self._selected_display_full() is not None:
+                    raise ConsoleDisplayPhaseRefused(  # noqa: B904 - Preserve the tested original reader exception context.
+                        "Selected character defining reader changed"
+                    )
                 return
             # The finite callback has exited; its new handle is retired.
             # No GUI state is published while that callback owns custody.
             if not result.scope_current:
                 continue
             if result.load_failed:
+                await self._display_publication_ready()
                 self._publish(
                     replace(
                         self.state,
@@ -1792,12 +1965,14 @@ class ConsoleCharacterContextController:
                     )
                 )
                 return
+            await self._display_publication_ready()
             self._publish_recent_groups(
                 result.snapshot.fingerprint, result.groups, result.details
             )
             return True
         try:
             if readers.ambient_current():
+                await self._display_publication_ready()
                 self._publish(
                     replace(
                         self.state,
@@ -1808,6 +1983,10 @@ class ConsoleCharacterContextController:
                     )
                 )
         except _ConsoleCharacterReaderChanged:
+            if self._selected_display_full() is not None:
+                raise ConsoleDisplayPhaseRefused(  # noqa: B904 - Preserve the tested original reader exception context.
+                    "Selected character defining reader changed"
+                )
             return
 
     def _publish_recent_groups(self, fingerprint, groups, details) -> None:
@@ -1835,6 +2014,12 @@ class ConsoleCharacterContextController:
         self, *, _presentation_is_current: Callable[[], bool] | None = None
     ) -> None:
         """Refresh the bounded projection under one complete scope fence."""
+        owner = getattr(self, "_domain_display_owner", None)
+        if owner is not None and self._selected_display_full() is None:
+            await owner.domain.presentation.refresh_display_character(
+                owner, self, "refresh"
+            )
+            return
 
         def presentation_is_current() -> bool:
             return _presentation_is_current is None or _presentation_is_current()
@@ -1852,6 +2037,10 @@ class ConsoleCharacterContextController:
                     if generation == self._generation:
                         self._successful_refresh_generation = generation
                 except _ConsoleCharacterReaderChanged:
+                    if self._selected_display_full() is not None:
+                        raise ConsoleDisplayPhaseRefused(  # noqa: B904 - Preserve the tested original reader exception context.
+                            "Selected character defining reader changed"
+                        )
                     pass
             return
         for _attempt in range(_SCOPE_CAPTURE_ATTEMPTS):
@@ -2693,29 +2882,60 @@ _CHARACTER_SCOPE_READERS = tuple(
 )
 
 
-_CHARACTER_REFRESH_READERS = (*_CHARACTER_SCOPE_READERS, *tuple(
-    (
-        _CHARACTER_SCOPE_OWNER, name, descriptor, function, function.__code__,
-        function.__globals__, function.__defaults__, function.__kwdefaults__,
-        tuple((function.__kwdefaults__ or {}).items()), function.__closure__,
-        tuple((cell, cell.cell_contents) for cell in (function.__closure__ or ())),
-        globals().get("__file__"), globals().get("__spec__"),
-        getattr(globals().get("__spec__"), "origin", None),
-    )
-    for name in (
-        "refresh", "_presentation_owner_key", "refresh_presentation_if_scope_changed",
-        "refresh_if_scope_changed", "_load_recent_sync", "_load_unavailable_details_sync",
-        "_begin", "_publish", "_current_character_identity", "_open_conversation_identity",
-        "_capture_scope", "_scope_is_current", "_operation_scope_is_current", "_unavailable_rows",
-        "_read_refresh_scope_sync", "_read_recent_scope_sync", "_refresh_recent_batch", "_publish_recent_groups",
-        "_check_recent_batch",
-    )
-    for descriptor in (vars(_CHARACTER_SCOPE_OWNER)[name],)
-    for function in (descriptor.__func__ if isinstance(descriptor, staticmethod) else descriptor,)
-))
+_CHARACTER_REFRESH_READERS = (
+    *_CHARACTER_SCOPE_READERS,
+    *tuple(
+        (
+            _CHARACTER_SCOPE_OWNER,
+            name,
+            descriptor,
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in (function.__closure__ or ())),
+            globals().get("__file__"),
+            globals().get("__spec__"),
+            getattr(globals().get("__spec__"), "origin", None),
+        )
+        for name in (
+            "refresh",
+            "_presentation_owner_key",
+            "refresh_presentation_if_scope_changed",
+            "_selected_display_full",
+            "_display_publication_ready",
+            "_display_closed",
+            "refresh_if_scope_changed",
+            "_load_recent_sync",
+            "_load_unavailable_details_sync",
+            "_begin",
+            "_publish",
+            "_current_character_identity",
+            "_open_conversation_identity",
+            "_capture_scope",
+            "_scope_is_current",
+            "_operation_scope_is_current",
+            "_unavailable_rows",
+            "_read_refresh_scope_sync",
+            "_read_recent_scope_sync",
+            "_refresh_recent_batch",
+            "_publish_recent_groups",
+            "_check_recent_batch",
+        )
+        for descriptor in (vars(_CHARACTER_SCOPE_OWNER)[name],)
+        for function in (
+            descriptor.__func__ if isinstance(descriptor, staticmethod) else descriptor,
+        )
+    ),
+)
 
 #: TASK-35961: the defining function of each stock refresh reader, by name.
-_CHARACTER_READER_FUNCTIONS = {record[1]: record[3] for record in _CHARACTER_REFRESH_READERS}
+_CHARACTER_READER_FUNCTIONS = {
+    record[1]: record[3] for record in _CHARACTER_REFRESH_READERS
+}
 #: TASK-35961: the display check method a settled run-time check qualifies.
 _CHARACTER_CHECK_READER = next(
     record for record in _CHARACTER_REFRESH_READERS if record[1] == "_check_recent_batch"
@@ -2745,9 +2965,15 @@ _CHARACTER_PRESENTATION_OWNER_CODE = next(
 )
 
 
-def character_presentation_work(controller: Any, screen: Any) -> Awaitable[bool]:
+def character_presentation_work(
+    controller: Any, screen: Any, *, _display_read: Any = None
+) -> Awaitable[bool]:
     """Use the stock display facade while retaining custom no-argument callers."""
     if type(controller) is _CHARACTER_SCOPE_OWNER:
+        if _display_read is not None and _stock_character_presentation(controller):
+            return controller.refresh_presentation_if_scope_changed(
+                screen, _display_read=_display_read
+            )
         return controller.refresh_presentation_if_scope_changed(screen)
     return controller.refresh_if_scope_changed()
 

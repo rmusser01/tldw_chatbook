@@ -121,6 +121,7 @@ class _PreparedSettlement:
     prior_integrity_state: str
     prior_omission_reason_code: str | None
     _response_equality_proof: bytes | None = field(default=None, repr=False)
+    _control_owner: object | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -203,9 +204,23 @@ class ConsoleTraceSettlementCoordinator:
         *,
         call_id: str,
         occurred_at: str,
+        _control_owner: object | None = None,
     ) -> TraceCallRecord:
         """Durably record first provider-response evidence, idempotently."""
 
+        if _control_owner is not None:
+            from .console_control_trace import run_trace_write
+
+            return run_trace_write(
+                _control_owner,
+                self,
+                database,
+                call_id,
+                lambda: self._mark_response_started(database, call_id, occurred_at),
+            )
+        return self._mark_response_started(database, call_id, occurred_at)
+
+    def _mark_response_started(self, database, call_id, occurred_at):
         from tldw_chatbook.Chat.console_trace_service import (
             trace_critical_write_checkpoint_policy,
         )
@@ -240,10 +255,19 @@ class ConsoleTraceSettlementCoordinator:
 
         return self._settle_prepared(database, self._prepare_safely(request))
 
-    def submit(self, database: object, request: TraceSettlementRequest) -> bool:
+    def submit(
+        self,
+        database: object,
+        request: TraceSettlementRequest,
+        *,
+        _control_owner: object | None = None,
+    ) -> bool:
         """Try one post-dispatch seal and queue a content-safe retry on failure."""
 
-        return self._submit_prepared(database, self._prepare_safely(request))
+        return self._submit_prepared(
+            database,
+            replace(self._prepare_safely(request), _control_owner=_control_owner),
+        )
 
     def fingerprint(self, request: TraceSettlementRequest) -> str:
         """Return a content-free identity for one sanitized settlement signal."""
@@ -254,13 +278,15 @@ class ConsoleTraceSettlementCoordinator:
         self,
         database: object,
         request: TraceSettlementRequest,
+        *,
+        _control_owner: object | None = None,
     ) -> ConsoleTraceSettlementHandoff:
         """Sanitize one response before it crosses the persistence handoff."""
 
         return ConsoleTraceSettlementHandoff(
             self,
             database,
-            self._prepare_safely(request),
+            replace(self._prepare_safely(request), _control_owner=_control_owner),
         )
 
     def _submit_prepared(
@@ -323,8 +349,12 @@ class ConsoleTraceSettlementCoordinator:
         from tldw_chatbook.DB.base_db import operation_owned_connection
 
         try:
-            with operation_owned_connection(database):
+            if prepared._control_owner is not None:
+                # Selected native observation owns this same connection scope.
                 self._settle_prepared(database, prepared)
+            else:
+                with operation_owned_connection(database):
+                    self._settle_prepared(database, prepared)
         except (_SettlementConflict, TraceIdentityConflict):
             with self._queue_lock:
                 self._inflight.pop(prepared.call_id, None)
@@ -540,6 +570,19 @@ class ConsoleTraceSettlementCoordinator:
         database: object,
         prepared: _PreparedSettlement,
     ) -> TraceCallRecord:
+        if prepared._control_owner is not None:
+            from .console_control_trace import run_trace_write
+
+            return run_trace_write(
+                prepared._control_owner,
+                self,
+                database,
+                prepared.call_id,
+                lambda: self._write_prepared(database, prepared),
+            )
+        return self._write_prepared(database, prepared)
+
+    def _write_prepared(self, database, prepared):
         with database.transaction(immediate=True) as cursor:  # type: ignore[attr-defined]
             existing = self.repository.get_call(cursor, prepared.call_id)
             if existing is None:
