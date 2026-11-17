@@ -3452,7 +3452,7 @@ DELETE FROM keywords
 
     def close_connection(self, *, checkpoint: bool = True):
         """
-        Closes the current thread's database connection.
+        Closes the current thread's connection; ``checkpoint=False`` skips WAL truncation.
 
         If the database is file-based and in WAL mode, it attempts to perform
         a WAL checkpoint (TRUNCATE) before closing to commit changes from the WAL file
@@ -3461,10 +3461,6 @@ DELETE FROM keywords
         managed file work and paused borrowed transactions instead keep the handle.
         The caller must release its native borrowers before requesting close; the
         cache reference is cleared only after successful native retirement.
-
-        Args:
-            checkpoint: Request WAL truncation before native close. A finite
-                read can leave ordinary SQLite checkpointing to the database.
         """
         local = self._local
         conn = getattr(local, "conn", None)

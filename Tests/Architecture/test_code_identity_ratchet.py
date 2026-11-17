@@ -47,6 +47,10 @@ PACKAGE = Path(__file__).resolve().parents[2] / "tldw_chatbook"
 # TASK-41319 (Console Send skill trust decided from the app's registrations)
 # removed 68: __func__ 2, __code__ 18, __defaults__ 8, __kwdefaults__ 9,
 # __closure__ 12, cell_contents 3, __globals__ 9, __wrapped__ 7.
+# PR #3536 (2026-11-16) added six __code__, two __func__ and one __wrapped__
+# read in version/shape guards of installed Textual code (tldw_chatbook/__init__.py
+# adapters, the switcher backdrop) plus one __func__ signature check next to
+# character_context.py's existing one; none decides authority (ADR-356 rule 4).
 # Lower a row when you remove sites.
 PINS = {
     # caller frames, coroutine/generator implementation
@@ -66,14 +70,14 @@ PINS = {
     "ag_code": 0,
     "ag_frame": 0,
     # function, code, default and closure identity
-    "__func__": 142,
-    "__code__": 383,
+    "__func__": 145,
+    "__code__": 389,
     "__defaults__": 202,
     "__kwdefaults__": 305,
     "__closure__": 238,
     "cell_contents": 126,
     "__globals__": 209,
-    "__wrapped__": 205,
+    "__wrapped__": 206,
 }
 
 

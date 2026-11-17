@@ -232,7 +232,7 @@ to the linked source module and the cohorts above; unresolved mappings remain bl
 ## Exact persistence producer symbols
 
 A row is a reviewed **source candidate**, not a claim its entire module is durable.
-The census contains 1703 rows (TASK-39053 reconciliation; TASK-38605 deleted four dead producers; TASK-39111, TASK-39112 and TASK-39115 added 99). Its qualified symbol is the locator-consumer
+The census contains 1705 rows (TASK-39053 reconciliation; TASK-38605 deleted four dead producers; TASK-39111, TASK-39112 and TASK-39115 added 99; PR #3536 added two read-only Textual source checks). Its qualified symbol is the locator-consumer
 evidence; where canonical root selection is not yet extracted, the cohort table explicitly records that resolver
 blocker. New calls in an existing symbol also change the expected count and fail.
 
@@ -905,6 +905,7 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Widgets/Console/console_conversation_inspector.py | ConsoleConversationInspector._save_json._write_export._write | write_text | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/Console/console_transcript.py | ConsoleMarkdownMessage._open_link._open_and_report | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/Console/console_transcript.py | ConsoleTranscript._append_paint_log | open | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Widgets/Console/console_session_switcher_modal.py | _native_backdrop_supported | open | 1 | external_input | installed Textual source, read-only shape check (PR #3536) |
 | tldw_chatbook/Widgets/Console/console_transcript.py | ConsoleTranscript._append_paint_log | write | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage.py | JSONStorage._create_backup | write | 1 | generic_boundary | tamagotchi.config phase8 exact default ConfigFileStorage; custom JSON ordinary; runtime composition pending |
 | tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage.py | JSONStorage._write_data | dump | 1 | generic_boundary | tamagotchi.config phase8 exact default ConfigFileStorage; custom JSON ordinary; runtime composition pending |
@@ -925,6 +926,7 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Workspaces/change_tracking.py | ShadowRepo.snapshot | open | 1 | qualified | workspaces.change_tracking |
 | tldw_chatbook/Workspaces/change_tracking.py | ShadowRepo.snapshot | write | 3 | qualified | workspaces.change_tracking |
 | tldw_chatbook/Writing_Interop/local_writing_service.py | LocalWritingService._open_connection | connect_private_sqlite | 2 | unsupported | miscellaneous |
+| tldw_chatbook/__init__.py | install_owner_local_box_models._source | open | 1 | external_input | installed Textual source, read-only shape check (PR #3536) |
 | tldw_chatbook/app.py | TldwCli._ensure_tts_profile_repository.open_repository | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/app_entry.py | _generated_css_is_stale | open | 2 | unsupported | miscellaneous |
 | tldw_chatbook/app_entry.py | _generated_css_is_stale._sha256 | open | 1 | unsupported | miscellaneous |
