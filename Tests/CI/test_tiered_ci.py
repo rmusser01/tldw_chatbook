@@ -165,14 +165,45 @@ def test_release_and_publishing_share_full_tests_and_validated_package():
                     assert "ref" not in step.get("with", {})
 
 
-def test_light_gate_is_required_and_preserves_fork_fallback():
+def test_safe_release_dispatch_qualifies_candidate_without_publishing():
+    derived = workflow("derived-artifacts.yml")
+    trigger = derived.get("on", derived.get(True))
+    assert trigger["workflow_dispatch"]["inputs"]["release"]["type"] == "boolean"
+    jobs = derived["jobs"]
+    condition = jobs["release-qualification"]["if"]
+    assert "github.event_name == 'workflow_dispatch'" in condition
+    assert "inputs.release" in condition
+    assert (
+        jobs["release-qualification"]["uses"]
+        == "./.github/workflows/release-qualification.yml"
+    )
+    verdict = next(
+        step
+        for step in jobs["derived-artifacts"]["steps"]
+        if step.get("name") == "Require complete release qualification"
+    )
+    assert "inputs.release" in verdict["if"]
+    for job in jobs.values():
+        assert "publish" not in job.get("uses", "")
+        for step in job.get("steps", []):
+            assert "pypi-publish" not in step.get("uses", "")
+
+
+def test_nightly_and_release_dispatch_have_own_concurrency_groups():
+    group = workflow("derived-artifacts.yml")["concurrency"]["group"]
+    assert group == (
+        "${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}"
+        "${{ inputs.nightly && '-nightly' || inputs.release && '-release' || '' }}"
+    )
+
+
+def test_light_gate_is_required_and_uses_hosted_runners():
     jobs = workflow("derived-artifacts.yml")["jobs"]
     assert {"dev-light", "release-qualification"} <= set(
         jobs["derived-artifacts"]["needs"]
     )
     assert jobs["dev-light"]["if"] == "needs.preflight.outputs.light == 'true'"
-    assert "head.repo.full_name == github.repository" in jobs["dev-light"]["runs-on"]
-    assert "|| 'ubuntu-latest'" in jobs["dev-light"]["runs-on"]
+    assert jobs["dev-light"]["runs-on"] == "ubuntu-latest"
     assert jobs["dev-light"]["timeout-minutes"] < 45
     steps = {s.get("name"): s for s in jobs["derived-artifacts"]["steps"]}
     for name, lane in [
