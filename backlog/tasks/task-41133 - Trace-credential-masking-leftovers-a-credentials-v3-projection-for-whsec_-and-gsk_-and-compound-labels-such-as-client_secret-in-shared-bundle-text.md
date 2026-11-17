@@ -56,17 +56,14 @@ The rule comment beside `_CREDENTIAL_PROJECTIONS` now names both of these, so th
 - User names: `user_name=`, `username:`.
 - Labels that are not credentials: `max_tokens`, `next_page_token`.
 
-Known limits, after review r15tr-rev2. Under a compound credential label the bundle still keeps:
-- a value with a digit but under 6 characters (`hu3er`);
-- a value with no digit, unless it has mixed case and is 16+ characters (all-lowercase or all-uppercase letters, hex without digits, `AbCdEfGhIjKlMnO`);
-- a purely numeric or date-shaped value (`12345678`, `2024-01-01`), or one holding a time (`10:00`);
-- a value starting with `./`, `../`, `~/`, `$`, `<`, `{`, `%`, `:`, `*`, `[` or `(` (bcrypt `$2b$...`, `$ecret...`), or a lowercase absolute path (`/etc/ssl/x`);
-- a value that starts like a call or index (`P4ssw0rd(1)`), or like a URL;
-- a dotted name whose segments are identifiers of up to 20 characters;
-- a lowercase identifier whose segments end in digits (`hunter2`, `secret1`, `client_secret_2`), and a run of capitalised words (`YourClientSecretHere`);
-- a value over 2048 characters, a quoted value split by a line break, and JSON-escaped quotes (`\"client_secret\": ...`, which logs do not mask either).
+Known limits, after review r15tr-rev3 (mask by default). Under a compound credential label the bundle keeps only the allowlist, so these are the remaining ways a real secret could be kept:
+- it holds a time (`12:34`), is a date or version (`2024-01-01`, `1.2.3`), or starts with a URL scheme (`x:/`);
+- it reads as a call or index whose callee is dotted or has no digit inside a word (`f(x)`, `tokens[0]`);
+- it is an identifier holding every word of its label, or a compound one made only of credential words (`password_123`, `secret_key_2024`);
+- it matches a placeholder, reference or known-root path (`your-...`, `$lowercase_var`, `{name}`, `/home/...`);
+- under a secret, token or key label (not a password label), it is a quoted value with a space, or a lowercase word of up to 12 letters that a lowercase sentence continues.
 
-Simple labels (`api_key=`, `token:`) stay with the export's older rule, and `?key=` in a URL is not masked. A UUID under a credential label (`session_token=550e8400-...`) is masked, because a session token's value is a credential.
+Simple labels (`api_key=`, `token:`) stay with the export's older rule, which also masks look-alikes such as `api_key=config.provider2.key` and `X-Request-Token: abc`. A trailing full stop after a masked value stays visible (`[credential redacted].`).
 
 **Review r15tr-rev1.** The first rule missed real values and over-masked look-alikes, and it could leave a partial mask (`db_password=Tr0ub4dor&3` came out as `[credential redacted]&3`).
 - **Value extent.** A value is now quoted whole, or bare up to whitespace, a quote, or a `&`/`;`/`,` that starts another field (`name=`) or ends the text. So a value is never cut inside itself. Labels may repeat separators (pydantic's `APP__CLIENT_SECRET`).
@@ -124,3 +121,30 @@ Simple labels (`api_key=`, `token:`) stay with the export's older rule, and `?ke
   - Covering run (`-n 4`, the same 39 files, load 37-65): 8 failed, 1645 passed. The 8 are the nodes that fail identically at base (rev1's base comparison).
   - Serial with lane flags: the recovered-suites slice (every pinned Trace export node, the ledger node, the parking and projection files) gives 412 passed in 113 s at load 59-63; `Tests/Utils/test_log_sanitizer.py` gives 209 passed.
   - `Tests/CI` gives 1640 passed, 1 skipped; the module ratchet 207 passed; the ruff gate is OK.
+
+**Review r15tr-rev3 (engineering ruling: mask by default).**
+- **Design.** A value under a compound credential label is now masked unless it is on an explicit look-alike allowlist (`_kept_look_alike` in `log_sanitizer.py`):
+  - placeholders (`your-...`, `<...>`, all-`x`/`*` runs, `changeme`, `example`, `REDACTED`, `None`/`null`/`true`/`false`, bracketed markers such as `[credential redacted]` and `[local path withheld]`);
+  - references (`$VAR`, `${VAR}`, `%VAR%`, `{name}`, `{{ ... }}`, `${{ ... }}`, `%(name)s`);
+  - known-root paths and drive paths;
+  - code (a call or index; an identifier built from its label's words);
+  - times, dates and URL schemes;
+  - prose under a non-password label.
+  Pure numbers, bcrypt `$2b$...`, `password123`, `summer2024`, `abc_123` and `CorrectHorseBatteryStaple` are masked.
+- **Additions beyond the ruling's list**, each needed by a reviewer look-alike:
+  - `None`/`null`/`true`/`false` (`access_token=None, max_retries=3`);
+  - templates `{{...}}`, `${{...}}`, `%(x)s` and `{x}` (probe3);
+  - a `file:/` URI (probe3);
+  - a leading `:` Ruby symbol and kebab-case names (`oauth-client-secret`);
+  - a bare lowercase word continued by prose (`client_secret: see section 4.2 of the guide`);
+  - bracketed markers, so a second pass changes nothing and a safe-summary export's `[local path withheld]` is not masked again.
+- **The identifier rule is narrower than the ruling's wording.** A value is kept when it holds every word of its label, or when it is compound and every word is a credential word. That keeps `client_secret_2`, `token_v2`, `refresh_token2`, `YourClientSecretHere` and `SECRET_KEY_V2`, and masks `password123` and the probe's `MySuperSecretPassphrase`; "includes a word of the label" would have kept those two.
+- **Overflow.** A value over 2048 characters is masked whole up to its delimiter, found with a linear scan; a kept value is at most 2048 characters, so rescanning stays linear. The slowest of 16 adversarial 200 KB texts takes 0.075 s CPU, so the 2 s bound keeps over 20x headroom.
+- **Escapes.** Quoted values honour `\` escapes (`_find_quoted_end`), and JSON-escaped labels and values (`{\"client_secret\": \"...\"}`) are read.
+- **`?key=`.** The value of a URL's `?key=` is masked as logs mask it (`mask_url_query_keys`).
+- **Tables.** `_MUST_MASK` (85 entries) and `_MUST_KEEP` (55 entries) in `Tests/Chat/test_trace_v2_collaboration.py` now hold every secret and look-alike from the rev1-rev3 probes, and are the contract.
+  - Must-mask: masked with no head or tail left, a second pass changes nothing, an older bundle holding it is refused, and a full export does not hold it.
+  - Must-keep: unchanged in all three profiles, and an older bundle holding it imports.
+  - Moved from keep to mask: the session-token UUID and `refresh_token: rotated2024.` (the ruling masks `summer2024`). `secret1` and `tok_v2` were withdrawn.
+  - Against the previous round's source, 45 table nodes were red (37 mask, 8 keep).
+  - Negative controls, each reverted: keeping long values turns the 7 overflow entries red; plain quote matching turns the escaped-quote entry red; keeping quoted prose under password labels turns the passphrase entry red.

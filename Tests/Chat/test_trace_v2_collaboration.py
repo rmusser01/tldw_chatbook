@@ -6,6 +6,8 @@ import ast
 import copy
 import hashlib
 import json
+import random
+import string
 import time
 from dataclasses import FrozenInstanceError
 from pathlib import Path
@@ -493,85 +495,6 @@ _LOG_SANITIZER_SHAPES = {
         "DEK-Info: AES-128-CBC,0A\n\nMIIEv" + _FAKE,
         "MIIEv" + _FAKE,
     ),
-    # TASK-41133: compound labels logs mask, with values no token rule knows
-    # (each label split, so no committed line holds a whole assignment).
-    "label-client-secret-query": (
-        "?client_id=app&client" + "_secret=GOCSPX-" + _FAKE + "a1B2&grant_type=code",
-        "GOCSPX-" + _FAKE,
-    ),
-    "label-refresh-token-yaml": ("refresh" + "_token: 1//0g" + _FAKE, "1//0g" + _FAKE),
-    "label-json-in-text": ('{"client' + '_secret": "' + _FAKE + '9a8b"}', _FAKE + "9a8b"),
-    "label-header": ("X-Auth" + "-Token: " + _FAKE + "5150", _FAKE + "5150"),
-    "label-env": ("AWS_SECRET" + "_ACCESS_KEY=wJalr/" + _FAKE, "wJalr/" + _FAKE),
-    "label-password": ("db" + "_password=hunter2" + _FAKE, "hunter2" + _FAKE),
-    # Review r15tr-rev1: punctuation, URL encoding and pydantic's ``__`` must be
-    # masked whole, with no tail left after a ``&`` or ``%`` inside the value.
-    "label-password-punct": ("db" + "_password=P@ssw0rd!" + _FAKE, "P@ssw0rd!" + _FAKE),
-    "label-password-json-punct": (
-        '{"db' + '_password": "Tr0ub4dor&3' + _FAKE + '"}',
-        "Tr0ub4dor&3" + _FAKE,
-    ),
-    "label-password-amp-tail": ("db" + "_password=Tr0ub4dor&3" + _FAKE, "&3" + _FAKE),
-    "label-password-pct-tail": ("db" + "_password=abcdefgh1%2F" + _FAKE, "%2F" + _FAKE),
-    "label-refresh-urlencoded": (
-        "grant_type=refresh_token&client_id=x&refresh" + "_token=1%2F%2F0g" + _FAKE,
-        "0g" + _FAKE,
-    ),
-    "label-pydantic-env": ("APP__CLIENT" + "_SECRET=" + _FAKE + "abc123", _FAKE + "abc123"),
-    # Review r15tr-rev2: a credential label inside another compound label's
-    # value (a URL, JSON text, a query string, a pipe list) is still masked.
-    "label-nested-url-fragment": (
-        "redirect" + "_url=https://app/cb#access" + "_token=ya29.a0Af-" + _FAKE
-        + "x12&token_type=Bearer",
-        "a0Af-" + _FAKE,
-    ),
-    "label-nested-json-url": (
-        '{"next' + '_page_url": "https://graph.example.com/v1/feed?access'
-        + "_token=EAAG" + _FAKE + 'x12&limit=25"}',
-        "EAAG" + _FAKE,
-    ),
-    "label-nested-quoted-query": (
-        '"query' + '_string": "client_id=x&client' + "_secret=GOCSPX-" + _FAKE + 'aB12"',
-        "GOCSPX-" + _FAKE,
-    ),
-    "label-nested-pipe": (
-        "request" + "_id=abc123|client" + "_secret=GOCSPX-" + _FAKE + "aB12",
-        "GOCSPX-" + _FAKE,
-    ),
-    "label-nested-error-description": (
-        '{"error' + '_description": "client' + "_secret=GOCSPX-" + _FAKE
-        + 'aB12 is invalid"}',
-        "GOCSPX-" + _FAKE,
-    ),
-    "label-nested-help-text": (
-        '{"help' + '_text": "Set refresh' + "_token: 1//0g" + _FAKE + 'x12 in config"}',
-        "1//0g" + _FAKE,
-    ),
-    # Review r15tr-rev2: key formats that start with "/", "." or "~", hold a
-    # ":", or are a long dotted token; a quoted value with "'" or spaces.
-    "label-base64-slash-start": (
-        "aws" + "_secret_access_key=/K7MDENGbPxRfiCY" + _FAKE + "Ab12+xyz",
-        "K7MDENGbPxRfiCY" + _FAKE,
-    ),
-    "label-azure-dot-start": ("client" + "_secret=.8Q~" + _FAKE + "ab12cd34ef", "8Q~" + _FAKE),
-    "label-tilde-start": ("client" + "_secret=~8Q" + _FAKE + "ab12cd34ef", "8Q" + _FAKE),
-    "label-telegram": (
-        "telegram" + "_api_token=123456789:AAH" + _FAKE + "dqTcvCH1vGWJxfSeof",
-        "AAH" + _FAKE,
-    ),
-    "label-colon-password": ("db" + "_password=Tr0ub4dor:3x" + _FAKE, "3x" + _FAKE),
-    "label-dotted-token": (
-        "access" + "_token=ya29.a0AfB_byC" + _FAKE + "abc123def",
-        "byC" + _FAKE,
-    ),
-    "label-apostrophe-quoted": (
-        "db" + "_password: \"Tr0ub4d0r's" + _FAKE + '"',
-        "s" + _FAKE,
-    ),
-    "label-passphrase-quoted": (
-        "db" + '_password: "correct horse 42 battery ' + _FAKE + '"',
-        "horse 42 battery",
-    ),
 }
 
 
@@ -654,36 +577,269 @@ _LOOK_ALIKE_TEXTS = (
 )
 
 
-#: Review r15tr-rev1: values under credential labels that are not credentials:
-#: placeholders, a Kubernetes secret name, paths, code, dates, references.
-#: Several also name a credential word a payload key may not hold, so their
-#: test puts them in values only.
-_LABEL_LOOK_ALIKE_TEXTS = (
-    "client" + "_secret=your-client-secret",
-    "refresh" + "_token: YOUR-REFRESH-TOKEN",
-    "client" + "_secret=xxxxxxxx-xxxx",
-    "client" + "_secret=oauth-client-secret",
-    "private" + "_key=/etc/ssl/private/server.key",
-    "client" + "_secret=/run/secrets/client_secret",
-    "private" + "_key=./keys/id_rsa2",
-    "secret" + "_key=base64.b64encode(os.urandom(32))",
-    "db" + "_password=hashlib.sha256(raw).hexdigest()",
-    "the secret" + "_key: 2024-01-01 rotated",
-    "refresh" + "_token: 2024-11-16T10:00:00Z expiry",
-    "client" + "_secret=$CLIENT_SECRET_2",
-    "refresh" + "_token: :refresh_token_v2",
-    "access" + "_token=None, max_retries=3",
-    "client" + "_secret: https://vault.example.com/v1/oauth",
-    # Review r15tr-rev2: identifiers, keyword arguments, a sentence's full stop
-    # and word-run names.
-    "client" + "_secret=client_secret_2",
-    "access" + "_token=token_v2",
-    "fetch(refresh" + "_token=refresh_token2)",
-    "f(client" + "_secret=secret1, refresh" + "_token=tok_v2)",
-    "Set the refresh" + "_token: rotated2024.",
-    "client" + "_secret=ClientSecretFromVaultConfig",
-    "client" + "_secret=YourClientSecretHere",
-)
+#: Review r15tr-rev3 (engineering ruling): a value under a credential label is
+#: masked unless it is on a narrow look-alike allowlist. These two tables are
+#: the contract. Every secret shape and every look-alike from the reviewers'
+#: probes (rev1 to rev3) is in one of them. Labels are split at ``_L`` so no
+#: committed line holds a whole assignment; the fakes are assembled likewise.
+_L = "_"
+_F = "DONOTUSE"
+_RNG = random.Random(41133)
+_B64 = string.ascii_letters + string.digits + "+/"
+_B64URL = string.ascii_letters + string.digits + "-_"
+
+
+def _fake(length: int, alphabet: str = _B64) -> str:
+    return "".join(_RNG.choice(alphabet) for _ in range(length))
+
+
+_LONG = {n: _fake(n) for n in (2000, 2048, 2049, 2100, 3200)}
+_LONG_QUOTED = _fake(3200)
+_LONG_SESSION = _fake(2300, _B64URL)
+_LONG_YAML = _fake(2300, _B64URL)
+_LONG_CONCAT = _fake(1500) + _fake(1500)
+_AZURE = "abc8Q~" + _fake(30, string.ascii_letters + string.digits)
+
+#: name -> (text, the secret that must not survive, in whole or in part).
+_MUST_MASK: dict[str, tuple[str, str]] = {
+    # rev1 (probe2, probe_labels)
+    "pw-punct": ("db" + _L + "password=P@ssw0rd!2024", "P@ssw0rd!2024"),
+    "pw-punct-json": ('{"db' + _L + 'password": "Tr0ub4dor&3xyz"}', "Tr0ub4dor&3xyz"),
+    "pw-amp-tail": ("db" + _L + "password=Tr0ub4dor&3" + _F, "Tr0ub4dor&3" + _F),
+    "pw-pct-tail": ("db" + _L + "password=abcdefgh1%2Frest" + _F, "abcdefgh1%2Frest" + _F),
+    "pw-hyphen-label": ("db" + "-password=P@ssw0rd!2024", "P@ssw0rd!2024"),
+    "pw-short": ("db" + _L + "password=hunt3r2", "hunt3r2"),
+    "pw-letters": ("db" + _L + "password=correcthorsebatterystaple", "correcthorsebatterystaple"),
+    "refresh-form-body": (
+        "grant_type=refresh_token&client_id=x&refresh" + _L + "token=1%2F%2F0g" + _F + "123",
+        "1%2F%2F0g" + _F + "123",
+    ),
+    "client-secret-urlencoded": ("client" + _L + "secret=ab%2Bcd" + _F + "123", "ab%2Bcd" + _F + "123"),
+    "client-secret-kv": ("client" + _L + "secret=" + _F + "abc123xyz", _F + "abc123xyz"),
+    "pydantic-env": ("APP__CLIENT" + _L + "SECRET=" + _F + "abc123def", _F + "abc123def"),
+    "pydantic-env-password": ("DATABASE__PASS" + "WORD=" + _F + "abc123def", _F + "abc123def"),
+    "url-key-query": ("https://api.example.com/v1/x?key=" + _F + "abc123def456", _F + "abc123def456"),
+    "x-api-key-header": ("x-api" + "-key: " + _F + "0123456789abcdef", _F + "0123456789abcdef"),
+    "x-api-key-header-capitals": ("X-API" + "-Key: " + _F + "0123456789abcdef", _F + "0123456789abcdef"),
+    "authorization-basic": ("Authorization: Basic dXNlcjpwYXNz" + "d29yZA==", "dXNlcjpwYXNz" + "d29yZA=="),
+    "proxy-authorization-basic": (
+        "Proxy" + "-Authorization: Basic dXNlcjpwYXNz" + "d29yZA==",
+        "dXNlcjpwYXNz" + "d29yZA==",
+    ),
+    "json-api-key": ('{"api' + _L + 'key": "' + _F + 'abc123def456"}', _F + "abc123def456"),
+    "json-api-key-single-quotes": ("{'api" + _L + "key': '" + _F + "abc123def456'}", _F + "abc123def456"),
+    "env-api-key": ("OPENAI" + _L + "API_KEY=" + _F + "abc123def456", _F + "abc123def456"),
+    "unterminated-quote": ("client" + _L + 'secret="' + _F + "abc123def456", _F + "abc123def456"),
+    "azure-subscription-key": (
+        "Ocp-Apim" + "-Subscription-Key: 0123456789abcdef0123456789abcdef",
+        "0123456789abcdef0123456789abcdef",
+    ),
+    "dotted-label": ("settings.api" + _L + "key=" + _F + "abc123", _F + "abc123"),
+    "space-before-colon": ("client" + _L + "secret : " + _F + "abc123def", _F + "abc123def"),
+    "aws-secret-yaml": (
+        "aws" + _L + "secret_access_key: wJalrXUtnFEMI/K7MDENG/bPxRfiCY" + _F,
+        "wJalrXUtnFEMI/K7MDENG/bPxRfiCY" + _F,
+    ),
+    "session-token-cookie": ("session" + _L + "token=" + _F + "abc123def456; Path=/", _F + "abc123def456"),
+    # rev2 (probe3, probe4, probe5)
+    "six-chars-digit": ("db" + _L + "password=hunt3r", "hunt3r"),
+    "five-chars-digit": ("db" + _L + "password=hu3er", "hu3er"),
+    "hex-no-digit": ("api" + _L + "token=abcdefabcdefabcdefabcdef", "abcdefabcdefabcdefabcdef"),
+    "lowercase-no-digit": (
+        "api" + _L + "token=qwertyuiopasdfghjklzxcvbnmqwerty",
+        "qwertyuiopasdfghjklzxcvbnmqwerty",
+    ),
+    "mixed-case-15": ("client" + _L + "secret=AbCdEfGhIjKlMnO", "AbCdEfGhIjKlMnO"),
+    "mixed-case-16": ("client" + _L + "secret=AbCdEfGhIjKlMnOp", "AbCdEfGhIjKlMnOp"),
+    "base64-slash-start": (
+        "aws" + _L + "secret_access_key=/K7MDENGbPxRfiCY" + _F + "Ab12+xyz",
+        "/K7MDENGbPxRfiCY" + _F + "Ab12+xyz",
+    ),
+    "base64-plus-start": (
+        "aws" + _L + "secret_access_key=+K7MDENGbPxRfiCY" + _F + "Ab12/xyz",
+        "+K7MDENGbPxRfiCY" + _F + "Ab12/xyz",
+    ),
+    "azure-dot-start": ("client" + _L + "secret=.8Q~" + _F + "ab12cd34ef", ".8Q~" + _F + "ab12cd34ef"),
+    "tilde-start": ("client" + _L + "secret=~8Q" + _F + "ab12cd34ef", "~8Q" + _F + "ab12cd34ef"),
+    "telegram-token": (
+        "telegram" + _L + "api_token=123456789:AAH" + _F + "dqTcvCH1vGWJxfSeof",
+        "123456789:AAH" + _F + "dqTcvCH1vGWJxfSeof",
+    ),
+    "dotted-token": ("access" + _L + "token=ya29.a0AfB" + _L + "byC" + _F + "abc123def", "ya29.a0AfB_byC" + _F + "abc123def"),
+    "dotted-token-dash": ("access" + _L + "token=ya29.a0AfB-byC" + _F + "abc123def", "ya29.a0AfB-byC" + _F + "abc123def"),
+    "numeric-password": ("db" + _L + "password=12345678", "12345678"),
+    "numeric-pin": ("api" + _L + "secret=9876543210123456", "9876543210123456"),
+    "colon-password": ("db" + _L + "password=Tr0ub4dor:3x", "Tr0ub4dor:3x"),
+    "parenthesis-password": ("db" + _L + "password=P4ssw0rd(1)", "P4ssw0rd(1)"),
+    "bcrypt-hash": ("db" + _L + "password=$2b$12$" + _F + "abcdefghijklmnopqrstuv", "$2b$12$" + _F + "abcdefghijklmnopqrstuv"),
+    "dollar-password": ("db" + _L + "password=$ecretP4ssw0rd", "$ecretP4ssw0rd"),
+    "apostrophe-quoted": ("db" + _L + "password: \"Tr0ub4d0r's" + _F + '"', "Tr0ub4d0r's" + _F),
+    "passphrase-quoted": ("db" + _L + 'password: "correct horse 42 battery"', "correct horse 42 battery"),
+    "escaped-json": ('{\\"client' + _L + 'secret\\": \\"GOCSPX-' + _F + 'aB12\\"}', "GOCSPX-" + _F + "aB12"),
+    "escaped-quote-inside": ("client" + _L + 'secret: "pa\\"ss' + _F + '12"', "pa\\\"ss" + _F + "12"),
+    "nested-url-fragment": (
+        "redirect" + _L + "url=https://app/cb#access" + _L + "token=ya29.a0Af-" + _F + "x12&token_type=Bearer",
+        "ya29.a0Af-" + _F + "x12",
+    ),
+    "nested-json-url": (
+        '{"next' + _L + 'page_url": "https://graph.example.com/v1/feed?access' + _L + "token=EAAG" + _F + 'x12&limit=25"}',
+        "EAAG" + _F + "x12",
+    ),
+    "nested-quoted-query": (
+        '"query' + _L + 'string": "client_id=x&client' + _L + "secret=GOCSPX-" + _F + 'aB12"',
+        "GOCSPX-" + _F + "aB12",
+    ),
+    "nested-pipe": ("request" + _L + "id=abc123|client" + _L + "secret=GOCSPX-" + _F + "aB12", "GOCSPX-" + _F + "aB12"),
+    "nested-unlabelled-url": (
+        "see https://app/cb#access" + _L + "token=ya29.a0Af-" + _F + "x12&token_type=Bearer",
+        "ya29.a0Af-" + _F + "x12",
+    ),
+    "nested-error-description": (
+        '{"error' + _L + 'description": "client' + _L + "secret=GOCSPX-" + _F + 'aB12 is invalid"}',
+        "GOCSPX-" + _F + "aB12",
+    ),
+    "nested-help-text": (
+        '{"help' + _L + 'text": "Set refresh' + _L + "token: 1//0g" + _F + 'x12 in config"}',
+        "1//0g" + _F + "x12",
+    ),
+    "unlabelled-description": (
+        '{"description": "Set refresh' + _L + "token: 1//0g" + _F + 'x12 in config"}',
+        "1//0g" + _F + "x12",
+    ),
+    "session-token-uuid": ("session" + _L + "token=550e8400-e29b-41d4-a716-446655440000", "550e8400-e29b-41d4-a716-446655440000"),
+    "sentence-version-word": ("Set the refresh" + _L + "token: rotated2024.", "rotated2024"),
+    # rev3 (probe6, probe7): long values, identifier-shaped passwords, words
+    **{
+        f"long-bare-{n}": ("private" + _L + "key=" + value + " end", value)
+        for n, value in _LONG.items()
+    },
+    "long-quoted": ('{"private' + _L + 'key": "' + _LONG_QUOTED + '"}', _LONG_QUOTED),
+    "long-session-token": ("aws" + _L + "session_token=" + _LONG_SESSION, _LONG_SESSION),
+    "long-yaml": ("client" + _L + "secret: " + _LONG_YAML + "\nnext: 1", _LONG_YAML),
+    "long-concatenated": ("refresh" + _L + "token: " + _LONG_CONCAT, _LONG_CONCAT),
+    **{
+        f"password-{value}": ("db" + _L + "password=" + value, value)
+        for value in (
+            "hunter22", "password123", "summer2024", "welcome1", "admin123", "letmein99",
+            "abc_123", "mysecret_2024", "companyname_2024", "secret_42_prod", "qwerty_123456",
+            "deadbeef1234", "a" * 10 + "123456",
+        )
+    },
+    **{
+        f"word-run-{value}": ("client" + _L + "secret=" + value, value)
+        for value in ("CorrectHorseBatteryStaple", "MySuperSecretPassphrase", "TrustNoOneEverAgain")
+    },
+    "azure-trailing-dot": ("client" + _L + "secret=" + _AZURE + ".", _AZURE),
+}
+
+#: name -> text that must survive a shared bundle unchanged.
+_MUST_KEEP: dict[str, str] = {
+    # rev1 (probe2, probe_labels)
+    "placeholder-your": "client" + _L + "secret=your-client-secret",
+    "placeholder-your-capitals": "refresh" + _L + "token: YOUR-REFRESH-TOKEN",
+    "placeholder-x": "client" + _L + "secret=xxxxxxxx-xxxx",
+    "kebab-secret-name": "client" + _L + "secret=oauth-client-secret",
+    "path-etc": "private" + _L + "key=/etc/ssl/private/server.key",
+    "path-run": "client" + _L + "secret=/run/secrets/client_secret",
+    "path-relative": "private" + _L + "key=./keys/id_rsa2",
+    "code-base64": "secret" + _L + "key=base64.b64encode(os.urandom(32))",
+    "code-hashlib": "db" + _L + "password=hashlib.sha256(raw).hexdigest()",
+    "code-boto3": "aws" + _L + "secret_access_key=boto3.session.Session().get_credentials()",
+    "date": "the secret" + _L + "key: 2024-01-01 rotated",
+    "iso-time": "refresh" + _L + "token: 2024-11-16T10:00:00Z expiry",
+    "version-label": "api" + _L + "key_version=v2.10.3-rc1",
+    "name-label": "client" + _L + "secret_name=my-secret-2024-prod",
+    "ruby-symbol": "refresh" + _L + "token: :refresh_token_v2",
+    "none-literal": "access" + _L + "token=None, max_retries=3",
+    "expiry-label": "access" + _L + "token_expires_in=3600",
+    "reference-dollar": "client" + _L + "secret=$CLIENT_SECRET_2",
+    "url": "client" + _L + "secret: https://vault.example.com/v1/oauth",
+    "placeholder-angle": "refresh" + _L + "token: <your refresh token>",
+    "reference-braces": "export CLIENT" + _L + "SECRET=${CLIENT_SECRET}",
+    "code-environ": "client" + _L + 'secret = os.environ["CLIENT_SECRET"]',
+    "code-keyword-argument": "creds = oauth.fetch_token(url, client" + _L + "secret=client_secret)",
+    "prose-bare": "Set client" + _L + "secret: it comes from the provider console.",
+    # rev2 (probe3)
+    "identifier-digit": "client" + _L + "secret=client_secret_2",
+    "identifier-version": "access" + _L + "token=token_v2",
+    "keyword-argument-paren": "fetch(refresh" + _L + "token=refresh_token2)",
+    "semver-label": "api" + _L + "key_version=1.2.3",
+    "prose-section": "client" + _L + "secret: see section 4.2 of the guide",
+    "word-run-config": "client" + _L + "secret=ClientSecretFromVaultConfig",
+    "word-run-placeholder": "client" + _L + "secret=YourClientSecretHere",
+    "mustache": "client" + _L + "secret={{ secrets.CLIENT_SECRET }}",
+    "jinja": "client" + _L + "secret={{secrets.CLIENT_SECRET}}",
+    "github-actions": "client" + _L + "secret=${{ secrets.CLIENT_SECRET }}",
+    "percent-format": "client" + _L + "secret=%(secret)s",
+    "stars": "client" + _L + "secret=****************",
+    "redacted-word": "client" + _L + "secret=REDACTED",
+    "file-uri": "client" + _L + "secret=file:/run/secrets/x",
+    "go-struct": "ClientSecret: cfg.ClientSecret2,",
+    "csv-header": "client" + _L + "secret,refresh" + _L + "token,user",
+    "markdown-table": "| client" + _L + "secret | string | your OAuth secret, e.g. GOCSPX-xxx |",
+    # rev3 (probe6, probe7)
+    "path-users": "private" + _L + "key=/Users/alice/.ssh/id_rsa",
+    "path-home-mixed-case": "private" + _L + "key=/home/Alice/keys/server.pem",
+    "path-drive": "private" + _L + "key=C:\\Users\\alice\\key.pem",
+    "prose-quoted": '{"client' + _L + 'secret": "rotate every 90 days"}',
+    "prose-quoted-digit": "client" + _L + 'secret: "Issued in step 2 of the guide"',
+    "code-getenv": "client" + _L + "secret=os.getenv('CLIENT_SECRET_2')",
+    "code-attribute": "client" + _L + "secret=settings.oauth.client_secret_v2",
+    "code-private-attribute": "client" + _L + "secret=self._client_secret2",
+    "code-json-index": "access" + _L + "token=resp.json()['access_token']",
+    "code-index": "refresh" + _L + "token=tokens[0]",
+    "constant-name": "api" + _L + "secret=SECRET_KEY_V2",
+    "constant-name-password": "db" + _L + "password=DB_PASSWORD_2",
+    "pascal-name": "client" + _L + "secret=ClientSecret2",
+    "code-call": "client" + _L + "secret=getClientSecret2()",
+}
+
+
+def _survives(secret: str, original: str, output: str) -> bool:
+    """Whether the secret, or its first or last six characters, is still in
+    the output (more often than the rest of the original text holds them)."""
+    rest = original.replace(secret, "")
+    return any(
+        output.count(part) > rest.count(part)
+        for part in {secret, secret[:6], secret[-6:]}
+        if part
+    )
+
+
+@pytest.mark.parametrize("name", sorted(_MUST_MASK))
+def test_every_secret_in_the_must_mask_table_is_masked(name: str) -> None:
+    """Review r15tr-rev3: masked whole in a shared bundle, a second pass
+    changes nothing, and an older bundle holding it is refused on import."""
+    text, secret = _MUST_MASK[name]
+
+    masked, changed = trajectory_export._credential_text(text)
+    serialized, _payload = _export_bytes_with(text, "full_trace")
+
+    assert changed and not _survives(secret, text, masked), masked
+    assert trajectory_export._credential_text(masked) == (masked, False)
+    assert trajectory_export._has_credential_material({"result": text})
+    assert secret.encode() not in serialized
+
+
+@pytest.mark.parametrize("name", sorted(_MUST_KEEP))
+def test_every_look_alike_in_the_must_keep_table_is_kept_and_imports(name: str) -> None:
+    """Review r15tr-rev3: kept unchanged in every profile, and an older bundle
+    holding it imports."""
+    text = _MUST_KEEP[name]
+    assert trajectory_export._credential_text(text) == (text, False)
+
+    for profile in ("safe_summary", "redacted_diagnostic", "full_trace"):
+        snapshot = _snapshot(
+            _record(content_preview=f"See {text}", payload={"result": f"run {text}"})
+        )
+        payload = _build(snapshot, profile, confirm_full=profile == "full_trace")
+        assert not any(
+            item["reason"] in {"credential", "credential_key"}
+            for item in payload["manifest"]["redaction_provenance"]
+        ), profile
+    older = _build(_snapshot())
+    older["events"][0]["payload"]["result"] = text
+    trajectory_import.load_imported_trace(_resign(older))
 
 
 @pytest.mark.parametrize(
@@ -722,41 +878,31 @@ _ADVERSARIAL_TEXTS = {
     "commas": "a_b=x" + ",a" * 100_000,
     "unclosed-quote": "client" + '_secret="' + "x" * 200_000,
     "many-assignments": " a_b=c1d2e3f4" * 16_000,
+    # Review r15tr-rev3 (probe6): the rescan and value-length costs.
+    "chained-credential-labels-spaced": ("client" + "_secret= ") * 15_000,
+    "credential-label-long-runs": ("client" + "_secret=" + "a" * 2040 + " ") * 100,
+    "credential-label-then-long-field": "client" + "_secret=x&" + "a" * 200_000,
+    "many-delimited-segments": "client" + "_secret=x" + "&aaaaaaaaaaaaaaaaaaaa" * 10_000,
+    "label-at-end": "x " * 100_000 + "client" + "_secret=",
+    "separator-run": "a" + "_" * 200_000 + "b=x1y2z3w4",
+    "trailing-closers": ("db" + "_password=a1" + ")" * 2000 + " ") * 100,
+    "trailing-dots": ("db" + "_password=a1" + "." * 2000 + " ") * 100,
+    "quoted-runs": ('"client' + '_secret": "' + "x" * 2047 + '" ') * 100,
+    "nested-labels": ("a_b=" + "client" + "_secret=") * 15_000,
 }
 
 
 @pytest.mark.parametrize("name", sorted(_ADVERSARIAL_TEXTS))
 def test_adversarial_bundle_text_is_masked_in_bounded_time(name: str) -> None:
-    """Measured as this thread's CPU time, so machine load does not count."""
+    """Measured as this thread's CPU time, so machine load does not count.
+    The slowest case measured 0.075 s (review r15tr-rev3, best of three
+    at load 74), so 2 s leaves over 20x headroom."""
     text = _ADVERSARIAL_TEXTS[name]
     started = time.thread_time()
 
     trajectory_export._credential_text(text)
 
     assert time.thread_time() - started < 2.0, name
-
-
-@pytest.mark.parametrize("profile", ["safe_summary", "redacted_diagnostic", "full_trace"])
-@pytest.mark.parametrize("text", _LABEL_LOOK_ALIKE_TEXTS)
-def test_label_look_alikes_survive_a_shared_bundle_and_an_older_one_imports(
-    text: str, profile: str
-) -> None:
-    """Review r15tr-rev1: the compound-label rule masked these, and an older
-    bundle holding one (an OAuth how-to) was refused on import."""
-    assert trajectory_export._credential_text(text) == (text, False)
-
-    snapshot = _snapshot(
-        _record(content_preview=f"See {text}", payload={"result": f"run {text}"})
-    )
-    payload = _build(snapshot, profile, confirm_full=profile == "full_trace")
-
-    assert not any(
-        item["reason"] in {"credential", "credential_key"}
-        for item in payload["manifest"]["redaction_provenance"]
-    )
-    older = _build(_snapshot())
-    older["events"][0]["payload"]["result"] = text
-    trajectory_import.load_imported_trace(_resign(older))
 
 
 @pytest.mark.parametrize("profile", ["safe_summary", "redacted_diagnostic", "full_trace"])

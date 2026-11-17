@@ -612,11 +612,12 @@ RECOVERED_SUITES_TARGETS = (
     "Tests/Chat/test_trace_v2_collaboration.py::test_code_and_docs_that_only_look_like_credentials_survive_a_shared_bundle",
     "Tests/Chat/test_trace_v2_collaboration.py::test_an_older_bundle_holding_a_newly_masked_shape_is_refused_on_import",
     # TASK-41133: compound credential labels come from the log sanitizer's
-    # list, look-alikes under them stay readable, a value keeps its closing
+    # list, the must-mask and must-keep tables hold, a value keeps its closing
     # bracket, adversarial text scans in bounded time, and the legacy ledger
     # node covers a v1 and a v2 ledger under v3.
     "Tests/Chat/test_trace_v2_collaboration.py::test_the_bundle_masks_compound_labels_with_the_log_sanitizers_own_labels",
-    "Tests/Chat/test_trace_v2_collaboration.py::test_label_look_alikes_survive_a_shared_bundle_and_an_older_one_imports",
+    "Tests/Chat/test_trace_v2_collaboration.py::test_every_secret_in_the_must_mask_table_is_masked",
+    "Tests/Chat/test_trace_v2_collaboration.py::test_every_look_alike_in_the_must_keep_table_is_kept_and_imports",
     "Tests/Chat/test_trace_v2_collaboration.py::test_a_masked_label_value_keeps_its_closing_bracket_and_full_stop",
     "Tests/Chat/test_trace_v2_collaboration.py::test_adversarial_bundle_text_is_masked_in_bounded_time",
     "Tests/Chat/test_console_trace_legacy_migration.py::test_an_older_legacy_ledger_keeps_migrating_new_exchanges_under_the_current_version",

@@ -64,6 +64,7 @@ from tldw_chatbook.Chat.trajectory import (
 from tldw_chatbook.Utils.log_sanitizer import (
     CREDENTIAL_VALUE_PATTERNS,
     mask_credential_labels,
+    mask_url_query_keys,
 )
 
 __all__ = [
@@ -353,8 +354,10 @@ def _credential_text(value: str) -> tuple[str, bool]:
     redacted = value
     for pattern in _CREDENTIAL_VALUE_RES:
         redacted = pattern.sub("[credential redacted]", redacted)
-    # TASK-41133: then compound labels (client_secret=...), named as logs name them.
+    # TASK-41133: then compound labels (client_secret=...), named as logs name
+    # them, and a URL's ``?key=`` value, as logs mask it.
     redacted = mask_credential_labels(redacted, "[credential redacted]")
+    redacted = mask_url_query_keys(redacted, "[credential redacted]")
     return redacted, redacted != value
 
 

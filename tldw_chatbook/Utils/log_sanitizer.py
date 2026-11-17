@@ -554,110 +554,198 @@ CREDENTIAL_VALUE_PATTERNS = (
 
 
 #: A compound credential label (TASK-41133). Labels may repeat separators
-#: (pydantic's ``APP__X``).
+#: (pydantic's ``APP__X``) and may be quoted, or escape-quoted inside a JSON
+#: string (``\"client_secret\":``).
 _COMPOUND_LABEL = re.compile(
     r"""
     (?<![A-Za-z0-9_.-])
-    (?P<label_quote>["']?)
+    (?:\\?(?P<label_quote>["']))?
     (?P<label>[A-Za-z0-9]+(?:[_.-]+[A-Za-z0-9]+)+)
-    (?P=label_quote)
+    (?(label_quote)\\?(?P=label_quote))
     [ \t]*[:=][ \t]*
     """,
     re.VERBOSE,
 )
-#: A field delimiter that ends a bare value: followed by whitespace, a quote,
-#: the end, or another ``name=`` field. Any other ``&``/``;``/``,`` belongs to
-#: the value, so a value is never cut inside itself (``Tr0ub4dor&3``).
-_BARE_VALUE_CHARACTER = r"""(?:[^\s"'&;,]|[&;,](?![\s"']|$|[A-Za-z0-9_.-]+[ \t]*[:=]))"""
-#: The value after a label: quoted whole (any character but its own quote, so
-#: ``"Tr0ub4d0r's ..."`` and a passphrase with spaces), or bare. Values over
-#: 2048 characters are not read, which keeps a scan of adversarial text linear.
-_LABEL_VALUE = re.compile(
-    rf"""
-    (?P<quote>["'])(?P<quoted>(?:(?!(?P=quote))[^\r\n]){{1,2048}}+)(?P=quote)
-    |
-    ["']?(?P<bare>{_BARE_VALUE_CHARACTER}{{1,2048}}+)(?!{_BARE_VALUE_CHARACTER})
-    """,
-    re.VERBOSE,
+#: A bare value runs to whitespace, a quote, or a ``&``/``;``/``,`` followed
+#: by whitespace, a quote, the end or another ``name=`` field. Any other
+#: ``&``/``;``/``,`` belongs to the value (``Tr0ub4dor&3``).
+_BARE_VALUE = re.compile(
+    r"""(?:[^\s"'&;,]|[&;,](?![\s"']|$|[A-Za-z0-9_.-]+[ \t]*[:=]))*+"""
 )
-#: What a value under such a label must not look like (review r15tr-rev1 and
-#: rev2): a relative or home path, a reference or placeholder (``$VAR``,
-#: ``<token>``, ``{secret}``, ``%(x)s``, ``:symbol``, ``****``,
-#: ``[credential redacted]``), a lowercase absolute path (``/etc/ssl/x``),
-#: a call or index (``b64encode(``, ``os.environ[``), a URL, a time or a
-#: date, a dotted name of short identifiers (``config.provider2.key``), a
-#: lowercase identifier (``client_secret_2``, ``token_v2``) or a run of
-#: capitalised words (``YourClientSecretHere``).
-_NON_CREDENTIAL_START = ("./", "../", "~/", "$", "<", "{", "%", ":", "*", "[", "(")
-_LOWERCASE_PATH = re.compile(r"(?:/[a-z0-9_.-]+)+/?")
-_CALL_OR_INDEX = re.compile(r"[A-Za-z0-9_.-]+[(\[]")
-_URL_SCHEME = re.compile(r"[a-z][a-z0-9+.-]*://", re.IGNORECASE)
-_TIME = re.compile(r"(?<!\d)\d{1,2}:\d{2}(?!\d)")
-_DATE_OR_NUMBER = re.compile(r"[0-9][0-9:./-]*(?:T[0-9:.]+Z?)?")
-_DOTTED_NAME = re.compile(
-    r"[A-Za-z_][A-Za-z0-9_]{0,19}(?:\.[A-Za-z_][A-Za-z0-9_]{0,19})+"
+#: Placeholders and templates that may hold spaces, read whole: ``<your
+#: token>``, ``{{ secrets.X }}``, ``${{ secrets.X }}``, ``%(secret)s``, and a
+#: bracketed marker such as ``[credential redacted]`` or a shared bundle's
+#: ``[local path withheld]`` (after ``./`` it keeps the leading dot).
+_TEMPLATE_VALUE = re.compile(
+    r"<[^<>\r\n]{1,256}>|\$?\{\{[^{}\r\n]{0,256}\}\}|%\([A-Za-z_]\w*\)[sdr]"
+    r"|(?:\.{1,2}|~)?\[[A-Za-z][A-Za-z ]{0,62}\]"
 )
-_LOWERCASE_IDENTIFIER = re.compile(r"[a-z]+[0-9]*(?:_(?:[a-z]+[0-9]*|[0-9]+))*")
-_WORD_RUN = re.compile(r"(?:[A-Z]?[a-z]+)(?:[A-Z][a-z]+)+")
-_WORD = re.compile(r"[A-Z]?[a-z]+")
+#: Longer values are masked whole, never examined (review r15tr-rev3).
+_MAX_EXAMINED_VALUE = 2048
 
-
-def _trim_bare_value(value: str) -> str:
-    """Drop a trailing full stop or unbalanced closing bracket from a bare value."""
-    while value:
-        last = value[-1]
-        opener = {")": "(", "]": "[", "}": "{"}.get(last)
-        if last == "." or (
-            opener is not None and value.count(last) > value.count(opener)
-        ):
-            value = value[:-1]
-            continue
-        return value
-    return value
-
-
-def _credential_shaped(value: str, *, quoted: bool) -> bool:
-    """Whether a labelled value looks like a credential rather than text.
-
-    It must hold a digit (6+ characters) or mixed case (16+); a ``-`` or
-    ``/`` alone does not count, so ``your-client-secret`` stays readable.
-    Only a quoted value may hold spaces (a passphrase).
+# The look-alike allowlist (review r15tr-rev3 ruling): a labelled value is
+# masked unless it is one of these.
+_PLACEHOLDER = re.compile(
+    r"""(?ix)
+    your[-_].* | changeme | change[-_]me | example | placeholder
+    | \**redacted\** | none | null | nil | undefined | true | false
+    | [x*]{3,} | [x*]+(?:[-_.][x*]+)+ | <.+> | \$?\{\{.*\}\} | %\([a-z_]\w*\)[sdr]
+    | (?:\.{1,2}|~)?\[[a-z][a-z\ ]*\]
     """
+)
+_REFERENCE = re.compile(
+    r"""(?x)
+    \$(?:[A-Z_][A-Z0-9_]*|[a-z_][a-z0-9_]*)
+    | \$\{(?:[A-Z_][A-Z0-9_]*|[a-z_][a-z0-9_]*)\}
+    | %[A-Za-z_][A-Za-z0-9_]*%
+    | \{[A-Za-z_][\w.]*\}
+    """
+)
+_PATH_ROOTS = (
+    "/Users/", "/home/", "/etc/", "/var/", "/opt/", "/run/", "/tmp/", "/usr/",
+    "/srv/", "/root/", "/mnt/", "/private/", "/Volumes/", "./", "../", "~/",
+)
+_DRIVE_PATH = re.compile(r"[A-Za-z]:\\")
+_URL_SCHEME = re.compile(r"[a-z][a-z0-9+.-]*:/", re.IGNORECASE)
+_TIME = re.compile(r"(?<!\d)\d{1,2}:\d{2}(?!\d)")
+_DATE = re.compile(r"[0-9]{1,4}(?:[-./][0-9]{1,4})+(?:T[0-9:.]+Z?)?")
+#: A call or an index: ``b64encode(``, ``os.environ[``, ``tokens[0]``. A
+#: callee with a digit inside a word (``P4ssw0rd(1)``) is not code unless
+#: it is dotted (``base64.b64encode(``).
+_CALL_OR_INDEX = re.compile(r"(?P<callee>[A-Za-z_][\w.]*)[(\[]")
+_IDENTIFIER = re.compile(r":?[A-Za-z_][\w-]*(?:\.[A-Za-z_][\w-]*)*")
+_IDENTIFIER_WORD = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
+#: Words a code identifier for a credential may hold besides its label's.
+_CREDENTIAL_WORDS = frozenset(
+    {"secret", "key", "token", "password", "passphrase", "credential", "api",
+     "auth", "access", "refresh", "client", "session"}
+)
+_PASSWORD_LABEL_WORDS = frozenset({"password", "passphrase", "passwd", "pwd"})
+
+
+def _words(name: str) -> list[str]:
+    """Lowercase words of a name, split on separators and capitals, digits and
+    ``v`` version tags dropped (``ClientSecret2`` -> client, secret)."""
+    return [
+        word.lower()
+        for word in _IDENTIFIER_WORD.findall(name)
+        if not word.isdigit() and word.lower() != "v"
+    ]
+
+
+def _code_identifier(value: str, label_words: set[str]) -> bool:
+    """A name built from the label's words: ``client_secret_2``, ``token_v2``,
+    ``YourClientSecretHere``, ``settings.oauth.client_secret_v2``.
+
+    The last dotted segment counts. It holds every word of the label, or it is
+    compound (``_``, ``-`` or a capital) and every word is a credential word.
+    ``password123``, ``summer2024`` and ``CorrectHorseBatteryStaple`` are not.
+    """
+    if not _IDENTIFIER.fullmatch(value):
+        return False
+    last = value.lstrip(":").rsplit(".", 1)[-1]
+    words = _words(last)
+    if not words:
+        return False
+    if label_words <= set(words):
+        return True
+    compound = "_" in last.strip("_") or "-" in last or len(words) > 1
+    return compound and set(words) <= label_words | _CREDENTIAL_WORDS
+
+
+def _kept_look_alike(value: str, label: str, *, quoted: bool, prose_follows: bool) -> bool:
+    """Whether a labelled value is on the look-alike allowlist (kept).
+
+    Everything else is masked (review r15tr-rev3: under-masking leaks a
+    secret; over-masking only makes a shared bundle less readable).
+    """
+    if not value:
+        return True
+    if len(value) > _MAX_EXAMINED_VALUE:
+        return False
+    label_words = set(_words(label))
+    password_label = bool(label_words & _PASSWORD_LABEL_WORDS)
+    call = _CALL_OR_INDEX.match(value)
     if (
-        value.startswith(_NON_CREDENTIAL_START)
-        or (not quoted and any(character.isspace() for character in value))
-        or _LOWERCASE_PATH.fullmatch(value)
-        or _CALL_OR_INDEX.match(value)
+        _PLACEHOLDER.fullmatch(value)
+        or _REFERENCE.fullmatch(value)
+        or value.startswith(_PATH_ROOTS)
+        or _DRIVE_PATH.match(value)
         or _URL_SCHEME.match(value)
         or _TIME.search(value)
-        or _DATE_OR_NUMBER.fullmatch(value)
-        or _DOTTED_NAME.fullmatch(value)
-        or _LOWERCASE_IDENTIFIER.fullmatch(value)
+        or _DATE.fullmatch(value)
         or (
-            _WORD_RUN.fullmatch(value)
-            and 3 * len(_WORD.findall(value)) <= len(value)
+            call is not None
+            and (
+                "." in call.group("callee")
+                or not re.search(r"\d[A-Za-z]", call.group("callee"))
+            )
         )
+        or _code_identifier(value, label_words)
     ):
+        return True
+    if password_label:
         return False
-    if any(character.isdigit() for character in value):
-        return len(value) >= 6
-    return (
-        len(value) >= 16
-        and any(character.islower() for character in value)
-        and any(character.isupper() for character in value)
+    # Prose under a secret, token or key label: a quoted sentence, or a short
+    # lowercase word that a sentence continues (``client_secret: see the guide``).
+    return (quoted and " " in value) or (
+        prose_follows and value.isalpha() and value.islower() and len(value) <= 12
     )
 
 
+def _trimmed_end(text: str, start: int, end: int) -> int:
+    """End of a bare value without a trailing full stop or unbalanced closer."""
+    pairs = {")": "(", "]": "[", "}": "{"}
+    balance = {
+        closer: text.count(closer, start, end) - text.count(opener, start, end)
+        for closer, opener in pairs.items()
+    }
+    while end > start:
+        last = text[end - 1]
+        if last == "." or balance.get(last, 0) > 0:
+            if last in balance:
+                balance[last] -= 1
+            end -= 1
+            continue
+        break
+    return end
+
+
+def _value_span(text: str, start: int) -> tuple[int, int, bool]:
+    """``(start, end, quoted)`` of the value that begins at ``start``.
+
+    A quoted value honours ``\\`` escapes (as ``_find_quoted_end`` does); an
+    escape-quoted one (``\\"...\\"``, JSON inside a string) ends at the next
+    escape-quote. An unclosed quote leaves a bare value after it.
+    """
+    if text.startswith(('\\"', "\\'"), start):
+        quote = text[start : start + 2]
+        close = text.find(quote, start + 2, _line_end(text, start))
+        if close != -1:
+            return start + 2, close, True
+        start += 2
+    elif start < len(text) and text[start] in "\"'":
+        close, closed = _find_quoted_end(text, start + 1, text[start])
+        if closed:
+            return start + 1, close, True
+        start += 1
+    template = _TEMPLATE_VALUE.match(text, start)
+    if template is not None:
+        return start, template.end(), False
+    end = _BARE_VALUE.match(text, start).end()
+    return start, _trimmed_end(text, start, end), False
+
+
 def mask_credential_labels(text: str, marker: str = REDACTION_MARKER) -> str:
-    """Mask credential-shaped values under compound credential labels.
+    """Mask every value under a compound credential label but look-alikes.
 
     The labels are the ones diagnostics mask (``client_secret=``,
     ``refresh_token:``, ``X-Auth-Token:``); PII labels such as ``user_name=``
-    are left alone. Logs mask every value under such a label; a shared Trace
-    bundle, which must keep code and docs, masks only a credential-shaped
-    value, and always the whole of it (TASK-41133). A value that is not
-    masked is scanned again, so a label nested in it (a URL, JSON text, a
-    query string) is found too.
+    are left alone. A value is masked whole unless it is on the look-alike
+    allowlist (placeholders, references, known-root paths, code, times, dates,
+    URLs, and prose under a non-password label). A value that is kept, or
+    that sits under any other label, is scanned again, so a label nested in it
+    (a URL, JSON text, a query string) is found too (TASK-41133).
 
     Args:
         text: Text that may hold ``label=value`` or ``label: value`` pairs.
@@ -669,22 +757,43 @@ def mask_credential_labels(text: str, marker: str = REDACTION_MARKER) -> str:
     parts: list[str] = []
     position = 0
     while (label := _COMPOUND_LABEL.search(text, position)) is not None:
-        value = (
-            _LABEL_VALUE.match(text, label.end())
-            if _is_credential_label(label.group("label"))
-            else None
-        )
-        if value is not None:
-            quoted = value.group("quoted") is not None
-            group = "quoted" if quoted else "bare"
-            candidate = value.group(group) if quoted else _trim_bare_value(value.group(group))
-            if _credential_shaped(candidate, quoted=quoted):
-                start = value.start(group)
+        name = label.group("label")
+        if _is_credential_label(name):
+            start, end, quoted = _value_span(text, label.end())
+            value = text[start:end]
+            prose_follows = bool(re.match(r"[ \t]+[a-z]", text[end : end + 2]))
+            # A masked value reads as a bracketed placeholder, so it is kept on
+            # a second pass.
+            if not _kept_look_alike(value, name, quoted=quoted, prose_follows=prose_follows):
                 parts.extend((text[position:start], marker))
-                position = start + len(candidate)
+                position = end
                 continue
         parts.append(text[position : label.end()])
         position = label.end()
+    parts.append(text[position:])
+    return "".join(parts)
+
+
+def mask_url_query_keys(text: str, marker: str = REDACTION_MARKER) -> str:
+    """Mask ``?key=``/``&key=`` values inside URLs, as diagnostics do.
+
+    Args:
+        text: Text that may hold URLs.
+        marker: What replaces each value.
+
+    Returns:
+        The text with those values replaced and everything else unchanged.
+    """
+    parts: list[str] = []
+    position = 0
+    for url in _DIAGNOSTIC_URL.finditer(text):
+        for key in _URL_QUERY_KEY.finditer(url.group()):
+            start = url.start() + key.end(1)
+            end = url.start() + key.end()
+            if start == end or text.startswith(marker, start):
+                continue
+            parts.extend((text[position:start], marker))
+            position = end
     parts.append(text[position:])
     return "".join(parts)
 
