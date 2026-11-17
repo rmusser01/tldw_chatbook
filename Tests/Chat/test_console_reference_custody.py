@@ -798,6 +798,26 @@ async def test_unproven_reference_git_cleanup_holds_a_daemon_worker_not_the_send
         # The reference is refused (raw text, no Git body), as for any
         # unavailable reference source.
         assert h.gateway.payloads == [[{"content": "read @staged", "role": "user"}]]
+        # TASK-41307: no run owns it, so the held-slots list releases it,
+        # read from the runtime although no agent turn ever ran here.
+        from tldw_chatbook.Chat.console_unproven_cleanup import (
+            held_tool_slots,
+            release_held_tool_slot,
+        )
+
+        key = retention.operation.owner.execution_id
+        assert held_tool_slots(h.controller) == {key: ("native Git", False)}
+        assert release_held_tool_slot(h.controller, key)
+        # ADR-134: Release frees only the tool-worker slot. The worker still
+        # holds the custody, the claim stays held and the record stays listed.
+        assert capacity.snapshot().tool_workers == 0
+        with h.runtime.worktree_activity.prelaunch(
+            footprint=WorktreeFootprint(opaque=True)
+        ) as claim:
+            assert claim is None
+        assert custody[0].is_alive() and capacity.retained() == (retention,)
+        assert held_tool_slots(h.controller) == {key: ("native Git", True)}
+        assert retention.operation.owner.drain_state() == "unproven"
         # A late proof lets the custody worker retire the operation, so the
         # turn's owner drains (TASK-40716).
         retention.prove()

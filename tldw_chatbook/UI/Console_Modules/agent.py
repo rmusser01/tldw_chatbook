@@ -636,6 +636,19 @@ def console_turn_activity_text(
     )
 
 
+def project_held_tool_slots(screen: Any, count: int) -> None:
+    """Show how many tool slots unproven cleanups hold (TASK-41307)."""
+    from textual.css.query import QueryError
+    from ...Widgets.Console.console_status_chips import ConsoleStatusChips
+
+    try:
+        screen.query_one("#console-status-chips", ConsoleStatusChips).sync_held_slots(
+            count
+        )
+    except QueryError:
+        pass
+
+
 def project_console_run_feedback(screen: Any, copy: str) -> None:
     """Paint resident run feedback without configuration or authority reads."""
     from textual.css.query import QueryError
@@ -1310,17 +1323,56 @@ class ConsoleAgentController:
             ),
         )
 
-    def sync_unproven_cleanup(self, transcript: Any, messages: Any = ()) -> None:
-        """Push Release rows for runs with an unproven tool cleanup (TASK-40716)."""
+    def sync_unproven_cleanup(self, transcript: Any, messages: Any = ()) -> int:
+        """Push Release rows for unproven tool cleanups (TASK-40716, TASK-41307).
+
+        Returns:
+            The tool slots unproven cleanups still hold, for the status line.
+        """
         controller = self._console_chat_controller
-        rows = {}
-        if getattr(controller, "run_terminal_rows", None):
+        capacity = getattr(
+            getattr(controller, "_hooks_v2_runtime", None), "_execution_capacity", None
+        )
+        rows, held = {}, 0
+        if getattr(controller, "run_terminal_rows", None) or (
+            capacity is not None and capacity.retained()
+        ):
             from tldw_chatbook.Chat.console_unproven_cleanup import (
                 unproven_cleanup_rows,
+                unreleased_slot_count,
             )
 
             rows = unproven_cleanup_rows(controller, messages)
+            held = unreleased_slot_count(controller)
         transcript.set_unproven_cleanup_rows(rows)
+        return held
+
+    def open_held_tool_slots(self) -> None:
+        """List every held tool slot with Release (TASK-41307)."""
+        from functools import partial
+
+        from tldw_chatbook.Chat.console_unproven_cleanup import (
+            held_tool_slots,
+            release_held_tool_slot,
+        )
+        from tldw_chatbook.Widgets.Console.console_held_tool_slots import (
+            ConsoleHeldToolSlotsModal,
+        )
+
+        controller = self._console_chat_controller
+        if controller is None:
+            return
+        self.push_screen(
+            ConsoleHeldToolSlotsModal(
+                held_tool_slots(controller), partial(release_held_tool_slot, controller)
+            ),
+            # Repaint the segment and the transcript's rows after releasing.
+            callback=lambda _result: self.run_worker(
+                self._sync_native_console_chat_ui_accessor(),
+                exclusive=True,
+                group="console-sync",
+            ),
+        )
 
     def release_unproven_tool_slot(self, message_id: str) -> bool:
         """Return only the tool slot; the tool's workspace stays held."""

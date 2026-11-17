@@ -29,7 +29,7 @@ def test_release_row_follows_its_explanation_until_released():
     transcript.set_messages([explanation, other])
     assert _release_rows(transcript) == []
 
-    transcript.set_unproven_cleanup_rows({"explanation": False})
+    transcript.set_unproven_cleanup_rows({"explanation": (False, "")})
     (row,) = _release_rows(transcript)
     rows = transcript._flat_transcript_rows()
     explanation_index = next(
@@ -42,7 +42,7 @@ def test_release_row_follows_its_explanation_until_released():
     assert button.native_message_id == "explanation"
     assert button.has_class("console-transcript-cleanup-release")
 
-    transcript.set_unproven_cleanup_rows({"explanation": True})
+    transcript.set_unproven_cleanup_rows({"explanation": (True, "")})
     (row,) = _release_rows(transcript)
     released = transcript._build_row_widget(row, track=False)
     assert isinstance(released, Static) and not isinstance(released, Button)
@@ -72,7 +72,7 @@ def test_release_rows_follow_retained_runs_whatever_their_outcome():
     assert agent.release_unproven_tool_slot("done-card")
     assert not agent.release_unproven_tool_slot("done-card")
     agent.sync_unproven_cleanup(transcript, messages)
-    assert pushed == [{"done-card": False}, {"done-card": True}]
+    assert pushed == [{"done-card": (False, "")}, {"done-card": (True, "")}]
     assert retention.abandoned and capacity.snapshot().tool_workers == 0
     # A late proof drops the row: nothing is held any more.
     retention.prove()
@@ -147,7 +147,7 @@ def test_release_row_renders_under_a_failed_assistant_card():
     )
     transcript = ConsoleTranscript()
     transcript.set_messages([user, card])
-    transcript.set_unproven_cleanup_rows({"card": False})
+    transcript.set_unproven_cleanup_rows({"card": (False, "")})
     keys = [row.key for row in transcript._flat_transcript_rows()]
     assert "cleanup-release:card" in keys
 
@@ -182,7 +182,7 @@ def test_run_rows_are_forgotten_once_nothing_can_need_release():
     messages = [_card("c"), _card("h")]
 
     # A run still live keeps its row; only a retained run shows one.
-    assert unproven_cleanup_rows(controller, messages) == {"h": False}
+    assert unproven_cleanup_rows(controller, messages) == {"h": (False, "")}
     assert controller.run_terminal_rows == {"c": "clean", "h": "held"}
 
     # A run that drained without retention needs no Release row.
@@ -194,7 +194,7 @@ def test_run_rows_are_forgotten_once_nothing_can_need_release():
     # A released record stays listed while it is retained...
     assert held.abandon()
     held_owner.finish_root()
-    assert unproven_cleanup_rows(controller, messages) == {"h": True}
+    assert unproven_cleanup_rows(controller, messages) == {"h": (True, "")}
     # ...and a late proof forgets it.
     held.prove()
     assert unproven_cleanup_rows(controller, messages) == {}
@@ -220,16 +220,16 @@ def test_a_closed_and_reopened_card_keeps_its_release_row():
         _agent_bridge=SimpleNamespace(_runtime_capacity=capacity),
     )
     assert unproven_cleanup_rows(controller, [_card("live-card", "db-card")]) == {
-        "live-card": False
+        "live-card": (False, "")
     }
     # Closed: no open message shows it, yet nothing forgets it.
     assert unproven_cleanup_rows(controller, []) == {}
     # Reopened: the same persisted card has a new in-memory id.
     reopened = [_card("reopened-card", "db-card")]
-    assert unproven_cleanup_rows(controller, reopened) == {"reopened-card": False}
+    assert unproven_cleanup_rows(controller, reopened) == {"reopened-card": (False, "")}
     assert release_unproven_tool_slot(controller, "reopened-card")
     assert capacity.snapshot().tool_workers == 0
-    assert unproven_cleanup_rows(controller, reopened) == {"reopened-card": True}
+    assert unproven_cleanup_rows(controller, reopened) == {"reopened-card": (True, "")}
     # Each reopen replaces the run's alias instead of adding another.
     for index in range(3):
         unproven_cleanup_rows(controller, [_card(f"reopen-{index}", "db-card")])
@@ -255,8 +255,140 @@ def test_release_returns_every_slot_a_run_retains():
         _agent_bridge=SimpleNamespace(_runtime_capacity=capacity),
     )
     assert capacity.snapshot().tool_workers == 2
-    assert unproven_cleanup_rows(controller, [_card("card")]) == {"card": False}
+    assert unproven_cleanup_rows(controller, [_card("card")]) == {"card": (False, "")}
     assert release_unproven_tool_slot(controller, "card")
     assert capacity.snapshot().tool_workers == 0
-    assert unproven_cleanup_rows(controller, [_card("card")]) == {"card": True}
+    assert unproven_cleanup_rows(controller, [_card("card")]) == {"card": (True, "")}
     assert not release_unproven_tool_slot(controller, "card")
+
+
+# -- TASK-41307: records outside an agent run's reply -------------------------
+
+_SSH_STOP = (
+    "Agent stopped: the cleanup of a remote SSH read could not be proven, so "
+    "its workspace and storage stay held until you restart the app."
+)
+
+
+def _runtime_controller(capacity, **extra):
+    """A Console controller whose runtime owns capacity and no agent bridge."""
+    return SimpleNamespace(
+        run_terminal_rows={},
+        _agent_bridge=SimpleNamespace(_runtime_capacity=None),
+        _hooks_v2_runtime=SimpleNamespace(_execution_capacity=capacity),
+        **extra,
+    )
+
+
+def test_held_slots_come_from_the_runtime_even_before_any_agent_turn():
+    """A Raw CLI- or Undo-only session has no bridge capacity to read."""
+    from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity, WorkOrigin
+    from tldw_chatbook.Chat.console_unproven_cleanup import (
+        held_tool_slots,
+        release_held_tool_slot,
+    )
+
+    capacity = RuntimeCapacity()
+    # Undo's owner is never bound to a run.
+    owner = capacity.begin_execution(origin=WorkOrigin.MANUAL, conversation_id="c")
+    owner.reserve_tool().retain_unproven("Undo")
+    controller = _runtime_controller(capacity)
+    pushed = []
+    agent = object.__new__(ConsoleAgentController)
+    agent._chat_controller_accessor = lambda: controller
+    transcript = SimpleNamespace(set_unproven_cleanup_rows=pushed.append)
+
+    assert agent.sync_unproven_cleanup(transcript) == 1
+    assert held_tool_slots(controller) == {owner.execution_id: ("Undo", False)}
+    assert release_held_tool_slot(controller, owner.execution_id)
+    assert capacity.snapshot().tool_workers == 0
+    # Released, it stays listed (its workspace is still held) but no longer
+    # counts toward the status line.
+    assert held_tool_slots(controller) == {owner.execution_id: ("Undo", True)}
+    assert agent.sync_unproven_cleanup(transcript) == 0
+
+
+def test_a_sub_agents_held_slot_is_listed_not_put_on_a_reply_card():
+    """A child run has no terminal card; the list is where it is released."""
+    from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity, WorkOrigin
+    from tldw_chatbook.Chat.console_unproven_cleanup import (
+        held_tool_slots,
+        release_held_tool_slot,
+        unproven_cleanup_rows,
+    )
+
+    capacity = RuntimeCapacity()
+    parent = capacity.begin_execution(origin=WorkOrigin.MANUAL, conversation_id="c")
+    parent.bind_run("parent-run")
+    parent.finish_root()
+    child = capacity.begin_execution(
+        origin=WorkOrigin.MANUAL, conversation_id="c", child=True
+    )
+    child.bind_run("child-run")
+    child.reserve_tool().retain_unproven("fs_read")
+    controller = _runtime_controller(capacity)
+    controller.run_terminal_rows["parent-card"] = "parent-run"
+
+    assert unproven_cleanup_rows(controller, [_card("parent-card")]) == {}
+    assert held_tool_slots(controller) == {"child-run": ("fs_read", False)}
+    assert release_held_tool_slot(controller, "child-run")
+    assert capacity.snapshot().tool_workers == 0
+    assert child.drain_state() == "live"  # its root has not finished
+    child.finish_root()
+    assert child.drain_state() == "unproven"
+
+
+def test_a_turn_stopped_before_its_run_names_the_cleanup_and_offers_release():
+    """The stop copy and the reply's row name the tool instead of recovery."""
+    from tldw_chatbook.Agents.execution_capacity import (
+        CleanupUnprovenRefused,
+        RuntimeCapacity,
+        WorkOrigin,
+    )
+    from tldw_chatbook.Chat.console_unproven_cleanup import (
+        explain_pre_run_stop,
+        release_unproven_tool_slot,
+        unproven_cleanup_rows,
+    )
+
+    capacity = RuntimeCapacity()
+    owner = capacity.begin_execution(origin=WorkOrigin.MANUAL, conversation_id="c")
+    owner.reserve_tool().retain_unproven("a remote SSH read")
+    try:
+        owner.reserve_tool()  # the turn's MCP setup
+    except CleanupUnprovenRefused as refused:
+        try:
+            raise RuntimeError("setup failed") from refused
+        except RuntimeError as wrapped:
+            error = wrapped
+    controller = _runtime_controller(capacity, _preflight_block_copies={})
+    reply = ConsoleChatMessage(
+        id="reply", role=ConsoleMessageRole.ASSISTANT, content="", status="pending"
+    )
+    user = ConsoleChatMessage(id="ask", role=ConsoleMessageRole.USER, content="go")
+
+    explain_pre_run_stop(controller, "reply", error)
+    assert controller._preflight_block_copies == {"reply": _SSH_STOP}
+    assert unproven_cleanup_rows(controller, [user, reply]) == {
+        "reply": (False, _SSH_STOP)
+    }
+    transcript = ConsoleTranscript()
+    transcript.set_messages([user, reply])
+    transcript.set_unproven_cleanup_rows({"reply": (False, _SSH_STOP)})
+    (row,) = _release_rows(transcript)
+    box = transcript._build_row_widget(row, track=False)
+    note, button = box._pending_children
+    assert str(note.render()) == _SSH_STOP
+    assert isinstance(button, Button) and button.native_message_id == "reply"
+    assert release_unproven_tool_slot(controller, "reply")
+    assert capacity.snapshot().tool_workers == 0
+    assert unproven_cleanup_rows(controller, [reply]) == {"reply": (True, _SSH_STOP)}
+
+
+def test_an_unrelated_settlement_failure_keeps_its_own_recovery_copy():
+    from tldw_chatbook.Chat.console_unproven_cleanup import explain_pre_run_stop
+
+    controller = _runtime_controller(None, _preflight_block_copies={})
+    explain_pre_run_stop(controller, "reply", RuntimeError("provider down"))
+    assert controller._preflight_block_copies == {}
+    assert controller.run_terminal_rows == {}

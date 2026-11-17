@@ -13228,6 +13228,9 @@ class ConsoleChatController:
                     "Console accepted-turn settlement failed | exception_type={}",
                     type(exc).__name__,
                 )
+                from .console_unproven_cleanup import explain_pre_run_stop
+
+                explain_pre_run_stop(self, commit.assistant_message_id, exc)  # TASK-41307
             if native_owner is not None:
                 if not self._ordinary_native_commit_current(native_owner):
                     return self._retain_original_native_commit_recovery(

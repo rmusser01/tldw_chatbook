@@ -180,3 +180,19 @@ This supersedes the "retaining original storage/scratch leases until real drain 
 - A workflow run held only by unproven cleanups (each of its tool workers is retained or has returned) does not stop exit. `ConsoleRuntime.dispose` closes every other owner and then reports `workflow_original_shutdown_unresolved`, and the app's exit runs its remaining owners before re-raising, logging any further failure it does not raise. A cancellation requested meanwhile is still re-raised, chained to the retained runs. A run whose custody is still live keeps stopping disposal before capacity closes.
 - A goal iteration that ends on it is uncertain, so it needs recovery.
 - The Release row follows the run's retained records, not how the run ended, and releases every slot the run still holds. A closed and reopened conversation finds it again by the card's persisted id.
+
+## Release outside a run's card amendment (TASK-41307, 2026-11-17)
+
+This extends the TASK-40716 decision that the abandon action sits on the run's terminal card. The card keeps it; it is no longer the only place.
+
+**Owner decision, 2026-11-17 ([TASK-41307](../tasks/task-41307%20-%20Unproven-cleanup-records-outside-an-agent-runs-reply-have-no-Release-button-so-their-tool-slot-stays-held-until-restart.md)).**
+- One Console-wide "Held tool slots" list releases every retained record. It sits behind a status-line segment that shows only while an unreleased record exists, and it includes run records that also have a card, so it shows every held slot. Sub-agent records are released only there.
+- A turn that stops before its run exists shows the cleanup-unproven explanation naming the tool instead of the "Response recovery failed" prompt, with Release directly under it.
+- A Raw CLI command's "Cleanup: Unproven" row carries Release too.
+- Release still returns only the tool-worker slot. The resource, its storage leases and any activity claim stay held until restart.
+
+**Implementation note (not an owner decision).**
+- A record is keyed by its run, else by its owner's execution (Undo, Change Review jobs, an @git reference outside an ordinary turn and a pre-run stop are never bound to a run).
+- The list reads the runtime's capacity, not the agent bridge's, which is allocated only once an agent turn runs; a session that only ran Raw CLI or Undo still lists its records.
+- `CleanupUnprovenRefused` carries its retention, so the accepted-turn failure handler and the Raw CLI command can point Release at it. A pre-run stop keeps the accepted turn's dispatch recovery; only its copy changes.
+- The segment refreshes on the Console's sync. A Change Review job retained in the background between syncs shows at the next one.

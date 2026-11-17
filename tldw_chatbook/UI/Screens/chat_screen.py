@@ -136,6 +136,7 @@ from ..Console_Modules.agent import (
     CONSOLE_AGENT_CANCEL_ALL_ID,
     CONSOLE_AGENT_FLEET_SECTION_ID,
     apply_console_agent_status_state,
+    project_held_tool_slots,
 )
 from ..Console_Modules.prompt_queue import ConsolePromptQueueRegion
 from ..Console_Modules.realtime import CONSOLE_REALTIME_CHIP_MESSAGES
@@ -637,6 +638,7 @@ from ...Widgets.Console.console_status_chips import (
     ConsoleAssistantChip,
     ConsoleCostChip,
     ConsoleEmergencyStopChip,
+    ConsoleHeldSlotsChip,
     ConsoleRunChip,
     ConsoleScopeChip,
     ConsoleSourcesChip,
@@ -10879,6 +10881,14 @@ class ChatScreen(BaseAppScreen):
         event.stop()
         self._reveal_console_inspector_rail()
 
+    @on(ConsoleHeldSlotsChip.OpenRequested)
+    def _console_held_slots_activated(
+        self, event: ConsoleHeldSlotsChip.OpenRequested
+    ) -> None:
+        """List the tool slots unproven cleanups hold, with Release (TASK-41307)."""
+        event.stop()
+        self._agent.open_held_tool_slots()
+
     @on(ConsoleEmergencyStopChip.ClearRequested)
     async def _console_emergency_stop_cleared(
         self, event: ConsoleEmergencyStopChip.ClearRequested
@@ -17183,7 +17193,8 @@ class ChatScreen(BaseAppScreen):
                 if type(count) is int and count != 0
             }
             transcript.set_citation_counts(visible_citation_counts)
-            self._agent.sync_unproven_cleanup(transcript, messages)  # TASK-40716
+            held = self._agent.sync_unproven_cleanup(transcript, messages)  # TASK-40716
+            project_held_tool_slots(self, held)  # TASK-41307
             visible_library_activity_counts = self._library_activity.sync_transcript(
                 transcript
             )
