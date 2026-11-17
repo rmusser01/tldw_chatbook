@@ -591,9 +591,10 @@ _CODE_VALUE = re.compile(
     rf"""(?:\({_CODE_ARGUMENTS}\)|\[{_CODE_ARGUMENTS}\])"""
     rf"""(?:\.{_CODE_NAME}|\({_CODE_ARGUMENTS}\)|\[{_CODE_ARGUMENTS}\])*"""
 )
-_CODE_LITERAL = re.compile(r""""([^"\r\n]*)"|'([^'\r\n]*)'""")
-#: A literal inside code that is a look-alike: an environment variable name
-#: or a lowercase key (``os.environ["CLIENT_SECRET"]``, ``['access_token']``).
+#: A literal inside code; group 1 is set for a first argument or an index.
+_CODE_LITERAL = re.compile(r"""([(\[])?(?:"([^"\r\n]*)"|'([^'\r\n]*)')""")
+#: The shape of a name in a first argument or index: an environment variable
+#: name or a lowercase key (``os.environ["CLIENT_SECRET"]``, ``['access_token']``).
 _LITERAL_NAME = re.compile(r"[A-Z]+(?:_[A-Z0-9]+)*|[a-z]+(?:_[a-z]+)*")
 _CODE_VALUE_END = re.compile(r"""[\s,;&)\]}"']|\.(?:\s|$)|$""")
 #: A YAML block scalar indicator; its value is the indented lines after it.
@@ -679,32 +680,34 @@ _PROSE_FUNCTION_WORDS = frozenset(
      "here", "below", "above"}
 )
 _IDENTIFIER_WORD = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
+_ANGLE_NAME = re.compile(r"[A-Za-z][A-Za-z_-]*")
+#: Mixed case beyond a camelCase word (``XkmPvLwQ``, not ``JavaScript``).
+_MIXED_CASE = re.compile(r"[a-z][A-Z][A-Za-z]*[a-z][A-Z]")
 
 
-def _words(name: str) -> list[str]:
+@lru_cache(maxsize=4096)
+def _words(name: str) -> tuple[str, ...]:
     """Lowercase words of a name, split on separators and capitals, digits and
-    ``v`` version tags dropped (``ClientSecret2`` -> client, secret)."""
-    return [
+    ``v`` version tags dropped (``ClientSecret2`` -> client, secret). Cached:
+    the same labels recur on every line."""
+    return tuple(
         word.lower()
         for word in _IDENTIFIER_WORD.findall(name)
         if not word.isdigit() and word.lower() != "v"
-    ]
+    )
 
 
 def _label_name(name: str, label: str) -> bool:
     """The label's own name, versioned by at most two digits: ``client_secret``,
-    ``client_secret_2``, ``refresh_token2``, ``ClientSecret2``. A camelCase
-    name needs the version (``clientSecret`` is not one, review r15tr-rev5)."""
-    tokens = [token.lower() for token in _IDENTIFIER_WORD.findall(name)]
+    ``clientSecret``, ``client_secret_2``, ``refresh_token2``, ``ClientSecret2``."""
+    tokens = tuple(token.lower() for token in _IDENTIFIER_WORD.findall(name))
     label_words = _words(label)
     if tokens[: len(label_words)] != label_words:
         return False
     rest = tokens[len(label_words) :]
-    if rest[:1] == ["v"]:
+    if rest[:1] == ("v",):
         rest = rest[1:]
-    if rest:
-        return len(rest) == 1 and rest[0].isdigit() and len(rest[0]) <= 2
-    return bool(_SNAKE_NAME.fullmatch(name))
+    return not rest or (len(rest) == 1 and rest[0].isdigit() and len(rest[0]) <= 2)
 
 
 def _code_identifier(value: str, label: str, label_words: set[str]) -> bool:
@@ -733,11 +736,14 @@ def _names_a_credential(name: str) -> bool:
 
 
 def _template_or_marker(value: str) -> bool:
-    """A template naming a credential, a phrase in angle brackets, or a marker
-    this code emits."""
+    """A template naming a credential, a name or phrase in angle brackets, or a
+    marker this code emits."""
     inner = None
     if value.startswith("<") and value.endswith(">"):
-        return " " in value and not _LETTER_DIGIT_WORD.search(value)
+        # A digit-free name or a phrase (``<your-client-secret>``, review r15tr-rev6).
+        return bool(_ANGLE_NAME.fullmatch(value, 1, len(value) - 1)) or (
+            " " in value and not _LETTER_DIGIT_WORD.search(value)
+        )
     if value.startswith(("{{", "${{")) and value.endswith("}}"):
         inner = value[value.index("{{") + 2 : -2].strip()
     elif value.startswith("%(") and len(value) > 3:
@@ -749,13 +755,21 @@ def _template_or_marker(value: str) -> bool:
     return value.lstrip(".~") in _EMITTED_MARKERS
 
 
-def _code_literals_look_alike(value: str) -> bool:
-    """Every quoted literal inside code is an env name, a key or a path."""
-    return all(
-        _LITERAL_NAME.fullmatch(literal) or _known_path(literal)
-        for match in _CODE_LITERAL.finditer(value)
-        for literal in [match.group(1) if match.group(1) is not None else match.group(2)]
-    )
+def _code_literals_look_alike(value: str, label: str, strict: bool) -> bool:
+    """Every quoted literal inside code is a look-alike (review r15tr-rev6).
+
+    A first argument or index may be a name that names a credential
+    (``os.environ["DB_PASSWORD"]``, ``['access_token']``); any other literal,
+    a default for one, is judged as the label's value, so a placeholder is
+    kept and ``os.getenv("DB_PASSWORD", "postgres")`` is masked.
+    """
+    for match in _CODE_LITERAL.finditer(value):
+        literal = match.group(2) if match.group(2) is not None else match.group(3)
+        if match.group(1) and _LITERAL_NAME.fullmatch(literal) and _names_a_credential(literal):
+            continue
+        if not _kept_look_alike(literal, label, quoted=True, prose_follows=False, strict=strict):
+            return False
+    return True
 
 
 def _known_path(value: str) -> bool:
@@ -765,6 +779,7 @@ def _known_path(value: str) -> bool:
     )
 
 
+@lru_cache(maxsize=1024)
 def _strict_label(label: str) -> bool:
     """A password label, or one whose value a person chooses: a label ending
     in ``secret`` or ``secret_key`` bar issued ones (review r15tr-rev5)."""
@@ -796,7 +811,7 @@ def _kept_look_alike(
     label_words = set(_words(label))
     password_label = strict or _strict_label(label)
     code = _CODE_VALUE.fullmatch(value)
-    if code is not None and not _code_literals_look_alike(value):
+    if code is not None and not _code_literals_look_alike(value, label, strict):
         return False
     if (
         _PLACEHOLDER.fullmatch(value)
@@ -823,10 +838,9 @@ def _kept_look_alike(
     ):
         return True
     # Prose under a secret, token or key label: a quoted sentence with no
-    # token-shaped word, or a function word that a sentence continues.
-    return ((quoted and " " in value) and not _LETTER_DIGIT_WORD.search(value)) or (
-        prose_follows and value in _PROSE_FUNCTION_WORDS
-    )
+    # token-shaped word, or a function word that words continue (the caller
+    # sets ``prose_follows`` only for those).
+    return ((quoted and " " in value) and not _LETTER_DIGIT_WORD.search(value)) or prose_follows
 
 
 def _trimmed_end(text: str, start: int, end: int) -> int:
@@ -886,6 +900,15 @@ def _value_span(text: str, start: int, line_end: int) -> tuple[int, int, bool]:
 #: Words after a masked value under a strict label, up to the next field.
 _MORE_WORDS = re.compile(r"[ \t]+(?![A-Za-z0-9_.-]+[ \t]*[:=])[^\s]")
 _NEXT_FIELD = re.compile(r"[ \t]+(?=[A-Za-z0-9_.-]+[ \t]*[:=])")
+_NEXT_WORD = re.compile(rf"[ \t]+(\S{{1,{_MAX_EXAMINED_VALUE}}})")
+
+
+def _field_end(text: str, start: int, end: int, line_end: int) -> int:
+    """Where a value that runs on past ``end`` stops: before the next field
+    (``user=bob``) or at the line end, a trailing separator left visible."""
+    field = _NEXT_FIELD.search(text, end, line_end)
+    stop = field.start() if field else line_end
+    return start + len(text[start:stop].rstrip(" \t,;|"))
 
 
 def mask_credential_labels(text: str, marker: str = REDACTION_MARKER) -> str:
@@ -914,27 +937,25 @@ def mask_credential_labels(text: str, marker: str = REDACTION_MARKER) -> str:
             if label.end() > line_end:  # one scan per line, not per label
                 line_end = _line_end(text, label.end())
             start, end, quoted = _value_span(text, label.end(), line_end)
-            prose_follows = bool(re.match(r"[ \t]+[a-z]", text[end : end + 2]))
-            if (
-                not quoted
-                and text[start:end] in _PROSE_FUNCTION_WORDS
-                and re.match(r"[ \t]+\S", text[end : end + 2])
-            ):
-                # A function word is prose only before lowercase words, never
-                # before a token ("the <token>"); then the value is the rest of
-                # the line.
-                stop = min(line_end, end + _MAX_EXAMINED_VALUE)
-                if not prose_follows or _LETTER_DIGIT_WORD.search(text, end, stop):
-                    prose_follows = False
-                    end = start + len(text[start:stop].rstrip())
+            prose_follows = False
+            if not quoted and text[start:end] in _PROSE_FUNCTION_WORDS:
+                # A function word is prose before a word, never before a token
+                # ("the <token>"); then the value runs on to the next field.
+                word = _NEXT_WORD.match(text, end, line_end)
+                if word is not None:
+                    following = word.group(1)
+                    prose_follows = not (
+                        _LETTER_DIGIT_WORD.search(following) or _MIXED_CASE.search(following)
+                    )
+                    if not prose_follows:
+                        end = _field_end(text, start, word.end(1), line_end)
             value = text[start:end]
             # A masked value reads as an emitted marker, so it is kept on a
             # second pass.
             if not _kept_look_alike(value, name, quoted=quoted, prose_follows=prose_follows):
                 if not quoted and _strict_label(name) and _MORE_WORDS.match(text, end, line_end):
                     # An unquoted passphrase runs on to the next field or the line end.
-                    field = _NEXT_FIELD.search(text, end, line_end)
-                    end = field.start() if field else start + len(text[start:line_end].rstrip())
+                    end = _field_end(text, start, end, line_end)
                 parts.extend((text[position:start], marker))
                 position = end
                 continue

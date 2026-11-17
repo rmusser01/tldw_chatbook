@@ -841,9 +841,6 @@ _MUST_MASK: dict[str, tuple[str, str]] = {
     "probe10-year-version": ("access" + _L + "token=accessToken2024", "accessToken2024"),
     "probe10-kebab-words": ("api" + _L + "token=token-token", "token-token"),
     "probe10-name-suffix": ("client" + _L + "secret=client_secret_prod", "client_secret_prod"),
-    "probe10-camel-unversioned": ("client" + _L + "secret=clientSecret", "clientSecret"),
-    "probe10-angle-word": ("db" + _L + "password=<letmein>", "letmein"),
-    "probe10-angle-camel": ("db" + _L + "password=<MyPassword>", "MyPassword"),
     "probe10-brace-word": ("db" + _L + "password={hunter}", "hunter"),
     "probe10-mustache-word": ("db" + _L + "password={{ hunter }}", "hunter"),
     "probe10-percent-word": ("db" + _L + "password=%(hunter)s", "hunter"),
@@ -856,6 +853,19 @@ _MUST_MASK: dict[str, tuple[str, str]] = {
     # rev5 (probe9 adapted): rules whose loosening needs its own row
     "lowercase-reference": ("db" + _L + "password=$db_password", "$db_password"),
     "title-snake-versioned": ("client" + _L + "secret=Client_Secret_2", "Client_Secret_2"),
+    # rev6 (probe12): a default inside code is judged as the label's value
+    "probe12-getenv-default": ("db" + _L + 'password=os.getenv("DB_PASSWORD", "postgres")', "postgres"),
+    "probe12-environ-get-default": ("db" + _L + 'password=os.environ.get("DB_PASSWORD", "hunter")', "hunter"),
+    "probe12-secret-key-default": ("SECRET" + _L + 'KEY=os.environ.get("SECRET_KEY", "devsecret")', "devsecret"),
+    "probe12-jwt-default": ("jwt" + _L + 'secret=os.getenv("JWT_SECRET", "supersecret")', "supersecret"),
+    "probe12-bare-getenv-default": ("client" + _L + 'secret=getenv("CLIENT_SECRET", "letmein_now")', "letmein_now"),
+    "probe12-secretstr-word": ("client" + _L + 'secret=SecretStr("supersecretvalue")', "supersecretvalue"),
+    # rev6 (probe9 adapted): a default that names a credential is still a value
+    "default-names-a-credential": ("db" + _L + 'password=os.getenv("DB_PASSWORD", "admin_password")', "admin_password"),
+    # rev6: a function word before a mixed-case token without digits
+    "function-word-mixed-case": ("client" + _L + "secret: the XkmPvLwQabcd", "XkmPvLwQabcd"),
+    "default-changeme": ("db" + _L + 'password=os.getenv("DB_PASSWORD", "changeme")', "changeme"),
+    "angle-symbols": ("db" + _L + "password=<p@ss!word>", "p@ss!word"),
 }
 
 #: name -> text that must survive a shared bundle unchanged.
@@ -922,6 +932,22 @@ _MUST_KEEP: dict[str, str] = {
     # rev5 (probe10): a ?key= value with no token-shaped word.
     "url-key-word": "https://example.com/search?key=python",
     "url-key-path": "https://s3.example.com/bucket?key=photos/2024/cat.jpg",
+    # rev6 (probe12): <name> placeholders from READMEs, kept under any label
+    "angle-word": "db" + _L + "password=<letmein>",
+    "angle-camel": "db" + _L + "password=<MyPassword>",
+    "readme-angle-your-client-secret": "client" + _L + "secret=<your-client-secret>",
+    "readme-angle-client-secret": "CLIENT" + _L + "SECRET=<client-secret>",
+    "readme-angle-constant": "client" + _L + "secret: <CLIENT_SECRET>",
+    "readme-angle-token": "refresh" + _L + "token=<token>",
+    "readme-angle-access-token": "access" + _L + "token=<ACCESS_TOKEN>",
+    "readme-angle-password": "db" + _L + "password=<password>",
+    "readme-angle-your-db-password": "db" + _L + "password=<your-db-password>",
+    # rev6: the label's own camelCase name
+    "camel-label-name": "client" + _L + "secret = clientSecret",
+    # rev6 (probe12): a function word before words is prose, fields after it kept
+    "function-word-docs": "client" + _L + "secret: see the OAuth2 docs",
+    "function-word-fields": "refresh" + _L + "token: the token expired at 10:30, retry_after=60 code=E401",
+    "function-word-piped-fields": "client" + _L + "secret: see the OAuth2 docs | request_id=abc123 | status=401",
 }
 
 
@@ -998,6 +1024,31 @@ def test_a_masked_label_value_keeps_its_closing_bracket_and_full_stop(
     assert trajectory_export._credential_text(text) == (expected, True)
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (
+            "client" + "_secret: the " + _P8 + " user=bob",
+            "client" + "_secret: [credential redacted] user=bob",
+        ),
+        (
+            "db" + "_password=hunter2 | user=bob | host=db.example.com",
+            "db" + "_password=[credential redacted] | user=bob | host=db.example.com",
+        ),
+        (
+            "db" + "_password: correct horse battery staple, user=bob",
+            "db" + "_password: [credential redacted], user=bob",
+        ),
+    ],
+    ids=("function-word-token", "piped-fields", "comma-field"),
+)
+def test_a_masked_run_stops_before_the_next_field(text: str, expected: str) -> None:
+    """Review r15tr-rev6: a value that runs on past its first word (a token
+    after a function word, an unquoted passphrase) stops before the next
+    field, and the separator before that field stays visible."""
+    assert trajectory_export._credential_text(text) == (expected, True)
+
+
 #: Review r15tr-rev2: adversarial texts of about 200 KB. The export's URL
 #: user-info rule took 198 s on the dash-separated one (quadratic), so a shared
 #: bundle could hang its import.
@@ -1040,6 +1091,37 @@ def test_escape_quoted_values_scan_in_linear_time() -> None:
 
     small, large = cpu(25_000), cpu(100_000)
     assert large < 8 * small, (small, large)
+
+
+@pytest.mark.parametrize(
+    ("unit", "plain_unit"),
+    [
+        ("client" + "_secret: the ", "client" + "_secret: thx "),
+        ("db" + "_password=a b c ", "db" + "_password=abc "),
+    ],
+    ids=("function-word-chain", "passphrase-chain"),
+)
+def test_runs_after_a_value_scan_in_linear_time(unit: str, plain_unit: str) -> None:
+    """Review r15tr-rev6: each function word looked up to 2 KB ahead for a
+    token, so a 1 MB chain took 2.2 s against 0.29 s before. Four times the
+    text (2 MB at the large end) must take well under 16 times the CPU time,
+    and the chain must cost about what a chain of one-word values costs (the
+    2 KB look-ahead was linear but 7 times slower, which the ratio misses)."""
+    from tldw_chatbook.Utils.log_sanitizer import mask_credential_labels
+
+    def cpu(text_unit: str, repeats: int) -> float:
+        text = text_unit * repeats
+        best = float("inf")
+        for _ in range(3):
+            started = time.thread_time()
+            mask_credential_labels(text)
+            best = min(best, time.thread_time() - started)
+        return best
+
+    small, large = cpu(unit, 25_000), cpu(unit, 100_000)
+    plain = cpu(plain_unit, 100_000)
+    assert large < 8 * small, (small, large)
+    assert large < 3 * plain, (large, plain)
 
 
 @pytest.mark.parametrize("name", sorted(_ADVERSARIAL_TEXTS))
