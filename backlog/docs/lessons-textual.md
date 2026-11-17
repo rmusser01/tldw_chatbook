@@ -28,6 +28,22 @@ test body had raised; it was not a separate product bug.
 When a test calls a method that reaches into a widget's children, wait for
 that widget's `is_mounted`, not for a query to find it or its container.
 
+## A poll that reads a child of a recomposing region raises `NoMatches` in the remove-then-mount gap (TASK-41534, 2026-11-17)
+
+**Incident.** `test_settings_lists_a_refused_endpoint_with_its_reason_and_edit_fixes_it`
+polled `query_one('#settings-custom-endpoints-status')` every 50 ms after each save. Each
+save recomposes the whole `#settings-custom-endpoints` region, the status line included.
+`Widget.recompose` awaits the removal of the old children before it mounts the new ones.
+`batch()` keeps a user from ever seeing the gap, but a test coroutine can run inside it. A
+probe that read the status on every loop turn found it missing for 5 turns per recompose,
+6 of 6 times. At load 55-100 the 50 ms poll landed in that gap in 5 of 7 runs, and it
+blocked the UI Fast Lane for every PR. The same test passed 10/10 at load 12-30 when it
+was written.
+
+**What to do.** When the widget a poll reads lives inside a region that the action under
+test recomposes, treat `QueryError` in the poll as "not yet". Keep the final check a real
+`query_one`, so a row that never comes back still fails.
+
 ## `is_attached` stays True while a removal prunes the widget, so it misses in-flight renders (TASK-36527, 2026-11-03)
 
 **Incident.** The File Notes git panel's worker renders were guarded with

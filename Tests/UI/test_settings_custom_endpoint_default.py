@@ -683,6 +683,11 @@ async def _click_until(screen, pilot, selector: str, done) -> None:
     still there the click is retried, scrolled into view again; a real click
     keeps hit-testing in the test. Opening a form is idempotent, and a
     repeated save writes the same value.
+
+    TASK-41534: a save recomposes the whole ``#settings-custom-endpoints``
+    region, status line included, so a poll that lands between the old
+    children's removal and the new ones' mount finds no status line. That
+    poll counts as "not yet"; the final check still queries it for real.
     """
     for attempt in range(3):
         if attempt and not screen.query(selector):
@@ -690,7 +695,11 @@ async def _click_until(screen, pilot, selector: str, done) -> None:
         await _click_scrolled_settings_button(screen, pilot, selector)
         deadline = time.monotonic() + 4.0
         while time.monotonic() < deadline:
-            if done():
+            try:
+                held = done()
+            except QueryError:  # mid-recompose (TASK-41534)
+                held = False
+            if held:
                 await pilot.pause()
                 return
             await pilot.pause(0.05)
