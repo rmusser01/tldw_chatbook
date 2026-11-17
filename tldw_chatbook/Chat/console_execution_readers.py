@@ -24,6 +24,26 @@ class ConsoleSessionReader:
     session_id: str
     incarnation: str
 
+    def _workspace_facts(self):
+        from .console_execution_workspace_values import ConsoleWorkspaceSurface
+
+        view = self.owner._current()
+        if view.session(self.session_id).incarnation_id != self.incarnation:
+            raise ConsoleProjectionUnavailable(self.session_id)
+        surface = self.owner._client.workspace_surface
+        if type(surface) is ConsoleWorkspaceSurface:
+            for facts in surface.sessions:
+                if facts.session_id == self.session_id:
+                    return facts
+        raise ConsoleProjectionUnavailable(self.session_id)
+
+    def local_character_id(self) -> int | None:
+        return self._workspace_facts().character_id
+
+    @property
+    def character_name(self) -> str | None:
+        return self._workspace_facts().character_name
+
     def __getattr__(self, name):
         if name not in ConsoleSessionView.__dataclass_fields__:
             raise AttributeError(name)

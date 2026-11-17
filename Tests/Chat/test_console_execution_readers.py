@@ -55,6 +55,31 @@ def _reader_client(publication):
     return client
 
 
+def test_held_session_reads_published_rail_character_for_its_incarnation():
+    from tldw_chatbook.Chat.console_chat_models import ConsoleRunMarker
+    from tldw_chatbook.Chat.console_execution_workspace_values import (
+        ConsoleWorkspaceSessionFacts,
+        ConsoleWorkspaceSurface,
+    )
+
+    session = ConsoleChatSession(id="session")
+    client = _reader_client(_publication(session))
+    held = client.store_reader.session(session.id)
+    with pytest.raises(ConsoleProjectionUnavailable):
+        held.local_character_id()
+    for character_id, name in ((None, None), (7, "Ada")):
+        client.workspace_surface = ConsoleWorkspaceSurface(None, True, (
+            ConsoleWorkspaceSessionFacts(
+                session.id, "", character_id, name, None, 0, ConsoleRunMarker.NONE,
+            ),
+        ))
+        assert held.local_character_id() == character_id
+        assert held.character_name == name
+    client.projection_view = _publication(ConsoleChatSession(id="session"))
+    with pytest.raises(ConsoleProjectionUnavailable):
+        held.local_character_id()
+
+
 def test_held_store_and_session_follow_actual_replaced_publications():
     session = ConsoleChatSession(id="session", draft="before")
     client = _reader_client(_publication(session))
