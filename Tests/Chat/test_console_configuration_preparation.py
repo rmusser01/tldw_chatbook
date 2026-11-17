@@ -63,6 +63,70 @@ def test_capture_selection_detaches_nested_selected_values():
         selected.tool_configuration["local_tools_enabled"] = True
 
 
+@pytest.mark.asyncio
+async def test_received_configuration_builds_fresh_resident_references_once_per_capture(
+    runtime_case,
+):
+    """A synchronous capture shares its classification, never another call's."""
+    import sys
+
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+    from tldw_chatbook.Chat import console_configuration_preparation as preparation
+
+    case = runtime_case
+    originals = (
+        preparation._source_references,
+        preparation._standard_configuration_references,
+    )
+    codes = {function.__code__: function.__name__ for function in originals}
+    counts = dict.fromkeys(codes.values(), 0)
+    caller_thread = threading.get_ident()
+
+    def started(code, _offset):
+        if threading.get_ident() == caller_thread:
+            counts[codes[code]] += 1
+
+    monitoring = sys.monitoring
+    tool = next(value for value in range(6) if monitoring.get_tool(value) is None)
+    monitoring.use_tool_id(tool, "resident-configuration-capture")
+    event = monitoring.events.PY_START
+    prior_callback = monitoring.register_callback(tool, event, started)
+    observed, captured = [], []
+    try:
+        for code in codes:
+            monitoring.set_local_events(tool, code, event)
+        for index in range(3):
+            if index == 2:
+                case.app.app_config = {"console": {"native_tool_calls": True}}
+            before = counts.copy()
+            receipt = preparation.capture_console_received_configuration_preparation(
+                case.app, case.store, case.controller, session_id=case.session.id
+            )
+            assert receipt is not None and receipt.trust_source is None
+            assert receipt.refs.app_config is case.app.app_config
+            captured.append(receipt)
+            observed.append({name: counts[name] - before[name] for name in counts})
+    finally:
+        for code in codes:
+            monitoring.set_local_events(tool, code, 0)
+        monitoring.register_callback(tool, event, prior_callback)
+        monitoring.free_tool_id(tool)
+
+    assert preparation._source_references is originals[0]
+    assert preparation._standard_configuration_references is originals[1]
+    assert captured[0].refs is not captured[1].refs
+    assert captured[1].refs is not captured[2].refs
+    for stale in captured[:2]:
+        with pytest.raises(RecoveryRequired, match="console_snapshot_owner_changed"):
+            preparation.require_received_configuration_preparation(
+                stale, case.app, case.store, case.controller, session_id=case.session.id
+            )
+    preparation.require_received_configuration_preparation(
+        captured[2], case.app, case.store, case.controller, session_id=case.session.id
+    )
+    assert observed == [dict.fromkeys(counts, 1)] * 3, observed
+
+
 @pytest.mark.parametrize(
     "kind",
     ["cold", "custom_mcp", "custom_plugin", "custom_consent", "background_persona"],
@@ -200,15 +264,11 @@ async def test_ready_local_skill_capture_runs_original_body_on_worker_and_matche
     assert "capture-worker-fixture" in {
         row["name"] for row in actual_skill["available_skills"]
     }
-    # Legacy synchronous capture still reads MCP; stock temporary sessions
-    # intentionally capture an empty ceiling because they never compose MCP.
+    # Both routes omit MCP for stock temporary sessions, which never compose it.
     assert case.store.session_is_ephemeral(case.session.id)
-    assert expected.mcp_definition_maximum
+    assert not expected.mcp_definition_maximum
     assert (
         actual.mcp_definition_capture == expected.mcp_definition_capture == "captured"
-    )
-    expected = replace(
-        expected, mcp_tool_maximum=frozenset(), mcp_definition_maximum={}
     )
     for name in actual.__dataclass_fields__:
         if name != "skill_context_maximum":

@@ -148,7 +148,7 @@ def recording(name, import_):
     return module
 
 
-async def main_send(tmp):
+async def main_send(runs_db):
     gateway = Gateway()
     store = ConsoleChatStore()
     session = store.create_session(ephemeral=True)
@@ -156,7 +156,7 @@ async def main_send(tmp):
         store=store,
         provider_gateway=gateway,
         agent_bridge=ConsoleAgentBridge(
-            agent_runs_db=AgentRunsDB(Path(tmp) / "runs.db", client_id="t"),
+            agent_runs_db=runs_db,
             store=store,
             provider_gateway=gateway,
         ),
@@ -204,7 +204,12 @@ async def main_send(tmp):
 
 warmed = []
 with tempfile.TemporaryDirectory() as tmp:
-    gateway, contents = asyncio.run(main_send(tmp))
+    runs_db = AgentRunsDB(Path(tmp) / "runs.db", client_id="t")
+    try:
+        gateway, contents = asyncio.run(main_send(runs_db))
+    finally:
+        assert runs_db.close_idle_connections(), "Run database still has active users"
+        runs_db.close()
 
 print(
     "SEND_JSON:"

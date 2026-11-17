@@ -68,3 +68,101 @@ owners. Pressed fallback custody starts the existing transcript poll only for it
 original attached generation; a failed presentation handoff cannot undo already
 accepted custody. This reconciliation does not qualify the broader polling or
 whole-path latency proposal.
+
+### Promoted manual preparation display amendment — 2026-11-15
+
+Selected for PR3534 under the owner's resumed latency work and six-second merge
+gate; implementation and native qualification remain pending. The wider polling
+proposal remains Proposed. A stock full-app Windows Send takes38.259/55.197/
+54.747s with the original coordinator; diagnostic periodic deferral measures
+16.367/19.647/15.186s on the same source. Host variation prevents a precise saving
+claim, but the comparison justifies reducing repeated display I/O on this route.
+
+Keep the accepted unpromoted branch intact. A promoted manual branch may narrow
+only while the sole original custody task still owns the current preparation
+and its own existing SendStart has not ended at provider entry or completion.
+Use the controller's task-to-preparation map and the store's current preparation;
+promotion replaces the received claim and successful save changes draft revisions.
+Do not weaken the received-claim predicate or invent revision offsets. The
+completed-FULL witness must cover relevant resident input/policy revisions:
+changed inputs require one original FULL pass before later unchanged polls narrow.
+Do not extend the separate three-second synchronous display-I/O exception.
+
+Within existing sync exclusion, retain speech/H3 reconciliation, draft display,
+current tabs, original transcript publication/acknowledgement and resident Send
+feedback. On this qualified promoted branch, defer routine retrieval-summary,
+character-browser, readiness/config and rail/inspector refreshes. Transcript
+context presentation may reuse an already available same-owner display without
+scheduling refresh; unavailable or changed ownership restores FULL. This evidence
+is display-only and cannot authorize capture, persistence or provider dispatch.
+Mark work owed using the existing cadence and return deferred so polling remains
+live. No new scheduler, cache, authority token or preparation owner is introduced.
+
+Recheck qualification after retained awaits. Pending FULL, changed settings,
+runtime/Canvas publication, roleplay persistence/identity changes, human decisions,
+other active sessions, custom callbacks, cancellation and terminal settlement
+retain FULL. Explicit FULL dominates and retains its trailing replay. Preserve
+the original final FULL, post-await stop predicate and survivor handoff. A narrow
+pass cannot complete attachment or terminal settlement. Qualify real Enter/button
+and producer transitions with held original callbacks before release; diagnostics
+or count reductions alone do not satisfy the six-second or feedback contracts.
+
+### Completed promoted display publication — 2026-11-15
+
+Within the accepted sole-stock promoted manual route, a completed original tabs
+and transcript publication may suppress their unchanged routine pipelines. Reuse
+one complete transcript gate, extracted from the existing implementation, rather
+than creating a second partial invalidation key. Retain the exact mounted widget,
+acknowledgement row, deletion arm, run activity, effective memory and current
+visible citation counts. The latter is already an explicit token invalidator.
+Only successful publication on the current widget installs the token; failed,
+cancelled, detached or abandoned attempts retain the previous completed token.
+
+The completed FULL witness also retains existing controller lifecycle,
+presentation publication and fleet-unseen revisions. Capture before publication
+and qualify again after all retained work. Missing, changed or custom/unproved
+publication takes the original route. Preserve speech/H3, draft reconciliation,
+resident feedback, settings/project/workspace attention, archive recovery and
+manual-read scheduling. Always run the original recovery-region synchronization:
+continuation warnings have no complete display revision.
+
+Retain the existing fifteen-call transcript backstop. A short pass advances its
+existing counter once; the forced pass takes the current qualified promoted long
+branch and increments through the original transcript function. No timer or
+budget changes. Short passes mark cadence owed and return False, keeping polling
+and attachment reconciliation live. Explicit FULL, changed sources, provider
+entry, cancellation, background activity and terminal handoff remain original.
+This publication is display evidence only, never authority for actions or I/O.
+
+### Runtime-owned display reader — 2026-11-16
+
+Apply ADR356's runtime-registration rule to PR3534's refresh-free display read.
+The composed Context/spend controller owns one reader of the existing
+ConsoleContextReadSnapshot. Its normal read records the actual snapshot, config
+projection and attachment visit. Reuse requires the same registered resource and
+controller, current screen/controller/store/session, unchanged attachment and a
+current published value, checked again after reading. Copies of registrations do
+not create owners. Transparent wrappers do not change resource ownership.
+
+Keep custom constructors without a registered resource on their original live
+callback route. Remove the newly added function/code/default attestation rather
+than relocating it. No new cache, scheduler, native owner, permission or cadence
+is introduced; explicit FULL and unavailable/stale display fallback remain.
+Task3r in the Windows Send plan supplies the mounted ownership/currentness and
+existing feedback/FULL qualification. The broader polling proposal stays Proposed.
+
+Resident FULL source/publication observation helpers live with the Console display
+projections. Composer run controls retain preparation and custody eligibility.
+This implementation move adds no cache, lifecycle, authority or timing exception;
+completed-publication and source-currentness conditions remain unchanged.
+
+### Optional busy-chat prefetch deferral, not selected — 2026-11-16
+
+Task3y experimented with deferring implicit half-life config prefetch during
+same-session runtime custody, retaining every expiry, cold/input/tokenizer,
+handoff, retry and explicit FULL warm-up check. Thirteen mounted controls passed.
+Quiet Windows Enter measured7.298/5.661/4.885s; Send button8.040/7.631/6.865s.
+The experiment did not establish a whole-Send speed benefit and was removed.
+Keep the original scheduling contract; the patch and original-owner regression
+remain in task artifacts for possible later review. These timings do not isolate
+a causal regression, and no longer display lifetime was considered acceptable.

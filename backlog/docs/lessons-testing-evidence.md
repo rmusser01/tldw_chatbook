@@ -1,5 +1,41 @@
 # Lessons: what counts as evidence a change works
 
+## Textual workers can retain bound async methods (PR3534, 2026-11-16)
+
+The two inherited FULL replay tests failed although their diagnostics recorded
+several successful successor publications. Their monitor admitted only coroutine
+objects from Worker._work; the actual ChatScreen and coalesced-sync producers pass
+bound async methods, which installed Textual retains until invocation. Requiring
+the original method and exact bound screen instead preserved all37 assertion ASTs
+and the5s/15s deadlines; both original cases passed after rebasing onto dev3917.
+Qualify the actual Worker work representation before diagnosing missing dispatch.
+Keep task, producer, current-owner publication and physical lifetime checks; merely
+observing a method or a requested update does not prove its work completed.
+
+## Qualify worker observers with the production executor and task factory (PR3534,2026-11-16)
+
+The post-save observer's synthetic plain ThreadPoolExecutor check passed, but its
+first app run linked zero workers. FreshContextExecutor inserts an additional
+Context.run call around asyncio.to_thread's partial, and the app's eager task
+factory starts a retained coroutine before its create_task call returns. The
+corrected observer qualified the actual executor body and both task factories,
+then linked8/9/8 workers and three eager tasks per Send in the live headless run.
+Use exact callable/future/WorkItem/task identities and inspect missing-link
+counts before assigning a worker's time to an awaiting foreground operation.
+Preserve incomplete traces as bounded evidence; matching timestamps alone do
+not establish the call relationship.
+
+## Entering a redraw is not completing publication (PR3534, 2026-11-15)
+
+The transcript gate tests deliberately omitted the mounted transcript or raised
+downstream, swallowed that exception, then relied on a token written before the
+pipeline. They counted entry but could not establish successful publication.
+Moving token assignment after actual success exposed that fixture assumption.
+Mounted fixtures now complete the original pipeline; separate error and exact
+held-refresh cancellation controls fail on the old code and pass after the fix
+(pr3534-promoted-publication-integrated-1). Test completed output before relying
+on a publication token, and test abandoned attempts separately.
+
 ## A `sleep(0)` observer starves worker threads on Linux, and the switch interval does not bound it (TASK-40334, 2026-11-13)
 
 **Incident.** The idle-heap test's old `BusySampler` looped on `await asyncio.sleep(0)`. It failed 13 CI shard-2 jobs and none of about 20 macOS runs or 17 runs in a local Linux 3.12.16 container. In 11 of the 13 the send logged nothing until the test's 15 s wait gave up and stopped the sampler; in the other two a durable commit that takes 0.2 s took 12-14 s. This is the starvation in "A `pilot.pause()` poll can starve a worker thread's config write of the GIL" (TASK-36530), with one difference: there a shorter switch interval helped, here it cannot. The `sleep(0)` loop releases the GIL on every turn, and each release signals the GIL condition (`drop_gil`). That wakes the waiting worker before its timed wait runs out, so it never asks for a hand-off (`take_gil`), and the loop thread, still on-CPU, takes the GIL back first. Linux makes that a spin: a bare `sleep(0)` loop made 112,810 turns on 0.200 s of CPU in 0.2 s, against 457 turns on 0.007 s on macOS, where a zero-timeout `kqueue` still parks the thread. PR3496 (538aad893f) replaced the sampler; after it the mounted test took 7.9-11.8 s in 23 CI shard-2 jobs, against 10.6-34 s before.
@@ -25676,3 +25712,42 @@ label copy and unmasked live-row lookup errors. TASK-41218 landed while this
 independent fix awaited integration; retain its merged guard and validate it
 with both regression sets rather than replacing it with a competing guard.
 
+
+
+## Enter a queued callback before freezing its delivery mechanism (PR3534, 2026-11-16)
+
+The af2 Windows feedback/shutdown run passed both Send feedback routes but both
+bounded-section shutdown controls timed out at callback_delivered.wait, after
+the real lifecycle drain had entered. Queuing call_after_refresh did not prove
+Textual had started delivery before shutdown stopped refresh. The test now waits
+for the original message-pump delivery to enter during setup, retains its actual
+callback behind a release, and invokes it exactly once during the held drain. All
+three shutdown cases pass in11.94s with the original2s shutdown-readiness and50ms
+observation bounds. This qualifies the controlled shutdown interleaving, not
+natural callback-delivery latency. Receipts: pr3534-af2-feedback-shutdown-1 and
+pr3534-shutdown-delivery-green-1 under claude-watch-final-gate-review.
+
+## A publication observer must forward the current callback signature (PR3534, 2026-11-16)
+
+The Windows save-acceptance control cleared the real draft but recorded no
+publication. Its test-only lambda accepted record alone; production already
+passed draft_committed as a keyword. The real presentation boundary caught and
+logged the resulting TypeError, so the failed observer looked like a missing
+publication. Untouched dev5e3 reproduced the failure. A keyword-compatible observer
+now calls the original bound method before recording (turn_id, draft_committed).
+All four real-save outcomes pass, including stop, store replacement and retyping,
+with unchanged deadlines. Preserve callback arguments, results and exceptions in
+forwarding observers; inspect the boundary's caught error before changing product
+publication logic. Receipts: pr3534-saved-publication-dev5e3-baseline-1 and
+pr3534-prefetch-red-publication-green-1 under claude-watch-final-gate-review.
+
+## Distinguish optional prefetch from required nested refreshes
+
+PR3534 (2026-11-16): a mounted busy-send regression still reported a pending
+configuration read after optional polling prefetch was suppressed. Observing the
+original scheduling branch showed that rendering had started a cold context read,
+which explicitly warmed configuration. Both legitimately shared the same pending
+flag. Complete the original context read and establish its current owner before
+testing optional prefetch; retain expiry and explicit-warm controls. The corrected
+old-scheduler run pr3534-prefetch-isolated-red-1 failed at the intended oracle,
+without overriding readers or manufacturing fresh timestamps.

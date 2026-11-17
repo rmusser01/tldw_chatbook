@@ -222,6 +222,35 @@ def _existing_admission_authority(bootstrap_root):
         raise RecoveryRequired("recovery_scope_uncertain") from None
 
 
+def observe_settled_admission_registry(
+    bootstrap_root: Path, authority: Admission
+) -> dict:
+    """Read and validate a live authority's registry without creating records."""
+    _require_settled_ancestry(bootstrap_root)
+    with pinned_directory(bootstrap_root) as parent:
+        receipt = _read(parent, _ANCESTRY_RECORD)
+        _validate_ancestry_record(bootstrap_root, parent, receipt)
+    marker = bootstrap_root / "unbound-owner"
+
+    def validate_marker(registry: dict) -> None:
+        entry = registry.get(UNBOUND_NAMESPACE)
+        if (
+            entry is None
+            or entry["roots"] != [str(marker)]
+            or not authority._tokens((marker,))
+            <= bootstrap.identity_view(entry["historical"])
+        ):
+            raise RecoveryRequired("recovery_scope_uncertain")
+
+    with authority._directory() as parent:
+        registry = _registry(
+            bootstrap_root, authority_parent=parent, validate=validate_marker
+        )
+        if registry is None:
+            raise RecoveryRequired("recovery_scope_uncertain")
+        return registry
+
+
 def _verify_pending_selector(selector: Path) -> None:
     """Verify existing bytes or genuine absence for a local pre-publication fence."""
     try:

@@ -39,8 +39,9 @@ app pump used to replay it, only in the chat it was made in, and with the
 draft captured at its own press (lead ruling: keys typed after a press are
 the next draft).
 
-Imported on the first send only, so it adds nothing to the ADR-097 boot
-census; boot-time readers go through ``getattr(screen, ACK_ATTRIBUTE)``.
+Console mount imports this immediate-feedback dependency before input arrives;
+ADR-097's unchanged boot census counts that cost. Acknowledgement owners remain
+lazy, and boot-time readers go through ``getattr(screen, ACK_ATTRIBUTE)``.
 """
 
 from __future__ import annotations

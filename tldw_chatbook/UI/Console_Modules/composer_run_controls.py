@@ -51,6 +51,8 @@ from ...Widgets.Console.console_composer_menu_modal import (
     build_composer_menu_entries,
 )
 from ...Widgets.Console.console_transcript import ConsoleTranscript
+from . import console_spend_projection as spend
+from . import transcript as transcript_projection
 
 if TYPE_CHECKING:
     from textual.events import Key
@@ -1169,7 +1171,9 @@ def bind_preparing_screen_sources(screen_type) -> None:
         "_ensure_console_agent_bridge",
         "_ensure_console_chat_store",
         "_ensure_console_chat_controller",
+        "_current_console_run_status_value",
         "_sync_console_native_session_tabs",
+        "_sync_native_console_transcript",
         "_sync_native_console_chat_ui",
     )
     records = tuple(
@@ -1189,11 +1193,11 @@ def bind_preparing_screen_sources(screen_type) -> None:
 
 def _preparing_helpers_current() -> bool:
     return all(
-        globals().get(name) is function
+        namespace.get(name) is function
         and function.__code__ is code
         and function.__defaults__ is defaults
         and function.__kwdefaults__ is kwdefaults
-        for name, function, code, defaults, kwdefaults in _PREPARING_HELPERS
+        for namespace, name, function, code, defaults, kwdefaults in _PREPARING_HELPERS
     )
 
 
@@ -1215,101 +1219,62 @@ def preparing_display_read(self) -> bool:
     return True
 
 
-def poll_source(self) -> dict | None:
-    """Observe established owners; this is never native/action authority."""
-    from tldw_chatbook import config
+def _promoted_preparing_poll_current(self, source: dict, record) -> bool:
+    """Read existing custody/preparation owners; never authorize a Send with UI."""
+    from ...Chat.console_chat_models import ConsoleRunStatus
+    from ...Chat.console_send_start import custody_send_start_open
+    from ...Chat.console_turn_preparation import ConsoleTurnPreparationState
+    from .console_spend_projection import console_transcript_context_inputs
 
-    from ...Chat.console_chat_controller import ConsoleChatController
-    from ...Chat.console_chat_store import ConsoleChatStore
-    from ...Chat.console_runtime import ConsoleRuntime
-    from ..Screens.chat_screen import ChatScreen, _console_screen_is_torn_down
-
-    if type(self) is not ChatScreen or _console_screen_is_torn_down(self):
-        return None
-    runtime = self._console_runtime()
-    if type(runtime) is not ConsoleRuntime:
-        return None
-    app = self.app_instance
-    store, controller = runtime.chat_store, runtime.chat_controller
+    controller, store = source["controller"], source["store"]
     if (
-        type(store) is not ConsoleChatStore
-        or type(controller) is not ConsoleChatController
-        or controller.store is not store
-        or controller.app is not app
-        or runtime._app is not app
-        or runtime._disposed
-        or controller._disposed
-        or controller._shutdown_requested.is_set()
+        not custody_send_start_open(record.task)
+        or record.request.session_id != record.session_id
+        or record.request.turn_id != record.turn_id
+        or controller.run_state.status not in {
+            ConsoleRunStatus.VALIDATING, ConsoleRunStatus.STREAMING
+        }
+        or getattr(self, "_console_config_handoffs", None)
+        or not spend.preparing_poll_inputs_current(self, source)
+        or any(
+            controller.pending_round_kinds(session.id)
+            for session in source["membership"]
+        )
+        or getattr(getattr(self, "_task_resume_state", None), "pending_approval", None)
     ):
-        return None
-    session = store._sessions.get(store.active_session_id)
-    registry = vars(app).get("_workspace_registry_service")
-    if registry is None:
-        registry = vars(app).get("workspace_registry_service")
-    generation = getattr(registry, "mutation_generation", None)
-    app_config = getattr(app, "app_config", None)
-    if (
-        session is None
-        or session.settings is None
-        or type(app_config) is not dict  # Custom mappings stay FULL.
-        or type(generation) is not int  # Booleans/custom generations stay FULL.
-    ):
-        return None
-    return {
-        "visit": self._current_console_attach_visit(),
-        "config": config,
-        "config_identity": config.current_config_identity(),
-        "app": app,
-        "app_config": app_config,
-        "chat_database": vars(app).get("chachanotes_db"),
-        "runtime": runtime,
-        "store": store,
-        "controller": controller,
-        "registry": registry,
-        "registry_generation": generation,
-        "session": session,
-        "settings": session.settings,
-        "bridge": controller._agent_bridge,
-        "runtime_bridge": runtime._agent_bridge,
-        "membership": tuple(store.sessions()),
-    }
-
-
-def poll_source_is_current(self, captured: dict | None) -> bool:
-    current = poll_source(self)
-    if captured is None or current is None:
         return False
+    with controller._active_submit_tasks_lock:
+        preparation = store.preparation_for_session(record.session_id)
+        if (
+            controller._active_submit_tasks.get(record.task) != record.session_id
+            or preparation is None
+            or controller._active_submit_preparations.get(record.task)
+            != preparation.preparation_id
+            or preparation.origin != "manual"
+            or preparation.pause_kind is not None
+            or preparation.state not in {
+                ConsoleTurnPreparationState.PREPARING,
+                ConsoleTurnPreparationState.READY,
+                ConsoleTurnPreparationState.COMMITTING,
+                ConsoleTurnPreparationState.ACCEPTED,
+                ConsoleTurnPreparationState.DISPATCH_STARTED,
+            }
+        ):
+            return False
+    memory_inputs = console_transcript_context_inputs(
+        self, controller, record.session_id, refresh=False
+    )
+    completed = source.get("display_publication")
     return (
-        captured["visit"].can_complete(current["visit"])
-        and captured["config_identity"] == current["config_identity"]
-        and captured["registry_generation"] == current["registry_generation"]
-        and all(
-            captured[name] is current[name]
-            for name in (
-                "config",
-                "app",
-                "app_config",
-                "chat_database",
-                "runtime",
-                "store",
-                "controller",
-                "registry",
-                "session",
-                "settings",
-                "bridge",
-                "runtime_bridge",
-            )
-        )
-        and len(captured["membership"]) == len(current["membership"])
-        and all(
-            before is after
-            for before, after in zip(captured["membership"], current["membership"])
-        )
+        memory_inputs is not None
+        and completed is not None
+        and completed == spend.poll_display_publication(self, source, memory_inputs)
+        and completed[1] == self._console_transcript_sync_token
     )
 
 
 def preparing_poll_record(self):
-    """Select only a sole, unchanged stock manual receipt for display work."""
+    """Select only a sole, unchanged stock manual preparation for display work."""
     from tldw_chatbook.Chat.console_chat_models import ConsoleSubmissionOrigin
     from tldw_chatbook.Chat.console_configuration_preparation import (
         capture_console_received_configuration_preparation,
@@ -1324,13 +1289,14 @@ def preparing_poll_record(self):
     source = getattr(self, "_console_completed_full_source", None)
     if (
         not _preparing_helpers_current()
+        or screen_module.console_transcript_sync_gate is not transcript_projection.console_transcript_sync_gate
         or not policy_producers_current()
         or self._console_sync_requested
         or not self._console_attach_sync_complete
         or not self._console_attach_reconciled
         or self._console_attach_reconcile_running
         or self._console_ordered_resume_pending()
-        or not poll_source_is_current(self, source)
+        or not spend.poll_source_is_current(self, source)
         or not stock_native_methods(
             self, screen_module._CONSOLE_RECEIVED_SCREEN_SELECTORS
         )
@@ -1397,21 +1363,25 @@ def preparing_poll_record(self):
     if (
         record.store is not store
         or record.session_id != source["session"].id
-        or record.request is not None
         or record.task is None
         or record.task.done()
         or intent is None
         or intent.queue_revision is not None
         or claim is None
         or claim.origin is not ConsoleSubmissionOrigin.MANUAL
-        or not store.received_turn_is_current(claim)
-        or not store.session_inputs_are_current(intent.inputs)
         or intent.view_attachment_generation != source["visit"].generation
         or capture_console_received_configuration_preparation(
             source["app"], store, controller, session_id=record.session_id
         )
         is None
     ):
+        return None
+    if record.request is None:
+        if not store.received_turn_is_current(claim) or not store.session_inputs_are_current(
+            intent.inputs
+        ):
+            return None
+    elif not _promoted_preparing_poll_current(self, source, record):
         return None
     context_provider = controller._turn_context_provider
     if context_provider is not None and (
@@ -1430,8 +1400,11 @@ def preparing_poll_record(self):
         intent.session_id
     )
     if (
-        launch is not intent.staged_evidence_launch
-        or launch_revision != intent.staged_evidence_revision
+        record.request is None
+        and (
+            launch is not intent.staged_evidence_launch
+            or launch_revision != intent.staged_evidence_revision
+        )
         or controller._provider_selection() != intent.selection.provider_selection
         # Stock provider-direct chats have no bridge without a chat DB.
         or source["bridge"] is None
@@ -1524,20 +1497,30 @@ async def sync_poll_display_ui(self) -> bool:
 
 _PREPARING_HELPERS = tuple(
     (
+        namespace,
         function.__name__,
         function,
         function.__code__,
         function.__defaults__,
         function.__kwdefaults__,
     )
-    for function in (
-        preparing_display_read,
-        poll_source,
-        poll_source_is_current,
-        preparing_poll_record,
-        sync_poll_display_ui,
-        _preparing_methods_current,
+    for namespace, functions in (
+        (globals(), (
+            preparing_display_read,
+            _promoted_preparing_poll_current,
+            preparing_poll_record,
+            sync_poll_display_ui,
+            _preparing_methods_current,
+        )),
+        (vars(spend), (
+            spend.poll_source,
+            spend.poll_source_is_current,
+            spend.preparing_poll_inputs_current,
+            spend.poll_display_publication,
+        )),
+        (vars(transcript_projection), (transcript_projection.console_transcript_sync_gate,)),
     )
+    for function in functions
 )
 
 

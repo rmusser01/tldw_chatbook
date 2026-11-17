@@ -1,6 +1,7 @@
 """Original current-owner observation helpers; general polling is not accepted."""
 
 import contextlib
+import copy
 import inspect
 import sys
 from types import CodeType
@@ -13,7 +14,7 @@ from Tests.UI.test_console_received_intent_feedback import (
     _received_console_case,
     _send,
 )
-from tldw_chatbook.UI.Console_Modules import composer_run_controls
+from tldw_chatbook.UI.Console_Modules import composer_run_controls, console_spend_projection
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
@@ -44,7 +45,7 @@ async def _qualify_warm_capture_sources(case):
 
 
 @contextlib.contextmanager
-def _original_transition_events(bindings, observe):
+def _original_transition_events(bindings, observe, *, accept_event=None):
     """Observe original code locally; keep no frames and replace no callbacks."""
     from functools import partial
 
@@ -79,11 +80,13 @@ def _original_transition_events(bindings, observe):
         nonlocal count
         frame = None
         try:
-            count += 1
-            assert count <= 4096, "original_transition_observer_overflow"
             label, namespace = by_code[code]
             frame = sys._getframe(1)
             assert frame.f_code is code and frame.f_globals is namespace
+            if accept_event is not None and not accept_event(label, frame):
+                return
+            count += 1
+            assert count <= 4096, "original_transition_observer_overflow"
             observe(kind, label, frame, values[0] if values else None)
         except BaseException as error:  # noqa: BLE001 - bound and retain original observer failures.
             if len(invalid) < 16:
@@ -315,6 +318,453 @@ async def test_ordinary_preparing_polls_do_not_repeat_live_core_reconciliation(
             sum(row["core_returns"] for row in steady_rows) == 0
         ), f"Unchanged Preparing polls repeated original live core reconciliation: {rows!r}"
         assert sum(row["roleplay_returns"] for row in steady_rows) == 0, rows
+
+
+@pytest.mark.parametrize("route", ["enter", "send-button"])
+async def test_promoted_manual_polls_keep_saved_transcript_without_repeating_reads(
+    monkeypatch, record_property, route,
+):
+    """An original post-save wait must not restart routine presentation reads."""
+    import asyncio
+    import threading
+
+    from textual.widgets import Button
+
+    from Tests.UI.test_console_received_intent_feedback import _run_segment
+    from tldw_chatbook.Chat.prompt_history import PromptHistory
+    from tldw_chatbook.UI.Console_Modules import character_context, config_sync
+    from tldw_chatbook.Widgets.Console.console_session_surface import ConsoleSessionSurface
+    from tldw_chatbook.Widgets.Console.console_settings_modal import ConsoleSettingsModal
+
+    async with _received_console_case(
+        monkeypatch, f"promoted-poll-{route}", durable=True
+    ) as case:
+        provider_entered, provider_release = threading.Event(), threading.Event()
+        provider_timeouts = []
+
+        def reply(**kwargs):
+            case.provider_calls.append(kwargs)
+            provider_entered.set()
+            if not provider_release.wait(60):
+                provider_timeouts.append(True)
+            return "Promoted polling reply completed."
+
+        monkeypatch.setattr("tldw_chatbook.Chat.Chat_Functions.chat_api_call", reply)
+        await _qualify_warm_capture_sources(case)
+        history = case.controller.prompt_history
+        assert type(history) is PromptHistory
+        await history.load()
+        await history._append_lock.acquire()
+        history_locked = True
+        surface_lock = None
+        surface_locked = False
+        full_request = None
+        record = None
+        history_entered = False
+        full_completions = 0
+        active, rows = {}, []
+        proof_probe_task = None
+        held_surface = {}
+        full_code = ChatScreen._sync_native_console_chat_ui.__code__
+
+        def observe(kind, label, frame, value):
+            nonlocal history_entered, full_completions
+            if label == "history":
+                if (
+                    kind == sys.monitoring.events.PY_START
+                    and frame.f_locals.get("self") is history
+                    and record is not None
+                    and asyncio.current_task() is record.task
+                ):
+                    history_entered = True
+                return
+            full = (
+                frame if label == "full"
+                else _transition_parent(frame, full_code, case.console)
+            )
+            if full is None or full.f_locals.get("self") is not case.console:
+                return
+            if (
+                label == "full"
+                and kind == sys.monitoring.events.PY_RETURN
+                and full.f_locals.get("poll_record") is None
+                and value is True
+            ):
+                full_completions += 1
+            timer = case.console._console_transcript_sync_timer
+            proof_probe = (
+                proof_probe_task is not None and asyncio.current_task() is proof_probe_task
+            )
+            if timer is None or (asyncio.current_task() is not timer._task and not proof_probe):
+                return
+            key = id(full)
+            if label == "full" and kind == sys.monitoring.events.PY_START:
+                if history_entered:
+                    active[key] = {
+                        "tabs": 0, "transcript": 0, "config": 0, "character": 0,
+                        "proof_probe": proof_probe and full.f_locals.get("_preparing_poll") is True,
+                    }
+                return
+            row = active.get(key)
+            if row is None:
+                return
+            if (
+                label == "surface"
+                and kind == sys.monitoring.events.PY_YIELD
+                and surface_locked
+                and not held_surface
+                and full.f_locals.get("poll_record") is record
+                and type(value) is asyncio.Future
+                and not value.done()
+                and any(waiter is value for waiter in surface_lock._waiters)
+            ):
+                held_surface.update(row=row, future=value)
+            if label in {"config", "character", "tabs", "transcript"} and kind == sys.monitoring.events.PY_START:
+                row[label] += 1
+            elif label == "transcript" and kind == sys.monitoring.events.PY_RETURN:
+                row["transcript_forced"] = bool(frame.f_locals.get("forced", False))
+            elif label == "full" and kind == sys.monitoring.events.PY_RETURN:
+                row["qualified"] = full.f_locals.get("poll_record") is record
+                row["short"] = full.f_locals.get("short_poll") is True
+                row["result"] = value
+                rows.append(row)
+                del active[key]
+
+        bindings = [
+            ("history", PromptHistory, "append"),
+            ("full", ChatScreen, "_sync_native_console_chat_ui"),
+            ("tabs", ChatScreen, "_sync_console_native_session_tabs"),
+            ("transcript", ChatScreen, "_sync_native_console_transcript"),
+            ("config", config_sync, "prepare_console_presentation_sync"),
+            ("character", character_context, "character_presentation_work"),
+            ("surface", ConsoleSessionSurface, "sync_sessions"),
+        ]
+        try:
+            with _original_transition_events(bindings, observe):
+                _send(case, route)
+                record = await _held_received_record(case)
+                custody_task = record.task
+                case.probe.release.set()
+                assert await _until(lambda: history_entered or record.task.done(), 60)
+                assert history_entered and not record.task.done(), "Original post-save history wait was not reached"
+                assert record.request is not None and record.inputs.durable_accepted
+                assert case.composer.draft_text() == ""
+                assert case.provider_calls == []
+                # A call count is meaningful only AFTER the real saved echo
+                # has reached the original mounted transcript. Keep the same
+                # twenty-second observation budget for publication and cadence.
+                deadline = asyncio.get_running_loop().time() + 20
+
+                def remaining():
+                    return max(0.0, deadline - asyncio.get_running_loop().time())
+
+                transcript = case.console.query_one("#console-native-transcript")
+                user = next(
+                    message for message in case.store.messages_for_session(case.session.id)
+                    if message.role.value == "user" and message.content == case.draft
+                )
+                assert await _until(
+                    lambda: user.id in transcript.mounted_message_content_ids(),
+                    remaining(),
+                ), rows
+                steady_start = len(rows)
+                assert await _until(
+                    lambda: sum(row["qualified"] for row in rows[steady_start:]) >= 2,
+                    remaining(),
+                ), rows
+                qualified = [row for row in rows[steady_start:] if row["qualified"]]
+                record_property("original_promoted_steady_poll_rows", qualified)
+                assert any(row["short"] for row in qualified), (
+                    "Published unchanged Preparing still repeats the long display pass", qualified
+                )
+                assert all(
+                    row["tabs"] == row["transcript"] == 0
+                    for row in qualified if row["short"]
+                ), qualified
+                assert sum(row["tabs"] for row in qualified) < len(qualified), qualified
+                assert sum(row["transcript"] for row in qualified) < len(qualified), qualified
+                assert all(row["result"] is False for row in qualified)
+                assert all(row["config"] == row["character"] == 0 for row in qualified), rows
+                # Media has no complete revision signal. Observe the original
+                # fifteenth-call forced pipeline, not a test-triggered sync.
+                assert await _until(
+                    lambda: any(
+                        row["qualified"] and not row["short"]
+                        and row["tabs"] and row["transcript"]
+                        and row.get("transcript_forced", False)
+                        for row in rows[steady_start:]
+                    ),
+                    remaining(),
+                ), rows
+                record_property("original_promoted_poll_rows", rows)
+                shown, text = _run_segment(case.console)
+                assert shown and "Sending" in text
+                assert user.id in transcript.mounted_message_content_ids()
+                assert case.console._console_transcript_sync_timer is not None
+                assert not record.task.done() and not case.provider_calls
+                # The current display is owned by the composed resource.
+                # Transparent wrappers do not revoke that ownership.
+                from tldw_chatbook.UI.Console_Modules import composer_run_controls
+
+                # Retain the same twenty-second window. Removing only the
+                # completed display proof must send the next original routine
+                # callback through FULL, then let actual publication requalify.
+                assert await _until(
+                    lambda: (
+                        not case.console._console_sync_in_progress
+                        and composer_run_controls.preparing_poll_record(case.console) is record
+                    ),
+                    remaining(),
+                )
+                source = case.console._console_completed_full_source
+                assert source["display_publication"] is not None
+                del source["display_publication"]
+                assert composer_run_controls.preparing_poll_record(case.console) is None
+                proof_start = len(rows)
+                before_full = full_completions
+                proof_probe_task = asyncio.current_task()
+                try:
+                    async with asyncio.timeout(remaining()):
+                        await config_sync.run_periodic_console_sync(
+                            composer_run_controls.sync_poll_display_ui, case.console
+                        )
+                finally:
+                    proof_probe_task = None
+                proof_rows = [row for row in rows[proof_start:] if row["proof_probe"]]
+                record_property("missing_display_publication_routine_pass", proof_rows)
+                assert len(proof_rows) == 1 and not proof_rows[0]["qualified"], proof_rows
+                assert proof_rows[0]["tabs"] and proof_rows[0]["config"], proof_rows
+                assert await _until(
+                    lambda: (
+                        full_completions > before_full
+                        and case.console._console_completed_full_source is not source
+                        and composer_run_controls.preparing_poll_record(case.console) is record
+                    ),
+                    remaining(),
+                ), "The missing display proof did not receive FULL and requalify"
+                assert case.console._console_completed_full_source["display_publication"] is not None
+                assert user.id in transcript.mounted_message_content_ids()
+                assert not record.task.done() and not case.provider_calls
+
+                owner = case.console._context_spend
+                snapshot = case.console._console_context_read_snapshot
+                # Every intervention is synchronous; no FULL can repair a
+                # missing publication between the negative and restored checks.
+                for target, name in (
+                    (owner, "_context_inputs"),
+                    (snapshot, "inputs"),
+                    (snapshot.config_projection, "run"),
+                ):
+                    original = getattr(target, name)
+                    with monkeypatch.context() as changed:
+                        changed.setattr(
+                            target, name,
+                            lambda *args, callback=original, **kwargs: callback(*args, **kwargs),
+                        )
+                        assert composer_run_controls.preparing_poll_record(case.console) is record
+                    assert composer_run_controls.preparing_poll_record(case.console) is record
+                for target, name, replacement in (
+                    (owner, "_context_display_resource", copy.copy(owner._context_display_resource)),
+                    (case.console, "_console_context_read_snapshot", copy.copy(snapshot)),
+                    (snapshot, "config_projection", copy.copy(snapshot.config_projection)),
+                    (snapshot, "value", None),
+                ):
+                    with monkeypatch.context() as changed:
+                        changed.setattr(target, name, replacement)
+                        assert composer_run_controls.preparing_poll_record(case.console) is None
+                    assert composer_run_controls.preparing_poll_record(case.console) is record
+                with monkeypatch.context() as changed:
+                    changed.setattr(case.console, "_current_console_run_status_value", lambda: "completed")
+                    assert composer_run_controls.preparing_poll_record(case.console) is None
+                assert composer_run_controls.preparing_poll_record(case.console) is record
+                if route == "enter":
+                    before = full_completions
+                    follow_up = "A later authored draft"
+                    case.composer.load_draft(follow_up)
+                    assert composer_run_controls.preparing_poll_record(case.console) is None
+                    assert await _until(
+                        lambda: full_completions > before
+                        and composer_run_controls.preparing_poll_record(case.console) is record,
+                        20,
+                    ), "The composer edit never received FULL then qualified display"
+                    assert case.store.session_draft(case.session.id) == follow_up
+
+                    # Per-chat Apply is deliberately read-only during a run.
+                    # Observe that policy; never force the disabled control.
+                    old_settings_revision = case.session.settings_revision
+                    old_settings = case.session.settings
+                    case.console.action_open_console_session_settings()
+                    assert await _until(
+                        lambda: isinstance(case.host.screen, ConsoleSettingsModal)
+                        and case.host.screen.is_mounted
+                        and case.host.screen.is_attached,
+                        20,
+                    )
+                    modal = case.host.screen
+                    apply = modal.query_one("#console-settings-save", Button)
+                    assert modal._active_run and not modal._can_save and apply.disabled
+                    assert case.session.settings_revision == old_settings_revision
+                    assert case.session.settings == old_settings
+                    await modal.request_safe_cancel(source="escape")
+                    returned = await _until(
+                        lambda: case.host.screen is case.console
+                        and composer_run_controls.preparing_poll_record(case.console) is record,
+                        20,
+                    )
+                    if not returned:
+                        qualification = []
+
+                        def observe_qualification(kind, label, frame, value):
+                            if kind == sys.monitoring.events.PY_RETURN:
+                                outcome = (
+                                    "none" if value is None else
+                                    "false" if value is False else
+                                    "true" if value is True else "owner"
+                                )
+                                qualification.append((label, frame.f_lineno, outcome))
+
+                        with _original_transition_events(
+                            [
+                                (name, composer_run_controls, name)
+                                for name in (
+                                    "preparing_poll_record",
+                                    "_promoted_preparing_poll_current",
+                                )
+                            ] + [(
+                                "poll_source_is_current", console_spend_projection,
+                                "poll_source_is_current",
+                            )],
+                            observe_qualification,
+                        ):
+                            qualified = composer_run_controls.preparing_poll_record(case.console) is record
+                        state = dict(
+                            top_screen=type(case.host.screen).__name__,
+                            returned_to_console=case.host.screen is case.console,
+                            modal_mounted=modal.is_mounted,
+                            modal_attached=modal.is_attached,
+                            dismiss_committed=modal._safe_dismiss_committed,
+                            cancel_pending=modal._safe_cancel_pending,
+                            close_guard=modal._settings_close_guard_mode,
+                            initial_feedback=modal._initial_feedback_sync,
+                            updating_controls=modal._updating_controls,
+                            attach_complete=case.console._console_attach_sync_complete,
+                            attach_reconciled=case.console._console_attach_reconciled,
+                            attach_running=case.console._console_attach_reconcile_running,
+                            sync_requested=case.console._console_sync_requested,
+                            sync_running=case.console._console_sync_in_progress,
+                            qualified=qualified,
+                            qualification_returns=qualification,
+                        )
+                        pytest.fail(f"Read-only settings return failed: {state!r}")
+                    assert case.session.settings_revision == old_settings_revision
+                    assert case.session.settings == old_settings
+
+                    # This original global-settings writer remains supported
+                    # during a run. Its generation must cause real FULL replay;
+                    # no test-triggered reconciliation repairs the display.
+                    from tldw_chatbook import config
+
+                    before = full_completions
+                    old_identity = config.current_config_identity()
+                    old_rate = await asyncio.to_thread(
+                        config.get_cli_setting, "console", "show_tokens_per_second", True
+                    )
+                    assert await asyncio.to_thread(
+                        config.save_setting_to_cli_config,
+                        "console", "show_tokens_per_second", not old_rate,
+                    )
+                    assert config.current_config_identity() != old_identity
+                    assert await _until(
+                        lambda: full_completions > before
+                        and composer_run_controls.preparing_poll_record(case.console) is record,
+                        20,
+                    ), "Global settings mutation never received FULL then qualified display"
+                    assert case.console._console_completed_full_source["config_identity"] == config.current_config_identity()
+                    assert case.composer.draft_text() == follow_up
+
+                    # Hold the original tab surface, then issue an actual FULL
+                    # request while that exact narrow poll is suspended.
+                    assert await _until(
+                        lambda: not case.console._console_sync_in_progress
+                        and case.console._console_session_tabs_sync_calls == 0,
+                        20,
+                    )
+                    surface = case.console.query_one(
+                        "#console-session-surface", ConsoleSessionSurface
+                    )
+                    surface_lock = surface._session_sync_lock
+                    await surface_lock.acquire()
+                    surface_locked = True
+                    assert await _until(lambda: bool(held_surface), 20)
+                    before = full_completions
+                    full_request = asyncio.create_task(case.console._sync_native_console_chat_ui())
+                    assert await _until(lambda: case.console._console_sync_requested, 20)
+                    assert not held_surface["future"].done()
+                    surface_lock.release()
+                    surface_locked = False
+                    assert await asyncio.wait_for(full_request, 20) is False
+                    assert await _until(
+                        lambda: full_completions > before
+                        and "result" in held_surface["row"]
+                        and composer_run_controls.preparing_poll_record(case.console) is record,
+                        20,
+                    ), "FULL requested across the original tab await was lost"
+                    assert held_surface["row"]["result"] is False
+
+                    before = full_completions
+                    history._append_lock.release()
+                    history_locked = False
+                    assert await _until(provider_entered.is_set, 60)
+                    assert not custody_task.done()
+                    assert composer_run_controls.preparing_poll_record(case.console) is None
+                    assert await _until(lambda: full_completions > before, 20)
+                    before = full_completions
+                    provider_release.set()
+                else:
+                    # Custody cancellation is a separate lifecycle edge. This
+                    # COMMITTING hold precedes the visible Stop affordance.
+                    before = full_completions
+                    assert custody_task.cancel()
+                    assert custody_task.cancelling()
+                    assert composer_run_controls.preparing_poll_record(case.console) is None
+                    history._append_lock.release()
+                    history_locked = False
+                    provider_release.set()
+                    assert not case.provider_calls
+                # Runtime custody retires in the task's original done callback,
+                # which may not have run when Task.done() first becomes true.
+                assert await _until(
+                    lambda: custody_task.done()
+                    and all(
+                        item.task is not custody_task
+                        for item in case.runtime._turn_custody.values()
+                    )
+                    and custody_task not in case.controller._active_submit_preparations,
+                    60,
+                )
+                await asyncio.gather(custody_task, return_exceptions=True)
+                assert all(
+                    item.task is not custody_task
+                    for item in case.runtime._turn_custody.values()
+                )
+                assert custody_task not in case.controller._active_submit_preparations
+                assert await _until(
+                    lambda: full_completions > before
+                    and case.console._console_transcript_sync_timer is None,
+                    20,
+                ), "The completed/cancelled turn did not hand back through FULL"
+                assert len(case.provider_calls) == (1 if route == "enter" else 0)
+                assert not provider_timeouts
+                record_property("promoted_edge_full_completions", full_completions)
+        finally:
+            provider_release.set()
+            if surface_locked:
+                surface_lock.release()
+            if history_locked:
+                history._append_lock.release()
+            case.probe.release.set()
+            if full_request is not None and not full_request.done():
+                await asyncio.wait_for(full_request, 20)
 
 
 @pytest.mark.parametrize("enabled", [False, True], ids=["disabled", "enabled-control"])
@@ -608,9 +1058,14 @@ async def test_full_request_during_poll_await_replays_with_current_owner(
                     return
                 assert type(value) is Worker
                 work, task = value._work, value._task
-                # The same FULL task also starts unrelated display workers.
-                # Select the issued FULL body before asserting its route.
-                if not inspect.iscoroutine(work) or work.cr_code is not full_code:
+                # Textual retains the issued bound async callback until
+                # the worker invokes it. Select the original body and owner;
+                # the same FULL task also starts unrelated display workers.
+                if (
+                    not inspect.ismethod(work)
+                    or work.__self__ is not console
+                    or work.__func__ is not ChatScreen._sync_native_console_chat_ui
+                ):
                     return
                 assert frame.f_locals["self"] is case.host.workers
                 assert value.node is console

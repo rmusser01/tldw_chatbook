@@ -4,7 +4,7 @@ import asyncio
 import sys
 import threading
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -25,18 +25,37 @@ from tldw_chatbook.Widgets.Console.console_transcript import (
 pytestmark = pytest.mark.bootstrap_profile
 
 
-class BannerPainted(Exception):
-    pass
-
-
 def _transcript_screen(screen, store, controller):
     paints, fetches = [], []
 
     def paint(value):
         paints.append(value)
-        raise BannerPainted
 
+    # Reuse complete downstream collaborators: recording the banner is not
+    # an exception and cannot stand in for successful publication.
+    from Tests.UI.test_console_turn_activity_line import _sync_stub
+
+    downstream, _unused_transcript = _sync_stub("")
+    for name in (
+        "_console_speech_states", "_console_image_preparing", "_image", "_video",
+        "_ensure_console_image_view", "_recent_console_image_messages",
+    ):
+        setattr(screen, name, getattr(downstream, name))
+    screen._native_console_transcript_fingerprint = lambda messages: tuple(
+        (message.id, message.content) for message in messages
+    )
+    screen._current_console_run_status_value = lambda: (
+        controller.run_state_for(store.active_session_id).status.value
+    )
+    screen._rendered_console_terminal_receipts = lambda *_args, **_kwargs: ()
+    screen._console_runtime = lambda: None
+    screen._sync_console_transcript_guidance = lambda: None
+    screen._last_native_transcript_refresh_key = None
+    screen._console_transcript_sync_token = None
+    screen._console_transcript_sync_ticks = 0
     transcript = Mock()
+    transcript.refresh_messages = AsyncMock()
+    transcript.apply_turn_activity.return_value = ""
     transcript.set_memory_banner_presentation.side_effect = paint
     screen.query_one = lambda *_args: transcript
     screen._console_transcript_region_or_none = lambda: None
@@ -75,6 +94,7 @@ def _transcript_screen(screen, store, controller):
     screen._agent = SimpleNamespace(
         console_turn_activity=lambda: None,
         console_turn_activity_abandon_action=lambda: None,
+        sync_unproven_cleanup=lambda *_args: None,
     )
     screen._context_spend = SimpleNamespace(
         _context_inputs=lambda owner,
@@ -86,10 +106,9 @@ def _transcript_screen(screen, store, controller):
 
 
 async def _render(screen, *, force=False):
-    try:
-        await ChatScreen._sync_native_console_transcript(screen, force=force)
-    except BannerPainted:
-        pass
+    await ChatScreen._sync_native_console_transcript(screen, force=force)
+    assert screen._last_native_transcript_refresh_key is not None
+    assert screen._last_native_transcript_session_id == screen._console_chat_store.active_session_id
 
 
 @pytest.mark.asyncio
@@ -130,6 +149,38 @@ async def test_context_publication_reopens_unchanged_transcript_gate(tmp_path):
         await _render(screen)
         assert len(fetches) == 2, "settled memory inputs should keep the tick gate"
         assert paints == [None, None]
+    finally:
+        await asyncio.gather(*tasks, return_exceptions=True)
+        database.close()
+
+
+@pytest.mark.asyncio
+async def test_same_owner_context_display_can_be_read_without_restarting_io(tmp_path):
+    """An expired presentation can be retained only until its exact owner changes."""
+    database, store, controller, screen, tasks = _screen(tmp_path)
+    try:
+        snapshot = spend.ConsoleContextReadSnapshot.for_screen(screen, max_age=1.0)
+        session_id = store.active_session_id
+        assert await snapshot.warm(controller, session_id)
+        published = snapshot.value
+        assert published is not None
+        snapshot.at = snapshot.config_projection.at = 0.0
+        scheduled = len(tasks)
+        with _actual_calls(controller) as calls:
+            read = getattr(snapshot, "current_inputs", None)
+            assert callable(read), "No same-owner presentation read avoids scheduling I/O"
+            assert read(controller, session_id) is published
+            assert len(tasks) == scheduled
+            assert calls == {"config": 0, "live_policy": 0}
+            # A real transcript mutation invalidates the old presentation. The
+            # no-refresh read cannot return it or launch work for the new owner.
+            store.append_message(
+                session_id, role=ConsoleMessageRole.USER, content="New input"
+            )
+            assert read(controller, session_id) is None
+            assert len(tasks) == scheduled
+            assert calls == {"config": 0, "live_policy": 0}
+        assert snapshot.value is published
     finally:
         await asyncio.gather(*tasks, return_exceptions=True)
         database.close()

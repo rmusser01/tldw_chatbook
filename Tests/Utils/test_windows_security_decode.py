@@ -3,6 +3,7 @@
 import ctypes as C
 import os
 import struct
+import weakref
 from collections import Counter
 from types import SimpleNamespace
 
@@ -27,7 +28,10 @@ def _descriptor(*, owner=1000, trustee=1000, mask=1, flags=0, padding=0, relativ
 def native(monkeypatch):
     """Controlled valid buffers exercise the ABI seam on every Python platform."""
     api = object.__new__(files._Native)
-    state = SimpleNamespace(data=_descriptor(), allocations={}, counts=Counter(), error=None)
+    state = SimpleNamespace(
+        data=_descriptor(), buffers=[], counts=Counter(), error=None,
+        responses=[], sizes=[], length=None,
+    )
     api.user_sid = "S-1-5-1000"
 
     def address(pointer):
@@ -51,22 +55,32 @@ def native(monkeypatch):
         assign(output, address(descriptor) + offset if offset else None)
         return 1
 
-    def acquire(handle, kind, flags, owner_out, group, dacl_out, sacl, descriptor_out):
-        state.counts["acquire"] += 1
-        if state.error == "acquire":
-            return 5
-        allocation = C.create_string_buffer(state.data)
-        pointer = C.addressof(allocation)
-        state.allocations[pointer] = allocation
-        assign(descriptor_out, pointer)
-        # Acquisition itself does not count as decoding the owner.
-        assign(owner_out, pointer + 20)
-        dacl(pointer, None, dacl_out, None)
-        return 0
+    def query(handle, flags, buffer, size, needed):
+        assert handle == 7 and flags == 5
+        state.counts["query"] += 1
+        state.sizes.append(size)
+        state.buffers.append(weakref.ref(buffer))
+        required = len(state.data)
+        if state.responses:
+            status, required = state.responses.pop(0)
+        elif state.error == "acquire":
+            status = -1073741790  # STATUS_ACCESS_DENIED
+        else:
+            status = -1073741789 if size < required else 0  # STATUS_BUFFER_TOO_SMALL
+        C.cast(needed, C.POINTER(files._U32))[0] = required
+        if status == 0:
+            assert len(state.data) <= size
+            C.memmove(buffer, state.data, len(state.data))
+            state.counts["acquire"] += 1
+        return status
 
     def free(pointer):
         state.counts["free"] += 1
-        del state.allocations[address(pointer)]
+        raise AssertionError("call-local query buffers must not be passed to LocalFree")
+
+    def length(pointer):
+        state.counts["length"] += 1
+        return len(state.data) if state.length is None else state.length
 
     def sid_string(pointer):
         state.counts["sid"] += 1
@@ -88,23 +102,25 @@ def native(monkeypatch):
         return result
 
     api.advapi = SimpleNamespace(
-        GetSecurityInfo=acquire, GetSecurityDescriptorLength=lambda pointer: len(state.data),
+        GetSecurityDescriptorLength=length,
         GetSecurityDescriptorOwner=owner, GetSecurityDescriptorDacl=dacl, GetAce=ace,
     )
+    api.nt = SimpleNamespace(NtQuerySecurityObject=query, RtlNtStatusToDosError=lambda status: 5)
     api.kernel = SimpleNamespace(LocalFree=free)
     api.sid_string = sid_string
     api.check = check
     monkeypatch.setattr(files.C, "WinError", lambda code: PermissionError(code, "native refusal"), raising=False)
     yield api, state
-    assert not state.allocations
+    assert all(buffer() is None for buffer in state.buffers)
+    assert state.counts["free"] == 0
 
 
-def test_repeated_bytes_still_acquire_and_free_each_native_descriptor(native):
+def test_repeated_bytes_still_query_each_native_descriptor(native):
     api, state = native
     assert api.security(7, False) == (1000, 0o600)
     first = state.counts.copy()
     assert api.security(7, False) == (1000, 0o600)
-    assert state.counts["acquire"] == state.counts["free"] == 2
+    assert state.counts["query"] == state.counts["acquire"] == 2
     assert state.counts["sid"] == first["sid"]
     assert state.counts["ace"] == first["ace"]
 
@@ -118,7 +134,7 @@ def test_changed_permissions_are_observed_on_the_same_handle(native):
     assert api.security(7, False) == (-1, 0o644)
     state.data = _descriptor()
     assert api.security(7, False) == (1000, 0o600)
-    assert state.counts["acquire"] == state.counts["free"] == 4
+    assert state.counts["query"] == state.counts["acquire"] == 4
 
 
 def test_directory_flag_and_current_user_are_part_of_decode_identity(native):
@@ -136,7 +152,7 @@ def test_warm_decode_never_hides_a_fresh_native_acquisition_failure(native):
     state.error = "acquire"
     with pytest.raises(PermissionError):
         api.security(7, False)
-    assert state.counts["acquire"] == 2 and state.counts["free"] == 1
+    assert state.counts["query"] == 2 and state.counts["acquire"] == 1
 
 
 def test_failed_decode_is_not_cached_and_releases_the_acquired_descriptor(native):
@@ -146,7 +162,7 @@ def test_failed_decode_is_not_cached_and_releases_the_acquired_descriptor(native
         api.security(7, False)
     state.error = None
     assert api.security(7, False) == (1000, 0o600)
-    assert state.counts["acquire"] == state.counts["free"] == 2
+    assert state.counts["query"] == state.counts["acquire"] == 2
     assert state.counts["sid"] == 3
 
 
@@ -160,16 +176,15 @@ def test_native_decoder_refusal_is_not_cached_or_replaced_by_an_older_result(nat
         api.security(7, False)
     state.error = None
     assert api.security(7, False) == (1000, 0o644)
-    assert state.counts["acquire"] == state.counts["free"] == 3
+    assert state.counts["query"] == state.counts["acquire"] == 3
 
 
-@pytest.mark.parametrize("options", [{"padding": 4096}, {"relative": False}])
-def test_ineligible_descriptors_keep_the_original_uncached_decoder(native, options):
+def test_large_descriptors_keep_the_original_uncached_decoder(native):
     api, state = native
-    state.data = _descriptor(**options)
+    state.data = _descriptor(padding=4096)
     assert api.security(7, False) == api.security(7, False) == (1000, 0o600)
     assert state.counts["sid"] == 4
-    assert state.counts["acquire"] == state.counts["free"] == 2
+    assert state.counts["acquire"] == 2 and state.counts["query"] == 4
 
 
 def test_successful_decode_retention_has_a_fixed_entry_bound(native):
@@ -237,9 +252,8 @@ def test_native_decode_reuse_preserves_fresh_acquisition_and_records_cost(tmp_pa
     descriptor = windows.open(tmp_path / "measured-security", windows.O_CREAT | windows.O_EXCL | windows.O_RDWR, 0o600)
     native = files._native()
     real = native.advapi
-    kernel = native.kernel
+    nt = native.nt
     counts = Counter()
-    allocations = set()
 
     class Observed:
         def __getattr__(self, name):
@@ -248,47 +262,36 @@ def test_native_decode_reuse_preserves_fresh_acquisition_and_records_cost(tmp_pa
                 return function
             def call(*args):
                 counts[name] += 1
-                result = function(*args)
-                if name == "GetSecurityInfo" and result == 0:
-                    allocations.add(C.cast(args[-1], C.POINTER(files._P))[0])
-                return result
+                return function(*args)
             return call
 
-    class ObservedKernel:
+    class ObservedNt:
         def __getattr__(self, name):
-            if name != "LocalFree":
-                return getattr(kernel, name)
-            def free(pointer):
-                address = C.cast(pointer, files._P).value
-                result = kernel.LocalFree(pointer)
-                if address in allocations and not result:
-                    allocations.remove(address)
-                    counts["descriptor_free"] += 1
-                return result
-            return free
+            function = getattr(nt, name)
+            if name != "NtQuerySecurityObject":
+                return function
+            def query(*args):
+                counts[name] += 1
+                return function(*args)
+            return query
 
     def uncached(handle):
-        owner, dacl, acquired = files._P(), files._P(), files._P()
-        result = real.GetSecurityInfo(handle, 1, 5, C.byref(owner), None, C.byref(dacl), None, C.byref(acquired))
-        if result:
-            raise C.WinError(result)
-        try:
-            return native._decode_security(owner, dacl, False, native.user_sid)
-        finally:
-            native.kernel.LocalFree(acquired)
+        return native._decode_descriptor(
+            native.security_descriptor(handle), False, native.user_sid
+        )
 
     try:
         handle = native.handle(descriptor)
         native._decoded_security.cache_clear()
         with monkeypatch.context() as patch:
             patch.setattr(native, "advapi", Observed())
-            patch.setattr(native, "kernel", ObservedKernel())
+            patch.setattr(native, "nt", ObservedNt())
             assert native.security(handle, False) == (1000, 0o600)
             first = counts.copy()
             for _ in range(10):
                 assert native.security(handle, False) == (1000, 0o600)
-            assert counts["GetSecurityInfo"] == 11
-            assert counts["descriptor_free"] == 11 and not allocations
+            assert counts["NtQuerySecurityObject"] == 11
+            assert counts["GetSecurityInfo"] == 0
             assert counts["GetAce"] == first["GetAce"]
             assert counts["ConvertSidToStringSidW"] == first["ConvertSidToStringSidW"]
         samples = {"cached": [], "uncached": []}
@@ -327,26 +330,109 @@ def test_real_warm_acl_observes_public_grant_and_hardening(tmp_path):
         windows.close(descriptor)
 
 
-def test_admission_descriptor_is_fresh_and_copied_before_release(native):
+def test_admission_descriptor_is_fresh_and_copied_from_call_local_buffer(native):
     api, state = native
     first = state.data
     assert api.security(7, False, with_descriptor=True) == (1000, 0o600, first)
-    assert not state.allocations
+    assert all(buffer() is None for buffer in state.buffers)
     state.data = _descriptor(trustee=999)
     assert api.security(7, False, with_descriptor=True) == (1000, 0o644, state.data)
-    assert state.counts["acquire"] == state.counts["free"] == 2
+    assert state.counts["query"] == state.counts["acquire"] == 2
     assert first != state.data
     # Ordinary two-positional-argument return shape remains unchanged.
     assert api.security(7, False) == (1000, 0o644)
 
 
-@pytest.mark.parametrize("options", [{"relative": False}, {"padding": 5000}])
-def test_admission_unrepresentable_descriptor_refuses_but_ordinary_stays_compatible(
-    native, options
-):
+def test_admission_oversized_descriptor_refuses_but_ordinary_stays_compatible(native):
     api, state = native
-    state.data = _descriptor(**options)
+    state.data = _descriptor(padding=5000)
     with pytest.raises(OSError, match="windows_admission_descriptor_unavailable"):
         api.security(7, False, with_descriptor=True)
-    assert not state.allocations
+    assert all(buffer() is None for buffer in state.buffers)
     assert api.security(7, False) == (1000, 0o600)
+
+
+def test_exact_metadata_descriptor_bound_keeps_byte_only_decode_cache(native):
+    api, state = native
+    state.data = _descriptor(padding=4096 - len(_descriptor()))
+    assert len(state.data) == 4096
+    assert api.security(7, False, with_descriptor=True) == (1000, 0o600, state.data)
+    first = state.counts.copy()
+    assert api.security(7, False, with_descriptor=True) == (1000, 0o600, state.data)
+    assert state.counts["query"] == 4 and state.counts["acquire"] == 2
+    assert state.counts["sid"] == first["sid"]
+
+
+@pytest.mark.parametrize("status", [-1073741789, -2147483643])
+def test_native_buffer_growth_retries_only_with_a_larger_bounded_length(native, status):
+    api, state = native
+    state.responses = [(status, 1024)]
+    assert api.security(7, False) == (1000, 0o600)
+    assert state.sizes == [512, 1024]
+    assert state.counts["query"] == 2 and state.counts["acquire"] == 1
+
+
+@pytest.mark.parametrize("required", [0, 512, 65537])
+def test_native_short_buffer_refuses_invalid_growth(native, required):
+    api, state = native
+    state.responses = [(-1073741789, required)]
+    with pytest.raises(PermissionError):
+        api.security(7, False)
+    assert state.sizes == [512] and state.counts["length"] == 0
+
+
+def test_native_descriptor_growth_has_a_finite_retry_bound(native):
+    api, state = native
+    state.responses = [(-1073741789, size) for size in (1024, 2048, 4096, 8192)]
+    with pytest.raises(OSError, match="windows_security_descriptor_unstable"):
+        api.security(7, False)
+    assert state.sizes == [512, 1024, 2048, 4096]
+    assert state.counts["length"] == state.counts["acquire"] == 0
+
+
+def test_largest_native_descriptor_keeps_ordinary_uncached_projection(native):
+    api, state = native
+    state.data = _descriptor(padding=65536 - len(_descriptor()))
+    assert api.security(7, False) == api.security(7, False) == (1000, 0o600)
+    assert state.sizes == [512, 65536, 512, 65536]
+    assert state.counts["sid"] == 4
+
+
+@pytest.mark.parametrize("required", [0, 19, 513])
+def test_success_with_invalid_returned_length_fails_before_native_decode(native, required):
+    api, state = native
+    state.responses = [(0, required)]
+    with pytest.raises(OSError, match="windows_security_descriptor_invalid"):
+        api.security(7, False)
+    assert state.counts["length"] == state.counts["owner"] == 0
+
+
+@pytest.mark.parametrize("length", [0, 19, 61])
+def test_descriptor_length_cannot_escape_fresh_returned_bytes(native, length):
+    api, state = native
+    assert len(state.data) == 60
+    state.length = length
+    with pytest.raises(OSError, match="windows_security_descriptor_invalid"):
+        api.security(7, False)
+    assert state.counts["length"] == 1 and state.counts["owner"] == 0
+
+
+@pytest.mark.parametrize("metadata", [False, True])
+def test_nonrelative_nt_result_is_invalid_on_both_routes(native, metadata):
+    api, state = native
+    state.data = _descriptor(relative=False)
+    with pytest.raises(OSError, match="windows_security_descriptor_invalid"):
+        api.security(7, False, with_descriptor=metadata)
+    assert state.counts["length"] == state.counts["owner"] == 0
+
+
+def test_malformed_fresh_ace_does_not_reuse_an_older_decode(native):
+    api, state = native
+    assert api.security(7, False) == (1000, 0o600)
+    changed = bytearray(state.data)
+    struct.pack_into("<H", changed, 42, 4)
+    state.data = bytes(changed)
+    with pytest.raises(OSError, match="malformed_windows_acl"):
+        api.security(7, False)
+    state.data = _descriptor(trustee=2000)
+    assert api.security(7, False) == (1000, 0o644)

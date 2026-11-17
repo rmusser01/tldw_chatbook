@@ -58,6 +58,13 @@ def leader():
 
 first=threading.Thread(target=follower,name='initialization-follower')
 second=threading.Thread(target=leader,name='initialization-leader')
+original_serving=storage._hold_serving
+if sys.platform=='win32':
+ # Select the first-use fallback for the measured nested acquisition only.
+ storage._hold_serving=lambda hold: (
+  not (threading.current_thread() is first and admitted.is_set())
+  and original_serving(hold)
+ )
 threading.setprofile_all_threads(observe)
 try:
  first.start();assert admitted.wait(5),errors
@@ -111,6 +118,7 @@ finally:
  db.db_path=path
  os.environ['TLDW_CONFIG_PATH']=str(selected)
  if pause is not None:pause.resume()
+ storage._hold_serving=original_serving
  threading.setprofile_all_threads(old_thread);sys.setprofile(old_main)
  db.close_connection();storage._shutdown()
 assert not first.is_alive() and not second.is_alive()

@@ -44,7 +44,7 @@ import time
 from dataclasses import dataclass
 from typing import Literal
 
-from tldw_chatbook.Tools.remote_workspace_transport import (
+from tldw_chatbook.Tools.remote_transport_models import (
     RemoteCallResult,
     TransportFailureKind,
 )

@@ -350,6 +350,23 @@ FAST_LANE_TARGETS = (
     "Tests/MCP/test_control_plane_permissions.py::test_remember_exact_inputs_writer_failure_preserves_error_and_stale_rule",
     "Tests/MCP/test_unified_control_plane_service.py::test_remember_exact_inputs_persistence_failure_keeps_current_call",
     "Tests/Canvas/test_canvas_kill_switch.py",
+    # TASK-34601.1 / PR3534: finite native source/config ownership; each
+    # fixture selects its own source or runs in a private-profile child.
+    "Tests/Backup_Recovery/test_permission_member_admission.py",
+    "Tests/Utils/test_sensitive_config_read_scope.py",
+    "Tests/Backup_Recovery/test_execution_activation_reads.py",
+    "Tests/Backup_Recovery/test_execution_source_groups.py",
+    # PR3534 Task3t/3u: native Windows evidence and fresh activation controls.
+    "Tests/Backup_Recovery/test_windows_acquisition_evidence.py",
+    "Tests/Backup_Recovery/test_windows_evidence_content_prerequisites.py",
+    "Tests/Backup_Recovery/test_windows_evidence_fallbacks.py",
+    "Tests/Backup_Recovery/test_windows_evidence_lifetime.py",
+    "Tests/Backup_Recovery/test_activation_control_observation.py",
+    "Tests/Backup_Recovery/test_activation_control_restrictions.py",
+    "Tests/Personal_Context/test_restore_marker_imports.py",
+    "Tests/Tools/test_remote_status_imports.py",
+    "Tests/Tools/test_remote_binding_status.py",
+    "Tests/Tools/test_remote_transport_call.py",
 )
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.
@@ -982,6 +999,16 @@ ADMISSION_2_TARGETS = (
     # TASK-37600: character launch selection and modal resume (bootstrap_profile).
     "Tests/UI/test_console_session_controller.py::test_character_launch_uses_worked_chat_pair_over_stale_controls",
     "Tests/UI/test_console_session_controller.py::test_character_launch_aligns_workspace_before_modal_resume",
+    "Tests/Chat/test_console_preview_permission_forwarding.py",
+    "Tests/Chat/test_response_rules_finite_assembly.py",
+    "Tests/Backup_Recovery/test_mcp_nested_join.py",
+    "Tests/Backup_Recovery/test_config_nested_join.py",
+    "Tests/Config/test_user_data_directory_publication.py",
+    "Tests/Chat/test_console_preparation_scheduling.py",
+    "Tests/UI/test_console_transcript_sync_gate.py",
+    "Tests/UI/test_console_transcript_context_projection.py::test_context_publication_reopens_unchanged_transcript_gate",
+    "Tests/UI/test_console_transcript_context_projection.py::test_custom_live_reader_keeps_original_post_gate_cadence_and_thread",
+    "Tests/Chat/test_console_configuration_preparation.py::test_received_configuration_builds_fresh_resident_references_once_per_capture",
 )
 
 #: The third admission-sensitive job's invocation, exactly, in order (Roleplay

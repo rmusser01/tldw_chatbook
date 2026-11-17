@@ -12,7 +12,7 @@ import asyncio
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import replace
 from functools import partial
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from loguru import logger
 from tldw_chatbook.Utils.input_validation import escape_markup
@@ -32,16 +32,18 @@ from ...Chat.console_image_view import (
     resolve_react_character_expressions,
     resolve_show_character_avatar,
 )
-from ...Widgets.Console.console_character_picker_modal import (
-    ConsoleCharacterChoice,
-    ConsoleCharacterOption,
-)
 from tldw_chatbook.Utils.character_display_text import sanitize_character_display_label
 from .session import (
     _canonical_card_character_id,
     _character_session_prompt_seed,
     _console_global_user_display_name,
 )
+
+if TYPE_CHECKING:
+    from ...Widgets.Console.console_character_picker_modal import (
+        ConsoleCharacterChoice,
+        ConsoleCharacterOption,
+    )
 
 _EXPRESSION_SPEC_CACHE_MAX = 16
 
@@ -152,6 +154,8 @@ class ConsoleCharacterController:
         except Exception:
             logger.opt(exception=True).warning("Character picker: list failed.")
             return ()
+        from ...Widgets.Console.console_character_picker_modal import ConsoleCharacterOption
+
         options: list[ConsoleCharacterOption] = []
         for card in cards or ():
             card_id = _canonical_card_character_id(card.get("id"))

@@ -14,9 +14,11 @@ import time
 import venv
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
+
+from Tests.Backup_Recovery.config_test_support import select_config_source
 
 import tldw_chatbook.Tools.git_tool_impls as git_tool_impls
 import tldw_chatbook.Tools.workspace_tool_executor as workspace_tool_executor_module
@@ -43,6 +45,17 @@ from tldw_chatbook.Tools.workspace_tool_protocol import (
 )
 from tldw_chatbook.Tools.workspace_tool_worker import run_workspace_worker
 from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Tools.remote_root_types import RemoteRoot
+
+
+@pytest.fixture(autouse=True)
+def _selected_config_source(monkeypatch, isolate_test_environment):
+    """Bind real guarded reads to this case's private HOME and config."""
+    select_config_source(
+        monkeypatch, isolate_test_environment / "config" / "config.toml"
+    )
 
 
 _OPERATION_ID = "fixed-operation-id"
@@ -2375,7 +2388,7 @@ def test_parent_validates_every_patch_target_before_worker_spawn(
     (workspace / "note.txt").write_bytes(b"before\n")
     runtime_config = workspace / "runtime-config.toml"
     runtime_config.write_bytes(b"SECRET\n")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(runtime_config))
+    select_config_source(monkeypatch, runtime_config)
     diff = (
         TWO_FILE_PATCH.replace("other.txt", "runtime-config.toml")
         .replace("first", "SECRET")
@@ -2416,7 +2429,7 @@ def test_parent_serializes_runtime_sensitive_exclusions_for_every_read_operation
     (workspace / "note.txt").write_text("needle\n", encoding="utf-8")
     runtime_config = workspace / "runtime-config.toml"
     runtime_config.write_text("needle = 'SECRET'\n", encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(runtime_config))
+    select_config_source(monkeypatch, runtime_config)
 
     request = WorkspaceToolExecutor(workspace)._build_request(
         operation, arguments, intent="read"
@@ -2451,7 +2464,7 @@ def test_parent_serializes_runtime_sensitive_exclusions_for_every_git_operation(
     config.mkdir()
     runtime_config = config / "runtime-config.toml"
     runtime_config.write_text("api_key = 'SECRET'\n", encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(runtime_config))
+    select_config_source(monkeypatch, runtime_config)
 
     request = WorkspaceToolExecutor(workspace)._build_request(
         operation, arguments, intent="read"
@@ -2483,7 +2496,7 @@ def test_parent_refuses_runtime_sensitive_git_path_before_worker_spawn(
     config.mkdir()
     runtime_config = config / "runtime-config.toml"
     runtime_config.write_text("api_key = 'SECRET'\n", encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(runtime_config))
+    select_config_source(monkeypatch, runtime_config)
 
     with pytest.raises(WorkspaceToolExecutionError) as caught:
         WorkspaceToolExecutor(workspace)._build_request(
@@ -2516,7 +2529,7 @@ def test_pinned_worker_preserves_runtime_git_exclusions_after_environment_scrubb
     _git(repository, "commit", "-m", "initial")
     runtime_config.write_text("api_key = 'NEW_SECRET'\n", encoding="utf-8")
     ordinary.write_text("ordinary v1\nordinary v2\n", encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(runtime_config))
+    select_config_source(monkeypatch, runtime_config)
 
     executor = WorkspaceToolExecutor(workspace)
     status_request = executor._build_request(
@@ -2580,7 +2593,7 @@ def test_parent_refuses_runtime_config_read_before_worker_spawn(
     workspace.mkdir()
     runtime_config = workspace / "runtime-config.toml"
     runtime_config.write_text("SECRET", encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(runtime_config))
+    select_config_source(monkeypatch, runtime_config)
 
     with pytest.raises(WorkspaceToolExecutionError) as caught:
         WorkspaceToolExecutor(workspace)._build_request(
@@ -2659,7 +2672,7 @@ def test_parent_exclusions_survive_root_replacement_and_worker_env_stripping(
     locator.mkdir()
     runtime_config = locator / "runtime-config.toml"
     runtime_config.write_text("A_CONFIG_SECRET", encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(runtime_config))
+    select_config_source(monkeypatch, runtime_config)
     request = WorkspaceToolExecutor(locator)._build_request(
         "fs_grep",
         {"pattern": "CONFIG_SECRET", "mode": "content", "max_results": 100},

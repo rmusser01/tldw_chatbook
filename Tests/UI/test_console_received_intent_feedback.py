@@ -564,6 +564,19 @@ async def test_actual_send_paints_sending_and_accepts_input_within_100ms(
             ),
             10,
         )
+        # Immediate feedback is a mounted Console dependency, even when its
+        # optional idle pre-import pass has not run. Observe; never warm it here.
+        owed_feedback_imports = [
+            name
+            for name in (
+                "tldw_chatbook.UI.Console_Modules.send_acknowledgement",
+                "tldw_chatbook.UI.Console_Modules.sent_draft",
+            )
+            if (module := sys.modules.get(name)) is None
+            or getattr(getattr(module, "__spec__", None), "_initializing", False)
+        ]
+        assert not owed_feedback_imports, owed_feedback_imports
+        assert vars(case.console).get("_console_send_ack") is None
         preparing = _NaturalPreparingFrame(case)
         typing = _TimedInputFrame(case.host, case.console, case.composer, case.probe)
         loop = asyncio.get_running_loop()

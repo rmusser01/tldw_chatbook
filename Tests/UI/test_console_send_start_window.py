@@ -566,3 +566,44 @@ async def test_exceptional_submission_retires_only_its_send_start():
         assert not send_start_open(owner, long_limit)
         assert send_start_open(other_owner, long_limit)
     assert not send_start_open(other_owner, long_limit)
+
+
+@pytest.mark.asyncio
+async def test_exact_custody_start_survives_display_pruning_until_its_provider():
+    """A display caller's short limit must not erase a live turn's own start."""
+    from tldw_chatbook.Chat import console_send_start as starts
+
+    class Owner:
+        pass
+
+    owner = Owner()
+    enter_provider, provider_entered, finish = (
+        asyncio.Event() for _ in range(3)
+    )
+
+    async def work():
+        await enter_provider.wait()
+        starts.note_provider_request()
+        provider_entered.set()
+        await finish.wait()
+
+    task = starts.start_custody_task(owner, work())
+    try:
+        # Exercise the actual pruning, without changing the clock or extending
+        # the existing three-second synchronous display exception.
+        assert not starts.send_start_open(owner, 0.0)
+        read = getattr(starts, "custody_send_start_open", None)
+        assert callable(read), "No exact-task start reader survives display pruning"
+        assert read(task)
+        with starts.submission_send_start(Owner()):
+            starts.note_provider_request()
+        assert read(task), "An unrelated provider request ended this custody start"
+        enter_provider.set()
+        await asyncio.wait_for(provider_entered.wait(), 5)
+        assert not task.done()
+        assert not read(task), "The owning provider request did not end the start"
+    finally:
+        enter_provider.set()
+        finish.set()
+        await asyncio.wait_for(task, 5)
+    assert not read(task)

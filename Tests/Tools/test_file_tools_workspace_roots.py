@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from Tests.Backup_Recovery.config_test_support import select_config_source
+
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
 from tldw_chatbook.Tools import file_operation_tools as fot
@@ -18,6 +20,14 @@ from tldw_chatbook.Tools.file_operation_tools import (
     ReadFileTool,
     WriteFileTool,
 )
+
+
+@pytest.fixture(autouse=True)
+def _selected_config_source(monkeypatch, isolate_test_environment):
+    """Bind guarded folder validation to this case's private config source."""
+    select_config_source(
+        monkeypatch, isolate_test_environment / "config" / "config.toml"
+    )
 
 
 def _symlink_directory(target: Path, link: Path) -> None:

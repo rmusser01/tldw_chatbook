@@ -4,6 +4,70 @@ This document describes the ADR-126 complete local backup and restore subsystem:
 
 Qualification keeps native identity and operation verdicts fresh on every call. Only parsed installed evidence is cached, by its path and descriptor-verified file generation (device, file identity, size, nanosecond modification and change times). Windows uses native ChangeTime. Changed, missing, malformed or concurrently replaced evidence is refused; a prior refusal is never retained as an authorization cache.
 
+Windows owner/DACL observations query the current handle with
+`NtQuerySecurityObject`. A call-local buffer starts at 512 bytes and may grow
+within four attempts to at most 64 KiB. The existing owner/ACL projection is
+unchanged. Only decoding of identical descriptor bytes is cached (128 entries,
+4096 bytes each); every observation still queries native security. Larger
+descriptors are decoded without retention for ordinary reads and refused for
+admission metadata. This does not cache permission decisions or extend handles.
+
+Sensitive database-path assembly uses one synchronous
+`config_participants.operation(config)` for its related public getters. Nested
+reads retain their native checks and reuse the operation's admission. Custom
+getters execute within that configuration scope. An individual getter failure
+prevents memo publication; outer admission or retirement failure propagates before
+returning a tuple. See ADR126's 2026-11-15 amendment.
+
+An implicit or exact native-path nested join of the installed, write-capable config operation performs
+one full fresh source/parent validation at raw-scope entry. Config classifies
+existing custody without I/O, then captures rollback state only after that entry
+succeeds. Body and context-exit failures still restore globals and mark the owner
+failed. Other target forms, snapshots, readonly and other-source routes retain their
+original ordering. All payload/effect/final checks and physical retirement remain;
+this is same-call consolidation, not permission reuse. See ADR126's nested
+configuration admission amendment.
+
+On a cold sensitive-input miss, the single-file, skill-trust, database and
+container getters share that same finite owner. The first live key/hit route is
+unchanged; final key validation and memo publication follow scope retirement.
+
+Installed hook-permission operations admit their main file, lock, randomized
+temporary and parent through one existing related-path acquisition. Both fresh
+hook reads and grant reconciliation remain, with the same member checks, lock
+ordering, pause/refusal and physical retirement. Only the registered
+`hooks.permissions` route uses this grouped path (ADR126, Task3z).
+
+Installed local/context/permission operations admit their selected members as one
+related-path group, including the permission backup. During construction,
+`raw_participants.scope` retains one separate canonical observation lease. Initial
+selection supplies structural owner/path facts to member declaration and existing
+participant registration. Four live gates still derive fresh recovery witnesses:
+initial selection, pre-source-lock validation, post-wait preflight and final
+publication. Active operations and file effects retain their original checks.
+The existing raw state takes ownership before publication and preserves failure,
+pause and native retirement behavior. A recovered destination keeps its canonical
+observer distinct from the selected member group. This synchronous declaration
+is not a reusable witness or payload cache. The permission-load observation still
+belongs to each read, including separate pre-save and post-save preview passes.
+
+Each `activation_permission` call reads control records and the registry once for
+its startup and owner-policy checks. An explicit deny-only `startup_restriction`
+runs first; Allow still requires the fresh built-in checks. The next owner reads
+fresh facts, including duplicate owners. Standalone startup inspection is unchanged;
+replacing that module function is not an activation customization contract. Source
+checks, generation requirements, approvals and native lease lifetimes remain live.
+
+`RecoveryAdmissionGuard` admits its distinct missing sources as one explicit
+execution group. `_acquire_execution_storage` verifies each member's full
+selection before and after one ordinary related-path acquisition; ordinary
+`acquire_storage` companions remain primary-only. Each original ordered source
+and owner check still reads fresh facts. One pending `_Acquisition` preserves
+pause refusal through preflight and retires before payload execution; the actual
+lease lasts through the effect. Nested and transferred scopes borrow their
+parent's leases and own only newly admitted groups. See ADR-126's explicit
+execution-source group amendment.
+
 ## Authoritative files
 
 | Concern | File | Key symbols |
@@ -61,6 +125,8 @@ Interrupted operations recover through `recover <operation-id> --finish|--rollba
 Same-process initialization followers wait on the existing `_changed` condition (TASK-35595). Initializer retirement/error, acquisition close and local-pause cancellation notify under the same lock. The original acquisition/path/provenance checks run at entry and after waking; native admission still follows before any dependent effect. Removing the 10 ms wake timer avoids repeating native path checks under the shared lock while the leader is unchanged. This does not change native cross-process lock polling, deadlines, source validation or lease retirement.
 
 Creation-intent ancestry validation uses the internal visitor of `native_files.pinned_directory` to inspect every existing parent in a single nofollow traversal (ADR-126, TASK-35595). Each descriptor reaches the visitor only after its original owner/mode check and is borrowed only for that call. Missing descendants do not hide existing ancestor intents; visitor errors and native close errors propagate. No settled verdict or directory handle is cached between acquisitions.
+
+Ordinary Windows acquisitions against a serving hold read the settled authority without joining the first-use initializer. The acquisition verifies current ancestry, pins the existing authority, and validates the enrollment marker against the locked registry. Each side of lease counting reads fresh control records and shares those inputs across the startup-permission and scope checks. The acquisition must still count against the same serving hold and pass the post-count checks before returning a lease. First-use, startup reacquisition and recovery retain their existing initialization paths.
 
 ## Failure behaviors and boundaries
 
@@ -177,3 +243,11 @@ a plugin root by name. The owner is activation-required:
 generation that lists `plugins` is unapproved, and `PluginService` approves it once
 its authority recovery completes. The keyring generation marker is never captured,
 so a restored profile without it reports `recovery_required`.
+
+Qualified Console tool-surface previews use the existing captured permission
+payload reader with an opt-in publication observation inside the mutation fence.
+This removes same-source getter/load forwarding scopes, while the outer checked
+read still validates native source state after publication and before returning
+its receipt. Other captured readers do not publish by default; custom load paths
+retain their original signature and single observation. Every later preview and
+execution-time permission check reads afresh (PR3534; ADR126).

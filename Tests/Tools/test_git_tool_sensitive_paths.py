@@ -48,6 +48,8 @@ from pathlib import Path
 
 import pytest
 
+from Tests.Backup_Recovery.config_test_support import select_config_source
+
 from tldw_chatbook.Tools.git_tool_impls import (
     _denylist_pathspecs,
     _glob_escape,
@@ -69,6 +71,14 @@ NETRC_MARKER = "SYNTHETIC-NOT-A-REAL-PASSWORD-19632"
 #: A legal POSIX filename that is ALSO a git pathspec meaning "everything
 #: except notes.txt". The whole point of the injection case below.
 MAGIC_NAME = ":(exclude)notes.txt"
+
+
+@pytest.fixture(autouse=True)
+def _selected_config_source(monkeypatch, isolate_test_environment):
+    """Keep a real selected config and each case's private HOME and Git repo."""
+    select_config_source(
+        monkeypatch, isolate_test_environment / "config" / "config.toml"
+    )
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -578,7 +588,7 @@ def test_the_container_rule_hides_direct_child_files_and_nothing_deeper(
     _init(repo)
     container = repo / "appstate"
     (container / "nested").mkdir(parents=True)
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(container / "config.toml"))
+    select_config_source(monkeypatch, container / "config.toml")
 
     (repo / "keep.txt").write_text("v1\n")
     (container / "loose.txt").write_text("secret v1\n")
@@ -640,7 +650,7 @@ def test_glob_escaping_confines_a_container_exclusion_to_its_own_directory(
     container = repo / "co*ntainer"
     container.mkdir()
     (repo / "coXntainer").mkdir()
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(container / "config.toml"))
+    select_config_source(monkeypatch, container / "config.toml")
     (container / "loose.txt").write_text("v1\n")
     (repo / "coXntainer" / "loose.txt").write_text("v1\n")
     _git(repo, "add", "-A", "-f")

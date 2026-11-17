@@ -73,27 +73,79 @@ async def test_bounded_reconcile_retires_while_shutdown_drains_owner(
             closing_reconciles.append(True)
         return original()
 
+    callback_started = asyncio.Event()
+    callback_release, callback_delivered = asyncio.Event(), asyncio.Event()
+    queued_callbacks = []
+    original_schedule = section.call_after_refresh
+    original_callback = section._run_scheduled_reconcile
+
+    async def deliver_queued_callback():
+        callback_started.set()
+        await callback_release.wait()
+        assert not callback_delivered.is_set(), "queued callback delivered twice"
+        try:
+            queued_callbacks[0]()
+        finally:
+            callback_delivered.set()
+
+    def capture_queued_callback(callback, *args, **kwargs):
+        assert not queued_callbacks and not args and not kwargs
+        assert callback.__self__ is section
+        assert callback.__func__ is original_callback.__func__
+        queued_callbacks.append(callback)
+        # Schedule exactly once through Textual, keeping the original callback
+        # on its message pump while controlling the shutdown interleaving.
+        scheduled = original_schedule(deliver_queued_callback)
+        assert scheduled, "original scheduler refused the queued callback"
+        return scheduled
+
     async def check_held_shutdown():
         try:
-            await asyncio.wait_for(entered.wait(), timeout=2)
-            assert app._exit and app.is_running
-            assert section.is_mounted and not section.is_attached
-            assert section.screen.is_current
+            # Both readiness boundaries share the original two-second budget;
+            # the unchanged 50ms observation begins after actual delivery.
+            async with asyncio.timeout(2):
+                await entered.wait()
+                assert app._exit and app.is_running
+                assert section.is_mounted and not section.is_attached
+                assert section.screen.is_current
+                assert not release.is_set()
+                callback_release.set()
+                await callback_delivered.wait()
             await asyncio.sleep(0.05)
             assert not release.is_set(), "the original shutdown drain must remain held"
             assert closing_reconciles == [], "closing section retries frozen layout"
             assert not section._reconcile_scheduled
         finally:
+            # Failed readiness must also release the scheduled callback.
+            callback_release.set()
             release.set()
 
     async with app.run_test(size=(60, 30)) as pilot:
         await _settle(pilot)
+        # A native tree may request another layout after the three generic
+        # pauses. Retire that real callback before capturing the one under test.
+        async with asyncio.timeout(2):
+            while section._reconcile_scheduled:
+                await pilot.pause()
         monkeypatch.setattr(section, "_reconcile", observe_reconcile)
-        observer = asyncio.create_task(check_held_shutdown())
-        # Queue while attached, then enter the real shutdown before it runs.
+        # Queue while attached; deliver the original callback after shutdown.
         assert section.is_attached
-        section.set_allocation(5)
+        assert not section._reconcile_scheduled
+        with monkeypatch.context() as scheduler_patch:
+            scheduler_patch.setattr(section, "call_after_refresh", capture_queued_callback)
+            section.set_allocation(5)
+        assert len(queued_callbacks) == 1
         assert section._reconcile_scheduled
+        try:
+            # Refresh stops during shutdown. Start Textual's delivery first,
+            # retaining the original callback behind the explicit release.
+            async with asyncio.timeout(2):
+                await callback_started.wait()
+        except BaseException:
+            callback_release.set()
+            release.set()
+            raise
+        observer = asyncio.create_task(check_held_shutdown())
     await observer
     assert app._exception is None
 

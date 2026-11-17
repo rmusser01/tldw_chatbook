@@ -82,6 +82,7 @@ def _original_scope_acquisitions(source):
     runtime_function = raw.runtime_operation
     runtime_code = runtime_function.__code__
     requests, returned, entries, closes = [], [], [], []
+    canonical_requests, canonical_returned, active_canonical = [], [], set()
     active_acquires, active_closes, active_reuses = {}, {}, {}
     active_checks, active_native = {}, {}
     check_rows, native_rows, acquire_rows = {}, {}, {}
@@ -112,6 +113,8 @@ def _original_scope_acquisitions(source):
     observed = SimpleNamespace(
         requests=requests,
         returned=returned,
+        canonical_requests=canonical_requests,
+        canonical_returned=canonical_returned,
         entries=entries,
         closes=closes,
         active_acquires=active_acquires,
@@ -405,13 +408,21 @@ def _original_scope_acquisitions(source):
                     and parent.f_code is scope_code
                     and parent.f_locals.get("source") is source
                 ):
-                    state = parent.f_locals["state"]
-                    assert not state.active
+                    state = parent.f_locals.get("state")
                     request = (
                         frame.f_locals["path"],
                         tuple(frame.f_locals["related_paths"]),
                     )
-                    requests.append(request)
+                    if state is None:
+                        # Canonical observation precedes raw-operation registration.
+                        assert parent.f_locals["operation"] is None
+                        assert parent.f_locals["canonical"] == request[0]
+                        assert request[1] == ()
+                        canonical_requests.append(request)
+                        active_canonical.add(id(frame))
+                    else:
+                        assert not state.active
+                        requests.append(request)
                     detail = None
                     if len(observed.acquisition_details) < 16:
                         detail = dict(
@@ -424,7 +435,11 @@ def _original_scope_acquisitions(source):
             elif event == "return" and id(frame) in active_acquires:
                 active_acquires.pop(id(frame))
                 assert isinstance(result, storage.StorageLease)
-                returned.append(result)
+                if id(frame) in active_canonical:
+                    active_canonical.remove(id(frame))
+                    canonical_returned.append(result)
+                else:
+                    returned.append(result)
         elif (
             frame.f_code is scope_code
             and event == "return"
@@ -478,6 +493,7 @@ def _original_scope_acquisitions(source):
         assert observed.parent_walk_depth == 0
         assert observed.parent_walk_calls == observed.parent_walk_exits
         assert not active_checks and not active_native
+        assert not active_canonical
         assert all(row["calls"] == row["exits"] for row in check_rows.values())
         assert all(row["calls"] == row["exits"] for row in native_rows.values())
         assert native_overflow["calls"] == native_overflow["exits"]
@@ -546,6 +562,14 @@ def _assert_one_original_read_acquisition(case, request):
     )
     assert admitted == expected, "all original members retain their request order"
     observation_lease = state.mcp_observation_lease
+    expected_canonical = (
+        [(state.mcp_canonical, ())]
+        if case.kind in {"permission", "catalog"} else []
+    )
+    assert observed.canonical_requests == expected_canonical
+    assert len(observed.canonical_returned) == len(expected_canonical)
+    if observed.canonical_returned:
+        assert observed.canonical_returned[0] is observation_lease
     if observation_lease is not None and all(
         observation_lease is not lease for lease in observed.returned
     ):
@@ -567,6 +591,7 @@ def _assert_one_original_read_acquisition(case, request):
     request.node.user_properties.extend(
         [
             ("original_acquisitions", len(observed.requests)),
+            ("canonical_observation_acquisitions", len(observed.canonical_requests)),
             ("original_members", len(admitted)),
             ("native_descriptor_closes", len(observed.closes)),
             ("native_whole_read_opens", observed.native_opens),

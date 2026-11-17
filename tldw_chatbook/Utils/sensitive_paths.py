@@ -363,32 +363,31 @@ def _resolved(path_str: str) -> Path | None:
 
 
 def _sensitive_db_paths() -> tuple[Path, ...]:
-    """Resolve this app's own SQLite database paths, lazily.
+    """Lazily resolve the app's SQLite paths through live config accessors.
 
-    These databases live under ``config.get_user_data_dir()`` -- by default
-    a sibling of ``~/.config/tldw_cli`` (e.g. ``~/.local/share/tldw_cli/...``),
-    not beneath it, so the static ``_SENSITIVE_DIRS`` tuple above cannot
-    express their location. Each path is resolved via the app's own
-    accessor (which also honors ``[database]`` path overrides and the
-    active user folder) rather than hardcoded, since neither the user
-    folder nor an override is known statically.
+    User-data folders and database overrides can lie outside static
+    ``_SENSITIVE_DIRS``. Resolve them through the app's own accessors.
+
+    One synchronous configuration scope owns assembly. Nested getters share
+    admission and retain native directory checks. Custom getters must not
+    wait on another thread that needs the configuration locks.
 
     Returns:
-        Resolved paths to every database whose accessor could be called.
-        An accessor that raises is skipped rather than failing the whole
-        check -- it is additional coverage, not the primary guarantee.
+        Paths from available accessors. Per-accessor errors are skipped as
+        additive coverage; containing admission or retirement errors propagate.
     """
     from .. import config as _config
 
     resolved: list[Path] = []
-    for accessor_name in _DB_PATH_ACCESSOR_NAMES:
-        accessor = getattr(_config, accessor_name, None)
-        if accessor is None:
-            continue
-        try:
-            resolved.append(accessor())
-        except Exception as exc:  # noqa: BLE001 - defensive, additive coverage only
-            _debug(f"sensitive_paths: could not resolve {accessor_name}: {exc}")
+    with _config.configuration_read_scope():
+        for accessor_name in _DB_PATH_ACCESSOR_NAMES:
+            accessor = getattr(_config, accessor_name, None)
+            if accessor is None:
+                continue
+            try:
+                resolved.append(accessor())
+            except Exception as exc:  # noqa: BLE001 - defensive, additive coverage only
+                _debug(f"sensitive_paths: could not resolve {accessor_name}: {exc}")
     return tuple(resolved)
 
 
@@ -651,14 +650,19 @@ def _raw_inputs() -> tuple:
         memo = _RAW_INPUTS_MEMO
     if memo is not None and _same_key(memo[0], key):
         return memo[1]
+    from .. import config as _config
+
     failures = getattr(_failures, "count", 0)
-    inputs = (
-        user_data_dir,
-        _sensitive_single_file_paths(),
-        _sensitive_skill_trust_dir(),
-        _sensitive_db_paths(),
-        _direct_child_rule_container_dirs(),
-    )
+    # These synchronous getters share admission, not their live path checks.
+    # Retire the read before checking the final key or publishing the memo.
+    with _config.configuration_read_scope():
+        inputs = (
+            user_data_dir,
+            _sensitive_single_file_paths(),
+            _sensitive_skill_trust_dir(),
+            _sensitive_db_paths(),
+            _direct_child_rule_container_dirs(),
+        )
     # The accessors read the live config and environment, so inputs built
     # while either moved describe some other key; keeping them could serve a
     # deny list with a gap once the override returns to this key's value.
@@ -927,14 +931,18 @@ def is_sensitive_path(
             ``TLDW_CONFIG_PATH`` swaps) without going stale.
 
     Returns:
-        True when the path is refused. Fails CLOSED: a path that cannot be
-        resolved is treated as sensitive.
+        True when the path is refused. Fails CLOSED: a path or sensitive
+        inventory that cannot be resolved is treated as sensitive.
     """
     resolved = _resolved(str(candidate))
     if resolved is None:
         return True
 
-    ctx = context if context is not None else resolve_sensitive_context()
+    try:
+        ctx = context if context is not None else resolve_sensitive_context()
+    except Exception as exc:  # noqa: BLE001 - unavailable policy refuses access
+        _debug(f"sensitive_paths: could not resolve sensitive context: {exc}")
+        return True
 
     # Every comparison below goes through `_compare_key` (TASK-19800): a
     # case-variant spelling reaches the same file on a case-insensitive

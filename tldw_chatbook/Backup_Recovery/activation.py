@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -54,6 +55,7 @@ def activation_permission(
     bootstrap_root: Path | None = None,
     namespaces: tuple[str, ...] | None = None,
     ordinary_only: bool = False,
+    startup_restriction: Callable[[Path, Path], tuple[bool, str]] | None = None,
 ) -> bool:
     """Read paired history before config fingerprint fallback, without repair.
 
@@ -64,15 +66,18 @@ def activation_permission(
     the namespace group actually held by their storage admission.
     Intact ordinary authority with neither witness retains legacy behavior; loss
     of every independent local history record is outside this local guarantee.
+    An explicit startup restriction may deny before the fresh built-in checks.
     """
     try:
         _identifier(owner)
         selected = lexical_path(config_selector or bootstrap.effective_config_path())
         root = lexical_path(bootstrap_root or bootstrap.default_bootstrap_root())
-        if not bootstrap.startup_permission(selected, root)[0]:
+        controls = bootstrap.read_activation_controls(
+            selected, root, startup_restriction=startup_restriction
+        )
+        if controls is None:
             return False
-        _, profiles, associations = bootstrap._control_records(root)
-        registry = bootstrap._registry(root)
+        profiles, associations, registry = controls
         names = set()
         if namespaces is not None:
             names.update(Admission._names(namespaces))
@@ -181,12 +186,17 @@ def _source_scope_admitted(root: Path, names: tuple[str, ...], path: Path) -> bo
 
 @contextmanager
 def execution_scope(
-    owners: tuple[str, ...], path: Path | None = None, *, retained=None
+    owners: tuple[str, ...],
+    path: Path | None = None,
+    *,
+    retained=None,
+    startup_restriction: Callable[[Path, Path], tuple[bool, str]] | None = None,
 ):
     """Keep actual storage admission through an accepted execution effect.
 
     A false result permits local inspection only. Callers retain this context
     inside the real worker/child, not around a cancellable offload waiter.
+    An explicit startup restriction runs separately for every owner.
     """
     from .storage_admission import StorageLease, acquire_storage
 
@@ -198,6 +208,10 @@ def execution_scope(
         if type(lease) is not StorageLease:
             raise ValueError("execution_lease_invalid")
         root, names = lease.execution_context(path)
+        restriction_kwargs = (
+            {"startup_restriction": startup_restriction}
+            if startup_restriction is not None else {}
+        )
         allowed = (
             selected == bootstrap.effective_config_path()
             and (path is None or _source_scope_admitted(root, names or (), path))
@@ -208,6 +222,7 @@ def execution_scope(
                     bootstrap_root=root,
                     namespaces=names,
                     ordinary_only=names is None,
+                    **restriction_kwargs,
                 )
                 for owner in owners
             )

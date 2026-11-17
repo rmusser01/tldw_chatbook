@@ -464,17 +464,17 @@ _SQLITE_OWNER_POLICIES = {
     "notifications.event_state": SQLiteOwnerPolicy(
         "tldw_chatbook/Notifications/event_state_repository",
         _PRIVATE_OR_MEMORY,
-        "The durable server-event ledger. The app gives it a private file "
-        "under the user data directory (`build_server_parity_state_"
-        "repositories`) and falls back to an exact in-memory target when "
-        "that directory cannot be trusted. TASK-21131: the file branch used "
-        "to be opened by `BaseDB._get_connection` under `db.base`, so this "
-        "entry described only half of it; the enforced target kinds are "
-        "unchanged (`db.base` allows exactly the same two).",
+        "The server-event ledger uses a private user-data file, or exact :memory: "
+        "if its directory cannot be trusted. Both routes use this owner (TASK-21131).",
     ),
     "personal_context.repository": SQLiteOwnerPolicy(
         "tldw_chatbook/Personal_Context/repository", _PRIVATE_AND_READ_ONLY,
         "The encrypted Personal Context repository owns one private local database.", preserve_read_only_source_mode=True,
+    ),
+    "personal_context.restore_marker": SQLiteOwnerPolicy(
+        "tldw_chatbook/Personal_Context/repository_keys", _READ_ONLY_URI,
+        "Read only the live repository's restore marker when its key is unavailable.",
+        preserve_read_only_source_mode=True,
     ),
     "recovery.personal_context.repository": SQLiteOwnerPolicy(  # TASK-40134/40135
         "tldw_chatbook/Personal_Context/recovery", _PRIVATE_MEMORY_AND_READ_ONLY, "Personal Context repository snapshot; ciphertext only, its key travels as an encrypted credential record.",

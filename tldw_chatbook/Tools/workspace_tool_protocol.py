@@ -10,7 +10,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from tldw_chatbook.Tools.patch_tool_impls import PATCH_MAX_BYTES, PATCH_MAX_FILES
 from tldw_chatbook.Tools.workspace_wire_decode import (
     ARGUMENT_SCHEMAS,
     MAX_COLLECTION_ITEMS,
@@ -418,9 +417,13 @@ def _require_argument_value(value: Any, *, kind: str) -> None:
         validate_glob_pattern(value)
         return
     if kind == "patch":
+        from tldw_chatbook.Tools.patch_tool_impls import PATCH_MAX_BYTES
+
         _require_string(value, "patch diff", cap=PATCH_MAX_BYTES)
         return
     if kind == "patch_targets":
+        from tldw_chatbook.Tools.patch_tool_impls import PATCH_MAX_FILES
+
         if type(value) is not list or not value or len(value) > PATCH_MAX_FILES:
             raise WorkspaceProtocolError("invalid patch targets")
         for target in value:

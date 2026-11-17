@@ -67,6 +67,16 @@ def test_config_toml_override_is_followed_when_retargeted(tmp_path, monkeypatch)
     assert is_sensitive_path(retargeted)
 
 
+def test_unavailable_sensitive_context_refuses_the_path(tmp_path, monkeypatch):
+    from tldw_chatbook.Utils import sensitive_paths
+
+    def unavailable():
+        raise RuntimeError("sensitive path inventory unavailable")
+
+    monkeypatch.setattr(sensitive_paths, "resolve_sensitive_context", unavailable)
+    assert is_sensitive_path(tmp_path / "ordinary.txt")
+
+
 def _real_control_plane_service():
     """Build a real ``UnifiedMCPControlPlaneService`` wired to a real,
     default-path ``LocalMCPStore`` -- the same store shape ``app.py``
@@ -146,7 +156,12 @@ def test_symlink_into_a_sensitive_dir_cannot_smuggle_a_path_past_the_check(
     (real_ssh / "id_rsa").write_text("fake-key-material")
 
     innocent_looking = tmp_path / "harmless.txt"
-    innocent_looking.symlink_to(real_ssh / "id_rsa")
+    try:
+        innocent_looking.symlink_to(real_ssh / "id_rsa")
+    except OSError as error:
+        if getattr(error, "winerror", None) == 1314:
+            pytest.skip("Windows account cannot create symbolic links")
+        raise
 
     assert is_sensitive_path(innocent_looking)
 

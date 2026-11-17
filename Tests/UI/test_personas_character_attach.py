@@ -178,6 +178,7 @@ async def _expand_character_dicts_section(pilot, screen):
 
 
 class TestCharacterDictionaryAttach:
+    @pytest.mark.bootstrap_profile
     async def test_character_attach_via_picker_then_detach(
         self, mock_app_instance, stub_characters, fake_dict_service, monkeypatch
     ):

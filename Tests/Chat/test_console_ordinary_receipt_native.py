@@ -26,7 +26,7 @@ async def exercise():
     from Tests.Chat.test_console_skill_substitution import _RecordingGateway
     from Tests.Performance._stock_private_app_creators import OriginalPrivateAppCreators
 
-    if sys.argv[2] == 'native_managed':
+    if sys.argv[2] in {'native_managed', 'mounted_queued', 'mounted_trust_replaced'}:
         from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
 
         seed = LocalSkillsService(
@@ -420,7 +420,8 @@ async def exercise():
     if sys.argv[2] == 'mounted_trust_replaced':
         assert not receipts
     else:
-        assert receipts and receipts[0].catalog.preparation is source
+        assert receipts, 'original skill catalog finish was not observed'
+        assert receipts[0].catalog.preparation is source, 'original skill preparation identity changed'
     if sys.argv[2] == 'native_managed':
         assert receipts[0].trust_refs is not None
         receipt = vars(local_skills).get('_console_native_skill_trust_publication')
@@ -438,12 +439,21 @@ async def exercise():
         assert final_q1.verified and final_q1.commit.first_persist
     if policy_changed_case:
         assert first_library_checks == [False], first_library_checks
+    from tldw_chatbook.Utils.platform_files import supports_native_process_groups
+
     target = models[-1]
-    if queued_case and not replaced_case and not policy_changed_case:
-        assert any(tree is target and owner is tree.owner for owner, tree in calls)
-    elif not replaced_case and not policy_changed_case:
-        assert calls and all(owner is target.owner and tree is target for owner, tree in calls)
-    assert target.footprint.opaque
+    if supports_native_process_groups():
+        if queued_case and not replaced_case and not policy_changed_case:
+            assert any(tree is target and owner is tree.owner for owner, tree in calls)
+        elif not replaced_case and not policy_changed_case:
+            assert calls and all(owner is target.owner and tree is target for owner, tree in calls)
+        assert target.footprint.opaque
+    else:
+        # Unsupported hosts use the original fallback without an ordinary tree.
+        assert target is None and all(tree is None for tree in models)
+        assert all(tree is None for _owner, tree in calls)
+        if not replaced_case and not policy_changed_case:
+            assert calls
     assert not network_guard.blocked_attempts()
     assert not real_profile_guard.take_violations()
     print('retired and reopened')

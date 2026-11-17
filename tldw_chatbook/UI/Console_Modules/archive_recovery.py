@@ -7,6 +7,7 @@ from typing import Any
 
 from textual import on
 from textual.containers import Vertical
+from textual.css.query import NoMatches
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.archive_recovery.contracts import (
@@ -81,15 +82,19 @@ class ConsoleArchiveRecoveryView:
     def _surface(self) -> ConsoleArchiveRecoverySurface | None:
         if not hasattr(self.screen, "_nodes"):
             return None
-        matches = self.screen.query("#console-archive-recovery-controls")
-        return matches.first() if matches else None
+        try:
+            return self.screen.query_one("#console-archive-recovery-controls")
+        except NoMatches:
+            return None
 
     def _confirmation(self) -> ArchiveRecoveryConfirmCard | None:
         surface = self._surface()
         if surface is None:
             return None
-        cards = surface.query(ArchiveRecoveryConfirmCard)
-        return cards.first() if cards else None
+        try:
+            return surface.query_one(ArchiveRecoveryConfirmCard)
+        except NoMatches:
+            return None
 
     def is_answerable(self, session_id: str) -> bool:
         """Require the current mounted source and already mounted exact controls."""
@@ -122,10 +127,10 @@ class ConsoleArchiveRecoveryView:
         async with self._sync_lock:
             if not hasattr(self.screen, "_nodes"):
                 return
-            roots = self.screen.query("#console-archive-recovery")
-            if not roots:
+            try:
+                root = self.screen.query_one("#console-archive-recovery")
+            except NoMatches:
                 return
-            root = roots.first()
             if not root.is_mounted or not root.is_attached:
                 return
             surface = self._surface()

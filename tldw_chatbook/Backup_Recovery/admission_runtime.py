@@ -17,7 +17,11 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 
 from .activation import execution_scope
-from .storage_admission import acquire_storage
+from .storage_admission import (
+    _Acquisition,
+    _acquire_execution_storage,
+    acquire_storage,
+)
 
 
 def execution_identity() -> "tuple[int, int, asyncio.Task[object] | None]":
@@ -174,22 +178,41 @@ class RecoveryAdmissionGuard:
         )
         with ExitStack() as stack:
             try:
-                for owner, path in observed:
-                    if path not in leases:
-                        leases[path] = acquire_storage(path)
-                        stack.callback(leases[path].close)
-                    if self.admit_source is not None and self.admit_source(
-                        stack, owner, path, leases[path]
-                    ):
-                        continue
-                    if not stack.enter_context(
-                        execution_scope(
-                            self.owners(owner), path, retained=leases[path]
-                        )
-                    ):
+                with ExitStack() as preflight:
+                    missing = tuple(dict.fromkeys(
+                        path for _owner, path in observed if path not in leases
+                    ))
+                    attempt = None
+                    if len(missing) > 1:
+                        # One preflight owns the declared set; approvals still
+                        # observe fresh facts and may refuse a newly arrived pause.
+                        attempt = _Acquisition()
+                        preflight.callback(attempt.close)
+                        group = _acquire_execution_storage(missing, attempt)
+                        stack.callback(group.close)
+                        leases.update((path, group) for path in missing)
+                    for owner, path in observed:
+                        if attempt is not None and path in missing:
+                            attempt.check(path)
+                        if path not in leases:
+                            leases[path] = acquire_storage(path)
+                            stack.callback(leases[path].close)
+                        if self.admit_source is not None and self.admit_source(
+                            stack, owner, path, leases[path]
+                        ):
+                            continue
+                        if not stack.enter_context(
+                            execution_scope(
+                                self.owners(owner), path, retained=leases[path]
+                            )
+                        ):
+                            raise self.error()
+                    if self.finalize is not None and not self.finalize(observed, leases):
                         raise self.error()
-                if self.finalize is not None and not self.finalize(observed, leases):
-                    raise self.error()
+                    if attempt is not None:
+                        for path in missing:
+                            attempt.check(path)
+                # Payload retains the leases, not a pending acquisition.
             except (OSError, ValueError, TypeError, RuntimeError, AttributeError):
                 raise self.error() from None
             state = ExecutionState(execution_identity(), leases, observed, active)

@@ -37,6 +37,26 @@ async def _request_original_full(screen, origin):
     return await screen._sync_native_console_chat_ui()
 
 
+def _inside_original_settings_read(frame):
+    """Inspect the finite caller chain without retaining it or reading arguments."""
+    parent = frame.f_back
+    while parent is not None:
+        if parent.f_code is config.load_settings.__code__:
+            return True
+        parent = parent.f_back
+    return False
+
+
+def _tab_transition_event_in_scope(label, frame):
+    # Windows metadata is a warm-read tripwire here, not a handle-retirement
+    # oracle. Unrelated native work must not exhaust the tab-transition budget.
+    return (
+        os.name != "nt"
+        or label != "metadata"
+        or _inside_original_settings_read(frame)
+    )
+
+
 class _OriginalTabDrift:
     def __init__(self, case, surface):
         self.case, self.screen, self.surface = case, case.console, surface
@@ -57,6 +77,7 @@ class _OriginalTabDrift:
         self.native_census = {}
         self.warm_native_census = {}
         self.ensure_census = []
+        self.event_census = {}
         self.drift_applied = False
         self.competing_ensure_entry = None
         self.competing_ensures = []
@@ -107,6 +128,12 @@ class _OriginalTabDrift:
         return None
 
     def observe(self, kind, label, frame, value):
+        # Finite labels/events and three phases; retain counts, never more events.
+        phase = "before-drift"
+        if self.drift_applied:
+            phase = "released" if self.held["future"].done() else "held-drift"
+        key = f"{phase}:{label}:{kind}"
+        self.event_census[key] = self.event_census.get(key, 0) + 1
         if label in {"acquire", "raw_scope", "close_fd", "metadata"}:
             key = (
                 label,
@@ -115,16 +142,10 @@ class _OriginalTabDrift:
                 self._full(frame) is not None,
             )
             self.native_census[str(key)] = self.native_census.get(str(key), 0) + 1
-            parent = frame.f_back
-            for _ in range(40):
-                if parent is None:
-                    break
-                if parent.f_code is config.load_settings.__code__:
-                    self.warm_native_census[str(key)] = (
-                        self.warm_native_census.get(str(key), 0) + 1
-                    )
-                    break
-                parent = parent.f_back
+            if _inside_original_settings_read(frame):
+                self.warm_native_census[str(key)] = (
+                    self.warm_native_census.get(str(key), 0) + 1
+                )
         if threading.current_thread() is not self.actor:
             return
         start, yielded, returned = (
@@ -256,12 +277,17 @@ class _OriginalTabDrift:
                 and value.node is self.screen
                 and value.group == "console-sync"
             ):
-                assert (
-                    inspect.iscoroutine(value._work)
-                    and value._work.cr_code is self.full_code
-                )
+                work = value._work
+                if inspect.iscoroutine(work):
+                    assert work.cr_code is self.full_code
+                else:
+                    # Original replay producers pass the bound async method.
+                    assert inspect.ismethod(work) and inspect.iscoroutinefunction(work)
+                    assert work.__self__ is self.screen
+                    assert work.__func__ is ChatScreen._sync_native_console_chat_ui
+                    assert work.__func__.__code__ is self.full_code
                 assert type(value._task) is asyncio.Task
-                self.workers.append((value, value._task, value._work))
+                self.workers.append((value, value._task, work))
             return
         if full is None:
             return
@@ -358,7 +384,9 @@ class _OriginalTabDrift:
     @contextlib.contextmanager
     def installed(self, record_property):
         try:
-            with _original_transition_events(self.bindings(), self.observe):
+            with _original_transition_events(
+                self.bindings(), self.observe, accept_event=_tab_transition_event_in_scope
+            ):
                 try:
                     yield
                 except BaseException as error:
@@ -383,7 +411,20 @@ class _OriginalTabDrift:
                         ),
                     )
                     raise
+        except BaseException:
+            # Includes observer-exit failures; the shared 4096-event cap remains.
+            record_property(
+                "tab_boundary_observer_event_census",
+                json.dumps(self.event_census, sort_keys=True),
+            )
+            raise
         finally:
+            record_property(
+                "tab_boundary_metadata_scope",
+                "original load_settings ancestry only (Windows open_handle)"
+                if os.name == "nt"
+                else "original storage posture calls (unchanged POSIX scope)",
+            )
             record_property("ensure_census", json.dumps(self.ensure_census))
             record_property("warm_native_census", json.dumps(self.warm_native_census))
             record_property(
@@ -412,6 +453,55 @@ class _OriginalTabDrift:
                 assert not state.descriptors and not state.pins and not state.files
                 assert all(lease not in storage._live_leases for lease in state.leases)
         assert all(task.done() for _, task, _ in self.workers)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Requires original Windows metadata calls")
+async def test_windows_metadata_filter_keeps_original_settings_native_tripwire(
+    monkeypatch, tmp_path
+):
+    """Ignore unrelated stat; retain/refuse native I/O inside a warm original read."""
+    path = tmp_path / "metadata-filter-control.txt"
+    path.write_text("metadata control", encoding="utf-8")
+    native_os = windows_files.WindowsOS()
+    warm = config.load_settings()
+    bindings = [
+        ("settings", config, "load_settings"),
+        ("metadata", windows_files._Native, "open_handle"),
+    ]
+    native_returns = 0
+    refuse = False
+
+    def observe(kind, label, frame, value):
+        nonlocal native_returns
+        if label == "metadata" and kind == sys.monitoring.events.PY_RETURN:
+            native_returns += 1
+            assert not refuse, "original_settings_native_metadata_detected"
+
+    with _original_transition_events(
+        bindings, observe, accept_event=_tab_transition_event_in_scope
+    ):
+        native_os.stat(path, follow_symlinks=False)
+        assert native_returns == 0
+        assert config.load_settings() is warm
+        assert native_returns == 0
+
+    original_hit = config._settings_cache_hit
+
+    def hit_with_native_metadata(active_path):
+        # Deliberate fault calibration only: both load_settings and open_handle
+        # retain their original bodies; this cache child adds real, closed I/O.
+        native_os.stat(path, follow_symlinks=False)
+        return original_hit(active_path)
+
+    refuse = True
+    with monkeypatch.context() as fault:
+        fault.setattr(config, "_settings_cache_hit", hit_with_native_metadata)
+        with pytest.raises(AssertionError, match="original_settings_native_metadata_detected"):
+            with _original_transition_events(
+                bindings, observe, accept_event=_tab_transition_event_in_scope
+            ):
+                assert config.load_settings() is warm
+    assert native_returns > 0
 
 
 @pytest.mark.parametrize("drift", ["membership", "active-session", "rebuild-store"])

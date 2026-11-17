@@ -1105,6 +1105,7 @@ async def test_scope_chip_refreshes_on_persist_transition_flush():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_scope_chip_click_opens_picker_modal():
     """Same handler seam as the Inspector row's Edit button (task-9):
     activating the scope segment -- via ``_on_click`` or Enter/Space while
@@ -1226,6 +1227,7 @@ async def test_workspace_rag_scope_button_enabled_for_real_default_workspace():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_workspace_rag_scope_button_opens_modal_with_universe_none():
     """Workspace target: the modal offers the FULL library (``universe=
     None``), names the workspace in the title, and seeds nothing when no

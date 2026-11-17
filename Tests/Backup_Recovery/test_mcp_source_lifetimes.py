@@ -1,13 +1,18 @@
 """Actual MCP durable-source lifetime regressions, isolated from transports."""
 
+import inspect
 import json
+import sys
+import threading
 import time
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
 
 from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission as storage
 from Tests.Backup_Recovery.test_participant_lifetimes import local_root
+from Tests.subprocess_pipes import pipe_ready
 
 
 def _scope_loads(monkeypatch, stub):
@@ -59,9 +64,50 @@ def test_actual_reader_refuses_before_read_or_recovery(mcp_sources, index):
         pause.resume()
 
 
-def test_permission_rmw_admitted_before_pause_finishes(mcp_sources, monkeypatch):
-    from tldw_chatbook.MCP import recovery_activation
+@contextmanager
+def _original_source_acquisitions(source, pause_active, *, thread_ids=None):
+    """Observe actual acquisitions on the declared issuing threads/source."""
+    from tldw_chatbook.Backup_Recovery import raw_participants as raw
 
+    acquire = storage.acquire_storage
+    code = acquire.__code__
+    scope_code = inspect.unwrap(raw.scope).__code__
+    threads = {threading.get_ident()} if thread_ids is None else thread_ids
+    selected = source.path
+    acquisitions = []
+    tool = next(index for index in range(6) if sys.monitoring.get_tool(index) is None)
+    sys.monitoring.use_tool_id(tool, "original-source-acquisitions")
+
+    def started(_code, _offset):
+        if threading.get_ident() not in threads:
+            return
+        frame = sys._getframe(1)
+        state = raw._states.get(getattr(raw._local, "operation", None))
+        if frame.f_locals.get("path") != selected and (
+            state is None or state.source is not source
+        ):
+            # Construction clears discovery; metadata reads may run on the
+            # coordinator thread. Observe only this source's original call tree.
+            while frame is not None:
+                if frame.f_code is scope_code and frame.f_locals.get("source") is source:
+                    break
+                frame = frame.f_back
+            else:
+                return
+        acquisitions.append(bool(pause_active()))
+
+    try:
+        sys.monitoring.register_callback(tool, sys.monitoring.events.PY_START, started)
+        sys.monitoring.set_local_events(tool, code, sys.monitoring.events.PY_START)
+        yield acquisitions
+    finally:
+        sys.monitoring.set_local_events(tool, code, 0)
+        sys.monitoring.register_callback(tool, sys.monitoring.events.PY_START, None)
+        sys.monitoring.free_tool_id(tool)
+        assert storage.acquire_storage is acquire and acquire.__code__ is code
+
+
+def test_permission_rmw_admitted_before_pause_finishes(mcp_sources, monkeypatch):
     source = mcp_sources[3]
     # False is the absent-store default, so a no-op does not create bytes.
     # Seed a real persisted policy before observing its admitted RMW read.
@@ -70,14 +116,6 @@ def test_permission_rmw_admitted_before_pause_finishes(mcp_sources, monkeypatch)
     assert source.path.exists()
     original = json.loads
     pauses = []
-    acquisitions = []
-    acquire = recovery_activation.acquire_storage
-
-    def admitted(*args, **kwargs):
-        acquisitions.append(bool(pauses))
-        return acquire(*args, **kwargs)
-
-    monkeypatch.setattr(recovery_activation, "acquire_storage", admitted)
 
     def loaded_then_pause(value, *args, **kwargs):
         result = original(value, *args, **kwargs)
@@ -87,7 +125,8 @@ def test_permission_rmw_admitted_before_pause_finishes(mcp_sources, monkeypatch)
 
     _scope_loads(monkeypatch, loaded_then_pause)
     try:
-        source.set_kill_switch(True)
+        with _original_source_acquisitions(source, lambda: bool(pauses)) as acquisitions:
+            source.set_kill_switch(True)
         assert pauses
         assert acquisitions and not any(
             acquisitions
@@ -286,9 +325,12 @@ def test_permission_preflight_pause_has_no_payload_or_backup_effects(
     original = storage.acquire_storage
     pauses = []
 
-    def acquired(path=None):
-        lease = original(path)
-        if path is not None and str(path).endswith(".bak") and not pauses:
+    def acquired(path=None, *, related_paths=()):
+        lease = original(path, related_paths=related_paths)
+        if not pauses and any(
+            member is not None and str(member).endswith(".bak")
+            for member in (path, *related_paths)
+        ):
             pauses.append(storage._begin_local_pause())
         return lease
 
@@ -346,7 +388,6 @@ def test_actual_native_uncertainty_retains_source_and_independent_lease(
     if _private_child(request, f"{point}-{timing}"):
         return
     import os
-    import select
     import stat
     from tldw_chatbook.Backup_Recovery import raw_participants as raw
     from tldw_chatbook.Utils import private_paths
@@ -458,7 +499,7 @@ def test_actual_native_uncertainty_retains_source_and_independent_lease(
     try:
         assert not participant.drain(time.monotonic() + 0.02)
         assert not pause.drain(time.monotonic() + 0.02)
-        assert not select.select([observer.stdout], [], [], 0.06)[0]
+        assert not pipe_ready(observer.stdout, 0.06)
     finally:
         observer.kill()
         observer.wait(timeout=5)
@@ -472,7 +513,6 @@ def test_independent_maintainer_enters_after_history_rotation_native_close(
     if _private_child(request, "rotation-observer"):
         return
     import os
-    import select
     from tldw_chatbook.Backup_Recovery import raw_participants as raw
     from tldw_chatbook.Utils import private_paths
 
@@ -498,7 +538,7 @@ def test_independent_maintainer_enters_after_history_rotation_native_close(
                 local_root / "admission", "maintenance", ("bootstrap.unbound",)
             )
             observers.append(observer)
-            assert not select.select([observer.stdout], [], [], 0.05)[0]
+            assert not pipe_ready(observer.stdout, 0.05)
 
     monkeypatch.setattr(private_paths, "_native_close", closed)
     try:

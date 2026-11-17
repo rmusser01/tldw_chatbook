@@ -55,7 +55,9 @@ class _PermissionProbe(controls._MaximumProbe):
             ):
                 self.acquisitions.append(arg)
                 if frame.f_back.f_code is raw_participants.scope.__wrapped__.__code__:
-                    self.paths.append(arg)
+                    self.paths.append(
+                        (frame.f_locals["path"], frame.f_locals["related_paths"])
+                    )
             if (
                 event == "return"
                 and code is raw_participants._pin_parent.__code__
@@ -69,7 +71,7 @@ class _PermissionProbe(controls._MaximumProbe):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "persisted,witnesses,contexts", [(False, 12, 15), (True, 14, 19)]
+    "persisted,witnesses,contexts", [(False, 7, 10), (True, 9, 14)]
 )
 async def test_real_permission_read_keeps_every_gate_and_retires_owners(
     snapshot_case, persisted, witnesses, contexts
@@ -86,7 +88,12 @@ async def test_real_permission_read_keeps_every_gate_and_retires_owners(
     assert payload == expected
     assert probe.interval <= 0.001 and sys.getswitchinterval() == previous
     assert probe.witnesses == witnesses and probe.contexts == contexts
-    assert len(probe.paths) == 3 and len(probe.acquisitions) == 12
+    path = case.permissions.path
+    assert probe.paths == [
+        (path, ()),
+        (path, (path.with_suffix(".json.tmp"), path.with_suffix(".json.bak"))),
+    ]
+    assert len(probe.acquisitions) == 2
     assert all(lease not in storage._live_leases for lease in probe.acquisitions)
     assert not any(
         state.source is case.permissions for state in raw_participants._states.values()

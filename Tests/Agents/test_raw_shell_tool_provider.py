@@ -663,16 +663,20 @@ def _workspace_guard_controller(runtime, store, registry=None):
 
 @pytest.mark.parametrize("has_captured_owner", [True, False])
 def test_console_raw_shell_protects_all_bindings_of_owning_workspace(
-    tmp_path, monkeypatch, has_captured_owner
+    tmp_path, monkeypatch, isolate_test_environment, has_captured_owner
 ):
     from concurrent.futures import ThreadPoolExecutor
     from types import SimpleNamespace
 
+    from Tests.Backup_Recovery.config_test_support import select_config_source
     from tldw_chatbook.Agents.agent_models import ToolCall
     from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
     from tldw_chatbook.Workspaces.models import WorkspaceRuntimeBinding
     from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
 
+    select_config_source(
+        monkeypatch, isolate_test_environment / "config" / "config.toml"
+    )
     owner = "owning-workspace"
     other = "visible-workspace"
     db = WorkspaceDB(tmp_path / "workspace.sqlite", client_id="raw-shell-guard")

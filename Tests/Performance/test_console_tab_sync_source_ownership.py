@@ -58,6 +58,12 @@ config_sync_source = source.parents[1] / "Console_Modules/config_sync.py"
 config_sync = ModuleType("tldw_chatbook.UI.Console_Modules.config_sync")
 config_sync.__package__ = "tldw_chatbook.UI.Console_Modules"
 exec(compile(config_sync_source.read_bytes(), str(config_sync_source), "exec", dont_inherit=True), vars(config_sync))  # noqa: S102 - the same fixed-source compile as the screen's.
+def no_display_publication(_owner, captured):
+    # This compiled owner has no installed source or completed display proof.
+    assert captured is None
+    return None
+
+
 namespace = {
     # The cold FULL path's function-local `from ..Console_Modules.character_context
     # import ...` resolves as in chat_screen. It loads the tldw_chatbook.UI
@@ -67,6 +73,7 @@ namespace = {
     "time": time,
     "Any": Any,
     "QueryError": LookupError,
+    "NoMatches": LookupError,
     "ConsoleSessionSurface": object,
     # The sync's entry classifies itself for the config-sync cadence
     # (TASK-33620.15.1), and the cold FULL path hands its deferral to
@@ -75,11 +82,14 @@ namespace = {
     "config_sync": config_sync,
     # Module globals the cold FULL path reads. The compiled class is not the
     # installed ChatScreen, so its poll source is None, which is what
-    # run_controls returns for any other type. The real poll_source imports
+    # spend returns for any other type. The real poll_source imports
     # chat_screen, which the teardown check below forbids.
     "ChatScreen": type("ChatScreen", (), {}),
-    "run_controls": SimpleNamespace(
+    "spend": SimpleNamespace(
         poll_source=lambda _owner: None,
+        poll_display_publication=no_display_publication,
+    ),
+    "run_controls": SimpleNamespace(
         PreparingPollChanged=type("PreparingPollChanged", (RuntimeError,), {}),
     ),
 }
@@ -119,7 +129,12 @@ def make_screen():
     owner._console_chat_controller = None
     owner.store = make_store("first")
     owner.surface = Surface()
-    owner.query_one = lambda *_: owner.surface
+    def query_one(selector, *_):
+        if selector == "#console-session-surface":
+            return owner.surface
+        raise LookupError(selector)
+
+    owner.query_one = query_one
     owner.query = lambda _selector: ()  # This fixture has no workflow line.
     owner._ensure_console_chat_store = lambda: owner.store
     owner.ensure_calls = []

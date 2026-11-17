@@ -2,6 +2,7 @@
 
 import pytest
 
+from Tests.Backup_Recovery.path_aliases import create_directory_alias
 from Tests.Backup_Recovery.test_bootstrap import local_scope  # noqa: F401
 from tldw_chatbook.Backup_Recovery import bootstrap
 from tldw_chatbook.Backup_Recovery import storage_admission as storage
@@ -112,7 +113,7 @@ def test_related_path_moved_outside_enrollment_is_rechecked_after_acquisition(
         calls += 1
         if calls == 2:
             directory.rename(data / "original-copies")
-            directory.symlink_to(outside, target_is_directory=True)
+            create_directory_alias(directory, outside)
         return original(selector, selected_root)
 
     monkeypatch.setattr(bootstrap, "startup_permission", permission)

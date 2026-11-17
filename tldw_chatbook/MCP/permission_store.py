@@ -3103,11 +3103,14 @@ def _capture_console_owned_load(source) -> tuple[Any, ...] | None:
         return None
 
 
-def _load_in_owned_scope(source, operation, captured) -> dict[str, Any]:
+def _load_in_owned_scope(
+    source, operation, captured, *, observe_publication=False
+) -> dict[str, Any]:
     """Read the original payload inside the named caller's checked source scope.
 
     The caller must retain its existing final native check and source receipt.
     This private helper grants no admission and never creates an operation.
+    Preview readers opt in to the public load observation under the same fence.
     """
     from tldw_chatbook.Backup_Recovery import raw_participants as raw
     from tldw_chatbook.Backup_Recovery import storage_admission as storage
@@ -3152,6 +3155,8 @@ def _load_in_owned_scope(source, operation, captured) -> dict[str, Any]:
                 raise mcp_sources.bootstrap.RecoveryRequired(
                     "raw_operation_provenance_invalid"
                 )
+            if observe_publication:
+                source._permission_publication.observe(result)
             return result
     except BaseException:
         if state is not None and (state.mcp_effects or state.uncertain):

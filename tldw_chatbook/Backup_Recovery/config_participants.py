@@ -412,7 +412,31 @@ def operation(source, *, route="config", target=None):
     from . import raw_participants as raw
 
     previous = getattr(raw._local, "operation", None)
-    nested = (
+    config_join = False
+    if previous is not None and route == "config":
+        # Classify custody only. The raw scope below still validates the live
+        # selector and native parents before any config body or rollback capture.
+        with storage._lock:
+            resident = raw.live_state(previous, None, False)
+            if (
+                resident.source is source
+                and source is sys.modules.get("tldw_chatbook.config")
+                and resident.route == "config"
+                and resident.writing is True
+                and resident.participant is not None
+                and (
+                    target is None
+                    or type(target) is type(resident.selected)
+                    and target == resident.selected
+                )
+            ):
+                participant = raw.participant_identity(resident.participant)
+                config_join = (
+                    participant.owner == "config"
+                    and participant.source() is source
+                    and participant.selected == resident.selected
+                )
+    nested = config_join or (
         previous is not None
         and raw.check(previous).source is source
         and route in {"config", "config_snapshot"}
@@ -426,7 +450,7 @@ def operation(source, *, route="config", target=None):
         )
         nested_target = None
     if nested:
-        before = {
+        before = None if config_join else {
             name: getattr(source, name)
             for name in _STATE_NAMES
             if hasattr(source, name)
@@ -435,12 +459,19 @@ def operation(source, *, route="config", target=None):
             with raw.scope(
                 source, "config", writing=True, selected_read=nested_target
             ) as active:
+                if before is None:
+                    before = {
+                        name: getattr(source, name)
+                        for name in _STATE_NAMES
+                        if hasattr(source, name)
+                    }
                 yield active
         except BaseException:
-            for name, value in before.items():
-                setattr(source, name, value)
-            raw._states[previous].config_failed = True
-            source._CONFIG_PERSISTENCE_ERROR = "config_operation_failed"
+            if before is not None:
+                for name, value in before.items():
+                    setattr(source, name, value)
+                raw._states[previous].config_failed = True
+                source._CONFIG_PERSISTENCE_ERROR = "config_operation_failed"
             raise
         return
     core = getattr(storage._operation_local, "operation", None)

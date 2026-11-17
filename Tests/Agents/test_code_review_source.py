@@ -13,6 +13,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.Backup_Recovery.config_test_support import select_config_source
+
 from tldw_chatbook.Agents.code_review_models import (
     CommitRangeTarget,
     ListSourceQuery,
@@ -42,7 +44,7 @@ def git(root, *args):
 
 
 @pytest.fixture
-def source_case(tmp_path, request):
+def source_case(tmp_path, request, monkeypatch, isolate_test_environment):
     root = tmp_path / "repo"
     root.mkdir()
     git(root, "init", "-q")
@@ -69,6 +71,9 @@ def source_case(tmp_path, request):
     # Catalog-only tests never capture sources; retain escape-link coverage
     # for every source/capture fixture consumer.
     if getattr(request, "param", None) != "catalog_only":
+        select_config_source(
+            monkeypatch, isolate_test_environment / "config" / "config.toml"
+        )
         (root / "escape").symlink_to(tmp_path / "outside")
     (tmp_path / "outside").write_text("outside secret")
     admitted = RunAdmittedWorkspaceRoot(

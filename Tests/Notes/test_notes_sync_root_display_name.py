@@ -20,6 +20,8 @@ from types import SimpleNamespace
 import pytest
 from loguru import logger
 
+from Tests.Backup_Recovery.config_test_support import select_config_source
+
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
@@ -113,7 +115,10 @@ def _controller(owner: NotesSyncRuntimeOwner) -> LibraryNotesSyncController:
 
 
 @pytest.fixture
-def database(tmp_path: Path) -> CharactersRAGDB:
+def database(tmp_path: Path, monkeypatch, isolate_test_environment) -> CharactersRAGDB:
+    select_config_source(
+        monkeypatch, isolate_test_environment / "config" / "config.toml"
+    )
     db = CharactersRAGDB(tmp_path / "notes.sqlite3", client_id="task-32451")
     _seed_marker(tmp_path / "sync.sqlite3")
     yield db

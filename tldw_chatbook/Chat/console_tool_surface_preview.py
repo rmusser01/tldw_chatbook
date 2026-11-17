@@ -289,8 +289,8 @@ async def owned_preflight_tool_surface(
         def read():
             try:
                 with service._producer_lifetime.operation():
-                    captured.permission_owner()
-                    return not bool(service.get_kill_switch())
+                    payload = captured.read_permission_payload(observe_publication=True)
+                    return not bool(payload.get("kill_switch", False))
             except Exception:  # noqa: BLE001 - the original switch reader treats failure as engaged.
                 return False
 

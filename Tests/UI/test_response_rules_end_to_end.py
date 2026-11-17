@@ -159,7 +159,7 @@ async def test_learn_repair_reopen_and_exclude_through_console(
 @pytest.mark.asyncio
 async def test_close_during_resume_retires_the_old_visible_draft(tmp_path, monkeypatch):
     from Tests.UI.response_rules_fixtures import seed_answer
-    from tldw_chatbook.UI.Console_Modules import composer_run_controls, workspace
+    from tldw_chatbook.UI.Console_Modules import console_spend_projection, workspace
 
     async with mounted_rules_console(tmp_path, (120, 35)) as case:
         await wait_for(
@@ -170,7 +170,7 @@ async def test_close_during_resume_retires_the_old_visible_draft(tmp_path, monke
                 and not case.console._console_attach_reconcile_running
                 and not case.console._console_sync_in_progress
                 and not case.console._console_sync_requested
-                and composer_run_controls.poll_source_is_current(
+                and console_spend_projection.poll_source_is_current(
                     case.console, case.console._console_completed_full_source
                 )
             ),

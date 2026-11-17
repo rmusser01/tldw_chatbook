@@ -14,7 +14,7 @@ sys.modules.setdefault('parakeet_mlx', types.ModuleType('parakeet_mlx'))
 route, state = sys.argv[1:]
 selector = Path(os.environ['TLDW_CONFIG_PATH'])
 base = selector.parent.parent
-selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir="' + str(base/'data') + '"\n[agents]\nmax_live_subagents=1\n')
+selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir="' + (base/'data').as_posix() + '"\n[agents]\nmax_live_subagents=1\n')
 selector.chmod(0o600)
 from tldw_chatbook import config
 from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission as storage
@@ -131,9 +131,18 @@ def effect():
     effect_file.write_text('completed after waiter')
     finished.set()
     return ToolResult(ok=True, content='completed')
+def cancel_after_entry():
+    if route != 'cancel':
+        return False
+    # Exercise cancellation of the actual admitted worker, not its startup race.
+    assert entered.wait(10), 'native worker did not reach the held effect'
+    return True
+
 if route in ('timeout','cancel'):
-    result = _call_with_timeout(effect, .2, 'delayed', should_cancel=lambda:route=='cancel')
+    result = _call_with_timeout(effect, .2, 'delayed', should_cancel=cancel_after_entry)
     assert not result.ok
+    if route == 'cancel':
+        assert result.outcome == 'cancelled' and result.dispatch_state == 'uncertain', result
     assert entered.is_set(), result
     assert not effect_file.exists()
     try:
