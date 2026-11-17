@@ -448,8 +448,13 @@ def _guarded_metadata_read(name: str, path: object, *args: object, **kwargs: obj
         and resolved is not None
         and _strict_ancestor(resolved)
     )
-    named_nofollow_ancestor = resolved in _METADATA_ONLY_PATHS and (
-        name == "lstat" or (name == "stat" and kwargs.get("follow_symlinks") is False)
+    named_nofollow_ancestor = (
+        resolved in _METADATA_ONLY_PATHS
+        and not (isinstance(dir_fd, int) and os.path.isabs(traversal_component))
+        and (
+            name == "lstat"
+            or (name == "stat" and kwargs.get("follow_symlinks") is False)
+        )
     )
     if resolved is None or not (
         _read_allowed(resolved) or traversal_stat or named_nofollow_ancestor
@@ -580,19 +585,24 @@ def _runtime_authority(
 
 
 def _runtime_metadata_ancestors(scratch: str) -> frozenset[str]:
-    """Return exact no-follow metadata probes needed to reach macOS temp roots."""
-    if sys.platform != "darwin":
-        return frozenset()
-    parts = Path(scratch).parts
-    if parts[:3] == (os.sep, "private", "tmp"):
-        return frozenset({"/private", "/private/tmp"})
-    if (
-        len(parts) >= 7
-        and parts[:4] == (os.sep, "private", "var", "folders")
-        and parts[6] == "T"
-    ):
-        return frozenset(str(Path(*parts[:part_count])) for part_count in range(2, 8))
-    return frozenset()
+    """Permit no-follow ancestor and bootstrap-intent metadata, never contents."""
+    # Control-record admission checks this exact sentinel in each ancestor.
+    paths = {str(parent) for parent in Path(scratch).parents}
+    paths.update(
+        str(parent / ".tldw-bootstrap-directory-create.pending")
+        for parent in Path(scratch).parents
+    )
+    if sys.platform == "darwin":
+        parts = Path(scratch).parts
+        if parts[:3] == (os.sep, "private", "tmp"):
+            paths.update({"/private", "/private/tmp"})
+        elif (
+            len(parts) >= 7
+            and parts[:4] == (os.sep, "private", "var", "folders")
+            and parts[6] == "T"
+        ):
+            paths.update(str(Path(*parts[:count])) for count in range(2, 8))
+    return frozenset(paths)
 
 
 def _install_boundary(checkout: str, scratch: str) -> None:
@@ -656,7 +666,8 @@ def _install_boundary(checkout: str, scratch: str) -> None:
         if hasattr(socket, name):
             setattr(socket, name, _deny_network)
 
-    subprocess.Popen = _deny_process
+    # Keep Popen usable in runtime type annotations while refusing construction.
+    subprocess.Popen.__new__ = staticmethod(_deny_process)
     for name in dir(os):
         value = getattr(os, name, None)
         if callable(value) and (
@@ -678,6 +689,10 @@ def _install_boundary(checkout: str, scratch: str) -> None:
         _replace_os_api(name, _mutator_guard(name))
     for name in _REAL_FD_READ_APIS:
         _replace_os_api(name, _fd_read_guard(name))
+
+    # Reader closeout has no audio-device authority, including import-time setup.
+    sys.modules["sounddevice"] = None
+    sys.modules["pyaudio"] = None
 
     THREAD_BASELINE = tuple(thread.ident for thread in threading.enumerate())
     TASK_BASELINE = ()

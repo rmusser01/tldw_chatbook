@@ -492,6 +492,19 @@ def _read_relative_file(
         or not target.is_file()
     ):
         raise LocalToolError(f"file not found: {display_path or relative}")
+    if target.is_symlink():
+        try:
+            resolved_relative = target.resolve().relative_to(workspace.resolve())
+        except (OSError, RuntimeError, ValueError):
+            raise LocalToolError(
+                f"file not found: {display_path or relative}"
+            ) from None
+        if not _relative_target_is_safe(
+            resolved_relative, workspace, sensitive_exclusions, is_directory=False
+        ):
+            raise LocalToolError(f"file not found: {display_path or relative}")
+        # Keep the final open relative to the retained worker root.
+        target = workspace / resolved_relative
     data = _read_bounded_bytes(target)
     if b"\x00" in data[:8192]:
         raise LocalToolError(

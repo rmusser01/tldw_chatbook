@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 import io
 import json
 import logging
@@ -21,6 +22,7 @@ import pytest
 import tldw_chatbook.Tools.git_tool_impls as git_tool_impls
 import tldw_chatbook.Tools.workspace_tool_executor as workspace_tool_executor_module
 import tldw_chatbook.Tools.workspace_tool_worker as workspace_tool_worker
+from tldw_chatbook.Tools import local_tool_impls, remote_worker_bundle
 from tldw_chatbook.Tools.local_tool_impls import LocalToolError
 from tldw_chatbook.Tools.workspace_tool_executor import (
     DIAGNOSTIC_STDERR_MAX_BYTES,
@@ -42,6 +44,7 @@ from tldw_chatbook.Tools.workspace_tool_protocol import (
     WorkspaceToolResponse,
 )
 from tldw_chatbook.Tools.workspace_tool_worker import run_workspace_worker
+from Tests.workspace_worker_test_support import run_in_process_workspace_worker
 from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
 
 
@@ -543,7 +546,7 @@ def test_worker_pins_and_dispatches_one_real_stat_request(tmp_path: Path) -> Non
     )
     stdout = io.BytesIO()
 
-    exit_code = run_workspace_worker(
+    exit_code = run_in_process_workspace_worker(
         io.BytesIO(request.to_bytes()), stdout, io.BytesIO()
     )
 
@@ -580,7 +583,7 @@ def test_worker_dispatch_refuses_cross_platform_rooted_stat_paths(
     )
     stdout = io.BytesIO()
 
-    exit_code = run_workspace_worker(
+    exit_code = run_in_process_workspace_worker(
         io.BytesIO(request.to_bytes()), stdout, io.BytesIO()
     )
 
@@ -1522,11 +1525,15 @@ def test_direct_worker_rejects_a_bypassed_unsafe_glob_pattern(pattern: str) -> N
     assert caught.value.code == "invalid_request"
 
 
-def _run_worker_request(request: WorkspaceToolRequest) -> WorkspaceToolResponse:
+def _run_worker_request(
+    request: WorkspaceToolRequest,
+    *,
+    worker: Callable[..., int] = workspace_tool_worker.run_workspace_worker,
+) -> WorkspaceToolResponse:
     """Run a hand-built pinned request and return its sole terminal frame."""
     stdout = io.BytesIO()
-    exit_code = run_workspace_worker(
-        io.BytesIO(request.to_bytes()), stdout, io.BytesIO()
+    exit_code = run_in_process_workspace_worker(
+        io.BytesIO(request.to_bytes()), stdout, io.BytesIO(), worker=worker
     )
     frames = [
         WorkspaceToolResponse.from_bytes(line)
@@ -1604,9 +1611,16 @@ def test_worker_does_not_surface_arbitrary_value_error_text(
     assert response.error == "workspace operation failed"
 
 
+@pytest.mark.parametrize("backend", ["source", "bundle"])
 def test_pinned_worker_applies_exclusions_to_both_lexical_and_resolved_aliases(
     tmp_path: Path,
+    backend: str,
 ) -> None:
+    worker = (
+        workspace_tool_worker.run_workspace_worker
+        if backend == "source"
+        else remote_worker_bundle.run_workspace_worker
+    )
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     (workspace / "public.txt").write_text("PUBLIC", encoding="utf-8")
@@ -1628,7 +1642,7 @@ def test_pinned_worker_applies_exclusions_to_both_lexical_and_resolved_aliases(
         output_max_bytes=MAX_RESPONSE_BYTES,
     )
 
-    denied = _run_worker_request(request)
+    denied = _run_worker_request(request, worker=worker)
     assert denied.outcome == "failure"
     assert "PUBLIC" not in (denied.error or "")
 
@@ -1649,9 +1663,82 @@ def test_pinned_worker_applies_exclusions_to_both_lexical_and_resolved_aliases(
         timeout_seconds=30,
         output_max_bytes=MAX_RESPONSE_BYTES,
     )
-    accepted = _run_worker_request(allowed)
+    accepted = _run_worker_request(allowed, worker=worker)
     assert accepted.outcome == "success"
     assert accepted.result is not None and "PUBLIC" in accepted.result
+
+
+@pytest.mark.parametrize("backend", ["source", "bundle"])
+@pytest.mark.parametrize("target_kind", ["escaping", "sensitive"])
+def test_pinned_read_rechecks_a_leaf_alias_before_opening_its_resolved_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    target_kind: str,
+    backend: str,
+) -> None:
+    implementation = local_tool_impls if backend == "source" else remote_worker_bundle
+    worker = (
+        workspace_tool_worker.run_workspace_worker
+        if backend == "source"
+        else remote_worker_bundle.run_workspace_worker
+    )
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "public.txt").write_text("PUBLIC", encoding="utf-8")
+    protected = workspace / "credentials"
+    protected.write_text("PRIVATE_TARGET", encoding="utf-8")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("PRIVATE_TARGET", encoding="utf-8")
+    link = workspace / "link"
+    link.symlink_to(workspace / "public.txt")
+    chain = capture_directory_chain(workspace)
+    real_safe = implementation._relative_target_is_safe
+    retargeted = []
+
+    def retarget_after_check(relative, root, exclusions, **kwargs):
+        safe = real_safe(relative, root, exclusions, **kwargs)
+        if relative == Path("link") and safe and not retargeted:
+            link.unlink()
+            link.symlink_to(outside if target_kind == "escaping" else protected)
+            retargeted.append(True)
+        return safe
+
+    real_open = os.open
+    opened = []
+
+    def record_open(path, flags, *args, **kwargs):
+        # The flat bundle also opens directories while pinning its root.
+        if not flags & getattr(os, "O_DIRECTORY", 0):
+            opened.append(path)
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(implementation, "os", SimpleNamespace(**vars(os)))
+    monkeypatch.setattr(implementation.os, "open", record_open)
+    monkeypatch.setattr(
+        implementation, "_relative_target_is_safe", retarget_after_check
+    )
+    request = WorkspaceToolRequest(
+        operation_id="retargeted-leaf-alias",
+        operation="fs_read",
+        intent="read",
+        root_locator=chain.canonical_root,
+        root_identity=chain.identities[0],
+        ancestor_identities=chain.identities,
+        arguments={
+            "path": "link",
+            "sensitive_exclusions": [{"kind": "name", "value": "credentials"}],
+        },
+        timeout_seconds=30,
+        output_max_bytes=MAX_RESPONSE_BYTES,
+    )
+
+    response = _run_worker_request(request, worker=worker)
+
+    assert retargeted == [True]
+    assert response.outcome == "failure"
+    assert not opened
+    assert "PRIVATE_TARGET" not in (response.result or "")
+    assert "PRIVATE_TARGET" not in (response.error or "")
 
 
 @pytest.mark.parametrize(
@@ -1779,7 +1866,7 @@ def test_pre_pin_read_operations_refuse_a_replaced_root(
     )
     stdout = io.BytesIO()
 
-    exit_code = run_workspace_worker(
+    exit_code = run_in_process_workspace_worker(
         io.BytesIO(request.to_bytes()), stdout, io.BytesIO()
     )
 
@@ -2276,7 +2363,7 @@ def test_two_file_patch_uses_one_admitted_frame_and_one_requested_root_identity(
     )
     stdout = io.BytesIO()
 
-    exit_code = run_workspace_worker(
+    exit_code = run_in_process_workspace_worker(
         io.BytesIO(request.to_bytes()), stdout, io.BytesIO()
     )
 
@@ -2638,7 +2725,7 @@ def test_pinned_operations_do_not_disclose_in_root_sensitive_symlink_aliases(
 
     request = executor._build_request(operation, arguments, intent="read")
     stdout = io.BytesIO()
-    exit_code = run_workspace_worker(
+    exit_code = run_in_process_workspace_worker(
         io.BytesIO(request.to_bytes()), stdout, io.BytesIO()
     )
     frames = [

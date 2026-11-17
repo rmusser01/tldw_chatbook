@@ -9,7 +9,8 @@ import pytest
 from tldw_chatbook.Tools import local_tool_impls, patch_tool_impls, remote_worker_bundle
 from tldw_chatbook.Tools.workspace_tool_executor import WorkspaceToolExecutor
 from tldw_chatbook.Tools.workspace_tool_protocol import WorkspaceToolResponse
-from tldw_chatbook.Tools.workspace_tool_worker import run_workspace_worker
+from tldw_chatbook.Tools import workspace_tool_worker
+from Tests.workspace_worker_test_support import run_in_process_workspace_worker
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -23,12 +24,15 @@ def _worker(root, operation, arguments, backend="local"):
         operation, arguments, intent="write"
     )
     output = BytesIO()
-    run = (
-        run_workspace_worker
-        if backend == "local"
-        else remote_worker_bundle.run_workspace_worker
+    backend_module = (
+        workspace_tool_worker if backend == "local" else remote_worker_bundle
     )
-    run(BytesIO(request.to_bytes()), output, BytesIO())
+    run_in_process_workspace_worker(
+        BytesIO(request.to_bytes()),
+        output,
+        BytesIO(),
+        worker=backend_module.run_workspace_worker,
+    )
     return [
         WorkspaceToolResponse.from_bytes(
             frame, expected_operation_id=request.operation_id

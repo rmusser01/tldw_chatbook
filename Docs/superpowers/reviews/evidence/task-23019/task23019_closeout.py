@@ -7,6 +7,7 @@ import ctypes
 import errno
 import hashlib
 import html
+import importlib.util
 import json
 import os
 import re
@@ -3264,6 +3265,18 @@ def _is_preserved_environment_name(name: str) -> bool:
     )
 
 
+def _profile_guard_environment() -> dict[str, str]:
+    guard = sys.modules.get("Tests.real_profile_guard")
+    if guard is None:
+        path = Path(__file__).resolve().parents[5] / "Tests/real_profile_guard.py"
+        spec = importlib.util.spec_from_file_location("task23019_profile_guard", path)
+        if spec is None or spec.loader is None:
+            raise CloseoutError("profile_guard_unavailable")
+        guard = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(guard)
+    return guard.child_environment()
+
+
 def prepare_scratch_environment(
     scratch: Path, *, environ: Mapping[str, str] | None = None
 ) -> ScratchEnvironment:
@@ -3312,6 +3325,7 @@ def prepare_scratch_environment(
         and not _is_credential_environment_name(name)
     }
     child_environment.update({name: str(path) for name, path in resolved_owned.items()})
+    child_environment.update(_profile_guard_environment())
     child_environment.update(
         {
             "TLDW_TEST_MODE": "1",
