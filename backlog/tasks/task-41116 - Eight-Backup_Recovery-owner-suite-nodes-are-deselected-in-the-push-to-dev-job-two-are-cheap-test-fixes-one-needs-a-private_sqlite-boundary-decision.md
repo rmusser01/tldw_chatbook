@@ -53,7 +53,7 @@ Filed in round 14 of the 2026-10-23 burn-down (closeout, 2026-11-15). Checked ag
 
 ## Implementation Notes
 
-Commits 6673ea6661, 146f5156af, 7d9c3988b1, a7816ce8b5, 829b7d3047. Five nodes re-admitted (8 -> 3 deselected); three stay. Not Done: AC#1 is open for those three (see below).
+Commits 6673ea6661, 146f5156af, 7d9c3988b1, a7816ce8b5, 829b7d3047. Net, three nodes re-admitted (8 -> 5 deselected): the custom-DB node and the two private_sqlite nodes. The two roundtrip capture nodes were re-admitted, then deselected again (last section). Not Done: AC#1 is open for the five.
 
 **Re-admitted (green, --deselect line and pin entry removed):**
 - `test_inventory.py::test_custom_db_and_disabled_features_are_not_external_or_unused`: cause found, order dependence. `install_adapters()` registers process-wide; any earlier test in the worker that ran it (test_restore_plan, test_data_groups, ...) made the media core report the custom file `included`. Red: `pytest -p no:xdist test_restore_plan.py::test_selected_shared_files_remain_one_physical_candidate test_inventory.py::<node>` -> `'included' == 'unsupported'`; deterministic. Fix: an autouse fixture gives every test_inventory test an empty registry. The same pair also failed `test_multiple_profile_configs_preserve_shared_physical_alias` (`undeclared_alias`), a latent flake in the job that this fixes too; with the fixture, the file after install_adapters: 32 passed (only the private_sqlite node below fails).
