@@ -76,6 +76,10 @@ _DROPPABLE = {
 # The review counts an older (not current) version of these kinds apart.
 _HISTORY = frozenset({"manifest", "scope", "scope_binding", "runtime_policy"})
 REBUILT_SCOPE_RECORDS = "rebuilt_scope_records"
+# Fix round 3 (coordinator ruling): damaged scopes whose kind no evidence
+# settles, more than one with no known global scope, refuse; never guessed.
+AMBIGUOUS_SCOPES = "personal_context_damaged_scopes_ambiguous"
+_REVIEW_ONLY = (REBUILT_SCOPE_RECORDS, AMBIGUOUS_SCOPES)
 RECOVERED_SCOPE_LABEL = "Recovered scope"
 
 
@@ -274,11 +278,13 @@ class RepositoryKeyCustody:
             connection.execute("BEGIN")
             try:
                 rows = connection.execute("SELECT * FROM encrypted_objects").fetchall()
-                damaged = [
-                    (self._damage_kind(connection, row), _key(row))
-                    for row in rows
-                    if self._reads(connection, row) is None
-                ]
+                damaged, scopes = [], {}
+                for row in rows:
+                    plaintext = self._reads(connection, row)
+                    if plaintext is None:
+                        damaged.append((self._damage_kind(connection, row), _key(row)))
+                    elif row["object_type"] == "scope":
+                        scopes[_key(row)[1:]] = plaintext
                 counts = Counter(kind for kind, _ in damaged)
                 rebuilt = {key[1] for kind, key in damaged if kind == "scope"}
                 if rebuilt:
@@ -286,6 +292,9 @@ class RepositoryKeyCustody:
                         self._scope_records(connection, rebuilt)
                         - {key for _, key in damaged}
                     )
+                    _, ambiguous = self._scope_kinds(connection, rebuilt, scopes)
+                    if ambiguous:
+                        counts[AMBIGUOUS_SCOPES] = len(ambiguous)
                 return dict(counts)
             finally:
                 connection.rollback()
@@ -313,6 +322,8 @@ class RepositoryKeyCustody:
         kind = row["object_type"]
         if kind in _HISTORY and not _is_current(connection, row):
             return kind + "_history"
+        if kind == "runtime_policy" and row["object_id"] == GLOBAL_POLICY_ID:
+            return "runtime_switch"  # the global on/off setting
         return kind
 
     @staticmethod
@@ -392,11 +403,22 @@ class RepositoryKeyCustody:
                             *key,
                         ),
                     )
+                rebuilt, ambiguous = self._scope_kinds(
+                    connection,
+                    {
+                        key[1]
+                        for key in damaged
+                        if key[0] == "scope" and _is_current(connection, key)
+                    },
+                    scopes,
+                )
+                if ambiguous:
+                    raise _locked("Damaged scopes cannot be told apart.", AMBIGUOUS_SCOPES)
                 expected = Counter(expected_damaged or {})
-                expected.pop(REBUILT_SCOPE_RECORDS, None)
+                for review_only in _REVIEW_ONLY:
+                    expected.pop(review_only, None)
                 if kinds != expected:
                     raise ProfileLockedError("Damaged objects changed since review.")
-                rebuilt = self._rebuilt_scopes(connection, damaged, scopes)
                 off = [
                     key[1]
                     for key in damaged
@@ -471,30 +493,32 @@ class RepositoryKeyCustody:
                 key,
             )
 
-    def _rebuilt_scopes(self, connection, damaged, scopes) -> dict:
-        """Each damaged current scope and the kind its rebuild takes.
+    @staticmethod
+    def _scope_kinds(connection, damaged_ids, scopes) -> tuple[dict, list[str]]:
+        """The kind each damaged current scope is rebuilt with, and the ids no
+        evidence settles (fix round 3).
 
-        The kind is sealed in the damaged version, so it comes from a readable
-        older version of the scope, else a workspace mapping (only workspaces
-        have one), else global when no readable current scope is global.
+        The kind is sealed in the damaged version. Evidence, in order: a
+        readable older version of the scope; a workspace mapping or unlinked
+        row (only workspaces have one); a `scope-global-` id (local global
+        scopes are created so). A profile has one global scope, so once one is
+        known (readable, or settled above) the rest are workspaces, and when
+        none is known a single unsettled scope is it. More than one unsettled
+        with no known global is ambiguous and refuses: guessing could serve a
+        workspace's records as global context in every chat.
         """
         from tldw_profile_core import ProfileScope, ScopeKind
 
-        ids = sorted(
-            key[1]
-            for key in damaged
-            if key[0] == "scope" and _is_current(connection, key)
-        )
         kinds: dict[str, ScopeKind] = {}
-        for (scope_id, _version), plaintext in scopes.items():
+        globals_ = set()
+        for (scope_id, version), plaintext in scopes.items():
             kinds[scope_id] = ProfileScope.model_validate_json(plaintext).kind
-        has_global = any(
-            kinds.get(scope_id) is ScopeKind.GLOBAL
-            for (scope_id, version) in scopes
-            if _is_current(connection, ("scope", scope_id, version))
-        )
-        rebuilt = {}
-        for scope_id in ids:
+            if kinds[scope_id] is ScopeKind.GLOBAL and _is_current(
+                connection, ("scope", scope_id, version)
+            ):
+                globals_.add(scope_id)
+        settled, unsettled = {}, []
+        for scope_id in sorted(damaged_ids):
             kind = kinds.get(scope_id)
             if kind is None and connection.execute(
                 "SELECT 1 FROM local_scope_bindings WHERE scope_id = ? UNION ALL "
@@ -502,20 +526,29 @@ class RepositoryKeyCustody:
                 (scope_id, scope_id),
             ).fetchone():
                 kind = ScopeKind.WORKSPACE
+            if kind is None and scope_id.startswith("scope-global-"):
+                kind = ScopeKind.GLOBAL
             if kind is None:
-                # ponytail: two damaged unmapped scopes and no readable global
-                # one cannot be told apart; the first by id becomes global.
-                kind = ScopeKind.WORKSPACE if has_global else ScopeKind.GLOBAL
-            has_global = has_global or kind is ScopeKind.GLOBAL
-            rebuilt[scope_id] = kind
-        return rebuilt
+                unsettled.append(scope_id)
+                continue
+            settled[scope_id] = kind
+            if kind is ScopeKind.GLOBAL:
+                globals_.add(scope_id)
+        if len(globals_) > 1:
+            return settled, sorted(damaged_ids)
+        if globals_ or len(unsettled) == 1:
+            last = ScopeKind.WORKSPACE if globals_ else ScopeKind.GLOBAL
+            settled.update(dict.fromkeys(unsettled, last))
+            return settled, []
+        return settled, unsettled
 
     def _rebuild_scopes(self, connection, rebuilt) -> None:
         """Owner decision 2026-11-16 ("Rebuild the scope"): a fresh version of
         each damaged current scope under its own id, so its records stay
         attached. The scope object's own fields reset (fresh times; only the id
-        and kind carry over), and a workspace keeps its mapping under
-        "Recovered scope". Its agent access row is a separate object: a
+        and kind carry over); a workspace keeps its mapping and its readable
+        label, and one with no label is named "Recovered scope". Its agent
+        access row is a separate object: a
         readable one stays exactly as it was (Off stays Off); only a damaged one
         is replaced, by Off (coordinator ruling, fix round 2)."""
         from tldw_profile_core import ProfileScope
@@ -544,7 +577,9 @@ class RepositoryKeyCustody:
             body = self._local_body(
                 connection, "local_scope_bindings", "scope_binding", scope_id
             )
-            if body is not None:
+            # Fix round 3: a readable label is kept; only a mapping with none
+            # is named "Recovered scope".
+            if body is not None and not str(body.get("label") or "").strip():
                 self._put_local_body(
                     connection,
                     "scope_binding",

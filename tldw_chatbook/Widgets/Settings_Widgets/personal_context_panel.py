@@ -43,7 +43,7 @@ from ...Personal_Context.recovery import (
     approve_restore_review,
     restore_review,
 )
-from ...Personal_Context.repository_keys import REBUILT_SCOPE_RECORDS
+from ...Personal_Context.repository_keys import AMBIGUOUS_SCOPES, REBUILT_SCOPE_RECORDS
 from ...Personal_Context.runtime_policy import AgentAuthority
 from ...Personal_Context.service import (
     PersonalContextService,
@@ -165,6 +165,10 @@ _DAMAGED_NOUNS = {
         "older workspace mapping versions",
     ),
     "runtime_policy": ("agent access setting", "agent access settings"),
+    "runtime_switch": (
+        "Personal Context on/off setting",
+        "Personal Context on/off settings",
+    ),
     "runtime_policy_history": (
         "older agent access setting version",
         "older agent access setting versions",
@@ -172,15 +176,30 @@ _DAMAGED_NOUNS = {
 }
 
 
+# Fix round 3: damaged scopes no evidence tells apart refuse, never guessed.
+_AMBIGUOUS_SCOPES_COPY = (
+    "Some damaged scopes can't be told apart, so this restored profile can't be "
+    "confirmed. Restore Personal Context again from another backup, or roll the "
+    "restore back in Backup & Restore > Recovery copies"
+)
+
+
 def _damaged_copy(counts: dict[str, int]) -> str:
     """The review's damage line; owner decisions 2026-11-14 to 2026-11-16."""
+    if counts.get(AMBIGUOUS_SCOPES):
+        return _AMBIGUOUS_SCOPES_COPY
     sentences = []
     if scopes := counts.get("scope"):
         kept = counts.get(REBUILT_SCOPE_RECORDS, 0)
+        one = scopes == 1
         sentences.append(
-            f"{scopes} damaged scope{'s' if scopes != 1 else ''} will be rebuilt; "
-            f"{'its' if scopes == 1 else 'their'} {kept} "
-            f"record{'s are' if kept != 1 else ' is'} kept"
+            f"{scopes} damaged scope{'' if one else 's'} will be rebuilt; "
+            + (
+                f"{'it has' if one else 'they have'} no records"
+                if not kept
+                else f"{'its' if one else 'their'} {kept} "
+                f"record{' is' if kept == 1 else 's are'} kept"
+            )
         )
     parts = [
         f"{counts[kind]} damaged {nouns[counts[kind] != 1]}"
@@ -190,8 +209,13 @@ def _damaged_copy(counts: dict[str, int]) -> str:
     if parts:
         listed = parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
         sentences.append(listed + " can't be read and will be removed")
-    if counts.get("runtime_policy"):
-        sentences.append("Agent access there is Off until you set it again")
+    if policies := counts.get("runtime_policy"):
+        sentences.append(
+            f"Agent access for {'that scope' if policies == 1 else 'those scopes'} "
+            "is Off until you set it again"
+        )
+    if counts.get("runtime_switch"):
+        sentences.append("Agent use of Personal Context stays off until you turn it on")
     return ". ".join(sentences)
 
 
@@ -1554,7 +1578,12 @@ class PersonalContextSettingsPanel(Vertical):
             self.app.call_from_thread(self._mutation_key_collision)
         except ProfileConflictError:
             self.app.call_from_thread(self._mutation_conflict)
-        except Exception:
+        except Exception as error:
+            if getattr(error, "reason_code", None) == AMBIGUOUS_SCOPES:
+                self.app.call_from_thread(
+                    self.notify, _AMBIGUOUS_SCOPES_COPY + ".", severity="error"
+                )
+                return
             if reload_removed_on_failure:
                 try:
                     snapshot = self._require_service().settings_snapshot()

@@ -201,12 +201,16 @@ and current-request content. It never truncates part of a profile record.
 
 Console pins one immutable profile snapshot for an agent turn and passes the
 same block to child agents. **Context > Next Send** shows that exact disposable
-block. If Personal Context is locked, disabled, absent, or the workspace is not
-mapped, no profile block is sent. The compatibility `workspace_root` setting
+block. If Personal Context is locked, disabled, absent, the workspace is not mapped,
+or the agent authority of the global scope or of the chat's workspace is
+**Off**, no profile block is sent. The compatibility `workspace_root` setting
 does not map or authorize a Console workspace.
 
 Each scope has its own local agent authority:
 
+- **Off** allows nothing: no profile context and no profile tools. Off on a
+  workspace withholds global context in that workspace too, and Off on the
+  global scope withholds profile context from every chat.
 - **Read only** allows eligible profile context and the `profile_search` and
   `profile_get` tools.
 - **Propose changes** also lets agents suggest creates, updates, archives, and

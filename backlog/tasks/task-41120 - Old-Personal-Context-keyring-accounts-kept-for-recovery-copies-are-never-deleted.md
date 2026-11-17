@@ -4,7 +4,7 @@ title: "Old Personal Context keyring accounts kept for recovery copies are never
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-17 00:35'
+updated_date: '2026-11-17 02:00'
 created_date: 2026-11-15 02:20
 labels:
 - follow-up
@@ -61,3 +61,5 @@ Filed in round 14 of the 2026-10-23 burn-down (closeout, 2026-11-15). Checked ag
 - **Frozen copy list (minor).** The `forget_kept_keys` docstring and the inventory prose state the reliance on the newer copy's escrow and the TASK-41122 reinstall.
 - **Unreadable copy (minor).** A `recovery_required` copy lists as `operation-<sha256>`, not the recorded id, so `forget_kept_keys` now deletes nothing while any listed copy is `recovery_required`.
 - **Tests.** New cases `database_moved`, `names_current_database` and `unreadable_copy` in `test_a_kept_account_goes_only_when_no_copy_or_live_database_names_it`. Each keeps the account while the condition holds, then deletes it once the condition clears. Red on the round-0 `recovery.py` (only that file checked out): all three failed `assert … in backend.values` (the account was deleted). Green: 6 passed.
+
+**2026-11-16, fix round 3 (review r15pc-rev2, minor).** The `forget_kept_keys` docstring and the owner-inventory prose now say a later copy "usually names the new account; if a later rollback revived the kept account, the TASK-41122 reinstall covers it". The inventory node passed again, serially (see TASK-41121 notes).

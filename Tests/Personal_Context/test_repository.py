@@ -2285,7 +2285,9 @@ def _scope_record_heads(db_path, scope_id) -> list[str]:
         )
 
 
-@pytest.mark.parametrize("kind", ["global", "workspace", "workspace_off"])
+@pytest.mark.parametrize(
+    "kind", ["global", "workspace", "workspace_off", "workspace_unlabelled"]
+)
 def test_a_damaged_current_scope_is_rebuilt_with_its_records(
     tmp_path, record_factory, proposal_factory, kind
 ) -> None:
@@ -2293,7 +2295,8 @@ def test_a_damaged_current_scope_is_rebuilt_with_its_records(
     counts the damaged current scope and its records; re-encryption gives the
     scope a fresh version under its own id and kind, its records stay attached,
     listed and readable, and a workspace keeps its mapping, renamed "Recovered
-    scope". Its readable agent access row is a separate, undamaged object and
+    scope" only when it has no readable label (fix round 3; a readable label
+    stays). Its readable agent access row is a separate, undamaged object and
     stays exactly as it was, Off included (coordinator ruling, fix round 2).
     With a rebuilt global scope, context building still works."""
     from tldw_chatbook.Personal_Context.runtime_policy import AgentAuthority
@@ -2307,6 +2310,12 @@ def test_a_damaged_current_scope_is_rebuilt_with_its_records(
     )
     if kind == "workspace_off":
         service.set_scope_authority(scope.scope_id, AgentAuthority.OFF)
+    if kind == "workspace_unlabelled":
+        service._repo().commit_scope_binding(
+            scope.scope_id,
+            {"version": 1, "local_workspace_id": "w", "label": ""},
+            expected_version_id=service._repo().get_scope_binding_version(scope.scope_id),
+        )
     authority = service.get_scope_authority(scope.scope_id)
     policy = service._repo().get_runtime_policy_version(scope.scope_id)
     listed = sorted(
@@ -2336,7 +2345,7 @@ def test_a_damaged_current_scope_is_rebuilt_with_its_records(
         assert service.list_workspace_bindings()[scope.scope_id] == {
             "version": 1,
             "local_workspace_id": "w",
-            "label": "Recovered scope",
+            "label": "Recovered scope" if kind == "workspace_unlabelled" else "W",
         }
         return
     service.set_runtime_enabled(True)
@@ -2465,3 +2474,122 @@ def test_a_kept_account_goes_only_when_no_copy_or_live_database_names_it(
     assert (_KEYRING_SERVICE, restored) not in backend.values
     assert (_KEYRING_SERVICE, account) in backend.values
     assert not list(control.iterdir())
+
+
+def _two_scope_profile(tmp_path, record_factory, global_id, workspace_id):
+    """A profile whose global and unmapped workspace scopes each have one
+    version and one record, under the given ids (fix round 3)."""
+    import uuid
+
+    from tldw_profile_core import ProfileScope
+
+    backend = SecureKeyring()
+    db_path = tmp_path / "a" / "personal-context.db"
+    db_path.parent.mkdir(mode=0o700)
+    service = PersonalContextService(
+        _keyring_repo(db_path, backend),
+        id_factory=lambda label: (
+            global_id if label == "scope-global" else f"{label}-{uuid.uuid4()}"
+        ),
+    )
+    manifest = service.create_profile()
+    (global_scope,) = service.list_scopes()
+    repo = _keyring_repo(db_path, backend)
+    repo.commit_scope(
+        global_scope.model_copy(
+            update={
+                "scope_id": workspace_id,
+                "kind": ScopeKind.WORKSPACE,
+                "version_id": "workspace-version-1",
+            }
+        ),
+        expected_version_id=None,
+    )
+    for record_id, scope_id in (("record-g", global_id), ("record-w", workspace_id)):
+        repo.commit_record_version(
+            record_factory(
+                manifest.profile_id, record_id=record_id, version_id=record_id + "-v1"
+            ).model_copy(update={"scope_id": scope_id}),
+            expected_version_id=None,
+        )
+    return db_path, backend
+
+
+def _damage_scopes(db_path, *scope_ids) -> None:
+    with closing(sqlite3.connect(db_path)) as connection:
+        keys = [
+            row
+            for row in connection.execute(
+                "SELECT object_type, object_id, version_id FROM object_heads "
+                "WHERE object_type = 'scope'"
+            )
+            if row[1] in scope_ids
+        ]
+    assert len(keys) == len(scope_ids)
+    for key in keys:
+        _damage_object(db_path, key)
+
+
+@pytest.mark.parametrize(
+    ("global_id", "damaged"),
+    [
+        # The reviewer's probe: a damaged global and an "aaa-" workspace that
+        # sorts first, both single-version and unmapped.
+        ("scope-global-1", ("scope-global-1", "aaa-server-workspace")),
+        # The no-evidence branch real profiles hit: one damaged scope, no
+        # readable global, no global-looking id.
+        ("server-global-1", ("server-global-1",)),
+        # An unmapped workspace beside a readable global.
+        ("server-global-1", ("aaa-server-workspace",)),
+    ],
+)
+def test_damaged_single_version_scopes_rebuild_with_the_right_kinds(
+    tmp_path, record_factory, global_id, damaged
+) -> None:
+    """Fix round 3 (coordinator ruling): the global scope is never guessed by
+    order. Each rebuilt scope keeps its kind, and global context serves only
+    the global scope's records."""
+    db_path, backend = _two_scope_profile(
+        tmp_path, record_factory, global_id, "aaa-server-workspace"
+    )
+    _damage_scopes(db_path, *damaged)
+    counts = _keyring_repo(db_path, backend).damaged_versions()
+    assert counts == {"scope": len(damaged), "rebuilt_scope_records": len(damaged)}
+
+    _keyring_repo(db_path, backend).reencrypt_profile(
+        keep_old_account=False, expected_damaged=counts
+    )
+
+    service = PersonalContextService(_keyring_repo(db_path, backend))
+    assert {s.scope_id: s.kind for s in service.list_scopes()} == {
+        global_id: ScopeKind.GLOBAL,
+        "aaa-server-workspace": ScopeKind.WORKSPACE,
+    }
+    service.set_runtime_enabled(True)
+    view = service.authorized_context_view()
+    assert {r.record_id for r in view.records} == {"record-g"}
+
+
+def test_damaged_scopes_that_cannot_be_told_apart_refuse(tmp_path, record_factory) -> None:
+    """Fix round 3 (coordinator ruling): two damaged single-version unmapped
+    scopes, no readable global and no global-looking id: the review counts them
+    as ambiguous and re-encryption refuses by name, changing nothing."""
+    db_path, backend = _two_scope_profile(
+        tmp_path, record_factory, "zzz-server-global", "aaa-server-workspace"
+    )
+    _damage_scopes(db_path, "zzz-server-global", "aaa-server-workspace")
+    counts = _keyring_repo(db_path, backend).damaged_versions()
+    assert counts == {
+        "scope": 2,
+        "rebuilt_scope_records": 2,
+        repository_keys.AMBIGUOUS_SCOPES: 2,
+    }
+    data = db_path.read_bytes()
+
+    with pytest.raises(ProfileLockedError) as refused:
+        _keyring_repo(db_path, backend).reencrypt_profile(
+            keep_old_account=False, expected_damaged=counts
+        )
+
+    assert refused.value.reason_code == repository_keys.AMBIGUOUS_SCOPES
+    assert db_path.read_bytes() == data

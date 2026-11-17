@@ -4,7 +4,7 @@ title: "Owner decision needed: damaged Personal Context objects other than recor
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-17 01:13'
+updated_date: '2026-11-17 02:00'
 created_date: 2026-11-15 02:20
 labels:
 - follow-up
@@ -94,3 +94,30 @@ Owner decision 2026-11-15: "no"
 - Test: `test_a_damaged_current_scope_is_rebuilt_with_its_records[workspace_off]` (the workspace set to Off before the damage) and `[workspace]` (Read only) now assert that the authority and the policy version are unchanged after the rebuild. Red against d13794c127: `[workspace_off]` failed `PROPOSE is OFF`, `[workspace]` failed `PROPOSE is READ_ONLY`. Green: `Tests/Personal_Context/test_repository.py` 98 passed (load 80).
 - User Guide: the **Off** line says it can be chosen for any scope and changed back; the restore paragraph says a rebuilt scope keeps its agent authority (Off stays Off) unless that setting was damaged too. The review copy already mentioned Off only for a damaged setting.
 - Covering: `test_settings_personal_context.py` + `test_personal_context_proposal_review.py` + `Tests/Agents/test_profile_tool_provider.py` + `test_profile_tool_scope.py`: 138 passed, 2 failed at load 70-86 (`test_plaintext_export_captures_scope_when_export_is_confirmed`, `test_production_settings_inspects_private_and_deleted_metadata[size1]`), both passing serially on rerun. Ruff gate and preflight pass.
+
+**2026-11-16, fix round 3 (review r15pc-rev2 and coordinator rulings).**
+- **Scope kind is never guessed by order (important).** The review's probe was a damaged global scope plus a damaged, unmapped, single-version workspace `aaa-server-workspace` that sorts first. Round 2 rebuilt the workspace as global, so global context served its records in every chat.
+  - Coordinator ruling: use the `scope-global-` id prefix as evidence of the global scope before any inference. If more than one scope is still unsettled after all evidence, fail closed with a named reason. Never pick the global scope by order.
+  - `RepositoryKeyCustody._scope_kinds` settles a scope's kind from, in order: a readable older version, a mapping or unlinked row (workspace), then a `scope-global-` id (global). A profile has one global scope, so once one is known the rest are workspaces; with none known, a single unsettled scope is it.
+  - More than one unsettled scope with no known global is refused as `AMBIGUOUS_SCOPES` (`personal_context_damaged_scopes_ambiguous`). Two known globals are refused the same way.
+  - `damaged_versions()` counts the ambiguous scopes, so the review shows "Some damaged scopes can't be told apart, so this restored profile can't be confirmed. Restore Personal Context again from another backup, or roll the restore back in Backup & Restore > Recovery copies". Re-encryption refuses with that reason, and the panel shows the same copy instead of the generic failure.
+- **Labels (coordinator's reading of the owner decision).** The owner's option text said "nothing readable is lost", so a workspace mapping whose label is still readable keeps it. "Recovered scope" is used only for a mapping with no readable label. This is the coordinator's reading, recorded as asked.
+- **Copy.**
+  - A rebuilt scope with no records reads "it has no records".
+  - A damaged global on/off setting counts as `runtime_switch` ("Personal Context on/off setting") with "Agent use of Personal Context stays off until you turn it on".
+  - Scope agent access reads "Agent access for that scope / those scopes is Off until you set it again".
+- **Docs.** `personal-context-profile.md`: Off on a workspace withholds global context in that workspace, and Off on the global scope withholds profile context from every chat; the restore paragraph covers labels and the ambiguous refusal. `console/chat-basics.md`: Off in the authority list and in the "no profile block is sent" sentence. The `forget_kept_keys` docstring and the owner-inventory prose now say a later copy "usually names the new account; if a later rollback revived the kept account, the TASK-41122 reinstall covers it".
+- **Tests.**
+  - `test_damaged_single_version_scopes_rebuild_with_the_right_kinds`, three cases:
+    - the probe: both scopes keep their kinds, and global context serves only `record-g`
+    - the no-evidence single global with id `server-global-1`
+    - an unmapped workspace beside a readable global.
+  - `test_damaged_scopes_that_cannot_be_told_apart_refuse`: counts, refusal reason, database unchanged.
+  - New `[workspace_unlabelled]` rebuild case; the other workspace cases now expect the kept label "W".
+  - UI: three new copy cases; `test_an_ambiguous_scope_refusal_says_what_to_do`; the authority round-trip test now also drives the select to Off.
+- **Red against 337d06f767** (patch, checkout, run, re-apply):
+  - The probe failed on the kind map, with the workspace rebuilt as GLOBAL. The ambiguity test failed because `AMBIGUOUS_SCOPES` did not exist; the old code rebuilt by order.
+  - `[workspace]` and `[workspace_off]` failed `'Recovered scope' == 'W'`.
+  - UI: four copy cases failed on the copy assertion; the refusal test failed on import.
+  - Already green there, as coverage additions: the no-evidence global case, the unmapped workspace case, and the Off round-trip.
+- **Covering (load 54-63, `-n 4`).** `Tests/Personal_Context/test_repository.py` + `test_settings_personal_context.py` + `test_personal_context_proposal_review.py` + `Tests/Agents/test_profile_tool_provider.py` + `test_profile_tool_scope.py`: 247 passed. The owner-inventory node passed serially (162 s). Ruff gate, markup census and preflight pass.

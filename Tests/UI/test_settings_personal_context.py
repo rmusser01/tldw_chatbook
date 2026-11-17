@@ -1534,6 +1534,30 @@ async def test_runtime_and_scope_authority_controls_show_exact_state_and_persist
             service.get_scope_authority(service.list_scopes()[0].scope_id)
             is AgentAuthority.READ_ONLY
         )
+        # TASK-41121 fix round 3: the select drives Off too, and shows it.
+        panel = screen.query_one(
+            "#personal-context-settings-panel", PersonalContextSettingsPanel
+        )
+        authority = panel.query_one("#personal-context-authority-0", Select)
+        authority.value = AgentAuthority.OFF.value
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await _until(
+            pilot,
+            lambda: panel.snapshot.scopes[0].authority is AgentAuthority.OFF,
+        )
+        await pilot.pause()
+        assert (
+            service.get_scope_authority(service.list_scopes()[0].scope_id)
+            is AgentAuthority.OFF
+        )
+        panel = screen.query_one(
+            "#personal-context-settings-panel", PersonalContextSettingsPanel
+        )
+        assert (
+            panel.query_one("#personal-context-authority-0", Select).value
+            == AgentAuthority.OFF.value
+        )
 
 
 @pytest.mark.asyncio
@@ -2420,12 +2444,34 @@ async def test_restored_profile_review_reencrypts_before_it_approves(
             {"scope": 1, "rebuilt_scope_records": 3, "runtime_policy": 1},
             "1 damaged scope will be rebuilt; its 3 records are kept. 1 damaged "
             "agent access setting can't be read and will be removed. Agent access "
-            "there is Off until you set it again",
+            "for that scope is Off until you set it again",
         ),
         (
             {"scope": 2, "rebuilt_scope_records": 1, "scope_binding_history": 1},
             "2 damaged scopes will be rebuilt; their 1 record is kept. 1 damaged "
             "older workspace mapping version can't be read and will be removed",
+        ),
+        # Fix round 3: no records, the global switch, and ambiguous scopes.
+        (
+            {"scope": 1, "rebuilt_scope_records": 0, "runtime_switch": 1},
+            "1 damaged scope will be rebuilt; it has no records. 1 damaged Personal "
+            "Context on/off setting can't be read and will be removed. Agent use of "
+            "Personal Context stays off until you turn it on",
+        ),
+        (
+            {"runtime_policy": 2},
+            "2 damaged agent access settings can't be read and will be removed. "
+            "Agent access for those scopes is Off until you set it again",
+        ),
+        (
+            {
+                "scope": 2,
+                "rebuilt_scope_records": 2,
+                "personal_context_damaged_scopes_ambiguous": 2,
+            },
+            "Some damaged scopes can't be told apart, so this restored profile can't "
+            "be confirmed. Restore Personal Context again from another backup, or "
+            "roll the restore back in Backup & Restore > Recovery copies",
         ),
     ],
 )
@@ -2537,3 +2583,48 @@ async def test_a_refused_review_reloads_the_damaged_count(monkeypatch) -> None:
         await pilot.pause()
         assert service.steps == [("reencrypt", {"record": 1})]
         assert damaged_line() == "2 damaged records can't be read and will be removed"
+
+
+@pytest.mark.asyncio
+async def test_an_ambiguous_scope_refusal_says_what_to_do(monkeypatch) -> None:
+    """TASK-41121 fix round 3: when re-encryption refuses because damaged scopes
+    can't be told apart, the notice says to restore from another backup or roll
+    back, not the generic failure copy, and the review stays offered."""
+    import tldw_chatbook.Widgets.Settings_Widgets.personal_context_panel as module
+    from tldw_chatbook.Personal_Context import recovery
+    from tldw_chatbook.Personal_Context.repository_keys import AMBIGUOUS_SCOPES
+
+    class _Ambiguous(_RestoredProfileService):
+        def reencrypt_after_restore(self, *, expected_damaged=None) -> str:
+            self.steps.append("reencrypt")
+            refusal = ProfileLockedError("private-scope-detail")
+            refusal.reason_code = AMBIGUOUS_SCOPES
+            raise refusal
+
+    service = _Ambiguous(_ready_snapshot())
+    monkeypatch.setattr(module, "restore_review", lambda path: recovery.REVIEW_AVAILABLE)
+    monkeypatch.setattr(
+        module, "approve_restore_review", lambda path: service.steps.append("approve")
+    )
+    panel = PersonalContextSettingsPanel(service)
+    notices: list[str] = []
+    monkeypatch.setattr(panel, "notify", lambda message, **_: notices.append(message))
+
+    class _PanelHost(ConsolidatedCSSApp):
+        def compose(self):
+            yield panel
+
+    host = _PanelHost()
+    async with host.run_test(size=(100, 40)) as pilot:
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        await pilot.click("#personal-context-restore-review")
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        assert service.steps == ["reencrypt"]
+        assert notices[-1].startswith("Some damaged scopes can't be told apart"), notices
+        assert "another backup" in notices[-1]
+        assert "private-scope-detail" not in " ".join(notices)
+        assert panel.query("#personal-context-restore-review")

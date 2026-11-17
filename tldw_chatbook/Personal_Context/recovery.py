@@ -807,9 +807,10 @@ def forget_kept_keys(control_root: Path) -> None:
     remaining copy may name and no live database names (TASK-41120).
 
     A record lists the copies that existed at re-encryption. A copy made later
-    captured the database while it named the new account, and a later rollback
-    to it that finds a deleted account reinstalls the key that copy escrowed
-    (TASK-41122), so later copies need no record. While any copy's evidence
+    usually names the new account; if a later rollback revived the kept
+    account, the TASK-41122 reinstall covers it (a rollback to a copy whose
+    account is gone puts that copy's escrowed key into a fresh account), so
+    later copies need no record. While any copy's evidence
     cannot be read (its listed id is not the one recorded), nothing is deleted.
     Never raises: the copy is already gone, and an entry left behind holds
     only an old key that reads no live row.

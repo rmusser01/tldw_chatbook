@@ -4126,9 +4126,10 @@ path, the copies listed then) into the recovery control root, and
 account once none of those copies remains, no copy's evidence is unreadable, and
 neither the recorded database (a missing one may have moved, so it counts) nor
 the current default database names it. The copy list is frozen at re-encryption:
-a later copy captured the database naming the new account, and a later rollback
-to a copy whose account is gone reinstalls the key that copy escrowed
-(TASK-41122: `restore_key(rollback=True)` plans
+a later copy usually names the new account; if a later rollback revived the kept
+account, the TASK-41122 reinstall covers it, since a later rollback to a copy
+whose account is gone reinstalls the key that copy escrowed
+(`restore_key(rollback=True)` plans
 `personal_context_restore_readable` only then, and the restore path installs it
 into a fresh `recovery_` account), so later copies need no record.
 Detached import refuses the repository by name
