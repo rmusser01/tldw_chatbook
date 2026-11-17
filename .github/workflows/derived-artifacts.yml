@@ -1158,7 +1158,8 @@ jobs:
 
       # PR2921: bounded privacy, native recovery and actual dispatch contracts.
       # TASK-36532: this step also hosts Tests/Chat/test_local_server_discovery.py
-      # (sandboxed, ~15 s) because pr-fast-lane is at its 35-min cap.
+      # (sandboxed; 962 nodes, 5 min 43 s serial locally at load 36-39 on
+      # 2026-11-16, TASK-41131) because pr-fast-lane is at its 35-min cap.
       # TASK-38758: and Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py
       # (sandboxed, ~30 s serial), for the same reason. TASK-38759 adds the
       # vLLM profile file and, FIRST, the history participant lifetimes file:
