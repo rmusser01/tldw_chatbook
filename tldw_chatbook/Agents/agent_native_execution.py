@@ -1840,11 +1840,13 @@ def _finish_execution(self, owner):
         if owner is tree.owner:
             return  # Original submit owns primary cleanup and late producers.
 
+        # Dict bookkeeping only: popped here so a refused scope still drops it.
+        child_id = self.__dict__.get("_ordinary_child_keys", {}).pop(owner, None)
+        legacy = self.__dict__.get("_ordinary_child_notifications", {}).pop(
+            child_id, None
+        )
+
         def release():
-            child_id = self.__dict__.get("_ordinary_child_keys", {}).pop(owner, None)
-            legacy = self.__dict__.get("_ordinary_child_notifications", {}).pop(
-                child_id, None
-            )
             if (
                 legacy is not None
                 and legacy[1] is not None

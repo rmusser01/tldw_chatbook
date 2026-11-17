@@ -944,16 +944,18 @@ class OrdinaryTurn:
                 if self.source is not None
                 else self.retain_source_scope()
             )
-        except OriginalSourceChanged as refused:
-            # Only the activation refusal is absorbed; anything else propagates.
-            logger.warning(
-                "ordinary host return refused: {}", type(refused).__name__
-            )
+        except Exception as refused:
             # The scope's cleanup never ran, so the owner can never drain
             # proven: its claim stays held (TASK-40716) whatever its row did.
+            # It still returns, once, so disposal never waits on a live owner.
             owner.mark_cleanup_unproven()
             self.host_returned(owner)
             owner.finish_root()
+            if not isinstance(refused, OriginalSourceChanged):
+                raise
+            logger.warning(
+                "ordinary host return refused: {}", type(refused).__name__
+            )
             return refused
         with stack:
             release()

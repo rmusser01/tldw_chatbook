@@ -550,14 +550,16 @@ async def test_refused_owner_whose_row_never_started_stays_unproven():
     assert tree.unproven_only() and not tree.retired.done()
 
 
-async def test_unrelated_runtime_error_in_host_return_propagates_once():
-    """Only the source-activation refusal is absorbed (TASK-41315)."""
+async def test_unrelated_activation_error_settles_unproven_and_propagates():
+    """Any entry failure returns the owner unproven once, then propagates (TASK-41315)."""
     from contextlib import contextmanager
 
     owner = _Owner()
     tree, member = _refused_source_turn(owner)
-    returns = []
-    tree.host_returned = returns.append
+    tree.sealed = True
+    member.row_started = False
+    wakes = []
+    tree.runtime = SimpleNamespace(_wake_first_send=lambda: wakes.append(1))
 
     @contextmanager
     def lease_gone():
@@ -566,7 +568,19 @@ async def test_unrelated_runtime_error_in_host_return_propagates_once():
 
     tree.source = SimpleNamespace(activate=lease_gone)
     with pytest.raises(RuntimeError, match="scratch lease retired"):
-        tree.return_host(owner, lambda: None)
+        tree.return_host(owner, lambda: pytest.fail("release ran unscoped"))
+
+    assert owner.finished and owner.cleanup_unproven and member.host_returned
+    assert tree.unproven_only() and not tree.retired.done() and wakes
+
+
+async def test_body_error_in_host_return_propagates_without_a_second_return():
+    from contextlib import contextmanager
+
+    owner = _Owner()
+    tree, member = _refused_source_turn(owner)
+    returns = []
+    tree.host_returned = returns.append
 
     @contextmanager
     def live():
