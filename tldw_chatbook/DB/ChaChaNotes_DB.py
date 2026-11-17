@@ -738,7 +738,7 @@ class CharactersRAGDB:
     """
 
     _CURRENT_SCHEMA_VERSION = (
-        86  # ADR-286 conversation-owned operational prompt mix-ins.
+        87  # ADR-337 amendment: trace segments owned by a spawned child run.
     )
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
@@ -8113,6 +8113,30 @@ DELETE FROM keywords
                 f"{type(exc).__name__}"
             ) from exc
 
+    def _migrate_from_v86_to_v87(self, conn: sqlite3.Connection) -> None:
+        """Link a spawned child's own trace segment to its parent's owner."""
+        self._require_migration_entry_version(conn, 86, "V86→V87")
+        path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v86_to_v87_console_trace_child_segments.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor, path.read_text(encoding="utf-8"), "V86→V87"
+                )
+                updated = cursor.execute(
+                    "UPDATE db_schema_version SET version=87 WHERE schema_name=? AND version=86",
+                    (self._SCHEMA_NAME,),
+                )
+                if updated.rowcount != 1:
+                    raise SchemaError("V86→V87 version update failed")
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            raise SchemaError(
+                f"Migration V86→V87 failed: {type(exc).__name__}"
+            ) from exc
+
     def _migrate_from_v85_to_v86(self, conn: sqlite3.Connection) -> None:
         """Install conversation-owned operational prompt mix-in records."""
         self._require_migration_entry_version(conn, 85, "V85→V86")
@@ -8691,6 +8715,7 @@ DELETE FROM keywords
                     83: self._migrate_from_v83_to_v84,
                     84: self._migrate_from_v84_to_v85,
                     85: self._migrate_from_v85_to_v86,
+                    86: self._migrate_from_v86_to_v87,
                 }
 
                 if current_db_version == 0:

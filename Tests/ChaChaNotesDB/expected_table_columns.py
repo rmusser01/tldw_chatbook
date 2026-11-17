@@ -360,6 +360,9 @@ EXPECTED_TABLE_COLUMNS: dict[str, frozenset[str]] = {
             "created_at",
         }
     ),
+    "console_trace_child_segments": frozenset(
+        {"segment_id", "owner_id", "turn_id", "run_id", "created_at"}
+    ),
     "console_trace_calls": frozenset(
         {
             "call_id",

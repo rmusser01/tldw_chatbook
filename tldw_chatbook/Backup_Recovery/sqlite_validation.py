@@ -111,6 +111,7 @@ class _Restrictions:
         self.browse_order_migration = False
         self.response_rules_migration = False
         self.prompt_mixins_migration = False
+        self.child_segments_migration = False
         self.canvas_sibling_migration = False
         self.portrait_migration = None
         self.archive_chronology_migration = False
@@ -501,6 +502,46 @@ class _Restrictions:
                             and second
                             in {"type", "name", "tbl_name", "rootpage", "sql"}
                         )
+                    )
+                if self.child_segments_migration and source is None:
+                    # TASK-41310: one link table, its three guards, and the
+                    # five owner guards recreated with the child link.
+                    table = "console_trace_child_segments"
+                    recreated = {
+                        "console_trace_calls_owner_lineage": "console_trace_calls",
+                        "console_trace_events_owner_guard": "console_trace_events",
+                        "console_trace_surface_nodes_owner_guard": (
+                            "console_trace_surface_nodes"
+                        ),
+                        "console_trace_surface_replacements_owner_guard": (
+                            "console_trace_surface_replacements"
+                        ),
+                        "console_trace_response_links_owner_guard": (
+                            "console_trace_response_links"
+                        ),
+                    }
+                    triggers = {
+                        **recreated,
+                        "console_trace_child_segments_insert_guard": table,
+                        "console_trace_child_segments_no_update": table,
+                        "console_trace_child_segments_no_delete": table,
+                    }
+                    allowed |= database == "main" and (
+                        action == sqlite3.SQLITE_CREATE_TABLE
+                        and first == table
+                        or action == sqlite3.SQLITE_CREATE_INDEX
+                        and first
+                        in {f"sqlite_autoindex_{table}_1", f"sqlite_autoindex_{table}_2"}
+                        and second == table
+                        or action == sqlite3.SQLITE_DROP_TRIGGER
+                        and recreated.get(first) == second
+                        or action == sqlite3.SQLITE_CREATE_TRIGGER
+                        and triggers.get(first) == second
+                        or action in {sqlite3.SQLITE_INSERT, sqlite3.SQLITE_DELETE}
+                        and first == "sqlite_master"
+                        or action == sqlite3.SQLITE_UPDATE
+                        and first == "sqlite_master"
+                        and second in {"type", "name", "tbl_name", "rootpage", "sql"}
                     )
                 if self.archive_chronology_migration and source is None:
                     allowed |= (
@@ -1215,6 +1256,7 @@ def _canvas_schema_access(connection, schema, restrictions=None):
         CHACHANOTES_V84_SCHEMAS,
         CHACHANOTES_V85_SCHEMAS,
         CHACHANOTES_V86_SCHEMAS,
+        CHACHANOTES_V87_SCHEMAS,
         CORE_SCHEMAS,
     )
 
@@ -1242,6 +1284,7 @@ def _canvas_schema_access(connection, schema, restrictions=None):
         *CHACHANOTES_V84_SCHEMAS,
         *CHACHANOTES_V85_SCHEMAS,
         *CHACHANOTES_V86_SCHEMAS,
+        *CHACHANOTES_V87_SCHEMAS,
         *(sql for _, sql in _SUBSCRIPTIONS_SCHEMA),
     )
     if schema not in frozen:
@@ -1515,6 +1558,7 @@ def _validate_candidate(
                         CHACHANOTES_V83_SCHEMAS,
                         CHACHANOTES_V84_SCHEMAS,
                         CHACHANOTES_V85_SCHEMAS,
+                        CHACHANOTES_V86_SCHEMAS,
                     )
 
                     actual_sql = tuple(
@@ -1545,6 +1589,8 @@ def _validate_candidate(
                         and actual_sql in CHACHANOTES_V84_SCHEMAS
                         or version == 85
                         and actual_sql in CHACHANOTES_V85_SCHEMAS
+                        or version == 86
+                        and actual_sql in CHACHANOTES_V86_SCHEMAS
                     ):
                         return (("unsupported_schema_migration",), None)
                     shipped_checkpoint = actual_sql in CHACHANOTES_V76_SHIPPED_SCHEMAS
@@ -1587,14 +1633,16 @@ def _validate_candidate(
                                 shipped_checkpoint
                                 and version == 76
                                 or installed.owner_id == "db.chachanotes.primary"
-                                and version in (77, 78, 79, 80, 81, 84, 85)
+                                and version in (77, 78, 79, 80, 81, 84, 85, 86)
                             ):
                                 migration = (
                                     Path(__file__).resolve().parents[1]
                                     / "DB"
                                     / "migrations"
                                     / (
-                                        "chachanotes_prompt_mixins.sql"
+                                        "chachanotes_v86_to_v87_console_trace_child_segments.sql"
+                                        if version == 86
+                                        else "chachanotes_prompt_mixins.sql"
                                         if version == 85
                                         else "chachanotes_v84_to_v85_archive_chronology.sql"
                                         if version == 84
@@ -1619,6 +1667,7 @@ def _validate_candidate(
                                 restrictions.canvas_sibling_migration = version == 81
                                 restrictions.archive_chronology_migration = version == 84
                                 restrictions.prompt_mixins_migration = version == 85
+                                restrictions.child_segments_migration = version == 86
                                 try:
                                     pending = ""
                                     for line in migration.read_text(
@@ -1655,6 +1704,7 @@ def _validate_candidate(
                                     restrictions.canvas_sibling_migration = False
                                     restrictions.archive_chronology_migration = False
                                     restrictions.prompt_mixins_migration = False
+                                    restrictions.child_segments_migration = False
                             restrictions.portrait_migration = (
                                 version
                                 if installed.owner_id == "db.chachanotes.primary"
