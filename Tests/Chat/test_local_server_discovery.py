@@ -4614,3 +4614,73 @@ def test_the_shipped_mlx_table_holds_the_host_and_port_its_adapter_reads():
 
     assert "api_url" not in table
     assert (table["host"], table["port"]) == ("127.0.0.1", 8080)
+
+
+# --- TASK-41145 ruling 2026-11-17: an explicit legacy custom_2 endpoint is not
+# silently redirected -----------------------------------------------------------
+
+_LEGACY_CUSTOM_2 = "http://legacy-box.lan:5000/v1/chat/completions"
+_CUSTOM_2_PLACEHOLDER = "http://localhost:5678/v1/chat/completions"
+
+
+@pytest.mark.parametrize(
+    ("user", "sent"),
+    [
+        # Legacy set explicitly, the slot still the template's placeholder.
+        ({"API": {"custom_openai2_api_ip": _LEGACY_CUSTOM_2}}, _LEGACY_CUSTOM_2),
+        # ...or blanked: the legacy endpoint is kept.
+        (
+            {
+                "API": {"custom_openai2_api_ip": _LEGACY_CUSTOM_2},
+                "api_settings": {"custom_2": {"api_url": ""}},
+            },
+            _LEGACY_CUSTOM_2,
+        ),
+        # A slot the user edited wins.
+        (
+            {
+                "API": {"custom_openai2_api_ip": _LEGACY_CUSTOM_2},
+                "api_settings": {"custom_2": {"api_url": "http://slot-box.lan:5678/v1"}},
+            },
+            "http://slot-box.lan:5678/v1/chat/completions",
+        ),
+        # The legacy key at its shipped default is not an explicit choice.
+        (
+            {"API": {"custom_openai2_api_ip": "http://127.0.0.1:5000/v1/chat/completions"}},
+            _CUSTOM_2_PLACEHOLDER,
+        ),
+    ],
+)
+def test_an_explicit_legacy_custom_2_endpoint_is_not_redirected(user, sent, monkeypatch):
+    """TASK-41145 ruling 2026-11-17: reading ``[api_settings.custom_2] api_url``
+    first moved a profile that set ``[API] custom_openai2_api_ip`` onto the
+    template's localhost:5678 placeholder. The merged view (every reader's)
+    keeps the explicit legacy endpoint until the slot holds a real one."""
+    from tldw_chatbook.Chat.console_provider_endpoints import adapter_own_endpoint
+
+    config = _merged(user)
+    assert config["api_settings"]["custom_2"]["api_url"] in {sent, sent.removesuffix("/chat/completions")}
+    posts = _local_world(monkeypatch, config)
+
+    _dispatch("custom-openai-api-2")
+
+    assert posts == [sent]
+    own = adapter_own_endpoint("custom-openai-api-2", config)
+    assert own.removesuffix("/chat/completions") == sent.removesuffix("/chat/completions")
+    assert user.get("api_settings", {}).get("custom_2", {}).get("api_url") != _LEGACY_CUSTOM_2
+
+
+def test_the_loaded_settings_keep_an_explicit_legacy_custom_2_endpoint(tmp_path, monkeypatch):
+    """TASK-41145 ruling 2026-11-17: ``load_settings`` (the adapter's read) is
+    built from the same merged view; the file itself is never written."""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        toml.dumps({"API": {"custom_openai2_api_ip": _LEGACY_CUSTOM_2}}), encoding="utf-8"
+    )
+    before = config_path.read_bytes()
+    config_module = select_config_source(monkeypatch, config_path)
+
+    settings = config_module.load_settings(force_reload=True)
+
+    assert settings["api_settings"]["custom_2"]["api_url"] == _LEGACY_CUSTOM_2
+    assert config_path.read_bytes() == before

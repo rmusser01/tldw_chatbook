@@ -394,6 +394,14 @@ never used by its chats and is still ignored: the field shows the host and
 port (`http://127.0.0.1:8080/v1` until you set them) until you enter the
 address again.
 
+Custom 2 (Custom OpenAI API 2) sends to the Endpoint saved for it,
+`[api_settings.custom_2] api_url`, and falls back to the older
+`[API] custom_openai2_api_ip`. A config that sets that older key to its own
+address keeps sending there, and the Endpoint field shows it, while the saved
+Endpoint is empty or still the shipped `http://localhost:5678/v1/chat/completions`;
+once you save an Endpoint for Custom 2, that one is used. Nothing rewrites the
+file for this.
+
 The vLLM, TabbyAPI, Aphrodite, Custom and Custom 2 saved lists start empty and
 fill through **Discover models**. A config file written by an older version
 may still hold their sample IDs (`vllm-model-z`, `tabby-model`,
