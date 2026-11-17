@@ -2159,3 +2159,74 @@ retained-source integration receipt remains applicable to the restored source.
 A bounded phase-entry/exit host CPU, process CPU, memory and I/O observer will
 record contention alongside subsequent original runs; no unrelated processes
 will be stopped and no slow sample will silently be discarded.
+
+
+### Task 3ae: Attribute loaded-host Send work (2026-11-17)
+
+ADR required: no for passive off-tree observation. Existing ADR126/230/231/356
+remain the implementation boundaries; reassess for a selected structural change.
+Published retained head d838c30 keeps auto-merge off. The exact Enter scenario
+passes all functional checks but records 17.980/13.426/15.763s to the adapter
+(pr3534-host-enter-1). All three users/replies/traces complete, no checkpoints
+remain, and source/HEAD are unchanged. Eight original phase scopes and all
+observer restoration checks pass, with no snapshot errors. Boundary capture
+costs 0.7–1.3ms per send phase and is outside its original phase timer.
+
+During the complete send phases, whole-host CPU averages 92.49/86.16/93.28%
+on 12 logical processors; the process consumes 24.72/18.94/22.14 CPU-seconds
+over 21.41/15.48/18.14 wall-seconds. Available physical memory stays near
+57,600MiB. Process accounting reports roughly 372k–398k other I/O operations
+per phase; these are not file-open counts or physical disk latency. Short
+layout scopes have insufficient CPU ticks and correctly report no percentage.
+This confirms high contemporaneous host load and substantial application work;
+it does not attribute earlier runs or establish a particular slowdown cause.
+Retain the failed measurement. Sample the exact owned current-source process
+with the existing fixed-duration py-spy diagnostic, then qualify any candidate
+with original controls and sequential uninstrumented Enter/button runs.
+
+Read-only architecture review found no new justified deletion: canonical
+recovery observations and payload admissions are distinct; nested catalog
+scopes already borrow their owner. Readiness refresh selections mostly follow
+the existing half-life FULL contract, the already withdrawn Task3y candidate.
+Entire user-directory stamp work on the raw-input thread totals only .119/.106s
+in the older diagnostic, including native calls and compatibility checks; it
+does not justify a new platform owner migration without finer evidence.
+
+
+Current-head CI repair (2026-11-17 UTC): hosted PR-event run43990098227
+completed its application lanes; Architecture guard contracts reports486 passes
+and one failure. The PR dependency correction introduced the read-only
+personal_context.restore_marker SQLite owner and updated the producer/SQLite
+call inventories, but omitted its explicit registry row in the backup-owner
+inventory. Add the exact module and _READ_ONLY_URI row; preserve the runtime
+policy and all assertions. Verify the existing registry census and adjacent
+backup inventory controls. ADR required:no; this documents an existing owner
+without changing storage, permission or backup authority.
+
+
+Task3ae current-source sampling: the first60s sampler was retired after the
+app finished before its capture duration, leaving no stack file; retain
+pr3534-current-sampled-button-1 as unusable stack evidence (all functional
+checks pass,13.166/7.438/10.549s, host35.50–69.55%). A separate15s sampler
+with bounded owned-child retirement completes successfully without product
+changes. pr3534-current-sampled-button-2 passes, with26.321/16.529/16.234s
+and host95.45–97.94%. Only the first Send prefix was sampled: main IOCP poll
+accounts for7.68/14.98 sample-seconds; an MCP worker spends5.72 in checked
+read and4.84 nested in canonical observation. These are stack residence,
+including waits and overlapping work, not additive CPU cost or predicted savings.
+The capture has no errors, no forced sampler termination, unchanged source
+and actual sampler retirement. Other routes/sends are outside its capture.
+
+A later read-only Windows process snapshot finds88% host CPU and ffmpeg at
+888% process CPU (about8.9 of12 logical cores). This is contemporaneous host
+context, not proof of earlier process attribution. No unrelated process is
+modified. Review of already-held canonical custody confirms it cannot grant
+new sidecar authority: related members still need fresh native admission,
+pending intent may publish while ordinary leases remain live, and raw.check
+does not replace each member scope check. A future shared fresh observation
+needs an explicit ADR126 contract and causal count evidence; no shortcut ships.
+
+The CI inventory correction passes its original registry test and neighboring
+census control (2passed5.13s; pr3534-inventory-correction-1). The54-job hosted
+allocation and original routing restoration are recorded off-tree. No merge
+or latency qualification is claimed.

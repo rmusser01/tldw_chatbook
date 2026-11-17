@@ -3157,3 +3157,17 @@ uses interpreter-wide monitoring events in _lsprof, making a worker thread_time
 interpretation unsound. A thread-local profile.Profile capture would require
 a synthetic diagnostic control and has higher Python overhead.
 Prefer the bounded host observation first; no profiler replacement is selected.
+
+
+**Task3ae source/currentness contractions — deferred after read-only review.**
+Canonical recovery observation and payload admissions own distinct resources;
+nested catalog scopes already borrow the same owner. The catalog forwarding
+join remains unproven. Background readiness selections follow the known FULL
+half-life cadence, adding no new reason to revive Task3y. Config source-current
+introspection lies inside .119/.106s of total stamp work on the raw-input
+thread; no existing platform registration API preserves its custom-dispatch
+and in-flight replacement contract by deletion. A new resource boundary needs
+measured attribution and an explicit compatibility decision (ADR126/356).
+The new host observer records 86–93% CPU during slow retained-source sends,
+plus substantial process CPU. Host load must be reported with subsequent
+comparisons; it is not permission to discard misses or weaken the six-second gate.

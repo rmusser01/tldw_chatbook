@@ -3375,6 +3375,7 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | sqlite:library.legacy_recovery | tldw_chatbook/Library/collections_legacy_recovery | _READ_ONLY_URI | sqlite/unsupported |
 | sqlite:personal_context.interview_drafts | tldw_chatbook/Personal_Context/interview_draft_repository | _PRIVATE_FILE | sqlite/installed exclusion (`_LocalSQLite`) |
 | sqlite:personal_context.repository | tldw_chatbook/Personal_Context/repository | _PRIVATE_AND_READ_ONLY | sqlite/runtime owner; no backup authority (backup uses `recovery.personal_context.repository`, TASK-40134) |
+| sqlite:personal_context.restore_marker | tldw_chatbook/Personal_Context/repository_keys | _READ_ONLY_URI | sqlite/runtime read-only restore-marker access; no backup or capture authority (TASK-40136; PR3534 dependency correction) |
 | sqlite:plugins.registry | tldw_chatbook/Plugins/registry | _PRIVATE_MEMORY_AND_READ_ONLY | sqlite/plugins runtime owner; no backup authority (backup uses `recovery.plugins.registry`) |
 | sqlite:recovery.operations.dreams | tldw_chatbook/DB/recovery_dreams_guardian | _PRIVATE_AND_READ_ONLY | sqlite/operational-recovery-qualified |
 | sqlite:recovery.operations.guardian | tldw_chatbook/DB/recovery_dreams_guardian | _PRIVATE_AND_READ_ONLY | sqlite/operational-recovery-qualified |
