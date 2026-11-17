@@ -1,10 +1,10 @@
 ---
 id: TASK-41104
 title: "The plugin restore end-to-end test fits its 480 s and per-child limits only at load under about 25"
-status: Done
+status: In Progress
 assignee:
 - '@claude'
-updated_date: '2026-11-16 23:48'
+updated_date: '2026-11-17 00:18'
 created_date: 2026-11-15 02:20
 labels:
 - follow-up
@@ -30,7 +30,7 @@ Filed in round 14 of the 2026-10-23 burn-down (closeout, 2026-11-15). Checked ag
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 Either the test's time limits come from measured times of its children (CI times recorded with run ids), with at least 2x headroom, or the slow part (the two Tools-group restores, mostly journal revalidation per the comment) is made faster, with before/after times recorded
+- [ ] #1 Either the test's time limits come from measured CI times of its children (recorded with run ids), with at least 2x headroom, or the slow part (the two Tools-group restores, mostly journal revalidation per the comment) is made faster, with before/after times recorded
 - [x] #2 The test passes 3 of 3 locally at load 40 or more
 <!-- AC:END -->
 
@@ -51,10 +51,9 @@ Filed in round 14 of the 2026-10-23 burn-down (closeout, 2026-11-15). Checked ag
 
 No product code changed: restore and authority logic belong to the concurrent fu-r15-plga stream, so the "make the restore faster" alternative was not taken.
 
-**Criteria (coordinator, r15pb-rev1).** The old criterion #2 began "Or" and was an alternative to #1. The coordinator authorized merging them into one either/or criterion (#1), which I ticked on its first branch; the old #3 is now #2.
-- I also reworded the first branch from "measured CI times of its children" to "measured times of its children (CI times recorded with run ids)", without separate authorization: no CI run kept per-child times (see "CI times").
-- The caps and the test limit come from loaded local runs. The coordinator ruled that the test limit may, because criterion #2 requires the test to hold there.
-- The test now records each child's CI time, so the caps can be tightened from CI data.
+**Criteria (coordinator, r15pb-rev1).** The old criterion #2 began "Or" and was an alternative to #1. The coordinator authorized merging them into one either/or criterion (#1), with #1's original wording; the old #3 is now #2 (met).
+- **#1 stays open, and so does the task.** No CI run has per-child times yet. It closes once this PR's qualification run records them (the `plugin_restore_child_*` JUnit properties now do) and the caps are tightened from them, with at least 2x headroom.
+- Until then the caps below come from loaded local runs. The coordinator ruled that the test limit may come from loaded local runs, because criterion #2 requires the test to hold there.
 
 **Changes.**
 - `Tests/Plugins/test_recovery.py::test_plugin_backup_restores_in_place_and_waits_for_authority_recovery`:
